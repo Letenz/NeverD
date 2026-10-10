@@ -1175,8 +1175,18 @@ TEST(RegistrationTryLevel,
     Catch.CatchObjectOffset = -24;
     Catch.ParentFrameOffset = 12;
     const auto High = MedToHighConverter().convert(Med, Arch::X86);
-    bool HasClause = false, HasTransfer = false;
+    bool HasClause = false, HasTransfer = false, HasRestore = false;
     walkStmts(High.Body, [&](const HighStmt &Stmt) {
+      if (Stmt.Kind == StmtKind::Store && Stmt.Addr == Resume.Address) {
+        ASSERT_TRUE(Stmt.StoreAddr && Stmt.StoreVal);
+        EXPECT_EQ(Stmt.StoreAddr->Kind, ExprKind::BinOp);
+        EXPECT_EQ(Stmt.StoreVal->Kind, ExprKind::BinOp);
+        ASSERT_EQ(Stmt.StoreAddr->Operands.size(), 2u);
+        ASSERT_EQ(Stmt.StoreVal->Operands.size(), 2u);
+        EXPECT_EQ(Stmt.StoreAddr->Operands[1]->ConstVal, 20u);
+        EXPECT_EQ(Stmt.StoreVal->Operands[1]->ConstVal, 32u);
+        HasRestore = true;
+      }
       if (Stmt.Kind == StmtKind::Goto && Stmt.GotoTarget == Resume.TargetVA)
         HasTransfer = true;
       if (Stmt.Kind == StmtKind::Return && Stmt.RetVal &&
@@ -1203,6 +1213,7 @@ TEST(RegistrationTryLevel,
       EXPECT_TRUE(High.Body.front().EHClauseBodies.front().empty());
     } else {
       EXPECT_TRUE(HasTransfer);
+      EXPECT_TRUE(HasRestore);
     }
   }
 }

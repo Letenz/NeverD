@@ -23,6 +23,70 @@ FrameValue join(FrameValue Left, const FrameValue &Right) {
               (!Right.MayBeFrame || Right.FrameOnlyFromCall)};
 }
 
+namespace {
+bool mergeCells(std::map<int32_t, FrameValue> &Cells,
+                const std::map<int32_t, FrameValue> &Other) {
+  bool Changed = false;
+  for (auto &[Offset, Value] : Cells) {
+    const auto It = Other.find(Offset);
+    const FrameValue Merged =
+        join(Value, It == Other.end() ? FrameValue{} : It->second);
+    Changed |= Merged != Value;
+    Value = Merged;
+  }
+  for (const auto &[Offset, Value] : Other)
+    if (!Cells.count(Offset)) {
+      const FrameValue Merged = join({}, Value);
+      if (Merged != FrameValue{}) {
+        Cells.emplace(Offset, Merged);
+        Changed = true;
+      }
+    }
+  return Changed;
+}
+
+void storeCell(std::map<int32_t, FrameValue> &Cells, int32_t Offset,
+               uint16_t Width, const FrameValue &Value) {
+  for (auto It = Cells.begin(); It != Cells.end();) {
+    if (int64_t(It->first) < int64_t(Offset) + Width &&
+        int64_t(Offset) < int64_t(It->first) + 4) {
+      const bool FullyOverwritten =
+          Offset <= It->first &&
+          int64_t(It->first) + 4 <= int64_t(Offset) + Width;
+      if (!FullyOverwritten && It->second.MayBeFrame) {
+        It->second = {{}, {}, false, true};
+        ++It;
+      } else
+        It = Cells.erase(It);
+    } else
+      ++It;
+  }
+  if (Width == 4 && Value != FrameValue{})
+    Cells[Offset] = Value;
+  else if (Value.MayBeFrame)
+    // A pointer can be split into narrow writes and reconstructed by a
+    // later load. Retain conservative four-byte coverage for every written
+    // chunk, including a final partial chunk, rather than dropping its
+    // provenance merely because this store is not a full pointer width.
+    for (uint32_t I = 0; I < Width; I += 4)
+      Cells[static_cast<int32_t>(uint32_t(Offset) + I)] = {{}, {}, false, true};
+}
+
+FrameValue loadCell(const std::map<int32_t, FrameValue> &Cells,
+                    std::optional<int32_t> Offset, uint16_t Width) {
+  if (Offset && Width == 4)
+    if (auto It = Cells.find(*Offset); It != Cells.end())
+      return It->second;
+  for (const auto &[Cell, Value] : Cells)
+    if (Value.MayBeFrame &&
+        (!Offset || (int64_t(Cell) < int64_t(*Offset) + Width &&
+                     int64_t(*Offset) < int64_t(Cell) + 4)))
+      return {{}, {}, false, true};
+  return {};
+}
+
+} // namespace
+
 bool FrameState::merge(const FrameState &Other) {
   bool Changed = false;
   for (size_t I = 0; I < Registers.size(); ++I) {
@@ -54,62 +118,33 @@ bool FrameState::merge(const FrameState &Other) {
   }
   Changed |= Other.OtherRegistersMayBeFrame && !OtherRegistersMayBeFrame;
   OtherRegistersMayBeFrame |= Other.OtherRegistersMayBeFrame;
-  for (auto &[Offset, Value] : Cells) {
-    const auto It = Other.Cells.find(Offset);
-    const FrameValue Merged =
-        join(Value, It == Other.Cells.end() ? FrameValue{} : It->second);
-    Changed |= Merged != Value;
-    Value = Merged;
-  }
-  for (const auto &[Offset, Value] : Other.Cells)
-    if (!Cells.count(Offset)) {
-      const FrameValue Merged = join({}, Value);
-      if (Merged != FrameValue{}) {
-        Cells.emplace(Offset, Merged);
-        Changed = true;
-      }
-    }
+  Changed |= mergeCells(Cells, Other.Cells);
+  Changed |= mergeCells(EntryCells, Other.EntryCells);
   return Changed;
+}
+
+void FrameState::forgetCellValues() {
+  for (auto *Space : {&Cells, &EntryCells})
+    for (auto &[Offset, Value] : *Space)
+      Value = join(Value, {});
 }
 
 void FrameState::store(int32_t Offset, uint16_t Width,
                        const FrameValue &Value) {
-  for (auto It = Cells.begin(); It != Cells.end();) {
-    if (int64_t(It->first) < int64_t(Offset) + Width &&
-        int64_t(Offset) < int64_t(It->first) + 4) {
-      const bool FullyOverwritten =
-          Offset <= It->first &&
-          int64_t(It->first) + 4 <= int64_t(Offset) + Width;
-      if (!FullyOverwritten && It->second.MayBeFrame) {
-        It->second = {{}, {}, false, true};
-        ++It;
-      } else
-        It = Cells.erase(It);
-    } else
-      ++It;
-  }
-  if (Width == 4 && Value != FrameValue{})
-    Cells[Offset] = Value;
-  else if (Value.MayBeFrame)
-    // A pointer can be split into narrow writes and reconstructed by a
-    // later load. Retain conservative four-byte coverage for every written
-    // chunk, including a final partial chunk, rather than dropping its
-    // provenance merely because this store is not a full pointer width.
-    for (uint32_t I = 0; I < Width; I += 4)
-      Cells[static_cast<int32_t>(uint32_t(Offset) + I)] = {{}, {}, false, true};
+  storeCell(Cells, Offset, Width, Value);
 }
-
+void FrameState::storeEntry(int32_t Offset, uint16_t Width,
+                            const FrameValue &Value) {
+  storeCell(EntryCells, Offset, Width, Value);
+}
 FrameValue FrameState::load(std::optional<int32_t> Offset,
                             uint16_t Width) const {
-  if (Offset && Width == 4)
-    if (auto It = Cells.find(*Offset); It != Cells.end())
-      return It->second;
-  for (const auto &[Cell, Value] : Cells)
-    if (Value.MayBeFrame &&
-        (!Offset || (int64_t(Cell) < int64_t(*Offset) + Width &&
-                     int64_t(*Offset) < int64_t(Cell) + 4)))
-      return {{}, {}, false, true};
-  return {};
+  auto Value = loadCell(Cells, Offset, Width);
+  return Offset ? Value
+                : join(Value, loadCell(EntryCells, std::nullopt, Width));
+}
+FrameValue FrameState::loadEntry(int32_t Offset, uint16_t Width) const {
+  return loadCell(EntryCells, Offset, Width);
 }
 
 void FrameTransfer::beginInstruction(va_t Address) {
@@ -183,9 +218,13 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
     }
     if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         Address.MayBeFrame)
-      return State.load(Address.Offset, Op.Output.Size);
+      return Address.EntryOffset && *Address.EntryOffset >= -12
+                 ? State.loadEntry(*Address.EntryOffset, Op.Output.Size)
+                 : State.load(Address.Offset, Op.Output.Size);
     return {};
   }
+  if (auto RealignedValue = evaluateRealignment(Op))
+    return *RealignedValue;
   if (Op.Opcode == NdOp::INT_XOR && Op.NumInputs == 2 && Op.Output.Size == 4 &&
       Op.Inputs[0].Size == 4 && Op.Inputs[1].Size == 4) {
     auto Left = read(Op.Inputs[0]);
@@ -218,6 +257,13 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Op.NumInputs == 2) {
     const FrameValue Left = read(Op.Inputs[0]);
     const FrameValue Right = read(Op.Inputs[1]);
+    if (Left.EntryOffset && Right.Constant)
+      return FrameValue::entryFrame(static_cast<int32_t>(
+          uint32_t(*Left.EntryOffset) +
+          (Op.Opcode == NdOp::INT_ADD ? *Right.Constant : -*Right.Constant)));
+    if (Op.Opcode == NdOp::INT_ADD && Left.Constant && Right.EntryOffset)
+      return FrameValue::entryFrame(
+          static_cast<int32_t>(*Left.Constant + uint32_t(*Right.EntryOffset)));
     if (Left.Offset && Right.Constant)
       return FrameValue::frame(static_cast<int32_t>(
           uint32_t(*Left.Offset) +

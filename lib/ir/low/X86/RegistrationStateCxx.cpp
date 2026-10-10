@@ -22,19 +22,22 @@ void RegistrationStateSolver::recordCatchReturn(
   const FrameValue Target =
       Op.NumInputs == 1 ? Transfer.read(Op.Inputs[0]) : FrameValue{};
   const int64_t SavedSlot = int64_t(*Chain.RegistrationOffset) - 4;
-  const auto SavedSP = SavedSlot >= INT32_MIN
-                           ? After.Frame.Cells.find(int32_t(SavedSlot))
-                           : After.Frame.Cells.end();
+  const auto CapturedSP =
+      After.CxxCatchStacks.size() == 1
+          ? After.CxxCatchStacks.begin()->back().SavedStackOffset
+          : std::nullopt;
+  // The runtime owns this snapshot, independently of subsequent catch writes
+  // to SavedESP. The continuation edge restores both the cell and ESP.
   const bool Valid =
-      After.CxxCatchStacks.size() == 1 && !After.Parent &&
-      !After.OtherCallback && !After.Unknown && !Facts[I].Invalid &&
-      After.Installed && !After.Uninstalled && !After.Levels.empty() &&
-      Op.Seq >= 0 && Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
-      &Op == &Block.Ops.back() && Block.Succs.empty() && Target.Constant &&
-      !Target.MayBeFrame && EH.CodeRange.contains(*Target.Constant) &&
-      *Target.Constant != Function.Entry &&
-      SavedSP != After.Frame.Cells.end() && SavedSP->second.Offset &&
-      *SavedSP->second.Offset <= SavedSlot && Boundary != Boundaries.end() &&
+      !Chain.RealignedFrame && After.CxxCatchStacks.size() == 1 &&
+      !After.Parent && !After.OtherCallback && !After.Unknown &&
+      !Facts[I].Invalid && After.Installed && !After.Uninstalled &&
+      !After.Levels.empty() && Op.Seq >= 0 && Op.NumInputs == 1 &&
+      Op.Inputs[0].Size == 4 && &Op == &Block.Ops.back() &&
+      Block.Succs.empty() && Target.Constant && !Target.MayBeFrame &&
+      EH.CodeRange.contains(*Target.Constant) &&
+      *Target.Constant != Function.Entry && CapturedSP &&
+      *CapturedSP <= SavedSlot && Boundary != Boundaries.end() &&
       Boundary->second.first == Block.Id &&
       Boundary->second.second.Control == LowInstructionControl::Return &&
       Boundary->second.second.Immediate.value_or(0) == 0 &&
@@ -44,14 +47,10 @@ void RegistrationStateSolver::recordCatchReturn(
     CxxContinuations.erase(Identity);
     CompleteCxxContinuations = false;
   } else if (!InvalidCxxContinuations.count(Identity)) {
-    const auto [TryIndex, CatchIndex] = After.CxxCatchStacks.begin()->back();
-    CatchReturn = RegistrationCxxContinuation{TryIndex,
-                                              CatchIndex,
-                                              Op.Addr,
-                                              Block.EndAddr,
-                                              Op.Seq,
-                                              *Target.Constant,
-                                              *SavedSP->second.Offset};
+    const auto &Context = After.CxxCatchStacks.begin()->back();
+    CatchReturn = RegistrationCxxContinuation{
+        Context.TryIndex, Context.CatchIndex, Op.Addr,    Block.EndAddr,
+        Op.Seq,           *Target.Constant,   *CapturedSP};
     const auto [It, Inserted] =
         CxxContinuations.emplace(Identity, *CatchReturn);
     if (!Inserted && It->second != *CatchReturn) {
@@ -112,7 +111,7 @@ bool RegistrationStateSolver::recordRuntimeMemory(
     const auto Stored = RuntimeTransfer.read(*Memory.StoredValue);
     const auto PrivateAddress = Transfer.read(*Memory.Address);
     if (PrivateAddress.Offset && !RuntimeAddress.MayBeFrame) {
-      if (!charge(After.RuntimeObject.Cells.size() +
+      if (!charge(After.RuntimeObject.cellCount() +
                   (Memory.AccessSize + 3) / 4 + 1))
         return false;
       After.RuntimeObject.store(*PrivateAddress.Offset, Memory.AccessSize,

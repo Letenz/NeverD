@@ -87,6 +87,12 @@ installation or follow removal. The call ABI consumer prunes only with complete
 state/lifetime/call proofs, current block identities and exact call receipts.
 For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
 its nested-search minimum and exact returned continuation and SavedESP facts.
+The captured pre-dispatch SavedESP owns the catch-return writeback even when
+catch code changes the cell. That effect remains bound to the exact RETURN in
+LowIR and MedIR. Dedicated x86 HighIR and LLVM continuation lowering restore
+the recovered source cell; the generated runtime frame has its own physical
+SavedESP. A separate COFF continuation proof replays the snapshot and checks
+the actual store immediately before catchret, including its value and address.
 CFG construction closes those targets against function and instruction
 ownership and replays the analysis; it does not turn them into independent
 ordinary entries or insert a fabricated IP-to-state map into FuncInfo.
@@ -95,6 +101,15 @@ fields used by module function discovery and indirect-entry discovery;
 independent pointer references, exports, stated symbols and direct calls still
 create ordinary entries. Focused loading retains this parser's language-table
 ownership rather than reparsing registration data as table-driven EH.
+For a checked realigned x86 frame, the LowIR value domain keeps entry EBP and
+runtime-establisher offsets in separate register facts and cell maps. The
+alignment transfer replays the decoded entry AND and allocation; installation
+requires the actual ESI anchor, saved entry EBP, saved ESP, previous chain,
+handler and seed state. Entry-relative accesses below the saved-register area
+and runtime-relative accesses above the aligned allocation can cross coordinate
+spaces; both remain rejected without an exact projection.
+This admits bounded ordinary state propagation, not a generated C++ catch's
+parent-frame restore or native re-reconstruction; those remain unproved.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional

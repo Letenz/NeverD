@@ -98,6 +98,15 @@ C++ catches have a separate runtime context: nested exception search starts
 above the active try block, and a catch returns a continuation code pointer to
 the runtime. LowIR requires an exact decoded return and saved stack value,
 decodes the target within the same function, and replays the restored context.
+Each active catch retains the saved-stack snapshot taken before runtime
+dispatch. A direct-frame catch may overwrite SavedESP: the continuation
+restores the captured pointer to that cell before restoring ESP. LowIR and
+MedIR bind this implicit writeback to the exact catch return; HighIR and native
+LLVM materialize it in the recovered source frame. The installer independently
+checks the writeback's address, value and order against fresh source analysis.
+A missing pre-dispatch snapshot still cannot be invented by a catch write.
+Realigned callback stacks and their parent-frame restoration remain outside
+this direct-frame contract.
 An unproven continuation or conflicting return retains annotations and
 withdraws native authority. These facts remain separate from the source
 FuncInfo and from the parent's scalar return value.
@@ -120,6 +129,14 @@ projection before its body can be copied into a clause; its native target is
 retained when that proof is absent.
 Direct MSVC prologues must prove the actual FS:[0] write and the registration
 and state-field offsets; matching integer sequences in locals are insufficient.
+
+For the checked LLVM realigned C++ prologue, ordinary LowIR propagation keeps
+entry EBP and runtime-establisher offsets separate. It replays stack alignment,
+allocation, the ESI anchor and all registration fields before accepting the
+actual FS:[0] installation. Accesses that could cross between the two frames
+fail closed. A generated catch's independent callback stack and runtime return
+protocol still require separate proofs, so these coordinates alone do not
+enable native reconstruction of a realigned source.
 
 Native SEH3/EH4 reconstruction additionally proves a fixed private source frame,
 balanced FS:[0] administration and one active state at each ordinary CFG block.

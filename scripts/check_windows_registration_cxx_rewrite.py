@@ -22,10 +22,12 @@ if __package__:
     from .check_windows_registration_cxx import OBSERVATION, SOURCE, parent_code_end
     from .check_windows_registration_eh import run_image
     from .check_windows_registration_rewrite import PE32
+    from .windows_registration_snapshot import saved_stack_probe
 else:
     from check_windows_registration_cxx import OBSERVATION, SOURCE, parent_code_end
     from check_windows_registration_eh import run_image
     from check_windows_registration_rewrite import PE32
+    from windows_registration_snapshot import saved_stack_probe
 
 BASES = (0x400000, 0x18000000)
 IMAGE_LABELS = ("original", "patched", "product-patched", "collision-patched",
@@ -186,6 +188,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--wine", default="wine" if os.name != "nt" else None)
     parser.add_argument("--wine-prefix", type=Path)
+    parser.add_argument("--saved-stack-probe", action="store_true",
+                        help="derive a bounded catch SavedESP overwrite and post-catch read probe")
     parser.add_argument("--timeout", type=float, default=60)
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0:
@@ -196,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
               "installation": "manual-public-cli-checked-transactions", "passed": False,
               "source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest(),
               "cases": [], "steps": []}
+    if args.saved_stack_probe:
+        report["source_probe"] = "derived-saved-esp-writeback"
     try:
         runtime = shutil.which(args.wine) if args.wine else None
         if args.wine and not runtime:
@@ -225,7 +231,13 @@ def main(argv: list[str] | None = None) -> int:
                     not native_image[0].get("passed") or \
                     native_image[0]["sha256"] != hashlib.sha256(original.read_bytes()).hexdigest():
                 raise ValueError("native MSVC image identity is missing or changed")
-            shutil.copyfile(original, parent / "original.exe")
+            native_digest = hashlib.sha256(original.read_bytes()).hexdigest()
+            if args.saved_stack_probe:
+                (parent / "original.exe").write_bytes(
+                    saved_stack_probe(PE32(original.read_bytes()), reference))
+            else:
+                shutil.copyfile(original, parent / "original.exe")
+            original = parent / "original.exe"
             shutil.copyfile(original_root / name / "original.map", parent / "original.map")
             pdb = original_root / name / "original.pdb"
             if pdb.is_file():
@@ -237,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("native MSVC baseline has a different preferred base")
             case = {"case": name, "reference": reference,
                     "original_code_end_rva": original_end, "observations": []}
+            if args.saved_stack_probe:
+                case["native_baseline_sha256"] = native_digest
             report["cases"].append(case)
             for label in IMAGE_LABELS[1:]:
                 (parent / (label + ".exe")).unlink(missing_ok=True)
@@ -261,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError("source C++ checks did not execute successfully")
             contract = json.loads((parent / "compiled-contract.json").read_text())
             patched = parent / "patched.exe"
-            if contract["source_image_sha256"] != native_image[0]["sha256"] or \
+            if contract["source_image_sha256"] != hashlib.sha256(original.read_bytes()).hexdigest() or \
                     contract["image_sha256"] != hashlib.sha256(patched.read_bytes()).hexdigest():
                 raise ValueError("source C++ installation changed its proved image identity")
             _, original_handlers = safe_handlers(image)

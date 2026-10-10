@@ -12,12 +12,22 @@
 #include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/low/LowIR.h"
 
+#include <compare>
 #include <deque>
 #include <map>
 #include <set>
 #include <tuple>
 
 namespace neverd::registration_state {
+
+struct CxxCatchContext {
+  uint32_t TryIndex = 0;
+  uint32_t CatchIndex = 0;
+  /// The CRT captures SavedESP before entering a catch and restores that
+  /// snapshot on return, even if the catch writes another value to the slot.
+  std::optional<int32_t> SavedStackOffset;
+  auto operator<=>(const CxxCatchContext &) const = default;
+};
 
 struct Domain {
   std::set<int32_t> Levels;
@@ -30,7 +40,7 @@ struct Domain {
   bool Parent = false;
   bool Callback = false;
   bool OtherCallback = false;
-  using CatchStack = std::vector<std::pair<uint32_t, uint32_t>>;
+  using CatchStack = std::vector<CxxCatchContext>;
   std::set<CatchStack> CxxCatchStacks;
   bool Uninstalled = false;
   bool Installed = false;
@@ -58,6 +68,10 @@ public:
 
 private:
   bool initialize();
+  bool validateRealignedLayout();
+  bool realignedMemoryIsDisjoint(const FrameValue &Address,
+                                 uint16_t Width) const;
+  bool realignedInstallationReady(const FrameState &Frame) const;
   bool initializeContracts();
   void initializeCookies();
   void collectOccurrences();

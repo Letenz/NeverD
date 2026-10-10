@@ -1988,6 +1988,16 @@ borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
+Catch-return tests require the pre-dispatch SavedESP snapshot to survive catch
+writes and subsequent continuation reads; unknown snapshots remain rejected.
+The native fixture independently edits or removes the writeback, changes its
+value/address, and moves or duplicates it before installation. Run
+`check_windows_registration_cxx_rewrite.py --saved-stack-probe` with the same
+MSVC inputs and tools as the ordinary source oracle. It derives a bounded
+machine-code probe that overwrites SavedESP with 7 and then reads the
+initialized inner guard through the restored pointer. Its report distinguishes the derived input from its
+hashed native MSVC baseline. CI runs both capture forms through all six
+preferred/rebased routes in Wine and replays those identical files on Windows.
 Cleanup projection tests check every reachable unwind state, initialization
 before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.

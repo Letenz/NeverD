@@ -42,6 +42,7 @@ add_neverd_component_library(NeverDBackendLLVM
   eh/MedLLVMNativeItaniumEH.cpp
   eh/MedLLVMNativeSEH.cpp
   X86/MedLLVMRegistrationSEHProof.cpp
+  X86/MedLLVMRegistrationCxxContinuation.cpp
   X86/MedLLVMNativeRegistration.cpp
   X86/MedLLVMNativeRegistrationCxx.cpp
   emit/MedLLVMCall.cpp

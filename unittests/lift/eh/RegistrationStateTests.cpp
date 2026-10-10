@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationStateTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/ir/RegistrationState.h"
@@ -16,95 +17,7 @@
 namespace {
 
 using namespace neverd;
-
-void emitOp(LowBlock &Block, va_t Address, NdOp Opcode, NdVar Output,
-            std::initializer_list<NdVar> Inputs,
-            NdMemoryAddressSpace Space = NdMemoryAddressSpace::Default) {
-  LowOp Op;
-  Op.Opcode = Opcode;
-  Op.Seq = Block.Ops.size();
-  Op.Output = Output;
-  Op.Addr = Address;
-  Op.MemoryAddressSpace = Space;
-  for (NdVar Input : Inputs)
-    Op.addInput(Input);
-  Block.Ops.push_back(Op);
-}
-
-void addSlotStore(LowBlock &Block, int32_t Value, uint16_t Width = 4) {
-  LowOp Address;
-  Address.Opcode = NdOp::INT_ADD;
-  Address.Output = NdVar::tmp(0, 4);
-  Address.addInput(NdVar::reg(x86reg::RBP, 4));
-  Address.addInput(NdVar::cst(uint32_t(-4), 4));
-  Address.Addr = Block.StartAddr;
-  Block.Ops.push_back(Address);
-  LowOp Store;
-  Store.Opcode = NdOp::STORE;
-  Store.addInput(Address.Output);
-  Store.addInput(NdVar::cst(uint32_t(Value), Width));
-  Store.Addr = Block.StartAddr;
-  Block.Ops.push_back(Store);
-}
-
-LowFunc makeBranchingFrame() {
-  LowFunc F;
-  F.Entry = 0x1000;
-  F.ExceptionMetadata.emplace();
-  F.ExceptionMetadata->CodeRange = {0x1000, 0x2000};
-  F.ExceptionMetadata->Personality = ExceptionPersonality::ExceptHandler3;
-  F.ExceptionMetadata->Encoding = ExceptionEncoding::X86ScopeTableEH3;
-  RegistrationChainInfo &Chain = F.ExceptionMetadata->Registration.emplace();
-  Chain.SeededTryLevel = -1;
-  Chain.TryLevelOffset = -4;
-  Chain.RegistrationOffset = -16;
-  Chain.ChainInstallVA = 0x1000;
-  Chain.Scopes.push_back({-1, 0x1800, 0x1900, false});
-  Chain.TryLevelStores = {{0x1010, 0x1017, 0}, {0x1020, 0x1027, -1}};
-  F.Blocks.resize(4);
-  for (int I = 0; I < 4; ++I) {
-    LowBlock &B = F.Blocks[I];
-    B.Id = I;
-    B.StartAddr = 0x1000 + I * 0x10;
-    B.EndAddr = B.StartAddr + 7;
-    B.InstructionBoundaries.push_back({B.StartAddr, 7});
-  }
-  F.Blocks[0].Succs = {1, 2};
-  F.Blocks[1].Succs = {3};
-  F.Blocks[2].Succs = {3};
-  auto Emit = [&](NdOp Opcode, NdVar Output,
-                  std::initializer_list<NdVar> Inputs,
-                  NdMemoryAddressSpace Space = NdMemoryAddressSpace::Default) {
-    LowOp Op;
-    Op.Opcode = Opcode;
-    Op.Seq = F.Blocks[0].Ops.size();
-    Op.Output = Output;
-    Op.Addr = 0x1000;
-    Op.MemoryAddressSpace = Space;
-    for (NdVar Input : Inputs)
-      Op.addInput(Input);
-    F.Blocks[0].Ops.push_back(Op);
-  };
-  Emit(NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-       {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
-  Emit(NdOp::COPY, NdVar::reg(x86reg::RBP, 4), {NdVar::reg(x86reg::RSP, 4)});
-  Emit(NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-       {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
-  Emit(NdOp::LOAD, NdVar::tmp(8, 4), {NdVar::cst(0, 8)},
-       NdMemoryAddressSpace::X86FS);
-  Emit(NdOp::STORE, {}, {NdVar::reg(x86reg::RSP, 4), NdVar::tmp(8, 4)});
-  LowOp Install;
-  Install.Opcode = NdOp::STORE;
-  Install.Seq = F.Blocks[0].Ops.size();
-  Install.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
-  Install.addInput(NdVar::cst(0, 8));
-  Install.addInput(NdVar::reg(x86reg::RSP, 4));
-  Install.Addr = 0x1000;
-  F.Blocks[0].Ops.push_back(Install);
-  addSlotStore(F.Blocks[1], 0);
-  addSlotStore(F.Blocks[2], -1);
-  return F;
-}
+using namespace neverd::registration_test;
 
 LowFunc makeCookieFrame(bool GS = false) {
   auto F = makeBranchingFrame();
@@ -469,108 +382,6 @@ TEST(RegistrationState, NarrowCxxStoresNeedThePriorWholeStateAndExactWidth) {
     ASSERT_EQ(Result.Blocks.size(), 5u);
     EXPECT_TRUE(Result.Blocks.back().Unknown) << Mutation;
   }
-}
-
-LowFunc makeCxxCatchContinuation(bool IncludeResume = true) {
-  auto F = makeBranchingFrame();
-  auto &EH = *F.ExceptionMetadata;
-  EH.Personality = ExceptionPersonality::CxxFrameHandler3;
-  EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
-  auto &Chain = *EH.Registration;
-  Chain.RegistrationOffset = -12;
-  Chain.Scopes.clear();
-  Chain.TryLevelStores = {
-      {0x1016, 0x101d, 0}, {0x1020, 0x1027, -1}, {0x1900, 0x1907, -1}};
-  auto &Cxx = EH.Cxx.emplace();
-  Cxx.MaxState = 2;
-  Cxx.UnwindMap = {{-1, 0, CxxUnwindAction::ActionKind::None},
-                   {-1, 0, CxxUnwindAction::ActionKind::None}};
-  CxxTryBlock Try;
-  Try.TryLow = Try.TryHigh = 0;
-  Try.CatchHigh = 1;
-  CxxCatchHandler Catch;
-  Catch.HandlerVA = 0x1800;
-  Try.Handlers.push_back(Catch);
-  Cxx.TryBlocks.push_back(Try);
-
-  F.Blocks.resize(IncludeResume ? 7 : 6);
-  F.Blocks[0].Ops[2].Inputs[1] = NdVar::cst(12, 4);
-  F.Blocks[0].Succs = {1};
-  for (size_t I = 1; I < F.Blocks.size(); ++I) {
-    F.Blocks[I] = LowBlock{};
-    F.Blocks[I].Id = I;
-    F.Blocks[I].StartAddr = 0x1000 + I * 0x10;
-    F.Blocks[I].EndAddr = F.Blocks[I].StartAddr + 7;
-  }
-  auto &Body = F.Blocks[1];
-  Body.EndAddr = 0x101d;
-  Body.InstructionBoundaries = {{0x1010, 3}, {0x1013, 3}, {0x1016, 7}};
-  Body.Succs = {2};
-  emitOp(Body, 0x1010, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
-         {NdVar::reg(x86reg::RSP, 4), NdVar::cst(16, 4)});
-  emitOp(Body, 0x1013, NdOp::INT_ADD, NdVar::tmp(40, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-16), 4)});
-  emitOp(Body, 0x1013, NdOp::STORE, {},
-         {NdVar::tmp(40, 4), NdVar::reg(x86reg::RSP, 4)});
-  LowBlock StateStore;
-  StateStore.StartAddr = 0x1016;
-  addSlotStore(StateStore, 0);
-  Body.Ops.insert(Body.Ops.end(), StateStore.Ops.begin(), StateStore.Ops.end());
-
-  F.Blocks[2].InstructionBoundaries = {{0x1020, 7}};
-  F.Blocks[2].Succs = {3};
-  addSlotStore(F.Blocks[2], -1);
-  auto &Unlink = F.Blocks[3];
-  Unlink.InstructionBoundaries = {{0x1030, 7}};
-  Unlink.Succs = {4};
-  emitOp(Unlink, 0x1030, NdOp::INT_ADD, NdVar::tmp(50, 4),
-         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-12), 4)});
-  emitOp(Unlink, 0x1030, NdOp::LOAD, NdVar::tmp(51, 4), {NdVar::tmp(50, 4)});
-  emitOp(Unlink, 0x1030, NdOp::STORE, {}, {NdVar::cst(0, 4), NdVar::tmp(51, 4)},
-         NdMemoryAddressSpace::X86FS);
-  auto AddReturn = [&](LowBlock &Block, va_t Address) {
-    LowInstructionBoundary Return;
-    Return.Address = Address;
-    Return.Size = 1;
-    Return.Control = LowInstructionControl::Return;
-    Block.InstructionBoundaries.push_back(Return);
-    Block.EndAddr = Address + 1;
-    emitOp(Block, Address, NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, 4)});
-  };
-  AddReturn(F.Blocks[4], 0x1040);
-  auto &Handler = F.Blocks[5];
-  Handler.StartAddr = 0x1800;
-  Handler.InstructionBoundaries = {{0x1800, 5}};
-  emitOp(Handler, 0x1800, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
-         {NdVar::cst(0x1900, 4)});
-  AddReturn(Handler, 0x1805);
-  if (IncludeResume) {
-    auto &Resume = F.Blocks[6];
-    Resume.StartAddr = 0x1900;
-    Resume.EndAddr = 0x1907;
-    Resume.InstructionBoundaries = {{0x1900, 7}};
-    Resume.Succs = {3};
-    addSlotStore(Resume, -1);
-  }
-  return F;
-}
-
-TEST(RegistrationState, CxxCatchResumesWithTheRuntimeStackAndState) {
-  const auto F = makeCxxCatchContinuation();
-  const auto Result = analyzeRegistrationStates(F);
-  ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.CallbackStatesComplete);
-  EXPECT_TRUE(Result.CxxContinuationsComplete);
-  EXPECT_TRUE(Result.RegistrationLifetimeComplete);
-  EXPECT_TRUE(Result.ChainOperationsComplete);
-  ASSERT_EQ(Result.CxxContinuations.size(), 1u);
-  EXPECT_EQ(
-      Result.CxxContinuations[0],
-      (RegistrationCxxContinuation{0, 0, 0x1805, 0x1806, 1, 0x1900, -28}));
-  EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
-  EXPECT_EQ(Result.Blocks[5].CxxMinimumTryLevel, 1);
-  EXPECT_FALSE(Result.Blocks[6].CallbackOnly);
-  EXPECT_EQ(Result.Blocks[6].Levels, (std::vector<int32_t>{1}));
 }
 
 namespace {
@@ -1098,114 +909,6 @@ TEST(RegistrationState, APartialCalleeWriteCannotLaunderTheObjectPointer) {
   EXPECT_EQ(A.callFrameEffect(0x1120, 0), nullptr);
 }
 
-TEST(RegistrationState,
-     MissingCxxContinuationKeepsTheCandidateWithoutAuthority) {
-  const auto Result =
-      analyzeRegistrationStates(makeCxxCatchContinuation(false));
-  ASSERT_EQ(Result.CxxContinuations.size(), 1u);
-  EXPECT_EQ(Result.CxxContinuations[0].TargetVA, 0x1900u);
-  EXPECT_FALSE(Result.CxxContinuationsComplete);
-  EXPECT_FALSE(Result.Complete);
-  EXPECT_FALSE(Result.RegistrationLifetimeComplete);
-  EXPECT_FALSE(Result.ChainOperationsComplete);
-  EXPECT_TRUE(Result.ChainAccesses.empty());
-}
-
-TEST(RegistrationState, CxxReturnsNeedExactContextStackAndDecodedReturn) {
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
-    auto F = makeCxxCatchContinuation();
-    auto &Handler = F.Blocks[5];
-    if (Mutation == 0)
-      Handler.Ops[0].Inputs[0] = NdVar::cst(9, 4);
-    if (Mutation == 1)
-      Handler.InstructionBoundaries.back().Control =
-          LowInstructionControl::TailCall;
-    if (Mutation == 2)
-      Handler.InstructionBoundaries.back().Immediate = 4;
-    if (Mutation == 3)
-      F.Blocks[1].Ops[2].Inputs[1] = NdVar::cst(0, 4);
-    if (Mutation == 4)
-      F.OrdinaryModuleAnalysisRoots.insert(Handler.StartAddr);
-    if (Mutation == 5)
-      Handler.Ops.back().Inputs[0].Size = 2;
-    if (Mutation == 6)
-      Handler.Ops[0].Opcode = NdOp::CALL;
-    if (Mutation == 7)
-      Handler.Ops.back().Seq = -1;
-    const auto Result = analyzeRegistrationStates(F);
-    EXPECT_FALSE(Result.Complete) << Mutation;
-    EXPECT_FALSE(Result.CxxContinuationsComplete) << Mutation;
-    EXPECT_FALSE(Result.RegistrationLifetimeComplete) << Mutation;
-    EXPECT_TRUE(Result.CxxContinuations.empty()) << Mutation;
-  }
-}
-
-TEST(RegistrationState, NestedCxxCatchResumesTheEnclosingCatchContext) {
-  auto F = makeCxxCatchContinuation();
-  auto &EH = *F.ExceptionMetadata;
-  auto &Cxx = *EH.Cxx;
-  Cxx.MaxState = 4;
-  Cxx.UnwindMap.resize(4, {-1, 0, CxxUnwindAction::ActionKind::None});
-  Cxx.TryBlocks[0].CatchHigh = 3;
-  auto Inner = Cxx.TryBlocks[0];
-  Inner.TryLow = Inner.TryHigh = 2;
-  Inner.CatchHigh = 3;
-  Inner.Handlers[0].HandlerVA = 0x1850;
-  Cxx.TryBlocks.push_back(Inner);
-  F.Blocks.resize(12);
-  F.Blocks[8] = F.Blocks[5];
-  F.Blocks[8].Id = 8;
-  F.Blocks[8].StartAddr = 0x1830;
-  F.Blocks[8].EndAddr = 0x1836;
-  for (auto &Op : F.Blocks[8].Ops)
-    Op.Addr += 0x30;
-  for (auto &Boundary : F.Blocks[8].InstructionBoundaries)
-    Boundary.Address += 0x30;
-  F.Blocks[9] = F.Blocks[8];
-  F.Blocks[9].Id = 9;
-  F.Blocks[9].StartAddr = 0x1850;
-  F.Blocks[9].EndAddr = 0x1856;
-  for (auto &Op : F.Blocks[9].Ops)
-    Op.Addr += 0x20;
-  for (auto &Boundary : F.Blocks[9].InstructionBoundaries)
-    Boundary.Address += 0x20;
-  F.Blocks[9].Ops[0].Inputs[0] = NdVar::cst(0x1820, 4);
-
-  auto StateBlock = [&](unsigned Id, va_t Address, int32_t Level,
-                        int Successor) {
-    auto &Block = F.Blocks[Id];
-    Block = LowBlock{};
-    Block.Id = Id;
-    Block.StartAddr = Address;
-    Block.EndAddr = Address + 7;
-    Block.InstructionBoundaries = {{Address, 7}};
-    Block.Succs = {Successor};
-    addSlotStore(Block, Level);
-    EH.Registration->TryLevelStores.push_back({Address, Address + 7, Level});
-  };
-  StateBlock(5, 0x1800, 2, 7);
-  StateBlock(10, 0x1820, 1, 8);
-  StateBlock(11, 0x1840, 1, 8);
-  auto &Protected = F.Blocks[7];
-  Protected.Id = 7;
-  Protected.StartAddr = 0x1810;
-  Protected.EndAddr = 0x1811;
-  Protected.InstructionBoundaries = {{0x1810, 1}};
-  Protected.Succs = {11};
-  const auto Result = analyzeRegistrationStates(F);
-  ASSERT_TRUE(Result.Complete);
-  EXPECT_TRUE(Result.CxxContinuationsComplete);
-  EXPECT_TRUE(Result.RegistrationLifetimeComplete);
-  ASSERT_EQ(Result.CxxContinuations.size(), 2u);
-  EXPECT_EQ(Result.CxxContinuations[0].TargetVA, 0x1900u);
-  EXPECT_EQ(Result.CxxContinuations[1].TargetVA, 0x1820u);
-  EXPECT_TRUE(Result.Blocks[10].CallbackOnly);
-  EXPECT_EQ(Result.Blocks[10].CxxMinimumTryLevel, 1);
-  EXPECT_TRUE(Result.Blocks[9].CallbackOnly);
-  EXPECT_EQ(Result.Blocks[9].CxxMinimumTryLevel, 3);
-  EXPECT_FALSE(Result.Blocks[6].CallbackOnly);
-}
-
 TEST(RegistrationState, ADynamicWriteCannotKeepThePreviousState) {
   LowFunc F = makeBranchingFrame();
   addSlotStore(F.Blocks[3], 1);
@@ -1236,16 +939,6 @@ TEST(RegistrationState, MissingSuccessorFailsTheWholeProof) {
   auto Result = analyzeRegistrationStates(F);
   EXPECT_FALSE(Result.Complete);
   EXPECT_TRUE(Result.Blocks.empty());
-}
-
-TEST(RegistrationState, CatchEntryUsesTheRuntimeCatchState) {
-  LowFunc F = makeCxxCatchContinuation();
-  F.ExceptionMetadata->Personality = ExceptionPersonality::CxxFrameHandlerX86;
-  auto Result = analyzeRegistrationStates(F);
-  ASSERT_TRUE(Result.Complete);
-  ASSERT_EQ(Result.Blocks.size(), 7u);
-  EXPECT_EQ(Result.Blocks[5].Levels, (std::vector<int32_t>{1}));
-  EXPECT_TRUE(Result.Blocks[5].CallbackOnly);
 }
 
 TEST(RegistrationState, PreservesFrameAliasesAcrossInstructionsAndCFGEdges) {

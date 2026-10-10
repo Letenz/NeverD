@@ -19,21 +19,22 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
     return 0;
   int32_t Minimum = INT32_MAX;
   for (const auto &Stack : State.CxxCatchStacks)
-    Minimum = std::min(Minimum, Cxx.TryBlocks[Stack.back().first].TryHigh + 1);
+    Minimum =
+        std::min(Minimum, Cxx.TryBlocks[Stack.back().TryIndex].TryHigh + 1);
   return Minimum;
 }
 
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
   if (Exhausted ||
-      !charge(Source.Levels.size() + Source.Frame.Cells.size() +
+      !charge(Source.Levels.size() + Source.Frame.cellCount() +
               Source.Frame.OtherRegisterBytes.size() +
-              Incoming[Target].Frame.Cells.size() +
+              Incoming[Target].Frame.cellCount() +
               Incoming[Target].Frame.OtherRegisterBytes.size() +
               Source.CxxCatchStacks.size() +
               Incoming[Target].CxxCatchStacks.size() +
-              Source.RuntimeObject.Cells.size() +
+              Source.RuntimeObject.cellCount() +
               Source.RuntimeObject.OtherRegisterBytes.size() +
-              Incoming[Target].RuntimeObject.Cells.size() +
+              Incoming[Target].RuntimeObject.cellCount() +
               Incoming[Target].RuntimeObject.OtherRegisterBytes.size() +
               Source.InitializedFrameBytes.size() +
               Incoming[Target].InitializedFrameBytes.size() + 10))
@@ -100,6 +101,7 @@ void RegistrationStateSolver::dispatch(
     Register.MayBeFrame = true;
   Root.Frame.OtherRegistersMayBeFrame = true;
   Root.Frame.Cells = Source.Frame.Cells;
+  Root.Frame.EntryCells = Source.Frame.EntryCells;
   Root.InitializedFrameBytes = Source.InitializedFrameBytes;
   Root.RuntimeObject.Cells = Source.RuntimeObject.Cells;
   for (auto &[Offset, Value] : Root.RuntimeObject.Cells)
@@ -115,18 +117,25 @@ void RegistrationStateSolver::dispatch(
   Root.Callback = Callback;
   Root.OtherCallback = Callback && !CxxCatch;
   if (CxxCatch) {
+    if (!charge(Source.Frame.cellCount() + 1))
+      return;
+    CxxCatchContext Context{CxxCatch->first, CxxCatch->second, {}};
+    const int64_t SavedSlot = int64_t(*Chain.RegistrationOffset) - 4;
+    if (SavedSlot >= INT32_MIN)
+      Context.SavedStackOffset =
+          Source.Frame.load(int32_t(SavedSlot), 4).Offset;
     if (Source.Parent && !Source.Callback)
-      Root.CxxCatchStacks.insert({*CxxCatch});
+      Root.CxxCatchStacks.insert({Context});
     else if (!Source.Parent && Source.Callback && !Source.OtherCallback &&
              !Source.CxxCatchStacks.empty()) {
       for (auto Stack : Source.CxxCatchStacks) {
         if (!charge(Stack.size() + 1))
           return;
-        Stack.push_back(*CxxCatch);
+        Stack.push_back(Context);
         Root.CxxCatchStacks.insert(std::move(Stack));
       }
     } else {
-      Root.CxxCatchStacks.insert({*CxxCatch});
+      Root.CxxCatchStacks.insert({Context});
       Root.Unknown = true;
     }
     if (CheckRuntimeObjects) {
@@ -146,8 +155,8 @@ void RegistrationStateSolver::dispatch(
             End > 0 ||
             (C.FrameOffset < int64_t(*Chain.TryLevelOffset) + 4 &&
              int64_t(*Chain.RegistrationOffset) - 4 < End) ||
-            !charge(SlotBytes + Root.Frame.Cells.size() +
-                    Root.RuntimeObject.Cells.size())) {
+            !charge(SlotBytes + Root.Frame.cellCount() +
+                    Root.RuntimeObject.cellCount())) {
           CompleteCatchObjects = false;
         } else {
           Root.Frame.store(C.FrameOffset, SlotBytes, {});
@@ -187,7 +196,7 @@ void RegistrationStateSolver::seedEntries() {
   // After push EBP, the canonical direct prologue establishes EBP at this
   // incoming SP minus four bytes. Do not assume later reads still name it.
   Initial.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
-      FrameValue::frame(4);
+      Chain.RealignedFrame ? FrameValue::entryFrame(4) : FrameValue::frame(4);
   Initial.Parent = Initial.Uninstalled = Initial.CanDispatch = true;
   merge(Entries.at(Function.Entry), Initial);
   for (va_t RootVA : Function.OrdinaryModuleAnalysisRoots) {
