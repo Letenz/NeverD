@@ -481,8 +481,15 @@ before the owned runtime slots. Missing maps, fixups or ownership, added filler
 slots, unindexed reads, malformed strides, address overflow and exhausted
 evidence must retain the ordinary load path.
 
-The same target's `LLVMFrameSlotProof` cases exercise shared PHI diamonds and
-loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
+`NeverDJumpTableTests` checks repeated field loads at nonzero offsets on x64
+and AArch64. Independently computed addresses may share a switch guard only
+when their full-width pointer, displacement, load width and memory history
+agree. Borrowed RBP fields, negative displacements and both signed and unsigned
+index extensions are covered; changed bases/offsets, partial reloads, stores,
+calls and memory barriers must not recover a table from the earlier guard.
+
+The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
+diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
 counters bound proof expansion independently of machine speed. Conflicting
 coordinates, nonzero recurrences, unanchored cycles, lossy pointer casts and
 query-local budget exhaustion must fail closed. Exact slots, affine recurrences,
