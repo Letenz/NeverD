@@ -98,6 +98,10 @@ C++ catches have a separate runtime context: nested exception search starts
 above the active try block, and a catch returns a continuation code pointer to
 the runtime. LowIR requires an exact decoded return and saved stack value,
 decodes the target within the same function, and replays the restored context.
+Each active catch retains the saved-stack snapshot taken before runtime
+dispatch. A catch cannot replace that snapshot by writing a different pointer
+to SavedESP; this shape remains rejected until implicit frame-memory
+restoration is represented across the IR pipeline.
 An unproven continuation or conflicting return retains annotations and
 withdraws native authority. These facts remain separate from the source
 FuncInfo and from the parent's scalar return value.

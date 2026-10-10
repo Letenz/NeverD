@@ -25,6 +25,13 @@ void RegistrationStateSolver::recordCatchReturn(
   const auto SavedSP = SavedSlot >= INT32_MIN
                            ? After.Frame.Cells.find(int32_t(SavedSlot))
                            : After.Frame.Cells.end();
+  const auto CapturedSP =
+      After.CxxCatchStacks.size() == 1
+          ? After.CxxCatchStacks.begin()->back().SavedStackOffset
+          : std::nullopt;
+  // The CRT restores its pre-dispatch snapshot. Until implicit frame-memory
+  // restoration is represented in every IR, a changed SavedESP cannot gain
+  // authority merely because its last value is another exact frame pointer.
   const bool Valid =
       !Chain.RealignedFrame && After.CxxCatchStacks.size() == 1 &&
       !After.Parent && !After.OtherCallback && !After.Unknown &&
@@ -33,9 +40,9 @@ void RegistrationStateSolver::recordCatchReturn(
       Op.Inputs[0].Size == 4 && &Op == &Block.Ops.back() &&
       Block.Succs.empty() && Target.Constant && !Target.MayBeFrame &&
       EH.CodeRange.contains(*Target.Constant) &&
-      *Target.Constant != Function.Entry &&
-      SavedSP != After.Frame.Cells.end() && SavedSP->second.Offset &&
-      *SavedSP->second.Offset <= SavedSlot && Boundary != Boundaries.end() &&
+      *Target.Constant != Function.Entry && CapturedSP &&
+      *CapturedSP <= SavedSlot && SavedSP != After.Frame.Cells.end() &&
+      SavedSP->second.Offset == CapturedSP && Boundary != Boundaries.end() &&
       Boundary->second.first == Block.Id &&
       Boundary->second.second.Control == LowInstructionControl::Return &&
       Boundary->second.second.Immediate.value_or(0) == 0 &&
@@ -45,14 +52,10 @@ void RegistrationStateSolver::recordCatchReturn(
     CxxContinuations.erase(Identity);
     CompleteCxxContinuations = false;
   } else if (!InvalidCxxContinuations.count(Identity)) {
-    const auto [TryIndex, CatchIndex] = After.CxxCatchStacks.begin()->back();
-    CatchReturn = RegistrationCxxContinuation{TryIndex,
-                                              CatchIndex,
-                                              Op.Addr,
-                                              Block.EndAddr,
-                                              Op.Seq,
-                                              *Target.Constant,
-                                              *SavedSP->second.Offset};
+    const auto &Context = After.CxxCatchStacks.begin()->back();
+    CatchReturn = RegistrationCxxContinuation{
+        Context.TryIndex, Context.CatchIndex, Op.Addr,    Block.EndAddr,
+        Op.Seq,           *Target.Constant,   *CapturedSP};
     const auto [It, Inserted] =
         CxxContinuations.emplace(Identity, *CatchReturn);
     if (!Inserted && It->second != *CatchReturn) {

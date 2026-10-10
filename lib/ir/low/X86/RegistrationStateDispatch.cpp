@@ -19,7 +19,8 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
     return 0;
   int32_t Minimum = INT32_MAX;
   for (const auto &Stack : State.CxxCatchStacks)
-    Minimum = std::min(Minimum, Cxx.TryBlocks[Stack.back().first].TryHigh + 1);
+    Minimum =
+        std::min(Minimum, Cxx.TryBlocks[Stack.back().TryIndex].TryHigh + 1);
   return Minimum;
 }
 
@@ -116,18 +117,25 @@ void RegistrationStateSolver::dispatch(
   Root.Callback = Callback;
   Root.OtherCallback = Callback && !CxxCatch;
   if (CxxCatch) {
+    if (!charge(Source.Frame.cellCount() + 1))
+      return;
+    CxxCatchContext Context{CxxCatch->first, CxxCatch->second, {}};
+    const int64_t SavedSlot = int64_t(*Chain.RegistrationOffset) - 4;
+    if (SavedSlot >= INT32_MIN)
+      Context.SavedStackOffset =
+          Source.Frame.load(int32_t(SavedSlot), 4).Offset;
     if (Source.Parent && !Source.Callback)
-      Root.CxxCatchStacks.insert({*CxxCatch});
+      Root.CxxCatchStacks.insert({Context});
     else if (!Source.Parent && Source.Callback && !Source.OtherCallback &&
              !Source.CxxCatchStacks.empty()) {
       for (auto Stack : Source.CxxCatchStacks) {
         if (!charge(Stack.size() + 1))
           return;
-        Stack.push_back(*CxxCatch);
+        Stack.push_back(Context);
         Root.CxxCatchStacks.insert(std::move(Stack));
       }
     } else {
-      Root.CxxCatchStacks.insert({*CxxCatch});
+      Root.CxxCatchStacks.insert({Context});
       Root.Unknown = true;
     }
     if (CheckRuntimeObjects) {
