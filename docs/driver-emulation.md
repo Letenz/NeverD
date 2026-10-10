@@ -997,7 +997,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v94`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v95`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records
@@ -1088,6 +1088,8 @@ this record does not imply guest SEH handling.
 rejected by the execution policy is not counted; an admitted instruction that
 faults in the CPU is counted. Synthetic API dispatch and the return sentinel
 do not increment this counter.
+
+The optional scenario boolean `trace_memory_writes` defaults to true. False leaves `writes` empty and charges the event budget only for API calls. Memory validation, committed-write observers, and instruction/time limits remain active. The report records the selection in `configuration.trace_memory_writes`; C++ uses `DriverOptions::TraceMemoryWrites`.
 
 Each `writes` entry has `semantics: "attempted_guest_write"`: it records a CPU
 write attempt outside the stack, including an attempt that may subsequently

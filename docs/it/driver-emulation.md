@@ -673,7 +673,7 @@ dispositivo e gli indirizzi dei callback del driver. Gli indirizzi guest sono
 stringhe esadecimali, così i consumatori JSON non perdono la precisione a 64 bit.
 L’oggetto `configuration` registra i limiti, il nome del servizio e le
 sostituzioni `kernel_exports` e l’input `registry` dell’esecuzione.
-Il profilo è `wdm-x64-scheduled-v94`. `nt_status` rimane il risultato di DriverEntry,
+Il profilo è `wdm-x64-scheduled-v95`. `nt_status` rimane il risultato di DriverEntry,
 mentre `scenario_success` descrive insieme l’inizializzazione e le richieste
 completate. `phase`, `requests` e `unload_completed` identificano le parti
 eseguite del ciclo di vita richiesto. Ogni chiamata API e scrittura CPU registra
@@ -718,6 +718,8 @@ l’esecuzione e questo record non implica una gestione SEH guest.
 rifiutata dalla politica di esecuzione non viene conteggiata; un’istruzione
 ammessa che provoca un fault nella CPU viene conteggiata. Il dispatch sintetico
 delle API e la sentinella di ritorno non incrementano questo contatore.
+
+Il booleano facoltativo dello scenario `trace_memory_writes` è true per impostazione predefinita. Con false, `writes` rimane vuoto e solo le chiamate API consumano il budget degli eventi. La convalida della memoria, gli osservatori delle scritture completate e i limiti di istruzioni e tempo restano attivi. Il rapporto registra la scelta in `configuration.trace_memory_writes`; C++ usa `DriverOptions::TraceMemoryWrites`.
 
 Ogni voce di `writes` ha `semantics: "attempted_guest_write"`: registra un
 tentativo di scrittura CPU fuori dallo stack, anche se successivamente provoca

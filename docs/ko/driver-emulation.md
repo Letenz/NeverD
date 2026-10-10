@@ -466,7 +466,7 @@ MinGW-w64 include 디렉터리가 기본 위치가 아니면 `--headers`를 사�
 
 ## 보고서 및 SDK
 
-JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 중단 PC, 명령어 수를 구분합니다. 장치 객체와 드라이버 콜백 주소를 포함하여 중단 전에 수집한 API 호출 및 관찰 가능한 상태를 보존합니다. JSON 소비자가 64비트 정밀도를 잃지 않도록 게스트 주소는 16진 문자열로 표현합니다. `configuration` 객체는 실행 한도, 서비스 이름과 `kernel_exports` 재정의를 기록합니다. 프로필은 `wdm-x64-scheduled-v94`입니다. `nt_status`는 계속 DriverEntry 결과를 나타내고, `scenario_success`는 초기화와 완료된 요청을 함께 나타냅니다. `phase`, `requests`, `unload_completed`는 요청한 수명 주기의 어느 부분이 실행되었는지 식별합니다. 각 API 호출과 CPU 쓰기에도 단계(`driver_entry`, `add_device:<ID>`, `request:N`, `callback:N`, `unload`)가 기록됩니다. 각 요청은 디스패치 및 I/O 상태, 완료 여부, 정보 길이와 반환된 `output_hex` 바이트를 보고합니다. `preferred_image_base`는 원래 PE 베이스를 나타냅니다. `security_cookie`는 초기화된 cookie의 게스트 주소이며, 필요하지 않았다면 `"0x0"`입니다. 요청 필드는 `kind`, `device`, `device_id`, `pnp`, `file`, `requestor_process_id`, `byte_offset`, `code`, `irp`, `completed`, `cancel_requested_at_100ns`, `dispatch_status`, `io_status`, `information`、`information_hex`, `output_hex`입니다. `configuration.registry`는 원래 레지스트리 구성을 보존합니다. `information_hex`는 원래 64비트 `IoStatus.Information`을 16진수 문자열로 정확히 보존합니다. 기존 숫자 필드 `information`도 유지합니다.
+JSON 보고서는 `stop_reason`, null이 가능한 `nt_status`와 `nt_success`, 중단 PC, 명령어 수를 구분합니다. 장치 객체와 드라이버 콜백 주소를 포함하여 중단 전에 수집한 API 호출 및 관찰 가능한 상태를 보존합니다. JSON 소비자가 64비트 정밀도를 잃지 않도록 게스트 주소는 16진 문자열로 표현합니다. `configuration` 객체는 실행 한도, 서비스 이름과 `kernel_exports` 재정의를 기록합니다. 프로필은 `wdm-x64-scheduled-v95`입니다. `nt_status`는 계속 DriverEntry 결과를 나타내고, `scenario_success`는 초기화와 완료된 요청을 함께 나타냅니다. `phase`, `requests`, `unload_completed`는 요청한 수명 주기의 어느 부분이 실행되었는지 식별합니다. 각 API 호출과 CPU 쓰기에도 단계(`driver_entry`, `add_device:<ID>`, `request:N`, `callback:N`, `unload`)가 기록됩니다. 각 요청은 디스패치 및 I/O 상태, 완료 여부, 정보 길이와 반환된 `output_hex` 바이트를 보고합니다. `preferred_image_base`는 원래 PE 베이스를 나타냅니다. `security_cookie`는 초기화된 cookie의 게스트 주소이며, 필요하지 않았다면 `"0x0"`입니다. 요청 필드는 `kind`, `device`, `device_id`, `pnp`, `file`, `requestor_process_id`, `byte_offset`, `code`, `irp`, `completed`, `cancel_requested_at_100ns`, `dispatch_status`, `io_status`, `information`、`information_hex`, `output_hex`입니다. `configuration.registry`는 원래 레지스트리 구성을 보존합니다. `information_hex`는 원래 64비트 `IoStatus.Information`을 16진수 문자열로 정확히 보존합니다. 기존 숫자 필드 `information`도 유지합니다.
 
 작업 항목 관찰에는 `callback:N` 단계가 기록됩니다. 보류 요청의 `dispatch_status`는 `STATUS_PENDING`을 유지하며 최종 완료 상태는 별도의 `io_status`에 기록되어 `scenario_success` 판정에 사용됩니다.
 
@@ -487,6 +487,8 @@ C SEH 범위는 끝 주소를 포함하지 않는 반개방 구간입니다. 유
 null이 가능한 `fault` 객체는 최초로 확정된 종료 백엔드 오류를 보존합니다. 재개 가능한 사용자 CPU 메모리 예외는 위 SEH 경로에서 처리합니다. `kind`, `pc`와 null이 가능한 `address`, `size`, `access`, `interrupt`는 매핑되지 않았거나 보호된 메모리, 잘못된 범위, 잘못된 명령어와 CPU 예외를 구분합니다. 주소는 16진 문자열, 크기와 인터럽트 벡터는 정수를 사용합니다. 관찰을 위한 읽기는 원래 오류를 대체할 수 없습니다. 오류가 발생한 백엔드는 재개할 수 없으며, 이 레코드로 이러한 백엔드 오류를 게스트 SEH에서 처리할 수는 없습니다.
 
 `instructions`는 허용된 게스트 명령어 실행 시도 수입니다. 실행 정책이 거부한 명령어는 세지 않지만, 허용된 후 CPU에서 오류가 난 명령어는 셉니다. 합성 API 디스패치와 반환 센티널은 이 카운터를 증가시키지 않습니다.
+
+선택적 시나리오 불리언 `trace_memory_writes`의 기본값은 true입니다. false이면 `writes`는 비어 있고 이벤트 예산에는 API 호출만 포함됩니다. 메모리 검증, 완료된 쓰기 관찰자, 명령어 및 시간 제한은 계속 적용됩니다. 보고서는 `configuration.trace_memory_writes`에 선택을 기록하며 C++에서는 `DriverOptions::TraceMemoryWrites`를 사용합니다.
 
 각 `writes` 항목의 `semantics: "attempted_guest_write"`는 스택 밖의 CPU 쓰기 시도를 기록한다는 뜻입니다. 이후 오류가 발생하거나 예산으로 중단되는 시도도 포함됩니다. 쓰기 완료를 보장하지 않으며 API 모델이 수행한 쓰기는 포함하지 않습니다. 장치와 드라이버 객체 스냅샷은 실행이 중단될 때 관찰한 상태를 나타냅니다.
 

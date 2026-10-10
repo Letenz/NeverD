@@ -471,7 +471,7 @@ MinGW-w64 の include ディレクトリがデフォルトと異なる場合は 
 
 JSON レポートは `stop_reason`、null を取り得る `nt_status` と `nt_success`、停止時の PC、命令数を区別します。デバイスオブジェクトやドライバーのコールバックアドレスなど、停止前に収集した API 呼び出しと観測可能な状態を保持します。ゲストアドレスは 16 進文字列として表現するため、JSON の利用側で 64 ビットの精度が失われません。
 
-`configuration` オブジェクトには、実行の上限、サービス名、`kernel_exports` の上書き設定を記録します。プロファイルは `wdm-x64-scheduled-v94` です。`nt_status` は引き続き DriverEntry の結果を示し、`scenario_success` は初期化と完了済みリクエストを合わせた結果を示します。`phase`、`requests`、`unload_completed` は、要求されたライフサイクルのどの部分が実行されたかを示します。API 呼び出しと CPU 書き込みにも、そのフェーズ（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N`、`unload`）を記録します。各リクエストはディスパッチと I/O のステータス、完了の有無、information 長、返された `output_hex` バイト列を報告します。`preferred_image_base` は元の PE ベースアドレスを示します。`security_cookie` は初期化した Cookie のゲストアドレスで、不要だった場合は `"0x0"` です。リクエストのレポートフィールドは `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex`、`output_hex` です。 `configuration.registry` は元のレジストリ設定を保持します。 `information_hex` は元の 64 ビット `IoStatus.Information` を 16 進文字列で正確に保持します。従来の数値フィールド `information` も保持します。
+`configuration` オブジェクトには、実行の上限、サービス名、`kernel_exports` の上書き設定を記録します。プロファイルは `wdm-x64-scheduled-v95` です。`nt_status` は引き続き DriverEntry の結果を示し、`scenario_success` は初期化と完了済みリクエストを合わせた結果を示します。`phase`、`requests`、`unload_completed` は、要求されたライフサイクルのどの部分が実行されたかを示します。API 呼び出しと CPU 書き込みにも、そのフェーズ（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N`、`unload`）を記録します。各リクエストはディスパッチと I/O のステータス、完了の有無、information 長、返された `output_hex` バイト列を報告します。`preferred_image_base` は元の PE ベースアドレスを示します。`security_cookie` は初期化した Cookie のゲストアドレスで、不要だった場合は `"0x0"` です。リクエストのレポートフィールドは `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex`、`output_hex` です。 `configuration.registry` は元のレジストリ設定を保持します。 `information_hex` は元の 64 ビット `IoStatus.Information` を 16 進文字列で正確に保持します。従来の数値フィールド `information` も保持します。
 
 ワーク項目の観測フェーズは `callback:N` です。保留リクエストの `dispatch_status` は `STATUS_PENDING` を保持し、最終完了状態は別の `io_status` に記録され、`scenario_success` の判定に使われます。
 
@@ -492,6 +492,8 @@ C SEH のスコープは終端を含まない半開区間です。有効な `__C
 null を取り得る `fault` オブジェクトは、最初に確定した終端バックエンドフォールトを保持します。再開可能なユーザー CPU メモリー例外は前述の SEH 経路で扱います。`kind`、`pc`、null を取り得る `address`、`size`、`access`、`interrupt` により、未マップまたは保護されたメモリ、無効な範囲、無効な命令、CPU 例外を区別します。アドレスは 16 進文字列、サイズと割り込みベクターは整数で表します。観測用の読み取りが元のフォールトを置き換えることはありません。フォールトが発生したバックエンドは再開できず、この記録によってバックエンドフォールトをゲスト SEH で処理できるわけではありません。
 
 `instructions` は、実行ポリシーが許可したゲスト命令の試行回数を数えます。ポリシーが拒否した命令は数えません。許可後に CPU フォールトが発生した命令は数えます。合成した API ディスパッチと戻り先の番兵は、このカウンターを増やしません。
+
+シナリオの省略可能な真偽値 `trace_memory_writes` は既定で true です。false では `writes` は空になり、イベント予算は API 呼び出しだけを数えます。メモリ検証、完了した書き込みの監視、命令数と時間の制限は有効なままです。選択は `configuration.trace_memory_writes` に記録され、C++ では `DriverOptions::TraceMemoryWrites` を使います。
 
 各 `writes` 項目の `semantics: "attempted_guest_write"` は、スタック外への CPU 書き込みの試行を記録したことを示します。その後にフォールトが発生したり、予算で停止したりする試行も含みます。書き込みの完了は保証せず、API モデルによる書き込みも含みません。デバイスとドライバーオブジェクトのスナップショットは、実行停止時に観測した状態を示します。
 

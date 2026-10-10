@@ -681,7 +681,7 @@ invitées sont des chaînes hexadécimales afin que les consommateurs JSON ne
 perdent pas de précision sur 64 bits. L’objet `configuration` enregistre les
 limites, le nom du service, les substitutions `kernel_exports` et l’entrée
 `registry` de l’exécution. Le profil est
-`wdm-x64-scheduled-v94`. `nt_status` reste le résultat de DriverEntry, tandis
+`wdm-x64-scheduled-v95`. `nt_status` reste le résultat de DriverEntry, tandis
 que `scenario_success` décrit conjointement l’initialisation et les requêtes
 terminées. `phase`, `requests` et `unload_completed` identifient les parties du
 cycle demandé qui ont été exécutées. Chaque appel d’API et écriture CPU indique
@@ -729,6 +729,8 @@ la SEH invitée.
 instruction rejetée par la politique d’exécution n’est pas comptée ; une
 instruction admise qui provoque une faute CPU est comptée. Le dispatch d’API
 synthétique et la sentinelle de retour n’incrémentent pas ce compteur.
+
+Le booléen de scénario facultatif `trace_memory_writes` vaut true par défaut. Avec false, `writes` reste vide et seuls les appels API consomment le budget d’événements. La validation mémoire, les observateurs des écritures effectuées et les limites d’instructions et de temps restent actifs. Le rapport indique ce choix dans `configuration.trace_memory_writes`; C++ utilise `DriverOptions::TraceMemoryWrites`.
 
 Chaque entrée `writes` possède `semantics: "attempted_guest_write"` : elle
 enregistre une tentative d’écriture CPU hors de la pile, y compris si elle
