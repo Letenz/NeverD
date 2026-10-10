@@ -309,6 +309,65 @@ with a source-indexed execution event while LLVM owns the physical GS check.
 The public writer replays that ownership and the complete event order against
 immutable input; metadata alone cannot authorize removing a source call.
 
+Offline web analysis has a separate source-domain session in `lib/web`, exposed
+through `NeverDCAPIWeb.h`. It owns immutable artifacts, bounded private disk
+storage and range reads, source identities,
+parser/model admission, lexical binding identities, primitive-value semantics,
+conservative effect summaries, module evidence, admitted-file comparisons,
+qualified bundle source partitions, fixed-profile Bun container extraction,
+map decoding, budgets and query redaction. `SourceView` owns the bounded display
+projection and original/projected range mapping; `SessionView` owns preview,
+publication and revocation. CLI/worker adapters cannot bypass those policies.
+Views use owned parser token/comment spans and never claim semantic rewrites.
+`SourceNavigation` owns syntax containment and lexical links; `SessionAnchor`
+joins source coordinates, original storage and committed display views. Bun
+source range conversion uses the same decoder as source extraction. Compressed
+sources return containing frames instead of fabricated per-character offsets.
+`ArtifactView` owns direct-byte selection and origins for original files, Bun
+assets and available ASAR members. Encoded Bun/map source keeps its dedicated
+decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
+owns its pinned native Unicode collision policy. `SessionAsar` publishes bounded
+member pages and explicit captured unpacked associations. Source, anchors,
+relative module-file comparisons and native handoff share these selections;
+unavailable members never become consumer bytes. `SourceOrigins` owns finite
+syntactic module provenance over the existing binding/module model; `ElectronSource`
+consumes it without claiming runtime API targets. `ElectronManifest` compares
+entry declarations within the selected captured namespace, and `SessionElectron`
+owns revisions, caches and metadata-only publication. The manifest consumer
+does not depend on the JS parser. `ElectronIPC` owns explicit manifest-scoped
+channel comparisons; `SessionElectronIPC` only selects cached evidence and
+publishes bounded source/channel/endpoint pages. No transport infers routing.
+`ElectronSelection` owns shared manifest/source admission for scoped consumers.
+`SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
+compares them with exact available namespace members. `SessionElectronEntries`
+selects evidence, caches results and publishes redacted pages; CLI and worker
+share those rules. Relative renderer-file and source-directory roots remain
+distinct. Association does not execute targets or automatically parse HTML.
+`HTML` owns the bounded UTF-8 script/base scanner, `HTMLReferences` owns pinned
+attribute decoding, and `HTMLLinks` owns portable local URL comparison.
+Its private `HTMLFiles` index and declared-base rules are shared with
+`HTMLModules`, which binds inline module requests to explicit document/script
+contexts and captured occurrences. Import-map declarations retain an explicit
+unresolved boundary. `SessionModules` selects this context only for derived
+inline IDs; ordinary external-file analyses keep their own profile and cache.
+`SessionHTML` owns cache/revision and private
+metadata policy. Inline scripts use `ArtifactView` slices with nested original
+storage origins and a shared inline-occurrence selector; source parser and
+anchor consumers do not reconstruct or execute browser source. HTML inventory
+remains available without the JS parser.
+`SessionNative` supplies the selected immutable native occurrence. The SDK
+bridge joins that evidence to a new independent native session;
+the web library does not depend on the native pipeline. `loadBinaryBuffer` uses
+the same ELF/COFF/Mach-O readers as file loading and refuses implicit universal
+slice selection. Snapshot-backed native sessions have no file or sidecar
+namespace; native path-dependent operations check that boundary explicitly.
+JavaScript is not
+a native ISA and does not enter LowIR. The CLI uses this C API, while the pinned
+embedded parser is private to the backend; no target code or external analyzer
+is executed. Syntax acceptance and source-map format validity do not establish
+semantic completeness or producer provenance. See [web analysis](web-analysis.md)
+and its [schema](web-artifact-schema.md) for the current capability boundary.
+
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
 MedIR analyses prove typed expressions and bounded COM ownership sequences.

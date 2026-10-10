@@ -283,6 +283,145 @@ ctest --test-dir build-release \
   --output-on-failure
 ```
 
+## Offline web analysis
+
+The Bun profile's C++ cases add preserved compiler graph hashes, synthetic
+hostile ELF/graph layouts, source encoding and immutable range checks. Set
+`NEVERD_BUN_142_CORPUS` to the pinned full-image corpus to qualify complete
+compiler outputs; that case explicitly skips without the corpus. The tests
+never build or execute their inputs. SDK/CLI/worker tests verify decoded source
+identities and an unusable external-tool PATH. See the
+[profile](web-bun-profile.md) and [corpus recipe](../unittests/web/fixtures/bun/README.md).
+
+ASAR cases in `NeverDWebArtifactTests` combine fixed upstream writer archives
+and an independent original member with C++-constructed malformed inputs.
+They cover complete truncation, Pickle padding, overlaps/overflow, Unicode
+aliases, inherited unpacked directories, missing/wrong-sized/changed bytes,
+whole/block integrity (including empty terminal blocks), and admission ceilings.
+`WebAsarSDK` checks source/map/native identity, exact packed/unpacked anchors,
+virtual relative-file candidates, unavailable-member refusal, cache/revision
+boundaries and CLI commands with no external tools. The C++ worker compares
+direct and framed extraction, source anchors and unpacked native handoff.
+The fixed native ICU policy is required; omission tests check an explicit
+`archive_path_policy_unavailable` response. See the
+[ASAR profile](web-asar-profile.md) and
+[fixture manifest](../unittests/web/fixtures/asar/README.md).
+
+`NeverDWebArtifactTests` covers artifact identity, immutable import publication,
+input links/collisions, aggregate budgets and bounded JSON admission. Its blob
+tests additionally check immutable disk snapshots, shared descriptor lifetime,
+range/overflow limits, concurrent reads and a C++ child with a lowered file-size
+limit to inject storage-write failure. The maximum-size case streams two 256 MiB
+members, checks hashes and records peak-RSS growth; it creates about one GiB of
+temporary source/spool data and removes it through the fixture's lifetime.
+`NeverDWebSourceTests` checks embedded C++ parsing, original byte spans, exact
+UTF-16 values, lexical binding relationships, dynamic lookup, primitive arithmetic,
+coercion and refusal budgets, immediate/deferred effect boundaries, ESM module
+entries, require uncertainty, confined admitted-file comparisons, and bundle
+partition spans/identity/uncertainty. Bundle tests verify an archived upstream
+example against its source document/manifest plus C++-constructed inert cases;
+source-view tests additionally cover regex/template rescans, keyword property
+names, private/escaped identifiers, shadowing/dynamic aliases, reviewed ranges,
+UTF-8/CRLF boundaries, immutable source coverage and the retained-token ceiling.
+Navigation tests cover nested functions, parameter defaults, direct expressions,
+shadowed/dynamic/reassigned callees, tagged/optional/constructor/import syntax,
+unavailable lexical evidence and malformed models. Bun range cases distinguish
+Latin-1, UTF-16 surrogate pairs, client UTF-8, CRLF and excluded terminators.
+`NeverDWebSourceMapTests` checks map deltas, index offsets and UTF-16 coordinates,
+plus Bun serialized-map windows, rare/duplicate anchors, preserved compiler
+source hashes, complete truncation boundaries and bounded Zstd frames. Bun map
+cases explicitly skip when LLVM lacks native Zstd support; SDK capability and
+unavailable-path checks remain active. No external decoder is used.
+`NeverDWebSDKTests` exercises C ABI ownership, revisions, private source/binding/semantic/map
+evidence and the CLI with an unusable external-tool `PATH`, including large
+originals refused by the smaller source/map limits before materialization.
+Source-view SDK cases check metadata-only previews, single-use publication,
+policy revocation, revision invalidation, exact chunks and source-view cache
+limits. The C++ worker compares direct and framed results and refuses text from
+an uncommitted projection or an undeclared disclosure field.
+Navigation/anchor cases compare ordinary, Bun and compressed-map storage
+precision, committed-view coverage, revisions and direct/framed query parity.
+CLI cases also exercise `bun-navigate`, `bun-view` and `bun-anchor` with an
+unusable external-tool PATH.
+`NeverDWebNativeTests` compares file and immutable-buffer loading of synthetic
+ELF/PE/thin Mach-O, verifies direct native bytes and static decompilation after
+web/input destruction, rejects truncated images and implicit universal slices,
+and checks sidecar/patch refusal and transactional file reload. It also covers
+directory occurrences, Bun native-asset provenance and four offline CLI commands.
+The full Bun compiler-container native load case uses `NEVERD_BUN_142_CORPUS`
+and explicitly skips when that corpus is absent. It does not execute the target
+or claim full-runtime native decompilation. Native handoff cases explicitly skip
+on Windows while web input capture is unavailable there. Worker checks retain
+a handoff across
+failed replacement, compare direct/framed static analysis, revoke it on import
+and preserve the separate ordinary native project.
+All new fixture-generation and test logic is C++; archived target JavaScript
+is inert input text.
+
+Electron cases add bounded manifest entry comparison, module-origin candidates,
+window/preload/renderer/IPC/bridge source ranges and refusal of shadowed, written,
+cyclic or dynamically resolved origins. C++ tests check falsy default entries,
+ESM extension/type rules, unsafe/missing paths, duplicate JSON, option getters,
+spreads and duplicate keys, alias/record budgets and mismatched evidence.
+SDK/CLI tests join an ASAR manifest to an explicit unpacked main, retain source
+anchors, refuse stale/cache/page requests and keep canary values private with
+external tools unavailable. The C++ worker compares actual framed results with
+the direct C API, including parser omission and unknown-field refusal. See the
+[Electron evidence profile](web-electron-profile.md); these tests do not
+establish runtime API identity, distribution detection or a complete app graph.
+
+`WebElectronIPC` additionally checks cross-source candidate grouping, exact
+UTF-16/NUL/surrogate comparisons, normalization distinctions, missing-main and
+wrong-source-type refusal, namespace isolation, unavailable origins, stable
+selection order and aggregate record/string/comparison limits. SDK/CLI cases
+cover ASAR occurrence isolation despite equal backing bytes, scoped pages and
+storage anchors, cache/revision refusal, private channels and original/ASAR CLI
+requests with unusable PATH. The framed worker compares both IPC operations
+against the same C++ API; no Electron runtime is part of these tests.
+
+`WebSourcePaths` checks CommonJS and ESM roots, app/source-base separation,
+join/resolve/concatenation differences, file URL object/string/directory cases,
+shadowing/writes/eval/cycles, unsafe paths and deterministic request selection.
+Parsed inert fixtures independently exhaust path work and allocated-string
+budgets and verify that no partial paths escape. `WebElectronEntries` adds
+exact-file/selected-source links, missing/directory/outside-scope refusals and
+aggregate boundary admission. A repeated long alias separately exhausts entry
+normalization work even when expression values are cached. SDK/CLI cases cover
+source anchors, immutable
+capture after deletion, bounded pages/caches, revision invalidation, private
+path canaries, ASAR occurrence isolation, unavailable unpacked targets and
+original/ASAR CLI forms with unusable PATH. The framed worker compares entry
+summaries/pages with direct API results and checks omission/unknown fields.
+
+`WebHTML` in `NeverDWebArtifactTests` checks the full pinned named-reference table
+and code point arrays, token/type/escape states, body spans, local URL/base
+association and real scan/link budget exhaustion. `WebHTMLSDK` checks C ABI and
+CLI inventory, source parsing, original/ASAR anchors, cache/revision failures and
+private-output canaries with an unusable PATH. `WebHTMLModules` in
+`NeverDWebSourceTests` checks inline import/re-export/dynamic-import candidates,
+preceding bases, URL metadata, import-map boundaries, malformed contexts and
+real work/count exhaustion. Unavailable inventories and early exhaustion cannot
+claim that import-map declarations are absent. SDK cases separate equal inline
+bytes under different documents/bases, preserve packed/unpacked ASAR occurrence identity and verify
+that external-file contexts cannot be rebased by HTML inspection. CLI checks
+require request pages after a partial module summary. The framed worker compares
+both HTML operations and inline source/anchor/module results with direct API
+results. All
+new fixture recording and test logic is C++; the [profile](web-html-profile.md)
+records deliberate context and import limitations.
+
+Build the owning target, then run
+`ctest --test-dir build-release/unittests/web --output-on-failure`. Parser tests require
+`NEVERD_ENABLE_WEB_JAVASCRIPT`; the backend requires
+`NEVERD_ENABLE_WEB_ANALYSIS`. Native lifting suites are not substitutes for
+this source-domain coverage. Host/profile limitations are recorded in the
+[web support matrix](web-support-matrix.md); source inventory does not qualify
+container extraction, full JavaScript semantics or complete epic acceptance.
+`NeverDWebAvailabilityTests` remains available when the backend is disabled;
+run its test directory at `build-release/unittests/web-api`. With the worker
+enabled, `NeverDWorkerWeb` in `build-release/tools/neverd-worker` checks the real
+framed process and isolation from native-session revisions using a C++ client.
+
 ## Library recognition
 
 The feature repository retains the original compiler objects, truth, source
