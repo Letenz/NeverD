@@ -46,6 +46,12 @@ prebuilt-LLVM guidance.
 
 ## GUI function lists and navigation
 
+`SessionCAPITest.PrepareFunction*` checks analysis without source emission,
+restricted and whole-image scope, repeated and switched entries, address zero,
+unloaded sessions and unknown ARM mode. `NeverDWorkerSourceCache` verifies
+preparation does not render discarded C and that a failed function switch
+requires real preparation before the preceding function's CFG is read again.
+
 With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
 the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
@@ -97,6 +103,11 @@ same PE/PDB and environment variables described below. Unmapped declarations
 exercise the explicit entry fallback. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
 listing jumps, rows beyond the first page, folded operations, secondary address
 round trips, cross-function navigation and missing instruction mappings.
+`graphRefreshKeepsLatestRequestedAddress` exercises navigation and keyboard/mouse
+selection while a replacement graph layout is pending, plus generation/revision
+refreshes before the first layout arrives. `graphJumpDuringFunctionResolutionKeepsLatestAddress`
+checks that a late function lookup cannot overwrite a newer in-graph jump or
+move the hidden listing to the stale destination.
 
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
@@ -159,6 +170,20 @@ depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
 opaque state restoration. Builder reuse after an image edit invalidates old
 proofs. `ImportCalleeTrace` additionally checks partial pointer writes and
 instruction-local temporary identity on x86, x64 and AArch64.
+`PipelineOutcome.SelectedX87WrappersPreserveReturnsAcrossParallelBuilds`
+compares serial and parallel LowIR analysis of 32 selected wrappers on x86 and
+x64. Each wrapper has no local x87 instruction and calls the same forwarding
+chain; every call and return must retain its physical 80-bit result. The
+register summaries must also agree across both schedules.
+
+`X87CallGraphCache` compares independent builders with and without shared
+graphs, including exact remaining proof budgets, recursion-depth failures,
+changed image and analysis contexts, concurrent queries and bounded eviction.
+Complete instruction graphs rejected for exceptional edges or unresolved
+terminal dispatch retain only an immutable rejection marker: tests require
+actual warm hits, identical cold/warm budget consumption and a fresh successful
+proof when the same address belongs to a different valid image. Truncated
+instruction streams remain unretained.
 
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
@@ -668,6 +693,13 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverValueQueryCache.*` checks actual complete-batch reuse, exact remaining
+budgets at every small-fixture boundary, ordered mixed results and feasible
+masks, all query fields, proof limits and graph-independent relocation context.
+Incomplete proofs and oversized records cannot be retained; count and byte
+limits are checked independently.
+`PipelineOutcome.ParallelCalleeFrontiersPreserveEveryRegisterSummary` compares
+serial and parallel summaries across two 40-function callee frontiers.
 
 `ResolverLaneViews.*` in the same target checks query-local register metadata
 caching across widths, high-byte registers, architectures, temporary values

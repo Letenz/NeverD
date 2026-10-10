@@ -25,6 +25,11 @@ Cancelling its final subscriber retires the process, since a synchronous C API
 analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
+Function preparation uses `neverd_prepare_function`, which shares the source
+route's ARM mode, exception-handler discovery and analysis-scope checks without
+emitting C. Source, IR and CFG views consume that prepared pipeline. Older
+engines retain the decompiler-based preparation fallback. A failed switch
+clears the worker's prepared-entry marker before another view can reuse it.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -56,7 +61,10 @@ surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
 statement anchors. Library folding retains its separate region projection.
 This supplies navigation evidence rather than complete expression provenance.
-Source and assembly cursors browse independently.
+Source and assembly cursors browse independently. Graph refreshes retain the
+latest requested or selected instruction even while no layout is available.
+A new navigation cancels the preceding function-lookup callback so a late reply
+cannot replace the newer destination.
 Tab consumes the selected row's primary address, preserving a secondary address
 chosen by an assembly-to-source Tab so a round trip returns to the same
 instruction. Reverse navigation waits for the source pages and expands the
@@ -484,8 +492,14 @@ they do not reuse CFG or value proofs across changed snapshots. A builder may
 retain one successful graph with an owned instruction snapshot. Reuse requires
 exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
-graph-construction charge; value queries and incomplete-proof handling still
-run. Input-size and vertex limits bound retention, and a new build clears it.
+graph-construction charge. The graph may also retain up to 64 completed query
+batches under a separate 8 MiB retained-payload allowance. Exact ordered query
+fields, proof limits, output shape, function context and both relocation
+occurrence inventories bind each result. Hits pay the complete cold value
+charge; a smaller budget runs the normal path. Incomplete proofs and batches
+using pointer-named symbolic values or merges are excluded. Image metadata is
+immutable during a build, and every new build discards this state. These caches
+do not bypass proposal validation, rollback or fixed-point stages.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -916,8 +930,10 @@ SSA then sees a caller's pass-through argument, and HighC passes exactly the
 arguments the callee reads. Stack arguments follow the 32-byte home area.
 
 Additional callee CFGs are admitted in deterministic breadth-first order.
-Batches retain at most eight bodies and use at most four independent decoders
-when symbol extents predict enough work; small batches stay serial. Read-only
+Parallel batches retain at most 32 bodies and use at most four independent
+decoders when symbol extents predict enough work; serial runs retain eight
+bodies. The wider window overlaps expensive callees across former batch
+barriers without changing admission or publication order. Read-only
 image indexes and the existing synchronized no-return cache may be shared.
 Summary publication and format-call collection retain the original order,
 depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
@@ -1353,8 +1369,23 @@ relocation predicate for untagged constants; equal original VAs alone cannot
 establish equality between independently rebuilt objects.
 
 The x86 CFG builder proves local x87 call-stack effects before constructing
-TOP-state block copies. One build owns the cached machine graphs; each query
-independently bounds its complete call closure and dataflow work. Every normal
+TOP-state block copies. One LowIR analysis may share up to 128 immutable machine
+graphs or empty projection-refusal markers across its independent CFG builders,
+under an 8 MiB retained-payload allowance including the construction context.
+This bounds the shared cache, not active builders or their private graph
+references.
+Exact function-boundary and jump-table protection sets, no-return proof depth
+and index identities bind each graph to its construction context. Image facts
+remain unchanged while a cache is shared; publishing new code references starts
+a fresh cache before additional callees are analyzed. Cache locks cover lookup
+and publication, while graph construction runs outside the lock. Each query
+still independently bounds and pays for its complete call closure and dataflow
+work; caller-dependent answers are not shared. A completely lifted, nontruncated
+CFG with exceptional edges or a block without any successor, return or modeled
+stop may retain an empty refusal marker. It grants no effect and rejects before
+graph-work charging, exactly as the original projection did. Incomplete lifting,
+invalid boundaries or successors, and the fixed graph-size limit retain no
+marker; a caller's exhausted proof allowance also cannot create one. Every normal
 return must agree on the stack change, and a pushed result must be initialized
 without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
