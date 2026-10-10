@@ -6793,7 +6793,72 @@ static int symbolic_descriptors(const char *input, unsigned mode) {
   return 37;
 }
 
+/* Model replay workload: fixed bytes never enter a native RNG inventory. */
+static int entropy_replay(unsigned mode) {
+  unsigned error;
+  const u64 sentinel = 0x1122334455667788UL;
+  unsigned char bytes[258];
+#define ENTROPY_EXPECT(expression)                                             \
+  do {                                                                         \
+    if (!(expression))                                                         \
+      return 50 + (__LINE__ % 200);                                            \
+  } while (0)
+  for (unsigned i = 0; i != sizeof(bytes); ++i)
+    bytes[i] = 0xa5;
+  if (mode) {
+    u64 address = (u64)(bytes + 1), size = mode == 3 ? 3 : 4;
+    if (mode == 2)
+      ENTROPY_EXPECT(!xattr_result(500, address, 4, sentinel, 0, 0, 0, 0, 0));
+    if (mode == 4) {
+      u64 mapped = call(197, 0, 2 * PAGE, 3, 0x1002, -1UL, 0, &error);
+      ENTROPY_EXPECT(!error && !secondary);
+      ENTROPY_EXPECT(!xattr_result(74, mapped + PAGE, PAGE, 1, 0, 0, 0, 0, 0));
+      address = mapped + PAGE - 2;
+    }
+    ENTROPY_EXPECT(!xattr_result(4, 1, (u64) "!", 1, 0, 0, 0, 1, 0));
+    call(500, address, size, sentinel, 0, 0, 0, &error);
+    return 201;
+  }
+  const u64 pointers[] = {0, 1, (u64)-1, 0x8000000000000000UL};
+  const u64 lengths[] = {257, 0x100000000UL, 0x100000001UL, 0x100000100UL,
+                         (u64)-1};
+  for (unsigned p = 0; p != 4; ++p) {
+    ENTROPY_EXPECT(!xattr_result(500, pointers[p], 0, sentinel, 0, 0, 0, 0, 0));
+    for (unsigned n = 0; n != 5; ++n)
+      ENTROPY_EXPECT(!xattr_result(500, pointers[p], lengths[n], sentinel, 0, 0,
+                                   0, 22, 1));
+  }
+  ENTROPY_EXPECT(!xattr_result(500, 0, 4, sentinel, 0, 0, 0, 14, 1));
+  ENTROPY_EXPECT(
+      !xattr_result(500, (u64)(bytes + 1), 4, sentinel, 0, 0, 0, 0, 0));
+  const unsigned char expected[] = {0, 0xff, 0x80, 0xa5};
+  for (unsigned i = 0; i != 4; ++i)
+    ENTROPY_EXPECT(bytes[i + 1] == expected[i]);
+  ENTROPY_EXPECT(bytes[0] == 0xa5 && bytes[5] == 0xa5);
+  ENTROPY_EXPECT(
+      !xattr_result(500, (u64)(bytes + 1), 1, sentinel, 0, 0, 0, 0, 0));
+  ENTROPY_EXPECT(bytes[1] == 0x7f && bytes[2] == 0xff && bytes[5] == 0xa5);
+  ENTROPY_EXPECT(
+      !xattr_result(500, (u64)(bytes + 1), 256, sentinel, 0, 0, 0, 0, 0));
+  for (unsigned i = 0; i != 256; ++i)
+    ENTROPY_EXPECT(bytes[i + 1] == (unsigned char)i);
+  ENTROPY_EXPECT(bytes[0] == 0xa5 && bytes[257] == 0xa5);
+  ENTROPY_EXPECT(!xattr_result(4, 1, (u64) "R", 1, 0, 0, 0, 1, 0));
+#undef ENTROPY_EXPECT
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "entropy-replay"))
+    return entropy_replay(0);
+  if (argc >= 2 && equal(argv[1], "entropy-missing"))
+    return entropy_replay(1);
+  if (argc >= 2 && equal(argv[1], "entropy-exhausted"))
+    return entropy_replay(2);
+  if (argc >= 2 && equal(argv[1], "entropy-mismatch"))
+    return entropy_replay(3);
+  if (argc >= 2 && equal(argv[1], "entropy-partial"))
+    return entropy_replay(4);
   if (argc >= 2 && equal(argv[1], "symbolic-link-rename")) {
     int status = argc < 3 ? 51 : symbolic_link_rename(argv[2]);
     if (status == 37 && argc >= 4 && equal(argv[3], "protected")) {

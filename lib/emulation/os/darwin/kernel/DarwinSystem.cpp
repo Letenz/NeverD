@@ -171,6 +171,13 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
     if (*Usage && ((**Usage).UserMicroseconds >= 1000000 ||
                    (**Usage).SystemMicroseconds >= 1000000))
       return failure(diagnostic::ResourceUsageOption);
+  if (Options.EntropyReads) {
+    if (Options.EntropyReads->size() > EntropyReplayLimit)
+      return failure(diagnostic::EntropyOption);
+    for (const auto &Read : *Options.EntropyReads)
+      if (Read.empty() || Read.size() > EntropyReadLimit)
+        return failure(diagnostic::EntropyOption);
+  }
   return llvm::Error::success();
 }
 

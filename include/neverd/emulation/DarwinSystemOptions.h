@@ -102,6 +102,11 @@ struct DarwinSystemOptions {
   /// explicit zero and -1 are known. No host lookup, scheduling, priority
   /// mutation or aggregate/peer observation is inferred.
   std::optional<int32_t> ProcessNice;
+  /// Ordered exact getentropy observations, not a host RNG or cryptographic
+  /// guarantee. At most 256 nonempty records of at most 256 bytes each.
+  /// Missing is unknown; an empty queue is explicitly exhausted. Each run
+  /// owns a fresh cursor; admitted success/whole EFAULT consumes one record.
+  std::optional<std::vector<std::vector<uint8_t>>> EntropyReads;
 };
 } // namespace neverd::emulation
 #endif

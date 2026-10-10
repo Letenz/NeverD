@@ -118,6 +118,8 @@ NEVERD_DARWIN_VALUE(InvalidArgument, 22)
 NEVERD_DARWIN_VALUE(NoMemory, 12)
 NEVERD_DARWIN_VALUE(PermissionDenied, 13)
 NEVERD_DARWIN_VALUE(ResultTooLarge, 34)
+NEVERD_DARWIN_VALUE(EntropyReadLimit, 256)
+NEVERD_DARWIN_VALUE(EntropyReplayLimit, 256)
 NEVERD_DARWIN_VALUE(SystemStringLimit, 1024)
 NEVERD_DARWIN_VALUE(HostNameLimit, 256)
 NEVERD_DARWIN_VALUE(LoginNameSize, 255)
@@ -221,6 +223,7 @@ NEVERD_DARWIN_SERVICE(Lstat64, 340, Int)
 NEVERD_DARWIN_SERVICE(GetDirEntries64, 344, Wide)
 NEVERD_DARWIN_SERVICE(GetTimeOfDay, 116, Int)
 NEVERD_DARWIN_SERVICE(GetRusage, 117, Int)
+NEVERD_DARWIN_SERVICE(GetEntropy, 500, Int)
 NEVERD_DARWIN_SERVICE(OpenAt, 463, Int)
 NEVERD_DARWIN_SERVICE(FstatAt64, 470, Int)
 NEVERD_DARWIN_SERVICE(UnlinkAt, 472, Int)
@@ -328,6 +331,18 @@ NEVERD_DARWIN_DIAGNOSTIC(SystemPrivilegedWrite,
                          "Darwin privileged system write is not modeled")
 NEVERD_DARWIN_DIAGNOSTIC(ResourceUsageObservation,
                          "Darwin resource usage observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    EntropyOption,
+    "Darwin entropy requires at most 256 records of 1..256 bytes")
+NEVERD_DARWIN_DIAGNOSTIC(EntropyObservation,
+                         "Darwin entropy observations are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(EntropyExhausted,
+                         "Darwin entropy observations are exhausted")
+NEVERD_DARWIN_DIAGNOSTIC(
+    EntropyLength,
+    "Darwin entropy observation length does not match the request")
+NEVERD_DARWIN_DIAGNOSTIC(EntropyPartialOutput,
+                         "Darwin partial entropy output is unsupported")
 NEVERD_DARWIN_DIAGNOSTIC(ResourceUsagePartialOutput,
                          "Darwin resource usage output is partially writable")
 NEVERD_DARWIN_DIAGNOSTIC(

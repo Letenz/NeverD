@@ -500,6 +500,85 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertIsNone(result["android"]["native_calls"][-1]["result"])
         self.assertIn("no explicit linux_time input", result["diagnostic"])
 
+    def test_darwin_entropy_replay_preserves_bytes_errors_and_fresh_runs(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import NeverDError, Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        observations = ["deadbeef", "00ff80a5", "7f", bytes(range(256)).hex()]
+        reasons = {
+            "entropy-missing": "Darwin entropy observations are not configured",
+            "entropy-exhausted": "Darwin entropy observations are exhausted",
+            "entropy-mismatch": "Darwin entropy observation length does not match the request",
+            "entropy-partial": "Darwin partial entropy output is unsupported",
+        }
+        for profile, architecture in (("macos", "x86_64"), ("macos", "arm64"),
+                                      ("ios", "arm64"), ("ios-simulator", "x86_64"),
+                                      ("ios-simulator", "arm64")):
+            path = str((Path(fixtures) / f"{profile}-{architecture}").resolve(strict=True))
+            name = f"{profile}-macho64-v1"
+            number = "20001f4" if architecture == "x86_64" else "1f4"
+            options = {"backend": "unicorn", "instruction_quantum": 1024,
+                       "timeout_microseconds": 5000000,
+                       "arguments": ["guest", "entropy-replay"],
+                       "darwin_system": {"entropy_reads": observations}}
+            request = json.dumps(options)
+            previous = None
+            for repeat in range(2):
+                with self.subTest(profile=name, architecture=architecture, repeat=repeat):
+                    result = session.emulate_process(path, name, request)
+                    self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                    self.assertEqual(result["exit_status"], 37)
+                    self.assertEqual(bytes.fromhex(result["stdout_hex"]), b"R")
+                    self.assertEqual(result["stderr_hex"], "")
+                    calls = [e for e in result["services"] if e["number"] == number]
+                    self.assertEqual(len(calls), 28)
+                    self.assertEqual([e["result"] for e in calls],
+                                     ["0" if i % 6 == 0 else "16" for i in range(24)]
+                                     + ["e", "0", "0", "0"])
+                    self.assertEqual([e["error"] for e in calls],
+                                     [i % 6 != 0 for i in range(24)] + [True, False, False, False])
+                    if previous is not None:
+                        self.assertEqual(result, previous)
+                    previous = result
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            for mode, reason in reasons.items():
+                with self.subTest(profile=name, architecture=architecture, mode=mode):
+                    options["arguments"][1] = mode
+                    options["darwin_system"] = {} if mode == "entropy-missing" else {
+                        "entropy_reads": observations[:1] if mode == "entropy-exhausted" else observations}
+                    result = session.emulate_process(path, name, json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "unsupported_service")
+                    self.assertEqual(result["diagnostic"], reason)
+                    self.assertEqual(bytes.fromhex(result["stdout_hex"]), b"!")
+                    self.assertEqual(result["services"][-1]["number"], number)
+                    self.assertIsNone(result["services"][-1]["result"])
+                    self.assertNotIn("error", result["services"][-1])
+            options["arguments"][1] = "entropy-missing"
+            options["darwin_system"] = {"entropy_reads": []}
+            result = session.emulate_process(path, name, json.dumps(options))
+            self.assertEqual(result["diagnostic"], reasons["entropy-exhausted"])
+            for invalid in (None, True, {}, [None], [""], ["0"], ["gg"],
+                            ["00\x00"], ["00" * 257], ["00"] * 257):
+                options["darwin_system"] = {"entropy_reads": invalid}
+                with self.assertRaises(NeverDError) as caught:
+                    session.emulate_process(path, name, json.dumps(options))
+                self.assertIn("entropy_reads", str(caught.exception))
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_profiles_preserve_bsd_errors_and_platform_identity(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

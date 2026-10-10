@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
+<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
 
 [← 文档索引](README.md)
 
@@ -1105,3 +1105,24 @@ guest/Python5,000,000us / quantum1024 / public10s
 8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
 67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```
+
+## 显式有限 getentropy 观测
+
+原始 BSD getentropy500 使用有序 `DarwinSystemOptions::EntropyReads` 观测队列，JSON 字段为 `darwin_system.entropy_reads`。每条必须是非空、偶数长度的十六进制字符串；最多256条，每条1..256字节。这是有限模型的限制；已有65536字节 JSON 传输上限不变。省略表示未知，`[]` 表示明确耗尽。原生选项与 JSON 在加载镜像或修改后端之前严格校验，其他 OS 配置拒绝 Darwin 选项。
+
+先检查完整64位长度：超过256返回 EINVAL22，不访问内存或消费记录；零长度对任何指针都成功，不需要观测。非零请求先准入下一条长度完全匹配的记录，再执行复制。缺少、耗尽或长度不匹配均在任何效果前以 UnsupportedService 停止，包括无效地址；这是回放准入顺序。完整复制成功或目标完全不可写的 EFAULT14 消费恰好一条。部分可写目标在复制和推进游标前拒绝；内存传输错误保持错误且不推进。之后返回寄存器失败不会撤销已完成的复制或消费。同一组选项重复执行也从首条记录开始。
+
+每次执行的 DarwinEntropy 独立持有游标，输入字节不变；已有 BSD 分发和 returnService 统一负责两种 ISA、进位及次级寄存器。无 SDK 回放程序检查零及非 UTF-8 字节、哨兵、完整错误和拒绝路径，覆盖五种客体及三种 ARM64 HVF 配置；固定回放字节不加入原生确定性 RNG 清单。原始 ARM64 O0/O1/O2 探针共594次调用；哨兵发生变化的字节数不等于准确复制长度。未提供宿主随机源、密码学质量、/dev/random、libc 导入或框架；Intel HVF、iOS 真机及完整 OS 兼容性仍未验证或未完成。
+
+```text
+BSD getentropy500 / DarwinEntropy / EntropyReads / darwin_system.entropy_reads
+full64 size>256 -> EINVAL22; zero ->0; whole EFAULT14 consumes one record
+1..256 bytes per record / at most256 records / JSON transport65536 bytes
+entropy-replay / entropy-missing / entropy-exhausted / entropy-mismatch / entropy-partial
+15 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+68 mandatory workloads per platform / ARM64 204 / Intel 136
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).

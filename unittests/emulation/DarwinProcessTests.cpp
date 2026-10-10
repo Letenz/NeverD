@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
@@ -80,6 +81,64 @@ protected:
     return emulateProcess(Path, GetParam().OS, Options);
   }
 };
+TEST_P(DarwinProcess, EntropyReplayKeepsBytesFaultOrderAndFreshRunLifetime) {
+  Options.InstructionQuantum = 1024;
+  Options.DarwinSystem = darwin_test::entropyReplayOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("entropy-replay");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, "R");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    std::vector<const ProcessServiceEvent *> Calls;
+    for (const auto &E : R->Services)
+      if (E.Number == Class + 500)
+        Calls.push_back(&E);
+    ASSERT_EQ(Calls.size(), 28u);
+    for (unsigned I = 0; I != 24; ++I) {
+      const bool Zero = I % 6 == 0;
+      EXPECT_EQ(Calls[I]->Arguments[1] == 0, Zero);
+      EXPECT_EQ(Calls[I]->Result, Zero ? 0 : 22);
+      EXPECT_EQ(Calls[I]->Error, !Zero);
+    }
+    EXPECT_EQ(Calls[24]->Arguments[0], 0u);
+    EXPECT_EQ(Calls[24]->Result, 14u);
+    EXPECT_EQ(Calls[24]->Error, true);
+    for (unsigned I = 25; I != 28; ++I) {
+      EXPECT_EQ(Calls[I]->Result, 0u);
+      EXPECT_EQ(Calls[I]->Error, false);
+    }
+  }
+  for (const auto &[Mode, Diagnostic] :
+       {std::pair{"entropy-missing",
+                  "Darwin entropy observations are not configured"},
+        std::pair{"entropy-exhausted",
+                  "Darwin entropy observations are exhausted"},
+        std::pair{
+            "entropy-mismatch",
+            "Darwin entropy observation length does not match the request"},
+        std::pair{"entropy-partial",
+                  "Darwin partial entropy output is unsupported"}}) {
+    Options.DarwinSystem = darwin_test::entropyReplayOptions();
+    if (llvm::StringRef(Mode) == "entropy-missing")
+      Options.DarwinSystem->EntropyReads.reset();
+    if (llvm::StringRef(Mode) == "entropy-exhausted")
+      Options.DarwinSystem->EntropyReads->resize(1);
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic, Diagnostic);
+    EXPECT_EQ(R->StandardOutput, "!");
+    EXPECT_EQ(R->Services.back().Number, Class + 500);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
 TEST_P(DarwinProcess, StartupDataBSSCarryAndBinaryOutput) {
   auto Result = run("normal");
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());

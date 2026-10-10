@@ -1762,3 +1762,24 @@ guest/Python5,000,000us / quantum1024 / public10s
 8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
 67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```
+
+## Explicit finite getentropy observations
+
+Raw BSD getentropy500 accepts an ordered `DarwinSystemOptions::EntropyReads` observation queue, encoded as JSON `darwin_system.entropy_reads`. Records are nonempty even-length hexadecimal strings: at most256 records, each1..256 bytes. These are finite model limits; the existing65536-byte JSON transport limit is unchanged. Omission is unknown; `[]` is explicitly exhausted. Strict native/JSON validation runs before image or backend mutation, and other OS profiles reject Darwin options.
+
+The owner checks the full64-bit length first: values above256 return EINVAL22 without memory access or consumption; zero succeeds for every pointer without accessing memory or requiring input. A nonzero request admits the next exact-length record before copyout. Missing, exhausted or mismatched observations stop UnsupportedService before effects, including for a bad address; that ordering describes replay admission. A successful copy or wholly inaccessible EFAULT14 consumes exactly one admitted record. Partial writable destinations stop before any bytes or cursor changes; memory transport errors remain errors without advancing. A later return-register failure preserves completed copy/consumption effects. Every public process execution starts a fresh cursor, even when the same options object is reused.
+
+One DarwinEntropy instance per run owns replay position; supplied bytes stay immutable. Existing BSD dispatch and returnService own both ISA bindings, carry and secondary registers. The SDK-free replay fixture verifies zero/non-UTF8 bytes, canaries, whole faults and refusal modes across five guest profiles and three actual ARM64 HVF profiles. Fixed replay bytes do not enter the native deterministic RNG inventory. Original native ARM64 probes at O0/O1/O2 cover594 calls; changed sentinel-byte counts are not exact copy lengths. Host randomness, cryptographic quality, /dev/random, libc imports and frameworks are not provided. Native Intel HVF, physical iOS and full OS compatibility remain unverified or incomplete.
+
+```text
+BSD getentropy500 / DarwinEntropy / EntropyReads / darwin_system.entropy_reads
+full64 size>256 -> EINVAL22; zero ->0; whole EFAULT14 consumes one record
+1..256 bytes per record / at most256 records / JSON transport65536 bytes
+entropy-replay / entropy-missing / entropy-exhausted / entropy-mismatch / entropy-partial
+15 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+68 mandatory workloads per platform / ARM64 204 / Intel 136
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).

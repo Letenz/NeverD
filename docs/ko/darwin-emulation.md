@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
+<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
 
 [← 문서 목록](README.md)
 
@@ -1001,3 +1001,24 @@ guest/Python5,000,000us / quantum1024 / public10s
 8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
 67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```
+
+## 명시적인 유한 getentropy 관측
+
+원시 BSD getentropy500은 순서가 있는 `DarwinSystemOptions::EntropyReads`를 사용하며 JSON 필드는 `darwin_system.entropy_reads`입니다. 비어 있지 않은 짝수 길이 16진수 문자열을 최대256개, 각1..256바이트로 제공합니다. 모델 한도이며 기존65536바이트 JSON 전송 한도는 유지합니다. 생략은 알 수 없음, `[]`는 명시적 소진입니다. 이미지나 백엔드 변경 전에 입력을 검증하며 다른 OS 프로필은 Darwin 옵션을 거부합니다.
+
+전체64비트 길이를 먼저 확인합니다. 256 초과는 메모리 접근이나 소비 없이 EINVAL22, 길이0은 모든 포인터에 대해 입력 없이 성공합니다. 비영 요청은 다음 기록의 정확한 길이를 먼저 승인합니다. 누락·소진·불일치는 잘못된 주소에서도 효과 전 UnsupportedService로 멈춥니다. 이는 재생 승인 순서입니다. 성공 또는 완전히 쓸 수 없는 EFAULT14는 한 기록을 소비합니다. 일부만 쓸 수 있는 대상은 복사 및 커서 변경 전에 거부하며 전송 오류는 커서를 진행하지 않습니다. 이후 반환 레지스터 실패는 완료된 효과를 유지합니다. 같은 옵션을 재사용해도 매 실행은 첫 기록에서 시작합니다.
+
+매 실행의 DarwinEntropy가 독립 커서를 소유하고 입력 바이트는 불변입니다. 기존 BSD 분배와 returnService가 양쪽 ISA, 캐리와 보조 레지스터를 담당합니다. SDK 없는 재생은5개 게스트와3개 ARM64 HVF 프로필을 검증하며 고정 바이트는 원시 결정적 RNG 목록에 넣지 않습니다. ARM64 O0/O1/O2 탐침은594회 호출이며 센티널 변화 수는 정확한 복사 길이가 아닙니다. 호스트 난수, 암호학적 품질, /dev/random, libc 가져오기와 프레임워크는 제공하지 않습니다. Intel HVF·물리 iOS·완전한 OS 호환성은 미검증 또는 미완료입니다。
+
+```text
+BSD getentropy500 / DarwinEntropy / EntropyReads / darwin_system.entropy_reads
+full64 size>256 -> EINVAL22; zero ->0; whole EFAULT14 consumes one record
+1..256 bytes per record / at most256 records / JSON transport65536 bytes
+entropy-replay / entropy-missing / entropy-exhausted / entropy-mismatch / entropy-partial
+15 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+68 mandatory workloads per platform / ARM64 204 / Intel 136
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).

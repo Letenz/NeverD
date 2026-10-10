@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
+<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -999,3 +999,24 @@ guest/Python5,000,000us / quantum1024 / public10s
 8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
 67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```
+
+## Explizite endliche getentropy-Beobachtungen
+
+Raw BSD getentropy500 verwendet die geordnete Beobachtungsfolge `DarwinSystemOptions::EntropyReads`, in JSON `darwin_system.entropy_reads`. Nichtleere Hexzeichenfolgen haben gerade Länge: höchstens256 Einträge mit je1..256 Bytes. Dies sind Modellgrenzen; das JSON-Transportlimit bleibt65536 Bytes. Auslassen bedeutet unbekannt, `[]` ausdrücklich erschöpft. Native und JSON-Eingaben werden vor Änderungen an Image oder Backend geprüft; andere OS-Profile lehnen Darwin-Optionen ab.
+
+Zuerst wird die gesamte64-Bit-Länge geprüft: über256 ergibt EINVAL22 ohne Zugriff oder Verbrauch; null gelingt für jeden Zeiger ohne Eingabe. Nichtnull verlangt anschließend den nächsten Eintrag mit genau passender Länge. Fehlende, erschöpfte oder unpassende Daten stoppen UnsupportedService vor Effekten, auch bei ungültiger Adresse; dies ist die Replay-Zulassung. Erfolg oder vollständig unbeschreibbares EFAULT14 verbraucht genau einen Eintrag. Teilweise beschreibbare Ziele werden vor Kopie und Cursoränderung abgelehnt; Transportfehler schreiten nicht fort. Spätere Rückgaberegisterfehler lassen abgeschlossene Effekte bestehen. Auch dieselben Optionen beginnen bei jedem Lauf am ersten Eintrag.
+
+DarwinEntropy besitzt je Lauf einen eigenen Cursor; Eingabebytes bleiben unverändert. Bestehendes BSD und returnService verwalten beide ISA, Carry und sekundäre Register. Der SDK-freie Replay-Test deckt5 Gastprofile und3 ARM64 HVF-Profile ab; feste Bytes gehören nicht zum nativen deterministischen RNG-Inventar. ARM64 O0/O1/O2-Proben umfassen594 Aufrufe; geänderte Sentinelbytes belegen keine genaue Kopierlänge. Host-RNG, Kryptografiequalität, /dev/random, libc-Imports und Frameworks fehlen. Intel HVF, physisches iOS und vollständige OS-Kompatibilität bleiben ungeprüft oder unvollständig.
+
+```text
+BSD getentropy500 / DarwinEntropy / EntropyReads / darwin_system.entropy_reads
+full64 size>256 -> EINVAL22; zero ->0; whole EFAULT14 consumes one record
+1..256 bytes per record / at most256 records / JSON transport65536 bytes
+entropy-replay / entropy-missing / entropy-exhausted / entropy-mismatch / entropy-partial
+15 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+68 mandatory workloads per platform / ARM64 204 / Intel 136
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).

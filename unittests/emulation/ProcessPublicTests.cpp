@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
@@ -507,6 +508,11 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"process-priority", "51"},
           std::pair{"virtual-process-priority",
                     emulation::darwin_test::PriorityHex},
+          std::pair{"entropy-replay", "52"},
+          std::pair{"entropy-missing", "21"},
+          std::pair{"entropy-exhausted", "21"},
+          std::pair{"entropy-mismatch", "21"},
+          std::pair{"entropy-partial", "21"},
           std::pair{"login-buffer", "4c"},
           std::pair{"virtual-login-buffer",
                     emulation::darwin_test::LoginNameHex},
@@ -556,7 +562,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       ModeName == "hard-links-name-unsupported" ||
       ModeName == "hard-links-attributes-unsupported";
   const bool UnknownNonblocking = ModeName == "nonblocking-flags-unsupported";
-  const bool Incomplete = ProtectedLink || UnknownPathConf ||
+  const bool Entropy = ModeName.starts_with("entropy-");
+  const bool UnknownEntropy = Entropy && ModeName != "entropy-replay";
+  const bool Incomplete = UnknownEntropy || ProtectedLink || UnknownPathConf ||
                           UnknownAttributes || UnknownXattrs || UnknownNames ||
                           UnknownBulk || UnknownXattrMutation ||
                           UnknownHardLinkName || UnknownNonblocking;
@@ -1032,6 +1040,21 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::KernelPathConfJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (Entropy) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    auto System = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::entropyReplayJSON()));
+    if (ModeName == "entropy-missing")
+      System.getAsObject()->erase(field::SystemEntropyReads);
+    if (ModeName == "entropy-exhausted") {
+      auto *Reads = System.getAsObject()->getArray(field::SystemEntropyReads);
+      while (Reads->size() > 1)
+        Reads->pop_back();
+    }
+    (*Input.getAsObject())[field::DarwinSystem] = std::move(System);
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    Options = llvm::formatv("{0}", Input).str();
+  }
   auto Text = takeString(neverd_emulate_process_json(Session, Path.c_str(),
                                                      Profile, Options.c_str()));
   ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
@@ -1047,6 +1070,85 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (Entropy) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    if (UnknownEntropy) {
+      const char *Reason =
+          ModeName == "entropy-missing"
+              ? "Darwin entropy observations are not configured"
+          : ModeName == "entropy-exhausted"
+              ? "Darwin entropy observations are exhausted"
+          : ModeName == "entropy-mismatch"
+              ? "Darwin entropy observation length does not match the request"
+              : "Darwin partial entropy output is unsupported";
+      EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic), Reason);
+      ASSERT_FALSE(Services->empty());
+      const auto *Last = Services->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number), X64 ? "20001f4" : "1f4");
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    } else {
+      std::vector<const llvm::json::Object *> Calls;
+      for (const auto &Event : *Services) {
+        const auto *Call = Event.getAsObject();
+        ASSERT_NE(Call, nullptr);
+        if (Call->getString(field::Number) == (X64 ? "20001f4" : "1f4"))
+          Calls.push_back(Call);
+      }
+      ASSERT_EQ(Calls.size(), 28u);
+      for (unsigned I = 0; I != 28; ++I) {
+        const bool Zero = I < 24 && I % 6 == 0;
+        EXPECT_EQ(Calls[I]->getString(field::Result), I < 24
+                                                          ? (Zero ? "0" : "16")
+                                                      : I == 24 ? "e"
+                                                                : "0");
+        EXPECT_EQ(Calls[I]->getBoolean(field::Error),
+                  (I < 24 && !Zero) || I == 24);
+      }
+      // Reuse the identical public options on the same session. Each run
+      // must start at observation zero, including the whole-EFAULT record.
+      auto Repeated = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      auto Again = llvm::json::parse(Repeated);
+      ASSERT_TRUE(bool(Again)) << llvm::toString(Again.takeError());
+      EXPECT_EQ(*Again, *Report);
+      auto Maximum = llvm::cantFail(llvm::json::parse(Options));
+      auto *Reads = Maximum.getAsObject()
+                        ->getObject(field::DarwinSystem)
+                        ->getArray(field::SystemEntropyReads);
+      while (Reads->size() < 256)
+        Reads->push_back("00");
+      const auto MaximumJSON = llvm::formatv("{0}", Maximum).str();
+      auto MaximumText = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, MaximumJSON.c_str()));
+      auto MaximumReport = llvm::json::parse(MaximumText);
+      ASSERT_TRUE(bool(MaximumReport))
+          << llvm::toString(MaximumReport.takeError());
+      EXPECT_EQ(*MaximumReport, *Report);
+      // Empty JSON is known exhausted, distinct from omission.
+      (*Maximum.getAsObject()->getArray(field::Arguments))[1] =
+          "entropy-missing";
+      (*Maximum.getAsObject()->getObject(
+          field::DarwinSystem))[field::SystemEntropyReads] =
+          llvm::json::Array{};
+      const auto EmptyJSON = llvm::formatv("{0}", Maximum).str();
+      auto EmptyText = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, EmptyJSON.c_str()));
+      auto EmptyReport = llvm::json::parse(EmptyText);
+      ASSERT_TRUE(bool(EmptyReport)) << llvm::toString(EmptyReport.takeError());
+      EXPECT_EQ(EmptyReport->getAsObject()->getString(field::Stop),
+                "unsupported_service");
+      EXPECT_EQ(EmptyReport->getAsObject()->getString(field::Diagnostic),
+                "Darwin entropy observations are exhausted");
+      EXPECT_EQ(EmptyReport->getAsObject()->getString(field::Stdout), "21");
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+  }
   if (UnknownNonblocking) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
               "unsupported Darwin fcntl command");
@@ -1266,6 +1368,47 @@ INSTANTIATE_TEST_SUITE_P(
           C = '_';
       return Name;
     });
+
+TEST_F(ProcessPublic, DarwinEntropyRejectsMalformedReplayBeforeLoading) {
+  for (const char *Bad :
+       {"null", "true", "{}", "\"00\"", "[null]", "[true]", "[0]", "[\"\"]",
+        "[\"0\"]", "[\"gg\"]", "[\"0x01\"]", "[\"00\\u0000\"]"}) {
+    const auto Request =
+        std::string("{\"darwin_system\":{\"entropy_reads\":") + Bad + "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("entropy_reads"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const auto &Bad : {"[\"" + std::string(514, '0') + "\"]",
+                          "[" + std::string("\"00\",") +
+                              [] {
+                                std::string Entries;
+                                for (unsigned I = 0; I != 256; ++I)
+                                  Entries += I ? ",\"00\"" : "\"00\"";
+                                return Entries;
+                              }() +
+                              "]"}) {
+    const auto Request = "{\"darwin_system\":{\"entropy_reads\":" + Bad + "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("entropy_reads"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(
+                  Session, "missing.macho", Profile,
+                  R"({"darwin_system":{"entropy_reads":[]}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
 
 TEST_F(ProcessPublic, AndroidNativeFunctionReturnsThroughSDKAndCLI) {
 #ifndef NEVERD_ANDROID_FIXTURE_DIR

@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
+<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
 
 [← 文件索引](README.md)
 
@@ -1001,3 +1001,24 @@ guest/Python5,000,000us / quantum1024 / public10s
 8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
 67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```
+
+## 明確有限 getentropy 觀測
+
+原始 BSD getentropy500 使用有序 `DarwinSystemOptions::EntropyReads` 觀測佇列，JSON 欄位為 `darwin_system.entropy_reads`。每筆必須是非空、偶數長度的十六進位字串；最多256筆，每筆1..256位元組。這是模型限制，既有65536位元組 JSON 傳輸上限不變。省略表示未知，`[]` 表示明確耗盡。原生選項與 JSON 在載入映像或變更後端前嚴格驗證；其他 OS 設定拒絕 Darwin 選項。
+
+先檢查完整64位元長度：超過256回傳 EINVAL22且不存取記憶體或消耗記錄；零長度對任何指標成功且不需要輸入。非零請求先接受下一筆長度完全相符的記錄，再複製。缺少、耗盡或長度不符均以 UnsupportedService 在效果之前停止，包括無效位址；這是重播准入順序。成功複製或完全無法寫入的 EFAULT14消耗一筆；部分可寫目的地在複製與游標更新前拒絕，記憶體傳輸錯誤不前進。後續回傳暫存器失敗保留已完成效果。相同選項每次執行都從第一筆開始。
+
+每次執行的 DarwinEntropy 獨立持有游標，輸入位元組保持不變。既有 BSD 分派與 returnService統一處理兩種 ISA、進位及次要暫存器。無 SDK 重播程式覆蓋五種客體與三種 ARM64 HVF設定；固定字節不加入原生確定性 RNG清單。原始 ARM64 O0/O1/O2探針有594次呼叫；哨兵變化數不代表準確複製長度。未提供宿主隨機源、密碼學品質、/dev/random、libc匯入或框架；Intel HVF、iOS實機與完整 OS相容性仍待驗證或完成。
+
+```text
+BSD getentropy500 / DarwinEntropy / EntropyReads / darwin_system.entropy_reads
+full64 size>256 -> EINVAL22; zero ->0; whole EFAULT14 consumes one record
+1..256 bytes per record / at most256 records / JSON transport65536 bytes
+entropy-replay / entropy-missing / entropy-exhausted / entropy-mismatch / entropy-partial
+15 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+68 mandatory workloads per platform / ARM64 204 / Intel 136
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).

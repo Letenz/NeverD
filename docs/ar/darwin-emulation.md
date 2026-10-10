@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 64aae2ab0c56fa1fc2c0d700d918e774dbbd5df9d14fdaa8fd6647880b29ba3a -->
+<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
 
 [← فهرس الوثائق](README.md)
 
@@ -999,3 +999,24 @@ guest/Python5,000,000us / quantum1024 / public10s
 8 model cases / 20 transport parameters / 10 public cases / 5 Python profiles
 67 mandatory workloads per platform / ARM64 201 / Intel 134
 ```
+
+## ملاحظات getentropy صريحة ومحدودة
+
+يستخدم BSD getentropy500 الخام قائمة مرتبة `DarwinSystemOptions::EntropyReads`، وحقل JSON هو `darwin_system.entropy_reads`. السجلات سلاسل سداسية غير فارغة بطول زوجي: حتى256 سجلًا، كل منها1..256 بايت. هذه حدود النموذج؛ يبقى حد نقل JSON عند65536 بايت. الحذف يعني مجهولًا، و`[]` يعني نفادًا صريحًا. يتحقق الإدخال الأصلي وJSON قبل تغيير الصورة أو الخلفية؛ ترفض ملفات OS الأخرى خيارات Darwin.
+
+يفحص الطول64 بت كاملًا أولًا: أكبر من256 يرجع EINVAL22 دون وصول أو استهلاك؛ الصفر ينجح لكل مؤشر دون بيانات. يقبل الطلب غير الصفري بعد ذلك السجل التالي بطول مطابق تمامًا. الغياب والنفاد وعدم المطابقة توقف UnsupportedService قبل الآثار حتى مع عنوان غير صالح؛ هذا ترتيب قبول الإعادة. النجاح أو EFAULT14 لوجهة غير قابلة للكتابة بالكامل يستهلك سجلًا واحدًا. الوجهة القابلة للكتابة جزئيًا ترفض قبل النسخ أو تحريك المؤشر؛ أخطاء النقل لا تحركه. فشل سجلات الإرجاع لاحقًا يبقي الآثار المكتملة. كل تشغيل يبدأ من السجل الأول حتى عند إعادة استخدام الخيارات.
+
+يمتلك DarwinEntropy مؤشرًا مستقلًا لكل تشغيل وتظل البايتات ثابتة. يتولى BSD وreturnService الحاليان كلا ISA وعلم الحمل والسجلات الثانوية. يغطي البرنامج دون SDK خمسة ملفات ضيف وثلاثة ARM64 HVF؛ لا تدخل البايتات الثابتة قائمة RNG الأصلية الحتمية. تغطي فحوص ARM64 O0/O1/O2 عدد594 نداء؛ عدد بايتات الحارس المتغيرة ليس طول النسخ الدقيق. لا يوفر RNG المضيف أو جودة تشفير أو /dev/random أو استيرادات libc أو frameworks. يظل Intel HVF وiOS الفعلي والتوافق الكامل مع OS غير متحقق أو غير مكتمل.
+
+```text
+BSD getentropy500 / DarwinEntropy / EntropyReads / darwin_system.entropy_reads
+full64 size>256 -> EINVAL22; zero ->0; whole EFAULT14 consumes one record
+1..256 bytes per record / at most256 records / JSON transport65536 bytes
+entropy-replay / entropy-missing / entropy-exhausted / entropy-mismatch / entropy-partial
+15 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+68 mandatory workloads per platform / ARM64 204 / Intel 136
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).

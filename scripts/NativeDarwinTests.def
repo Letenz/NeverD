@@ -116,3 +116,6 @@ NEVERD_NATIVE_DARWIN_CASE(XattrMutationsPreserveInputAuthorityAndObjectLifetime)
 NEVERD_NATIVE_DARWIN_CASE(HardLinksShareObjectsAndRetainExplicitNameBoundary)
 NEVERD_NATIVE_DARWIN_CASE(SymbolicDescriptorsRetainObjectsAndNativeErrorOrder)
 NEVERD_NATIVE_DARWIN_CASE(NonblockingDescriptorsKeepNativeControlState)
+
+// Model replay on the native CPU; not a native deterministic RNG oracle.
+NEVERD_NATIVE_DARWIN_CASE(EntropyReplayKeepsBytesFaultOrderAndFreshRunLifetime)
