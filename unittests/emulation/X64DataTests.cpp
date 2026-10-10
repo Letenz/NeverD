@@ -972,6 +972,92 @@ TEST_P(X64Data, UnmodeledFormsRemainExplicitlyUnsupported) {
   }
 }
 
+TEST_P(X64Address, UnalignedExchangesPreserveAtomicMemoryAndAddressRegisters) {
+  llvm::cantFail(
+      CPU->map(Data + PageSize, PageSize, Read | Write | UserAccessible));
+  const auto Encoding = [](unsigned Size, bool Locked) {
+    std::vector<uint8_t> Bytes;
+    if (Locked)
+      Bytes.push_back(0xf0);
+    if (Size == 2)
+      Bytes.push_back(0x66);
+    if (Size == 8)
+      Bytes.push_back(0x48);
+    // XCHG [RDX], DL/DX/EDX/RDX: the destination register also owns the
+    // original address, so a premature register update corrupts the store.
+    Bytes.insert(Bytes.end(), {uint8_t(Size == 1 ? 0x86 : 0x87), 0x12});
+    return Bytes;
+  };
+  for (unsigned Size : {1u, 2u, 4u, 8u}) {
+    const uint64_t Mask = UINT64_MAX >> ((WordBytes - Size) * CHAR_BIT);
+    for (uint64_t Offset :
+         {uint64_t(1), uint64_t(3), uint64_t(7), uint64_t(61), PageSize - 3}) {
+      const uint64_t Address = Data + Offset;
+      for (bool Locked : {false, true}) {
+        for (unsigned Stop = 0; Stop != 3; ++Stop) {
+          SCOPED_TRACE(testing::Message() << Size << '/' << Offset << '/'
+                                          << Locked << '/' << Stop);
+          llvm::cantFail(CPU->writeInteger(Address, High, WordBytes));
+          llvm::cantFail(CPU->setReg(X64Register::DX, Address));
+          unsigned Reads = 0, Writes = 0;
+          BackendHooks Hooks;
+          Hooks.Read = [&](uint64_t A, uint32_t N) {
+            EXPECT_EQ(A, Address);
+            EXPECT_EQ(N, Size);
+            ++Reads;
+            if (Stop == 1)
+              CPU->stop();
+          };
+          Hooks.Write = [&](uint64_t A, uint32_t N, uint64_t V) {
+            EXPECT_EQ(Reads, 1u);
+            EXPECT_EQ(A, Address);
+            EXPECT_EQ(N, Size);
+            EXPECT_EQ(V, Address & Mask);
+            EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::DX)), Address);
+            EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, WordBytes)),
+                      High);
+            ++Writes;
+            if (Stop == 2)
+              CPU->stop();
+          };
+          const auto Bytes = Encoding(Size, Locked);
+          expectStopped(run(Bytes, std::move(Hooks)));
+          ASSERT_FALSE(HasFatalFailure());
+          EXPECT_EQ(Reads, 1u);
+          EXPECT_EQ(Writes, Stop == 1 ? 0u : 1u);
+          EXPECT_EQ(llvm::cantFail(CPU->readInteger(Address, WordBytes)),
+                    Stop ? High : (High & ~Mask) | (Address & Mask));
+          const uint64_t Preserved = Size == 4 ? 0 : Address & ~Mask;
+          EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::DX)),
+                    Stop ? Address : Preserved | (High & Mask));
+          EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::FLAGS)), InitialFlags);
+          EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)),
+                    Stop ? Code : Code + Bytes.size());
+        }
+      }
+    }
+  }
+  for (unsigned Size : {2u, 4u, 8u}) {
+    for (bool Locked : {false, true}) {
+      SetUp();
+      ASSERT_TRUE(CPU);
+      const uint64_t Address = Data + PageSize - 1;
+      llvm::cantFail(CPU->writeInteger(Address, 0x5a, 1));
+      llvm::cantFail(CPU->setReg(X64Register::DX, Address));
+      const auto Exit = run(Encoding(Size, Locked));
+      ASSERT_EQ(Exit.Kind, ExecutionExitKind::GuestFault) << Exit.Diagnostic;
+      ASSERT_TRUE(Exit.Fault);
+      EXPECT_EQ(Exit.Fault->Kind, BackendFaultKind::UnmappedMemory);
+      EXPECT_EQ(Exit.Fault->Address, Data + PageSize);
+      EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::DX)), Address);
+      EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code);
+      uint8_t Prefix = 0;
+      llvm::cantFail(CPU->snapshotBacking(Address, {&Prefix, 1}));
+      EXPECT_EQ(Prefix, 0x5a);
+    }
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
     DAZBackends, X64DAZData,
     testing::Values(
