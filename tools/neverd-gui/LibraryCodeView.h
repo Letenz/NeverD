@@ -46,6 +46,9 @@ public:
   void setRegionFolded(const QString &id, bool folded);
   Q_INVOKABLE QString regionAt(int position) const;
   Q_INVOKABLE int sourceLineAt(int position) const;
+  int originalPosition(int position) const {
+    return sourcePosition(position, false);
+  }
   Q_INVOKABLE QString originalSelection(int begin, int end) const;
   /// Display ranges [begin, end) of folded summaries.
   QVector<QPair<int, int>> foldedRanges() const;

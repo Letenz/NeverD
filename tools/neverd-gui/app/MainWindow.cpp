@@ -1487,6 +1487,72 @@ void MainWindow::applyIndicator() {
 }
 
 void MainWindow::rename() {
+  if (auto *code = focusedCodeView()) {
+    const auto target = code->text()->renameTarget();
+    const auto function = code->text()->function();
+    if (!target || !function) {
+      output_->append(
+          tr("Select a declared variable or an image name to rename"), 1);
+      return;
+    }
+    const QPointer<CodeView> view = code;
+    const auto representation = code->representation();
+    const auto epoch = session_.epoch();
+    const auto valid = [this, view, function, representation, epoch] {
+      return view && session_.epoch() == epoch &&
+             view->text()->function() == function &&
+             view->representation() == representation;
+    };
+    const auto edit = [this, view, target = *target, function = *function,
+                       representation, epoch,
+                       valid](std::optional<Address> address) {
+      if (!valid())
+        return;
+      bool ok = false;
+      const auto current = target.value("name").toString();
+      const auto name =
+          QInputDialog::getText(this, tr("Rename"), tr("New name:"),
+                                QLineEdit::Normal, current, &ok)
+              .trimmed();
+      if (view) {
+        view->window()->activateWindow();
+        view->text()->setFocus();
+      }
+      if (!ok || !valid() || name == current)
+        return;
+      if (address)
+        session_.rename(*address, name, epoch);
+      else {
+        const auto original = target.value("original").toString();
+        session_.editCode({{"address", hexAddress(function)},
+                           {"representation", representation},
+                           {"kind", "name"},
+                           {"original", original},
+                           {"name", name},
+                           {"identity", target.value("identity")}},
+                          epoch);
+      }
+      if (view)
+        view->text()->setFocus();
+    };
+    if (target->value("kind").toString() == QLatin1String("local"))
+      edit(std::nullopt);
+    else if (const auto address = addressValue(target->value("address")))
+      edit(address);
+    else
+      session_.read(
+          QStringLiteral("resolve"), {{"query", target->value("query")}}, code,
+          [this, edit, valid](const QJsonObject &result) {
+            if (valid()) {
+              if (const auto address = addressValue(result.value("address")))
+                edit(address);
+              else
+                output_->append(tr("The selected name has no image address"),
+                                1);
+            }
+          });
+    return;
+  }
   const auto item = currentAddress();
   const auto target = disassembly_->operandTarget();
   if (!item && !target)
@@ -1510,6 +1576,58 @@ void MainWindow::rename() {
 }
 
 void MainWindow::comment() {
+  if (auto *code = focusedCodeView()) {
+    const auto target = code->text()->commentTarget();
+    const auto function = code->text()->function();
+    if (!target || !function) {
+      output_->append(
+          tr("Select a source line; expand folded code before commenting it"),
+          1);
+      return;
+    }
+    const QPointer<CodeView> view = code;
+    const auto representation = code->representation();
+    const auto epoch = session_.epoch();
+    const auto edit = [this, view, target = *target, function = *function,
+                       representation, epoch](const QString &current) {
+      if (!view || session_.epoch() != epoch ||
+          view->text()->function() != function ||
+          view->representation() != representation)
+        return;
+      bool ok = false;
+      const auto text = QInputDialog::getMultiLineText(
+          this, tr("Please enter text"), tr("Comment this source line:"),
+          current, &ok);
+      if (view) {
+        view->window()->activateWindow();
+        view->text()->setFocus();
+      }
+      if (!ok || !view || session_.epoch() != epoch ||
+          view->text()->function() != function ||
+          view->representation() != representation)
+        return;
+      if (const auto address = addressValue(target.value("mapped_address")))
+        session_.setComment(*address, text, epoch);
+      else {
+        auto payload = target;
+        payload["address"] = hexAddress(function);
+        payload["representation"] = representation;
+        payload["kind"] = "comment";
+        payload["text"] = text;
+        session_.editCode(payload, epoch);
+      }
+      view->text()->setFocus();
+    };
+    if (const auto address = addressValue(target->value("mapped_address")))
+      session_.read(QStringLiteral("resolve"),
+                    {{"query", hexAddress(*address)}}, code,
+                    [edit](const QJsonObject &result) {
+                      edit(result.value("comment").toString());
+                    });
+    else
+      edit(target->value("text").toString());
+    return;
+  }
   const auto address = currentAddress();
   if (!address)
     return;

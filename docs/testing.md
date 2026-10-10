@@ -54,6 +54,13 @@ pages. `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
 
+`NeverDWorkerCodeEdits` checks declared local targets, image-name replacements,
+UTF-8 span remapping, comments and raw string isolation, and rejection of stale,
+colliding or shadowed names. The controller edits source, C and LLVM C with a
+pinned view and a different hidden assembly location, then checks undo/redo,
+save/restart and instruction-mapped comments. Snapshot coverage also verifies
+that read-only replicas load these edits without changing durable owner files.
+
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
 ctest --test-dir build-gui -R '^NeverDGui' --output-on-failure
@@ -67,6 +74,11 @@ replies retain a finite 30-second deadline. Set `NEVERD_CODE_NAV_WORKER` and
 `functionsActivationKeepsCodeWindow`, using a supported PE with at least three
 functions. The Pseudocode profile needs a worker that supports the `source`
 representation. Each worker must keep its matching engine and runtime libraries.
+The same variables enable `native-source` and `native-llvmc` rows of
+`pseudocodeNamesAndCommentsEditTheirSource` with the controlled Windows
+`acceptance.exe`/PDB fixture (`sample(int value)`). These rows copy the inputs
+to a disposable project, edit the real output through native widgets, and
+verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 

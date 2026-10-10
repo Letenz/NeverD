@@ -27,6 +27,7 @@ constexpr int MaxRecentFiles = 10;
 bool isEdit(const QString &operation) {
   static const QSet<QString> edits{QStringLiteral("annotation_set"),
                                    QStringLiteral("rename"),
+                                   QStringLiteral("code_edit"),
                                    QStringLiteral("function_create"),
                                    QStringLiteral("function_delete"),
                                    QStringLiteral("item_define"),
@@ -787,6 +788,15 @@ void Session::rename(Address function, const QString &name,
                              .arg(displayAddress(function), name.trimmed()),
                          0);
           });
+}
+
+void Session::editCode(const QJsonObject &edit, quint64 epoch) {
+  if (!acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  command(QStringLiteral("code_edit"), edit,
+          [this](const QJsonObject &) { refreshHistory(); });
 }
 
 void Session::setComment(Address address, const QString &text,

@@ -174,6 +174,209 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void pseudocodeNamesAndCommentsEditTheirSource_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::addColumn<bool>("native");
+    QTest::addColumn<bool>("mapped");
+    for (const auto &representation :
+         {QStringLiteral("source"), QStringLiteral("c"),
+          QStringLiteral("llvmc")})
+      QTest::newRow(qPrintable(representation))
+          << representation << false << false;
+    QTest::newRow("mapped-source") << QStringLiteral("source") << false << true;
+    if (!qEnvironmentVariable("NEVERD_CODE_NAV_WORKER").isEmpty() &&
+        !qEnvironmentVariable("NEVERD_CODE_NAV_FILE").isEmpty()) {
+      QTest::newRow("native-source")
+          << QStringLiteral("source") << true << false;
+      QTest::newRow("native-llvmc") << QStringLiteral("llvmc") << true << false;
+    }
+  }
+
+  void pseudocodeNamesAndCommentsEditTheirSource() {
+    QFETCH(QString, representation);
+    QFETCH(bool, native);
+    QFETCH(bool, mapped);
+    QTemporaryDir directory;
+    const auto input = qEnvironmentVariable("NEVERD_CODE_NAV_FILE");
+    const auto path =
+        native ? directory.filePath("acceptance.exe")
+               : writeFixture(directory,
+                              mapped ? QStringLiteral("code-edits-mapped.bin")
+                              : representation == QLatin1String("c")
+                                  ? QStringLiteral("code-edits-cpp.bin")
+                                  : QStringLiteral("code-edits.bin"));
+    if (native) {
+      QVERIFY(QFile::copy(input, path));
+      const auto pdb = QFileInfo(input).absolutePath() + "/" +
+                       QFileInfo(input).completeBaseName() + ".pdb";
+      if (QFileInfo::exists(pdb))
+        QVERIFY(QFile::copy(pdb, directory.filePath("acceptance.pdb")));
+    }
+    Workbench bench(native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
+                           : QString::fromLocal8Bit(TEST_WORKER));
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    auto *functions = bench.functions();
+    QVERIFY(functions);
+    QTRY_VERIFY_WITH_TIMEOUT(functions->model().total() >= 2,
+                             NativeOpenTimeoutMs);
+    const auto function =
+        native ? *functions->model().addressAt(0) : Base + 0x140;
+    const auto elsewhere =
+        native ? *functions->model().addressAt(1) : Base + 0x180;
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench
+        .action(representation == QLatin1String("llvmc")
+                    ? ActionId::ViewLLVMC
+                    : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(representation == QLatin1String("llvmc")
+                                    ? QStringLiteral("llvmc")
+                                    : QStringLiteral("source"));
+    QVERIFY(view);
+    if (representation == QLatin1String("c")) {
+      view->setRepresentation(representation);
+      QCOMPARE(view->representation(), representation);
+    }
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->loading() &&
+            code->allText().contains(native ? "value" : "int32_t v1"),
+        NativeOpenTimeoutMs);
+    for (auto *button : view->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(view->locked());
+    assembly->navigate(elsewhere);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(elsewhere));
+
+    int commentLine = -1;
+    auto edit = [&](const QString &name, const QString &value,
+                    bool comment = false) {
+      bench.window->activateWindow();
+      if (!QTest::qWaitForWindowActive(bench.window.get()))
+        return false;
+      code->setFocus();
+      if (!QTest::qWaitFor([&] { return code->hasFocus(); }, OpenTimeoutMs))
+        return false;
+      code->setCursorLine(0);
+      if (!code->findText(name, true))
+        return false;
+      if (comment) {
+        const auto target = code->commentTarget();
+        if (!target || !target->value("anchor").toString().contains(name))
+          return false;
+        commentLine = target->value("line").toInt(-1);
+      }
+      QTimer filler;
+      bool accepted = false;
+      connect(&filler, &QTimer::timeout, &filler, [&] {
+        if (auto *dialog = qobject_cast<QInputDialog *>(
+                QApplication::activeModalWidget())) {
+          dialog->setTextValue(value);
+          accepted = true;
+          dialog->accept();
+        }
+      });
+      filler.start(10);
+      if (comment)
+        bench.action(ActionId::EditComment)->trigger();
+      else
+        QTest::keyClick(code, Qt::Key_N);
+      return QTest::qWaitFor([&] { return accepted; }, OpenTimeoutMs);
+    };
+    QVERIFY(edit(native ? QStringLiteral("value") : QStringLiteral("v0"),
+                 QStringLiteral("input_value")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        code->allText().contains(native ? "input_value" : "v1 = input_value +"),
+        NativeOpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    if (!native)
+      QVERIFY(code->allText().contains("\"v0 v1 function_22\""));
+    QCOMPARE(assembly->currentFunction(), std::optional<Address>(elsewhere));
+
+    QVERIFY(
+        edit(native ? QStringLiteral("sample") : QStringLiteral("function_22"),
+             QStringLiteral("renamed_callee")));
+    QTRY_VERIFY_WITH_TIMEOUT(code->allText().contains("renamed_callee("),
+                             NativeOpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    if (!native)
+      QVERIFY(code->allText().contains("\"v0 v1 function_22\""));
+    QVERIFY(edit(native ? QStringLiteral("return (") : QStringLiteral("v1 ="),
+                 QString::fromUtf8("本行注释\nsecond */ line"), true));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        code->allText().contains(QString::fromUtf8("本行注释")), OpenTimeoutMs);
+    QVERIFY(code->allText().contains("second * / line"));
+    QVERIFY(commentLine >= 0);
+    QVERIFY(code->allText()
+                .split('\n')
+                .at(commentLine)
+                .contains(QString::fromUtf8("本行注释")));
+    QVERIFY(code->isVisible());
+    QVERIFY(view->locked());
+    if (mapped) {
+      bool checked = false;
+      bench.session.read("resolve", {{"query", hexAddress(function + 2)}}, code,
+                         [&](const QJsonObject &p) {
+                           checked = p.value("comment").toString().contains(
+                               QString::fromUtf8("本行注释"));
+                         });
+      QTRY_VERIFY_WITH_TIMEOUT(checked, OpenTimeoutMs);
+    }
+    bench.action(ActionId::EditUndo)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !code->allText().contains(QString::fromUtf8("本行注释")),
+        OpenTimeoutMs);
+    bench.action(ActionId::EditRedo)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        code->allText().contains(QString::fromUtf8("本行注释")), OpenTimeoutMs);
+    bench.session.save();
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(path + ".nddb"), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
+    QString databaseError;
+    const auto stored = ProjectDatabase::read(path + ".nddb", &databaseError);
+    QVERIFY2(stored.has_value(), qPrintable(databaseError));
+    QVERIFY(stored->sidecars.contains(QStringLiteral(".neverd-code.json")));
+    QVERIFY(stored->sidecars.value(QStringLiteral(".neverd-code.json"))
+                .contains("input_value"));
+    QTemporaryDir restored;
+    const auto unpacked = ProjectDatabase::unpack(
+        path + ".nddb", restored.path(), &databaseError);
+    QVERIFY2(!unpacked.isEmpty(), qPrintable(databaseError));
+    QCOMPARE(readAll(unpacked + ".neverd-code.json"),
+             readAll(path + ".neverd-code.json"));
+    bench.session.restart();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    view->showFunction(function);
+    bench
+        .action(representation == QLatin1String("llvmc")
+                    ? ActionId::ViewLLVMC
+                    : ActionId::ViewPseudocode)
+        ->trigger();
+    view->setRepresentation(representation);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        code->allText().contains("input_value") &&
+            code->allText().contains("renamed_callee(") &&
+            code->allText().contains(QString::fromUtf8("本行注释")),
+        NativeOpenTimeoutMs);
+    if (native) {
+      const auto capture = qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+      if (!capture.isEmpty()) {
+        QFile source(capture + "/edits-" + representation + ".txt");
+        QVERIFY(source.open(QIODevice::WriteOnly));
+        QVERIFY(source.write(code->allText().toUtf8()) > 0);
+        QVERIFY(bench.window->grab().save(capture + "/edits-" + representation +
+                                          ".png"));
+      }
+    }
+  }
   void slowPseudocodeKeepsBrowsingAndFollowsLatestFunction() {
     QTemporaryDir directory;
     Workbench bench;

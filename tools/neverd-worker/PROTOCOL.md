@@ -139,12 +139,13 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `annotation_set` | `{address,text}`; an empty string removes the comment. Stages an edit, increments revision, returns `{address,text,dirty:true,saved:false}`. Requires the writer lock. |
 | `save` | Commits staged annotations and their command-history cursor through the recovery journal; returns `{saved:true,dirty:false}` after flushing. Requires the writer lock. |
 | `rename` | `{address,name}`; any address: a function, data or a label. The name is not empty, has no spaces or control characters, is not an automatic form such as `sub_1234`, and is not used at another address. Requires clean annotations; never autosaves staged notes. Commits the rename plus history through the journal, reloads through the public C ABI, invalidates caches and increments revision. Returns `{address,name,saved:true}`. Requires the writer lock. |
+| `code_edit` | `{address,representation,kind}` for a function's source view (`c/llvmc/source/cpp/rust/go`). `kind:"name"` adds `{original,name,identity}` from a current local `code_names` target; an empty name or the original name clears the alias. `kind:"comment"` adds `{line,anchor,text}` from a current source row; empty text removes it. Refuses obsolete/ambiguous targets, colliding or invalid local names, dirty annotations and read-only sessions. Commits the presentation edit and history, invalidates caches and increments revision. Returns `{address,saved}`, `saved:false` on no change. Image names use `rename` and mapped instruction comments use `annotation_set`. |
 | `function_create` / `function_delete` | `{address}`. Capability present only with an engine that keeps function edits. Creates a function at the address, or deletes the one that starts there, as the engine allows (`<binary>.neverd-functions.json`). Requires clean annotations; commits the edit plus history, restarts function-level analysis and the reference index, and increments revision. Returns `{address,created,saved:true}`. Requires the writer lock. |
 | `item_define` | `{address,action,size?}`. Capability present only with an engine that keeps data items. `action:"data"` makes the item at the address a value of `size` 1, 2, 4 or 8 bytes, or without a size the next of byte, word, dword and qword after the current one; `"string"` makes the string that starts there an item, read with the `string_options` encodings; `"undefine"` shows the item's bytes as undefined bytes. Refused on instructions. Commits the items (`<binary>.neverd-items.json`) plus one history command, invalidates caches and increments revision. Returns `{address,kind,size,saved}`, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
 | `operand_format` | `{address,operand?:0-7,action}`. Capability present only with an engine that keeps operand formats. The address must start an instruction whose listing shows formats (x86 so far; other dialects are `unsupported`). A format changes an operand that is a plain number: `operand` when it is one, otherwise (or without `operand`) the instruction's last number; an instruction without one is `invalid_request`. `action` is a base of `include/neverd/OperandFormats.def` (`number`, `hex`, `decimal`, `binary`, `char`, `offset`; `number` also clears both flags), or `negate`/`invert` to toggle the sign change or the bitwise complement. Commits the formats (`<binary>.neverd-operands.json`) plus one history command; listing lines show the change without the listing being built again. Increments revision and returns `{address,operand,format:{base,negate,invert},saved}` with the operand that took the format, `saved:false` when nothing changed. Requires clean annotations and the writer lock. |
 | `reload` | Explicitly reloads the sidecars, discards staged annotations, clears dirty state, invalidates caches and increments revision. Returns metadata. |
-| `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand",address,before,after,index,applied}`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
-| `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item and operand history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
+| `history` | Standard `offset/limit` page. Returns `{schema_version:1,items,total,cursor,offset,next_offset,complete,can_undo,can_redo,available,blocked_reason,source_sha256}`. Items contain `{kind:"annotation"|"rename"|"function"|"item"|"operand"|"code",address,before,after,index,applied}`. Hashing is lazy and runs on the Session execution thread; the existing dashboard API can require VM analysis. |
+| `undo` / `redo` | No payload. Annotation changes/cursor movement remain dirty until Save. Rename, function, item, operand and code history changes require clean annotations and commit immediately. Return the history listing plus `{dirty,saved,address}`. All operations require the writer lock. |
 | `history_reset` | Explicitly starts empty history from the current sidecars, preserving comments/renames. Requires clean annotations and the writer lock, then reloads their state. It never resolves a pending recovery journal or maps comments to a changed binary. |
 | `contributions` | Available before opening a file. Returns `{schema_version:1,registry_revision:string,revision:string,items,complete:true}`. Each item has `{id,title,kind,namespace,version,query}` and optional table `columns`. The payload revision belongs to the registry, independently of the envelope's image revision. |
 | `contribution_register` | `{path}`. Validates a local manifest completely before adding or replacing its namespace; returns the new contributions listing. Registration never executes a query or loads scripts/QML. |
@@ -152,6 +153,26 @@ diagnostic; fixed-image authentication still requires its stricter evidence.
 | `contribution_execute` | `{id,address?:hex}`. Executes that registered, whitelisted read-only query, replacing its exact `${address}` token with the supplied address or image entry. Returns `{contribution_id,operation,result}`. Arbitrary query/payload overrides are not supported. |
 
 ## IR and C source mapping
+
+Source pages with edit metadata carry `code_names`, half-open UTF-8 spans in
+the complete displayed document. An address target has `kind:"address"`,
+`address` and `original`; a local target has `kind:"local"`, `original` and
+`identity`. The worker recognizes declared, unambiguous locals conservatively;
+member spellings and text in strings/comments supply no inferred local target.
+Rows add `code_anchor` (the original physical line) and `code_comment`.
+Presentation aliases replace identifier occurrences, preserving literals and
+remapping source names, library spans and prelude offsets. Notes render inline
+without adding physical lines. Existing image annotations appear on mapped
+source rows, and a function annotation appears at its definition.
+
+Local aliases and unmapped notes belong to a function and representation in
+`<binary>.neverd-code.json`. An alias's complete source identity is a portable
+presentation hash, not semantic evidence: a different engine rendering suppresses
+the alias and sets `code_edits_stale`. A note requires its line and original
+anchor to match. These edits do not change engine variables, types or instruction
+semantics. They share the normal journal, undo/redo, replica validation and `.nddb`
+packing. An older page API that rejects `source` as an unsupported representation
+may supply its HighC page instead, reported as `representation:"source",dialect:"c"`.
 
 A worker linked to an engine exporting the additive `neverd_ir_view_json`
 operation uses its native Low/Med/C/LLVMC pages directly. The symbol is resolved from the

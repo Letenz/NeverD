@@ -271,6 +271,8 @@ void CodeText::clear() {
   anchor_.reset();
   marked_.clear();
   sourceNames_.clear();
+  editNames_.clear();
+  editMetadata_ = false;
   sourceNameIndex_.clear();
   unread_ = 0;
   updateRange();
@@ -352,6 +354,10 @@ void CodeText::request(int offset, quint64 serial) {
         if (unread_ > 0)
           status_ += (status_.isEmpty() ? QString() : QStringLiteral(" · ")) +
                      tr("%n declarations shown as C", nullptr, unread_);
+        if (payload.value("code_edits_stale").toBool())
+          status_ +=
+              QStringLiteral(" · ") +
+              tr("Saved variable names belong to a different source rendering");
         updateRange();
         viewport()->update();
         emit statusChanged();
@@ -361,6 +367,8 @@ void CodeText::request(int offset, quint64 serial) {
           return;
         loading_ = false;
         // A refused function reads in no language and names nothing.
+        editNames_.clear();
+        editMetadata_ = true;
         sourceNames_.clear();
         sourceNameIndex_.clear();
         unread_ = 0;
@@ -382,6 +390,10 @@ void CodeText::request(int offset, quint64 serial) {
 }
 
 void CodeText::appendPage(const QJsonObject &payload, int offset) {
+  if (offset == 0) {
+    editNames_.clear();
+    editMetadata_ = payload.contains("code_names");
+  }
   const QString text = payload.value("text").toString();
   const qint64 pageOffset = payload.value("byte_offset").toInteger(-1);
   if (offset == 0) {
@@ -410,6 +422,7 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     lines_.clear();
     lineStarts_.clear();
   }
+  const int pageCharBase = source_.size();
   source_ += text;
   sourceBytes_ += text.toUtf8().size();
   if (!text.isEmpty() && !text.endsWith(QLatin1Char('\n'))) {
@@ -420,6 +433,20 @@ void CodeText::appendPage(const QJsonObject &payload, int offset) {
     sourceRows_.append(row.toObject().toVariantMap());
   // A source name's bytes are in the page that holds its line.
   const QByteArray bytes = text.toUtf8();
+  for (const auto &value : payload.value("code_names").toArray()) {
+    const auto name = value.toObject();
+    const auto begin = name.value("begin_byte").toInteger(-1) - pageOffset;
+    const auto end = name.value("end_byte").toInteger(-1) - pageOffset;
+    if (begin >= 0 && end > begin && end <= bytes.size()) {
+      auto target = name;
+      const auto spelling = QString::fromUtf8(bytes.mid(begin, end - begin));
+      target["name"] = spelling;
+      editNames_.push_back(
+          {pageCharBase + int(QString::fromUtf8(bytes.left(begin)).size()),
+           pageCharBase + int(QString::fromUtf8(bytes.left(end)).size()),
+           std::move(target)});
+    }
+  }
   bool namesAdded = false;
   for (const auto &value : payload.value("source_names").toArray()) {
     const auto name = value.toObject();
@@ -931,6 +958,57 @@ QString CodeText::currentToken() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size())
     return {};
   return lines_[cursorLine_].styled.tokenAt(cursorColumn_);
+}
+
+std::optional<QJsonObject> CodeText::renameTarget() const {
+  if (!function_ || loading_)
+    return std::nullopt;
+  const auto display = displayPosition(cursorLine_, cursorColumn_);
+  if (!library_.regionAt(display).isEmpty())
+    return std::nullopt;
+  const auto position =
+      library_.canFold() ? library_.originalPosition(display) : display;
+  for (const auto &name : editNames_)
+    if (position >= name.begin && position < name.end)
+      return name.target;
+  if (editMetadata_)
+    return std::nullopt;
+  const auto token = currentToken();
+  if (const auto at = objectAddress(token))
+    return QJsonObject{{"address", hexAddress(*at)}, {"name", token}};
+  if (const auto name = sourceNameAt(cursorLine_, cursorColumn_)) {
+    if (name->second.address)
+      return QJsonObject{{"address", hexAddress(*name->second.address)},
+                         {"name", token}};
+    return QJsonObject{{"query", name->second.symbol}, {"name", token}};
+  }
+  if (const auto linked = linkedSymbol(token))
+    return QJsonObject{{"query", *linked}, {"name", token}};
+  return std::nullopt;
+}
+
+std::optional<QJsonObject> CodeText::commentTarget() const {
+  if (!function_ || loading_ || lines_.isEmpty())
+    return std::nullopt;
+  const auto position = displayPosition(cursorLine_, 0);
+  if (library_.regionAt(position) == QLatin1String(PreludeRegion))
+    return QJsonObject{{"mapped_address", hexAddress(*function_)}};
+  if (!library_.regionAt(position).isEmpty())
+    return std::nullopt;
+  const int line =
+      library_.canFold() ? library_.sourceLineAt(position) : cursorLine_;
+  for (const auto &value : sourceRows_) {
+    const auto row = value.toMap();
+    if (row.value("line").toInt() != line || !row.contains("code_anchor"))
+      continue;
+    QJsonObject target{{"line", line},
+                       {"anchor", row.value("code_anchor").toString()},
+                       {"text", row.value("code_comment").toString()}};
+    if (const auto at = currentAddress())
+      target["mapped_address"] = hexAddress(*at);
+    return target;
+  }
+  return std::nullopt;
 }
 
 QString CodeText::selectedText() const {
