@@ -66,6 +66,182 @@ sequence. `LowIR -> MedIR` is shared. Structured decompilation then uses
 `MedIR -> LLVM IR` route. In particular, patch and lift modes deliberately skip
 HighIR.
 
+Windows registration-chain EH has separate source and generated contracts.
+The COFF loader owns the checked SEH/FuncInfo records. LowIR's
+`analyzeRegistrationStates` owns reaching levels, callback roots and chain
+lifetime, including the untouched bytes of narrow state stores; HighIR and
+native LLVM lowering consume that same result.
+It also publishes ordinary, runtime-dispatch and catch-resumption reachability.
+Empty levels alone do not identify dead code: a reached block can precede
+installation or follow removal. The call ABI consumer prunes only with complete
+state/lifetime/call proofs, current block identities and exact call receipts.
+For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
+its nested-search minimum and exact returned continuation and SavedESP facts.
+CFG construction closes those targets against function and instruction
+ownership and replays the analysis; it does not turn them into independent
+ordinary entries or insert a fabricated IP-to-state map into FuncInfo.
+The FuncInfo parser also authenticates the exact stored callback-pointer
+fields used by module function discovery and indirect-entry discovery;
+independent pointer references, exports, stated symbols and direct calls still
+create ordinary entries. Focused loading retains this parser's language-table
+ownership rather than reparsing registration data as table-driven EH.
+The LowIR no-return path proof lives in the low validation component, so call
+ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
+same architectural intrinsic-termination definition; both follow exceptional
+destinations after an ordinary no-return call.
+MedIR distinguishes established parent EBP, private callback
+ESP and a continuation's checked saved ESP. Its shared root-shape and
+entry-stack-coordinate helpers are consumed by stack proofs, HighIR and LLVM;
+a generic COPY or a conflicting ordinary entry cannot substitute for that
+runtime contract. Structured and fallback HighIR clauses retain object/frame
+offsets and the checked continuation list.
+HighIR can join split registration C++ intervals around a runtime-only catch
+only when the resulting protected slice is contiguous and has no independent
+entry. Callback separation and body extraction commit together under a shared
+copy budget. A separately converted ordinary PE32 callback cannot be embedded
+without a parent-frame projection; its clause retains the native target.
+`hasCallerCleanupRegistrationABI` owns the current PE32 stack-cleanup check,
+which the writer replays against immutable input.
+`getCheckedX86RegistrationLeafCalleeABI` uses the same affine transfer for
+callee-private stack and borrowed ECX object domains, with separate spill
+storage. Its exact object/image footprints describe a returning leaf; a caller
+still needs bounds, initialization and registration-separation proof. A leaf
+summary alone cannot establish a source call or native C++ capability.
+The same frame transfer separately reports whether every ordinary leaf return
+computes a 32-bit scalar independently of incoming registers, borrowed pointers
+and the caller PC. Frame privacy can admit an unobserved entry-EAX return;
+that weaker fact cannot choose a physical scalar call declaration.
+The same ABI owner authenticates immutable MSVC cleanup relays that derive
+ECX from the establisher EBP and tail-jump to a checked leaf. PE32 relative
+branches wrap at the architectural width; instruction storage does not wrap.
+This relay describes an object offset, without granting a parent-frame borrow
+at an unwind dispatch. The shared immutable-code reader verifies unique
+file-backed PE32 storage without pointer fixups before decoding the relay.
+The COFF loader separately owns bounded scalar ThrowInfo decoding and its
+immutable CatchableType graph. The call ABI owner binds that graph to an exact
+CRT import and a fully initialized private exception object, retaining real
+caller-PC observations and rejecting metadata mutation. This still describes
+a preserved helper, rather than authorizing a rewritten parent.
+One CFG construction memoizes these callee proofs under a shared budget that
+also charges failed attempts. Registration-state analysis projects each exact
+source call into the caller's allocated frame, intersects byte initialization
+at joins and excludes the registration record and SavedESP from object borrows.
+May-writes discard old value facts without inventing definite initialization.
+A checked private throw stops ordinary flow while retaining runtime dispatch
+and catch resumption; LowToMed consumes its source-indexed no-return fact.
+The same projection authenticates cleanup objects at every reachable unwind
+dispatch, including catch dispatch through its checked SavedESP. Every
+action must bind a checked relay and initialized, pointer-free read extent;
+conflicting predecessors or unproved actions discard cleanup and image-read
+authority. Cleanup receipts retain the source block, active state, action
+and projected extents.
+C++ catch homes are seeded only from a matching checked thrown type and
+object width. Reference catches carry a separate runtime-object address domain;
+private frame spills preserve that identity without treating it as an image or
+parent-frame pointer. Exact typed access receipts require the active catch
+context, bounded scalar reads/writes and complete source occurrences. Partial
+spills, pointer escape and use after catch return discard runtime authority.
+Adjacent table-owned catch labels extend the parent code range; cleanup relays
+retain their separate ABI and ordinary-entry conflicts remain explicit.
+These call facts remain separate from a compiler or installation receipt.
+For PE32 C++, the loader authenticates the original FuncInfo-loading handler
+thunk separately from the CRT dispatch entry. Its shared immutable-code reader
+admits absolute operands only at exact, unique HIGHLOW relocation slots; an
+opcode relocation, conflicting storage or changed runtime import rejects the
+identity. Native source lowering consumes the checked physical call ABI,
+typed catch home, cleanup borrows and catch-return target. LLVM records the
+exact parent and child funclet machine-code ranges when emitting indexed
+catch rows. Complete PE32 C++ receipts additionally close FuncInfo, unwind,
+try and handler tables and bind each cleanup to its generated state and range.
+The COFF table validator reparses source metadata, checks all raw table edges,
+matches the physical catch subfield and authenticates every absolute pointer
+fixup. SEH and C++ share generated-section and pointer-field ownership checks.
+The emitter fixes original image storage identity before materializing any
+function or shard, including masked native C++ sources. Preserved callee
+footprints and ordinary helper bodies therefore share the same canonical image
+storage. The independent C++ control validator replays source analysis, binds
+source ranges to stable LowIR identities and checks every source operation,
+catch, cleanup, invoke, chain occurrence and continuation. A no-return call
+carries its terminal block boundary because its normal successor cannot execute
+an anchor. SEH and C++ share the source-segment and whole-frame identity owner.
+The full C++ IR proof uses that same frame-address owner to authenticate actual
+object borrows, scalar pointer privacy, every-path byte initialization and typed
+runtime reference accesses. Reads and writes retain original image storage;
+language metadata, CRT dispatch and readonly image ranges remain immutable.
+Catch writes seed only the checked object home, and callee may-writes do not
+establish initialization. Control and table receipts cannot replace this proof.
+The x86 state pass also records its actual compiler-created registration handler
+as a private derived owner of the parent. MC closes that handler's exact range,
+table identity and physical registration-node base/offset. The COFF handler
+validator checks its FuncInfo load and original CRT tail branch, exact fixups,
+the decoded parent store into that node and the compiler's SafeSEH row. Kind,
+PC-relative flag and final encoded displacement retain separate meanings.
+These individual IR and machine-code receipts do not grant installation. The
+C++ transaction composes fresh full IR, complete table and handler proofs,
+preserves the original SafeSEH handlers and adds the compiler-owned handler
+only when the input already enables SafeSEH. Every dispatch pointer belongs to
+the emitted HIGHLOW closure; failures leave the generated image unchanged.
+Preparation also binds every actual entry mapping to its unique compiled source
+definition. The committed receipt retains sorted original/generated RVAs; final
+validation requires PE32 x86, an executable original entry and the exact E9
+target, in addition to the generated section hash. A complete language table
+cannot authorize an omitted or redirected entry trampoline.
+The same bounded COFF FuncInfo decoder exposes complete normalized wire graphs,
+record extents and callback-pointer fields without inventing a physical frame.
+Valid record aliases remain inspectable; distinct ownership is a separate
+requirement for reconstruction.
+The compiler table consumer cross-checks this decoding with its exact indexed
+extents. Prepared C++ graphs and entry encodings then require fresh equality
+when the final PE is mapped and decoded, even if a changed section hash is
+supplied. Ordinary loading also retains bounded direct PE32 entry-jump targets
+as tentative function boundaries, observes unindexed immediate stores through
+other base registers and authenticates private FuncInfo handler thunks before
+excluding in-range handlers. This preserves the installed language graph on
+reload. These observations do not make a frame callable; state replay of a
+generated realigned ESI frame still needs its own transfer proof.
+The loader authenticates the complete straight-line ESI prologue, including
+alignment/allocation, saved parent frame and SP, seeded state, handler/link
+slots and FS publication. A separate realigned anchor records its register,
+definition and bias from the runtime establisher. State-store observations use
+that bias; they do not imply entry EBP coordinates. Canonical LLVM schema 10
+and semantic digests retain the anchor. The EBP state solver and native source
+classifier explicitly reject it until a matching coordinate transfer exists.
+The original loader owns load-config's declared structure extent even when
+MSVC's directory retains its 64-byte compatibility size. Installation requires
+a complete unique raw-backed extent. Final guard validation uses this same
+declared extent, so a compatibility directory cannot hide CF or EH continuation
+fields; the complete declaration must remain inside one raw-backed section.
+The checked LowIR callee ABI also owns
+precise executed-instruction extents, including a private throw's exact import
+thunk. The transaction rejects every five-byte entry patch that intersects this
+preserved code or CRT dispatch, including interior sites; unrelated replacements
+may coexist. Native C++ source classification owns the currently supported
+single-try, single-catch projection and its state bound. Output additionally
+requires the compiler's catch, complete-table and handler receipt capabilities.
+The public plan dispatches to the same full C++ IR proof used by preparation;
+classification alone cannot authorize installation. Genuine source images are
+executed under Wine and the identical files are replayed with the Windows CRT.
+Native LLVM lowering owns
+the physical registration and callback frame recovery. The COFF transaction
+authenticates emitted scope rows, SafeSEH and absolute relocations before
+installing the complete module through either patch mode. Analysis facts alone
+cannot authorize native installation.
+COFF owns the bounded SEH3/EH4 scope-table byte extent. Both preserved callees
+and edited/generated LLVM must leave that complete table unchanged; EH4 also
+protects the exact image cookie. A compiler-owned scope snapshot cannot replace
+a runtime-mutated source table.
+The same FuncInfo decoder owns C++ metadata record extents and callback pointer
+fields. Native checks reparse the complete normalized graph before using those
+extents and reject distinct overlapping records. Preserved ordinary callees
+and cleanup relays must leave every language record unchanged. A checked
+private throw contributes its authenticated image and caller-PC effects;
+separate state reachability and object projection still govern native calls.
+The same LowIR frame domain owns EH4 cookie initialization and exact source
+checker occurrences. Native lowering may replace an authenticated pure check
+with a source-indexed execution event while LLVM owns the physical GS check.
+The public writer replays that ownership and the complete event order against
+immutable input; metadata alone cannot authorize removing a source call.
+
 Library feature recognition reads the shared MedIR boundary before the source
 routes diverge. `SignatureDB` owns validated packs and the existing byte matcher;
 MedIR analyses prove typed expressions and bounded COM ownership sequences.
@@ -342,7 +518,10 @@ rechecks the current graph. Bound calls retain their exact parameters and
 effects; only recognized architectural terminators bypass the ordinary
 intrinsic restriction. The final interprocedural no-return fixed point copies
 its result into each exact native source-call hint, including clearing stale
-effects on a later run. HighIR therefore sees the same termination boundary.
+effects on a later run. Both LowIR and MedIR proofs follow exceptional
+successors even when a no-return call ends the ordinary path. A handler that
+returns or whose body is unresolved prevents proving the enclosing function
+non-returning. HighIR therefore sees the same termination boundary.
 Publication revalidates the typed callee's complete source flow and requires
 its dependency closure; a function flag alone never authorizes a terminating
 source call. Reports, writes and traps before termination remain observable.

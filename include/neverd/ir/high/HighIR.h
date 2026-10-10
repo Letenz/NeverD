@@ -634,6 +634,12 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
       ContinuationsByEntry[Func.Entry] = Func.CxxContinuationTargets;
     }
   for (HighFunc &Func : Funcs) {
+    // A PE32 callback uses the parent's EBP and a private runtime stack.
+    // A separately converted ordinary HighFunc carries no projection of
+    // those coordinates. Retain its native clause target until that contract
+    // is proved; bodies already recovered inside the parent remain intact.
+    if (Func.ExceptionMetadata && Func.ExceptionMetadata->Registration)
+      continue;
     std::set<va_t> Active;
     std::set<va_t> Continuations = Func.CxxContinuationTargets;
     bool Attached = false;

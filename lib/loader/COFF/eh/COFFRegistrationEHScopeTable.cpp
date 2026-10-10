@@ -6,7 +6,9 @@
 
 #include "COFFRegistrationEHDetail.h"
 
+#include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -22,31 +24,29 @@ namespace {
 /// are indices into the same table, so a forward or out-of-range reference
 /// would make the nesting graph cyclic or dangling.
 bool isValidEnclosingLevel(int32_t Level, uint32_t Index, bool IsEH4) {
-  if (Level == -1)
-    return true;
-  if (IsEH4 && Level == -2)
+  if (Level == (IsEH4 ? -2 : -1))
     return true;
   return Level >= 0 && static_cast<uint32_t>(Level) < Index;
 }
 
-/// One `mov dword ptr [ebp+disp], imm32`, the only shape the compiler uses to
-/// set the current try level.
+/// One immediate byte, word or dword store relative to a checked base. A narrow
+/// immediate is an observation of written bits, not a complete runtime state.
 struct FrameSlotStore {
   va_t StoreVA = 0;
   va_t EndVA = 0;
   int32_t Displacement = 0;
   int32_t Value = 0;
+  uint8_t Width = 4;
 };
 
 /// Every such store inside a code range.
 ///
 /// This is a byte scan rather than a decode, so it can also match bytes that
-/// are the tail of some other instruction.  Nothing downstream trusts a hit on
-/// its own: a slot is only believed once the whole set of stores into it reads
-/// as a try-level sequence, which arbitrary bytes do not.
+/// are the tail of some other instruction. The CFG owner must authenticate
+/// each hit against its decoded instruction boundary before using it.
 std::vector<FrameSlotStore>
-findFrameSlotStores(const BinaryImage &Img,
-                    const ExceptionAddressRange &Range) {
+findFrameSlotStores(const BinaryImage &Img, const ExceptionAddressRange &Range,
+                    uint8_t BaseRegister, int32_t BaseOffset) {
   std::vector<FrameSlotStore> Stores;
   const Segment *Seg = Img.getSegmentFor(Range.Begin);
   if (!Seg || !Seg->isExecutable() || Range.Begin < Seg->VA ||
@@ -59,22 +59,40 @@ findFrameSlotStores(const BinaryImage &Img,
     return Stores;
 
   const uint8_t *Data = Seg->Data.data();
-  for (uint64_t I = Begin; I + 7 <= End; ++I) {
-    if (Data[I] != 0xC7)
-      continue;
-    // ModRM /0 with a base of EBP: mod=01 is the byte displacement and mod=10
-    // the dword one.  Both take a trailing imm32.
-    if (Data[I + 1] == 0x45) {
-      Stores.push_back(
-          {static_cast<va_t>(Seg->VA + I), static_cast<va_t>(Seg->VA + I + 7),
-           static_cast<int8_t>(Data[I + 2]),
-           static_cast<int32_t>(readLE<uint32_t>(Data + I + 3))});
-    } else if (Data[I + 1] == 0x85 && I + 10 <= End) {
-      Stores.push_back(
-          {static_cast<va_t>(Seg->VA + I), static_cast<va_t>(Seg->VA + I + 10),
-           static_cast<int32_t>(readLE<uint32_t>(Data + I + 2)),
-           static_cast<int32_t>(readLE<uint32_t>(Data + I + 6))});
+  for (uint64_t I = Begin; I + 4 <= End; ++I) {
+    uint64_t Opcode = I;
+    uint8_t Width = 4;
+    if (Data[Opcode] == 0x66) {
+      ++Opcode;
+      Width = 2;
     }
+    if (Data[Opcode] == 0xC6 && Width == 4)
+      Width = 1;
+    else if (Data[Opcode] != 0xC7)
+      continue;
+    // ModRM /0 with the selected unindexed frame base and a displacement.
+    const uint8_t ModRM = Data[Opcode + 1];
+    const unsigned Mod = ModRM >> 6;
+    const uint64_t DispBytes = Mod == 1 ? 1 : Mod == 2 ? 4 : 0;
+    if ((ModRM & 0x38) || (ModRM & 7) != BaseRegister || !DispBytes ||
+        Opcode + 2 + DispBytes + Width > End)
+      continue;
+    const uint64_t Immediate = Opcode + 2 + DispBytes;
+    const int64_t Displacement =
+        int64_t(BaseOffset) + (DispBytes == 1
+                                   ? int8_t(Data[Opcode + 2])
+                                   : readLE<int32_t>(Data + Opcode + 2));
+    if (Displacement < INT32_MIN || Displacement > INT32_MAX)
+      continue;
+    const int32_t Value = Width == 1   ? Data[Immediate]
+                          : Width == 2 ? readLE<uint16_t>(Data + Immediate)
+                                       : readLE<int32_t>(Data + Immediate);
+    Stores.push_back({static_cast<va_t>(Seg->VA + I),
+                      static_cast<va_t>(Seg->VA + Immediate + Width),
+                      int32_t(Displacement), Value, Width});
+    // Do not publish a second dword candidate inside the operand-size prefix.
+    if (Opcode != I)
+      I = Opcode;
   }
   return Stores;
 }
@@ -96,7 +114,9 @@ findFrameSlotStores(const BinaryImage &Img,
 /// in the image, where validation is all there is.
 uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
                             bool IsEH4,
-                            std::vector<RegistrationScopeRecord> &Scopes) {
+                            std::vector<RegistrationScopeRecord> &Scopes,
+                            bool &BudgetExhausted) {
+  BudgetExhausted = false;
   for (uint32_t Index = 0; Index < MaxRegistrationRecords; ++Index) {
     uint64_t Offset = uint64_t(Index) * 12;
     if (Offset > InvalidVA - ArrayVA)
@@ -125,23 +145,17 @@ uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
     Scope.IsFinally = Filter == 0;
     Scopes.push_back(Scope);
   }
+  if (Scopes.size() == MaxRegistrationRecords) {
+    const uint64_t Bytes = uint64_t(MaxRegistrationRecords) * 12;
+    BudgetExhausted =
+        Bytes > InvalidVA - ArrayVA || Limit == 0 || ArrayVA + Bytes != Limit;
+  }
   return static_cast<uint32_t>(Scopes.size());
 }
 
-/// Prove which frame slot holds the current try level, and keep the stores
-/// into it.
-///
-/// The scope table is indexed by a level the runtime reads out of the frame,
-/// so the table alone never says which code each scope guards — only the
-/// stores do.  Which slot holds the level is not recorded anywhere either, so
-/// it has to be proven, and the table itself supplies the vocabulary to prove
-/// it with: a try-level slot only ever receives the seed the prologue pushed
-/// or the index of a scope the table declares.  A frame slot qualifies when
-/// every store into it is one of those values, the seed is among them, and so
-/// is at least one real scope index.  Ordinary locals fail on the first count
-/// by holding something outside the range and on the second by never being set
-/// to the seed.  When more than one slot survives, nothing was proven and no
-/// ranges are published.
+/// Collect immediate stores in the prologue-authenticated state slot. For
+/// other prologues retain a unique value-pattern observation for inspection;
+/// that heuristic does not establish registration ownership or CFG states.
 void recoverTryLevelStores(const BinaryImage &Img,
                            const ExceptionAddressRange &Range, int32_t Seed,
                            size_t ScopeCount, RegistrationChainInfo &Chain) {
@@ -150,7 +164,12 @@ void recoverTryLevelStores(const BinaryImage &Img,
   const int32_t Highest = static_cast<int32_t>(ScopeCount) - 1;
 
   std::map<int32_t, std::vector<FrameSlotStore>> BySlot;
-  for (const FrameSlotStore &Store : findFrameSlotStores(Img, Range)) {
+  const uint8_t BaseRegister =
+      Chain.RealignedFrame ? Chain.RealignedFrame->BaseRegister : 5;
+  const int32_t BaseOffset =
+      Chain.RealignedFrame ? Chain.RealignedFrame->BaseOffset : 0;
+  for (const FrameSlotStore &Store :
+       findFrameSlotStores(Img, Range, BaseRegister, BaseOffset)) {
     // The try level lives in the frame the prologue established, which is
     // below the frame pointer.  A positive displacement addresses an incoming
     // argument and cannot be it.
@@ -160,11 +179,26 @@ void recoverTryLevelStores(const BinaryImage &Img,
 
   const std::vector<FrameSlotStore> *Winner = nullptr;
   int32_t WinningSlot = 0;
+  if (Chain.RegistrationOffset && Chain.TryLevelOffset) {
+    auto It = BySlot.find(*Chain.TryLevelOffset);
+    if (It != BySlot.end()) {
+      Winner = &It->second;
+      WinningSlot = It->first;
+    }
+  }
+  // Legacy observations without an authenticated layout remain inspectable,
+  // but cannot authorize CFG state recovery or native frame ownership.
   for (const auto &[Slot, Stores] : BySlot) {
+    if (Chain.RegistrationOffset)
+      break;
     bool SawSeed = false;
     bool SawScope = false;
     bool AllInRange = true;
     for (const FrameSlotStore &Store : Stores) {
+      if (Store.Width != 4) {
+        AllInRange = false;
+        continue;
+      }
       if (Store.Value == Seed)
         SawSeed = true;
       else if (Store.Value >= 0 && Store.Value <= Highest)
@@ -185,12 +219,12 @@ void recoverTryLevelStores(const BinaryImage &Img,
   Chain.TryLevelOffset = WinningSlot;
   Chain.TryLevelStores.reserve(Winner->size());
   for (const FrameSlotStore &Store : *Winner)
-    Chain.TryLevelStores.push_back({Store.StoreVA, Store.EndVA, Store.Value});
-  std::sort(Chain.TryLevelStores.begin(), Chain.TryLevelStores.end(),
-            [](const RegistrationTryLevelStore &A,
-               const RegistrationTryLevelStore &B) {
-              return A.StoreVA < B.StoreVA;
-            });
+    Chain.TryLevelStores.push_back(
+        {Store.StoreVA, Store.EndVA, Store.Value, Store.Width});
+  std::sort(
+      Chain.TryLevelStores.begin(), Chain.TryLevelStores.end(),
+      [](const RegistrationTryLevelStore &A,
+         const RegistrationTryLevelStore &B) { return A.StoreVA < B.StoreVA; });
 }
 
 /// `_except_handler4` prefixes the entry array with the frame displacements of
@@ -210,3 +244,26 @@ bool decodeEH4Header(const BinaryImage &Img, va_t TableVA,
 }
 
 } // namespace neverd::coff_loader::registration_detail
+
+namespace neverd::coff_loader {
+std::optional<ExceptionAddressRange>
+getX86RegistrationSEHScopeTableRange(const ExceptionFunction &Function) {
+  const bool EH3 =
+      Function.Personality == ExceptionPersonality::ExceptHandler3 &&
+      Function.Encoding == ExceptionEncoding::X86ScopeTableEH3;
+  const bool EH4 =
+      Function.Personality == ExceptionPersonality::ExceptHandler4 &&
+      Function.Encoding == ExceptionEncoding::X86ScopeTableEH4;
+  if ((!EH3 && !EH4) || !Function.Registration)
+    return std::nullopt;
+  const auto &Chain = *Function.Registration;
+  if (!Chain.ScopeTableVA || Chain.ScopeTableVA > UINT32_MAX ||
+      Chain.Scopes.empty() ||
+      Chain.Scopes.size() > limits::kMaxRegistrationEHRecords)
+    return std::nullopt;
+  const uint64_t Bytes = uint64_t(Chain.Scopes.size()) * 12 + (EH4 ? 16 : 0);
+  if (Bytes > uint64_t(UINT32_MAX) + 1 - Chain.ScopeTableVA)
+    return std::nullopt;
+  return ExceptionAddressRange{Chain.ScopeTableVA, Chain.ScopeTableVA + Bytes};
+}
+} // namespace neverd::coff_loader

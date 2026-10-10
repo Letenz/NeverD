@@ -28,6 +28,10 @@ constexpr llvm::StringLiteral GSFH4Domain("windows-eh.gs-fh4");
 constexpr uint8_t SEHGraphKind = 1;
 constexpr uint8_t FH3GraphKind = 2;
 constexpr uint8_t FH4GraphKind = 3;
+// Kind 4 omitted store widths. A new domain rejects those old receipts without
+// changing the existing table-driven SEH and C++ semantic identities.
+constexpr uint8_t RegistrationSEHGraphKind = 5;
+constexpr uint8_t RegistrationCxxGraphKind = 6;
 static_assert(GraphDomain.size() <= std::numeric_limits<uint32_t>::max());
 static_assert(TokenDomain.size() <= std::numeric_limits<uint32_t>::max());
 
@@ -213,22 +217,101 @@ getSEHGraphDigest(const ExceptionFunction &EH, Arch TargetArch) {
   return llvm::SHA256::hash(Bytes.bytes());
 }
 
+bool appendRegistrationContract(CanonicalBytes &Bytes,
+                                const ExceptionFunction &EH, uint8_t Encoding) {
+  const RegistrationChainInfo &Chain = *EH.Registration;
+  if (!appendCount(Bytes, Chain.Scopes.size()))
+    return false;
+  Bytes.appendU8(Encoding);
+  Bytes.appendU64(EH.PersonalityVA);
+  Bytes.appendU64(EH.HandlerDataVA);
+  Bytes.appendU64(Chain.HandlerVA);
+  Bytes.appendU64(Chain.ScopeTableVA);
+  for (const auto &Offset :
+       {Chain.TryLevelOffset, Chain.SeededTryLevel, Chain.RegistrationOffset}) {
+    Bytes.appendU8(Offset.has_value());
+    if (Offset)
+      Bytes.appendI32(*Offset);
+  }
+  Bytes.appendU8(Chain.HasSecurityCookies);
+  Bytes.appendI32(Chain.GSCookieOffset);
+  Bytes.appendI32(Chain.GSCookieXOROffset);
+  Bytes.appendI32(Chain.EHCookieOffset);
+  Bytes.appendI32(Chain.EHCookieXOROffset);
+  Bytes.appendU32(Chain.ScopeTableMagic);
+  Bytes.appendU64(Chain.ChainInstallVA);
+  Bytes.appendU64(Chain.ChainRemoveVA);
+  Bytes.appendU8(Chain.RealignedFrame.has_value());
+  if (Chain.RealignedFrame) {
+    const auto &Frame = *Chain.RealignedFrame;
+    Bytes.appendU8(Frame.BaseRegister);
+    Bytes.appendU64(Frame.DefinitionVA);
+    Bytes.appendU32(Frame.Alignment);
+    Bytes.appendU32(Frame.AllocationBytes);
+    Bytes.appendI32(Frame.BaseOffset);
+    Bytes.appendI32(Frame.SavedParentFrameOffset);
+  }
+  for (const RegistrationScopeRecord &Scope : Chain.Scopes) {
+    Bytes.appendI32(Scope.EnclosingLevel);
+    Bytes.appendU64(Scope.FilterVA);
+    Bytes.appendU64(Scope.HandlerVA);
+    Bytes.appendU8(Scope.IsFinally);
+  }
+  if (!appendCount(Bytes, Chain.TryLevelStores.size()))
+    return false;
+  for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
+    if ((Store.Width != 1 && Store.Width != 2 && Store.Width != 4) ||
+        (Store.Width == 1 && uint32_t(Store.Level) > UINT8_MAX) ||
+        (Store.Width == 2 && uint32_t(Store.Level) > UINT16_MAX))
+      return false;
+    Bytes.appendU64(Store.StoreVA);
+    Bytes.appendU64(Store.EndVA);
+    Bytes.appendI32(Store.Level);
+    Bytes.appendU8(Store.Width);
+  }
+  return true;
+}
+
+std::optional<std::array<uint8_t, 32>>
+getRegistrationSEHGraphDigest(const ExceptionFunction &EH) {
+  if (!EH.Registration || EH.SEH || EH.Cxx || EH.GSCookie ||
+      EH.ParseStatus != ExceptionParseStatus::Complete ||
+      (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
+       EH.Encoding != ExceptionEncoding::X86ScopeTableEH4))
+    return std::nullopt;
+  CanonicalBytes Bytes;
+  if (!appendGraphHeader(Bytes, RegistrationSEHGraphKind, Arch::X86,
+                         EH.CodeRange) ||
+      !appendRegistrationContract(
+          Bytes, EH,
+          EH.Encoding == ExceptionEncoding::X86ScopeTableEH4 ? 2 : 1))
+    return std::nullopt;
+  return llvm::SHA256::hash(Bytes.bytes());
+}
+
 std::optional<std::array<uint8_t, 32>>
 getCxxGraphDigest(const ExceptionFunction &EH, Arch TargetArch) {
+  const bool Registration = EH.Registration.has_value();
   if (!EH.Cxx || EH.SEH || EH.ParseStatus != ExceptionParseStatus::Complete ||
-      EH.model() != ExceptionModel::WindowsTable ||
-      !EH.Cxx->hasValidStateGraph())
+      !EH.Cxx->hasValidStateGraph() ||
+      (Registration ? (TargetArch != Arch::X86 ||
+                       EH.Encoding != ExceptionEncoding::X86CxxFuncInfo ||
+                       !EH.Registration->Scopes.empty())
+                    : EH.model() != ExceptionModel::WindowsTable))
     return std::nullopt;
 
   const CxxExceptionInfo &Cxx = *EH.Cxx;
-  const bool IsFH3 = EH.Personality == ExceptionPersonality::CxxFrameHandler3 &&
-                     Cxx.NativeEncoding == CxxExceptionInfo::Encoding::FH3;
+  const bool IsFH3 =
+      (EH.Personality == ExceptionPersonality::CxxFrameHandler3 ||
+       (Registration &&
+        EH.Personality == ExceptionPersonality::CxxFrameHandlerX86)) &&
+      Cxx.NativeEncoding == CxxExceptionInfo::Encoding::FH3;
   const bool IsGSFH4 =
       EH.Personality == ExceptionPersonality::GSHandlerCheckEH4;
   const bool IsFH4 =
       (EH.Personality == ExceptionPersonality::CxxFrameHandler4 || IsGSFH4) &&
       Cxx.NativeEncoding == CxxExceptionInfo::Encoding::FH4;
-  if ((!IsGSFH4 && EH.GSCookie) ||
+  if ((Registration && !IsFH3) || (!IsGSFH4 && EH.GSCookie) ||
       (IsGSFH4 && (!EH.GSCookie || EH.GSCookie->ParseStatus !=
                                        ExceptionParseStatus::Complete)) ||
       (!IsFH3 && !IsFH4))
@@ -238,9 +321,17 @@ getCxxGraphDigest(const ExceptionFunction &EH, Arch TargetArch) {
     return std::nullopt;
 
   CanonicalBytes Bytes;
-  if (!appendGraphHeader(Bytes, IsFH3 ? FH3GraphKind : FH4GraphKind, TargetArch,
-                         EH.CodeRange))
+  const uint8_t GraphKind = Registration ? RegistrationCxxGraphKind
+                            : IsFH3      ? FH3GraphKind
+                                         : FH4GraphKind;
+  if (!appendGraphHeader(Bytes, GraphKind, TargetArch, EH.CodeRange))
     return std::nullopt;
+  if (Registration) {
+    Bytes.appendU8(
+        EH.Personality == ExceptionPersonality::CxxFrameHandler3 ? 1 : 2);
+    if (!appendRegistrationContract(Bytes, EH, 3))
+      return std::nullopt;
+  }
   Bytes.appendU8(IsFH3 ? 1 : 2);
   Bytes.appendU64(Cxx.NativeFuncInfoVA);
   Bytes.appendU32(Cxx.Magic);
@@ -349,10 +440,13 @@ makeToken(const std::array<uint8_t, 32> &GraphDigest,
 std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken>
 getSEHScopeSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
                          uint32_t ScopeIndex) {
-  if (!EH.SEH || ScopeIndex >= EH.SEH->Scopes.size())
+  const bool Registration = TargetArch == Arch::X86 && EH.Registration;
+  if (Registration ? ScopeIndex >= EH.Registration->Scopes.size()
+                   : (!EH.SEH || ScopeIndex >= EH.SEH->Scopes.size()))
     return std::nullopt;
   const std::optional<std::array<uint8_t, 32>> GraphDigest =
-      getSEHGraphDigest(EH, TargetArch);
+      Registration ? getRegistrationSEHGraphDigest(EH)
+                   : getSEHGraphDigest(EH, TargetArch);
   if (!GraphDigest)
     return std::nullopt;
   return makeToken(*GraphDigest,
@@ -373,6 +467,27 @@ getCxxCatchSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
   return makeToken(*GraphDigest,
                    llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCatch,
                    TryBlockIndex, CatchIndex);
+}
+
+std::optional<llvm::mc_rewrite::RewriteWinEHSemanticToken>
+getCxxCleanupSemanticToken(const ExceptionFunction &EH, Arch TargetArch,
+                           uint32_t ActionIndex) {
+#ifndef LLVM_NEVERD_X86_CXX_FUNCTION_RECEIPTS
+  return std::nullopt;
+#else
+  if (TargetArch != Arch::X86 || !EH.Registration || !EH.Cxx ||
+      ActionIndex >= EH.Cxx->UnwindMap.size())
+    return std::nullopt;
+  const auto &Action = EH.Cxx->UnwindMap[ActionIndex];
+  if (!Action.ActionVA || Action.Kind != CxxUnwindAction::ActionKind::Direct)
+    return std::nullopt;
+  const auto GraphDigest = getCxxGraphDigest(EH, TargetArch);
+  if (!GraphDigest)
+    return std::nullopt;
+  return makeToken(*GraphDigest,
+                   llvm::mc_rewrite::RewriteWinEHSemanticKind::CxxCleanup,
+                   ActionIndex, 0);
+#endif
 }
 
 } // namespace neverd::windows_eh_semantics

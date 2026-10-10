@@ -38,6 +38,15 @@
 
 namespace neverd {
 
+bool MedLLVMEmitter::preservesRegistrationImageStorage(uint64_t Begin,
+                                                       uint64_t End) const {
+  return Begin < End && llvm::any_of(
+                            PreservedRegistrationImageStorageRanges,
+                            [&](const auto &Range) {
+                              return Range.Begin < End && Begin < Range.End;
+                            });
+}
+
 bool MedLLVMEmitter::hasAuthenticatedFunctionEntryVA(va_t Address) const {
   return EmittedFuncNames.count(Address) != 0 ||
          (Img && Img->isImportStubAt(Address));
@@ -312,6 +321,14 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
   };
   std::map<uint64_t, PtrSlot> SlotsByVA;
   bool HasRuntimeCallableStorage = false;
+  const bool HasRegistrationStorage =
+      TargetArch == Arch::X86 && TargetFormat == BinaryFormat::COFF &&
+      llvm::any_of(Img->ExceptionMetadata.Functions, [&](const auto &EH) {
+        return EH.Registration && EH.Registration->ScopeTableVA >= RunStart &&
+               EH.Registration->ScopeTableVA < RunEnd;
+      });
+  const bool HasPreservedRegistrationStorage =
+      preservesRegistrationImageStorage(RunStart, RunEnd);
   auto slotInRun = [&](uint64_t S) {
     return S >= RunStart && S <= RunEnd && PtrSz <= RunEnd - S;
   };
@@ -450,7 +467,10 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
       if (Imported && !Imported->Name.empty()) {
         Kind = PtrSlotKind::Import;
         ImportName = Imported->Name;
-      } else if (!resolveImageFunctionAddress(TargetVA)) {
+      } else if ((HasRegistrationStorage || HasPreservedRegistrationStorage)
+                     ? (!Img->isCodeAddress(TargetVA) ||
+                        !Img->readVA(TargetVA, 1))
+                     : !resolveImageFunctionAddress(TargetVA)) {
         if (!FatalCodePointerResolution)
           llvm::WithColor::error()
               << "med_llvm_emitter: relocation-proven code pointer at 0x"
@@ -493,7 +513,12 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(uint64_t SlotVA,
   // patch mode binds this canonical name to the original run, while standalone
   // lift output must receive the storage contract from its environment.  Code
   // fallback targets were still authenticated in the pass above.
-  if (HasRuntimeCallableStorage) {
+  // Registration tables likewise retain their original image identity. Their
+  // fields name dispatcher-only labels with an implicit frame ABI, rather than
+  // ordinary address-taken LLVM blocks. Native lowering emits a fresh table
+  // for its own callbacks; source inspection still sees the original storage.
+  if (HasRuntimeCallableStorage || HasRegistrationStorage ||
+      HasPreservedRegistrationStorage) {
     auto *GV = new llvm::GlobalVariable(*Mod, StructTy, /*isConstant=*/false,
                                         llvm::GlobalValue::ExternalLinkage,
                                         /*Initializer=*/nullptr, GlobalName);

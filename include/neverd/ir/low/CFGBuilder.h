@@ -28,12 +28,15 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <tuple>
 #include <vector>
 
 namespace neverd {
+
+class RegistrationCallCalleeIndex;
 
 namespace libc {
 class NoReturnTargetIndex;
@@ -1119,6 +1122,11 @@ private:
   /// successors and extract jump tables.  Shared by the initial build, the
   /// multi-stage re-resolution, and the indirect-tail-call conversion.
   void rebuildBlocks(LowFunc &Func);
+
+  /// Decode the exact parent continuations returned by PE32 C++ catches and
+  /// replay their runtime state/stack transfers on the expanded graph.
+  void closeRegistrationCxxContinuations(const BinaryImage &Img, Decoder &Dec,
+                                         LowFunc &Func);
   void prepareRelativeRelocationRootSourceCache();
   void extractJumpTables(LowFunc &Func);
   std::vector<va_t> resolveJumpTable(const BinaryImage &Img,
@@ -2659,6 +2667,7 @@ private:
   /// saves no register: it has no unwind record or one without operations.
   bool CurrentFuncIsFramelessLeaf = false;
   const BinaryImage *CurrentImg = nullptr;
+  std::shared_ptr<RegistrationCallCalleeIndex> RegistrationCallees;
   /// One-build reverse index for image-global 32-bit relative-code
   /// relocations.  rebuildBlocks may run many times during resolver fixed-point
   /// replay; scanning every image slot on every stage multiplies unrelated

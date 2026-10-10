@@ -631,6 +631,7 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   // return address, is lifted again as an ordinary call; anything else that
   // cannot be proven makes the return that breaks the proof unsupported.
   KeptOwnInteriorCallTargets.clear();
+  RegistrationCallees.reset();
   for (;;) {
     LowFunc Func = buildOnce(Img, Dec, EntryAddr, FuncName);
     if (OwnInteriorCallSites.empty())
@@ -859,6 +860,11 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
       for (const RustLandingPad &Pad : Exception->Rust->LandingPads)
         AddExceptionalRoot(Pad.PadVA);
     if (Exception->Registration) {
+      const RegistrationChainInfo &Chain = *Exception->Registration;
+      const unsigned InstallSize = Chain.chainInstallInstructionSize();
+      if (Chain.RegistrationOffset && Chain.ChainInstallVA != 0 &&
+          Chain.ChainInstallVA <= InvalidVA - InstallSize)
+        AddBoundary(Chain.ChainInstallVA + InstallSize);
       for (const RegistrationScopeRecord &Scope :
            Exception->Registration->Scopes) {
         AddExceptionalRoot(Scope.FilterVA);
@@ -975,6 +981,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   JumpTableProofContextComplete = false;
 
   convertIndirectTailCalls(Func);
+  closeRegistrationCxxContinuations(Img, Dec, Func);
 
   std::set<va_t> ReachableInsnAddrs;
   for (const LowBlock &Block : Func.Blocks)

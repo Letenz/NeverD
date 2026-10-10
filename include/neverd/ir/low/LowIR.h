@@ -15,6 +15,7 @@
 #define NEVERD_IR_LOW_LOWIR_H
 
 #include "neverd/ir/NdOps.h"
+#include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -1156,6 +1157,7 @@ struct LowFunc {
   /// rather than being reinterpreted as a function-pointer tail call.
   std::set<va_t> UnsafeIndirectBranchAddresses;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  std::optional<RegistrationStateAnalysis> RegistrationStates;
 
   /// Coverage accounting for recursive-descent decode and lift.  These values
   /// describe reachable instruction starts, not a linear sweep of the section.

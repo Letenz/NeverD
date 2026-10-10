@@ -30,6 +30,7 @@
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-emitter"
 #include "neverd/ArchSupport.h"
@@ -45,10 +46,12 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Mangler.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/BinaryRewrite.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -756,6 +759,84 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                                           JT.StorageRanges.begin(),
                                           JT.StorageRanges.end());
     }
+  // Decide shared image identity before any function can cache a private run.
+  // Native C++ calls preserve immutable input helpers, whose image footprints
+  // are supplied by the same state/ABI owner as their exact call occurrences.
+  // Inspect masked bodies too, so every shard agrees on storage identity.
+  PreservedRegistrationImageStorageRanges.clear();
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF && Img) {
+    for (size_t I = 0; I != Funcs.size(); ++I) {
+      const auto &Func = Funcs[I];
+      if (!Func.ExceptionMetadata || !Func.RegistrationStates ||
+          Func.SkippedSSA || !Func.RegistrationCallerCleanupABIComplete)
+        continue;
+      const auto Classification =
+          classifyWindowsEHNativeSource(*Func.ExceptionMetadata, TheArch, Fmt,
+                                        WindowsEHNativeCapability::IRLowering);
+      const auto &States = *Func.RegistrationStates;
+      if (!Classification.canLowerNativeIR() ||
+          Classification.Model !=
+              WindowsEHNativeSourceModel::X86RegistrationCxx ||
+          !States.Complete || !States.RegistrationLifetimeComplete ||
+          !States.CallFrameEffectsComplete ||
+          !States.CleanupFrameEffectsComplete)
+        continue;
+      auto Preserve = [&](const RegistrationCalleeFrameContract &Contract) {
+        for (const auto *Ranges : {&Contract.ImageReads, &Contract.ImageWrites,
+                                   &Contract.CallerPCWrites})
+          for (const auto &Range : *Ranges) {
+            if (!Range.isValid() || Range.End > uint64_t(UINT32_MAX) + 1)
+              return false;
+            PreservedRegistrationImageStorageRanges.push_back(Range);
+          }
+        return true;
+      };
+      bool Complete = true;
+      for (const auto &Range : States.ImageReads) {
+        if (!Range.isValid() || Range.End > uint64_t(UINT32_MAX) + 1) {
+          Complete = false;
+          break;
+        }
+        PreservedRegistrationImageStorageRanges.push_back(Range);
+      }
+      // Parent image writes can be in a separate writable run from every
+      // preserved helper. Give all writable image storage one shared identity.
+      for (const auto &Segment : Img->Segments)
+        if (Segment.isWritable() && Segment.Size) {
+          if (Segment.VA > UINT32_MAX ||
+              Segment.Size > uint64_t(UINT32_MAX) + 1 - Segment.VA) {
+            Complete = false;
+            break;
+          }
+          PreservedRegistrationImageStorageRanges.push_back(
+              {Segment.VA, Segment.VA + Segment.Size});
+        }
+      for (const auto &Contract : States.CalleeContracts)
+        Complete &= Preserve(Contract);
+      for (const auto &Contract : States.CleanupContracts)
+        Complete &= Preserve(Contract.Leaf);
+      if (!Complete) {
+        llvm::WithColor::error() << "med_llvm_emitter: malformed preserved "
+                                    "registration image footprint\n";
+        return nullptr;
+      }
+    }
+    llvm::sort(PreservedRegistrationImageStorageRanges, [](const auto &Left,
+                                                           const auto &Right) {
+      return std::tie(Left.Begin, Left.End) < std::tie(Right.Begin, Right.End);
+    });
+    size_t Count = 0;
+    for (const auto &Range : PreservedRegistrationImageStorageRanges) {
+      if (Count && Range.Begin <=
+                       PreservedRegistrationImageStorageRanges[Count - 1].End) {
+        auto &Previous = PreservedRegistrationImageStorageRanges[Count - 1];
+        Previous.End = std::max(Previous.End, Range.End);
+      } else {
+        PreservedRegistrationImageStorageRanges[Count++] = Range;
+      }
+    }
+    PreservedRegistrationImageStorageRanges.resize(Count);
+  }
   IdentityPreservingDataAddrs.clear();
   for (const MedFunc &Func : Funcs)
     for (const MedBlock &Block : Func.Blocks) {
@@ -903,8 +984,13 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       ModuleSuppressibleJumpTableRelocationSlots.insert(Slot);
 
   const char *Triple = llvmEmitTriple(TheArch, Fmt);
-  if (Triple)
+  if (Triple) {
     Mod_->setTargetTriple(llvm::Triple(Triple));
+    // Registration callbacks recover pointer-sized cells before target
+    // codegen creates a TargetMachine. Use LLVM's target layout here too.
+    if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+      Mod_->setDataLayout(Mod_->getTargetTriple().computeDataLayout());
+  }
   if (Fmt == BinaryFormat::COFF && Img) {
     uint32_t GuardFlags = Img->DynInfo.GuardFlags;
     if ((GuardFlags & uint32_t(llvm::COFF::GuardFlags::CF_INSTRUMENTED)) != 0)
@@ -926,14 +1012,22 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   // original runtime thunk authoritative, and resolves both spellings to it.
   std::map<va_t, std::string> NativePersonalityNames;
   std::set<va_t> ConflictingPersonalityAddresses;
-  if ((TheArch == Arch::X64 || TheArch == Arch::ARM ||
+  if ((TheArch == Arch::X86 || TheArch == Arch::X64 || TheArch == Arch::ARM ||
        TheArch == Arch::AArch64) &&
       Fmt == BinaryFormat::COFF) {
     for (const MedFunc &F : Funcs) {
       if (!F.ExceptionMetadata || F.ExceptionMetadata->PersonalityVA == 0)
         continue;
       const ExceptionPersonality Personality = F.ExceptionMetadata->Personality;
-      if (Personality != ExceptionPersonality::CSpecificHandler &&
+      const bool Registration =
+          TheArch == Arch::X86 &&
+          (Personality == ExceptionPersonality::ExceptHandler3 ||
+           Personality == ExceptionPersonality::ExceptHandler4) &&
+          classifyWindowsEHNativeSource(*F.ExceptionMetadata, TheArch, Fmt,
+                                        WindowsEHNativeCapability::IRLowering)
+              .canLowerNativeIR();
+      if (!Registration &&
+          Personality != ExceptionPersonality::CSpecificHandler &&
           !((TheArch == Arch::X64 &&
              (Personality == ExceptionPersonality::CxxFrameHandler3 ||
               Personality == ExceptionPersonality::CxxFrameHandler4 ||
@@ -966,9 +1060,17 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     auto Personality = NativePersonalityNames.find(F.Entry);
     llvm::StringRef SourceName(F.Name);
     SourceName.consume_front("\01");
+    std::string PersonalityObjectName;
+    if (TheArch == Arch::X86 && Personality != NativePersonalityNames.end()) {
+      llvm::raw_string_ostream OS(PersonalityObjectName);
+      llvm::Mangler::getNameWithPrefix(OS, Personality->second,
+                                       Mod_->getDataLayout());
+    }
     if (Personality != NativePersonalityNames.end() &&
         !ConflictingPersonalityAddresses.count(F.Entry) &&
-        SourceName == Personality->second)
+        (SourceName == Personality->second ||
+         (!PersonalityObjectName.empty() &&
+          SourceName == PersonalityObjectName)))
       EmittedName = (kAutoFuncPrefix + llvm::utohexstr(F.Entry)).str();
     else if (hasObjectFunctionNameAt(Img, Fmt, F.Entry, F.Name))
       EmittedName = llvm_name::fromObjectSymbol(F.Name, Fmt).str();
@@ -1044,6 +1146,53 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       EmittedFuncCodeEnds[Func.Entry] = End;
   }
   initializeCxxContinuationPlans(Funcs, BodyMask);
+
+  // PE32 registration prologues push the executable runtime handler address.
+  // An import veneer may intentionally have no lifted body. Its checked EH
+  // identity still supplies the exact declaration needed by that address use.
+  if (TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    for (const auto &[Address, Name] : NativePersonalityNames) {
+      if (ConflictingPersonalityAddresses.count(Address) ||
+          EmittedFuncNames.count(Address))
+        continue;
+      auto *Type =
+          llvm::FunctionType::get(llvm::Type::getInt32Ty(*Ctx), {}, true);
+      auto *Existing = Mod_->getFunction(Name);
+      if (Mod_->getNamedValue(Name) &&
+          (!Existing || !Existing->isDeclaration() ||
+           Existing->getFunctionType() != Type))
+        continue;
+      auto *Declaration = llvm::cast<llvm::Function>(
+          Mod_->getOrInsertFunction(Name, Type).getCallee());
+      rewrite_source::setOriginalVA(*Declaration, Address);
+      FuncNames[Address] = Name;
+      if (Img && ((Name == "_except_handler4" &&
+                   coff_loader::getCheckedX86EH4CookieCheck(*Img, Address)) ||
+                  (Name == "_except_handler3" &&
+                   coff_loader::isCheckedX86SEH3Personality(*Img, Address))))
+        EmittedFuncNames[Address] = Name;
+    }
+
+  if (Img && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
+    for (const auto &Func : Funcs) {
+      if (!Func.ExceptionMetadata ||
+          !coff_loader::getCheckedX86CxxPersonalityABI(*Img,
+                                                       *Func.ExceptionMetadata))
+        continue;
+      const auto Address = Func.ExceptionMetadata->PersonalityVA;
+      if (EmittedFuncNames.count(Address))
+        continue;
+      const auto Name = "__nd_registration_handler_" + llvm::utohexstr(Address);
+      auto *Type =
+          llvm::FunctionType::get(llvm::Type::getInt32Ty(*Ctx), {}, true);
+      if (Mod_->getNamedValue(Name))
+        continue;
+      auto *Declaration = llvm::cast<llvm::Function>(
+          Mod_->getOrInsertFunction(Name, Type).getCallee());
+      rewrite_source::setOriginalVA(*Declaration, Address);
+      EmittedFuncNames[Address] = Name;
+      FuncNames[Address] = Name;
+    }
 
   // Build every ordinary block skeleton before emitting the first operation.
   // A code-pointer mirror requested by an early consumer can then name an

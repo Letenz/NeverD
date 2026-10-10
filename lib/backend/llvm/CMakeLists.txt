@@ -8,6 +8,10 @@ add_neverd_component_library(NeverDLLVMFloatConvertLowering
   emit/MedLLVMFloatConvertLowering.cpp
 )
 
+add_neverd_component_library(NeverDWindowsRegistrationFrame
+  eh/WindowsRegistrationFrame.cpp
+)
+
 add_neverd_component_library(NeverDBackendLLVM
   LLVMSourceMap.cpp
   AArch64/MedLLVMAArch64Sideeffect.cpp
@@ -34,6 +38,8 @@ add_neverd_component_library(NeverDBackendLLVM
   eh/MedLLVMNativeCxxEH.cpp
   eh/MedLLVMNativeItaniumEH.cpp
   eh/MedLLVMNativeSEH.cpp
+  eh/MedLLVMNativeRegistration.cpp
+  eh/MedLLVMNativeRegistrationCxx.cpp
   emit/MedLLVMCall.cpp
   emit/MedLLVMEmitter.cpp
   emit/MedLLVMFloatEmitter.cpp
@@ -52,4 +58,5 @@ add_neverd_component_library(NeverDBackendLLVM
   LLVMFloatConvertLowering
   IR
   WindowsEHMetadata
+  WindowsRegistrationFrame
 )

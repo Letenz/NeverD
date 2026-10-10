@@ -10,17 +10,112 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <optional>
+#include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 namespace neverd {
+
+void CFGBuilder::closeRegistrationCxxContinuations(const BinaryImage &Img,
+                                                   Decoder &Dec,
+                                                   LowFunc &Func) {
+  if (Img.Arch != Arch::X86 || !Func.ExceptionMetadata ||
+      !Func.ExceptionMetadata->Registration || !Func.ExceptionMetadata->Cxx ||
+      !Func.RegistrationStates)
+    return;
+
+  std::set<va_t> AddedRoots;
+  std::set<va_t> AddedPersistent;
+  std::set<va_t> Quarantined;
+  size_t WorkUsed = 0;
+  bool Failed = false;
+  auto Charge = [&](size_t Amount) {
+    if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
+      Failed = true;
+      return false;
+    }
+    WorkUsed += Amount;
+    return true;
+  };
+  for (;;) {
+    const auto Candidates = Func.RegistrationStates->CxxContinuations;
+    if (!Charge(Candidates.size() + Func.Blocks.size() + 1))
+      break;
+    std::set<va_t> ProvenTargets;
+    bool Grew = false;
+    for (const RegistrationCxxContinuation &Continuation : Candidates) {
+      const va_t Target = Continuation.TargetVA;
+      if (Quarantined.count(Target) || !isOwnedInteriorTarget(Img, Target)) {
+        Failed = true;
+        continue;
+      }
+      ProvenTargets.insert(Target);
+      if (!DurableCFGRoots.count(Target) || !BlockStarts.count(Target) ||
+          !Insns.count(Target)) {
+        if (!AddedRoots.count(Target) &&
+            AddedRoots.size() == limits::kMaxRegistrationEHRecords) {
+          Failed = true;
+          break;
+        }
+        BlockStarts.insert(Target);
+        if (DurableCFGRoots.insert(Target).second)
+          AddedRoots.insert(Target);
+        if (PersistentCFGRoots.insert(Target).second)
+          AddedPersistent.insert(Target);
+        // Runtime resumption supplies a reaching frame/state; this is not an
+        // independent ordinary entry with unknown incoming registers.
+        if (!ExploredAddrs.count(Target))
+          explore(Img, Dec, Target);
+        Grew = true;
+      }
+      if (!Insns.count(Target)) {
+        Failed = true;
+        Quarantined.insert(Target);
+        ProvenTargets.erase(Target);
+      }
+    }
+    bool Withdrew = false;
+    for (auto It = AddedRoots.begin(); It != AddedRoots.end();) {
+      if (ProvenTargets.count(*It)) {
+        ++It;
+        continue;
+      }
+      if (AddedPersistent.erase(*It))
+        PersistentCFGRoots.erase(*It);
+      DurableCFGRoots.erase(*It);
+      Quarantined.insert(*It);
+      It = AddedRoots.erase(It);
+      Withdrew = Failed = true;
+    }
+    if (!Grew && !Withdrew)
+      break;
+    splitBlocks();
+    rebuildBlocks(Func);
+    multiStageResolve(Img, Dec, Func);
+    convertIndirectTailCalls(Func);
+  }
+  if (Failed) {
+    auto &State = *Func.RegistrationStates;
+    State.Complete = State.CallbackStatesComplete =
+        State.CxxContinuationsComplete = State.RegistrationLifetimeComplete =
+            State.ChainOperationsComplete = State.ImageReadsComplete = false;
+    State.ChainAccesses.clear();
+    State.Diagnostics.push_back(
+        "C++ continuation ownership or CFG closure is not proven");
+  }
+}
 
 void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   for (LowBlock &Block : Func.Blocks) {
@@ -30,16 +125,88 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   if (!Func.ExceptionMetadata)
     return;
   const ExceptionFunction &Metadata = *Func.ExceptionMetadata;
+  Func.RegistrationStates.reset();
+  if (Metadata.Registration) {
+    std::optional<std::vector<RegistrationCalleeFrameContract>> Callees;
+    std::optional<std::vector<RegistrationCleanupFrameContract>> Cleanups;
+    const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
+    if (CheckCalls) {
+      if (!RegistrationCallees)
+        RegistrationCallees =
+            std::make_shared<RegistrationCallCalleeIndex>(*CurrentImg);
+      Callees = RegistrationCallees->contracts(Func);
+      Cleanups = RegistrationCallees->cleanupContracts(Func);
+    }
+    va_t CookieCheckVA = 0;
+    if (CurrentImg &&
+        Metadata.Personality == ExceptionPersonality::ExceptHandler4 &&
+        Metadata.Registration->GSCookieOffset != -2)
+      if (auto Check = coff_loader::getCheckedX86EH4CookieCheck(
+              *CurrentImg, Metadata.PersonalityVA);
+          Check &&
+          coff_loader::hasCheckedX86CookieCheckSuccessPath(*CurrentImg, *Check))
+        CookieCheckVA = *Check;
+    Func.RegistrationStates = analyzeRegistrationStates(
+        Func,
+        CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
+            ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
+            : 0,
+        CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
+        CheckCalls && Cleanups ? &*Cleanups : nullptr);
+    if (CheckCalls && (!Callees || !Cleanups))
+      Func.RegistrationStates->Diagnostics.push_back(
+          "registration callee proof budget exhausted");
+  }
 
+  std::map<va_t, LowBlock *> BlocksByAddress;
+  std::map<int, LowBlock *> BlocksById;
+  for (LowBlock &Block : Func.Blocks) {
+    BlocksByAddress.emplace(Block.StartAddr, &Block);
+    BlocksById.emplace(Block.Id, &Block);
+  }
   auto TargetBlockId = [&](va_t TargetVA) {
-    if (LowBlock *Target = Func.blockFor(TargetVA))
-      return Target->Id;
+    auto It = BlocksByAddress.upper_bound(TargetVA);
+    if (It != BlocksByAddress.begin()) {
+      const LowBlock &Block = *std::prev(It)->second;
+      if (TargetVA < Block.EndAddr)
+        return Block.Id;
+    }
     return -1;
+  };
+  std::set<std::tuple<int, va_t, ExceptionalEdgeKind, uint32_t, int32_t, va_t>>
+      Edges;
+  size_t RegistrationEdgeWork = 0;
+  bool RegistrationEdgesExhausted = false;
+  auto ChargeRegistrationEdge = [&] {
+    if (!Metadata.Registration)
+      return true;
+    if (RegistrationEdgeWork == limits::kMaxRegistrationEHStateWork) {
+      RegistrationEdgesExhausted = true;
+      return false;
+    }
+    ++RegistrationEdgeWork;
+    return true;
+  };
+  auto RejectExhaustedRegistrationEdges = [&] {
+    if (!RegistrationEdgesExhausted)
+      return false;
+    for (LowBlock &Block : Func.Blocks) {
+      Block.ExceptionalSuccs.clear();
+      Block.ExceptionalPreds.clear();
+    }
+    Func.RegistrationStates->Complete = false;
+    Func.RegistrationStates->RegistrationLifetimeComplete = false;
+    Func.RegistrationStates->Blocks.clear();
+    Func.RegistrationStates->Diagnostics.push_back(
+        "registration exceptional-edge expansion budget exhausted");
+    return true;
   };
   auto AddEdge = [&](LowBlock &Source, va_t TargetVA, ExceptionalEdgeKind Kind,
                      uint32_t Region, int32_t State,
                      va_t SourceVA = InvalidVA) {
-    if (TargetVA == 0)
+    if (TargetVA == 0 || !ChargeRegistrationEdge() ||
+        !Edges.emplace(Source.Id, TargetVA, Kind, Region, State, SourceVA)
+             .second)
       return;
     ExceptionalEdge Edge;
     Edge.BlockId = TargetBlockId(TargetVA);
@@ -48,17 +215,11 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     Edge.RegionIndex = Region;
     Edge.State = State;
     Edge.SourceVA = SourceVA;
-    if (std::find(Source.ExceptionalSuccs.begin(),
-                  Source.ExceptionalSuccs.end(),
-                  Edge) == Source.ExceptionalSuccs.end())
-      Source.ExceptionalSuccs.push_back(Edge);
-    if (Edge.BlockId >= 0 &&
-        Edge.BlockId < static_cast<int>(Func.Blocks.size())) {
+    Source.ExceptionalSuccs.push_back(Edge);
+    if (auto It = BlocksById.find(Edge.BlockId); It != BlocksById.end()) {
       ExceptionalEdge Pred = Edge;
       Pred.BlockId = Source.Id;
-      auto &Preds = Func.Blocks[Edge.BlockId].ExceptionalPreds;
-      if (std::find(Preds.begin(), Preds.end(), Pred) == Preds.end())
-        Preds.push_back(Pred);
+      It->second->ExceptionalPreds.push_back(Pred);
     }
   };
   auto ForProtectedBlocks = [&](const ExceptionAddressRange &Range, auto &&Fn) {
@@ -124,6 +285,49 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       }
     };
     for (LowBlock &Block : Func.Blocks) {
+      if (RegistrationEdgesExhausted)
+        break;
+      if (Metadata.Registration) {
+        if (!Func.RegistrationStates)
+          continue;
+        auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
+                               Func.RegistrationStates->Blocks.end(),
+                               [&](const RegistrationBlockState &State) {
+                                 return State.BlockId == Block.Id;
+                               });
+        if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
+          continue;
+        for (int32_t State : It->Levels) {
+          if (!ChargeRegistrationEdge())
+            break;
+          int32_t Walk = State;
+          for (size_t Step = 0; Step < Cxx.UnwindMap.size(); ++Step) {
+            if (!ChargeRegistrationEdge())
+              break;
+            if (Walk < 0 || static_cast<size_t>(Walk) >= Cxx.UnwindMap.size())
+              break;
+            const CxxUnwindAction &Cleanup = Cxx.UnwindMap[Walk];
+            AddEdge(Block, Cleanup.ActionVA, ExceptionalEdgeKind::CxxCleanup,
+                    static_cast<uint32_t>(Walk), State);
+            Walk = Cleanup.ToState;
+          }
+          for (size_t I = 0; I < Cxx.TryBlocks.size(); ++I) {
+            if (!ChargeRegistrationEdge())
+              break;
+            const CxxTryBlock &Try = Cxx.TryBlocks[I];
+            if (Try.TryLow < It->CxxMinimumTryLevel || State < Try.TryLow ||
+                State > Try.TryHigh)
+              continue;
+            for (const CxxCatchHandler &Catch : Try.Handlers) {
+              if (!ChargeRegistrationEdge())
+                break;
+              AddEdge(Block, Catch.HandlerVA, ExceptionalEdgeKind::CxxCatch,
+                      static_cast<uint32_t>(I), State);
+            }
+          }
+        }
+        continue;
+      }
       if (Cxx.IsSynchronous && CurrentImg && CurrentImg->Arch == Arch::X64) {
         // x64 FH3/FH4 state lookup uses the saved return PC. Clang can put
         // an IP-map boundary one byte past a label, inside an instruction;
@@ -138,6 +342,8 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       }
     }
   }
+  if (RejectExhaustedRegistrationEdges())
+    return;
 
   // x86-32 registration chain.  This table is indexed by the try level the
   // frame holds rather than by address, so a scope guards exactly those blocks
@@ -146,39 +352,46 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
   // an exception arrives the runtime offers it to the current level's scope and
   // then to each enclosing one in turn, so every scope on that chain gets an
   // edge and not just the innermost.
-  if (Metadata.Registration && !Metadata.Registration->TryLevelStores.empty()) {
+  if (Metadata.Registration && Func.RegistrationStates) {
     const RegistrationChainInfo &Chain = *Metadata.Registration;
     const size_t ScopeCount = Chain.Scopes.size();
     for (LowBlock &Block : Func.Blocks) {
-      // The store's own block still runs at the outgoing level, so only a store
-      // that has completed by the time the block is entered counts.
-      int32_t Level = Chain.SeededTryLevel.value_or(-1);
-      for (const RegistrationTryLevelStore &Store : Chain.TryLevelStores) {
-        if (Store.EndVA > Block.StartAddr)
+      if (RegistrationEdgesExhausted)
+        break;
+      auto It = std::find_if(Func.RegistrationStates->Blocks.begin(),
+                             Func.RegistrationStates->Blocks.end(),
+                             [&](const RegistrationBlockState &State) {
+                               return State.BlockId == Block.Id;
+                             });
+      if (It == Func.RegistrationStates->Blocks.end() || !It->CanDispatch)
+        continue;
+      for (int32_t Level : It->Levels) {
+        if (!ChargeRegistrationEdge())
           break;
-        Level = Store.Level;
-      }
-
-      // A malformed table could name itself as its own enclosing level; the
-      // scope count bounds the walk so such a cycle cannot spin.
-      for (size_t Step = 0; Step < ScopeCount; ++Step) {
-        if (Level < 0 || static_cast<size_t>(Level) >= ScopeCount)
-          break;
-        const RegistrationScopeRecord &Scope = Chain.Scopes[Level];
-        const uint32_t Region = static_cast<uint32_t>(Level);
-        if (Scope.IsFinally) {
-          AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHFinally,
-                  Region, Level);
-        } else {
-          AddEdge(Block, Scope.FilterVA, ExceptionalEdgeKind::SEHFilter, Region,
-                  Level);
-          AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHHandler,
-                  Region, Level);
+        // The scope count bounds the walk even for manually supplied cycles.
+        for (size_t Step = 0; Step < ScopeCount; ++Step) {
+          if (!ChargeRegistrationEdge())
+            break;
+          if (Level < 0 || static_cast<size_t>(Level) >= ScopeCount)
+            break;
+          const RegistrationScopeRecord &Scope = Chain.Scopes[Level];
+          const uint32_t Region = static_cast<uint32_t>(Level);
+          if (Scope.IsFinally) {
+            AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHFinally,
+                    Region, Level);
+          } else {
+            AddEdge(Block, Scope.FilterVA, ExceptionalEdgeKind::SEHFilter,
+                    Region, Level);
+            AddEdge(Block, Scope.HandlerVA, ExceptionalEdgeKind::SEHHandler,
+                    Region, Level);
+          }
+          Level = Scope.EnclosingLevel;
         }
-        Level = Scope.EnclosingLevel;
       }
     }
   }
+  if (RejectExhaustedRegistrationEdges())
+    return;
 
   // Itanium.  A Rust frame is deliberately not walked separately: its landing
   // pads are a reclassification of these same call sites (or, on MSVC targets,
