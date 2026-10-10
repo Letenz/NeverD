@@ -26,6 +26,14 @@ analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
 
+Each worker retains up to eight completed code documents under a 32 MiB
+conservative retained-size allowance. Exact function, representation, project
+revision and listing generation identify a document. A hit can answer before
+preparing the mutable single-function Session; it never marks that Session as
+holding the cached function. Graph and IR preparation keeps its own state.
+Documents own text, rows and edit anchors, and project or presentation changes
+invalidate them. Oversized documents remain readable without being retained.
+
 The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
 notes. `UserStateTables.def` includes this state in history, recovery, read-only
 replicas and database packing. Source identity and exact row anchors prevent
@@ -363,12 +371,27 @@ entries are reusable only until either resolver learns a concrete result;
 both share the invalidation generation because their walks recurse into each
 other. Neither cache bypasses incomplete-proof rejection.
 
-Proof graph indexes use a private arena that outlives their containers and is
-retired with the synchronous query. Ordered insertion hints preserve duplicate
+HighIR's call-argument projection uses the same checked affine equation core
+for entry-stack offsets in an immutable MedIR function. Each SSA definition is
+indexed once; PHIs require all incoming offsets to agree. Width and ambiguity
+checks stay in the SSA adapter. A separate dependency-depth certificate prevents
+warm query order from bypassing the projection's depth bound. A new conversion,
+including a second layout attempt, discards the index and solved offsets.
+The depth certificate is conservative for general multi-PHI cycles; failure
+leaves the coordinate unknown even when a more expensive path analysis might
+prove it within the bound.
+
+Proof graph indexes use a private arena that outlives their containers.
+Ordered insertion hints preserve duplicate
 and out-of-order point handling. A fixed-size register lane cache checks the
 complete offset/width key and uses the query's immutable target metadata.
 These storage and lookup optimizations retain the original evidence charges;
-they do not reuse CFG or value proofs across changed snapshots.
+they do not reuse CFG or value proofs across changed snapshots. A builder may
+retain one successful graph with an owned instruction snapshot. Reuse requires
+exact instruction facts, LowOps, effective edges, block starts, proof roots,
+conditional roots and storage-owner inputs. Hits pay the complete original
+graph-construction charge; value queries and incomplete-proof handling still
+run. Input-size and vertex limits bound retention, and a new build clears it.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its

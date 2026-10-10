@@ -77,6 +77,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
               "$<TARGET_FILE:neverd-worker-test-server>")
     set_tests_properties(NeverDWorkerAnalysisSnapshot PROPERTIES TIMEOUT 30)
     set_tests_properties(NeverDWorkerTransport PROPERTIES TIMEOUT 40)
+    add_test(NAME NeverDWorkerSourceCache
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_cache_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerSourceCache PROPERTIES TIMEOUT 40)
     add_test(NAME NeverDWorkerGraphTransport
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/graph_transport_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")

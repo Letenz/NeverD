@@ -75,6 +75,12 @@ pinned view and a different hidden assembly location, then checks undo/redo,
 save/restart and instruction-mapped comments. Snapshot coverage also verifies
 that read-only replicas load these edits without changing durable owner files.
 
+`NeverDWorkerSourceCache` counts actual preparation and source-page calls across
+A-to-B-to-A navigation, including a subsequent graph or IR request. It checks
+edits, undo, replica restore, project replacement, representation separation and
+both document-count and retained-byte eviction. Timing-independent cache tests
+complement `source_revisit_bench.py`, which measures complete real source pages.
+
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
 `SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
@@ -496,6 +502,19 @@ cycles, unknown roots, conflicting anchors, intermediate overflow, budget
 exhaustion, incremental graph growth and cache reset. A seeded independent
 backward path-constraint oracle checks cyclic equation results. Repeated
 diamond graphs check linear evidence growth rather than a wall-clock cutoff.
+
+`HighEntryStackOffsets.*` in `NeverDHighControlFlowTests` checks the shared
+affine solver's SSA adapter against independent path constraints and the prior
+recursive algorithm on its supported small domain. Coverage includes shared
+diamonds, balanced and unanchored cycles, conflicting paths, checked overflow,
+SSA ambiguity, exception entries, pointer widths and query-order-independent
+depth refusal.
+
+`ResolverGraphCache.*` in `NeverDJumpTableTests` compares hot and cold answers
+and remaining budgets at every small-fixture budget boundary. Equal-size
+instruction, edge, root and ownership changes must replace the graph; rolled
+back and temporary override payloads cannot leave borrowed pointers behind.
+Resource failure and value-analysis incompleteness remain distinct.
 
 `ResolverLaneViews.*` in the same target checks query-local register metadata
 caching across widths, high-byte registers, architectures, temporary values

@@ -75,6 +75,19 @@ struct MockSession {
   /// The loader the next load reads with, and the one the image was read
   /// with, in neverd_session_set_load_options JSON; null reads the sidecar.
   Json requestedLoad, loadedWith = {{"loader", "auto"}};
+  /// Source-document tests distinguish page reuse from a fresh preparation,
+  /// and refuse graph/IR reads against a different restricted pipeline.
+  std::uint64_t preparedEntry = 0;
+  unsigned sourcePrepares = 0, sourcePages = 0;
+  bool wholeProgramPrepared = false;
+  bool sourceCacheVMFixture() const {
+    return path.ends_with("source-cache-evm.bin") ||
+           path.ends_with("source-cache-sbf.bin");
+  }
+  bool sourceCacheFixture() const {
+    return path.ends_with("source-cache.bin") ||
+           path.ends_with("source-cache-budget.bin") || sourceCacheVMFixture();
+  }
 };
 MockSession *session(neverd_session_t s) {
   return static_cast<MockSession *>(s);
@@ -143,7 +156,11 @@ int neverd_apply_signature_file(neverd_session_t s, const char *path) {
 int neverd_auto_apply_signatures(neverd_session_t s, const char *path) {
   return neverd_apply_signature_file(s, path);
 }
-int neverd_session_analyze(neverd_session_t) {
+int neverd_session_analyze(neverd_session_t s) {
+  if (session(s)->sourceCacheVMFixture()) {
+    session(s)->wholeProgramPrepared = true;
+    ++session(s)->sourcePrepares;
+  }
   std::puts("python-style print during analysis");
   std::fflush(stdout);
   std::this_thread::sleep_for(std::chrono::milliseconds(1800));
@@ -152,7 +169,11 @@ int neverd_session_analyze(neverd_session_t) {
 const char *neverd_session_file_path(neverd_session_t s) {
   return copy(session(s)->path);
 }
-const char *neverd_session_arch_name(neverd_session_t) {
+const char *neverd_session_arch_name(neverd_session_t s) {
+  if (session(s)->path.ends_with("source-cache-evm.bin"))
+    return copy("evm");
+  if (session(s)->path.ends_with("source-cache-sbf.bin"))
+    return copy("sbf");
   return copy("x86_64");
 }
 const char *neverd_session_format_name(neverd_session_t) { return copy("ELF"); }
@@ -606,6 +627,10 @@ const char *neverd_unwind_frame_json(neverd_session_t, neverd_va_t address) {
   return copy("null");
 }
 const char *neverd_decompile(neverd_session_t s, neverd_va_t address) {
+  if (session(s)->sourceCacheFixture()) {
+    session(s)->preparedEntry = address;
+    ++session(s)->sourcePrepares;
+  }
   if (session(s)->path.ends_with("pseudocode-parallel.bin") &&
       (address == Base || address == Base + 16)) {
     std::printf("fixture parallel decompile %s started\n",
@@ -740,6 +765,61 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  if (session(s)->sourceCacheFixture()) {
+    auto &state = *session(s);
+    if (!state.wholeProgramPrepared && state.preparedEntry != address) {
+      state.error = "fixture source read used another function's pipeline";
+      return nullptr;
+    }
+    ++state.sourcePages;
+    const bool large = state.path.ends_with("source-cache-budget.bin");
+    const std::size_t total = large ? 9000 : 4;
+    const auto first = std::min(offset, total);
+    const auto end = first + std::min(limit, total - first);
+    std::string text;
+    Json rows = Json::array();
+    const auto line = [&](std::size_t index) {
+      if (index == 0)
+        return "int function_" + std::to_string((address - Base) / 16) +
+               "(void) {\n";
+      if (index == 1)
+        return std::string("  int value = 1;\n");
+      if (index == 2)
+        return std::string("  return value;\n");
+      if (index == 3)
+        return std::string("}\n");
+      return "// " + std::string(512, 'x') + "\n";
+    };
+    std::size_t begin = 0;
+    for (std::size_t i = 0; i < first; ++i)
+      begin += line(i).size();
+    for (auto i = first; i < end; ++i) {
+      text += line(i);
+      rows.push_back(
+          {{"line", i},
+           {"object_id", "source:" + std::to_string(i)},
+           {"kind", "source"},
+           {"mapping_status", i == 2 ? "instruction_anchor" : "unmapped"},
+           {"addresses",
+            i == 2 ? Json::array({hexAddress(address + 2)}) : Json::array()}});
+    }
+    return copy(Json{{"schema_version", 1},
+                     {"address", hexAddress(address)},
+                     {"representation", representation},
+                     {"dialect", "c"},
+                     {"text", text},
+                     {"rows", rows},
+                     {"offset", first},
+                     {"byte_offset", begin},
+                     {"total_lines", total},
+                     {"complete", end == total},
+                     {"next_offset", end == total ? Json(nullptr) : Json(end)},
+                     {"library_regions", Json::array()},
+                     {"source_names", Json::array()},
+                     {"fixture_prepares", state.sourcePrepares},
+                     {"fixture_pages", state.sourcePages}}
+                    .dump());
+  }
   if (session(s)->path.ends_with("code-edits.bin") ||
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
@@ -1201,6 +1281,12 @@ const char *neverd_xrefs_from_json(neverd_session_t s, neverd_va_t address) {
 }
 const char *neverd_cfg_json(neverd_session_t s, neverd_va_t address) {
   session(s)->error.clear();
+  if (session(s)->sourceCacheFixture() &&
+      !session(s)->wholeProgramPrepared &&
+      session(s)->preparedEntry != address) {
+    session(s)->error = "fixture graph read used another function's pipeline";
+    return nullptr;
+  }
   Json nodes = Json::array(), edges = Json::array();
   const int count = address == Base + 2   ? 10000
                     : address == Base + 1 ? 501

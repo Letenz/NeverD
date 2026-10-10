@@ -150,6 +150,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SourceAggregateTests.cpp
   core/SourceCallReturnTests.cpp
   core/HighSSADefinitionTests.cpp
+  core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/ObjCCallHintTests.cpp
   core/SwiftFieldReceiverTests.cpp
@@ -1037,6 +1038,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 
 add_neverd_unittest(NeverDJumpTableTests
   core/AffineFrameStateTests.cpp
+  core/ResolverGraphCacheTests.cpp
   core/ResolverLaneViewTests.cpp
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
@@ -1188,6 +1190,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighValueForwardTests.cpp
   core/HighCIntegerConversionTests.cpp
   core/HighSSADefinitionTests.cpp
+  core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
   LINK_COMPONENTS
