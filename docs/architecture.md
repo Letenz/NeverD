@@ -408,6 +408,13 @@ vocabularies. `interfaces/HAR` owns bounded capture admission;
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
 as source execution. See the [passive interface profile](web-interface-profile.md).
+`streams/Framing` owns bounded line/SSE framing, `streams/Records` owns
+selected JSON/protocol shapes and `streams/Relations` owns recorded-context
+joins. Shared `JsonReader` reports consumed nodes even on failure so a stream
+cannot reset the aggregate budget at each record. `SessionStreams` owns
+revision-bound redaction preview/commit and metadata pages; CLI and worker
+cannot infer a protocol or bypass publication. See the
+[stream profiles](web-stream-profile.md).
 `web/Error.h` owns fixed diagnostics independently of `Session`; artifact
 readers and semantic algorithms do not depend on the session API to fail.
 `SourceNavigation` owns syntax containment and lexical links; `SessionAnchor`

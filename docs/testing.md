@@ -360,6 +360,14 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebStreams.*` covers explicit JSONL/SSE/JSON-RPC/MCP/log profiles, byte spans,
+EOF limits, duplicate/missing context, original numeric tokens and aggregate
+JSON work including failures. `WebStreamSDK.*` and `NeverDWorkerWeb` cover
+preview gates, profile/hash/policy receipts, redaction canaries, cache/revision
+revocation and transport parity. Run the owning web directory after changing
+shared JSON admission or session boundaries; readers remain enabled without JS.
+See the [stream profiles](web-stream-profile.md).
+
 `WebInterfaces.*` and `WebSourceInterfaces.*` cover passive HAR admission,
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and

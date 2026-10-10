@@ -45,7 +45,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and shared source/Bun/native consumers implemented; two official Claude Code npm packages qualify original digest and payload evidence | Source behavior, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
 | P4D passive interfaces/HAR | Native HAR preview/commit, direct fetch/WebSocket source candidates and explicit method/origin/path comparison implemented | XHR/wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
-| P6 stream/log consumers | Pending | SSE/JSONL/JSON-RPC/MCP versioned records, truncation and canary tests |
+| P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation, broader framing/host qualification and C++ MCP transport remain |
 | P7 Tauri/Wails/Node-family | Pending | Actual asset extraction and bridge/native links for each named profile |
 | P8 C++ MCP, optional presentation, distribution | Pending | No external executable/script dependency, bounded outputs and shipped notices |
 | P9 full acceptance audit | Pending | Issue-by-issue fixture and cross-platform evidence, documented gaps |
