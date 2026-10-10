@@ -484,7 +484,9 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
     if (!Seen.insert(&E).second)
       return;
     if (HideEHRuntimeMemory &&
-        E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS)
+        E.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
+        !(E.Kind == ExprKind::Call &&
+          E.IntrinsicId == Intrinsic::X86FPRoundMemoryState))
       return;
     CollectWideType(E.Type);
     CollectWideType(E.CastTo);
@@ -592,7 +594,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       CollectWideType(Param.Type);
     for (const HighLocal &Local : Func.Locals)
       CollectWideType(Local.Type);
-    HideEHRuntimeMemory = Func.ExceptionMetadata.has_value();
+    HideEHRuntimeMemory = Func.ExceptionMetadata.has_value() &&
+                          !preservesRegistrationMemory(Func);
     walkStmts(Func.Body, [&](const HighStmt &Stmt) {
       if (Stmt.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
         if (HideEHRuntimeMemory &&
@@ -799,7 +802,8 @@ std::string HighCWriter::memoryLoadExpr(const TypeRef &Ty, llvm::StringRef Addr,
   // MSVC's FS/GS read intrinsics are a useful source-level spelling for
   // Windows targets. Other formats keep the target address-space-qualified
   // helper, so the segment remains explicit in the C memory type.
-  if (useMsvcSegmentedRead(Opts, CurrentFunc)) {
+  if (useMsvcSegmentedRead(Opts, CurrentFunc) &&
+      !(CurrentFunc && preservesRegistrationMemory(*CurrentFunc))) {
     if (std::string Seg = renderX86MsvcSegmentedLoad(
             Opts.TheArch, Ty ? Ty->Size : 0, Addr, Ordering, AddressSpace);
         !Seg.empty())
@@ -3042,6 +3046,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeMemoryHelpers();
   writeX64SyscallHelper();
   writeX64WindowsSyscallHelper();
+  writeRegistrationEntryDeclarations(Funcs);
   writeForwardDecls(Funcs);
   writeImageObjects();
 

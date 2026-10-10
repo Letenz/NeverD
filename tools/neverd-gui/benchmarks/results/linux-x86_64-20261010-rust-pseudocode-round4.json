@@ -6,7 +6,7 @@
   "control_manifest": {
     "commit": "c663bb37cf717838d8c70e1ea0588c6f01bb6161",
     "configuration": "Release, -O3 -DNDEBUG; Web/Hermes/ada enabled; ASAR unavailable due to missing ICU 77.1",
-    "sdk_compiler": "/home/ad/.local/bin/clang++ (Clang 23)",
+    "sdk_compiler": "clang++ (Clang 23; user-local installation)",
     "worker_compiler": "/usr/bin/c++ (GCC 15)",
     "binaries": {
       "libneverd.so": {

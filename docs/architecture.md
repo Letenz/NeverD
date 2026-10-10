@@ -170,9 +170,25 @@ exact no-return call fallthroughs before SSA, preserving exceptional edges and
 the continuation's independent runtime frame. Shared coordinate projection
 expresses the aligned establisher from entry ESP for HighIR and LLVM, while
 entry-stack proofs cannot claim a fixed displacement. Pointer-copy and slot
-proofs keep each runtime definition's identity. Full callback lowering and
-native re-reconstruction have separate contracts. HighIR retains
-handler/continuation annotations for this model. Native scalar-catch lowering
+proofs keep each runtime definition's identity. The MedIR callback owner binds
+private ESP definitions to the current runtime-only entry and checks the whole
+ordinary catch CFG against exact source ranges and continuation receipts.
+HighIR captures that input with an `EntryRegister` expression at the callback
+entry, rather than substituting the parent's ESP or an unknown value. Copy
+propagation cannot move the capture. Realigned catches become clause bodies
+only when all callback blocks can move together without admitting an ordinary
+entry or absorbing unprotected code. SavedESP restoration precedes the checked
+continuation. HighC spells the runtime input as an explicit EH-view intrinsic;
+it does not supply a standalone C implementation of the exception runtime.
+The explicit C view retains an embedded callback as a labelled native entry
+inside the parent, skipped by ordinary fallthrough, without assigning it a C
+function ABI. Aligned frames retain their explicit FS chain accesses because
+their byte-addressed node stores still consume the previous-head definition.
+The MedIR call owner binds each retained callee ABI to its current occurrence.
+HighIR reads that call's current ECX SSA value and uses the proved argument
+count; a private EBP spill cannot become an extra stack argument.
+Unproved or ambiguous bodies retain handler/continuation annotations.
+Native scalar-catch lowering
 projects the source coordinate only into an allocation with proved physical
 alignment. A dedicated catch-stack planner bounds private ESP uses; catch
 objects, cleanup borrows and continuation writeback share the parent projection.
@@ -245,7 +261,12 @@ thunk separately from the CRT dispatch entry. Its shared immutable-code reader
 admits absolute operands only at exact, unique HIGHLOW relocation slots; an
 opcode relocation, conflicting storage or changed runtime import rejects the
 identity. Native source lowering consumes the checked physical call ABI,
-typed catch home, cleanup borrows and catch-return target. LLVM records the
+optional catch home, cleanup borrows and catch-return target. The shared x86
+catch projection distinguishes a proved absence of object storage from missing
+object/access proofs. LLVM lowering and COFF IR validation consume that same
+projection; an unbound catch grants no runtime initialization write. Literal
+zero object and catch-all RTTI fields must have no overlapping compiler fixup.
+LLVM records the
 exact parent and child funclet machine-code ranges when emitting indexed
 catch rows. Complete PE32 C++ receipts additionally close FuncInfo, unwind,
 try and handler tables and bind each cleanup to its generated state and range.
@@ -352,6 +373,17 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 joins source coordinates, original storage and committed display views. Bun
 source range conversion uses the same decoder as source extraction. Compressed
 sources return containing frames instead of fabricated per-character offsets.
+`SessionBunExport` owns explicitly requested local disclosure of an immutable
+Bun extraction. `ExportDirectory` owns private-directory, exclusive no-follow
+writes, bounded output, read-back hashes and completion-manifest publication.
+Virtual target names are data, never output paths. `SourceRecovery` owns
+whitespace-only readable copies and reparse/tree comparison through the same
+embedded parser, with a separate sequential budget profile. It does not enter
+interactive caches, infer missing TypeScript or grant semantic-rewrite claims.
+The parser integration preserves original locations when converting async-arrow
+spread nodes to rest bindings; parser admission additionally checks the owned
+token after a rest binding for a forbidden comma. No consumer repairs missing
+locations or guesses this syntax independently.
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR members. Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
@@ -1470,7 +1502,7 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
-`ir/X86FPState.h` owns scalar SSE numerical/state contracts. Legacy
+`ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
 containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
 defines both transports through ordinary SSA; auxiliary-output discovery and
@@ -1486,6 +1518,21 @@ profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
 remaining x87 control/TOP/tag semantics retain their separate contracts;
 this scalar state surface does not certify them.
 
+Legacy/VEX ROUND extends that state surface through whole-instruction
+`X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
+MXCSR rounding, and bit 3 suppresses precision only. Packed results complete
+together; an unmasked invalid operand prevents newly raised precision status
+from other lanes, while preserving existing sticky bits. Scalar upper-lane
+passthrough and VEX upper zeroing retain their lifter ownership.
+`X86FPRoundMemoryState` additionally owns the entire source access. Native and
+C lowering execute memory ROUND inside the incoming/outgoing CSR scope,
+preserving legacy packed alignment faults without a preceding ordinary LOAD.
+Its eight-byte address carrier owns Default/FS/GS; numerical width comes from
+the result aggregate, independently of target pointer width. Concrete x64
+evaluation requires authenticated 48/57-bit canonical-address context and
+segment bases. Unknown context refuses; known memory faults retain incoming
+CSR and publish no numerical result. This does not extend EVEX/SAE coverage.
+
 Swift consumes the same typed HighIR state contract for scalar SSE arithmetic.
 Its x86_64-only compiler pointer intrinsics import and commit MXCSR; numerical
 helpers disable optimization so arithmetic stays between those effects. The
@@ -1496,6 +1543,19 @@ belong to the module preamble, separate from member bodies.
 unit includes its exact preamble prefix, while the complete file places each
 distinct preamble once before the ordered unit bodies. Module-wide storage
 and declaration names participate in helper allocation before emission.
+
+`ir/X86ShadowStack.h` owns RDSSP's conditional full-GPR result. Its operands
+are the old complete register and the encoded 32/64-bit read width. Disabled
+shadow stacks preserve the entire old value, including an x64 RDSSPD's high
+half; an enabled 32-bit read zero-extends SSP. Concrete emulation requires
+explicit current-CPL enablement and, when enabled, SSP. Unknown calls and
+unmodeled CET mutators invalidate that snapshot. LLVM uses typed, owned tied
+assembly; HighC and LLVMC emit assembly at the caller, without a helper CALL.
+This reads the host execution frame: enabled guest recompilation still needs
+an authenticated initial SSP and proof of original CALL/RET/tail topology.
+The separate CET-disabled interpreter provider keeps its existing NOP receipt
+and Missing sidecar; ordinary lifting does not upgrade that audit evidence.
+Swift projection remains explicitly unsupported.
 
 The experimental [interpreter recovery stage](interpreter-recovery.md)
 specializes strictly lifted LowIR before the common MedIR boundary. Its
@@ -1551,6 +1611,8 @@ The finite-query cache accounts for serialized keys, numeric results and recency
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.
+
+The LLVM importer turns each reached guest load/store alignment above one into a sticky definedness obligation on its actual 64-bit address. Access widths and memory effects remain unchanged; masks, comparisons and accumulation use the existing construction budgets. Omitted textual alignment uses the parsed ABI alignment; `align 1` emits no guard. This adds no entry assumption or accessible bytes. State-object accesses retain their separate eight-byte alignment contract, and atomic/volatile accesses remain unsupported.
 
 `modelLLVMScalarFunction` reuses this importer for pure `noundef` integer arguments and integer returns (`i1/i8/i16/i32/i64`). The shared model handles funnel-shift endpoints and guarded multiplication with double-width products. `checkLLVMScalarEquivalence` executes both models through `SymExec`, discovers controlling input bits, exhausts their complete combinations and keeps all other bits symbolic. Every return must agree and every executed operation must remain defined; partition, path, node and cumulative work budgets bound the query. `SymContext::constantWindow` exposes cumulative query accounting without relaxing its existing per-query ceilings. Refusal permits no rewrite. This read-only C++ query neither changes default source output nor supplies a persistent native/ABI or compiler certificate.
 
