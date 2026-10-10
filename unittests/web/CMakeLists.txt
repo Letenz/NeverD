@@ -34,6 +34,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     ElectronEntryTests.cpp
     ElectronSourceTests.cpp
     SourceTests.cpp
+    SourceRecoveryTests.cpp
     SourceBindingTests.cpp
     SourceValueTests.cpp
     SourceEffectTests.cpp

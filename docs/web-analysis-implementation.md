@@ -1047,3 +1047,47 @@ The five epics remain open. This increment qualifies captured import-map
 candidates locally; package graphs/diffs, passive observations, other desktop
 and native JS formats, semantic rewrites, C++ MCP and cross-host distribution
 still need their planned implementation and evidence.
+
+## Claude Code standalone practical recovery — 2026-10-10
+
+The official Claude Code 2.1.296 Linux x64 artifact drove the next implementation
+increment. NeverD first refused its new Bun graph flags, then exposed a large
+source materialization ceiling and nine async-rest parser-location failures.
+The fixes remain in the shared C++ owners: a versioned prelinked graph profile,
+streaming Unicode conversion, explicit local export and a separate sequential
+readability profile with reparse/tree comparison. The parser keeps exact
+source locations and rejects the newly exposed illegal rest trailing comma.
+
+NeverD exported all 2,345 JS modules (44,768,763 UTF-8 bytes), 244 assets and
+10,005 exact regions, with a full original and per-file read-back hash checks.
+2,303 modules have verified readable copies; 42 preserve raw source and parser
+diagnostics, including confirmed unsupported resource-management syntax. The
+artifact contains no source maps. Original TypeScript, erased names/types and
+native/JSC decompilation are not claimed. A repeated run with an unusable
+external-tool PATH produced the identical completion-manifest hash.
+
+The full web suite registered 284 cases: 277 passed and seven skipped (six
+need LLVM Zstd, one requires ASAR disabled). Both full Bun corpora were supplied.
+The five C++ worker suites passed. A broader worker run hit a SourceCache
+timeout against the separately built mock and a macOS temporary-path alias
+assumption. Canonical `TMPDIR=/private/tmp` made AnalysisSnapshot pass.
+SourceCache passed one retry after rebuilding the mock but timed out again
+after dev integration, including a serial retry. That separate mock-worker
+large-source test remains an explicit validation limitation; its server does
+not link the changed web backend. No worker source was modified.
+Logs use `/tmp/neverd-claude-{full-web-tests,worker-verified,worker-canonical-path}.log`.
+
+Integration with `dev` at `6543c4935` rebuilt the native dependencies and repeated
+all 284 web cases with the same 277 passes and seven skips. C API availability
+passed, with the backend-omission-only case skipped. A separate C++ probe compiled
+the actual C API translation unit without the web feature and checked that the
+new export entry point returns `capability_unavailable`. The export owner and
+session translation units also compiled without the JS parser; this is not a
+claim of a complete parser-disabled build. The integration logs are
+`/tmp/neverd-claude-dev-{build,web,worker,api,source-cache}.log`.
+
+Input hash, official provenance, reproducible commands, measured recovery
+counts and precise limitations are recorded in
+[the qualification](web-claude-code-qualification.md). Proprietary input and
+recovered code remain outside the repository. This increment supplies practical
+evidence for #714/#718; it does not close the five epics.

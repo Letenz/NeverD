@@ -373,6 +373,17 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 joins source coordinates, original storage and committed display views. Bun
 source range conversion uses the same decoder as source extraction. Compressed
 sources return containing frames instead of fabricated per-character offsets.
+`SessionBunExport` owns explicitly requested local disclosure of an immutable
+Bun extraction. `ExportDirectory` owns private-directory, exclusive no-follow
+writes, bounded output, read-back hashes and completion-manifest publication.
+Virtual target names are data, never output paths. `SourceRecovery` owns
+whitespace-only readable copies and reparse/tree comparison through the same
+embedded parser, with a separate sequential budget profile. It does not enter
+interactive caches, infer missing TypeScript or grant semantic-rewrite claims.
+The parser integration preserves original locations when converting async-arrow
+spread nodes to rest bindings; parser admission additionally checks the owned
+token after a rest binding for a forbidden comma. No consumer repairs missing
+locations or guesses this syntax independently.
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR members. Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`

@@ -362,6 +362,21 @@ never build or execute their inputs. SDK/CLI/worker tests verify decoded source
 identities and an unusable external-tool PATH. See the
 [profile](web-bun-profile.md) and [corpus recipe](../unittests/web/fixtures/bun/README.md).
 
+`WebBun.ClaudeCode21296FullContainerWhenSupplied` checks an independently
+downloaded official Linux x64 artifact when `NEVERD_CLAUDE_CODE_21296_ELF` is
+set. It pins the original SHA-256/size, extended layout, module/region counts,
+entry index and all decoded source totals. No target code is redistributed or
+downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
+tests cover malformed prelinked indices, counts, aliases and alignment.
+`WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
+recovery without raising interactive budgets and invalid-source refusal.
+Async-rest source spans and illegal trailing commas have parser regressions.
+`WebSDK.BunExport*` and `WebSDK.CLIBunExport*` check captured-byte preservation,
+all region contents, raw/readable/index output, stale revisions, destination
+and symlink refusal, metadata canaries and an unusable external-tool PATH.
+The full practical command and result boundary are in the
+[Claude Code qualification](web-claude-code-qualification.md).
+
 ASAR cases in `NeverDWebArtifactTests` combine fixed upstream writer archives
 and an independent original member with C++-constructed malformed inputs.
 They cover complete truncation, Pickle padding, overlaps/overflow, Unicode
