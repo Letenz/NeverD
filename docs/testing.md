@@ -189,6 +189,12 @@ actual warm hits, identical cold/warm budget consumption and a fresh successful
 proof when the same address belongs to a different valid image. Truncated
 instruction streams remain unretained.
 
+The concurrent graph tests hold a builder at a real prover callback and observe
+registered waiters before releasing it. They check one construction for matching
+inputs, independent proof budgets, exception and incomplete-lift wakeups,
+different contexts, and reentrant callbacks across threads and caches. These
+overlaps are coordinated by conditions rather than assumed from timing.
+
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
 to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
@@ -230,6 +236,16 @@ undefined-behavior checks remain enabled.
 Native execution requires an x64 host and Clang; the in-process SSE oracle
 additionally requires GCC/Clang. Skips on other hosts are explicit.
 This suite does not establish packed FP, VEX or x87 state coverage.
+
+`NeverDX86RdSspAccuracyTests` checks every x86/x64 encoded GPR destination,
+full-width disabled preservation, enabled concrete SSP reads, flags, unknown
+state, call/mutator invalidation, malformed descriptors in both strict modes,
+Med/High shapes and owned LLVM assembly. Native x64 tests authenticate disabled
+CET inside the executing child and compare original bytes against Codegen
+default/NoOpt and HighC/LLVMC default/NoOpt at C O0/O2, including RSP and typed
+pointer returns. Enabled native guest recompilation is outside this coverage.
+The standalone LLVMC frame/value controls retain materialized dependencies of
+forwarded expressions and execute deep bit assembly with UB traps.
 
 `HighSwiftEmitter` checks typed scalar SSE transports, malformed shapes,
 definite local assignment, bounded 96-bit slices and module-wide helper names.
@@ -282,7 +298,23 @@ cmake --build build-release --target NeverDX86FPStateAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPStateAccuracyTests$' --output-on-failure
 cmake --build build-release --target NeverDX86FPConversionAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPConversionAccuracyTests$' --output-on-failure
+cmake --build build-release --target NeverDX86FPRoundAccuracyTests --parallel 4
+ctest --test-dir build-release -L '^NeverDX86FPRoundAccuracyTests$' --output-on-failure
 ```
+
+`NeverDX86FPRoundAccuracyTests` compares original legacy/VEX scalar and packed
+ROUND bytes with actual SDK Codegen and HighC/LLVMC at default/NoOpt and O0/O2.
+Directed controls cover all immediate rounding selectors, ignored high bits,
+precision suppression, sticky flags, DAZ/FTZ, NaN payloads, scalar return ABI,
+upper lanes, dead numerical results and mixed invalid/inexact lane priority.
+Memory probes retain the actual instruction access for aligned, unaligned,
+protected-page and cross-page sources. Complete-source failure must not publish
+numerical output or add FP flags. Low/Med/High and owned assembly controls
+check malformed shapes, address spaces and typed numerical provenance. Software
+FS controls cover resolved alignment and i386 offset truncation; native GS
+source probes require Windows/Linux and FS probes require Linux. Native ROUND
+requires x64 SSE4.1; VEX probes additionally require AVX. These directed tests
+do not certify EVEX/SAE, unavailable-feature faults or general x87 state.
 
 ## x86 invalid encodings and instruction boundaries
 
@@ -335,6 +367,21 @@ compiler outputs; that case explicitly skips without the corpus. The tests
 never build or execute their inputs. SDK/CLI/worker tests verify decoded source
 identities and an unusable external-tool PATH. See the
 [profile](web-bun-profile.md) and [corpus recipe](../unittests/web/fixtures/bun/README.md).
+
+`WebBun.ClaudeCode21296FullContainerWhenSupplied` checks an independently
+downloaded official Linux x64 artifact when `NEVERD_CLAUDE_CODE_21296_ELF` is
+set. It pins the original SHA-256/size, extended layout, module/region counts,
+entry index and all decoded source totals. No target code is redistributed or
+downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
+tests cover malformed prelinked indices, counts, aliases and alignment.
+`WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
+recovery without raising interactive budgets and invalid-source refusal.
+Async-rest source spans and illegal trailing commas have parser regressions.
+`WebSDK.BunExport*` and `WebSDK.CLIBunExport*` check captured-byte preservation,
+all region contents, raw/readable/index output, stale revisions, destination
+and symlink refusal, metadata canaries and an unusable external-tool PATH.
+The full practical command and result boundary are in the
+[Claude Code qualification](web-claude-code-qualification.md).
 
 ASAR cases in `NeverDWebArtifactTests` combine fixed upstream writer archives
 and an independent original member with C++-constructed malformed inputs.
@@ -713,6 +760,12 @@ budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.
 Incomplete proofs and oversized records cannot be retained; count and byte
 limits are checked independently.
+The long-predecessor guard fixture separates a shallow comparison from its
+value's CFG history. It checks 128 table slots reaching four exact case targets,
+unrelated guards and partial-register changes, while retaining the independent
+deep-syntax refusal. The cache case checks rejection beyond the expanded value
+depth, that a complete expanded-depth answer cannot satisfy a default-depth
+query, and that repeated expanded queries preserve results and work charges.
 `PipelineOutcome.ParallelCalleeFrontiersPreserveEveryRegisterSummary` compares
 serial and parallel summaries across two 40-function callee frontiers.
 
@@ -952,6 +1005,8 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 `InterpreterMachineStateModel.*` in `NeverDLowIRRefinementTests` uses independent LowIR examples to check raw entry flags, status versus guest RAX, all 17 state words, partial register lanes, packed flags, sticky dynamic rejection, guest frame writes, both branch arms and cyclic inference followed by a fresh proof. Wrong outputs, lost status, changed memory, stale instruction records, malformed inputs and exhausted generation budgets must fail. Existing machine-source tests also exercise both C routes at O0/O2; model tests alone do not certify compiled C.
 
 `NeverDLLVMInterpreterModelTests` checks independently written LLVM against full-state LowIR oracles: widths, parallel PHIs, switches, guest memory, separate status, poison guards, intrinsic ranges, rejected contracts and all four construction budgets. It checks a complete arbitrary-word countdown proof and rejects changed status. Independently written C compiled at O1/O2 must match the same observations. These tests validate the admitted model; automatic invariant discovery and compiler correctness remain separate obligations. Variable-shift cases cover all four widths, masked and branch-bounded counts, boundary and oversized counts, no-wrap/exact flags, strict poison rejection and compiled C at O1/O2.
+
+`LLVMGuestAlignment.*` compares loads and stores with independent byte-memory oracles: aligned and misaligned domains, free high address bits, parsed default alignment, partial widths, unused or overwritten accesses, unreachable branches and exact/one-short construction budgets. `InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` checks native stack stores, matching entry congruences and altered source effects through both fresh relations.
 
 `NeverDLLVMScalarEquivalenceTests` checks complete loop domains, zero iterations, simultaneous PHI swaps, switches, high input bits, last-partition counterexamples, poison-producing extra updates, return ranges, unsupported contracts and exact/short/zero budgets. Independent double-width and overflow oracles cover funnel endpoints and guarded products at every admitted word width; independent nested-loop C at O1/O2 checks the compiler input profile. The state-model suite also checks funnel endpoints. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` checks shared query accounting and unchanged local limits.
 
@@ -3351,7 +3406,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads = 5447`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 2 image MDLs = 5449`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 

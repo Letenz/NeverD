@@ -81,6 +81,32 @@ TEST(WebSource, ExplicitSourceTypeControlsModuleAndReturnSyntax) {
   EXPECT_EQ(inspect("with (obj) {}").ParseStatus, "parsed");
 }
 
+TEST(WebSource, AsyncArrowRestParametersKeepParserOwnedLocations) {
+  const std::string Text =
+      "const f=async (x, ... /* rest */ args)=>async(...more)=>args;";
+  const auto Result = inspect(Text, "module");
+  ASSERT_EQ(Result.ParseStatus, "parsed");
+  size_t RestCount = 0;
+  for (const auto &N : Result.Nodes) {
+    ASSERT_LE(N.Start, N.End);
+    ASSERT_LE(N.End, Text.size());
+    if (N.Kind != "RestElement")
+      continue;
+    const auto Spelling = Text.substr(N.Start, N.End - N.Start);
+    EXPECT_TRUE(Spelling == "... /* rest */ args" || Spelling == "...more");
+    ++RestCount;
+  }
+  EXPECT_EQ(RestCount, 2);
+  // A source-location fix must not relax the parameter grammar.
+  for (const auto Invalid : {"async (...rest, x)=>x", "async (...rest,)=>x",
+                             "async (...rest /*comment*/,)=>x"})
+    EXPECT_NE(inspect(Invalid, "module").ParseStatus, "parsed") << Invalid;
+  EXPECT_EQ(inspect("async(...rest,)", "module").ParseStatus, "parsed");
+  EXPECT_EQ(
+      inspect("const f=async(... /* , */ rest)=>rest", "module").ParseStatus,
+      "parsed");
+}
+
 TEST(WebSource, MalformedAndUnsupportedSyntaxDoesNotPublishPartialNodes) {
   for (const auto Text : {"let = ;", "function {", "const a: number = 1;",
                           "const a = <div/>;", "throw\n1;", "break;"}) {

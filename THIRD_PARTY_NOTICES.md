@@ -52,7 +52,12 @@ integration, analysis and adapter implementation is C++.
 
 `lib/web/hermes-overlay/hermes/Support/Allocator.h` preserves the upstream
 header and adds an allocation-budget hook, dated 2026-10-10. The custom CMake
-integration selects the parser dependency graph and excludes upstream VM,
+integration also generates a private copy of `JSParserImpl.cpp` with one
+source-location fix: async-arrow rest parameters retain the original spread
+node's parser-owned source range. It requires the pinned code to match exactly
+once, retains upstream notices, and does not modify the fetched sources.
+This fix is exposed as parser profile `hermes-602befee-js-v2`.
+The integration selects the parser dependency graph and excludes upstream VM,
 tool and test targets. Enabled builds stage the license set beside libneverd,
 inside the SDK and under the installed `share/neverd/licenses/hermes`.
 
