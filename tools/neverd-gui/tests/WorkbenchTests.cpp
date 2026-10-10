@@ -2219,6 +2219,39 @@ private slots:
              QStringLiteral("stale_revision"));
   }
 
+  void cancellingViewReadsPreservesAnExternalAnalysisSnapshot() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    session.open(
+        writeFixture(directory, QStringLiteral("pseudocode-parallel.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(session.loaded(), OpenTimeoutMs);
+    QObject view;
+    // Hold the project dispatcher busy so the replica's snapshot remains
+    // queued when Cancel is pressed, rather than relying on a timing race.
+    session.queries().subscribe(
+        {"decompile",
+         {{"address", hexAddress(Base)}, {"representation", "source"}}},
+        &view, [](const QJsonObject &) {});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        diagnostics.join('\n').contains("fixture parallel decompile " +
+                                        hexAddress(Base) + " started"),
+        OpenTimeoutMs);
+    QSignalSpy replies(&session, &Session::externalResponse);
+    session.externalQuery(
+        "external-analysis", "decompile",
+        {{"address", hexAddress(Base + 32)}, {"representation", "source"}}, {});
+    QTRY_COMPARE_WITH_TIMEOUT(session.queries().pendingReadCount(), 2, 1000);
+    session.cancelReads();
+    QTRY_COMPARE_WITH_TIMEOUT(replies.size(), 1, OpenTimeoutMs);
+    QCOMPARE(replies.front()[0].toString(),
+             QStringLiteral("external-analysis"));
+    QCOMPARE(replies.front()[1].toJsonObject().value("status").toString(),
+             QStringLiteral("ok"));
+  }
+
   void saveBeforeQuitRejectsALateEdit() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("transition.bin"));

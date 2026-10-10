@@ -55,6 +55,7 @@ public:
   // External clients can split a graph summary and viewport across requests.
   // Keep that stateful protocol on one replica, as before the pool existed.
   QueryService &externalQueries() { return lanes_.front().service->queries(); }
+  QSet<QObject *> snapshotOwners() const;
   void unsubscribeOwner(QObject *owner);
   void cancelReads(const QSet<QObject *> &keep = {});
 

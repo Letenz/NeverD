@@ -54,6 +54,8 @@ pages. Concurrent analysis cases check that a slow view cannot block another
 function, cancellation only retires its own executor, subsequent pages keep
 their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
+Cancelling view reads must preserve a queued project snapshot needed by a
+retained external analysis request.
 `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.

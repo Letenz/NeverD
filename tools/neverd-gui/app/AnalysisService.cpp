@@ -241,6 +241,13 @@ QueryService &AnalysisPool::queries(const QJsonObject &payload,
   return bind(selected);
 }
 
+QSet<QObject *> AnalysisPool::snapshotOwners() const {
+  QSet<QObject *> owners;
+  for (const auto &lane : lanes_)
+    owners.insert(lane.service.get());
+  return owners;
+}
+
 void AnalysisPool::unsubscribeOwner(QObject *owner) {
   if (const auto binding = bindings_.find(owner); binding != bindings_.end()) {
     disconnect(binding->destroyed);
