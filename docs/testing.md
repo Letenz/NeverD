@@ -377,6 +377,16 @@ tests cover malformed prelinked indices, counts, aliases and alignment.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
 Async-rest source spans and illegal trailing commas have parser regressions.
+Resource-declaration tests cover contextual keywords, line terminators,
+initialization, loops, source types, immutable lexical bindings and conservative
+disposal effects. With the same official-artifact environment variable,
+`WebSourceRecovery.ClaudeCode21296AllJavaScriptWhenSupplied` checks all 2,345
+modules for reparse-verified readability and preservation of every original
+byte in order; it never executes the target. Allow several minutes on a busy
+host. The worker's C++ code-edit regression includes 9,000 long comment rows,
+real asm linkage and fake linkage inside comments. Existing source-cache
+transport checks exercise cache reuse and byte-budget eviction without raising
+their response deadlines.
 `WebSDK.BunExport*` and `WebSDK.CLIBunExport*` check captured-byte preservation,
 all region contents, raw/readable/index output, stale revisions, destination
 and symlink refusal, metadata canaries and an unusable external-tool PATH.
@@ -1013,6 +1023,8 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 `NeverDLLVMInterpreterModelTests` checks independently written LLVM against full-state LowIR oracles: widths, parallel PHIs, switches, guest memory, separate status, poison guards, intrinsic ranges, rejected contracts and all four construction budgets. It checks a complete arbitrary-word countdown proof and rejects changed status. Independently written C compiled at O1/O2 must match the same observations. These tests validate the admitted model; automatic invariant discovery and compiler correctness remain separate obligations. Variable-shift cases cover all four widths, masked and branch-bounded counts, boundary and oversized counts, no-wrap/exact flags, strict poison rejection and compiled C at O1/O2.
 
 `LLVMGuestAlignment.*` compares loads and stores with independent byte-memory oracles: aligned and misaligned domains, free high address bits, parsed default alignment, partial widths, unused or overwritten accesses, unreachable branches and exact/one-short construction budgets. `InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` checks native stack stores, matching entry congruences and altered source effects through both fresh relations.
+
+`LLVMByteSwap*`, `LLVMScalarByteSwap.*` and `InterpreterLLVMRefinement.ByteSwapRequiresBothFreshPremises` check independent byte-copy and shift/mask oracles, preserved upper bytes, cross-block values, retained poison, strict call contracts and independently counted exact/one-short budgets. Clang O1/O2 fixtures require actual byte-swap intrinsics; small native byte-exchange/BSWAP fixtures check both fresh premises and reject changed values or lost upper-word clearing.
 
 `NeverDLLVMScalarEquivalenceTests` checks complete loop domains, zero iterations, simultaneous PHI swaps, switches, high input bits, last-partition counterexamples, poison-producing extra updates, return ranges, unsupported contracts and exact/short/zero budgets. Independent double-width and overflow oracles cover funnel endpoints and guarded products at every admitted word width; independent nested-loop C at O1/O2 checks the compiler input profile. The state-model suite also checks funnel endpoints. `SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` checks shared query accounting and unchanged local limits.
 

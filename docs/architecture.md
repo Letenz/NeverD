@@ -398,6 +398,11 @@ The parser integration preserves original locations when converting async-arrow
 spread nodes to rest bindings; parser admission additionally checks the owned
 token after a rest binding for a forbidden comma. No consumer repairs missing
 locations or guesses this syntax independently.
+The same private parser owns resource-declaration grammar and original
+`using`/`await using` kinds. `SourceBindings` owns their immutable lexical
+bindings and `SourceEffects` owns conservative registration/disposal effects;
+formatting cannot remove or lower them. See the
+[resource-management profile](web-resource-management-profile.md).
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR members. Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
@@ -1630,6 +1635,8 @@ The finite-query cache accounts for serialized keys, numeric results and recency
 `modelInterpreterMachineStateX64` and the source wrapper share one generator for guest register lanes, packed flags, profile status and control flow. The model changes only state-object access into explicit register bytes and keeps status separate from guest RAX. It owns no compiler semantics or proof policy; the caller still owns the entry domain, observations, frame contract and complete refinement check.
 
 `NeverDLLVMInterpreterModel` owns the separate bounded scalar LLVM import into the same raw state ABI. `modelLLVMInterpreterMachineStateX64` retains actual status returns and emits explicit definedness guards. `llvmInterpreterMachineStateContract` supplies full observations and zero-monitor preservation; the caller owns domain, memory and complete proof. Importing LLVM does not change ordinary lifting or source publication, and does not prove a compiler.
+
+The shared LLVM model admits canonical scalar `llvm.bswap` at i16, i32 and i64 through charged byte extraction and balanced concatenation. Other widths, vectors and unsupported call contracts still fail explicitly. Machine-state, scalar and native-to-LLVM consumers share this owner; byte swapping never erases earlier definedness obligations or establishes a native ABI.
 
 The LLVM importer turns each reached guest load/store alignment above one into a sticky definedness obligation on its actual 64-bit address. Access widths and memory effects remain unchanged; masks, comparisons and accumulation use the existing construction budgets. Omitted textual alignment uses the parsed ABI alignment; `align 1` emits no guard. This adds no entry assumption or accessible bytes. State-object accesses retain their separate eight-byte alignment contract, and atomic/volatile accesses remain unsupported.
 
