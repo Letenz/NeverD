@@ -3101,6 +3101,18 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     // Mapping is optional. A failed marked rendering cannot invalidate the
     // ordinary source that was already emitted successfully above.
   }
+  // Statement markers must not affect expression spelling or the independent
+  // library-region coverage proof. Each private render must reproduce Ordinary.
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  try {
+    Instructions.prepareHighSources();
+    std::string Annotated;
+    llvm::raw_string_ostream OS(Annotated);
+    Render(OS, &Instructions);
+    Instructions.finish(Annotated, Ordinary);
+  } catch (const std::exception &) {
+    // Missing navigation evidence leaves the successful source and library map.
+  }
   Out << Ordinary;
   return true;
 }

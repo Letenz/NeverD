@@ -1,5 +1,7 @@
 #include "ProjectHistory.h"
 
+#include "CodeEdits.h"
+
 #include <algorithm>
 #include <fstream>
 
@@ -36,7 +38,9 @@ Json read(const fs::path &path, std::size_t limit = MaxHistoryBytes) {
 }
 /// The fields of a row of \p table besides its address.
 void validateRow(std::string_view table, const Json &row) {
-  if (table == "annotations") {
+  if (table == "code_edits") {
+    CodeEdits::validateRow(row);
+  } else if (table == "annotations") {
     if (!row.contains("text"))
       throw Error("history_invalid", "Annotation text is missing");
     (void)stringField(row, "text", {}, 65536);

@@ -26,6 +26,7 @@
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QMetaEnum>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRandomGenerator>
@@ -239,6 +240,47 @@ private slots:
     StyledLine copy = line;
     QCOMPARE(copy.text, line.text);
     QCOMPARE(copy.spans.size(), line.spans.size());
+  }
+
+  void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
+    const QFont font(QStringLiteral("Consolas"), 10);
+    const auto color = [](int role) {
+      return QColor::fromHsv((role * 30) % 360, 160, 230);
+    };
+    const QString prefix =
+        QStringLiteral("    return (uint32_t)input_value * 3 + 7; ");
+    StyledLine plain;
+    plain.text = prefix;
+    StyledLine annotated;
+    annotated.text =
+        prefix + QString::fromUtf8("/* 本行注释 second * / line */");
+    plain.spans = {{4, 6, 2, {}},   {11, 1, 10, {}}, {12, 8, 3, {}},
+                   {20, 1, 10, {}}, {21, 11, 8, {}}, {33, 1, 10, {}},
+                   {35, 1, 4, {}},  {37, 1, 10, {}}, {39, 1, 4, {}},
+                   {40, 1, 10, {}}};
+    annotated.spans = plain.spans;
+    annotated.spans.append({int(prefix.size()),
+                            int(annotated.text.size() - prefix.size()),
+                            6,
+                            {}});
+    const auto baseline = plain.layout(font, 1, color).lineAt(0);
+    const auto decorated = annotated.layout(font, 1, color).lineAt(0);
+    for (int at = 0; at <= prefix.size(); ++at)
+      QVERIFY2(std::abs(baseline.cursorToX(at) - decorated.cursorToX(at)) < 0.1,
+               qPrintable(QStringLiteral("Code column %1 moved: %2 -> %3")
+                              .arg(at)
+                              .arg(baseline.cursorToX(at))
+                              .arg(decorated.cursorToX(at))));
+    const auto render = [&](StyledLine &line) {
+      QImage image(800, 40, QImage::Format_ARGB32_Premultiplied);
+      image.fill(Qt::transparent);
+      QPainter painter(&image);
+      line.layout(font, 1, color).draw(&painter, QPointF());
+      return image;
+    };
+    const int width = int(baseline.cursorToX(int(prefix.size())));
+    QCOMPARE(render(annotated).copy(0, 0, width, 40),
+             render(plain).copy(0, 0, width, 40));
   }
 
   void commandsHaveUniqueIdsAndUnambiguousShortcuts() {

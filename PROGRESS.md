@@ -1,5 +1,94 @@
 # NeverD Daily Progress
 
+Last verified: **2026-10-10 09:07 Asia/Shanghai (UTC+08:00) / 01:07 UTC**.
+
+This is a bounded static review and a point-in-time GitHub snapshot, not a whole-repository audit or execution result. Priorities are suggestions, not delivery commitments. This topic-branch report is a proposal against dev, not a merge.
+
+## Current snapshot and changes
+
+- Pinned dev source: [ee6e0f54](https://github.com/NeverSight/NeverD/commit/ee6e0f54140eade0a29868331ea8bb78f164d92c). Previous reviewed source: [f242ee88](https://github.com/NeverSight/NeverD/commit/f242ee8897fd7172fb79046653bb6b555b54cab2). The intervening d2028756 integration, explicitly outside yesterday's review, is included in today's inventory but not exhaustively audited.
+- [Comparison](https://github.com/NeverSight/NeverD/compare/f242ee8897fd7172fb79046653bb6b555b54cab2...ee6e0f54140eade0a29868331ea8bb78f164d92c): **293 commits / 669 changed paths**: 180 added, 486 modified and 3 removed. Excluding yesterday's two report commits aa03a653/8763c218 and their documentation-only merge 93b4b9d8, plus PROGRESS.md, leaves **290 non-report commits / 668 paths**. These include source, tests, documentation and merges; they are not implementation-completion metrics.
+- Activity window: **October 9 01:10 UTC through October 10 01:07 UTC**, with collections sampled 01:04–01:06 UTC.
+- **25 ordinary open issues**, up five; no ordinary issue closed in this interval. New [#714](https://github.com/NeverSight/NeverD/issues/714) JavaScript/bundles, [#715](https://github.com/NeverSight/NeverD/issues/715) offline Node package triage, [#716](https://github.com/NeverSight/NeverD/issues/716) desktop extraction, [#717](https://github.com/NeverSight/NeverD/issues/717) passive interface/protocol mapping and [#718](https://github.com/NeverSight/NeverD/issues/718) Bun/native JS CLI extraction are planning work, not implemented capability.
+- **4 pre-existing open PRs**, versus two at yesterday's snapshot: #728, #744, #751 and draft #758. **51 PRs opened / 49 merged / 0 closed without merge** in the interval. Report-only #703 accounts for one opening and one merge; excluding it gives 50 openings / 48 merges. Today's report proposal is excluded from these pre-publication counts.
+- Yesterday's [#689](https://github.com/NeverSight/NeverD/pull/689), [#702](https://github.com/NeverSight/NeverD/pull/702) and report [#703](https://github.com/NeverSight/NeverD/pull/703) are merged. Do not keep their old pending-review state.
+- **No new independently proven defect in today's bounded NeverD source sample; no speculative code change.** The author added loop-prefix selection repair and FLS cleanup/retained-state handling, reviewed below.
+
+## Static review scope and evidence
+
+Read root AGENTS.md and CONTRIBUTING.md, relevant architecture/testing guidance and the roadmap. The complete pinned tree contains no nested AGENTS.md. Contribution guidance requires a topic branch against dev. The static-only constraint overrides build/test/formatter instructions: no project code, build, test, benchmark, repository script, dynamic analysis or manual CI action was executed.
+
+### Reviewed source
+
+1. **Multi-cut loop inference:** complete a580a0bf patch, including 173 added LowIRRefinementTests.cpp lines; current LowIRUndefinedIndependence.cpp **551–623, 3250–3338, 3470–3530, 4420–4485 and 5601–5713**, tracing cutpoint production, candidate reruns, transition state and the independent final checker.
+   - inferMultiple now runs the complete entry segment before choosing first-arrival prefix templates. Separate bounded searches only fill missing nested cuts.
+   - Cutpoint indices originate from the validated plan traversal. Candidate return lists are cleared for each run; transition starts are reset before the initial traversal.
+   - Inference remains a proposal. The final checker replays original/candidate entry segments, establishes missing paired prefixes and checks every inductive segment. The new fixtures include reordered/padded arms, changed arithmetic, zero progress, changed entry values and independently bounded inference/proof budgets.
+   - This is source evidence, not proof that the new tests pass or a whole-solver soundness claim.
+
+2. **FLS callbacks and process termination:** complete production changes in fb5515e0 and 96906f99; current WindowsProcess.cpp **300–500 and 625–950**, Services.cpp's dynamic-local inventory, complete/exitCleanup and FlsAlloc/Free/GetValue/SetValue implementations, and full WindowsProcessLifetime.cpp. Also inspected changed FLSCleanup/ServiceOutcome/lifetime declarations.
+   - Cleanup and loader work share the bounded continuation stack. Return handling completes the FLS record before restoring caller state; the allocated index cannot be reused while its callback is active. Recursive release of that same slot refuses explicitly.
+   - Normal process exit performs current-fiber cleanup before DLL/TLS detach; startup failure remains separate. Completion clears the fiber value but retains the process-wide index. Later-index allocations can participate in the same bounded traversal.
+   - Loader operations during exit cleanup are refused before Modules.begin can acquire/release references. Nested ordinary cleanup resumes the saved active call and return gate.
+   - Inspected added WindowsLifetimeTests/WindowsSystemTests, FLS exit/leaf fixture sources and changed UnpackGeneratedTests/fixture source for nested callbacks, same-slot recursion, observer identity and event limits; none were run.
+   - Other fibers/threads, all exception interactions, lower-index allocations during exit and undocumented Windows teardown behavior were not independently qualified. No speculative broadening of the declared model was made.
+
+3. **Retained dynamic TLS/FLS and unpacking:** all interface/production hunks in dac53695, including ProcessObserver.h, Unpack.h/Unpack.def, UnpackJSON.cpp, and current Unpack.cpp **110–240** and ProcessTransfer.cpp **375–450**.
+   - Allocated zero-valued TLS slots and nonzero unallocated TEB cells both retain state; FLS uses allocated-slot count. Absent inventory stays distinct from zero.
+   - Capture propagates inventory errors instead of inventing emptiness. Normal reconstruction refuses unknown or live state; explicitly requested snapshots retain diagnostics and are labeled snapshots.
+   - This does not reconstruct dynamic slot ownership or certify other thread/fiber state. Full container rebuilds, tail-helper behavior and native execution are outside this review.
+
+**Coverage limits:** most of the 668 non-report changed paths remain unaudited, including broad GUI, ABI, loader, floating-point, Darwin, native backend and emitter changes. No full review of open PR implementations is claimed. Author-local test counts and benchmark timings are not our measurements. Feature issues #655/#656/#714–#718 were not implemented or mutated.
+
+## Existing CI and review snapshot
+
+Read-only sampling **October 10 01:05–01:06 UTC**. Each status belongs to its explicit source/head; passing PR checks do not validate dev.
+
+### dev ee6e0f54
+
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/38003677498): in progress; Linux/macOS/Windows main jobs still running.
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/38003677512): success.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/38003677507): **failure**. Ubuntu and Windows succeeded; macOS failed at Swift source recovery.
+- [macOS log](https://github.com/NeverSight/NeverD/actions/runs/38003677507/job/114067460307) independently shows 366 mobile tests passing and arm64 classic/default Swift variants completing, followed by **x86_64 classic/default failure**: doubleAdd, floatAdd, mixed, stackFloats and stackMixed lack an ordinary direct source binding. Only 2/4 Swift variants completed. Negative-control messages earlier in the log are not additional real failures.
+- [Mobile Real Applications 38008461137](https://github.com/NeverSight/NeverD/actions/runs/38008461137): in progress with its upstream-regression gate failed; an earlier same-head run 38003688030 is skipped. Neither is a passed qualification.
+- Five workflow records: **1 success, 1 failure, 2 in progress, 1 skipped**. 26 exact-head check records: **9 success, 2 failure, 5 in progress, 10 skipped**. Main-platform completion and downstream qualification remain unresolved.
+
+### Open PR heads
+
+| PR / exact head | Observed check summary | Review / dependency limits |
+| --- | --- | --- |
+| [#728](https://github.com/NeverSight/NeverD/pull/728), 396d371074093e329ff69bd76d10540f18c2b0f3 | 19: 14 success, 2 failure, 1 running, 2 skipped | Mergeable/unstable. Mobile all three hosts pass; main Linux/macOS fail, Windows runs. Its Swift repair is a pending integration candidate, not dev success. |
+| [#744](https://github.com/NeverSight/NeverD/pull/744), 92090e9a4dbfc4cec64db197179f66810947c79e | 16: 5 success, 7 failure, 4 skipped | Conflicting/dirty. Published-package audit and all three main/mobile platform jobs fail. Description says new LLVM release publication and successful live audit are still pending; old-head Wine/native results do not qualify this head. |
+| [#751](https://github.com/NeverSight/NeverD/pull/751), 44944e90fe4d7c2d6501f9952cb6541a203ab155 | 12: 7 success, 3 failure, 1 running, 1 skipped | Mergeability unknown at read. Main Linux/macOS and mobile macOS fail; Windows main runs. Extensive local test/timing claims remain author reports, including explicitly retained failures. |
+| [#758](https://github.com/NeverSight/NeverD/pull/758), 82943cfc06d2ef6e4058ddbac46dbbe4dea6a327 | 19: 14 success, 3 running, 2 skipped | Draft, mergeable/unstable; depends on #728. Author explicitly reports the complete Darwin gate has not passed (three timeouts in its last reported epoch). Mobile all three hosts pass, main jobs run. |
+
+All four returned review submissions, inline review comments and conversation comment collections were empty, with no requested reviewers. Pending independent review and unresolved CI/dependencies remain; metadata mergeability does not mean ready to merge. Full root causes of every PR check failure were not established.
+
+## Suggested priorities
+
+1. **Close the integrated Swift recovery gap without duplicating pending repairs.** Dependency: #728/#758 source review and exact-head qualification. Acceptance: the selected integrated head completes all four unchanged Swift variants and required mobile gates; separate ARM64 success from x86_64 failure and keep original bounds.
+2. **Resolve the PR integration/qualification queue.** Dependency: #744 conflict resolution and authorized LLVM release/audit; #751/#728 failed-platform diagnostics; #758 prerequisite and Darwin timeout evidence. Acceptance: independent review and terminal exact-head required CI, with inherited failures, unavailable native targets and author reports explicitly separated. This daily task neither merges nor publishes an LLVM release.
+3. **Sequence the new web-analysis plans behind explicit evidence contracts.** Dependency: #714–#718 extraction/provenance/artifact APIs and existing #655/#656 collaboration/adapter boundaries. Acceptance: choose a pinned offline corpus and a small extraction-to-analysis slice with version/hash identity, unsupported outcomes and bounded resources; keep passive protocol mapping separate from active requests. Planning is not implementation or a delivery-date commitment.
+
+## Daily log — 2026-10-10
+
+- Inventoried 293 commits and 669 paths; removed pure report content/merge from substantive counts.
+- Reviewed loop-prefix selection, FLS continuation/exit and retained dynamic TLS/FLS boundaries plus focused regression source. No newly proven NeverD defect or source patch.
+- Recorded 25 ordinary open issues, four pre-existing PRs, five new feature proposals and the actual merged state of yesterday's PRs.
+- Diagnosed exact-dev mobile Swift failure from the existing log; distinguished pending PR mobile success from dev and retained other CI/review gaps.
+- Updated only this English tracker proposal; preserved prior content verbatim. No dependency/security change, issue mutation, merge, deployment or active CI action.
+
+## Counting and publication limits
+
+The compare commit pages were **100 + 100 + 93 + 0**. GitHub's 300-file comparison cap was replaced by comparison of complete recursive trees: **6,641 and 6,819 entries**, neither truncated. Renames count as removed/added paths. Open issues, updated issues and open PRs exhausted at an empty second page. The latest 100 closed PRs extend back to October 8 03:29 UTC, before the activity window; merged_at distinguishes merges from non-merge closures. Check totals fit their 100-item pages; dev check/workflow second pages were empty. External/historical checks outside the sampled collections are not exhaustively covered.
+
+No usable authorized engineering environment was available in the environment catalog; this static task used GitHub connector reads and authorized report publication. No execution verification was attempted. Readback and publication receipt are supplied in the delivery summary.
+
+<details>
+<summary>Previous snapshots and manual content (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-09 09:10 Asia/Shanghai (UTC+08:00)** / **2026-10-09 01:10 UTC**
 
 This is a bounded static source review and a point-in-time snapshot of existing GitHub evidence. Priorities are suggestions, not delivery commitments. All previous tracker content is preserved below. This topic-branch report is a proposal against dev; publication does not mean it has been merged.
@@ -1572,6 +1661,8 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
 
 </details>
 

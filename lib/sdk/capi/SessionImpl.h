@@ -625,11 +625,10 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
-    Sources.reset();
-    if (!PipeResult.LibraryRecognitions.empty()) {
-      Sources = std::make_shared<LLVMSourceMap>();
-      Emitter.setSourceMap(Sources.get());
-    }
+    // Native source views need surviving instruction observations even when
+    // this function contains no recognized library operation.
+    Sources = std::make_shared<LLVMSourceMap>();
+    Emitter.setSourceMap(Sources.get());
     auto Candidate = Emitter.emit(
         PipeResult.MedFuncs, *LLVMCtx, "neverd_output", Img.Arch, ImportMap,
         &Img, Img.abiFormat(), /*MergeableGlobals=*/false, BodyMask);

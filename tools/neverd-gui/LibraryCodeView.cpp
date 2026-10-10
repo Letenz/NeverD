@@ -167,6 +167,32 @@ void LibraryCodeView::toggleRegion(const QString &id) {
   setRegionFolded(id, !folded_.contains(id));
 }
 
+bool LibraryCodeView::unfoldSourceLine(int sourceLine) {
+  if (sourceLine < 0)
+    return false;
+  qsizetype begin = 0;
+  for (int line = 0; line < sourceLine; ++line) {
+    begin = original_.indexOf(QLatin1Char('\n'), begin);
+    if (begin < 0)
+      return false;
+    ++begin;
+  }
+  const auto newline = original_.indexOf(QLatin1Char('\n'), begin);
+  const auto end = newline < 0 ? original_.size() : newline + 1;
+  bool changed = false;
+  for (const auto &region : regions_)
+    if (folded_.contains(region.id))
+      for (const auto &span : region.spans)
+        if (span.begin < end && span.end > begin) {
+          folded_.remove(region.id);
+          changed = true;
+          break;
+        }
+  if (changed)
+    rebuild();
+  return changed;
+}
+
 void LibraryCodeView::setRegionFolded(const QString &id, bool folded) {
   for (const auto &region : regions_)
     if (region.id == id && region.available) {

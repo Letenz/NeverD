@@ -40,12 +40,18 @@ public:
   /// The display line showing the start of source line \p sourceLine, -1
   /// past the end.
   int displayLine(int sourceLine) const;
+  /// Expand folds intersecting an original source row. Return whether the
+  /// display projection changed.
+  bool unfoldSourceLine(int sourceLine);
   Q_INVOKABLE void toggleRegion(const QString &id);
   /// Fold or unfold every library operation.
   Q_INVOKABLE void setFolded(bool folded);
   void setRegionFolded(const QString &id, bool folded);
   Q_INVOKABLE QString regionAt(int position) const;
   Q_INVOKABLE int sourceLineAt(int position) const;
+  int originalPosition(int position) const {
+    return sourcePosition(position, false);
+  }
   Q_INVOKABLE QString originalSelection(int begin, int end) const;
   /// Display ranges [begin, end) of folded summaries.
   QVector<QPair<int, int>> foldedRanges() const;

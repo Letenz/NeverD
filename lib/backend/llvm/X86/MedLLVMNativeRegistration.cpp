@@ -1,10 +1,11 @@
-//===- MedLLVMNativeRegistration.cpp - Native PE32 SEH -------------------===//
+//===- MedLLVMNativeRegistration.cpp - Native PE32 SEH --------------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
-#include "MedLLVMEHHelpers.h"
+#include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationSEHProof.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
@@ -38,49 +39,6 @@ using Role = windows_eh_md::NativeProvenanceRole;
 bool mayUnwind(const llvm::CallInst &Call) {
   // A nounwind callee can still fault while this registration is active.
   return !Call.isMustTailCall() && !llvm::isa<llvm::IntrinsicInst>(Call);
-}
-
-bool collectDeadFinallyResult(llvm::CallInst &Call,
-                              std::vector<llvm::Instruction *> &Dead) {
-  std::set<llvm::Instruction *> Seen;
-  std::vector<llvm::Value *> Pending{&Call};
-  size_t Work = 0;
-  while (!Pending.empty()) {
-    auto *Value = Pending.back();
-    Pending.pop_back();
-    for (auto *User : Value->users()) {
-      if (++Work > limits::kMaxRegistrationEHStateWork)
-        return false;
-      auto *Instruction = llvm::dyn_cast<llvm::Instruction>(User);
-      if (!Instruction || Instruction->getFunction() != Call.getFunction())
-        return false;
-      if (!Seen.insert(Instruction).second)
-        continue;
-      if (auto *Cast = llvm::dyn_cast<llvm::CastInst>(Instruction);
-          Cast && Cast->getSrcTy()->isIntegerTy() &&
-          Cast->getDestTy()->isIntegerTy()) {
-        Dead.push_back(Cast);
-        Pending.push_back(Cast);
-        continue;
-      }
-      auto *Store = llvm::dyn_cast<llvm::StoreInst>(Instruction);
-      auto *Slot =
-          Store ? llvm::dyn_cast<llvm::AllocaInst>(Store->getPointerOperand())
-                : nullptr;
-      if (!Store || Store->getValueOperand() != Value || Store->isVolatile() ||
-          Store->isAtomic() || !Slot || !Slot->isStaticAlloca() ||
-          !Slot->getAllocatedType()->isIntegerTy())
-        return false;
-      for (auto *SlotUser : Slot->users()) {
-        auto *Definition = llvm::dyn_cast<llvm::StoreInst>(SlotUser);
-        if (!Definition || Definition->getPointerOperand() != Slot ||
-            Definition->isVolatile() || Definition->isAtomic())
-          return false;
-      }
-      Dead.push_back(Store);
-    }
-  }
-  return true;
 }
 
 } // namespace
@@ -158,82 +116,17 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       FrameEntrySPOffset > FrameBytes->getFixedValue())
     return false;
 
-  // A synthetic source frame must stay private. Otherwise an unknown callee
-  // can modify a source registration field without changing LLVM's live node.
-  // Consume the shared LowIR frame domain, including spill/reload provenance,
-  // then carry that fact through synthetic MedIR copies and PHIs.
-  using ValueKey = std::tuple<MedVar::VarKind, int, int>;
-  auto Key = [](const MedVar &V) { return ValueKey{V.Kind, V.Id, V.SSAVer}; };
-  std::set<std::pair<va_t, int>> FrameOccurrences;
-  for (const auto &Value : States.FrameValues)
-    FrameOccurrences.emplace(Value.Address, Value.OpSeq);
-  std::set<ValueKey> FrameValues;
-  for (const MedBlock &Block : Func.Blocks)
-    for (const MedOp &Op : Block.Ops)
-      if (!Op.Output.isConst() && Op.Output.Size &&
-          (FrameOccurrences.count({Op.Addr, Op.OriginSeq}) ||
-           Op.RegistrationRoot != MedOp::RegistrationRootKind::None))
-        FrameValues.insert(Key(Op.Output));
-  auto IsFrame = [&](const MedVar &V) {
-    return !V.isConst() && FrameValues.count(Key(V));
-  };
-  bool Changed = true;
-  size_t Work = 0;
-  while (Changed) {
-    Changed = false;
-    for (const MedBlock &Block : Func.Blocks) {
-      for (const PhiNode &Phi : Block.Phis) {
-        if (++Work > limits::kMaxRegistrationEHStateWork)
-          return false;
-        for (const auto &[Pred, Value] : Phi.Args)
-          if (IsFrame(Value))
-            Changed |= FrameValues.insert(Key(Phi.Output)).second;
-      }
-      for (const MedOp &Op : Block.Ops) {
-        if (++Work > limits::kMaxRegistrationEHStateWork)
-          return false;
-        if (!Op.Output.Size || Op.Output.isConst() || Op.Opcode == NdOp::LOAD ||
-            Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-          continue;
-        for (unsigned I = 0; I < Op.NumInputs; ++I)
-          if (IsFrame(Op.Inputs[I]))
-            Changed |= FrameValues.insert(Key(Op.Output)).second;
-      }
-    }
-  }
-  for (const MedCallInfo &Call : Func.CallInfos)
-    if (llvm::any_of(Call.Args, IsFrame))
-      return false;
-  for (const MedBlock &Block : Func.Blocks)
-    for (const MedOp &Op : Block.Ops) {
-      // Indexed source-memory receipts currently describe ordinary loads and
-      // stores. Do not admit an unbound read-modify-write effect.
-      if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
-          Op.Opcode == NdOp::ATOMIC_CMPXCHG)
-        return false;
-      if ((Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::COND_BR ||
-           Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::CALL ||
-           Op.Opcode == NdOp::INDIR_CALL) &&
-          llvm::any_of(llvm::ArrayRef(Op.Inputs).take_front(Op.NumInputs),
-                       IsFrame))
-        return false;
-      if ((Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
-           Op.Opcode == NdOp::ATOMIC_CMPXCHG) &&
-          llvm::any_of(llvm::ArrayRef(Op.Inputs).take_front(Op.NumInputs),
-                       IsFrame))
-        return false;
-      if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
-          IsFrame(Op.Inputs[1]) &&
-          Op.MemoryAddressSpace != NdMemoryAddressSpace::X86FS) {
-        const auto Slot = canonicalFrameSlotKey(Op.Inputs[0], true);
-        if (!Slot || Slot->second < -int64_t(FrameEntrySPOffset) ||
-            Op.Inputs[1].Size > FrameBytes->getFixedValue() ||
-            Slot->second >
-                int64_t(FrameBytes->getFixedValue() - Op.Inputs[1].Size) -
-                    int64_t(FrameEntrySPOffset))
-          return false;
-      }
-    }
+  auto FrameValues = x86_registration::getPrivateSEHFrameValues(
+      Func, States, [&](const MedVar &Address, uint16_t Width) {
+        const auto Slot = canonicalFrameSlotKey(Address, true);
+        return Slot && Slot->second >= -int64_t(FrameEntrySPOffset) &&
+               Width <= FrameBytes->getFixedValue() &&
+               Slot->second <= int64_t(FrameBytes->getFixedValue() - Width) -
+                                   int64_t(FrameEntrySPOffset);
+      });
+  if (!FrameValues)
+    return false;
+  auto IsFrame = [&](const MedVar &V) { return FrameValues->contains(V); };
 
   std::map<va_t, const MedBlock *> BlocksAt;
   std::map<int, const RegistrationBlockState *> BlockStates;
@@ -274,54 +167,11 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
     return It == BlocksAt.end() ? nullptr : OriginalBlockMap.at(It->second->Id);
   };
 
-  // Authenticate every emitted FS memory instruction, not just entries that
-  // happen to survive in an occurrence map. Duplicate emission is unknown.
-  std::set<llvm::Instruction *> ChainInstructions;
-  for (const RegistrationChainAccess &Access : States.ChainAccesses) {
-    auto It = RegistrationChainIR.find({Access.Address, Access.OpSeq});
-    if (It == RegistrationChainIR.end() || !It->second ||
-        !ChainInstructions.insert(It->second).second ||
-        It->second->getFunction() != &Parent)
-      return false;
-    auto *Load = llvm::dyn_cast<llvm::LoadInst>(It->second);
-    auto *Store = llvm::dyn_cast<llvm::StoreInst>(It->second);
-    const bool Read =
-        Access.AccessKind == RegistrationChainAccess::Kind::ReadPreviousHead ||
-        Access.AccessKind == RegistrationChainAccess::Kind::ReadInstalledHead;
-    llvm::Value *Pointer = Load    ? Load->getPointerOperand()
-                           : Store ? Store->getPointerOperand()
-                                   : nullptr;
-    const auto *Offset =
-        llvm::dyn_cast_or_null<llvm::ConstantPointerNull>(Pointer);
-    if (Read != (Load != nullptr) || !Pointer || !Offset ||
-        Pointer->getType()->getPointerAddressSpace() != 257 ||
-        (Load && (!Load->getType()->isIntegerTy(32) || Load->isAtomic() ||
-                  Load->isVolatile())) ||
-        (Store && (!Store->getValueOperand()->getType()->isIntegerTy(32) ||
-                   Store->isAtomic() || Store->isVolatile())))
-      return false;
-  }
-  for (llvm::BasicBlock &Block : Parent)
-    for (llvm::Instruction &Instruction : Block) {
-      if (Instruction.isEHPad() || llvm::isa<llvm::InvokeInst>(Instruction) ||
-          llvm::isa<llvm::CallBrInst>(Instruction) ||
-          llvm::isa<llvm::IndirectBrInst>(Instruction) ||
-          llvm::isa<llvm::ResumeInst>(Instruction))
-        return false;
-      const llvm::Value *Pointer = nullptr;
-      if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Instruction))
-        Pointer = Load->getPointerOperand();
-      if (const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&Instruction))
-        Pointer = Store->getPointerOperand();
-      if (Pointer && Pointer->getType()->getPointerAddressSpace() == 257 &&
-          !ChainInstructions.count(&Instruction))
-        return false;
-      for (const llvm::Use &Operand : Instruction.operands())
-        if (Operand->getType()->isPointerTy() &&
-            Operand->getType()->getPointerAddressSpace() == 257 &&
-            !ChainInstructions.count(&Instruction))
-          return false;
-    }
+  auto ChainProof = x86_registration::getCheckedSEHChainInstructions(
+      Parent, States, RegistrationChainIR);
+  if (!ChainProof)
+    return false;
+  auto &ChainInstructions = *ChainProof;
 
   struct Region {
     llvm::BasicBlock *Handler = nullptr;
@@ -468,57 +318,12 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
   if (Incoming.size() != RegistrationIncomingIR.size())
     return false;
 
-  struct SourceOperation {
-    llvm::Instruction *Instruction;
-    const MedOp *Operation;
-    int Block;
-    uint8_t Kind;
-  };
-  std::vector<SourceOperation> SourceOperations;
-  std::set<llvm::CallInst *> CookieCheckCalls;
-  size_t MemoryOperations = 0;
-  for (const MedBlock &Block : Func.Blocks)
-    for (const MedOp &Op : Block.Ops) {
-      llvm::Instruction *Instruction = nullptr;
-      uint8_t Kind;
-      if ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-        const auto It = RegistrationMemoryIR.find({Op.Addr, Op.OriginSeq});
-        if (It == RegistrationMemoryIR.end() || !It->second)
-          return false;
-        Instruction = It->second;
-        Kind = Op.Opcode == NdOp::STORE;
-        ++MemoryOperations;
-      } else if (Op.Opcode == NdOp::CALL) {
-        for (const auto &[Call, Address] : CallSiteAddrs)
-          if (Address == Op.Addr) {
-            if (Instruction)
-              return false;
-            Instruction = const_cast<llvm::CallInst *>(Call);
-          }
-        if (!Instruction)
-          return false;
-        Kind = States.cookieCheck(Op.Addr, Op.OriginSeq) ? 3 : 2;
-        if (Kind == 3) {
-          auto *Call = llvm::cast<llvm::CallInst>(Instruction);
-          if (!States.SecurityCookiesComplete || !States.CookieCheckVA ||
-              Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
-              Op.Inputs[0].ConstVal != States.CookieCheckVA ||
-              !Call->use_empty() || Call->isMustTailCall())
-            return false;
-          CookieCheckCalls.insert(Call);
-        }
-      } else
-        continue;
-      if (Op.OriginSeq < 0 ||
-          Instruction->getParent() != OriginalBlockMap.at(Block.Id))
-        return false;
-      SourceOperations.push_back({Instruction, &Op, Block.Id, Kind});
-    }
-  if (MemoryOperations != RegistrationMemoryIR.size())
+  auto SourceProof = x86_registration::getCheckedSEHSourceOperations(
+      Func, OriginalBlockMap, RegistrationMemoryIR, CallSiteAddrs);
+  if (!SourceProof)
     return false;
-  if (CookieCheckCalls.size() != States.CookieChecks.size())
-    return false;
+  auto &SourceOperations = SourceProof->Operations;
+  auto &CookieCheckCalls = SourceProof->CookieCheckCalls;
 
   // Each scope must actually participate in the proven dispatch graph.
   std::vector<bool> Used(Regions.size());
@@ -570,7 +375,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationSEH(
       if (auto Callback = CallbackIndices.find({Direct->second, true});
           Callback != CallbackIndices.end())
         Finally = Callback->second;
-    if (Finally && !collectDeadFinallyResult(
+    if (Finally && !x86_registration::collectDeadFinallyResult(
                        *const_cast<llvm::CallInst *>(Call), DeadFinallyResults))
       return false;
     if ((State->second >= 0 && mayUnwind(*Call)) || Finally)

@@ -106,3 +106,5 @@ RVA-basierte verzögerte Importe behalten ungelöste interne Thunks und binden b
 
 
 `WrappedEntriesRequireExplicitTransferEvidence` prüft einen DLL-Wrapper, der den wiederhergestellten Eintritt auf tieferem Stapel aufruft. Standard bleibt `no_entry`; die Wahl des beobachteten Aufrufs mit `transfer` erzeugt eine ladbare DLL. Ein tieferer Aufruf allein unterscheidet Eintritt und Initialisierer nicht.
+
+Weicht der wiederhergestellte DLL-Einstieg vom ursprünglichen PE-Einstieg ab, leitet ein Adapter das Prozess-Attach an den gewählten Einstieg und Detach sowie Thread-Benachrichtigungen an den ursprünglichen ausführbaren Einstieg weiter. So bleibt die Bereinigung des äußeren Wrappers erhalten. Ein nicht verfügbarer ursprünglicher Einstieg führt zum Fehler. `entry_rva` bezeichnet weiterhin den gewählten Einstieg; der PE-Header kann auf den Adapter zeigen. Ein unabhängiger DLL-Test prüft die Bereinigung auf beiden emulierten Architekturen und nativem Windows.
