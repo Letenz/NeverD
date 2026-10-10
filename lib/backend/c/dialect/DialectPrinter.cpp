@@ -547,6 +547,30 @@ std::optional<size_t> SourceDialectText::mapOffset(size_t CBegin) const {
 }
 
 std::optional<std::pair<size_t, size_t>>
+SourceDialectText::mapExact(llvm::StringRef C, size_t CBegin,
+                            size_t CEnd) const {
+  if (CBegin >= CEnd || CEnd > C.size())
+    return std::nullopt;
+  const llvm::StringRef Piece = C.slice(CBegin, CEnd).trim();
+  if (Piece.empty())
+    return std::nullopt;
+  CBegin = Piece.data() - C.data();
+  CEnd = CBegin + Piece.size();
+  std::optional<std::pair<size_t, size_t>> Mapped;
+  for (const SourceDialectPiece &P : Pieces) {
+    if (P.CBegin != CBegin || P.CEnd != CEnd)
+      continue;
+    if (P.Begin >= P.End || P.End > Text.size())
+      return std::nullopt;
+    const auto Span = std::make_pair(P.Begin, P.End);
+    if (Mapped && *Mapped != Span)
+      return std::nullopt;
+    Mapped = Span;
+  }
+  return Mapped;
+}
+
+std::optional<std::pair<size_t, size_t>>
 SourceDialectText::map(size_t CBegin, size_t CEnd) const {
   std::optional<std::pair<size_t, size_t>> Hull;
   for (const SourceDialectPiece &P : Pieces)

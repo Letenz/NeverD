@@ -541,7 +541,8 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   Options.TheArch = S.Img.Arch;
   Options.Format = S.Img.abiFormat();
   Options.Names = Map.Names;
-  SourceDialectText Spelled = spellInDialect(Raw, Options);
+  const llvm::StringRef Original(Raw);
+  SourceDialectText Spelled = spellInDialect(Original, Options);
   for (CSourceRegion &Region : Map.Regions) {
     std::vector<CSourceSpan> Spans;
     for (const CSourceSpan &Span : Region.Spans)
@@ -559,7 +560,8 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
   Map.Definitions = std::move(Definitions);
   std::vector<CSourceAnchor> Anchors;
   for (const auto &Anchor : Map.Anchors)
-    if (auto Moved = Spelled.map(Anchor.Span.Begin, Anchor.Span.End))
+    if (auto Moved =
+            Spelled.mapExact(Original, Anchor.Span.Begin, Anchor.Span.End))
       Anchors.push_back(
           {Anchor.Function, {Moved->first, Moved->second}, Anchor.Occurrences});
   Map.Anchors = std::move(Anchors);

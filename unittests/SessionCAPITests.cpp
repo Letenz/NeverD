@@ -3612,6 +3612,76 @@ TEST_F(SessionCAPITest, CSourcePagesRetainCanonicalReturnAnchors) {
   }
 }
 
+TEST_F(SessionCAPITest, DialectNavigationMapsOnlyTheReturnRowAcrossPages) {
+  const std::pair<const char *, const char *> Cases[] = {
+      {"cpp", "_ZN4Demo4workEi"},
+      {"rust", "_RNvCs8vGhbR5OvgK_13rust_eh_probe4main"},
+      {"go", "runtime.deferreturn"}};
+  for (bool AArch64 : {false, true}) {
+    SCOPED_TRACE(AArch64 ? "aarch64" : "x64");
+    const uint64_t Base = AArch64 ? 0xffff800000400000ULL : 0x400000;
+    for (const auto &[Dialect, Symbol] : Cases) {
+      SCOPED_TRACE(Dialect);
+      const auto Path = write("dialect-anchors.elf",
+                              makeNamedNativeELF(Symbol, Base, AArch64));
+      ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+      const auto Entry = neverd_session_entry_addr(Session);
+      const auto Return = Entry + (AArch64 ? 4 : 5);
+      for (const char *Stage : {Dialect, "source"}) {
+        SCOPED_TRACE(Stage);
+        const auto Full =
+            takeView(neverd_ir_view_json(Session, Entry, Stage, 0, 2048));
+        ASSERT_EQ(Full.getString("dialect"), Dialect);
+        ASSERT_EQ(Full.getString("mapping_status"), "instruction_anchors");
+        ASSERT_TRUE(Full.getString("text"));
+        const auto *ExpectedRows = Full.getArray("rows");
+        ASSERT_NE(ExpectedRows, nullptr);
+        std::string Text;
+        llvm::json::Array Rows;
+        size_t Offset = 0, Mapped = 0, Unmapped = 0;
+        for (;;) {
+          const auto Page =
+              takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 1));
+          ASSERT_TRUE(Page.getString("text"));
+          EXPECT_EQ(Page.getInteger("byte_offset"), Text.size());
+          const auto Line = *Page.getString("text");
+          Text += Line.str();
+          const auto *PageRows = Page.getArray("rows");
+          ASSERT_NE(PageRows, nullptr);
+          ASSERT_EQ(PageRows->size(), 1u);
+          const auto *Row = PageRows->front().getAsObject();
+          ASSERT_NE(Row, nullptr);
+          const auto *Addresses = Row->getArray("addresses");
+          ASSERT_NE(Addresses, nullptr);
+          if (Line.trim().starts_with("return ")) {
+            ASSERT_EQ(Addresses->size(), 1u) << Line.str();
+            ASSERT_TRUE(Addresses->front().getAsString());
+            EXPECT_EQ(std::stoull(Addresses->front().getAsString()->str(),
+                                  nullptr, 16),
+                      Return);
+            EXPECT_EQ(Row->getString("mapping_status"), "instruction_anchor");
+            ++Mapped;
+          } else {
+            EXPECT_TRUE(Addresses->empty()) << Line.str();
+            EXPECT_EQ(Row->getString("mapping_status"), "unmapped");
+            ++Unmapped;
+          }
+          Rows.push_back(PageRows->front());
+          if (Page.getBoolean("complete").value_or(false))
+            break;
+          ASSERT_TRUE(Page.getInteger("next_offset"));
+          Offset = *Page.getInteger("next_offset");
+          ASSERT_LT(Offset, 1000u);
+        }
+        EXPECT_EQ(Mapped, 1u);
+        EXPECT_GT(Unmapped, 0u);
+        EXPECT_EQ(Text, *Full.getString("text"));
+        EXPECT_EQ(Rows, *ExpectedRows);
+      }
+    }
+  }
+}
+
 TEST_F(SessionCAPITest, SourceViewsReadInTheProgramsLanguages) {
   // Pages of two lines reassemble the whole text; the first page says what
   // the text reads in, and each page the source names on it.
