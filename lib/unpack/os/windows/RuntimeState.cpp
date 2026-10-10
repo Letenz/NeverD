@@ -137,9 +137,9 @@ llvm::Expected<std::vector<uint8_t>> compile(llvm::StringRef Header,
                     "-fno-builtin", "-fno-stack-protector", "-O1", "-c", Source,
                     "-o", Object}))
     return std::move(E);
-  if (auto E =
-          Run({*Link, "/nodefaultlib", "/dll", "/entry:restore", "/fixed",
-               "/dynamicbase:no", "/timestamp:0", ImageBase, Object, Lib, DLL}))
+  if (auto E = Run({*Link, "/nodefaultlib", "/dll", "/entry:restore", "/fixed",
+                    "/dynamicbase:no", "/timestamp:0", "/merge:.idata=.data",
+                    ImageBase, Object, Lib, DLL}))
     return std::move(E);
   return readInput(D / "runtime.dll");
 }

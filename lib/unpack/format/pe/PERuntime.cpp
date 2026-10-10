@@ -141,6 +141,18 @@ llvm::Expected<RebuiltImage> appendRuntime(RebuiltImage Out,
         return Item.takeError();
       if (IAT > Mapped.size() || I * 8 + 8 > Mapped.size() - IAT)
         return failure("native runtime IAT exceeds its backing");
+      // The original image keeps its own IAT protection range. The runtime
+      // uses writable import cells so the native loader can bind both tables
+      // without making intervening code/data pages part of that range.
+      const auto *Region = Code.regionAt(IAT + I * 8);
+      if (!Region || IAT + I * 8 + 8 > Region->RVA + Region->MemorySize)
+        return failure("native runtime IAT crosses its section");
+      const auto Access = Code.headers()
+                              .Sections[Region - Code.regions().data()]
+                              .Characteristics;
+      if (!(Access & llvm::COFF::IMAGE_SCN_MEM_WRITE) ||
+          (Access & llvm::COFF::IMAGE_SCN_MEM_EXECUTE))
+        return failure("native runtime IAT requires writable data");
       uint64_t Value = *Item;
       if (!Value)
         break;
@@ -319,7 +331,6 @@ llvm::Expected<RebuiltImage> appendRuntime(RebuiltImage Out,
   Directory(llvm::COFF::EXCEPTION_TABLE, ExceptionRVA,
             Functions.size() * sizeof(RuntimeFunction));
   Directory(llvm::COFF::TLS_TABLE, TLSRVA, sizeof(TLS));
-  Directory(llvm::COFF::IAT, 0, 0);
   Out.File = std::move(Output);
   auto Checked = Image::read(Out.File);
   if (!Checked)
