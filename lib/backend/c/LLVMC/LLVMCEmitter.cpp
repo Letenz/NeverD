@@ -293,6 +293,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
           if (auto Shape = classifyX86FPStateAsm(*CI);
               Shape && (isX86ScalarFPStateIntrinsic(Shape->first) ||
                         isX86FPRoundStateIntrinsic(Shape->first) ||
+                        isX86FPApprox12Intrinsic(Shape->first) ||
                         isX86FPConversionStateIntrinsic(Shape->first))) {
             if (Opts.TheArch == Arch::X86 &&
                 isX86FPConversionStateIntrinsic(Shape->first) &&
@@ -1127,7 +1128,8 @@ static bool isCVectorBoundaryInstruction(const llvm::Instruction &Inst,
                                          Arch TheArch) {
   if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst))
     if (const auto Shape = classifyX86FPStateAsm(*Call);
-        Shape && isX86FPRoundStateIntrinsic(Shape->first))
+        Shape && (isX86FPRoundStateIntrinsic(Shape->first) ||
+                  isX86FPApprox12Intrinsic(Shape->first)))
       return TheArch == Arch::X86 || TheArch == Arch::X64;
   auto IsLocalType = [](llvm::Type *Type) {
     return isCVectorType(Type) || !containsVectorType(Type);

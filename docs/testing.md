@@ -310,6 +310,20 @@ source probes require Windows/Linux and FS probes require Linux. Native ROUND
 requires x64 SSE4.1; VEX probes additionally require AVX. These directed tests
 do not certify EVEX/SAE, unavailable-feature faults or general x87 state.
 
+`NeverDX86FPApprox12AccuracyTests` covers legacy/VEX RCP/RSQRT scalar and
+packed forms with original byte kernels, SDK Codegen default/NoOpt and both C
+routes default/NoOpt at O0/O2. Numerical bits, unchanged MXCSR (including
+unmasked exceptions), scalar merging and vector upper bits are complete
+observations. Memory checks cover legacy packed alignment faults, scalar/VEX
+unaligned access, canonical ranges, permissions and FS/GS. Scalar C return
+observers check FP type and raw bits. The portable software reference is an
+explicit non-strict opt-in: check the architectural error envelope separately
+from implementation-dependent RCP tininess and record approximated execution.
+Default/strict concrete evaluation refuses unproved normal results; definite
+special values remain exact. Native FS requires Linux and AVX probes require
+native OS-enabled AVX. These tests do not certify x86-32 execution, enabled #AC,
+unavailable-feature faults or EVEX 14/28-bit approximations.
+
 ## x86 invalid encodings and instruction boundaries
 
 `NeverDX86EncodingAccuracyTests` requires raw illegal LOCK forms (including

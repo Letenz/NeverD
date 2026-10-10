@@ -249,7 +249,7 @@ inline X86ShadowStackReadShape x86ShadowStackReadLowShape(const LowOp &Op,
 inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
   const bool Memory =
       Op.NumInputs && Op.Inputs[0].isConst() &&
-      Op.Inputs[0].Offset == unsigned(Intrinsic::X86FPRoundMemoryState);
+      isX86FPStateMemoryIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset));
   const bool Round =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPRoundStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset));
@@ -267,6 +267,7 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
           .NumInputs = Op.NumInputs,
           .IdIsConst = Op.NumInputs && Op.Inputs[0].isConst(),
           .IdSize = Op.NumInputs ? Op.Inputs[0].Size : 0U,
+          .IdValue = Op.NumInputs ? Op.Inputs[0].Offset : 0U,
           .OutputIsWritable = Op.Output.isReg() || Op.Output.isTemp(),
           .OutputSize = Op.Output.Size,
           .OperandsAreScalar = Scalar,

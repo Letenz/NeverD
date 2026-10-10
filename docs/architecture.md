@@ -1516,6 +1516,22 @@ evaluation requires authenticated 48/57-bit canonical-address context and
 segment bases. Unknown context refuses; known memory faults retain incoming
 CSR and publish no numerical result. This does not extend EVEX/SAE coverage.
 
+Legacy/VEX RCP/RSQRT use `X86FPApprox12State` raw numerical results and
+`X86FPApprox12MemoryState` instruction-owned source access. These instructions
+have no MXCSR input, output or exception effect; an unknown CSR stays unknown.
+Scalar width is four bytes, packed width is 16/32, and upper-lane writes retain
+their existing lifter ownership. Legacy packed memory requires 16-byte
+alignment, while scalar/VEX memory does not impose that requirement. Native
+LLVM and readable C execute the actual instruction, preserving raw NaN bits.
+Concrete evaluation completes determined special values but refuses
+implementation-dependent normal results by default. Explicit non-strict
+reference mode can select a software result within the architectural error
+envelope and records `ApproximatedOps`; strict/concolic execution always
+refuses that representative. This mode does not establish exact path or
+target evidence. Existing EVEX 14/28 approximations retain their own contract.
+Enabled alignment-check faults and unavailable CPU features require further
+authenticated execution context; this surface does not certify them.
+
 Swift consumes the same typed HighIR state contract for scalar SSE arithmetic.
 Its x86_64-only compiler pointer intrinsics import and commit MXCSR; numerical
 helpers disable optimization so arithmetic stays between those effects. The

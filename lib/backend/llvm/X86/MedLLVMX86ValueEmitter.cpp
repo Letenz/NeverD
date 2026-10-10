@@ -561,6 +561,30 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     const auto Shape = x86FPStateMedShape(Op, TargetArch);
     if (!x86FPStateShapeIsValid(IC, Shape))
       llvm::report_fatal_error("invalid x86 numerical/state contract");
+    if (isX86FPApprox12Intrinsic(IC)) {
+      const bool Memory = IC == I::X86FPApprox12MemoryState;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPApprox12LLVMType(*Ctx, Layout);
+      auto *Source = getVar(Op.Inputs[Memory ? 1 : 2], Builder);
+      if (Memory) {
+        auto *Integer = Builder.getInt64Ty();
+        Source = Source->getType()->isPointerTy()
+                     ? Builder.CreatePtrToInt(Source, Integer)
+                     : Builder.CreateZExtOrTrunc(Source, Integer);
+        Source = Builder.CreateIntToPtr(
+            Source, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                     Op.MemoryAddressSpace)));
+      } else
+        Source = Builder.CreateBitCast(Source, Type);
+      auto *Fn = llvm::FunctionType::get(Type, {Source->getType()}, false);
+      auto *Asm = llvm::InlineAsm::get(Fn, x86FPApprox12Asm(Layout, Memory),
+                                       Memory ? X86FPApprox12MemoryConstraints
+                                              : X86FPApprox12ValueConstraints,
+                                       true);
+      auto *Result = Builder.CreateCall(Asm, {Source}, "fp_approx12");
+      Result->setMetadata(X86FPStateAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+      return Builder.CreateBitCast(Result, sizeToType(Op.Output.Size));
+    }
     auto *I32 = llvm::Type::getInt32Ty(*Ctx);
     auto *Ptr = llvm::PointerType::getUnqual(*Ctx);
     llvm::IRBuilder<> EntryBuilder(&CurFunc->getEntryBlock(),

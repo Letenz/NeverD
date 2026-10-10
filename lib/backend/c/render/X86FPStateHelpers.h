@@ -25,6 +25,56 @@ inline std::string x86FPStateRawCType(unsigned Bytes) {
                     : "unsigned _BitInt(" + std::to_string(Bytes * 8) + ")";
 }
 
+inline std::string x86FPApprox12CHelperName(Intrinsic Id, unsigned Layout) {
+  std::string Name = std::string("neverd_x86_") +
+                     x86FPApprox12Mnemonic(Layout) + "_bits" +
+                     std::to_string(x86FPStateSourceBytes(Layout) * 8);
+  if (Id == Intrinsic::X86FPApprox12MemoryState) {
+    const auto Space = x86FPRoundStateAddressSpace(Layout);
+    Name += Space == NdMemoryAddressSpace::X86FS   ? "_memory_fs"
+            : Space == NdMemoryAddressSpace::X86GS ? "_memory_gs"
+                                                   : "_memory";
+  }
+  return Name;
+}
+
+template <typename Stream>
+inline void writeX86FPApprox12CHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                                      const std::string &Name) {
+  const unsigned Bytes = x86FPStateSourceBytes(Layout);
+  const unsigned Control = x86FPRoundStateControl(Layout);
+  const bool Memory = Id == Intrinsic::X86FPApprox12MemoryState;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const auto Raw = x86FPStateRawCType(Bytes);
+  OS << "/* Approximate reciprocal, preserving MXCSR and raw NaN bits. */\n"
+     << "static inline ";
+  if (Bytes == 32 || (Control & 4))
+    OS << "__attribute__((target(\"avx\"))) ";
+  OS << Raw << " " << Name << "(" << (Memory ? "void *address" : Raw + " bits")
+     << ") {\n    ";
+  if (x86FPApprox12IsScalar(Control))
+    OS << "float";
+  else
+    OS << "typedef float approx_vector __attribute__((vector_size(" << Bytes
+       << ")));\n    approx_vector";
+  OS << (Memory ? " result_value;\n" : " value, result_value;\n") << "    "
+     << Raw << " result;\n";
+  if (!Memory)
+    OS << "    __builtin_memcpy(&value, &bits, " << Bytes << ");\n";
+  OS << "    __asm__ volatile(\"" << x86FPApprox12Mnemonic(Layout) << " ";
+  if (Memory)
+    OS << (Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+           : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                  : "")
+       << "(%1)";
+  else
+    OS << "%1";
+  OS << ",%0\" : \"=&x\"(result_value) : "
+     << (Memory ? "\"r\"(address)" : "\"x\"(value)") << " : \"memory\");\n"
+     << "    __builtin_memcpy(&result, &result_value, " << Bytes << ");\n"
+     << "    return result;\n}\n\n";
+}
+
 inline std::string x86FPRoundStateCHelperName(Intrinsic Id, unsigned Layout) {
   std::string Name = std::string("neverd_x86_") +
                      x86FPRoundStateMnemonic(Layout) + "_bits" +
@@ -98,6 +148,8 @@ writeX86FPRoundStateCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
 }
 
 inline std::string x86FPScalarValueCHelper(Intrinsic Id, unsigned Bytes) {
+  if (isX86FPApprox12Intrinsic(Id))
+    return x86FPApprox12CHelperName(Id, Bytes);
   if (isX86FPRoundStateIntrinsic(Id))
     return x86FPRoundStateCHelperName(Id, Bytes) + "_value";
   if (isX86FPConversionStateIntrinsic(Id))
@@ -114,6 +166,10 @@ inline void writeX86FPScalarValueCHelpers(Stream &OS,
                                           const X86FPStateCHelperNames &Used) {
   for (const auto &[Shape, Name] : Used) {
     const auto [Id, Bytes] = Shape;
+    if (isX86FPApprox12Intrinsic(Id)) {
+      writeX86FPApprox12CHelper(OS, Id, Bytes, Name);
+      continue;
+    }
     if (isX86FPRoundStateIntrinsic(Id)) {
       writeX86FPRoundStateCHelper(OS, Id, Bytes, Name, true);
       continue;
@@ -162,6 +218,8 @@ inline void writeX86FPScalarValueCHelpers(Stream &OS,
 }
 
 inline std::string x86FPStateCHelper(Intrinsic Id, unsigned ScalarBytes) {
+  if (isX86FPApprox12Intrinsic(Id))
+    return x86FPApprox12CHelperName(Id, ScalarBytes);
   if (isX86FPRoundStateIntrinsic(Id))
     return x86FPRoundStateCHelperName(Id, ScalarBytes);
   if (isX86FPConversionStateIntrinsic(Id))
@@ -178,6 +236,10 @@ inline void writeX86FPStateCHelpers(llvm::raw_ostream &OS,
                                     const X86FPStateCHelperNames &Used) {
   for (const auto &[Shape, Name] : Used) {
     const auto [Id, Bytes] = Shape;
+    if (isX86FPApprox12Intrinsic(Id)) {
+      writeX86FPApprox12CHelper(OS, Id, Bytes, Name);
+      continue;
+    }
     if (isX86FPRoundStateIntrinsic(Id)) {
       writeX86FPRoundStateCHelper(OS, Id, Bytes, Name, false);
       continue;

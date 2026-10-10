@@ -3877,6 +3877,20 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     const auto Helper = FPStateHelperNames.find(*Shape);
     if (Helper == FPStateHelperNames.end())
       llvm::report_fatal_error("uncollected x86 FP state C helper");
+    if (isX86FPApprox12Intrinsic(Id)) {
+      const std::string Source =
+          Id == Intrinsic::X86FPApprox12MemoryState
+              ? "(void*)(uintptr_t)(" +
+                    integerPointerOperandStr(Call.getArgOperand(0)) + ")"
+              : BitcastInput(0);
+      const std::string Expression = Helper->second + "(" + Source + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
     if (isX86FPConversionStateIntrinsic(Id)) {
       const std::string Expression = Helper->second + "(" + BitcastInput(0) +
                                      ", (void*)" +
@@ -3916,6 +3930,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   std::string AsmStr = IA->getAsmString().str();
   if (llvm::StringRef(AsmStr).contains("rdssp"))
     llvm::report_fatal_error("unowned shadow stack read C projection");
+  if (llvm::StringRef(AsmStr).contains("rcpss ") ||
+      llvm::StringRef(AsmStr).contains("rcpps ") ||
+      llvm::StringRef(AsmStr).contains("rsqrtss ") ||
+      llvm::StringRef(AsmStr).contains("rsqrtps "))
+    llvm::report_fatal_error("unowned x86 approximate reciprocal C projection");
   if (AsmStr.empty())
     return false;
 

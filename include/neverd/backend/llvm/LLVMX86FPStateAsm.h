@@ -27,6 +27,26 @@ inline constexpr char X86FPStateBinaryConstraints[] = "=&x,0,x,r,~{memory}";
 inline constexpr char X86FPStateConversionConstraints[] = "=&r,x,r,~{memory}";
 inline constexpr char X86FPStateRoundConstraints[] = "=&x,x,r,~{memory}";
 inline constexpr char X86FPStateRoundMemoryConstraints[] = "=&x,r,r,~{memory}";
+inline constexpr char X86FPApprox12ValueConstraints[] = "=&x,x,~{memory}";
+inline constexpr char X86FPApprox12MemoryConstraints[] = "=&x,r,~{memory}";
+
+inline llvm::Type *x86FPApprox12LLVMType(llvm::LLVMContext &Context,
+                                         unsigned Layout) {
+  auto *Scalar = llvm::Type::getFloatTy(Context);
+  return x86FPApprox12IsScalar(x86FPRoundStateControl(Layout))
+             ? Scalar
+             : llvm::FixedVectorType::get(Scalar,
+                                          x86FPStateSourceBytes(Layout) / 4);
+}
+
+inline std::string x86FPApprox12Asm(unsigned Layout, bool Memory) {
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  return std::string(x86FPApprox12Mnemonic(Layout)) + " " +
+         (Memory ? std::string(Segment) + "($1)" : "$1") + ",$0";
+}
 
 inline llvm::Type *x86FPRoundStateLLVMType(llvm::LLVMContext &Context,
                                            unsigned Layout) {
@@ -89,6 +109,37 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     if (Asm->getAsmString() == X86FPStateWriteAsm)
       return std::pair{Intrinsic::X86WriteMXCSR, 0U};
   }
+  if (Call.arg_size() == 1)
+    for (bool Memory : {false, true})
+      for (unsigned Control = 0; Control < (Memory ? 8U : 4U); ++Control)
+        for (unsigned Bytes : {4U, 16U, 32U}) {
+          if (x86FPApprox12IsScalar(Control)
+                  ? Bytes != 4 || (Control & 4)
+                  : Bytes == 4 || (Memory && Bytes == 32 && !(Control & 4)))
+            continue;
+          for (auto Space :
+               {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+                NdMemoryAddressSpace::X86GS}) {
+            if (!Memory && Space != NdMemoryAddressSpace::Default)
+              continue;
+            const unsigned Layout =
+                x86FPRoundStateLayout(Bytes, Control, 0, Space);
+            const auto *Type = x86FPApprox12LLVMType(Call.getContext(), Layout);
+            const auto *SourceType = Call.getArgOperand(0)->getType();
+            if (Call.getType() == Type &&
+                (Memory ? SourceType->isPointerTy() &&
+                              SourceType->getPointerAddressSpace() ==
+                                  llvmX86MemoryAddressSpace(Space)
+                        : SourceType == Type) &&
+                Asm->getConstraintString() ==
+                    (Memory ? X86FPApprox12MemoryConstraints
+                            : X86FPApprox12ValueConstraints) &&
+                Asm->getAsmString() == x86FPApprox12Asm(Layout, Memory))
+              return std::pair{Memory ? Intrinsic::X86FPApprox12MemoryState
+                                      : Intrinsic::X86FPApprox12State,
+                               Layout};
+          }
+        }
   for (Intrinsic Id : {Intrinsic::X86FPAddState, Intrinsic::X86FPSubState,
                        Intrinsic::X86FPMulState, Intrinsic::X86FPDivState})
     for (unsigned Bytes : {4U, 8U}) {

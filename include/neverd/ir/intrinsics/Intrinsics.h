@@ -621,6 +621,7 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
+  case Intrinsic::X86FPApprox12MemoryState:
   case Intrinsic::Movsb:
   case Intrinsic::Movsw:
   case Intrinsic::Movsd:
@@ -822,6 +823,11 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::X86FPApprox12MemoryState:
+    // [id, address, control], without a CSR operand or effect.
+    return NumInputs == 3 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 0 &&
+           (OutputSize == 4 || OutputSize == 16 || OutputSize == 32);
   case Intrinsic::X86FPRoundMemoryState:
     // [id, address, control, immediate, MXCSR]. Full numerical/state
     // validation belongs to the shared X86FPState representation adapters.

@@ -3707,6 +3707,11 @@ add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPRoundAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPApprox12AccuracyTests
+  x86_64/X86_64_FPApprox12AccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPApprox12AccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86EncodingAccuracyTests
   x86_64/X86_64_EncodingAccuracyTests.cpp
   LINK_COMPONENTS Decode Lift Loader)

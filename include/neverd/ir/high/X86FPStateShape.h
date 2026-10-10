@@ -23,7 +23,7 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
   };
   const bool Conversion = isX86FPConversionStateIntrinsic(Call.IntrinsicId);
   const bool Round = isX86FPRoundStateIntrinsic(Call.IntrinsicId);
-  const bool Memory = Call.IntrinsicId == Intrinsic::X86FPRoundMemoryState;
+  const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
   const unsigned ControlIndex = Memory ? 1 : 0;
   const bool HasControl =
       Call.Operands.size() > ControlIndex && Call.Operands[ControlIndex];
@@ -47,8 +47,12 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           .NumInputs = static_cast<unsigned>(Call.Operands.size() + 1),
           .IdIsConst = true,
           .IdSize = 2,
+          .IdValue = static_cast<unsigned>(Call.IntrinsicId),
           .OutputIsWritable = Call.Type && Call.Type->Kind == NdTypeKind::Int &&
-                              Call.Type->Size > 0,
+                              Call.Type->Size > 0 &&
+                              (!isX86FPApprox12Intrinsic(Call.IntrinsicId) ||
+                               (!Call.IsIndirectCall && !Call.IndirectTarget &&
+                                !Call.SourceCallHint && !Call.DoesNotReturn)),
           .OutputSize = Call.Type ? Call.Type->Size : 0U,
           .OperandsAreScalar = ScalarOperands,
           .LeftSize = PointerAddress ? 8 : Size(0),

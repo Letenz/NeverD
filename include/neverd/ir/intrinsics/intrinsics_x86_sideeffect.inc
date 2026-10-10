@@ -183,6 +183,8 @@ SIDEEFFECT(Intrinsic::X86FPConvert);
 SIDEEFFECT(Intrinsic::X86FPRoundTransform);
 SIDEEFFECT(Intrinsic::X86FPRoundState);
 SIDEEFFECT(Intrinsic::X86FPRoundMemoryState);
+SIDEEFFECT(Intrinsic::X86FPApprox12State);
+SIDEEFFECT(Intrinsic::X86FPApprox12MemoryState);
 SIDEEFFECT(Intrinsic::X86FPExtract);
 SIDEEFFECT(Intrinsic::X86FPRange);
 SIDEEFFECT(Intrinsic::X86FPFixup);

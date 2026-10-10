@@ -265,7 +265,72 @@ bool exactPositiveSquareRoot(uint64_t Bits, uint16_t ElementSize,
   return true;
 }
 
+/// A software representative is opt-in, never exact concrete evidence.
+/// All operations use integer/APFloat semantics and preserve host FP state.
+std::optional<uint32_t> approximate12Lane(uint32_t Bits, bool Rsqrt,
+                                          bool AllowReference,
+                                          bool &Approximated) {
+  const auto Format = formatForSize(4);
+  const uint32_t Sign = Bits & 0x80000000U;
+  if (isNaN(Bits, Format))
+    return Bits | 0x00400000U;
+  if (isZero(Bits, Format) || isDenormal(Bits, Format))
+    return Sign | 0x7f800000U;
+  if (Rsqrt && Sign)
+    return 0xffc00000U;
+  if (isInfinity(Bits, Format))
+    return Sign;
+  if (!AllowReference)
+    return std::nullopt;
+  Approximated = true;
+  if (Rsqrt) {
+    ExactSqrtResult Root;
+    if (!exactPositiveSquareRoot(Bits, 4, llvm::APFloat::rmNearestTiesToEven,
+                                 Root))
+      return std::nullopt;
+    Bits = static_cast<uint32_t>(Root.Bits);
+  }
+  llvm::APFloat Input(llvm::APFloat::IEEEsingle(), llvm::APInt(32, Bits));
+  llvm::APFloat Value(llvm::APFloat::IEEEsingle(), llvm::APInt(32, 0x3f800000));
+  Value.divide(Input, llvm::APFloat::rmNearestTiesToEven);
+  const auto Result =
+      static_cast<uint32_t>(Value.bitcastToAPInt().getZExtValue());
+  // RCP flushes tiny results independently of FTZ. Its boundary interval is
+  // implementation dependent; this RN representative is an allowed member.
+  return isDenormal(Result, Format) ? Result & 0x80000000U : Result;
+}
+
 } // namespace
+
+std::optional<std::vector<uint8_t>>
+NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
+                                   unsigned Alignment) {
+  if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+      (Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
+      (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+       !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+    return std::nullopt;
+  const uint64_t Offset = Img.Arch == Arch::X86
+                              ? uint32_t(readOperand(Op.Inputs[1]))
+                              : readOperand(Op.Inputs[1]);
+  const auto Address = resolveMemoryAddress(Op, Offset);
+  if (!Address || !isX86CanonicalMemoryRange(*Address, Bytes) ||
+      (Alignment > 1 && (*Address % Alignment)))
+    return std::nullopt;
+  // A write-back cache supplies data, never memory-access permission.
+  for (unsigned Index = 0; Index < Bytes; ++Index) {
+    const uint64_t ByteAddress = *Address + Index;
+    const Segment *Mapped = Img.getSegmentFor(ByteAddress);
+    if (!Mapped || !Mapped->isReadable() || ByteAddress < Mapped->VA ||
+        ByteAddress - Mapped->VA >= Mapped->Size)
+      return std::nullopt;
+  }
+  const auto Loaded = loadMemoryBytes(*Address, Bytes);
+  if (Loaded && CollectLoads &&
+      static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
+    LoadLog.push_back({*Address, Bytes});
+  return Loaded;
+}
 
 bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
   if (!MXCSRKnown)
@@ -545,6 +610,35 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     setMXCSR(static_cast<uint32_t>(State));
     return true;
   }
+  if (isX86FPApprox12Intrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPApprox12MemoryState;
+    const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;
+    std::vector<uint8_t> Source;
+    if (Memory) {
+      const auto Loaded = loadX86FPStateMemory(
+          Op, Op.Output.Size,
+          !x86FPApprox12IsScalar(Control) && !(Control & 4) ? 16 : 1);
+      if (!Loaded)
+        return false;
+      Source = *Loaded;
+    } else
+      Source = readOperandBytes(Op.Inputs[2]);
+    std::vector<uint8_t> Result(Op.Output.Size);
+    bool Approximated = false;
+    for (unsigned Offset = 0; Offset < Op.Output.Size; Offset += 4) {
+      const auto Value = approximate12Lane(
+          static_cast<uint32_t>(readLane(Source, Offset, 4)),
+          (Control & 1) != 0, X86Approx12ReferenceMode && !StrictMode,
+          Approximated);
+      if (!Value)
+        return false;
+      writeLane(Result, Offset, 4, *Value);
+    }
+    writeOutputBytes(Op.Output, Result);
+    if (Approximated)
+      ++Skips.ApproximatedOps;
+    return true;
+  }
   if (isX86FPConversionStateIntrinsic(Id)) {
     const unsigned SourceBytes = Op.Inputs[1].Size;
     const unsigned DestinationBytes =
@@ -606,30 +700,12 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
       // Match the native scope on memory faults: the authenticated incoming
       // CSR is installed before the instruction accesses its source.
       setMXCSR(static_cast<uint32_t>(State));
-      const uint64_t Offset = Img.Arch == Arch::X86
-                                  ? uint32_t(readOperand(Op.Inputs[1]))
-                                  : readOperand(Op.Inputs[1]);
-      const auto Address = resolveMemoryAddress(Op, Offset);
-      if (!Address || !isX86CanonicalMemoryRange(*Address, Bytes) ||
-          (!x86FPRoundStateIsScalar(Control) && !(Control & 8) &&
-           (*Address & 15)))
-        return false;
-      // A write-back cache supplies values, never source-access permission.
-      // Check every mapped byte before allowing cached data to satisfy a load.
-      for (unsigned Index = 0; Index < Bytes; ++Index) {
-        const uint64_t ByteAddress = *Address + Index;
-        const Segment *Mapped = Img.getSegmentFor(ByteAddress);
-        if (!Mapped || !Mapped->isReadable() || ByteAddress < Mapped->VA ||
-            ByteAddress - Mapped->VA >= Mapped->Size)
-          return false;
-      }
-      const auto Loaded = loadMemoryBytes(*Address, Bytes);
+      const auto Loaded = loadX86FPStateMemory(
+          Op, Bytes,
+          !x86FPRoundStateIsScalar(Control) && !(Control & 8) ? 16 : 1);
       if (!Loaded)
         return false;
       Source = *Loaded;
-      if (CollectLoads &&
-          static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
-        LoadLog.push_back({*Address, static_cast<uint16_t>(Bytes)});
     } else
       Source = readOperandBytes(Op.Inputs[2]);
     const unsigned VectorBytes = std::max(Bytes, 16U);

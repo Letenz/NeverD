@@ -78,9 +78,9 @@ x86ShadowStackReadMedShape(const MedOp &Op, Arch TargetArch = Arch::Unknown) {
 
 inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
                                           Arch TargetArch = Arch::Unknown) {
-  const bool Memory =
-      Op.NumInputs && Op.Inputs[0].isConst() &&
-      Op.Inputs[0].ConstVal == unsigned(Intrinsic::X86FPRoundMemoryState);
+  const bool Memory = Op.NumInputs && Op.Inputs[0].isConst() &&
+                      isX86FPStateMemoryIntrinsic(
+                          static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
   const bool Round =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPRoundStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
@@ -111,6 +111,7 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
       .NumInputs = Op.NumInputs,
       .IdIsConst = Op.NumInputs && Op.Inputs[0].isConst(),
       .IdSize = Op.NumInputs ? Op.Inputs[0].Size : 0U,
+      .IdValue = Op.NumInputs ? Op.Inputs[0].ConstVal : 0U,
       .OutputIsWritable = isMedIntrinsicWritableScalar(Op.Output),
       .OutputSize = Op.Output.Size,
       .OperandsAreScalar = Scalar,

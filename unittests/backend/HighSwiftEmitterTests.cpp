@@ -215,6 +215,25 @@ TEST(HighSwiftEmitter, RoundStateRequiresAnExplicitSwiftImplementation) {
   }
 }
 
+TEST(HighSwiftEmitter,
+     ApproximateReciprocalsRequireAnExplicitSwiftImplementation) {
+  for (auto Id :
+       {Intrinsic::X86FPApprox12State, Intrinsic::X86FPApprox12MemoryState}) {
+    auto F = function();
+    auto Operands = Id == Intrinsic::X86FPApprox12State
+                        ? std::vector<ExprPtr>{HighExpr::makeConst(2, 1),
+                                               HighExpr::makeConst(0, 4)}
+                        : std::vector<ExprPtr>{HighExpr::makeConst(0x1000, 8),
+                                               HighExpr::makeConst(2, 1)};
+    F.Body[0].RetVal = fpStateCall(Id, 4, std::move(Operands));
+    const auto Emitted = HighSwiftEmitter().emit(F, signature());
+    EXPECT_FALSE(Emitted.Recovered);
+    EXPECT_TRUE(Emitted.Source.empty());
+    EXPECT_NE(Emitted.Reason.find("floating-point state shape"),
+              std::string::npos);
+  }
+}
+
 TEST(HighSwiftEmitter, ScalarSSERejectsMalformedAndUnprovedStateTransports) {
   auto [Baseline, Source] = fpStateFunction(Intrinsic::X86FPAddState, 8);
   auto Valid = HighSwiftEmitter().emit(Baseline, Source);
