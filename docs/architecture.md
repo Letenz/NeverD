@@ -317,6 +317,13 @@ entries are reusable only until either resolver learns a concrete result;
 both share the invalidation generation because their walks recurse into each
 other. Neither cache bypasses incomplete-proof rejection.
 
+Proof graph indexes use a private arena that outlives their containers and is
+retired with the synchronous query. Ordered insertion hints preserve duplicate
+and out-of-order point handling. A fixed-size register lane cache checks the
+complete offset/width key and uses the query's immutable target metadata.
+These storage and lookup optimizations retain the original evidence charges;
+they do not reuse CFG or value proofs across changed snapshots.
+
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
 finite domain with every independent root retained and all group edges absent.
