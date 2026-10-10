@@ -30,6 +30,7 @@
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -3654,6 +3655,75 @@ TEST_F(JTE_X86_64, RecoversExactCOFFImageRelativeRVASwitch) {
                  "non-parameter high bits have no Win64 ABI certificate");
   ExpectRejected({.RelocatedTableSlot = true},
                  "PE RVA slots cannot carry mixed relocation provenance");
+}
+
+TEST_F(JTE_X86_64, COFFBorrowedFrameReloadReachesVerifiedLLVM) {
+  constexpr neverd::va_t ImageBase = 0x140000000;
+  constexpr neverd::va_t Entry = ImageBase + 0x1000;
+  auto Make = [&](bool DifferentField) {
+    auto Image = makeCOFFImageRelativeRVASwitch();
+    auto &Text = Image.Segments.front();
+    Text.Size = 0x100 + 7 * sizeof(uint32_t);
+    Text.Data.assign(Text.Size, 0xcc);
+    Image.Sections.front().Size = Text.Size;
+    Image.Symbols.front().Size = 0xe0;
+    Image.KnownCodeRanges = {{Entry, Entry + 0xe0}};
+    // The finally-funclet shape in XCPT4: RBP borrows the parent's frame,
+    // the guard reloads its field, and the dispatch loads unsigned PE RVAs.
+    const uint8_t Code[] = {
+        0x55,                                     // push rbp
+        0x48, 0x83, 0xec, 0x20,                   // sub rsp,32
+        0x48, 0x89, 0xd5,                         // mov rbp,rdx
+        0x83, 0x7d, 0x24, 0x05,                   // cmp dword [rbp+36],5
+        0x0f, 0x87, 0xbe, 0,    0,    0,          // ja default (+0xd0)
+        0x48, 0x63, 0x45, 0x24,                   // movsxd rax,[rbp+36]
+        0x48, 0x8d, 0x0d, 0xe3, 0xef, 0xff,       // lea rcx,image base
+        0xff, 0x8b, 0x84, 0x81, 0,    0x11, 0, 0, // mov eax,[rcx+rax*4+0x1100]
+        0x48, 0x01, 0xc8,                         // add rax,rcx
+        0xff, 0xe0};                              // jmp rax
+    std::copy(std::begin(Code), std::end(Code), Text.Data.begin());
+    if (DifferentField)
+      Text.Data[21] = 40;
+    for (uint8_t I = 0; I != 8; ++I) {
+      const size_t Offset = 0x60 + I * 16;
+      const uint8_t Return[] = {0xb8, I,    0,    0,    0,    // mov eax,I
+                                0x48, 0x83, 0xc4, 0x20, 0x5d, // restore frame
+                                0xc3};
+      std::copy(std::begin(Return), std::end(Return),
+                Text.Data.begin() + Offset);
+      if (I < 7) {
+        const uint32_t RVA = 0x1000 + Offset;
+        for (unsigned Byte = 0; Byte != 4; ++Byte)
+          Text.Data[0x100 + I * 4 + Byte] =
+              static_cast<uint8_t>(RVA >> (Byte * 8));
+      }
+    }
+    return Image;
+  };
+  for (bool DifferentField : {false, true}) {
+    SCOPED_TRACE(DifferentField);
+    auto Image = Make(DifferentField);
+    neverd::Decoder Decoder;
+    ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+    neverd::CFGBuilder Builder;
+    const neverd::LowFunc Low = Builder.build(Image, Decoder, Entry, "funclet");
+    if (DifferentField) {
+      EXPECT_TRUE(Low.JumpTables.empty());
+      continue;
+    }
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_TRUE(Low.JumpTables.front().IsPEImageRelativeRVA);
+    EXPECT_EQ(
+        Low.JumpTables.front().Targets,
+        (std::vector<neverd::va_t>{Entry + 0x60, Entry + 0x70, Entry + 0x80,
+                                   Entry + 0x90, Entry + 0xa0, Entry + 0xb0}));
+    EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+    auto Run = runPipelineWithEvidenceBudget(
+        Image, neverd::limits::kMaxJumpTableEvidenceWork);
+    ASSERT_TRUE(Run.Result.Error.empty()) << Run.Result.Error;
+    ASSERT_NE(Run.Result.LlvmModule, nullptr);
+    EXPECT_FALSE(llvm::verifyModule(*Run.Result.LlvmModule, &llvm::errs()));
+  }
 }
 
 namespace {
