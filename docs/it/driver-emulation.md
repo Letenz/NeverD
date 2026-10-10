@@ -407,6 +407,8 @@ Il modello API iniziale ha intenzionalmente un contratto limitato:
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`; svolgimento con arresto/ripresa e rilascio di IRP/MDL/buffer solo al limite finale |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Operazioni limitate sui buffer guest, al massimo 1 MiB per chiamata; le API di copia senza sovrapposizione rifiutano le sovrapposizioni |
 
+`MmProbeAndLockPages` accetta anche in `KernelMode` un intervallo contiguo dell’immagine del driver posseduto dal loader, con IRQL <= APC_LEVEL. Il modello verifica i permessi richiesti e conserva la quota di pagine fisiche; esclude lacune e mappature estranee. La proprietà identifica anche immagini sotto il limite degli indirizzi utente. Gli alias di sistema condividono byte e identità fisiche senza cambiare le protezioni originali. Ogni blocco richiede sblocco e rilascio del descrittore. Le chiamate MDL conservano la dipendenza di ripristino UNPACK; l’accesso modellato non certifica un ripristino portabile.
+
 `KernelDispatcher` interpreta `Count`, `Limit` e `Adjustment` del semaforo come `LONG` con segno a 32 bit, `Level` del mutex come `ULONG` a 32 bit e `Wait` come `BOOLEAN` a 8 bit, ignorando i bit di registro non definiti secondo l’[ABI Windows x64](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170). I valori non validi nella larghezza definita e gli overflow del semaforo vengono rifiutati prima di modificare lo stato dell’oggetto.
 
 I limiti IRQL provengono da `KernelAPIIRQL.def`; il modello responsabile verifica le restrizioni dipendenti dagli argomenti. Un DPC non può chiamare il registro né allocare, liberare o accedere al pool paginato. Le conversioni Unicode di `DbgPrint` richiedono `PASSIVE_LEVEL`; output ANSI e operazioni non paginate supportate restano utilizzabili a `DISPATCH_LEVEL`. Gli stack hanno limiti: un puntatore fuori intervallo non può entrare nello stack di un altro worker bloccato. I timer armati nell’estensione impediscono il rilascio prematuro del dispositivo.
@@ -671,7 +673,7 @@ dispositivo e gli indirizzi dei callback del driver. Gli indirizzi guest sono
 stringhe esadecimali, così i consumatori JSON non perdono la precisione a 64 bit.
 L’oggetto `configuration` registra i limiti, il nome del servizio e le
 sostituzioni `kernel_exports` e l’input `registry` dell’esecuzione.
-Il profilo è `wdm-x64-scheduled-v91`. `nt_status` rimane il risultato di DriverEntry,
+Il profilo è `wdm-x64-scheduled-v92`. `nt_status` rimane il risultato di DriverEntry,
 mentre `scenario_success` descrive insieme l’inizializzazione e le richieste
 completate. `phase`, `requests` e `unload_completed` identificano le parti
 eseguite del ciclo di vita richiesto. Ogni chiamata API e scrittura CPU registra

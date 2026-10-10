@@ -800,6 +800,9 @@ private:
   llvm::Expected<uint64_t> querySystemInformation(llvm::ArrayRef<uint64_t> Args,
                                                   bool Trusted);
   std::vector<KernelLoadedModule> LoadedModules;
+  // Only loader-owned mapped spans, excluding image holes. Physical backing is
+  // registered lazily when a permitted image range is first locked.
+  std::map<uint64_t, uint64_t> ImageRAM;
   uint64_t DriverObject = 0;
   uint64_t RegistryPath = 0;
   uint64_t DriverExtension = 0;

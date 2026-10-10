@@ -288,7 +288,15 @@ llvm::Error KernelModel::probeAndLockPages(uint64_t MDL, uint32_t Mode,
     return mdlError(
         "MmProbeAndLockPages requires a supported mode and lock operation");
   auto &State = It->second;
-  const bool UserRange = State.OriginalAddress < profile::UserProbeLimit;
+  auto Image = ImageRAM.upper_bound(State.OriginalAddress);
+  if (Image != ImageRAM.begin())
+    --Image;
+  const bool ImageRange =
+      Image != ImageRAM.end() && State.OriginalAddress >= Image->first &&
+      State.OriginalAddress - Image->first < Image->second &&
+      State.ByteCount <= Image->second - (State.OriginalAddress - Image->first);
+  const bool UserRange =
+      State.OriginalAddress < profile::UserProbeLimit && !ImageRange;
   auto Range = [&]() -> llvm::Expected<UserMemoryRange> {
     if (Mode == UserMode || UserRange) {
       if (CurrentIRQL > APCLevel ||
@@ -298,16 +306,26 @@ llvm::Error KernelModel::probeAndLockPages(uint64_t MDL, uint32_t Mode,
       return resolveUserMemoryRange(State.OriginalAddress, State.ByteCount,
                                     Operation != IoReadAccess);
     }
-    auto Pool = Allocations.upper_bound(State.OriginalAddress);
-    if (Pool == Allocations.begin())
-      return mdlError("kernel page locking requires a live pool allocation");
-    --Pool;
-    const uint64_t Offset = State.OriginalAddress - Pool->first;
-    if (Offset >= Pool->second.Size ||
-        State.ByteCount > Pool->second.Size - Offset)
-      return mdlError("kernel page locking requires its complete range inside "
-                      "one live pool allocation");
-    if (!Pool->second.NonPaged && CurrentIRQL > APCLevel)
+    uint64_t Start = 0;
+    bool Pageable = true;
+    if (ImageRange) {
+      Start = Image->first;
+    } else {
+      auto Pool = Allocations.upper_bound(State.OriginalAddress);
+      if (Pool == Allocations.begin())
+        return mdlError("kernel page locking requires a live pool allocation "
+                        "or loader-owned image range");
+      --Pool;
+      const uint64_t Offset = State.OriginalAddress - Pool->first;
+      if (Offset >= Pool->second.Size ||
+          State.ByteCount > Pool->second.Size - Offset)
+        return mdlError(
+            "kernel page locking requires its complete range inside "
+            "one live pool allocation or loader-owned image span");
+      Start = Pool->first;
+      Pageable = !Pool->second.NonPaged;
+    }
+    if (Pageable && CurrentIRQL > APCLevel)
       return mdlError(
           "pageable kernel page locking requires IRQL <= APC_LEVEL");
     const unsigned Permissions = Read | (Operation != IoReadAccess ? Write : 0);
@@ -318,10 +336,14 @@ llvm::Error KernelModel::probeAndLockPages(uint64_t MDL, uint32_t Mode,
     if (!*Accessible)
       return llvm::make_error<KernelGuestException>(
           exceptions::StatusAccessViolation);
+    if (ImageRange && !Physical.find(Start))
+      if (auto E = Physical.registerRegion(Start, Start, Image->second))
+        return E;
     auto Owner = Physical.ownerForRange(State.OriginalAddress, State.ByteCount);
     if (!Owner)
       return Owner.takeError();
-    return UserMemoryRange{*Owner, Offset, State.OriginalAddress};
+    return UserMemoryRange{*Owner, State.OriginalAddress - Start,
+                           State.OriginalAddress};
   }();
   if (!Range)
     return Range.takeError();

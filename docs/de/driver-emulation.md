@@ -406,6 +406,8 @@ Das anfängliche API-Modell besitzt bewusst einen begrenzten Vertrag:
 | `IofCompleteRequest`, `IoCompleteRequest` | `IO_NO_INCREMENT`; führt Completion-Abwicklung mit Stop/Fortsetzung aus und gibt IRP/MDL/Puffer erst an der Endgrenze frei |
 | `memcpy`, `memmove`, `memset`, `memcmp`, `RtlCopyMemory`, `RtlMoveMemory`, `RtlFillMemory`, `RtlZeroMemory`, `RtlCompareMemory` | Begrenzte Gastpufferoperationen, höchstens 1 MiB pro Aufruf; Kopier-APIs ohne Überlappungsunterstützung weisen Überlappungen ab |
 
+`MmProbeAndLockPages` akzeptiert im `KernelMode` auch einen zusammenhängenden, vom Loader verwalteten Bereich des Eingabetreiberabbilds bei IRQL <= APC_LEVEL. Das Modell prüft die angeforderten Rechte und behält das physische Seitenkontingent bei; Lücken und fremde Mappings gehören nicht zum Abbild. Dies gilt auch für Abbilder unterhalb der Benutzeradressgrenze. Systemaliase teilen die ursprünglichen Bytes und physischen Identitäten, ohne die ursprünglichen Schutzrechte zu ändern. Auf jede Sperre müssen Entsperrung und Deskriptorfreigabe folgen. MDL-Aufrufe behalten ihre UNPACK-Wiederherstellungsabhängigkeit; modellierter Zugriff bestätigt keine portable Wiederherstellung.
+
 `KernelDispatcher` interpretiert `Count`, `Limit` und `Adjustment` des Semaphors als vorzeichenbehaftete 32-Bit-`LONG`, `Level` des Mutex als 32-Bit-`ULONG` und `Wait` als 8-Bit-`BOOLEAN`. Undefinierte Registerbits werden gemäß der [Windows-x64-ABI](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention?view=msvc-170) ignoriert. Ungültige Werte innerhalb der definierten Breite und Semaphorüberläufe werden vor jeder Änderung des Objektzustands abgewiesen.
 
 IRQL-Obergrenzen stehen in `KernelAPIIRQL.def`; argumentabhängige Regeln prüft das zuständige Modell. DPCs dürfen weder Registry-APIs aufrufen noch paged Pool allokieren, freigeben oder darauf zugreifen. Unicode-Konvertierungen von `DbgPrint` erfordern `PASSIVE_LEVEL`; unterstützte ANSI-Ausgabe und nonpaged Operationen bleiben auf `DISPATCH_LEVEL` nutzbar. Callback-Stacks sind begrenzt: Ein ausbrechender Stackpointer darf nicht den Stack eines anderen blockierten Workers erreichen. Aktive Timer in der Geräteerweiterung verhindern vorzeitige Gerätefreigabe.
@@ -674,7 +676,7 @@ einschließlich Geräteobjekten und Callback-Adressen des Treibers. Gastadressen
 sind Hexadezimalzeichenfolgen, damit JSON-Verbraucher keine 64-Bit-Präzision
 verlieren. Das Objekt `configuration` protokolliert Limits, Dienstnamen und
 `kernel_exports`-Überschreibungen sowie die `registry`-Eingabe des Laufs. Das
-Profil lautet `wdm-x64-scheduled-v91`. `nt_status` bleibt das
+Profil lautet `wdm-x64-scheduled-v92`. `nt_status` bleibt das
 DriverEntry-Ergebnis, während `scenario_success` Initialisierung und
 abgeschlossene Anforderungen gemeinsam beschreibt. `phase`, `requests` und
 `unload_completed` kennzeichnen die ausgeführten Teile des angeforderten
