@@ -1539,17 +1539,23 @@ std::string renderX86TypedIntrinsicCall(
         (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
                       : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
         "(";
-    const unsigned Operands = isX86FPConversionStateIntrinsic(Call.IntrinsicId)
-                                  ? 2
-                                  : Call.Operands.size();
+    const bool Round = isX86FPRoundStateIntrinsic(Call.IntrinsicId);
+    const bool Memory = Call.IntrinsicId == I::X86FPRoundMemoryState;
+    const unsigned Operands =
+        Round || isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+            ? 2
+            : Call.Operands.size();
     for (unsigned Index = 0; Index < Operands; ++Index) {
       if (Index)
         Result += ", ";
-      const auto &Operand = *Call.Operands[Index];
+      const auto &Operand =
+          *Call.Operands[Round ? (Index == 0 ? (Memory ? 0 : 1) : 3) : Index];
       const auto Text = ExprFn(Operand);
-      if (Operand.Type && Operand.Type->Kind == NdTypeKind::Float)
-        Result += "__builtin_bit_cast(uint" +
-                  std::to_string(Operand.Type->Size * 8) + "_t, " + Text + ")";
+      if (Memory && Index == 0)
+        Result += "(void *)(uintptr_t)(" + Text + ")";
+      else if (Operand.Type && Operand.Type->Kind == NdTypeKind::Float)
+        Result += "__builtin_bit_cast(" +
+                  x86FPStateRawCType(Operand.Type->Size) + ", " + Text + ")";
       else
         Result += Text;
     }

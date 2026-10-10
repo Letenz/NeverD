@@ -103,6 +103,11 @@ public:
   bool setMemoryAddressSpaceBase(NdMemoryAddressSpace AddressSpace,
                                  uint64_t Base);
 
+  /// Authenticate the x86-64 canonical linear-address width before an owned
+  /// architectural memory operation. Mapping a byte does not prove that its
+  /// address is canonical. This configuration survives reset().
+  bool setX86LinearAddressBits(uint8_t LinearAddressBits);
+
   /// Configure the architectural state required before ENQCMD/ENQCMDS may
   /// read their 64-byte source.  Without an explicit context those
   /// instructions fail closed: a BinaryImage cannot authenticate a current
@@ -227,6 +232,7 @@ private:
   std::vector<uint8_t> readOperandBytes(const NdVar &Operand) const;
   std::optional<uint64_t> resolveMemoryAddress(const LowOp &Op,
                                                uint64_t Offset) const;
+  bool isX86CanonicalMemoryRange(uint64_t Address, uint64_t Size) const;
   void writeOutput(const NdVar &Output, uint64_t Value);
   void writeOutputBytes(const NdVar &Output, llvm::ArrayRef<uint8_t> Value);
   std::optional<std::vector<uint8_t>> loadMemoryBytes(uint64_t Addr,
