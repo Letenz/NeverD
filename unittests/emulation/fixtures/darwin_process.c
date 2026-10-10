@@ -6547,6 +6547,182 @@ static int created_namespace_metadata(const char *input, int virtual_record) {
   return 37;
 }
 
+/* Original SDK-free O_SYMLINK controls. Complete virtual stat bytes are a
+ * separate observation; multi-name vnode queries stop only in mode2. */
+static int symbolic_descriptors(const char *input, unsigned mode) {
+  unsigned error, length = 0, slash = 0;
+  char parent[1024];
+  while (length < sizeof(parent) - 1 && input[length]) {
+    parent[length] = input[length];
+    if (input[length] == '/')
+      slash = length;
+    ++length;
+  }
+  if (!length || input[length] || input[0] != '/')
+    return 201;
+  parent[slash ? slash : 1] = 0;
+#define SYMBOL_EXPECT(expression)                                              \
+  do {                                                                         \
+    if (!(expression))                                                         \
+      return 50 + (__LINE__ % 200);                                            \
+  } while (0)
+  u64 root = call(5, (u64)parent, 0x100000, 0, 0, 0, 0, &error);
+  SYMBOL_EXPECT(!error && !secondary && root >= 3);
+  // Native temporary roots may contain /var -> /private/var. Compare against
+  // the actual held parent, rather than the caller's unresolved spelling.
+  SYMBOL_EXPECT(!xattr_result(92, root, 50, (u64)parent, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(13, root, 0, 0, 0, 0, 0, 0, 0));
+  u64 mask = call(60, 0027, 0, 0, 0, 0, 0, &error);
+  SYMBOL_EXPECT(!error && !secondary && mask <= 07777);
+  SYMBOL_EXPECT(
+      !xattr_result(57, (u64) "data", (u64) "held-sym", 0, 0, 0, 0, 0, 0));
+  u64 fds[3];
+  for (unsigned access = 0; access != 3; ++access) {
+    fds[access] =
+        call(5, (u64) "held-sym", 0x200000 | access, 0, 0, 0, 0, &error);
+    SYMBOL_EXPECT(!error && !secondary && fds[access] >= 3);
+    SYMBOL_EXPECT(!xattr_result(92, fds[access], 3, 0, 0, 0, 0, access, 0));
+    SYMBOL_EXPECT(!xattr_result(192, fds[access], 20, 0, 0, 0, 0, 4096, 0));
+    SYMBOL_EXPECT(!xattr_result(199, fds[access], 7, 0, 0, 0, 0, 7, 0));
+  }
+  u64 copy = call(41, fds[2], 0, 0, 0, 0, 0, &error);
+  SYMBOL_EXPECT(!error && !secondary && copy >= 3);
+  u64 independent = call(5, (u64) "held-sym", 0x200002, 0, 0, 0, 0, &error);
+  SYMBOL_EXPECT(!error && !secondary && independent >= 3);
+  SYMBOL_EXPECT(!xattr_result(199, independent, 0, 1, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(
+      !xattr_result(5, (u64) "held-sym", 0x200100, 0, 0, 0, 0, 62, 1));
+  SYMBOL_EXPECT(
+      !xattr_result(5, (u64) "held-sym", 0x300000, 0, 0, 0, 0, 20, 1));
+  SYMBOL_EXPECT(
+      !xattr_result(5, (u64) "held-sym", 0x200003, 0, 0, 0, 0, 22, 1));
+  SYMBOL_EXPECT(!xattr_result(13, fds[2], 0, 0, 0, 0, 0, 20, 1));
+  SYMBOL_EXPECT(!xattr_result(463, fds[2], (u64) "child", 0, 0, 0, 0, 20, 1));
+  u64 before[20], current[20], attributes[3] = {5UL | (8UL << 32), 0, 0};
+  u64 type[3] = {0xa5a5a5a5a5a5a5a5UL, 0, 0xa5a5a5a5a5a5a5a5UL};
+  before[0] = before[19] = current[0] = current[19] = 0xa5a5a5a5a5a5a5a5UL;
+  SYMBOL_EXPECT(
+      !xattr_result(339, fds[2], (u64)(before + 1), 0, 0, 0, 0, 0, 0));
+  const unsigned char *stat = (const unsigned char *)(before + 1);
+  SYMBOL_EXPECT(
+      (little_integer(stat + 4, 2) & 0xf000) == 0xa000 &&
+      little_integer(stat + 6, 2) == 1 && little_integer(stat + 96, 8) == 4 &&
+      before[0] == 0xa5a5a5a5a5a5a5a5UL && before[19] == 0xa5a5a5a5a5a5a5a5UL);
+  SYMBOL_EXPECT(!xattr_result(228, fds[2], (u64)attributes, (u64)(type + 1), 8,
+                              0, 0, 0, 0));
+  SYMBOL_EXPECT(type[1] == 0x0000000500000008UL &&
+                type[0] == 0xa5a5a5a5a5a5a5a5UL &&
+                type[2] == 0xa5a5a5a5a5a5a5a5UL);
+  const u64 maximum = 0x7fffffffffffffffUL;
+  u64 vector[2] = {-1UL, 1};
+  for (unsigned access = 0; access != 3; ++access) {
+    u64 fd = fds[access], rd = access == 1 ? 9 : 1, wr = access == 0 ? 9 : 1;
+    for (unsigned zero = 0; zero != 2; ++zero) {
+      SYMBOL_EXPECT(!xattr_result(3, fd, -1UL, zero, 0, 0, 0, rd, 1));
+      SYMBOL_EXPECT(!xattr_result(4, fd, -1UL, zero, 0, 0, 0, wr, 1));
+      SYMBOL_EXPECT(!xattr_result(153, fd, -1UL, zero, maximum, 0, 0,
+                                  access == 1 ? 9 : 0, access == 1));
+      SYMBOL_EXPECT(!xattr_result(154, fd, -1UL, zero, maximum, 0, 0,
+                                  access == 0 ? 9 : 27, 1));
+    }
+    SYMBOL_EXPECT(!xattr_result(154, fd, -1UL, 1, -1UL, 0, 0, 22, 1));
+    SYMBOL_EXPECT(
+        !xattr_result(153, fd, -1UL, 1, -1UL, 0, 0, access == 1 ? 9 : 22, 1));
+    const unsigned numbers[] = {120, 121, 540, 541, 542, 543};
+    for (unsigned i = 0; i != 6; ++i) {
+      unsigned write = i & 1, positioned = i >= 4;
+      SYMBOL_EXPECT(!xattr_result(numbers[i], fd, (u64)vector, 1,
+                                  positioned ? maximum : 0, 0, 0,
+                                  positioned && !write ? (access == 1 ? 9 : 0)
+                                  : positioned         ? (access == 0 ? 9 : 27)
+                                  : write              ? wr
+                                                       : rd,
+                                  !(positioned && !write && access != 1)));
+      SYMBOL_EXPECT(!xattr_result(numbers[i], fd, -1UL, 1, 0, 0, 0, 14, 1));
+      SYMBOL_EXPECT(!xattr_result(numbers[i], fd, -1UL, 0, 0, 0, 0, 22, 1));
+    }
+    for (unsigned seek = 3; seek != 5; ++seek) {
+      SYMBOL_EXPECT(!xattr_result(199, fd, 7, seek, 0, 0, 0, 6, 1));
+      SYMBOL_EXPECT(!xattr_result(199, fd, -1UL, seek, 0, 0, 0, 22, 1));
+    }
+    for (unsigned protection = 1; protection != 4; ++protection)
+      for (unsigned flags = 1; flags != 3; ++flags)
+        SYMBOL_EXPECT(
+            !xattr_result(197, 0, 16384, protection, flags, fd, 0, 22, 1));
+    SYMBOL_EXPECT(!xattr_result(199, fd, 0, 1, 0, 0, 0, 7, 0));
+  }
+  SYMBOL_EXPECT(!xattr_result(201, fds[0], 0, 0, 0, 0, 0, 22, 1));
+  SYMBOL_EXPECT(!xattr_result(201, fds[2], -1UL, 0, 0, 0, 0, 22, 1));
+  SYMBOL_EXPECT(!xattr_result(201, copy, maximum, 0, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(92, fds[2], 3, 0, 0, 0, 0, 0x10002, 0));
+  SYMBOL_EXPECT(!xattr_result(92, independent, 3, 0, 0, 0, 0, 2, 0));
+  SYMBOL_EXPECT(!xattr_result(339, copy, (u64)(current + 1), 0, 0, 0, 0, 0, 0));
+  for (unsigned i = 0; i != 20; ++i)
+    SYMBOL_EXPECT(current[i] == before[i]);
+  SYMBOL_EXPECT(!xattr_result(92, copy, 4, 8, 0, 0, 0, 25, 1));
+  SYMBOL_EXPECT(!xattr_result(92, fds[2], 3, 0, 0, 0, 0, 0x1000a, 0));
+  SYMBOL_EXPECT(!xattr_result(92, independent, 3, 0, 0, 0, 0, 2, 0));
+  SYMBOL_EXPECT(!xattr_result(92, copy, 4, 0, 0, 0, 0, 25, 1));
+  SYMBOL_EXPECT(!xattr_result(199, copy, 0, 1, 0, 0, 0, 7, 0));
+  SYMBOL_EXPECT(
+      !xattr_result(58, (u64) "held-sym", (u64)vector, 4, 0, 0, 0, 4, 0));
+  SYMBOL_EXPECT(little_integer((const unsigned char *)vector, 4) == 0x61746164);
+  SYMBOL_EXPECT(!xattr_result(128, (u64) "held-sym", (u64) "moved-sym", 0, 0, 0,
+                              0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(10, (u64) "moved-sym", 0, 0, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(
+      !xattr_result(57, (u64) "fresh", (u64) "moved-sym", 0, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(directory_path(copy, parent, "/moved-sym"));
+  SYMBOL_EXPECT(!xattr_result(339, copy, (u64)(current + 1), 0, 0, 0, 0, 0, 0));
+  const unsigned char *held = (const unsigned char *)(current + 1);
+  SYMBOL_EXPECT(little_integer(held + 6, 2) == 0 &&
+                little_integer(held + 8, 8) == little_integer(stat + 8, 8) &&
+                little_integer(held + 96, 8) == 4);
+  SYMBOL_EXPECT(!xattr_result(6, fds[2], 0, 0, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(3, copy, -1UL, 1, 0, 0, 0, 1, 1));
+  // A read-only symbolic FD has independent ordinary-xattr authority. Its
+  // target receives no content or attribute grant from this operation.
+  u64 attrfd = call(5, (u64) "fd-attrs", 0x200000, 0, 0, 0, 0, &error);
+  SYMBOL_EXPECT(!error && !secondary && attrfd >= 3);
+  SYMBOL_EXPECT(!xattr_result(237, attrfd, (u64) "user.neverd.descriptor",
+                              (u64) "F", 1, 0, 0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(235, attrfd, (u64) "user.neverd.descriptor",
+                              (u64)vector, 1, 0, 0, 1, 0));
+  SYMBOL_EXPECT(*(unsigned char *)vector == 'F');
+  SYMBOL_EXPECT(!xattr_result(201, attrfd, 0, 0, 0, 0, 0, 22, 1));
+  SYMBOL_EXPECT(!xattr_result(228, attrfd, (u64)attributes, (u64)(type + 1), 8,
+                              0, 0, 0, 0));
+  SYMBOL_EXPECT(type[1] == 0x0000000500000008UL);
+  SYMBOL_EXPECT(!xattr_result(239, attrfd, (u64) "user.neverd.descriptor", 0, 0,
+                              0, 0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(235, attrfd, (u64) "user.neverd.descriptor",
+                              (u64)vector, 1, 0, 0, 93, 1));
+  SYMBOL_EXPECT(!xattr_result(6, attrfd, 0, 0, 0, 0, 0, 0, 0));
+  if (mode == 1) {
+    SYMBOL_EXPECT(!xattr_result(4, 1, (u64)(before + 1), 144, 0, 0, 0, 144, 0));
+    SYMBOL_EXPECT(!xattr_result(4, 1, (u64)(type + 1), 8, 0, 0, 0, 8, 0));
+  } else {
+    SYMBOL_EXPECT(!xattr_result(4, 1, (u64) "S", 1, 0, 0, 0, 1, 0));
+  }
+  if (mode == 2) {
+    SYMBOL_EXPECT(!xattr_result(471, root, (u64) "moved-sym", root,
+                                (u64) "other-sym", 0, 0, 0, 0));
+    u64 aliased = call(5, (u64) "moved-sym", 0x200000, 0, 0, 0, 0, &error);
+    SYMBOL_EXPECT(!error && !secondary && aliased >= 3);
+    SYMBOL_EXPECT(!xattr_result(10, (u64) "moved-sym", 0, 0, 0, 0, 0, 0, 0));
+    SYMBOL_EXPECT(!xattr_result(10, (u64) "other-sym", 0, 0, 0, 0, 0, 0, 0));
+    call(92, aliased, 50, (u64)parent, 0, 0, 0, &error);
+    return 202;
+  }
+  SYMBOL_EXPECT(!xattr_result(10, (u64) "moved-sym", 0, 0, 0, 0, 0, 0, 0));
+  const u64 closing[] = {copy, independent, fds[0], fds[1], root};
+  for (unsigned i = 0; i != 5; ++i)
+    SYMBOL_EXPECT(!xattr_result(6, closing[i], 0, 0, 0, 0, 0, 0, 0));
+  SYMBOL_EXPECT(!xattr_result(60, mask, 0, 0, 0, 0, 0, 0027, 0));
+#undef SYMBOL_EXPECT
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "symbolic-link-rename")) {
     int status = argc < 3 ? 51 : symbolic_link_rename(argv[2]);
@@ -6748,6 +6924,17 @@ int main(int argc, char **argv, char **envp, char **apple) {
                                  : equal(argv[1], "attribute-names-unsupported")
                                      ? 2
                                      : 0);
+  if (equal(argv[1], "symbolic-descriptors") ||
+      equal(argv[1], "symbolic-descriptors-values") ||
+      equal(argv[1], "symbolic-descriptors-name-unsupported"))
+    return argc < 3
+               ? 201
+               : symbolic_descriptors(
+                     argv[2],
+                     equal(argv[1], "symbolic-descriptors-values") ? 1
+                     : equal(argv[1], "symbolic-descriptors-name-unsupported")
+                         ? 2
+                         : 0);
   if (equal(argv[1], "hard-links") || equal(argv[1], "hard-links-values") ||
       equal(argv[1], "hard-links-name-unsupported") ||
       equal(argv[1], "hard-links-attributes-unsupported"))

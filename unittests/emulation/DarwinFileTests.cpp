@@ -382,6 +382,13 @@ protected:
     Files = std::make_unique<DarwinFiles>(*Space, Options);
     path("user.neverd.beta", Base + 128);
   }
+  void symbolicDescriptorInputs() {
+    Options->SymbolicLinks["/alias"] = {'d', 'a', 't', 'a'};
+    Options->Metadata["/alias"] =
+        darwin_test::initialSymbolicLinkMetadata(4, 57);
+    Files = std::make_unique<DarwinFiles>(*Space, Options);
+    path("/alias");
+  }
   void xattrBuffer(ServiceKind Service, std::array<uint64_t, 6> Args,
                    llvm::StringRef Hex, uint64_t Value, bool Error = false) {
     const auto Expected = llvm::fromHex(Hex);
@@ -14611,6 +14618,489 @@ TEST_P(DarwinFileTest, HardLinkEntrySlotWaitsForDetachedDescription) {
   EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
   EXPECT_EQ(ok(ServiceKind::Link, {Base, Base + 128}), 0u);
   error(ServiceKind::Link, {Base, Base + 128}, value::FileExists);
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorsSelectFinalObjectsAndKeepOpenOrder) {
+  symbolicDescriptorInputs();
+  Options->SymbolicLinks["/broken"] = {'m', 'i', 's', 's', 'i', 'n', 'g'};
+  Options->SymbolicLinks["/cycle"] = {'c', 'y', 'c', 'l', 'e'};
+  Options->SymbolicLinks["/dirlink"] = {'e', 'm', 'p', 't', 'y'};
+  Options->Directories.insert("/empty");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  for (auto Name : {"/alias", "/broken", "/cycle", "/dirlink"}) {
+    path(Name);
+    for (uint32_t Access = 0; Access != 3; ++Access) {
+      SCOPED_TRACE(Name);
+      SCOPED_TRACE(Access);
+      const auto FD = ok(ServiceKind::Open, {Base, 0x200000 | Access});
+      EXPECT_TRUE(Files->symbolicLinkDescriptor(FD));
+      EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), Access);
+      error(ServiceKind::Fchdir, {FD}, 20);
+      path("relative", Base + 512);
+      error(ServiceKind::OpenAt, {FD, Base + 512, 0}, 20);
+      EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+      EXPECT_FALSE(Files->symbolicLinkDescriptor(FD));
+    }
+    error(ServiceKind::Open, {Base, 0x200003}, 22);
+    error(ServiceKind::Open, {Base, 0x200100}, 62);
+    error(ServiceKind::Open, {Base, 0x20200100}, 22);
+    error(ServiceKind::Open, {Base, 0x300000}, 20);
+    const auto FD = ok(ServiceKind::Open, {Base, 0x20200000});
+    EXPECT_TRUE(Files->symbolicLinkDescriptor(FD));
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  }
+  path("/dirlink/child");
+  error(ServiceKind::Open, {Base, 0x20200000}, 62);
+  path("/data");
+  const auto File = ok(ServiceKind::Open, {Base, 0x200000});
+  EXPECT_FALSE(Files->symbolicLinkDescriptor(File));
+  contents(File, {'a', 'b', 0, 0xff, 'e', 'f'});
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x200002}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileNotWritable);
+  path("/empty");
+  const auto Directory = ok(ServiceKind::Open, {Base, 0x200000});
+  EXPECT_FALSE(Files->symbolicLinkDescriptor(Directory));
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Directory}), 0u);
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicDescriptorsCreationAndTrailingSlashUseReferents) {
+  namespacePolicy();
+  Options->WritableFiles.insert("/data");
+  Options->SymbolicLinks = {{"/alias", {'d', 'a', 't', 'a'}},
+                            {"/broken", {'m', 'i', 's', 's', 'i', 'n', 'g'}}};
+  Options->MutableSymbolicLinks = {"/alias", "/broken"};
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  path("/alias");
+  error(ServiceKind::Open, {Base, 0x200a00, 0600}, 17);
+  error(ServiceKind::Open, {Base, 0x200300, 0600}, 62);
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200400});
+  EXPECT_TRUE(Files->symbolicLinkDescriptor(Held));
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Held, 3}), 0x10000u);
+  linkTarget("/alias", "data");
+  path("/data");
+  const auto Data = ok(ServiceKind::Open, {Base});
+  contents(Data, {'a', 'b', 0, 0xff, 'e', 'f'});
+  path("/broken");
+  const auto Created = ok(ServiceKind::Open, {Base, 0x200600, 0600});
+  EXPECT_FALSE(Files->symbolicLinkDescriptor(Created));
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Created, 3}), 0u);
+  contents(Created, {});
+  path("/alias/");
+  const auto Followed = ok(ServiceKind::Open, {Base, 0x200400});
+  EXPECT_FALSE(Files->symbolicLinkDescriptor(Followed));
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Followed, 3}), 0x10000u);
+  contents(Data, {});
+  path("/alias/.");
+  error(ServiceKind::Open, {Base, 0x200000}, 20);
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorScalarIOKeepsNativePrefixMatrix) {
+  symbolicDescriptorInputs();
+  // Independent original ARM64 raw oracle, identical at O0/O2. Letter values
+  // are EPERM/EBADF/EINVAL/EFBIG or successful zero, in the loop order below.
+  constexpr llvm::StringLiteral Oracle[] = {
+      "pppidddippziippziippziiiiiiidddiddddiddddidiiiii",
+      "dddipppidddddddddddddddiiiiippfiippfiippfiiiiiii",
+      "pppipppippziippziippziiiiiiippfiippfiippfiiiiiii"};
+  constexpr ServiceKind Services[] = {ServiceKind::Read, ServiceKind::Write,
+                                      ServiceKind::Pread, ServiceKind::Pwrite};
+  constexpr uint64_t Counts[] = {0, 1, 0x7fffffff, 0x80000000};
+  constexpr uint64_t Offsets[] = {0, 7, INT64_MAX, UINT64_MAX, UINT64_MAX - 1};
+  std::array<uint8_t, 32> Canary;
+  Canary.fill(0xa5);
+  for (uint32_t Access = 0; Access != 3; ++Access) {
+    path("/alias");
+    const auto FD = ok(ServiceKind::Open, {Base, 0x200000 | Access});
+    size_t Index = 0;
+    for (unsigned S = 0; S != 4; ++S)
+      for (auto Count : Counts)
+        for (unsigned O = 0; O != (S < 2 ? 1u : 5u); ++O) {
+          SCOPED_TRACE(Access);
+          SCOPED_TRACE(Index);
+          EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 7, 0}), 7u);
+          llvm::cantFail(Space->write(Base + Page, Canary));
+          const char Expected = Oracle[Access][Index++];
+          const std::array<uint64_t, 6> Args = {FD, UINT64_MAX, Count,
+                                                Offsets[O]};
+          if (Expected == 'z')
+            EXPECT_EQ(ok(Services[S], Args), 0u);
+          else
+            error(Services[S], Args,
+                  Expected == 'p'   ? 1
+                  : Expected == 'd' ? 9
+                  : Expected == 'i' ? 22
+                                    : 27);
+          EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 7u);
+          std::array<uint8_t, 32> After;
+          llvm::cantFail(Space->read(Base + Page, After));
+          EXPECT_EQ(After, Canary);
+          EXPECT_EQ(ok(ServiceKind::Fcntl, {FD, 3}), Access);
+        }
+    EXPECT_EQ(Index, Oracle[Access].size());
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorVectorIOKeepsNativeImportMatrix) {
+  symbolicDescriptorInputs();
+  constexpr llvm::StringLiteral Oracle[] = {
+      "pppiddddppziippziippziiiiiiidddiidddiidddiidddii",
+      "ddddpppiddddddddddddddddddddppfiippfiippfiiiiiii",
+      "pppipppippziippziippziiiiiiippfiippfiippfiiiiiii"};
+  constexpr ServiceKind Services[] = {ServiceKind::Readv, ServiceKind::Writev,
+                                      ServiceKind::Preadv,
+                                      ServiceKind::Pwritev};
+  constexpr uint64_t Counts[] = {0, 1, 0x7fffffff, 0x80000000};
+  constexpr uint64_t Offsets[] = {0, 7, INT64_MAX, UINT64_MAX, UINT64_MAX - 1};
+  for (uint32_t Access = 0; Access != 3; ++Access) {
+    path("/alias");
+    const auto FD = ok(ServiceKind::Open, {Base, 0x200000 | Access});
+    size_t Index = 0;
+    for (unsigned S = 0; S != 4; ++S) {
+      error(Services[S], {FD, UINT64_MAX, 0, 0}, 22);
+      error(Services[S], {FD, UINT64_MAX, 1, 0}, 14);
+      for (auto Count : Counts)
+        for (unsigned O = 0; O != (S < 2 ? 1u : 5u); ++O) {
+          SCOPED_TRACE(Access);
+          SCOPED_TRACE(Index);
+          EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 7, 0}), 7u);
+          std::array<uint8_t, 16> Vector;
+          llvm::support::endian::write64le(Vector.data(), UINT64_MAX);
+          llvm::support::endian::write64le(Vector.data() + 8, Count);
+          llvm::cantFail(Space->write(Base + 512, Vector));
+          const char Expected = Oracle[Access][Index++];
+          const std::array<uint64_t, 6> Args = {FD, Base + 512, 1, Offsets[O]};
+          if (Expected == 'z')
+            EXPECT_EQ(ok(Services[S], Args), 0u);
+          else
+            error(Services[S], Args,
+                  Expected == 'p'   ? 1
+                  : Expected == 'd' ? 9
+                  : Expected == 'i' ? 22
+                                    : 27);
+          EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 7u);
+          std::array<uint8_t, 16> After;
+          llvm::cantFail(Space->read(Base + 512, After));
+          EXPECT_EQ(After, Vector);
+        }
+    }
+    EXPECT_EQ(Index, Oracle[Access].size());
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  }
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicDescriptorTruncateAndControlShareOnlyDescriptions) {
+  symbolicDescriptorInputs();
+  const auto A = ok(ServiceKind::Open, {Base, 0x200002});
+  const auto Copy = ok(ServiceKind::Dup, {A});
+  const auto B = ok(ServiceKind::Open, {Base, 0x200002});
+  const auto ReadOnly = ok(ServiceKind::Open, {Base, 0x200000});
+  const auto Before = status(A);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 7, 0}), 7u);
+  for (auto Size :
+       {uint64_t(0), uint64_t(2), uint64_t(128), uint64_t(INT64_MAX)}) {
+    EXPECT_EQ(ok(ServiceKind::Ftruncate, {A, Size}), 0u);
+    EXPECT_EQ(status(A), Before);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), 0x10002u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 7u);
+    error(ServiceKind::Ftruncate, {ReadOnly, Size}, 22);
+  }
+  error(ServiceKind::Ftruncate, {A, UINT64_MAX}, 22);
+  error(ServiceKind::Fcntl, {Copy, 4, 8}, 25);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x1000au);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+  error(ServiceKind::Fcntl, {A, 4, 1}, 25);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), 0x10002u);
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 0x4000}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileControl);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
+  EXPECT_EQ(status(A), Before);
+  linkTarget("/alias", "data");
+  path("/data");
+  contents(ok(ServiceKind::Open, {Base}), {'a', 'b', 0, 0xff, 'e', 'f'});
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorsSeekAndAttributesUseTheirObject) {
+  symbolicDescriptorInputs();
+  const auto FD = ok(ServiceKind::Open, {Base, 0x200000});
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 7, 0}), 7u);
+  for (auto Offset : {uint64_t(0), uint64_t(1), uint64_t(3), uint64_t(4),
+                      uint64_t(7), uint64_t(INT64_MAX)})
+    for (uint64_t Whence : {3, 4}) {
+      error(ServiceKind::Lseek, {FD, Offset, Whence}, 6);
+      EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 7u);
+    }
+  for (uint64_t Whence : {3, 4})
+    error(ServiceKind::Lseek, {FD, UINT64_MAX, Whence}, 22);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, UINT64_MAX, 2}), 3u);
+  EXPECT_EQ(ok(ServiceKind::FpathConf, {FD, 20}), 4096u);
+  EXPECT_EQ(llvm::support::endian::read64le(status(FD).data() + 96), 4u);
+  attributeRequest(1);
+  attributeRecord(ServiceKind::FgetAttrList,
+                  {FD, Base + 128, Base + Page + 8, 128, 0},
+                  "140000000800000006000000616c696173000000");
+  attributeRequest(8);
+  attributeRecord(ServiceKind::FgetAttrList,
+                  {FD, Base + 128, Base + Page + 8, 128, 0},
+                  "0800000005000000");
+  identity(FD, "/alias");
+  auto Mapping = Files->mappingSource(FD);
+  ASSERT_TRUE(std::holds_alternative<uint32_t>(Mapping));
+  EXPECT_EQ(std::get<uint32_t>(Mapping), 22u);
+}
+
+TEST_P(DarwinFileTest,
+       SymbolicDescriptorXattrsDoNotRequireContentOrAccessGrants) {
+  Options->ExtendedAttributes["/alias"] = {{"user.neverd.value", {'L'}}};
+  Options->ExtendedAttributes["/data"] = {{"user.neverd.value", {'T'}}};
+  Options->MutableExtendedAttributes.insert("/alias");
+  symbolicDescriptorInputs();
+  const auto ReadOnly = ok(ServiceKind::Open, {Base, 0x200000});
+  const auto Writer = ok(ServiceKind::Open, {Base, 0x200002});
+  path("user.neverd.value", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FgetXattr, {ReadOnly, Base + 128, Base + Page, 1}),
+            1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'L');
+  path("N", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {ReadOnly, Base + 128, Base + 512, 1}),
+            0u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {Writer, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutatedMetadata);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Writer, 128}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Fstat64, {ReadOnly, Base + Page}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::SymbolicLinkMutatedMetadata);
+  EXPECT_EQ(ok(ServiceKind::FgetXattr, {ReadOnly, Base + 128, Base + Page, 1}),
+            1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'N');
+  path("/data");
+  EXPECT_EQ(ok(ServiceKind::GetXattr, {Base, Base + 128, Base + Page, 1}), 1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'T');
+  EXPECT_TRUE(Options->WritableFiles.empty());
+  EXPECT_EQ(Options->ExtendedAttributes.at("/alias")[0].Bytes,
+            std::vector<uint8_t>({'L'}));
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorsRetainUniqueNamesAfterParentRemoval) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Parent = makeDirectory("/p");
+  makeLink("/p/a", "../data");
+  path("/p/a");
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200002});
+  const auto Copy = ok(ServiceKind::Dup, {Held});
+  const auto Inode = llvm::support::endian::read64le(status(Held).data() + 8);
+  renameFile("/p/a", "/p/moved");
+  path("/p/moved");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  makeLink("/p/moved", "new-target");
+  path("/p/moved");
+  const auto Fresh = ok(ServiceKind::Open, {Base, 0x200000});
+  EXPECT_NE(llvm::support::endian::read64le(status(Fresh).data() + 8), Inode);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/p");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Parent}), 0u);
+  for (auto FD : {Held, Copy}) {
+    identity(FD, "/p/moved");
+    const auto Record = status(FD);
+    EXPECT_EQ(llvm::support::endian::read64le(Record.data() + 8), Inode);
+    EXPECT_EQ(llvm::support::endian::read16le(Record.data() + 6), 0u);
+    EXPECT_EQ(llvm::support::endian::read64le(Record.data() + 96), 7u);
+    error(ServiceKind::Read, {FD, Base + Page, 1}, 1);
+  }
+  EXPECT_EQ(ok(ServiceKind::Close, {Held}), 0u);
+  identity(Copy, "/p/moved");
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorsKeepPermanentMultipleNameBoundary) {
+  namespacePolicy();
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  makeLink("/a", "data");
+  path("/a");
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200000});
+  path("/b", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::LinkAt, {value::AtCurrentDirectory, Base,
+                                     value::AtCurrentDirectory, Base + 512, 0}),
+            0u);
+  for (unsigned Removed = 0; Removed != 3; ++Removed) {
+    if (Removed) {
+      path(Removed == 1 ? "/a" : "/b");
+      EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+    }
+    EXPECT_FALSE(invoke(ServiceKind::Fcntl, {Held, 50, Base + Page}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+    attributeRequest(1);
+    EXPECT_FALSE(invoke(ServiceKind::FgetAttrList,
+                        {Held, Base + 128, Base + Page, 128, 0}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::HardLinkName);
+    attributeRequest(8);
+    attributeRecord(ServiceKind::FgetAttrList,
+                    {Held, Base + 128, Base + Page + 8, 128, 0},
+                    "0800000005000000");
+  }
+}
+
+TEST_P(DarwinFileTest, SymbolicReplacementCannotCreditDeletedHeldAliasObject) {
+  namespacePolicy();
+  Options->WritableFiles.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  makeLink("/a", "old");
+  path("/a");
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200000});
+  path("/target", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::LinkAt, {value::AtCurrentDirectory, Base,
+                                     value::AtCurrentDirectory, Base + 128, 0}),
+            0u);
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/data");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  // Fixed declarations cost16. Names /a and /target cost3+8; the opaque
+  // target costs3. No final-object or final-name credit belongs to this FD.
+  const auto Capacity = darwin_file_limits::Bytes - 30;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Rename, {Base, Base + 128}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::RenameLimit);
+  identity(Data, "/data");
+  error(ServiceKind::Read, {Held, Base + Page, 1}, 1);
+  EXPECT_EQ(ok(ServiceKind::Close, {Held}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Rename, {Base, Base + 128}), 0u);
+  identity(Data, "/target");
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 6}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 7}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, SymbolicFinalNameAndObjectWaitForEveryDescription) {
+  namespacePolicy();
+  Options->WritableFiles.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  makeLink("/a", "old");
+  path("/a");
+  const auto A = ok(ServiceKind::Open, {Base, 0x200002});
+  const auto Copy = ok(ServiceKind::Dup, {A});
+  const auto B = ok(ServiceKind::Open, {Base, 0x200002});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/data");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  const auto Capacity = darwin_file_limits::Bytes - 22;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Copy, INT64_MAX}), 0u);
+  for (auto FD : {A, Copy}) {
+    EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+    EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 1}));
+    EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  }
+  identity(B, "/a");
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Close, {B}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 6}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 7}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, SymbolicCloseReclaimsRemovedParentsToFixedPoint) {
+  namespacePolicy();
+  Options->WritableFiles.insert("/data");
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  const auto Parent = makeDirectory("/d");
+  makeLink("/d/l", "q");
+  path("/d/l");
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200000});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  path("/d");
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Close, {Parent}), 0u);
+  path("/data");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  // Fixed16 plus directory path3, selected child name5 and target byte1.
+  const auto Capacity = darwin_file_limits::Bytes - 25;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  identity(Held, "/d/l");
+  EXPECT_EQ(ok(ServiceKind::Close, {Held}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 9}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 10}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, SymbolicTruncateDoesNotSpendLastCreationInode) {
+  namespacePolicy(UINT64_MAX);
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  makeLink("/a", "q");
+  path("/a");
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200002});
+  const auto Before = status(Held);
+  EXPECT_EQ(llvm::support::endian::read64le(Before.data() + 8), UINT64_MAX);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Held, INT64_MAX}), 0u);
+  EXPECT_EQ(status(Held), Before);
+  path("/b");
+  path("q", Base + 1024);
+  EXPECT_FALSE(invoke(ServiceKind::Symlink, {Base + 1024, Base}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationInode);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Held, 0}), 0u);
+  EXPECT_EQ(status(Held), Before);
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorUnlinkedXattrGrowthKeepsObjectBudget) {
+  namespacePolicy();
+  Options->WritableFiles.insert("/data");
+  Options->MutableSymbolicLinks.insert("/alias");
+  Options->ExtendedAttributes["/alias"] = {};
+  Options->MutableExtendedAttributes.insert("/alias");
+  symbolicDescriptorInputs();
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200002});
+  path("/data");
+  const auto Data = ok(ServiceKind::Open, {Base, 2});
+  // Data/root declarations and grants cost16. Link path/target cost11;
+  // its two mutation grants cost14. Metadata and known-empty xattrs add
+  // no duplicate path reservation. New a/X costs3.
+  const auto Capacity = darwin_file_limits::Bytes - 44;
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity}), 0u);
+  path("a", Base + 128);
+  path("X", Base + 512);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Held, Base + 128, Base + 512, 1}), 0u);
+  path("/alias");
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Held, INT64_MAX}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 1}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+  path("b", Base + 128);
+  EXPECT_FALSE(invoke(ServiceKind::FsetXattr, {Held, Base + 128, 0, 0}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::ExtendedAttributeMutationLimit);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity - 2}), 0u);
+  EXPECT_EQ(ok(ServiceKind::FsetXattr, {Held, Base + 128, 0, 0}), 0u);
+  path("a", Base + 128);
+  EXPECT_EQ(ok(ServiceKind::FgetXattr, {Held, Base + 128, Base + Page, 1}), 1u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page, 1)), 'X');
+  EXPECT_EQ(ok(ServiceKind::Close, {Held}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Data, Capacity + 3}), 0u);
+  EXPECT_FALSE(invoke(ServiceKind::Ftruncate, {Data, Capacity + 4}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileMutationLimit);
+}
+
+TEST_P(DarwinFileTest, SymbolicDescriptorEntrySlotSurvivesLastUnlink) {
+  namespacePolicy();
+  // The initial data file and explicit root metadata occupy two slots.
+  for (unsigned I = 0; I != 253; ++I)
+    Options->Files["/f" + std::to_string(I)] = {};
+  ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  Files = std::make_unique<DarwinFiles>(*Space, Options);
+  makeLink("/a", "q");
+  path("/a");
+  const auto Held = ok(ServiceKind::Open, {Base, 0x200002});
+  EXPECT_EQ(ok(ServiceKind::Unlink, {Base}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Ftruncate, {Held, 0}), 0u);
+  path("/new");
+  EXPECT_FALSE(invoke(ServiceKind::Open, {Base, 0x202, 0600}));
+  EXPECT_EQ(Result.Diagnostic, diagnostic::FileCreationLimit);
+  EXPECT_EQ(ok(ServiceKind::Close, {Held}), 0u);
+  const auto New = ok(ServiceKind::Open, {Base, 0x202, 0600});
+  EXPECT_EQ(llvm::support::endian::read64le(status(New).data() + 8),
+            darwin_test::CreationPolicy.FirstInode + 1);
 }
 
 INSTANTIATE_TEST_SUITE_P(OSPages, DarwinFileTest, testing::Values(4096, 16384));

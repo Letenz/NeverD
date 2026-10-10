@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← 文件索引](README.md)
 
@@ -931,7 +931,7 @@ xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported 使用原
 
 別名只消耗名稱項目及路徑/NUL 費用，不消耗新 inode；位元組、屬性授權及映射租約由共享物件持有。既有明確策略更新連結數與 ctime；缺少策略時完整 stat 未知。屬性修改使完整 stat 失效，內容修改使屬性觀察失效。描述物件及最後映射保留刪除名稱的費用；替換只抵扣可立即釋放的費用。子樹依確切身分及父目錄移動，樹外別名留在原位；相對符號目標使用所選項目的父目錄。
 
-曾有多個名稱的物件，即使剩一個或零個名稱，F_GETPATH/ATTR_CMN_NAME 仍不支援；APFS 快取尚無通用模型。批量 NAME 來自實際項目，相同物件的普通重新命名/SWAP 保留雙方。EXCL 大小寫、O_SYMLINK、原生 Intel HVF、實體 iOS、ACL、映射一致性/EOF 訊號、dyld、Mach IPC、執行緒與完整框架仍是缺口。本節僅在上述契約內擴展前文限制。
+曾有多個名稱的物件，即使剩一個或零個名稱，F_GETPATH/ATTR_CMN_NAME 仍不支援；APFS 快取尚無通用模型。批量 NAME 來自實際項目，相同物件的普通重新命名/SWAP 保留雙方。EXCL 大小寫、原生 Intel HVF、實體 iOS、ACL、映射一致性/EOF 訊號、dyld、Mach IPC、執行緒與完整框架仍是缺口。本節僅在上述契約內擴展前文限制。
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -947,5 +947,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 有界 O_SYMLINK 描述符
+
+O_SYMLINK=0x00200000 在唯讀、唯寫和讀寫模式下保留最後的符號連結物件，包括懸空或循環連結；它不授予目標內容寫入權限。O_CREAT 仍跟隨最後目標；NOFOLLOW 保持 ELOOP 優先順序，獨占建立保持 EEXIST，O_DIRECTORY 對保留的連結傳回 ENOTDIR。必要的中間路徑或結尾斜線展開沿用現有解析器及 NOFOLLOW_ANY 邊界。F_GETFL 不傳回物件選擇位元。
+
+描述物件共用實際 LinkNode 與所選 NameIdentity。dup 共用狀態旗標與游標，獨立 open 使用各自的描述物件。重新命名、刪除、名稱重用或刪除父目錄後，既有 FD 仍保留原物件。唯一名稱的 F_GETPATH 與 ATTR_CMN_NAME 使用保留的所選名稱；曾有多個名稱的物件，即使名稱全部刪除，仍明確拒絕 vnode 名稱推斷。初始固定費用持續保留；動態名稱、目標、項目及屬性增量等待實際最後持有者釋放。其他描述物件仍持有物件或所選名稱時，取代不能抵扣最後別名的費用。
+
+符號描述符 I/O 不將原始目標字串視為檔案內容。既有純量/向量匯入、存取及數量檢查後，負位移傳回 EINVAL。INT64_MAX 的讀取傳回零，其他允許位移傳回 EPERM，包含零長度要求。INT64_MAX 的寫入傳回 EFBIG，其餘在零長度成功、APPEND 或資料存取前傳回 EPERM。既有 pwrite/pwritev 負位移的早期規則仍是唯一依據。DATA/HOLE seek 對非負位置傳回 ENXIO，負位置傳回 EINVAL，游標不變。
+
+唯寫/讀寫描述物件的非負 ftruncate 與允許的 open TRUNC 只設定 WasWritten，不改變目標位元組、完整 stat、擴充屬性、游標、儲存准入或 inode 分配。唯讀 ftruncate 及負長度傳回 EINVAL。允許參數的 F_SETFL 先改變 APPEND，再傳回 ENOTTY25；dup 可觀察變化，獨立開啟不受影響。未知參數在產生效果前停止。
+
+固定 fpathconf、fgetattrlist 及獨立宣告的普通 FD 擴充屬性權限作用於符號物件。相對目錄 FD 查找與 fchdir 傳回 ENOTDIR。屬性修改仍使 stat 失效，截斷不會恢復中繼資料。舊式、位移對齊、不可執行的 private/shared mmap 選擇到達符號物件類型的 EINVAL 拒絕，不建立映射或租約。普通 shared 映射、未知旗標、執行權限及其他現有不支援邊界保持不變。原生映射對照僅涵蓋 length16384、offset0、protection1/2/3，並未驗證所有 mmap 變體。
+
+原創 ARM64 準備對15項截斷及隔離的物件選擇保留完整144位元組 stat 與保護區比較。O0/O2 觀察涵蓋純量/向量極端位移與數量、稀疏 seek、18項映射拒絕及失敗 F_SETFL 的副作用。無 SDK 共用程式另以 O0/O1/O2 編譯，比較描述符實際父目錄路徑，避免原生暫存目錄的拼寫別名。虛擬模式比較獨立的完整 stat/type 字面值，或在多名稱查詢時明確停止並保留輸出。原生 Intel HVF、iOS 實機、ACL/權限執行、映射 EOF/訊號一致性、dyld、Mach IPC、執行緒與完整執行時期/框架仍未驗證或未完成。
+
+主要解釋依據：[對應版本 XNU 映射邊界](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c)。實作與探針皆為原創，未複製 Apple 實作。
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

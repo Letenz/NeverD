@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← فهرس الوثائق](README.md)
 
@@ -929,7 +929,7 @@ Sources: [XNU bulk ABI](https://raw.githubusercontent.com/apple-oss-distribution
 
 يستهلك الاسم البديل مدخلاً ومساراً/NUL فقط دون inode جديد. يمتلك الكائن المشترك البيانات وصلاحيات السمات وصلاحية البيانات الوصفية وعقود الخرائط. تحدّث السياسات الصريحة عدد الروابط وctime؛ دونها يبقى stat الكامل مجهولاً. تعديل السمات يبطل stat وتعديل المحتوى يبطل مشاهدات السمات. تحتفظ الأوصاف وآخر الخرائط بتكلفة الأسماء المحذوفة، ولا تخصم الاستبدالات إلا تكلفة قابلة للتحرير فوراً. تختار الأشجار الفرعية الهوية والأب الدقيقين؛ تبقى الأسماء الخارجية ثابتة وتستخدم الأهداف النسبية الأب المختار.
 
-تبقى F_GETPATH/ATTR_CMN_NAME غير مدعومة بعد تعدد الأسماء حتى عند بقاء اسم واحد أو صفر؛ لا ندّعي نموذجاً عاماً لذاكرة APFS. يستخدم bulk NAME المدخل الحقيقي ويحفظ rename/SWAP للكائن نفسه الاسمين. تبقى EXCL وحالة الأحرف وO_SYMLINK وIntel HVF وiOS الفعلي وACL واتساق الخرائط/إشارات EOF وdyld وMach IPC والخيوط والأطر الكاملة فجوات مستقلة. يوسّع هذا العقد الاستثناءات السابقة داخل حدوده فقط.
+تبقى F_GETPATH/ATTR_CMN_NAME غير مدعومة بعد تعدد الأسماء حتى عند بقاء اسم واحد أو صفر؛ لا ندّعي نموذجاً عاماً لذاكرة APFS. يستخدم bulk NAME المدخل الحقيقي ويحفظ rename/SWAP للكائن نفسه الاسمين. تبقى EXCL وحالة الأحرف وIntel HVF وiOS الفعلي وACL واتساق الخرائط/إشارات EOF وdyld وMach IPC والخيوط والأطر الكاملة فجوات مستقلة. يوسّع هذا العقد الاستثناءات السابقة داخل حدوده فقط.
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -945,5 +945,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## واصفات O_SYMLINK المحدودة
+
+يحتفظ O_SYMLINK=0x00200000 بكائن الرابط الرمزي الأخير، بما في ذلك الرابط المقطوع أو الدوري، للقراءة أو الكتابة أو كليهما. لا يمنح صلاحية كتابة محتوى الهدف. يظل O_CREAT يتبع الهدف، مع أولوية ELOOP لـ NOFOLLOW وEEXIST للإنشاء الحصري وENOTDIR عند O_DIRECTORY للرابط المحتفظ به. تستخدم المكونات الوسيطة والشرطة النهائية المحلل وحدود NOFOLLOW_ANY الحالية. يستثني F_GETFL بت الاختيار.
+
+تحتفظ الأوصاف بكائني LinkNode وNameIdentity الفعليين. يشارك dup الأعلام والمؤشر، أما open المستقل فله وصف منفصل. لا يغير نقل الاسم أو حذفه أو إعادة استخدامه أو حذف الأب هوية الكائن المحتفظ به. يستخدم F_GETPATH وATTR_CMN_NAME الاسم الوحيد المحدد. وجود عدة أسماء سابقاً يمنع استنتاج اسم vnode دائماً، حتى بعد حذفها كلها. تبقى الحجوزات الأولية ثابتة؛ تنتظر الأسماء والأهداف والإدخالات وزيادة السمات الديناميكية آخر مالك فعلي. لا يمكن احتساب آخر اسم بديل كتخفيض كلفة الاستبدال بينما الكائن أو الاسم ما زال محتفظاً به.
+
+لا يعرض I/O نص هدف الرابط كمحتوى ملف. بعد فحوص الاستيراد القياسي/المتجهي والوصول والعدد الحالية، تعيد الإزاحة السالبة EINVAL. تعيد القراءة عند INT64_MAX صفراً والكتابة EFBIG؛ تعيد الإزاحات الأخرى المسموحة EPERM حتى للطول الصفري وقبل APPEND أو الوصول إلى البيانات. تبقى قواعد الإزاحة السالبة المبكرة لـ pwrite/pwritev كما هي. تعيد DATA/HOLE قيمة ENXIO للمواقع غير السالبة وEINVAL للسالبة دون تغيير المؤشر.
+
+لا تضبط ftruncate غير السالبة للوصف القابل للكتابة وopen TRUNC المسموحة إلا WasWritten. تبقى بايتات الهدف وstat الكامل وxattrs والمؤشر والميزانية وinode دون تغيير. تعيد القراءة فقط أو الطول السالب EINVAL. تغير F_SETFL المسموحة APPEND ثم تعيد ENOTTY25؛ يشاهد dup التغيير ولا يشاهده open المستقل. تتوقف الوسائط المجهولة قبل التأثير.
+
+تعمل fpathconf الثابتة وfgetattrlist وصلاحيات FD-xattr العادية المعلنة بشكل مستقل على كائن الرابط. يعيد FD الدليل النسبي وfchdir قيمة ENOTDIR. لا يعيد truncate صلاحية stat التي أبطلتها تعديلات السمات. يصل mmap القديم private/shared والمحاذى وغير التنفيذي إلى رفض EINVAL حسب نوع الرابط دون mapping أو lease. تبقى حدود shared العادي والأعلام المجهولة والحماية التنفيذية وغيرها دون تغيير. تغطي ضوابط mmap الأصلية18 حالة فقط بطول16384 وإزاحة0 وحماية1/2/3.
+
+تقارن التحضيرات الأصلية ARM64 جميع144 بايتاً المحمية لـ stat في15 حالة truncate، وإزاحات/أعداد I/O القصوى وsparse seek وتأثيرات F_SETFL الفاشلة. ينفذ البرنامج المشترك بلا SDK عند O0/O1/O2 ويقارن المسار الفعلي لـ FD الأب. تقارن المسارات الافتراضية قيمة stat/type مستقلة أو ترفض الأسماء المتعددة بوضوح مع الاحتفاظ بالمخرجات. تبقى Intel HVF الأصلية وiOS الفعلي وACL/الصلاحيات وEOF/الإشارات المربوطة وdyld وMach IPC والخيوط وبيئات التشغيل/frameworks الكاملة غير متحققة أو غير مكتملة.
+
+المصدر الأساسي للتفسير: [حدود mmap في إصدار XNU المطابق](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c). التنفيذ والمجسات أصلية ولا تنسخ تنفيذ Apple.
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← Indice della documentazione](README.md)
 
@@ -929,7 +929,7 @@ link segue il target simbolico finale; linkat flags=0 seleziona il collegamento 
 
 Un alias consuma voce e percorso/NUL, senza nuovo inode. Byte, autorizzazioni degli attributi, validità dei metadati e lease dei mapping appartengono all’oggetto condiviso. Le politiche esplicite aggiornano link e ctime; senza di esse stat completo è ignoto. Modificare attributi invalida stat; modificare contenuto invalida le osservazioni degli attributi. Descrizioni e ultimi mapping mantengono i costi dei nomi rimossi; la sostituzione accredita solo costi immediatamente liberabili. I sottoalberi selezionano identità e genitori esatti; alias esterni restano fermi e target relativi usano il genitore selezionato.
 
-Dopo più nomi F_GETPATH/ATTR_CMN_NAME restano non supportati anche con uno o zero nomi; nessun modello generale della cache APFS. bulk NAME usa la voce reale; rename/SWAP dello stesso oggetto conserva entrambi i nomi. Casing EXCL, O_SYMLINK, Intel HVF, iOS fisico, ACL, mapping coerenti/segnali EOF, dyld, Mach IPC, thread e framework completi restano lacune. Le precedenti esclusioni sono estese solo entro questo contratto.
+Dopo più nomi F_GETPATH/ATTR_CMN_NAME restano non supportati anche con uno o zero nomi; nessun modello generale della cache APFS. bulk NAME usa la voce reale; rename/SWAP dello stesso oggetto conserva entrambi i nomi. Casing EXCL, Intel HVF, iOS fisico, ACL, mapping coerenti/segnali EOF, dyld, Mach IPC, thread e framework completi restano lacune. Le precedenti esclusioni sono estese solo entro questo contratto.
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -945,5 +945,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## Descrittori O_SYMLINK limitati
+
+O_SYMLINK=0x00200000 conserva l'ultimo oggetto simbolico, anche con destinazione mancante o ciclo, in lettura, scrittura o entrambe. Non concede scrittura sul contenuto della destinazione. O_CREAT segue ancora il destinatario; NOFOLLOW mantiene la priorità ELOOP, la creazione esclusiva EEXIST, e O_DIRECTORY restituisce ENOTDIR per il link conservato. Componenti intermedi e barre finali usano il risolutore e NOFOLLOW_ANY esistenti. F_GETFL omette il bit di selezione.
+
+La descrizione conserva LinkNode e NameIdentity effettivi. Dup condivide flag e cursore; open indipendenti hanno descrizioni proprie. Rinomina, rimozione, riutilizzo del nome e rimozione del padre non sostituiscono l'oggetto detenuto. F_GETPATH/ATTR_CMN_NAME usano il nome univoco selezionato; la precedente presenza di più nomi impedisce permanentemente l'inferenza vnode, anche senza nomi superstiti. Le prenotazioni iniziali restano fisse; nomi, destinazioni, voci e crescita dinamica degli attributi attendono l'ultimo proprietario reale. La sostituzione non può accreditare l'ultimo alias ancora detenuto.
+
+L'I/O non espone la stringa della destinazione come contenuto. Dopo i controlli esistenti di importazione scalare/vettoriale, accesso e quantità, gli offset negativi danno EINVAL. A INT64_MAX la lettura restituisce zero, la scrittura EFBIG; gli altri offset ammessi danno EPERM anche a lunghezza zero, prima di APPEND o accesso ai dati. Restano le regole negative anticipate di pwrite/pwritev. DATA/HOLE dà ENXIO per posizioni non negative, EINVAL per negative, senza spostare il cursore.
+
+ftruncate non negativo su descrizioni scrivibili e open TRUNC ammesso impostano solo WasWritten. Destinazione, stat completo, xattrs, cursore, budget e inode restano invariati. Sola lettura o lunghezza negativa dà EINVAL. F_SETFL ammesso modifica APPEND prima di restituire ENOTTY25; dup vede l'effetto, open indipendenti no. Gli argomenti sconosciuti arrestano prima degli effetti.
+
+fpathconf fisso, fgetattrlist e autorità ordinaria FD-xattr dichiarata separatamente operano sul link. FD di directory relativo e fchdir danno ENOTDIR. truncate non ripristina stat invalidato da una modifica degli attributi. mmap legacy private/shared allineato e non eseguibile raggiunge EINVAL per tipo simbolico, senza mapping o lease. Shared ordinario, flag sconosciuti, protezione eseguibile e altri limiti esistenti restano invariati. I18 controlli nativi mmap coprono solo length16384, offset0 e protection1/2/3.
+
+La preparazione ARM64 originale confronta144 byte stat protetti per15 troncamenti, offset/quantità estremi, seek sparso ed effetti di F_SETFL fallito. Il programma comune senza SDK esegue O0/O1/O2 e confronta il percorso effettivo del FD padre. Le rotte virtuali confrontano un letterale stat/type indipendente oppure rifiutano esplicitamente più nomi conservando l'output. Intel HVF nativo, iOS fisico, ACL/permessi, EOF/segnali mappati, dyld, Mach IPC, thread e ambienti/framework completi restano non verificati o incompleti.
+
+Fonte primaria: [confine mmap XNU corrispondente](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c). Implementazione e sonde originali; nessuna implementazione Apple copiata.
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

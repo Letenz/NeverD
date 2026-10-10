@@ -1692,7 +1692,7 @@ Raw link follows the terminal symbolic target; linkat with flags 0 links the sym
 
 A successful alias consumes one namespace entry and its path/NUL charge, with no new inode or duplicate object bytes/attributes. Bytes, independent attribute/content grants, metadata validity and mapping leases remain object-owned. Link counts and ctime use the existing explicit metadata policies; omitted policy leaves complete post-mutation stat unknown. Attribute mutation invalidates complete stat; content mutation invalidates ordinary attribute observations. Removed names retain their cost while held descriptions own them, and the final name/object cost survives mapping-only retention. Rename replacement credits only immediately releasable ownership. Subtree moves/SWAP select exact identities and actual parents; tree-external aliases remain in place and relative symbolic targets use each selected entry parent.
 
-After an object has acquired multiple names, F_GETPATH and vnode ATTR_CMN_NAME remain unsupported even after one or zero names remain. Private native ARM64 controls show lookup-sensitive APFS name observations, with different path/name cache behavior; no general cache model is claimed. Bulk directory NAME uses the selected live entry, independently of vnode-name inference. Same-object ordinary rename/SWAP preserve both entries, while case-insensitive EXCL remains outside the bounded contract. O_SYMLINK descriptors, native Intel HVF, physical iOS, permissions/ACLs, coherent file mappings/EOF signals, dyld, Mach IPC, threads and complete frameworks remain separate gaps. This section extends earlier hard-link exclusions only within this contract.
+After an object has acquired multiple names, F_GETPATH and vnode ATTR_CMN_NAME remain unsupported even after one or zero names remain. Private native ARM64 controls show lookup-sensitive APFS name observations, with different path/name cache behavior; no general cache model is claimed. Bulk directory NAME uses the selected live entry, independently of vnode-name inference. Same-object ordinary rename/SWAP preserve both entries, while case-insensitive EXCL remains outside the bounded contract. Native Intel HVF, physical iOS, permissions/ACLs, coherent file mappings/EOF signals, dyld, Mach IPC, threads and complete frameworks remain separate gaps. This section extends earlier hard-link exclusions only within this contract.
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -1708,5 +1708,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## Bounded O_SYMLINK descriptors
+
+O_SYMLINK=0x00200000 retains the final symbolic object, including broken or cyclic links, for read-only, write-only and read/write access. It does not grant writable target content. O_CREAT still follows the final target; NOFOLLOW keeps its ELOOP precedence, exclusive creation keeps EEXIST, and O_DIRECTORY rejects a retained link with ENOTDIR. Required intermediate or trailing-slash expansion uses the existing resolver and NOFOLLOW_ANY boundary. F_GETFL omits the selection bit.
+
+Descriptions share the actual LinkNode and selected NameIdentity. Dup shares status flags and cursor; independent opens keep their own descriptions. Held links retain their original object through rename, removal, name reuse and parent removal. Unique F_GETPATH and ATTR_CMN_NAME use the selected retained name; multiple-name history permanently refuses vnode name inference even after all names are removed. Initial fixed reservations remain fixed; dynamic names, targets, entries and attribute growth wait for their actual final owner. Replacement cannot credit a last alias while another description still owns its object or selected name.
+
+Symbolic I/O never exposes raw target bytes as file contents. After the existing scalar/vector import, access and count checks, negative offsets give EINVAL. Reads at INT64_MAX return zero; other admitted offsets give EPERM, including zero-length requests. Writes at INT64_MAX give EFBIG; other admitted offsets give EPERM before zero-length success, APPEND or payload access. The existing early negative pwrite/pwritev rules remain authoritative. DATA/HOLE seek returns ENXIO for nonnegative positions and EINVAL for negative positions, without advancing the cursor.
+
+Admitted open TRUNC, including read-only symbolic selection, only sets WasWritten. Nonnegative ftruncate does the same for write-only/read/write descriptions. Both leave target bytes, full stat, xattrs, cursor, storage admission and inode allocation untouched. Read-only ftruncate and negative lengths give EINVAL. F_SETFL with admitted arguments changes APPEND before returning ENOTTY25; dup observes the change and independent opens do not. Unknown arguments stop before effects.
+
+Fixed fpathconf, fgetattrlist and independently declared ordinary FD-xattr authority use the symbolic object. Relative directory-FD lookup and fchdir return ENOTDIR. Attribute mutations keep their existing stat invalidation; truncate cannot restore metadata. Legacy aligned, non-executable private/shared mmap selections reach the symbolic-kind EINVAL refusal without a mapping or lease. Ordinary shared mappings, unknown flags, executable protection and other existing unsupported boundaries remain unchanged. The native mapping controls cover length16384, offset0 and protections1/2/3, not every mmap variant.
+
+Original ARM64 preparation records complete guarded 144-byte stat equality for15 truncate controls and isolated selection cases. Additional O0/O2 observations cover scalar/vector extreme offsets and counts, sparse seeks,18 mapping refusals and failed F_SETFL effects. The SDK-free common workload also compiles at O0/O1/O2 and compares actual descriptor parent paths, avoiding native temporary-root spelling aliases. Virtual routes compare an independent complete stat/type literal or stop explicitly at a multi-name query while preserving output. Native Intel HVF, physical iOS, ACL/permission enforcement, coherent mapped EOF/signals, dyld, Mach IPC, threads and full runtimes/frameworks remain unverified or incomplete.
+
+Primary interpretation: [matching XNU mapping boundary](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c). Implementation and probes are original; no Apple implementation is copied.
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

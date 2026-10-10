@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← 文档索引](README.md)
 
@@ -1035,7 +1035,7 @@ xattr-mutations / xattr-mutations-values / xattr-mutations-unsupported 使用原
 
 新增别名只消耗一个名称条目及路径/NUL 费用，不消耗新 inode，也不重复计费对象字节或属性。内容与属性授权、元数据有效性和映射租约属于共享对象。链接数与 ctime 使用现有显式元数据策略；缺少策略时，修改后的完整 stat 保持未知。修改扩展属性使完整 stat 失效，修改内容使普通属性观察失效。删除名称后，描述对象保留名称费用，最后一个名称及对象费用也由仅存的映射租约保留；替换只能抵扣可立即释放的费用。子树移动/SWAP 按确切身份及实际父目录选择条目，树外别名不移动，相对符号链接目标从所选条目的父目录解析。
 
-对象一旦拥有过多个名称，即使只剩一个或零个名称，F_GETPATH 与 vnode ATTR_CMN_NAME 仍明确不支持。ARM64 原生控制显示 APFS 名称观察依赖查找历史，路径与名称缓存行为也不同，尚不能声明通用缓存模型。目录批量 NAME 直接来自实际条目。相同对象的普通重命名/SWAP 保留双方条目，大小写不敏感 EXCL 仍超出当前契约。O_SYMLINK 描述符、原生 Intel HVF、实体 iOS、权限/ACL、映射一致性及 EOF 信号、dyld、Mach IPC、线程和完整框架仍是独立缺口。本节仅在上述范围内扩展前文的硬链接限制。
+对象一旦拥有过多个名称，即使只剩一个或零个名称，F_GETPATH 与 vnode ATTR_CMN_NAME 仍明确不支持。ARM64 原生控制显示 APFS 名称观察依赖查找历史，路径与名称缓存行为也不同，尚不能声明通用缓存模型。目录批量 NAME 直接来自实际条目。相同对象的普通重命名/SWAP 保留双方条目，大小写不敏感 EXCL 仍超出当前契约。原生 Intel HVF、实体 iOS、权限/ACL、映射一致性及 EOF 信号、dyld、Mach IPC、线程和完整框架仍是独立缺口。本节仅在上述范围内扩展前文的硬链接限制。
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -1051,5 +1051,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 有界 O_SYMLINK 描述符
+
+O_SYMLINK=0x00200000 在只读、只写和读写模式下保留最终符号链接对象，包括悬空或循环链接；它不授予目标内容写权限。O_CREAT 仍跟随最终目标；NOFOLLOW 保持 ELOOP 优先顺序，独占创建保持 EEXIST，O_DIRECTORY 对保留的链接返回 ENOTDIR。必需的中间路径或末尾斜杠展开沿用现有解析器和 NOFOLLOW_ANY 边界。F_GETFL 不返回对象选择位。
+
+描述对象共用实际 LinkNode 和所选 NameIdentity。dup 共享状态标志和游标，独立 open 使用各自的描述对象。链接被重命名、删除、名称复用或父目录删除后，已有 FD 仍保留原对象。唯一名称的 F_GETPATH 和 ATTR_CMN_NAME 使用保留的所选名称；一旦有过多个名称，即使全部删除，vnode 名称推断仍明确不支持。初始固定费用始终预留，动态名称、目标、条目和属性增量等待实际最后所有者释放。另一描述对象仍保留对象或所选名称时，替换不能抵扣最后别名的费用。
+
+符号描述符 I/O 不把原始目标字符串当作文件内容。现有标量/向量导入、访问模式和数量检查完成后，负偏移返回 EINVAL；INT64_MAX 处读取返回零，其余允许的偏移返回 EPERM，包括零长度请求。INT64_MAX 处写入返回 EFBIG，其余允许偏移在零长度成功、APPEND 或载荷访问前返回 EPERM。已有 pwrite/pwritev 负偏移的早期检查仍是唯一依据。DATA/HOLE seek 对非负位置返回 ENXIO，负位置返回 EINVAL，游标不变。
+
+只写/读写描述对象的非负 ftruncate 以及允许的 open TRUNC 只设置 WasWritten 状态，不改变目标字节、完整 stat、扩展属性、游标、存储准入或 inode 分配。只读 ftruncate 和负长度返回 EINVAL。F_SETFL 的允许参数先改变 APPEND，再返回 ENOTTY25；dup 可观察变化，独立打开不受影响。未知参数在产生效果前停止。
+
+固定 fpathconf、fgetattrlist 及独立声明的普通 FD 扩展属性授权作用于符号对象。相对目录 FD 查找和 fchdir 返回 ENOTDIR。属性修改仍使 stat 失效，截断不会恢复元数据。旧式、偏移对齐、非可执行的 private/shared mmap 选择到达符号对象类型的 EINVAL 拒绝，不创建映射或租约。普通 shared 映射、未知标志、执行权限及其他现有不支持边界保持不变。原生映射对照只覆盖 length16384、offset0、protection1/2/3，并未验证所有 mmap 变体。
+
+原创 ARM64 准备对15项截断及隔离的对象选择保留完整144字节 stat 和保护区比较。O0/O2 观察还覆盖标量/向量的极端偏移和数量、稀疏 seek、18项映射拒绝及失败 F_SETFL 的副作用。无 SDK 共用程序另以 O0/O1/O2 编译，比较描述符实际父目录路径，避免原生临时目录拼写别名。虚拟模式比较独立的完整 stat/type 字面值，或在多名称查询时明确停止并保留输出。原生 Intel HVF、iOS 真机、ACL/权限执行、映射 EOF/信号一致性、dyld、Mach IPC、线程和完整运行时/框架仍未验证或未完成。
+
+主要解释依据：[对应版本 XNU 映射边界](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c)。实现与探针均为原创，未复制 Apple 实现。
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

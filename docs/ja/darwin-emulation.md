@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← ドキュメント一覧](README.md)
 
@@ -931,7 +931,7 @@ link は末尾のシンボリックリンクを追跡する。linkat の flags=0
 
 別名はエントリとパス/NUL の使用量のみを増やし、新しい inode を使わない。バイト、属性権限、メタデータ有効性、マッピングのリースは共有オブジェクトが保持する。明示ポリシーがリンク数と ctime を更新し、欠落時の完全な stat は未知。属性変更は stat を、内容変更は属性観測を無効化する。削除名と最終マッピングの使用量は保持され、置換は直ちに解放できる分だけを差し引く。部分木は正確な識別と親で移動し、外部の別名は動かず、相対ターゲットは選択エントリの親から解決する。
 
-複数名を持った履歴のあるオブジェクトの F_GETPATH/ATTR_CMN_NAME は、残りが一つやゼロでも未対応。APFS キャッシュを一般化しない。bulk NAME は実エントリを使い、同一オブジェクトの通常 rename/SWAP は両名を保持する。EXCL の大小文字、O_SYMLINK、Intel HVF、実機 iOS、ACL、マッピング整合性/EOF シグナル、dyld、Mach IPC、スレッド、完全なフレームワークは別の課題。この契約の範囲内だけで以前の除外を拡張する。
+複数名を持った履歴のあるオブジェクトの F_GETPATH/ATTR_CMN_NAME は、残りが一つやゼロでも未対応。APFS キャッシュを一般化しない。bulk NAME は実エントリを使い、同一オブジェクトの通常 rename/SWAP は両名を保持する。EXCL の大小文字、Intel HVF、実機 iOS、ACL、マッピング整合性/EOF シグナル、dyld、Mach IPC、スレッド、完全なフレームワークは別の課題。この契約の範囲内だけで以前の除外を拡張する。
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -947,5 +947,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 有界 O_SYMLINK 記述子
+
+O_SYMLINK=0x00200000 は、読取専用・書込専用・読書きの各モードで最後のシンボリックリンク自体を保持します。切れたリンクや循環リンクも対象ですが、参照先の内容を書き換える権限は付与しません。O_CREAT は最後の参照先をたどり、NOFOLLOW の ELOOP、排他的作成の EEXIST、保持したリンクに対する O_DIRECTORY の ENOTDIR の順序を保ちます。途中や末尾スラッシュの展開は既存の名前解決と NOFOLLOW_ANY に従い、F_GETFL は選択ビットを返しません。
+
+実際の LinkNode と選択した NameIdentity を保持します。dup はフラグと位置を共有し、独立した open は別の記述を持ちます。改名・削除・名前再利用・親ディレクトリ削除後も元の物体を保持します。一意名の F_GETPATH と ATTR_CMN_NAME は保持した選択名を使い、複数名の履歴がある物体は全名削除後も vnode 名の推測を拒否します。初期予約は固定で、動的な名前・参照先・項目・属性増分は最後の所有者まで保持されます。置換はまだ所有されている最後の別名を費用控除に使えません。
+
+I/O はリンクの参照先文字列をファイル内容として公開しません。既存のスカラー/ベクトル取込、アクセス、数の検査後、負の位置は EINVAL です。読取は INT64_MAX で零、それ以外の許容位置は長さ零でも EPERM です。書込は INT64_MAX で EFBIG、それ以外は長さ零の成功・APPEND・データアクセスより前に EPERM です。pwrite/pwritev の既存の早期負位置規則を保ちます。DATA/HOLE seek は非負で ENXIO、負で EINVAL、位置は変わりません。
+
+書込可能な記述子の非負 ftruncate と許容 open TRUNC は WasWritten だけを設定し、参照先、完全 stat、属性、位置、記憶容量や inode を変更しません。読取専用または負長は EINVAL です。許容 F_SETFL は APPEND を変更してから ENOTTY25 を返し、dup に共有されます。未知の引数は効果前に停止します。
+
+固定 fpathconf、fgetattrlist、独立した通常 FD 属性権限はリンク物体に作用します。相対ディレクトリ FD と fchdir は ENOTDIR。属性変更による stat 無効化を truncate は復旧しません。整列した非実行の旧式 private/shared mmap は物体種別で EINVAL となり、映射やリースを作成しません。通常 shared 映射、未知フラグ、実行権限などの既存拒否を保ちます。原生 mmap の対象は length16384、offset0、protection1/2/3 の18例です。
+
+独自 ARM64 検証は15 truncate 例の完全144バイト stat、極端位置/数の I/O、疎 seek、F_SETFL の失敗時効果を確認します。SDK 非依存の共通プログラムは O0/O1/O2 で実行し、実際の親記述子パスを比較します。仮想経路は独立した stat/type リテラルまたは出力を保持する複数名拒否を検証します。Intel HVF、iOS 実機、ACL/権限、映射 EOF/シグナル、dyld、Mach IPC、スレッド、完全なランタイム/フレームワークは未検証または未完成です。
+
+解釈の一次資料：[同版 XNU の映射境界](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c)。実装とプローブは独自作成で Apple 実装をコピーしていません。
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

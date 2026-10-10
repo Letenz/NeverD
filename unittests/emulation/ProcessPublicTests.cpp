@@ -414,6 +414,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"extended-attributes-values",
                     emulation::darwin_test::ExtendedAttributesHex},
           std::pair{"extended-attributes-unsupported", "58"},
+          std::pair{"symbolic-descriptors", "53"},
+          std::pair{"symbolic-descriptors-values",
+                    emulation::darwin_test::SymbolicDescriptorHex},
+          std::pair{"symbolic-descriptors-name-unsupported", "53"},
           std::pair{"hard-links", "48"},
           std::pair{"hard-links-values", emulation::darwin_test::HardLinksHex},
           std::pair{"hard-links-name-unsupported", "48"},
@@ -542,6 +546,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool UnknownNames = ModeName == "attribute-names-unsupported";
   const bool UnknownBulk = ModeName == "bulk-attributes-unsupported";
   const bool UnknownHardLinkName =
+      ModeName == "symbolic-descriptors-name-unsupported" ||
       ModeName == "hard-links-name-unsupported" ||
       ModeName == "hard-links-attributes-unsupported";
   const bool Incomplete = ProtectedLink || UnknownPathConf ||
@@ -964,6 +969,13 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::CommonAttributesJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ModeName.starts_with("symbolic-descriptors")) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::SymbolicDescriptorJSON));
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName.starts_with("hard-links")) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -1030,7 +1042,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     const auto *Last = Services->back().getAsObject();
     ASSERT_NE(Last, nullptr);
     EXPECT_EQ(Last->getString(field::Number),
-              ModeName == "hard-links-name-unsupported"
+              ModeName == "hard-links-name-unsupported" ||
+                      ModeName == "symbolic-descriptors-name-unsupported"
                   ? (X64 ? "200005c" : "5c")
                   : (X64 ? "20000e4" : "e4"));
     EXPECT_EQ(Last->get(field::Error), nullptr);

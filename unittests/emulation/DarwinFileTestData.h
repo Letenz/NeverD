@@ -663,6 +663,103 @@ inline constexpr char MetadataJSON[] = R"({
   "modification_time":{"seconds":"9223372036854775807","nanoseconds":999999999},
   "change_time":{"seconds":-3,"nanoseconds":4},
   "birth_time":{"seconds":-5,"nanoseconds":6}})";
+inline DarwinFileOptions symbolicDescriptorOptions() {
+  DarwinFileOptions O;
+  O.Files["/data"] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
+  O.Directories.insert("/");
+  O.MutableDirectories.insert("/");
+  O.Metadata["/"] = creationParentMetadata();
+  O.CreationPolicy = NamespaceCreationPolicy;
+  O.InitialUmask = 0027;
+  O.WorkingDirectory = "/";
+  O.SymbolicLinks["/fd-attrs"] = {'d', 'a', 't', 'a'};
+  O.MutableSymbolicLinks.insert("/fd-attrs");
+  O.ExtendedAttributes["/fd-attrs"] = {};
+  O.MutableExtendedAttributes.insert("/fd-attrs");
+  return O;
+}
+// Independent LP64 literal: first runtime symbolic stat and OBJTYPE reply.
+inline constexpr char SymbolicDescriptorHex[] =
+    "85ffffffe8a101001132547698badcfee803000098badcfe0000000000000000"
+    "edffffffffffffffb168de3a00000000edffffffffffffffb168de3a00000000"
+    "edffffffffffffffb168de3a00000000edffffffffffffffb168de3a00000000"
+    "040000000000000001000000000000000020000000000000efcdab8900000000"
+    "000000000000000000000000000000000800000005000000";
+inline constexpr char SymbolicDescriptorJSON[] = R"({
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839"
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true,
+      "metadata": {
+        "device": -123,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    }
+  ],
+  "creation_policy": {
+    "first_inode": "18364758544493064721",
+    "block_size": 8192,
+    "generation": 2309737967,
+    "creation_time": {
+      "seconds": -19,
+      "nanoseconds": 987654321
+    },
+    "mutation_policy": {
+      "allocation_unit": 4096,
+      "mutation_time": {
+        "seconds": -7,
+        "nanoseconds": 123456789
+      }
+    },
+    "namespace_policy": {
+      "symbolic_link_allocation_unit": 512,
+      "directory_entry_size": 32,
+      "directory_blocks": 7
+    }
+  },
+  "umask": 23,
+  "working_directory": "/",
+  "symbolic_links": [
+    {
+      "path": "/fd-attrs",
+      "target_hex": "64617461",
+      "mutable": true,
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    }
+  ]
+})";
 inline DarwinFileOptions hardLinksOptions() {
   auto O = kernelPathConfOptions();
   O.WorkingDirectory = "/";

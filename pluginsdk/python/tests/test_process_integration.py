@@ -540,6 +540,15 @@ class ProcessIntegrationTests(unittest.TestCase):
                                            ("extended-attributes", b"X"),
                                            ("extended-attributes-values", bytes.fromhex("00ff410080420a757365722e6e65766572642e6265746100757365722e6e65766572642e616c70686100757365722e6e65766572642e656d70747900")),
                                            ("extended-attributes-unsupported", b"X"),
+                                           ("symbolic-descriptors", b"S"),
+                                           ("symbolic-descriptors-values", bytes.fromhex(
+                                               "85ffffffe8a101001132547698badcfee803000098badcfe0000000000000000"
+                                               "edffffffffffffffb168de3a00000000edffffffffffffffb168de3a00000000"
+                                               "edffffffffffffffb168de3a00000000edffffffffffffffb168de3a00000000"
+                                               "040000000000000001000000000000000020000000000000efcdab8900000000"
+                                               "000000000000000000000000000000000800000005000000"
+                                               )),
+                                           ("symbolic-descriptors-name-unsupported", b"S"),
                                            ("hard-links", b"H"),
                                            ("hard-links-values", bytes.fromhex("51313233343536373839")),
                                            ("hard-links-name-unsupported", b"H"),
@@ -1274,7 +1283,89 @@ class ProcessIntegrationTests(unittest.TestCase):
                                                    {"path": "/cycle", "target_hex": "6379636c65", "mutable": True}],
                                 "working_directory": "/"}
                             file_options = json.dumps(query_options)
-                        unknown_hard_link_name = mode in ("hard-links-name-unsupported", "hard-links-attributes-unsupported")
+                        if mode.startswith("symbolic-descriptors"):
+                            query_options = json.loads(file_options)
+                            query_options["instruction_quantum"] = 1024
+                            query_options["timeout_microseconds"] = 5_000_000
+                            query_options["darwin_files"] = json.loads(r'''
+{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "30313233343536373839"
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "mutable": true,
+      "metadata": {
+        "device": -123,
+        "inode": 41,
+        "mode": 16877,
+        "link_count": 1,
+        "uid": 2309737967,
+        "gid": 4275878552,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 2309737967,
+        "access_time": {
+          "seconds": "-9223372036854775807",
+          "nanoseconds": 1
+        },
+        "modification_time": {
+          "seconds": "9223372036854775807",
+          "nanoseconds": 999999999
+        },
+        "change_time": {
+          "seconds": -3,
+          "nanoseconds": 4
+        },
+        "birth_time": {
+          "seconds": -5,
+          "nanoseconds": 6
+        }
+      }
+    }
+  ],
+  "creation_policy": {
+    "first_inode": "18364758544493064721",
+    "block_size": 8192,
+    "generation": 2309737967,
+    "creation_time": {
+      "seconds": -19,
+      "nanoseconds": 987654321
+    },
+    "mutation_policy": {
+      "allocation_unit": 4096,
+      "mutation_time": {
+        "seconds": -7,
+        "nanoseconds": 123456789
+      }
+    },
+    "namespace_policy": {
+      "symbolic_link_allocation_unit": 512,
+      "directory_entry_size": 32,
+      "directory_blocks": 7
+    }
+  },
+  "umask": 23,
+  "working_directory": "/",
+  "symbolic_links": [
+    {
+      "path": "/fd-attrs",
+      "target_hex": "64617461",
+      "mutable": true,
+      "extended_attributes": [],
+      "mutable_extended_attributes": true
+    }
+  ]
+}
+''')
+                            file_options = json.dumps(query_options)
+                        unknown_hard_link_name = mode in ("symbolic-descriptors-name-unsupported", "hard-links-name-unsupported", "hard-links-attributes-unsupported")
                         if mode.startswith("hard-links"):
                             query_options = json.loads(file_options)
                             query_options["instruction_quantum"] = 1024
@@ -1549,7 +1640,7 @@ class ProcessIntegrationTests(unittest.TestCase):
                         if unknown_hard_link_name:
                             self.assertEqual(result["diagnostic"], "Darwin multiple-name vnode observations are unsupported")
                             last = result["services"][-1]
-                            number = "5c" if mode == "hard-links-name-unsupported" else "e4"
+                            number = "5c" if mode in ("hard-links-name-unsupported", "symbolic-descriptors-name-unsupported") else "e4"
                             self.assertEqual(last["number"], "20000" + number if architecture == "x86_64" else number)
                             self.assertIsNone(last["result"])
                             self.assertNotIn("error", last)

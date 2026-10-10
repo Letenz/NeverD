@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -929,7 +929,7 @@ link folgt dem letzten symbolischen Ziel; linkat mit flags=0 wählt das Linkobje
 
 Ein Alias kostet nur Eintrag und Pfad/NUL, keinen neuen inode. Bytes, Attributrechte, Metadatengültigkeit und Mapping-Leases gehören dem gemeinsamen Objekt. Explizite Richtlinien aktualisieren Linkzahl und ctime; ohne sie bleibt vollständiges stat unbekannt. Attributänderungen invalidieren stat, Inhaltsänderungen Attributbeobachtungen. Gehaltene Beschreibungen und letzte Mappings behalten Namenskosten; Ersetzung verrechnet nur sofort freigebbare Kosten. Teilbäume wählen genaue Identitäten und Eltern; externe Aliasnamen bleiben stehen, relative symbolische Ziele verwenden den gewählten Eintragselternteil.
 
-F_GETPATH/ATTR_CMN_NAME bleiben nach mehreren Namen auch bei einem oder keinem Namen unzulässig; kein allgemeines APFS-Cachemodell wird behauptet. bulk NAME stammt vom tatsächlichen Eintrag; gewöhnliches rename/SWAP desselben Objekts behält beide Namen. EXCL-Großschreibung, O_SYMLINK, Intel HVF, physisches iOS, ACL, kohärente Mappings/EOF-Signale, dyld, Mach IPC, Threads und vollständige Frameworks bleiben Lücken. Frühere Ausschlüsse werden nur innerhalb dieses Vertrags erweitert.
+F_GETPATH/ATTR_CMN_NAME bleiben nach mehreren Namen auch bei einem oder keinem Namen unzulässig; kein allgemeines APFS-Cachemodell wird behauptet. bulk NAME stammt vom tatsächlichen Eintrag; gewöhnliches rename/SWAP desselben Objekts behält beide Namen. EXCL-Großschreibung, Intel HVF, physisches iOS, ACL, kohärente Mappings/EOF-Signale, dyld, Mach IPC, Threads und vollständige Frameworks bleiben Lücken. Frühere Ausschlüsse werden nur innerhalb dieses Vertrags erweitert.
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -945,5 +945,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## Begrenzte O_SYMLINK-Deskriptoren
+
+O_SYMLINK=0x00200000 hält das letzte symbolische Linkobjekt auch bei ungültigem Ziel oder Zyklus, für Lesen, Schreiben oder beides. Es gewährt keine Schreibrechte auf Zielinhalte. O_CREAT folgt weiterhin dem Ziel; NOFOLLOW behält ELOOP-Priorität, exklusive Erstellung EEXIST, und O_DIRECTORY liefert für den gehaltenen Link ENOTDIR. Zwischenkomponenten und abschließende Schrägstriche folgen dem bestehenden Resolver und NOFOLLOW_ANY. F_GETFL enthält das Auswahlbit nicht.
+
+Die Beschreibung hält den tatsächlichen LinkNode und die ausgewählte NameIdentity. Dup teilt Statusflags und Cursor, unabhängige Opens besitzen eigene Beschreibungen. Umbenennung, Entfernung, Namenswiederverwendung und Elternentfernung ersetzen das gehaltene Objekt nicht. F_GETPATH/ATTR_CMN_NAME verwenden den ausgewählten eindeutigen Namen; eine Mehrnamenshistorie verweigert vnode-Namensschlüsse dauerhaft, auch ohne verbleibende Namen. Anfangsreservierungen bleiben fest. Dynamische Namen, Ziele, Einträge und Attributzuwächse warten auf ihren tatsächlichen letzten Besitzer. Ein noch gehaltenes letztes Alias kann beim Ersetzen keine Kostengutschrift liefern.
+
+I/O stellt Zielzeichenfolgen niemals als Dateiinhalt bereit. Nach bestehenden Skalar/Vektor-, Zugriffs- und Anzahlprüfungen liefern negative Offsets EINVAL. Lesen an INT64_MAX ergibt null, Schreiben EFBIG; andere zugelassene Offsets ergeben EPERM, auch bei Länge null und vor APPEND oder Datenzugriff. Bestehende frühe Negativprüfungen von pwrite/pwritev bleiben maßgeblich. DATA/HOLE liefert für nichtnegative Positionen ENXIO und für negative EINVAL, ohne Cursoränderung.
+
+Nichtnegatives ftruncate für schreibfähige Beschreibungen und zugelassenes open TRUNC setzen nur WasWritten. Zielbytes, vollständiger stat, xattrs, Cursor, Speicherbudget und inode bleiben unverändert. Nur-Lesen oder negative Länge liefert EINVAL. Zugelassenes F_SETFL ändert APPEND und liefert anschließend ENOTTY25; dup sieht die Änderung, unabhängiges open nicht. Unbekannte Argumente stoppen vor Wirkungen.
+
+Festes fpathconf, fgetattrlist und unabhängig deklarierte gewöhnliche FD-xattr-Rechte gelten für das Linkobjekt. Relative Verzeichnis-FDs und fchdir liefern ENOTDIR. truncate stellt durch Attributänderung ungültigen stat nicht wieder her. Ausgerichtete, nicht ausführbare historische private/shared mmap-Auswahlen erreichen das symbolische EINVAL ohne Mapping oder Lease. Gewöhnliches Shared, unbekannte Flags, ausführbarer Schutz und weitere bestehende Grenzen bleiben bestehen. Die18 nativen mmap-Kontrollen umfassen nur length16384, offset0 und protection1/2/3.
+
+Die eigenständig erstellte ARM64-Vorbereitung prüft alle144 geschützten stat-Bytes bei15 Truncate-Fällen, extreme I/O-Offsets/Anzahlen, Sparse-Seek und fehlgeschlagene F_SETFL-Effekte. Das SDK-freie gemeinsame Programm läuft mit O0/O1/O2 und vergleicht den tatsächlichen Eltern-FD-Pfad. Virtuelle Routen vergleichen unabhängige stat/type-Literale oder verweigern Mehrnamensabfragen unter Erhalt der Ausgabe. Natives Intel HVF, physisches iOS, ACL/Rechte, gemappte EOF/Signale, dyld, Mach IPC, Threads und vollständige Laufzeiten/Frameworks bleiben ungeprüft oder unvollständig.
+
+Primäre Interpretation: [passende XNU-Mappinggrenze](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c). Implementierung und Probes sind original; kein Apple-Implementierungscode wurde kopiert.
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

@@ -82,6 +82,9 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                 self.assertEqual((path.parent / "alias").readlink(), Path("data"))
                 self.assertEqual((path.parent / "cycle").readlink(), Path("cycle"))
                 self.assertFalse((path.parent / "dangling").exists())
+            elif command[1] == "symbolic-descriptors":
+                self.assertEqual({item.name for item in path.parent.iterdir()}, {"data", "fd-attrs"})
+                self.assertEqual((path.parent / "fd-attrs").readlink(), Path("data"))
             elif command[1] == "directory-link-roots":
                 catalogue = path.parent
                 self.assertEqual({item.name for item in catalogue.iterdir()}, {"data", "a", "b"})
@@ -122,7 +125,7 @@ class DarwinKernelReferenceTests(unittest.TestCase):
                  ("directory-link-roots", 37, b""),
                  ("directory-entries", 37, b""),
                  ("kernel-pathconf", 37, b""), ("common-attributes", 37, b""),
-                 ("extended-attributes", 37, b""), ("attribute-names", 37, b""), ("bulk-attributes", 37, b""), ("xattr-mutations", 37, b""), ("hard-links", 37, b"")])
+                 ("extended-attributes", 37, b""), ("attribute-names", 37, b""), ("bulk-attributes", 37, b""), ("xattr-mutations", 37, b""), ("hard-links", 37, b""), ("symbolic-descriptors", 37, b"")])
             self.assertEqual(attributes.call_count, 3)
             self.assertEqual([(call.args[1], call.args[2]) for call in attributes.call_args_list],
                              [("user.neverd.beta", b"\x00\xffA\x00\x80B\n"),

@@ -785,7 +785,8 @@ DarwinFiles::directoryDescriptor(uint32_t FD) const {
   const auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint32_t(BadDescriptor);
-  if (I->second.Open->Type == Kind::File)
+  if (I->second.Open->Type == Kind::File ||
+      I->second.Open->Type == Kind::SymbolicLink)
     return uint32_t(NotDirectory);
   if (I->second.Open->Type != Kind::Directory)
     return diagnostic::FileDirectoryKind;
@@ -834,9 +835,10 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   }
   if ((Flags & OpenAccessMask) == OpenAccessMask)
     return returned(InvalidArgument, true);
-  if (Flags & ~uint32_t(OpenCloseOnExec | OpenDirectory | OpenAccessMask |
-                        OpenAppend | OpenTruncate | OpenCreate | OpenExclusive |
-                        OpenNoFollow | OpenNoFollowAny))
+  if (Flags &
+      ~uint32_t(OpenCloseOnExec | OpenDirectory | OpenSymbolic |
+                OpenAccessMask | OpenAppend | OpenTruncate | OpenCreate |
+                OpenExclusive | OpenNoFollow | OpenNoFollowAny))
     return unsupported(Result, diagnostic::FileOpenFlags);
   // XNU reserves the descriptor before resolving the pathname. A failed
   // open does not retain that reservation.
@@ -848,12 +850,13 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   if ((Flags & OpenCreate) && (Flags & OpenDirectory))
     return returned(InvalidArgument, true);
   const bool ExclusiveCreate = (Flags & OpenCreate) && (Flags & OpenExclusive);
-  auto Resolved = resolvePath(Address, DirectoryFD,
-                              Flags & OpenCreate ? LookupMode::CreateFile
-                                                 : LookupMode::Existing,
-                              {!(Flags & OpenNoFollow) && !ExclusiveCreate,
-                               bool(Flags & OpenNoFollowAny)},
-                              false);
+  const bool RetainSymbolic = (Flags & OpenSymbolic) && !(Flags & OpenCreate);
+  auto Resolved = resolvePath(
+      Address, DirectoryFD,
+      Flags & OpenCreate ? LookupMode::CreateFile : LookupMode::Existing,
+      {!(Flags & OpenNoFollow) && !ExclusiveCreate && !RetainSymbolic,
+       bool(Flags & OpenNoFollowAny)},
+      false);
   if (!Resolved)
     return Resolved.takeError();
   if (auto *Error = std::get_if<uint32_t>(&*Resolved))
@@ -866,7 +869,8 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
     return returned(FileExists, true);
   if ((Flags & OpenDirectory) && File.Type == Kind::SymbolicLink)
     return returned(NotDirectory, true);
-  if (File.Type == Kind::SymbolicLink)
+  if (File.Type == Kind::SymbolicLink &&
+      (!RetainSymbolic || (Flags & OpenNoFollow)))
     return returned(TooManyLinks, true);
   if (Created) {
     auto Made = create(File, Mode, Result);
@@ -878,13 +882,15 @@ DarwinFiles::open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD,
   const bool Mutating = (Flags & OpenAccessMask) || (Flags & OpenTruncate);
   if (Mutating && File.Type == Kind::Directory)
     return returned(IsDirectory, true);
-  if (Mutating && !File.File->Writable)
+  if (Mutating && File.Type == Kind::File && !File.File->Writable)
     return unsupported(Result, diagnostic::FileNotWritable);
   File.Flags = Flags & (OpenAccessMask | OpenAppend);
   if ((Flags & OpenTruncate) && !Created) {
-    auto Truncated = resize(File, 0, Result);
-    if (!Truncated || !*Truncated || (**Truncated).Error)
-      return Truncated;
+    if (File.Type == Kind::File) {
+      auto Truncated = resize(File, 0, Result);
+      if (!Truncated || !*Truncated || (**Truncated).Error)
+        return Truncated;
+    }
     File.Flags |= FileWasWritten;
   }
   Descriptors.emplace(FD, Descriptor{std::make_shared<Description>(File),
@@ -1654,8 +1660,8 @@ DarwinFiles::unlink(uint64_t Path, uint32_t DirectoryFD, ProcessResult &Result,
     reserveDetachedName(File);
     detachName(File);
     updateDirectoryMetadata(*File.Name->Parent, true);
-    // Symbolic descriptors remain unsupported. Release this operation's
-    // temporary observers before reclaiming its separately owned costs.
+    // Release only this operation's temporary observers. Held descriptions
+    // continue to own their object and separately charged selected name.
     File.Link.reset();
     File.Name.reset();
     reclaimUnlinked();
@@ -1936,15 +1942,19 @@ DarwinFiles::rename(uint64_t SourcePath, uint32_t SourceDirectory,
       ReclaimsFile ? Target.bytes().size() +
                          Target.File->ExtendedAttributes.DynamicCharge
                    : 0;
-  const uint64_t LinkCredit = Target.Link && Target.Link->LinkedNames == 1
-                                  ? Target.Link->dynamicObjectCharge()
-                                  : 0;
+  const bool ReclaimsLink = Target.Link && Target.Link->LinkedNames == 1 &&
+                            Target.Link.use_count() == 2;
+  const uint64_t LinkCredit =
+      ReclaimsLink ? Target.Link->dynamicObjectCharge() : 0;
   const auto *ObjectName = Target.File   ? Target.File->Name.get()
                            : Target.Link ? Target.Link->Name.get()
                                          : nullptr;
   const uint64_t NameCredit =
       Target.Name &&
-              (Target.Link || ReclaimsFile || Target.File->LinkedNames > 1) &&
+              ((Target.Link &&
+                (ReclaimsLink || Target.Link->LinkedNames > 1)) ||
+               (Target.File &&
+                (ReclaimsFile || Target.File->LinkedNames > 1))) &&
               Target.Name.use_count() == 2 + (ObjectName == Target.Name.get())
           ? Target.Name->PathCharge
           : 0;
@@ -2353,11 +2363,14 @@ DarwinFiles::resize(Description &File, uint64_t Size, ProcessResult &Result) {
 
 ServiceResult DarwinFiles::seek(Description &File, uint64_t Offset,
                                 uint32_t Whence) {
-  if (File.Type != Kind::File && File.Type != Kind::Directory)
+  if (File.Type != Kind::File && File.Type != Kind::Directory &&
+      File.Type != Kind::SymbolicLink)
     return {IllegalSeek, true};
   if (Whence == SeekHole || Whence == SeekData) {
     if (Offset > INT64_MAX)
       return {InvalidArgument, true};
+    if (File.Type == Kind::SymbolicLink)
+      return {NoSuchAddress, true};
     const uint64_t Size = File.bytes().size();
     if (Offset >= Size)
       return {NoSuchAddress, true};
@@ -2422,13 +2435,19 @@ DarwinFiles::MappingSource DarwinFiles::mappingSource(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   if (I == Descriptors.end())
     return uint32_t(BadDescriptor);
-  if (I->second.Open->Type == Kind::Directory)
+  if (I->second.Open->Type == Kind::Directory ||
+      I->second.Open->Type == Kind::SymbolicLink)
     return uint32_t(InvalidArgument);
   if (I->second.Open->Type != Kind::File)
     return diagnostic::MemoryFileKind;
   const auto &File = *I->second.Open->File;
   return Mapping{File.bytes(), File.Lease,
                  (I->second.Open->Flags & OpenAccessMask) != OpenWriteOnly};
+}
+
+bool DarwinFiles::symbolicLinkDescriptor(uint32_t FD) const {
+  auto I = Descriptors.find(FD);
+  return I != Descriptors.end() && I->second.Open->Type == Kind::SymbolicLink;
 }
 
 ServiceResult DarwinFiles::duplicate(const Descriptor &Source, uint32_t Minimum,
@@ -2443,7 +2462,8 @@ ServiceResult DarwinFiles::duplicate(const Descriptor &Source, uint32_t Minimum,
 std::optional<ServiceResult> DarwinFiles::pathconf(const Description &File,
                                                    uint32_t Name,
                                                    ProcessResult &Result) {
-  if (File.Type != Kind::File && File.Type != Kind::Directory)
+  if (File.Type != Kind::File && File.Type != Kind::Directory &&
+      File.Type != Kind::SymbolicLink)
     return unsupported(Result, diagnostic::FilePathConfKind);
   // These are the fixed XNU vn_pathconf results, independent of vnode stat,
   // page size and filesystem VNOPs. Other selectors need filesystem knowledge,
@@ -2595,7 +2615,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       if (Found == Descriptors.end())
         return returned(BadDescriptor, true);
       File = Found->second.Open.get();
-      if (File->Type != Kind::File && File->Type != Kind::Directory)
+      if (File->Type != Kind::File && File->Type != Kind::Directory &&
+          File->Type != Kind::SymbolicLink)
         return unsupported(Result, diagnostic::FileAttributeKind);
     }
     auto Request = readAttributes(Input);
@@ -2701,7 +2722,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     const auto Access = File.Flags & OpenAccessMask;
     if ((Writing && !Access) || (!Writing && Access == OpenWriteOnly))
       return returned(BadDescriptor, true);
-    const bool Vnode = File.Type == Kind::File || File.Type == Kind::Directory;
+    const bool Vnode = File.Type == Kind::File ||
+                       File.Type == Kind::Directory ||
+                       File.Type == Kind::SymbolicLink;
     if (Positioned && !Vnode)
       return returned(IllegalSeek, true);
     const Buffer Scalar{A[1], A[2]};
@@ -2728,8 +2751,13 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
   case ServiceKind::FpathConf:
     return pathconf(File, uint32_t(A[1]), Result);
   case ServiceKind::Ftruncate: {
-    if (File.Type != Kind::File || !(File.Flags & OpenAccessMask))
+    if ((File.Type != Kind::File && File.Type != Kind::SymbolicLink) ||
+        !(File.Flags & OpenAccessMask))
       return returned(InvalidArgument, true);
+    if (File.Type == Kind::SymbolicLink) {
+      File.Flags |= FileWasWritten;
+      return returned(0);
+    }
     auto Truncated = resize(File, A[1], Result);
     if (Truncated && *Truncated && !(**Truncated).Error)
       File.Flags |= FileWasWritten;
@@ -2742,7 +2770,7 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
   case ServiceKind::FstatAt64:
     return status(File, A[2], Result);
   case ServiceKind::Fchdir:
-    if (File.Type == Kind::File)
+    if (File.Type == Kind::File || File.Type == Kind::SymbolicLink)
       return returned(NotDirectory, true);
     if (File.Type != Kind::Directory)
       return unsupported(Result, diagnostic::FileDirectoryKind);
@@ -2811,7 +2839,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
           ~uint32_t(OpenAccessMask | OpenAppend | FileWasWritten))
         return unsupported(Result, diagnostic::FileControl);
       File.Flags = (File.Flags & ~OpenAppend) | (A[2] & OpenAppend);
-      return returned(0);
+      return returned(File.Type == Kind::SymbolicLink ? NotTerminal : 0,
+                      File.Type == Kind::SymbolicLink);
     default:
       return unsupported(Result, diagnostic::FileControl);
     }

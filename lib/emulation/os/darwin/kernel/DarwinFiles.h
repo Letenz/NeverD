@@ -39,6 +39,9 @@ public:
   /// Looking up a mapping source never changes the open description's cursor.
   using MappingSource = std::variant<Mapping, uint32_t, const char *>;
   MappingSource mappingSource(uint32_t FD) const;
+  /// Admission fact for modes whose known symbolic vnode rejects mapping.
+  /// This query borrows the descriptor without retaining or changing it.
+  bool symbolicLinkDescriptor(uint32_t FD) const;
 
 private:
   enum class Kind {

@@ -92,6 +92,11 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
                                  ("cycle", "cycle")):
                 (catalogue / name).symlink_to(target)
             case_input = catalogue / "data"
+        if mode == "symbolic-descriptors":
+            catalogue = initial_root / mode
+            catalogue.mkdir()
+            (catalogue / "fd-attrs").symlink_to("data")
+            case_input = catalogue / "data"
         if mode == "kernel-pathconf":
             catalogue = initial_root / "pathconf"
             (catalogue / "empty").mkdir(parents=True)

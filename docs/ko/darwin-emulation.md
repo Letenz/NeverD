@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 73ff01e20e3343b3849e9470f9d9298351d71ed016ef1042c535301002b1f6cd -->
+<!-- i18n-source: ea094ac2085aef2983cbeec54f21c8d4b678b37eea3c683ebfb8de8a96ae558e -->
 
 [← 문서 목록](README.md)
 
@@ -931,7 +931,7 @@ link는 마지막 심볼릭 링크 대상을 따라가며 linkat flags=0은 링�
 
 별칭은 항목 및 경로/NUL 비용만 추가하고 새 inode를 소비하지 않는다. 바이트, 속성 권한, 메타데이터 유효성과 매핑 임대는 공유 객체가 소유한다. 명시 정책이 링크 수와 ctime을 갱신하며 정책이 없으면 전체 stat는 미지다. 속성 변경은 stat를, 내용 변경은 속성 관찰을 무효화한다. 설명 및 마지막 매핑이 삭제 이름의 비용을 유지하며 교체는 즉시 해제 가능한 비용만 공제한다. 하위 트리는 정확한 식별과 부모로 이동하고 외부 별칭은 유지한다. 상대 심볼릭 대상은 선택 항목의 부모를 사용한다.
 
-여러 이름을 가졌던 객체의 F_GETPATH/ATTR_CMN_NAME은 한 개 또는 0개가 남아도 미지원이다. APFS 캐시 모델을 일반화하지 않는다. bulk NAME은 실제 항목을 사용하며 같은 객체의 일반 rename/SWAP는 두 이름을 유지한다. EXCL 대소문자, O_SYMLINK, Intel HVF, 실제 iOS, ACL, 매핑 일관성/EOF 신호, dyld, Mach IPC, 스레드 및 전체 프레임워크는 별도 과제다. 이 계약 범위에서만 이전 제외를 확장한다.
+여러 이름을 가졌던 객체의 F_GETPATH/ATTR_CMN_NAME은 한 개 또는 0개가 남아도 미지원이다. APFS 캐시 모델을 일반화하지 않는다. bulk NAME은 실제 항목을 사용하며 같은 객체의 일반 rename/SWAP는 두 이름을 유지한다. EXCL 대소문자, Intel HVF, 실제 iOS, ACL, 매핑 일관성/EOF 신호, dyld, Mach IPC, 스레드 및 전체 프레임워크는 별도 과제다. 이 계약 범위에서만 이전 제외를 확장한다.
 
 ```text
 link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
@@ -947,5 +947,38 @@ HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
 native5s / compile120s / drain1s / reap1s
 guest/Python5,000,000us / quantum1024 / public10s
 34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
-65 mandatory workloads per platform / ARM64 195 / Intel 130
+66 mandatory workloads per platform / ARM64 198 / Intel 132
+```
+
+## 제한된 O_SYMLINK 설명자
+
+O_SYMLINK=0x00200000은 읽기 전용, 쓰기 전용, 읽기/쓰기에서 마지막 심볼릭 링크 자체를 보존하며 끊어진 링크와 순환 링크도 포함합니다. 대상 내용의 쓰기 권한은 부여하지 않습니다. O_CREAT는 마지막 대상을 따라가고 NOFOLLOW의 ELOOP, 독점 생성의 EEXIST, 보존된 링크에 대한 O_DIRECTORY의 ENOTDIR 순서를 유지합니다. 중간 또는 끝 슬래시 확장은 기존 해석기와 NOFOLLOW_ANY를 따르며 F_GETFL은 선택 비트를 제외합니다.
+
+실제 LinkNode와 선택한 NameIdentity를 보존합니다. dup은 상태 플래그와 커서를 공유하고 독립 open은 별도 설명을 사용합니다. 이름 변경, 삭제, 이름 재사용, 부모 삭제 후에도 기존 객체가 유지됩니다. 단일 이름의 F_GETPATH/ATTR_CMN_NAME은 선택한 보존 이름을 사용합니다. 여러 이름을 가졌던 객체는 이름을 모두 삭제해도 vnode 이름 추론을 거부합니다. 초기 예약은 고정이며 동적 이름, 대상, 항목, 속성 증가 비용은 마지막 소유자까지 유지됩니다. 다른 설명자가 객체나 선택한 이름을 보존하면 마지막 별칭을 교체 비용에서 공제할 수 없습니다.
+
+I/O는 대상 문자열을 파일 내용으로 노출하지 않습니다. 기존 스칼라/벡터 가져오기, 접근, 개수 검사 후 음수 오프셋은 EINVAL입니다. INT64_MAX 읽기는 0, 다른 허용 오프셋은 길이 0을 포함해 EPERM입니다. INT64_MAX 쓰기는 EFBIG, 나머지는 길이 0 성공, APPEND, 데이터 접근 전에 EPERM입니다. pwrite/pwritev의 기존 조기 음수 규칙을 유지합니다. DATA/HOLE seek은 음수가 아니면 ENXIO, 음수면 EINVAL이며 커서는 그대로입니다.
+
+쓰기 전용/읽기·쓰기의 음수가 아닌 ftruncate와 허용 open TRUNC는 WasWritten만 설정하며 대상 바이트, 전체 stat, 속성, 커서, 저장 예산, inode를 변경하지 않습니다. 읽기 전용 또는 음수 길이는 EINVAL입니다. 허용 F_SETFL은 APPEND를 변경한 후 ENOTTY25를 반환하고 dup에 반영됩니다. 알 수 없는 인수는 효과 전에 중지합니다.
+
+고정 fpathconf, fgetattrlist, 독립 선언된 일반 FD 속성 권한은 심볼릭 객체에 적용됩니다. 상대 디렉터리 FD와 fchdir는 ENOTDIR입니다. 속성 변경으로 무효화된 stat을 truncate가 복구하지 않습니다. 정렬된 비실행 레거시 private/shared mmap은 객체 종류에서 EINVAL로 거부되며 매핑이나 임대를 만들지 않습니다. 일반 shared 매핑, 알 수 없는 플래그, 실행 보호 등 기존 미지원 경계는 유지됩니다. 네이티브 mmap은 length16384, offset0, protection1/2/3의18개 조합만 검증합니다.
+
+독자 ARM64 준비는15개 truncate의 전체144바이트 stat, 극단 오프셋/개수 I/O, 희소 seek, 실패 F_SETFL 효과를 확인합니다. SDK 없는 공통 프로그램은 O0/O1/O2에서 실행하고 실제 부모 설명자 경로를 비교합니다. 가상 경로는 독립 stat/type 리터럴 또는 기존 출력을 보존하는 다중 이름 거부를 검증합니다. Intel HVF, 실제 iOS, ACL/권한, 매핑 EOF/신호, dyld, Mach IPC, 스레드, 전체 런타임/프레임워크는 미검증 또는 미완성입니다.
+
+일차 해석 자료: [동일 버전 XNU 매핑 경계](https://raw.githubusercontent.com/apple-oss-distributions/xnu/xnu-11417.140.69/bsd/kern/kern_mman.c). 구현과 탐침은 독자 작성하며 Apple 구현을 복사하지 않습니다.
+
+```text
+O_SYMLINK=0x00200000; ENOTTY=25
+open O_RDONLY|O_SYMLINK|O_TRUNC: WasWritten only
+LinkNode, NameIdentity, HadMultipleNames, DetachedNames
+INT64_MAX read=0 / write=EFBIG; other admitted offsets=EPERM
+SEEK_DATA/SEEK_HOLE nonnegative=ENXIO / negative=EINVAL
+F_SETFL: APPEND effect before ENOTTY; dup shares / independent open separate
+symbolic-descriptors
+symbolic-descriptors-values
+symbolic-descriptors-name-unsupported
+SymbolicDescriptor*, SymbolicDescriptorsRetainObjectsAndNativeErrorOrder
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 transport parameters / 15 public cases / 5 Python profiles
+66 mandatory workloads per platform / ARM64 198 / Intel 132
 ```

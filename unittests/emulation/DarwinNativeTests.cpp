@@ -1118,6 +1118,12 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         std::filesystem::create_symlink(Target, Catalogue / Name);
       CaseInput = (Catalogue / "data").string();
     }
+    if (llvm::StringRef(Test.Mode) == "symbolic-descriptors") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
+      std::filesystem::create_symlink("data", Catalogue / "fd-attrs");
+      CaseInput = (Catalogue / "data").string();
+    }
     if (llvm::StringRef(Test.Mode) == "kernel-pathconf") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directories(Catalogue / "empty"));
