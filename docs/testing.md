@@ -424,6 +424,17 @@ results. All
 new fixture recording and test logic is C++; the [profile](web-html-profile.md)
 records deliberate context and import limitations.
 
+`WebImportMap` checks native URL normalization, exact/prefix/scoped precedence,
+null and invalid-address blocking, prefix backtracking, separate declaration
+and script bases, first-definition composition, percent/query/fragment identity,
+duplicate/normalized-key refusals and independent admission/resolution budgets.
+HTML module cases add timing/origin/root confinement and aggregate map limits.
+SDK/CLI/worker cases compare private map pages and request evidence, preserve
+ASAR member identity and read captured maps after the original files are deleted.
+No JavaScript runtime, browser, URL CLI or external generator is used. HTML map
+inventory must also be checked with the JS parser disabled; backend-omission
+coverage retains its existing ABI cases.
+
 Build the owning target, then run
 `ctest --test-dir build-release/unittests/web --output-on-failure`. Parser tests require
 `NEVERD_ENABLE_WEB_JAVASCRIPT`; the backend requires

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/ImportMap.h"
 
 namespace neverd::web {
 inline constexpr std::string_view HTMLProfile =
@@ -13,6 +14,7 @@ inline constexpr uint64_t MaxHTMLAttributeBytes = 16384;
 inline constexpr uint64_t MaxHTMLPathBytes = 4096;
 inline constexpr uint64_t MaxHTMLLinkSteps = 4 * 1024 * 1024;
 inline constexpr uint64_t MaxHTMLNamespaceEntries = 10001;
+inline constexpr uint64_t MaxHTMLImportMaps = 64;
 inline constexpr uint32_t NoHTMLIndex = UINT32_MAX;
 
 struct HTMLScript {
@@ -69,4 +71,20 @@ struct HTMLLinks {
   uint64_t Steps = 0;
 };
 HTMLLinks linkHTMLScripts(const HTMLDocument &Document, const Snapshot &Input);
+
+struct HTMLImportMap {
+  uint32_t Script = NoHTMLIndex;
+  std::string BaseStatus;
+  HTMLLocalURL LocalBase;
+  ImportMap Model;
+};
+struct HTMLImportMaps {
+  std::string ID, Status, Reason;
+  std::string DocumentURL; // Private synthetic capture URL, never a host path.
+  std::vector<HTMLImportMap> Declarations;
+  uint64_t Steps = 0, EligibleCount = 0;
+};
+HTMLImportMaps inspectHTMLImportMaps(const HTMLDocument &Document,
+                                     std::string_view Bytes,
+                                     const Snapshot &Input);
 } // namespace neverd::web

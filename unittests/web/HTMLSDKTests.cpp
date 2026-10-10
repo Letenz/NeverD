@@ -111,7 +111,7 @@ protected:
     const auto Summary = take(neverd_web_source_modules_analyze_json(
         Web, Revision.data(), Revision.size(), ID.data(), ID.size()));
     EXPECT_EQ(field(Summary, "link_profile"),
-              "html-inline-module-file-candidates-v1");
+              "html-inline-module-file-candidates-v2");
     return take(neverd_web_source_module_records_json(
         Web, Revision.data(), Revision.size(), ID.data(), ID.size(), "requests",
         8, 0, 512));
@@ -215,7 +215,7 @@ TEST_F(WebHTMLSDK, InventoryLinksArePrivateAndSurviveCapturedInputDeletion) {
       Modules.getAsObject()->getObject("link_context")->getString("html_id"),
       ID);
   EXPECT_EQ(field(Modules, "link_profile"),
-            "html-inline-module-file-candidates-v1");
+            "html-inline-module-file-candidates-v2");
   const auto Anchor = anchor(field(Parsed, "source_id"), 6, 6);
   const auto *Storage = Anchor.getAsObject()->getObject("storage");
   ASSERT_NE(Storage, nullptr);
@@ -326,6 +326,131 @@ TEST_F(WebHTMLSDK, InlineContextsStaySeparateAndDoNotRebaseExternalSources) {
       ExternalSource.size(), "requests", 8, 0, 512));
   ASSERT_EQ(items(Requests).size(), 1u);
   EXPECT_EQ(field(items(Requests)[0], "candidate_artifact_id"), artifact("3;"));
+#endif
+}
+
+TEST_F(WebHTMLSDK, ImportMapInventoryIsBoundedPrivateAndUsesCapturedBytes) {
+  const std::string HTML = R"(<script type=importmap>{"imports":{
+      "CANARY-name":"./dep.js?CANARY-query#CANARY-fragment"},
+      "integrity":{"./dep.js":"CANARY-digest"}}</script>
+      <template><script type=importmap>{"CANARY":"private"}</script></template>
+      <script type=module>import 'CANARY-name';</script>)";
+  write("index.html", HTML);
+  write("dep.js", "export const x=1;");
+  capture();
+  const auto Doc = artifact(HTML);
+  fs::remove_all(Input);
+  const auto Summary = analyze(Doc);
+  EXPECT_EQ(field(Summary, "import_map_analysis"), "partial");
+  EXPECT_EQ(Summary.getAsObject()->getInteger("import_map_count"), 2);
+  const auto ID = field(Summary, "html_id");
+  const auto Maps = records(ID, "import_maps", 0, 1);
+  ASSERT_EQ(items(Maps).size(), 1u);
+  EXPECT_EQ(field(items(Maps)[0], "analysis_status"), "ok");
+  EXPECT_EQ(items(Maps)[0].getAsObject()->getBoolean("integrity_present"),
+            true);
+  EXPECT_EQ(items(Maps)[0].getAsObject()->getBoolean("integrity_verified"),
+            false);
+  EXPECT_EQ(Maps.getAsObject()->getInteger("next_offset"), 1);
+  const auto Inert = records(ID, "import_maps", 1, 1);
+  EXPECT_EQ(field(items(Inert)[0], "reason"), "ineligible_html_context");
+  EXPECT_EQ(code(records(ID, "import_maps", 3)), "invalid_page");
+  EXPECT_EQ(field(analyze(Doc), "import_map_analysis_id"),
+            field(Summary, "import_map_analysis_id"));
+}
+
+TEST_F(WebHTMLSDK, ImportMapRequestsSeparateURLsAndKeepMappingEvidence) {
+#if !NEVERD_TEST_WEB_JAVASCRIPT
+  GTEST_SKIP() << "Requires JS parser";
+#else
+  const std::string HTML = R"(<script type=importmap>{"imports":{
+      "CANARY-a":"./dep.js?CANARY-one","CANARY-b":"./dep.js?CANARY-two",
+      "CANARY-same":"./dep.js?CANARY-one","CANARY-stop":null}}</script>
+      <script type=module>import 'CANARY-a';import 'CANARY-b';
+      import 'CANARY-same';import 'CANARY-stop';</script>)";
+  const std::string JS = "export const x=1;";
+  write("index.html", HTML);
+  write("dep.js", JS);
+  capture();
+  const auto Target = artifact(JS);
+  const auto Summary = analyze(artifact(HTML));
+  const auto ID = field(Summary, "html_id");
+  const auto Maps = records(ID, "import_maps"), Scripts = records(ID);
+  const auto Source =
+      field(source(field(items(Scripts)[1], "inline_artifact_id"), "module"),
+            "source_id");
+  const auto Requests = moduleRequests(Source);
+  ASSERT_EQ(items(Requests).size(), 4u);
+  const auto &A = items(Requests)[0], &B = items(Requests)[1],
+             &Same = items(Requests)[2], &Blocked = items(Requests)[3];
+  for (unsigned I = 0; I < 3; ++I) {
+    EXPECT_EQ(field(items(Requests)[I], "candidate_artifact_id"), Target);
+    EXPECT_EQ(field(items(Requests)[I], "import_map_id"),
+              field(items(Maps)[0], "import_map_id"));
+  }
+  EXPECT_NE(field(A, "module_url_candidate_id"),
+            field(B, "module_url_candidate_id"));
+  EXPECT_EQ(field(A, "module_url_candidate_id"),
+            field(Same, "module_url_candidate_id"));
+  EXPECT_EQ(field(Blocked, "link_status"), "blocked_import_map");
+  EXPECT_TRUE(Blocked.getAsObject()->get("candidate_artifact_id")->getAsNull());
+  cli({"html", Input.string(), "2"}, 0, "\"record_kind\":\"import_maps\"");
+  cli({"html-modules", Input.string(), "2", "1"}, 0, "blocked_import_map");
+#endif
+}
+
+TEST_F(WebHTMLSDK, ExhaustedImportMapsCannotReportSuccessfulCLIComparison) {
+#if !NEVERD_TEST_WEB_JAVASCRIPT
+  GTEST_SKIP() << "Requires JS parser";
+#else
+  std::string HTML;
+  for (unsigned I = 0; I < 65; ++I)
+    HTML += "<script type=importmap>{}</script>";
+  HTML += "<script type=module>import './dep.js';</script>";
+  write("index.html", HTML);
+  write("dep.js", "1;");
+  cli({"html", Input.string(), "2"}, 1, "budget_exceeded");
+  cli({"html-modules", Input.string(), "2", "65"}, 1, "budget_exceeded");
+#endif
+}
+
+TEST_F(WebHTMLSDK, ImportMapTargetsRetainASAROccurrenceIdentity) {
+#if !NEVERD_TEST_WEB_JAVASCRIPT
+  GTEST_SKIP() << "Requires JS parser";
+#else
+  if (!has("asar_extract"))
+    GTEST_SKIP() << "ASAR unavailable";
+  const std::string HTML =
+      R"(<script type=importmap>{"imports":{"CANARY-p":"./b.js"}}
+      </script><script type=module>import 'CANARY-p';</script>)";
+  const std::string JS = "export default 'CANARY';";
+  const auto Archive = asarArchive(
+      {{"a.html", asarFile(HTML)}, {"b.js", asarFile(JS, HTML.size())}},
+      HTML + JS);
+  write("app.asar", Archive);
+  write("b.js", JS);
+  capture();
+  const auto AID = artifact(Archive), Original = artifact(JS);
+  const auto Extraction =
+      take(neverd_web_asar_extract_json(Web, Revision.data(), Revision.size(),
+                                        AID.data(), AID.size(), nullptr, 0));
+  const auto EID = field(Extraction, "extraction_id");
+  const auto Members = take(neverd_web_asar_records_json(
+      Web, Revision.data(), Revision.size(), EID.data(), EID.size(), 0, 512));
+  ASSERT_EQ(items(Members).size(), 2u);
+  const auto H = analyze(field(items(Members)[0], "member_id"));
+  const auto Scripts = records(field(H, "html_id"));
+  const auto SID =
+      field(source(field(items(Scripts)[1], "inline_artifact_id"), "module"),
+            "source_id");
+  const auto Requests = moduleRequests(SID);
+  ASSERT_EQ(items(Requests).size(), 1u);
+  EXPECT_EQ(field(items(Requests)[0], "candidate_artifact_id"),
+            field(items(Members)[1], "member_id"));
+  EXPECT_NE(field(items(Requests)[0], "candidate_artifact_id"), Original);
+  const auto Location = anchor(SID, 0, 1);
+  EXPECT_EQ(Location.getAsObject()->getObject("storage")->getString("kind"),
+            "html_inline_script");
 #endif
 }
 

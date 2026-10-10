@@ -55,6 +55,7 @@ struct Session::Impl {
   struct HTMLResults {
     HTMLDocument Document;
     HTMLLinks Links;
+    HTMLImportMaps ImportMaps;
   };
   std::map<std::string, HTMLResults> HTMLDocuments;
   struct HTMLSourceSelection {

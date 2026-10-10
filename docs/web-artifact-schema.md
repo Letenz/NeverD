@@ -95,7 +95,7 @@ complete source semantics, map provenance or whole-project analysis.
 | `module_status: ok/partial` | Syntactic inventory completed, possibly with explicit export/assertion conflicts; no runtime linking or reachability claim |
 | `module_status: unsupported/budget_exceeded/unavailable` | No module inventory records are published |
 | `link_status: ok` in a module summary | Every request received an admitted-file comparison or explicit refusal/boundary classification |
-| `link_status: partial` in an HTML inline module summary | Explicit HTML source/base candidates were compared; browser preparation, import-map semantics and runtime bases remain unverified |
+| `link_status: partial` in an HTML inline module summary | Explicit source/base/import-map candidates were compared; browser preparation, activation/history and runtime bases remain unverified |
 | `exact_admitted_file_candidate` in a request | A literal allowed by the reported profile matches an admitted member; runtime module target is still unverified |
 | `bundle_status: ok/partial` | Qualified structural partitions exist; partial retains explicit refused candidates or binding limitations |
 | `bundle_status: not_detected` | No qualified layout found; original source is still available |
@@ -113,16 +113,33 @@ that omission. Hashes, sizes, counts and syntax shapes remain visible; this
 policy is not an anonymity guarantee or automatic secret detector.
 
 Module summaries and pages carry `link_profile` and nullable `link_context`.
-For `html-inline-module-file-candidates-v1`, the context includes `context_id`,
+For `html-inline-module-file-candidates-v2`, the context includes `context_id`,
 `kind: html_inline_source_candidate`, `html_id`, `html_script_id`, nullable
-`preceding_base_id`, `base_status` and `import_map_status`. It always reports
-`runtime_base_verified: false` and `module_url_identity: not_modeled`.
+`preceding_base_id`, `base_status`, `import_map_status` and
+`import_map_analysis_id`. It always reports `runtime_base_verified: false`.
+`module_url_identity` is `not_modeled` without maps, or
+`capture_context_url_candidate` for the admitted source-order map profile.
 Requests add nullable `query_present` and `fragment_present`; null means no
 admitted URL comparison supplied that metadata. Values stay private. An import
-map boundary has no candidate ID. Ordinary external-file analyses retain null
+map refusal/budget/timing/origin boundary has no candidate artifact ID.
+Requests additionally carry nullable `module_url_candidate_id`, `import_map_id`,
+`import_map_entry_id`, `import_map_scope_id` and `import_map_match`
+(`exact`, `prefix`, `default_url`). URL IDs group private normalized URLs within
+one source/context and are not runtime module identities. Unadmitted file URLs
+have no URL ID. Ordinary external-file analyses retain null
 context and presence fields. Equal target artifact IDs establish a shared
 captured file occurrence, not equivalent runtime module URLs. See the
 [HTML profile](web-html-profile.md#inline-module-file-candidates).
+
+HTML summaries add `import_map_analysis_id`, `import_map_profile`,
+`import_map_analysis`, `import_map_count`, `import_map_steps`,
+`import_map_reason` and `import_map_activation_verified: false`.
+`html_records` accepts `import_maps` and retains normal pagination/revision rules.
+Each item reports a declaring `script_id`, whole-body range, fixed status/reason,
+base status, record/import/scope/ignored-key counts, integrity presence/count,
+origin-dependent-key presence and normalization work. Raw map text, addresses,
+keys, scopes and integrity values remain private; integrity/activation flags are
+always false. Individual-map refusal remains visible in a partial inventory.
 
 ASAR summaries use `profile:asar-pickle-json-v1`,
 `path_policy:icu-77.1-nfc-casefold-portable-v1`,

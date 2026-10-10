@@ -22,8 +22,9 @@ llvm::json::Object moduleSummary(const SourceModuleAnalysis &M,
                                                : llvm::json::Value(C.BaseID)},
         {"base_status", C.Status},
         {"import_map_status", C.ImportMapStatus},
+        {"import_map_analysis_id", C.ImportMapAnalysisID},
         {"runtime_base_verified", false},
-        {"module_url_identity", "not_modeled"}};
+        {"module_url_identity", C.ModuleURLIdentity}};
   }
   return llvm::json::Object{
       {"schema_version", 1},
@@ -86,7 +87,7 @@ std::string Session::analyzeSourceModules(std::string_view ExpectedRevision,
     const auto Members = State->memberNamespace(H.Document.ArtifactID);
     Analysis.Links = linkHTMLSourceModules(
         Found->second, Analysis.Evidence, H.Document, H.Links, Inline->Script,
-        Members ? *Members : State->Published);
+        Members ? *Members : State->Published, H.ImportMaps);
   } else {
     const auto Members = State->memberNamespace(Found->second.ArtifactID);
     Analysis.Links = linkSourceModules(Found->second, Analysis.Evidence,
@@ -162,6 +163,26 @@ std::string Session::sourceModuleRecords(std::string_view ExpectedRevision,
           {"argument_count", R.ArgumentCount},
           {"optional", R.Optional},
           {"runtime_target_verified", false},
+          {"module_url_candidate_id",
+           I < L.Requests.size() && !L.Requests[I].URLCandidateID.empty()
+               ? llvm::json::Value(L.Requests[I].URLCandidateID)
+               : llvm::json::Value(nullptr)},
+          {"import_map_id",
+           I < L.Requests.size() && !L.Requests[I].ImportMapID.empty()
+               ? llvm::json::Value(L.Requests[I].ImportMapID)
+               : llvm::json::Value(nullptr)},
+          {"import_map_entry_id",
+           I < L.Requests.size() && !L.Requests[I].ImportMapEntryID.empty()
+               ? llvm::json::Value(L.Requests[I].ImportMapEntryID)
+               : llvm::json::Value(nullptr)},
+          {"import_map_scope_id",
+           I < L.Requests.size() && !L.Requests[I].ImportMapScopeID.empty()
+               ? llvm::json::Value(L.Requests[I].ImportMapScopeID)
+               : llvm::json::Value(nullptr)},
+          {"import_map_match",
+           I < L.Requests.size() && !L.Requests[I].ImportMapMatch.empty()
+               ? llvm::json::Value(L.Requests[I].ImportMapMatch)
+               : llvm::json::Value(nullptr)},
           {"link_status",
            I < L.Requests.size() ? L.Requests[I].Status : "unavailable"},
           {"query_present",

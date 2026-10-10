@@ -1,5 +1,14 @@
 # Third-Party Notices
 
+## Ada URL parser
+
+Offline import-map analysis embeds the unchanged C++ Ada 4.0.0 URL parser at
+`b12a893a45809da8103bb4f1e2f6f5ee13f9100b`. NeverD selects its MIT license and
+preserves the Ada, included Ada IDNA and Unicode notices under
+[`LICENSES/ada`](LICENSES/ada/README.md). The build pins the archive hash and
+compiles source directly; no upstream generator, tool or JavaScript runtime
+is invoked. URLPattern and its regex backend are excluded.
+
 ## ASAR format reference and preserved fixtures
 
 The independent C++ reader follows the Pickle, filesystem and integrity

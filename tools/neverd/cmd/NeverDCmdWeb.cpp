@@ -558,8 +558,8 @@ int runWeb() {
       const auto HTMLID = Analysis->getAsObject()->getString("html_id");
       if (!HTMLID)
         return 1;
-      for (const llvm::StringRef Kind : {"scripts", "bases"}) {
-        if (HTMLSource && Kind == "bases")
+      for (const llvm::StringRef Kind : {"scripts", "bases", "import_maps"}) {
+        if (HTMLSource && Kind != "scripts")
           continue;
         uint64_t Offset = HTMLSource ? HTMLScriptIndex : 0;
         do {
@@ -598,7 +598,9 @@ int runWeb() {
         return Analysis->getAsObject()->getString("analysis_status") ==
                            "partial" &&
                        Analysis->getAsObject()->getString("link_status") ==
-                           "partial"
+                           "partial" &&
+                       Analysis->getAsObject()->getString(
+                           "import_map_analysis") == "partial"
                    ? 0
                    : 1;
     }

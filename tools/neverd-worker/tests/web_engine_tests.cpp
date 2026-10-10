@@ -1146,8 +1146,9 @@ int main(int argc, char **argv) {
     for (const auto &[path, bytes] :
          std::initializer_list<std::pair<fs::path, std::string_view>>{
              {htmlRoot / "a.html",
-              "<base href='./'><script>const "
-              "x='SECRET_WEB';import('./b.js?SECRET_WEB#f');</script><script "
+              "<base href='./'><script type=importmap>{\"imports\":{"
+              "\"SECRET_WEB\":\"./b.js?SECRET_WEB#f\"}}</script><script>const "
+              "x='SECRET_WEB';import('SECRET_WEB');</script><script "
               "src='b.js?SECRET_WEB'></script>"},
              {htmlRoot / "b.js", "throw Error('SECRET_WEB');"}}) {
       std::ofstream out(path, std::ios::binary);
@@ -1181,18 +1182,18 @@ int main(int argc, char **argv) {
     const auto html = web.execute("web_html_analyze", htmlRequest);
     reply = process.call("web_html_analyze", htmlRequest, htmlRevision,
                          htmlProject);
-    check(reply["payload"] == html && html["script_count"] == 2 &&
-              html["base_count"] == 1 &&
+    check(reply["payload"] == html && html["script_count"] == 3 &&
+              html["import_map_count"] == 1 && html["base_count"] == 1 &&
               html["runtime_entries_verified"] == false,
           "HTML summary differs through transport");
     Json htmlScripts;
-    for (const auto kind : {"scripts", "bases"}) {
+    for (const auto kind : {"scripts", "bases", "import_maps"}) {
       Json request{{"schema_version", 1},
                    {"revision", htmlRevision},
                    {"html_id", html["html_id"]},
                    {"record_kind", kind},
                    {"offset", 0},
-                   {"limit", 2}};
+                   {"limit", 3}};
       const auto page = web.execute("web_html_records", request);
       reply =
           process.call("web_html_records", request, htmlRevision, htmlProject);
@@ -1207,13 +1208,13 @@ int main(int argc, char **argv) {
       check(reply["error"]["code"] == "invalid_request",
             "Worker accepted HTML fetch field");
     }
-    check(htmlScripts["items"][1]["candidate_artifact_id"] ==
+    check(htmlScripts["items"][2]["candidate_artifact_id"] ==
               htmlArtifacts["items"][2]["artifact_id"],
           "HTML external candidate lost occurrence");
     const Json htmlSourceRequest{
         {"schema_version", 1},
         {"revision", htmlRevision},
-        {"artifact_id", htmlScripts["items"][0]["inline_artifact_id"]},
+        {"artifact_id", htmlScripts["items"][1]["inline_artifact_id"]},
         {"source_type", "script"}};
     if (hasBindings) {
       const auto source = web.execute("web_source_analyze", htmlSourceRequest);
@@ -1253,6 +1254,8 @@ int main(int argc, char **argv) {
                     htmlArtifacts["items"][2]["artifact_id"] &&
                 requests["items"][0]["query_present"] == true &&
                 requests["items"][0]["fragment_present"] == true &&
+                requests["items"][0]["import_map_match"] == "exact" &&
+                requests["items"][0]["module_url_candidate_id"].is_string() &&
                 reply.dump().find("SECRET_WEB") == std::string::npos,
             "HTML module links differ or expose a private reference");
     } else {

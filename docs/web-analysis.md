@@ -473,11 +473,14 @@ or partial inventory and 1 for unavailable/unsupported/exhausted analyses. Its
 single-file `modules` command reports the absent directory base explicitly;
 directory candidate links are available through the SDK and worker lifecycle.
 
-HTML inline IDs instead select `html-inline-module-file-candidates-v1`, which
+HTML inline IDs instead select `html-inline-module-file-candidates-v2`, which
 compares literal imports/re-exports/dynamic imports using the document and
 preceding base candidate. It supports the bounded HTML local URL subset and
 retains document/script/base IDs in `link_context`; normal file contexts remain
-null. Import-map declarations currently refuse target association. The
+null. Captured early import maps add exact/prefix/scoped candidate resolution,
+blocking entries, first-definition composition and private URL identity.
+Unknown origin/history, malformed maps and budget failures refuse association.
+The
 `html-modules` and `asar-html-modules` CLI forms emit those summaries and pages,
 including completed `partial` results. They never reinterpret an external file
 under a document context. See the [HTML contract](web-html-profile.md).

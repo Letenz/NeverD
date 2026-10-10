@@ -360,8 +360,13 @@ distinct. Association does not execute targets or automatically parse HTML.
 attribute decoding, and `HTMLLinks` owns portable local URL comparison.
 Its private `HTMLFiles` index and declared-base rules are shared with
 `HTMLModules`, which binds inline module requests to explicit document/script
-contexts and captured occurrences. Import-map declarations retain an explicit
-unresolved boundary. `SessionModules` selects this context only for derived
+contexts and captured occurrences. `ImportMap` owns bounded JSON/URL normalization
+and exact/prefix/scoped/blocking rules over the embedded C++ Ada URL parser.
+`HTMLImportMaps` owns captured declaration bases, source-order eligibility and
+the separate capture-root projection. Full serialized URLs stay private;
+decoded filesystem candidates never substitute for URL identity. Unknown browser
+activation/history and absolute key origins remain explicit boundaries.
+`SessionModules` selects this context only for derived
 inline IDs; ordinary external-file analyses keep their own profile and cache.
 `SessionHTML` owns cache/revision and private
 metadata policy. Inline scripts use `ArtifactView` slices with nested original
