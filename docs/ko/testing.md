@@ -151,6 +151,8 @@ v4 테스트는 접두 구조의 크기와 패딩, 잘린 구조와 알 수 없�
 
 `InterpreterLLVMRefinement.Preservation*`는 부분 및 겹침 범위, 잘못된 요청, 독립 계산한 준비 비용, 양쪽의 동일한 최종 손상, 루프를 통한 진입값 저장과 복원, 새로운 불투명 상태 증거 및 후반 거부를 검사합니다. API 사용자인 `NeverDPEFixedImageTests`도 다시 빌드합니다. 요청 생략 시 결과, 카운터 및 다이제스트는 별도로 기준선과 비교합니다.
 
+`InterpreterLLVMRefinement.Collection*`는 유한 및 귀납 증명에 필요한 유지와 지연, 도달 가능한 잘못된 분기, 후반 소스 거부, 진입값 보존, 네 가지 네이티브 설정의 식별을 검사합니다. 조합 계층에서 전달을 누락한 결함 버전을 컴파일해 필요한 설정이 네이티브 검사기에 전달되는지 확인합니다.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

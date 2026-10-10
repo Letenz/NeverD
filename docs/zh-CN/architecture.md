@@ -273,6 +273,8 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 
 可选的 `InterpreterLLVMRefinementPreservation` 请求向两段全新证明添加 GPR 字节保存义务。准备层统一负责有预算的校验、重叠并集和按字拆分；完整状态、定义性与栈帧观察项仍然强制保留。`NativeState` 只传给原生检查器，支持 `SelectedWitness`，拒绝 `AllUndefinedChoices`。子凭据绑定各自的有效契约；空请求保持原有默认行为。
 
+`InterpreterLLVMNativeCollection` 将两项默认关闭的收集选项仅传给全新原生证明。保留的审计边界必须在所选 witness 下不可达；延迟收集的分支仍须为每条可行路径提供完整语义。原生凭据绑定这些选项，源码假设、观察项和证明预算保持不变。
+
 恢复 C API v3 与 CLI 将显式字段、细化和求解查询预算传入共享特化器。适配层先检查结构大小与 reserved 字段，再读取扩展；v1/v2 布局和默认值保持稳定。提高预算仅改变允许的工作量，不改变执行契约或结果发布条件。
 
 恢复还提供 `--vm-chain-transfers=N`（默认 0）和 `--vm-no-control-discovery`。串接在已证明唯一目标的控制转移之间保留符号关联；达到上限后回到普通 CFG 边界。机器状态恢复可通过 `--vm-entry-frame=begin:end` 声明未经运行时检查、不会回绕的入口 RSP 偏移范围。精确数值前提会写入生成的 C 和报告；它不授予内存访问权限，也不构成等价证明。

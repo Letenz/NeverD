@@ -149,6 +149,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `InterpreterLLVMRefinement.Preservation*` 涵蓋局部／重疊範圍、非法請求、獨立計算的準備開銷、兩端相同的最終破壞、跨迴圈的入口保存／還原、新鮮不透明狀態證據及後期拒絕。`NeverDPEFixedImageTests` 也是 API 使用端，需要重新建置。未提供請求時的結果、計數與摘要另行對照基準。
 
+`InterpreterLLVMRefinement.Collection*` 檢查有限與歸納證明所需的保留／延遲策略、可達壞分支、後期原始碼拒絕、入口保存及全部四種原生策略身分。編譯組合層遺漏傳遞的故障，確認每項必要選項確實到達原生檢查器。
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

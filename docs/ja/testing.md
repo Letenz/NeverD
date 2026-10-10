@@ -152,6 +152,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `InterpreterLLVMRefinement.Preservation*` は部分範囲と重複、不正要求、独立計算した準備コスト、両側の同一破壊、ループをまたぐ入口値の保存と復元、新しい不透明状態の証拠、後段の拒否を検証します。API 利用側の `NeverDPEFixedImageTests` も再ビルドします。要求省略時の結果・カウンタ・ダイジェストは別途ベースラインと比較します。
 
+`InterpreterLLVMRefinement.Collection*` は有限・帰納証明で必要な保持と遅延、到達可能な不正分岐、後段のソース拒否、入口値の保存、四通りのネイティブ設定の識別を検証します。組合せ処理で設定の伝達を除いた故障版をコンパイルし、必要な設定が検証器に届くことを確認します。
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

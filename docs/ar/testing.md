@@ -151,6 +151,8 @@ build-release/bin/NeverDX86NoIndexAddressTests
 
 تغطي `InterpreterLLVMRefinement.Preservation*` النطاقات الجزئية والمتداخلة والطلبات غير الصالحة وكلفة التحضير المحسوبة باستقلال والتغييرات النهائية المتطابقة وحفظ قيم الدخول واستعادتها عبر الحلقات والأدلة الجديدة للحالة المعتمة والرفض المتأخر. أعد بناء مستهلك الواجهة `NeverDPEFixedImageTests` أيضًا. قارن النتائج والعدادات والملخصات دون طلب مع خط الأساس بصورة منفصلة.
 
+تتحقق `InterpreterLLVMRefinement.Collection*` من الاحتفاظ والتأجيل اللازمين في البراهين المحدودة والاستقرائية، والفروع غير الصالحة القابلة للوصول، ورفض المصدر المتأخر، وحفظ قيم الدخول، وهويات الخيارات الأصلية الأربع. ابنِ نسخًا معيبة تحذف تمرير الخيارات من وحدة التركيب للتحقق من وصول كل خيار لازم إلى المدقق الأصلي.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

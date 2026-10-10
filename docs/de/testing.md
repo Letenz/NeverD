@@ -155,6 +155,8 @@ Geschützte Countdown-Tests prüfen den nächsten Versuch nach einem verworfenen
 
 `InterpreterLLVMRefinement.Preservation*` prüft Teilbereiche und Überlappungen, ungültige Anfragen, unabhängig berechneten Vorbereitungsaufwand, identische Endwertänderungen, Sicherung/Wiederherstellung von Eintrittswerten über Schleifen, neue opake Nachweise und späte Ablehnung. Auch den API-Verbraucher `NeverDPEFixedImageTests` neu bauen. Ergebnisse, Zähler und Digests bei ausgelassener Anfrage separat mit der Basis vergleichen.
 
+`InterpreterLLVMRefinement.Collection*` prüft notwendige Beibehaltung und Verzögerung in endlichen und induktiven Beweisen, erreichbare ungültige Zweige, späte Quellablehnung, Eintrittserhaltung und alle vier nativen Optionsidentitäten. Kompilierte Auslassungsfehler im Kompositionsmodul prüfen die Weitergabe jeder benötigten Option.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

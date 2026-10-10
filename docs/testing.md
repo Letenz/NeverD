@@ -786,6 +786,8 @@ Guarded countdown coverage checks retry after a rejected body template, a comple
 
 `InterpreterLLVMRefinement.Preservation*` covers partial/overlapping ranges, malformed requests, independently counted preparation work, identical final clobbers, entry save/restore across loops, fresh opaque evidence and late refusal. Rebuild `NeverDPEFixedImageTests` as another API consumer. Compare omitted-request outcomes, counters and digests with the baseline separately.
 
+`InterpreterLLVMRefinement.Collection*` checks required retention and deferral in finite and inductive proofs, reachable bad arms, late source refusal, entry preservation and all four native policy identities. Compile omission faults in the composition owner to verify that each required choice reaches the native checker.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

@@ -155,6 +155,8 @@ Les tests de décompte gardé couvrent la reprise après rejet du modèle du cor
 
 `InterpreterLLVMRefinement.Preservation*` couvre plages partielles ou superposées, requêtes invalides, coût de préparation calculé indépendamment, altérations finales identiques, sauvegarde/restauration des valeurs d’entrée à travers les boucles, preuves opaques nouvelles et refus tardifs. Reconstruire aussi le consommateur d’API `NeverDPEFixedImageTests`. Comparer séparément résultats, compteurs et résumés sans requête à la référence.
 
+`InterpreterLLVMRefinement.Collection*` vérifie rétention et report nécessaires aux preuves finies et inductives, branches invalides accessibles, refus source tardif, préservation à l’entrée et les quatre identités des options natives. Compiler des fautes omettant leur transmission dans le module de composition pour vérifier chaque option nécessaire.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

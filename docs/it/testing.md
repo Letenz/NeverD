@@ -154,6 +154,8 @@ I test del conto alla rovescia protetto coprono il nuovo tentativo dopo il rifiu
 
 `InterpreterLLVMRefinement.Preservation*` copre intervalli parziali o sovrapposti, richieste errate, costo di preparazione calcolato indipendentemente, alterazioni finali identiche, salvataggio/ripristino dei valori iniziali attraverso i cicli, nuove prove opache e rifiuti tardivi. Ricostruire anche il consumatore API `NeverDPEFixedImageTests`. Confrontare separatamente risultati, contatori e digest senza richiesta con la base.
 
+`InterpreterLLVMRefinement.Collection*` verifica conservazione e rinvio necessari nelle prove finite e induttive, rami errati raggiungibili, rifiuto tardivo del sorgente, conservazione iniziale e tutte le quattro identità delle opzioni native. Compilare guasti che ne omettono la trasmissione nel modulo di composizione per verificare ogni opzione necessaria.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

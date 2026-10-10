@@ -174,6 +174,8 @@ LLVM 模型負責驗證 `initializes` 參數契約，重用狀態指標投影，
 
 可選的 `InterpreterLLVMRefinementPreservation` 請求向兩段全新證明加入 GPR 位元組保存義務。準備層統一負責有預算的驗證、重疊聯集與按字分割；完整狀態、定義性與框架觀察項仍須保留。`NativeState` 只傳給原生檢查器，支援 `SelectedWitness`，拒絕 `AllUndefinedChoices`。子憑據綁定各自的有效契約；空請求維持原有預設行為。
 
+`InterpreterLLVMNativeCollection` 將兩項預設關閉的收集選項僅傳給全新原生證明。保留的稽核邊界必須在所選 witness 下不可達；延遲收集的分支仍須為每條可行路徑提供完整語義。原生憑據綁定這些選項，原始碼假設、觀察項和證明預算維持不變。
+
 恢復 C API v3 與 CLI 將明確的欄位、細化和求解查詢預算傳入共用特化器。轉接層先檢查結構大小與 reserved 欄位，再讀取擴充；v1/v2 配置和預設值保持穩定。提高預算僅改變允許的工作量，不改變執行契約或結果發布條件。
 
 恢復也提供 `--vm-chain-transfers=N`（預設 0）和 `--vm-no-control-discovery`。串接在已證明唯一目標的控制轉移之間保留符號關聯；達到上限後回到普通 CFG 邊界。機器狀態恢復可透過 `--vm-entry-frame=begin:end` 宣告未經執行時檢查、不會回繞的入口 RSP 偏移範圍。精確數值前提會寫入產生的 C 和報告；它不授予記憶體存取權限，也不構成等價證明。

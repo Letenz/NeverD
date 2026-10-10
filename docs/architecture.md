@@ -1445,6 +1445,8 @@ The LLVM model owns validation of `initializes` parameter contracts. It reuses s
 
 An optional `InterpreterLLVMRefinementPreservation` request adds GPR-byte preservation to both fresh premises. Preparation owns bounded validation, overlap union and word splitting; mandatory state, definedness and frame observations remain. `NativeState` reaches only the native checker and supports `SelectedWitness`; `AllUndefinedChoices` is refused. Effective subcontracts bind the receipts, and an empty request preserves existing defaults.
 
+`InterpreterLLVMNativeCollection` exposes two false-by-default collection choices only to the fresh native premise. Retained audit boundaries must be unreachable under the selected witness; deferred branches still require complete semantics on every feasible path. The native receipt binds these choices. Source assumptions, observations and proof budgets remain unchanged.
+
 The v3 recovery C API and CLI map explicit field, refinement and solver-query budgets to the shared specializer. The adapter validates structure sizes and reserved fields before reading extensions; v1/v2 layouts and defaults remain stable. Budget increases change permitted work, not the execution contract or publication criteria.
 
 Recovery also exposes `--vm-chain-transfers=N` (default 0) and `--vm-no-control-discovery`. Chaining retains symbolic correlations across proved singleton transfers; its limit returns to ordinary CFG boundaries. Machine-state recovery can declare unchecked, nonwrapping entry-RSP offsets with `--vm-entry-frame=begin:end`. The exact numeric premise accompanies generated C and the report; it grants no memory access or equivalence proof.
