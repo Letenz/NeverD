@@ -6,8 +6,15 @@ add_neverd_component_library(NeverDCodeGen
   COFF/PESignaturePolicy.cpp
   COFF/COFFReloc.cpp
   COFF/COFFRegistrationPatch.cpp
+  COFF/COFFRegistrationCallbackProof.cpp
+  COFF/COFFRegistrationFrameProof.cpp
+  COFF/COFFRegistrationImageProof.cpp
+  COFF/COFFRegistrationIncomingFrame.cpp
+  COFF/COFFRegistrationIR.cpp
+  COFF/COFFRegistrationSEHTables.cpp
   COFF/COFFRegistrationCxx.cpp
   COFF/COFFRegistrationCxxIR.cpp
+  COFF/COFFRegistrationCxxContinuation.cpp
   COFF/COFFRegistrationCxxFrame.cpp
   COFF/COFFRegistrationIRProof.cpp
   CodeGen.cpp

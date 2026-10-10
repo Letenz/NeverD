@@ -1,10 +1,11 @@
-//===- MedLLVMNativeRegistrationCxx.cpp - Native PE32 C++ EH -------------===//
+//===- MedLLVMNativeRegistrationCxx.cpp - Native PE32 C++ EH --------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 
-#include "MedLLVMEHHelpers.h"
+#include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationCxxContinuation.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
@@ -217,6 +218,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         const auto *Resume = States.cxxContinuation(Op.Addr, Op.OriginSeq);
         if (!Return || !Resume || Resume->TryIndex || Resume->CatchIndex ||
             !BlocksAt.count(Resume->TargetVA) ||
+            Resume->SavedStackOffset > -16 ||
+            int64_t(FrameEntrySPOffset) - 4 + Resume->SavedStackOffset < 0 ||
+            FrameEntrySPOffset > INT32_MAX ||
             !Resumes.emplace(Return, Resume).second)
           return false;
       }
@@ -574,15 +578,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     CallSiteAddrs.erase(Old);
     Old->eraseFromParent();
   }
-  for (const auto &[Return, Resume] : Resumes) {
-    llvm::IRBuilder<> B(Return);
-    med_llvm_eh::emitWindowsEHProvenanceAnchor(
-        B, Model, Role::HandlerTarget, EH.CodeRange.Begin, Resume->Address,
-        Resume->TryIndex, Resume->CatchIndex, Pad, Resume->TargetVA,
-        uint32_t(Resume->SavedStackOffset));
-    B.CreateCatchRet(Pad, BlocksAt.at(Resume->TargetVA));
-    Return->eraseFromParent();
-  }
+  for (const auto &[Return, Resume] : Resumes)
+    emitRegistrationCxxContinuation(*Return, *FrameAlloca, FrameEntrySPOffset,
+                                    *Pad, *BlocksAt.at(Resume->TargetVA),
+                                    EH.CodeRange.Begin, *Resume);
   for (const auto &Access : States.ChainAccesses) {
     auto *I = RegistrationChainIR.at({Access.Address, Access.OpSeq});
     llvm::IRBuilder<> B(I);

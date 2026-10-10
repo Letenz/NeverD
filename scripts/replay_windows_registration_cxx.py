@@ -53,6 +53,10 @@ def main(argv: list[str] | None = None) -> int:
                 not source.get("passed") or len(source["cases"]) != 2 or \
                 {case["case"] for case in source["cases"]} != {"value", "reference"}:
             raise ValueError("source C++ reconstruction evidence is incomplete")
+        if source.get("source_probe"):
+            if source["source_probe"] != "derived-saved-esp-writeback":
+                raise ValueError("source C++ probe has an unknown derivation")
+            report["source_probe"] = source["source_probe"]
         report["source_schema"] = schema
         report["installation"] = installation
         environment = os.environ.copy()

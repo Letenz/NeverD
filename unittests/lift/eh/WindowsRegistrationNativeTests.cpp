@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationCxxContinuationTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -158,6 +159,7 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
   auto SharedContract = validateCOFFRegistrationIR(*Parent, *Source, *Loaded);
   ASSERT_FALSE(bool(SharedContract))
       << llvm::toString(std::move(SharedContract));
+  registration_test::checkCxxContinuationEdits(*Parent, *Source, *Loaded);
   // Reparse the unchanged input for every post-emission edit. A completeness
   // marker alone cannot bind a moved source operation or runtime control edge.
   for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
@@ -1683,7 +1685,25 @@ TEST(WindowsRegistrationCxxSource, InputPE32EmitsTypedCatchAndCleanupIR) {
         llvm::any_of(UnprovedStates.Diagnostics, [](const auto &Message) {
           return Message.find("coordinate transfer proof") != std::string::npos;
         }));
-    // Checked coordinates do not establish their CFG transfer or native ABI.
+    neverd::Decoder ReliftDecoder;
+    ASSERT_TRUE(ReliftDecoder.init(*Reloaded));
+    auto Relift = CFGBuilder().build(*Reloaded, ReliftDecoder,
+                                     GeneratedGraph->CodeRange.Begin,
+                                     "realigned-generated-parent");
+    ASSERT_TRUE(Relift.RegistrationStates);
+    const auto &ReliftStates = *Relift.RegistrationStates;
+    const auto Installed =
+        llvm::find_if(ReliftStates.Blocks, [&](const auto &B) {
+          return B.Range.Begin == GeneratedChain.ChainInstallVA + 6;
+        });
+    ASSERT_NE(Installed, ReliftStates.Blocks.end());
+    EXPECT_TRUE(Installed->Reached);
+    EXPECT_TRUE(Installed->CanDispatch);
+    EXPECT_FALSE(Installed->Unknown);
+    // Ordinary coordinate transfer does not prove the generated catch's
+    // distinct runtime restore and continuation protocol.
+    EXPECT_FALSE(ReliftStates.CxxContinuationsComplete);
+    // Checked coordinates do not establish the complete native ABI.
     EXPECT_FALSE(classifyWindowsEHNativeSource(*GeneratedGraph, Arch::X86,
                                                BinaryFormat::COFF)
                      .canPatchOutput());
