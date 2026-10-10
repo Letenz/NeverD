@@ -13,6 +13,8 @@
 
 #include "neverd/ir/med/LowToMed.h"
 
+#include "../X86/RegistrationRoots.h"
+
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -923,6 +925,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   }
 
   try {
+    x86_registration::RegistrationRoots(Low, TheArch, Fmt)
+        .disconnectNoReturnFallthroughs(Func);
     bindSourceCalls(Func, Low, Fmt);
     modelKnownWideCallReturns(Func);
     debugVerifyMedFunc(Func, "modelKnownWideCallReturns");

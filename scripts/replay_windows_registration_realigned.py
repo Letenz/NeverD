@@ -17,16 +17,21 @@ if __package__:
     from .check_windows_registration_eh import image_digest, run_image
     from .check_windows_registration_realigned import SOURCE, require_test_result
     from .check_windows_registration_rewrite import PE32
+    from .windows_registration_libraries import validate_manifest
 else:
     from check_windows_registration_eh import image_digest, run_image
     from check_windows_registration_realigned import SOURCE, require_test_result
     from check_windows_registration_rewrite import PE32
+    from windows_registration_libraries import validate_manifest
 
 IMAGES = {"probe.exe": 0, "probe-rebased.exe": 0,
           "wrong-result.exe": 1, "wrong-result-rebased.exe": 1}
 
 
 def validate_capture(root: Path, capture: dict) -> None:
+    validate_manifest(capture.get("runtime_libraries", {}))
+    if require_test_result(root / "emit.xml") != 2:
+        raise ValueError("realigned emission/root identity evidence is missing")
     if capture.get("schema") != 1 or \
             capture.get("evidence") != "generated-realigned-callback-analysis" or \
             capture.get("source_sha256") != hashlib.sha256(SOURCE.read_bytes()).hexdigest() or \

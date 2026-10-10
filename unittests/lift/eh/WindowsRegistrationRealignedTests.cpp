@@ -7,14 +7,21 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/codegen/CodeGen.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/WindowsEHNativeSource.h"
+#include "neverd/backend/llvm/X86RegistrationFrame.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/high/X86RegistrationFrame.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
@@ -28,9 +35,89 @@
 
 using namespace neverd;
 
+namespace neverd {
+class MedLLVMEmitterTestPeer {
+public:
+  static bool rootHasIndependentIdentity(const MedFunc &Func, const MedOp &Op) {
+    MedLLVMEmitter E;
+    E.CurMedFunc = &Func;
+    E.TargetArch = Arch::X86;
+    E.TargetFormat = BinaryFormat::COFF;
+    const auto Slot = E.canonicalFrameSlotKey(Op.Output);
+    return !E.pointerPreservingInput(Op) && Slot &&
+           Slot->first == std::make_pair(Op.Output.Id, Op.Output.SSAVer) &&
+           Slot->second == 0 && E.addrSlotKey(Op.Output, 0, true) == Slot &&
+           E.varIsFrameDerived(Op.Output) &&
+           !E.canonicalFrameSlotKey(Op.Output, true);
+  }
+};
+} // namespace neverd
+
 namespace {
 
+std::optional<uint32_t> evaluateRoot(const ExprPtr &Expr, uint32_t EntrySP) {
+  if (!Expr)
+    return std::nullopt;
+  if (Expr->Kind == ExprKind::Var)
+    return EntrySP;
+  if (Expr->Kind == ExprKind::Const)
+    return uint32_t(Expr->ConstVal);
+  if (Expr->Kind != ExprKind::BinOp || Expr->Operands.size() != 2)
+    return std::nullopt;
+  const auto Left = evaluateRoot(Expr->Operands[0], EntrySP);
+  const auto Right = evaluateRoot(Expr->Operands[1], EntrySP);
+  if (!Left || !Right)
+    return std::nullopt;
+  switch (Expr->Op) {
+  case NdOp::INT_ADD:
+    return *Left + *Right;
+  case NdOp::INT_SUB:
+    return *Left - *Right;
+  case NdOp::INT_AND:
+    return *Left & *Right;
+  default:
+    return std::nullopt;
+  }
+}
+
 #ifdef LLVM_NEVERD_X86_CXX_CATCH_SUBFIELDS
+TEST(WindowsRegistrationRealigned, RuntimeRootsKeepInvocationIdentity) {
+  const auto &TRI = getTargetRegInfo(Arch::X86);
+  for (auto Kind :
+       {MedOp::RegistrationRootKind::EstablishedFramePointer,
+        MedOp::RegistrationRootKind::CallbackStackPointer,
+        MedOp::RegistrationRootKind::RestoredStackPointer,
+        MedOp::RegistrationRootKind::RealignedFramePointer,
+        MedOp::RegistrationRootKind::RealignedRestoredStackPointer}) {
+    const bool FP =
+        Kind == MedOp::RegistrationRootKind::EstablishedFramePointer ||
+        Kind == MedOp::RegistrationRootKind::RealignedFramePointer;
+    const bool Restored =
+        Kind == MedOp::RegistrationRootKind::RestoredStackPointer ||
+        Kind == MedOp::RegistrationRootKind::RealignedRestoredStackPointer;
+    MedFunc Func;
+    Func.Blocks.resize(1);
+    auto &Root = Func.Blocks[0].Ops.emplace_back();
+    Root.Opcode = NdOp::COPY;
+    Root.Output.Kind = MedVar::Reg;
+    Root.Output.TheArch = Arch::X86;
+    Root.Output.Id = 1;
+    Root.Output.SSAVer = 1;
+    Root.Output.RegOff = FP ? TRI.FramePointer : TRI.StackPointer;
+    Root.Output.Size = 4;
+    Root.addInput(Root.Output);
+    Root.Inputs[0].SSAVer = 0;
+    Root.RegistrationRoot = Kind;
+    Root.RegistrationStackOffset = Restored ? -32 : 0;
+    ASSERT_TRUE(hasValidRegistrationRootShape(Root));
+    EXPECT_TRUE(MedLLVMEmitterTestPeer::rootHasIndependentIdentity(Func, Root));
+    Root.RegistrationRoot = MedOp::RegistrationRootKind::None;
+    Root.RegistrationStackOffset = 0;
+    EXPECT_FALSE(
+        MedLLVMEmitterTestPeer::rootHasIndependentIdentity(Func, Root));
+  }
+}
+
 TEST(WindowsRegistrationRealigned, EmitsIndependentCallbackFrame) {
   llvm::LLVMContext Context;
   llvm::Module Module("callback-probe", Context);
@@ -84,8 +171,11 @@ TEST(WindowsRegistrationRealigned, EmitsIndependentCallbackFrame) {
   Call->setDoesNotThrow();
   B.CreateCatchRet(Pad, Resume);
   B.SetInsertPoint(Resume);
-  auto *Result = B.CreateLoad(B.getInt32Ty(), Frame);
-  Result->setVolatile(true);
+  // The first aligned local is at the captured parent ESP. Read through the
+  // actual restored register so a correct ESI alone cannot make this pass.
+  auto *Result = B.CreateCall(
+      llvm::InlineAsm::get(llvm::FunctionType::get(B.getInt32Ty(), false),
+                           "movl (%esp), $0", "=r,~{memory}", true));
   B.CreateRet(Result);
   ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
   auto Object = Codegen().compile(Module, Arch::X86, BinaryFormat::COFF);
@@ -140,6 +230,100 @@ TEST(WindowsRegistrationRealigned, InputPE32RecoversTheCallbackContract) {
   }));
   const auto Med =
       LowToMedConverter().convert(F, Arch::X86, BinaryFormat::COFF);
+  ASSERT_TRUE(verifyMedFunc(Med, "realigned-registration-roots"));
+  llvm::LLVMContext RootContext;
+  llvm::IRBuilder<> RootBuilder(RootContext);
+  bool CatchFrame = false, ResumeFrame = false, ResumeStack = false;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.RegistrationRoot != MedOp::RegistrationRootKind::None) {
+        SCOPED_TRACE(Block.StartAddr);
+        if (Op.RegistrationRoot ==
+            MedOp::RegistrationRootKind::RealignedFramePointer) {
+          CatchFrame |= Block.StartAddr == Catch;
+          ResumeFrame |= Block.StartAddr == State.CxxContinuations[0].TargetVA;
+        }
+        if (Op.RegistrationRoot ==
+            MedOp::RegistrationRootKind::RealignedRestoredStackPointer) {
+          EXPECT_EQ(Block.StartAddr, State.CxxContinuations[0].TargetVA);
+          EXPECT_EQ(Op.RegistrationStackOffset,
+                    State.CxxContinuations[0].SavedStackOffset);
+          ResumeStack = true;
+        }
+        EXPECT_TRUE(hasValidRegistrationRootShape(Op));
+        EXPECT_FALSE(
+            entryStackOffset(Med, Op.Output, Arch::X86, BinaryFormat::COFF));
+        EXPECT_TRUE(
+            MedLLVMEmitterTestPeer::rootHasIndependentIdentity(Med, Op));
+        if (Op.RegistrationRoot ==
+            MedOp::RegistrationRootKind::CallbackStackPointer) {
+          EXPECT_FALSE(registrationRootFrameCoordinate(Med, Op));
+          continue;
+        }
+        ASSERT_TRUE(registrationRootFrameCoordinate(Med, Op));
+        const auto &Layout = *EH.Registration->RealignedFrame;
+        // Exercise every ABI-compatible residue, including PE32 wraparound.
+        for (uint32_t Base : {0x10000u, 0xfffffff0u})
+          for (uint32_t Residue = 0; Residue < Layout.Alignment; Residue += 4) {
+            const uint32_t SP = Base + Residue;
+            const uint32_t Expected = ((SP - 16) & -Layout.Alignment) -
+                                      Layout.AllocationBytes -
+                                      uint32_t(Layout.BaseOffset) +
+                                      uint32_t(Op.RegistrationStackOffset);
+            auto *Value = emitX86RegistrationRoot(
+                Med, Op, RootBuilder.getInt32(SP), RootBuilder);
+            const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Value);
+            ASSERT_NE(Constant, nullptr);
+            EXPECT_EQ(Constant->getZExtValue(), Expected);
+            EXPECT_EQ(evaluateRoot(lowerX86RegistrationRoot(Med, Op), SP),
+                      Expected);
+          }
+      }
+  EXPECT_TRUE(CatchFrame);
+  EXPECT_TRUE(ResumeFrame);
+  EXPECT_TRUE(ResumeStack);
+  const auto Throw =
+      llvm::find_if(State.CallFrameEffects,
+                    [](const auto &Call) { return Call.DoesNotReturn; });
+  ASSERT_NE(Throw, State.CallFrameEffects.end());
+  const auto ThrowBlock = llvm::find_if(Med.Blocks, [&](const auto &Block) {
+    return Block.StartAddr <= Throw->Address && Throw->Address < Block.EndAddr;
+  });
+  ASSERT_NE(ThrowBlock, Med.Blocks.end());
+  EXPECT_TRUE(ThrowBlock->Succs.empty());
+  EXPECT_TRUE(llvm::any_of(ThrowBlock->ExceptionalSuccs, [](const auto &Edge) {
+    return Edge.Kind == ExceptionalEdgeKind::CxxCatch;
+  }));
+  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Unproved = F;
+    auto &Proof = *Unproved.RegistrationStates;
+    auto &Call = Proof.CallFrameEffects[Throw - State.CallFrameEffects.begin()];
+    if (Mutation == 0)
+      Proof.CallFrameEffectsComplete = false;
+    if (Mutation == 1)
+      Call.DoesNotReturn = false;
+    if (Mutation == 2)
+      Call.Target += 4;
+    if (Mutation == 3)
+      ++Call.EndAddress;
+    if (Mutation == 4)
+      Proof.CallFrameEffects.clear();
+    if (Mutation == 5)
+      Unproved.OrdinaryModuleAnalysisRoots.insert(
+          State.CxxContinuations[0].TargetVA);
+    if (Mutation == 6)
+      Proof.CxxContinuationsComplete = false;
+    if (Mutation == 7)
+      Unproved.RegistrationStates.reset();
+    const auto Other =
+        LowToMedConverter().convert(Unproved, Arch::X86, BinaryFormat::COFF);
+    for (const auto &Block : Other.Blocks)
+      if (Block.StartAddr == State.CxxContinuations[0].TargetVA)
+        for (const auto &Op : Block.Ops)
+          EXPECT_NE(Op.RegistrationRoot,
+                    MedOp::RegistrationRootKind::RealignedFramePointer);
+  }
   const auto High = MedToHighConverter().convert(Med, Arch::X86);
   EXPECT_EQ(High.StructuredExceptionRegions, 0u);
   EXPECT_GT(High.UnstructuredExceptionRegions, 0u);

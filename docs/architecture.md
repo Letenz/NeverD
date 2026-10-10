@@ -149,9 +149,14 @@ the authenticated saved entry EBP; callback pointers lose their exact identity
 when an invocation ends or another begins. Checked callback calls borrow parent
 objects using the pre-dispatch stack snapshot, while preserving their private
 ESP. Parent administration, including the saved entry EBP, cannot be borrowed.
-These LowIR facts do not supply MedIR/HighIR frame-root lowering or native
-re-reconstruction. HighIR retains handler/continuation annotations for the
-realigned model instead of claiming an executable structured catch body.
+MedIR's separate x86 root owner consumes these LowIR facts. It disconnects only
+exact no-return call fallthroughs before SSA, preserving exceptional edges and
+the continuation's independent runtime frame. Shared coordinate projection
+expresses the aligned establisher from entry ESP for HighIR and LLVM, while
+entry-stack proofs cannot claim a fixed displacement. Pointer-copy and slot
+proofs keep each runtime definition's identity. Full callback lowering and
+native re-reconstruction still need their own source-frame contract; HighIR
+retains handler/continuation annotations for this model.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional

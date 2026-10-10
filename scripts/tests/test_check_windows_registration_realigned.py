@@ -7,15 +7,8 @@ import unittest
 
 from scripts import check_windows_registration_realigned as runner
 from scripts import replay_windows_registration_realigned as replay
+from scripts import windows_registration_libraries as libraries
 
-
-def archive_member(name=b"__CxxThrowException@8", kind=4, machine=0x14c):
-    names = name + b"\0vcruntime140.dll\0"
-    data = struct.pack("<HHHHIIHH", 0, 0xffff, 0, machine,
-                       0, len(names), 0, kind) + names
-    header = (f"import/         {0:<12}{0:<6}{0:<6}{0:<8}"
-              f"{len(data):<10}`\n").encode()
-    return header + data + (b"\n" if len(data) & 1 else b"")
 
 
 class RealignedCallbackEvidenceTests(unittest.TestCase):
@@ -36,9 +29,14 @@ class RealignedCallbackEvidenceTests(unittest.TestCase):
         struct.pack_into("<I", data, 0x210, 0x401000)
         struct.pack_into("<IIHH", data, 0x400, 0x1000, 12, 0x3010, 0)
         (root / "frame.obj").write_bytes(b"test object")
+        (root / "emit.xml").write_text('<testsuites tests="2"/>')
         capture = {"schema": 1, "evidence": "generated-realigned-callback-analysis",
                    "source_sha256": hashlib.sha256(runner.SOURCE.read_bytes()).hexdigest(),
                    "object_sha256": hashlib.sha256(b"test object").hexdigest(),
+                   "runtime_libraries": {"schema": 1, "architecture": "x86",
+                                         "toolset": "14.44", "files": [
+                                             {"name": name, "sha256": "a" * 64}
+                                             for name in libraries.LIBRARIES]},
                    "images": []}
         for name, expected in replay.IMAGES.items():
             image = bytearray(data)
@@ -60,7 +58,7 @@ class RealignedCallbackEvidenceTests(unittest.TestCase):
             root = Path(directory)
             capture = self.capture(root)
             replay.validate_capture(root, capture)
-            for mutation in range(7):
+            for mutation in range(8):
                 changed = copy.deepcopy(capture)
                 if mutation == 0:
                     changed["images"].pop()
@@ -76,6 +74,8 @@ class RealignedCallbackEvidenceTests(unittest.TestCase):
                     changed["source_sha256"] = "stale"
                 if mutation == 6:
                     changed["images"][0]["image"] = "../probe.exe"
+                if mutation == 7:
+                    changed.pop("runtime_libraries")
                 with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                     replay.validate_capture(root, changed)
             path = root / "probe-rebased.exe"
@@ -94,34 +94,11 @@ class RealignedCallbackEvidenceTests(unittest.TestCase):
                 '<testsuites tests="1"><testcase><skipped/></testcase></testsuites>')
             with self.assertRaises(ValueError):
                 replay.validate_capture(root, capture)
-
-    def test_stdcall_import_preserves_symbols_and_member_offsets(self):
-        original = b"!<arch>\n" + archive_member() + archive_member(b"___CxxFrameHandler3")
-        expected = bytearray(original)
-        struct.pack_into("<H", expected, 8 + 60 + 18, 12)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "runtime.lib"
-            path.write_bytes(original)
-            runner.undecorate_throw_import(path)
-            self.assertEqual(path.read_bytes(), bytes(expected))
-            runner.undecorate_throw_import(path)
-            self.assertEqual(path.read_bytes(), bytes(expected))
-
-    def test_malformed_or_missing_import_does_not_write_partial_results(self):
-        cases = [b"", b"!<arch>\n", b"!<arch>\n" + archive_member()[:-1],
-                 b"!<arch>\n" + archive_member() * 2,
-                 b"!<arch>\n" + archive_member(b"__CxxThrowException@4"),
-                 b"!<arch>\n" + archive_member(kind=5),
-                 b"!<arch>\n" + archive_member(machine=0x8664),
-                 b"!<arch>\n" + archive_member() + b"bad member"]
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "runtime.lib"
-            for original in cases:
-                with self.subTest(original=original):
-                    path.write_bytes(original)
-                    with self.assertRaises(ValueError):
-                        runner.undecorate_throw_import(path)
-                    self.assertEqual(path.read_bytes(), original)
+            (root / "probe.xml").write_text('<testsuites tests="1"/>')
+            for count in (0, 1, 3):
+                (root / "emit.xml").write_text(f'<testsuites tests="{count}"/>')
+                with self.subTest(count=count), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture)
 
     def test_analysis_requires_executed_passing_checks(self):
         with tempfile.TemporaryDirectory() as directory:
