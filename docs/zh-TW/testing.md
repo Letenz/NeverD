@@ -1486,6 +1486,8 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `BinaryLowIRLoopInference.NativeSelectors*` 涵蓋兩個暫存器上下文、僅靠框架區分的上下文、三域合取、無法區分的範本、來源及原生迴圈本體變異，以及推導與證明各自的精確和少一預算。迴圈次數任意，不引入入口常數。
 
+`NativeSelectorsGeneralize*` 驗證交替暫存器／框架階段的自動恢復與完整原生證明，包括高位元仍符號化的位元組遮罩。`NativeSelectorState*` 檢查錯誤排名／本體、遮罩外位元損壞、畸形賦值及工作量／中繼資料的精確和少一預算。明確有效的計畫另將正式建構器與變換前後的完整原生檢查組合，涵蓋重疊與不相交切點混合、原始側前綴來源保留、回退掃描計費及暫存位移溢位拒絕。這些明確計畫檢查與自動推導涵蓋範圍分別記錄。
+
 `DarwinIndirectRecordCalls` 檢查目前 MakeScale 契約與 22 項匯入/ABI 變更拒絕案例，再透過共用按值副本證明使用完整的 48 位元組私有結果。未對齊、偏移、重疊或超出堆疊框架的結果範圍皆被拒絕。即使保留完整回傳 ABI，移除確定寫入效果也會被拒絕。
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` 拒絕十種入口、載體或寫入修改以及缺少的入口 ABI。`NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` 重新提升直接尾呼叫，檢查明確輸出參數、六次寫入與發布門檻。

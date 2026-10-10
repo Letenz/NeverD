@@ -3459,6 +3459,8 @@ Native loop refinement exercises deferred conditional collection and retained un
 
 `BinaryLowIRLoopInference.NativeSelectors*` covers two register contexts, frame-only contexts, three-domain conjunctions, inseparable templates, origin/native-body mutations and exact/one-short independent inference and proof budgets. The tests use arbitrary loop counts and introduce no entry constants.
 
+`NativeSelectorsGeneralize*` checks automatic recovery and complete native proofs for alternating register and frame phases, including byte masks with symbolic upper bits. `NativeSelectorState*` checks wrong rank/body, outside-mask corruption, malformed assignments and exact/one-short work and metadata budgets. Explicit valid plans additionally compose the production builder with complete native checks before and after mixed overlap/disjoint cuts, retain original-prefix provenance, charge fallback scans and reject temporary overflow. These explicit-plan checks are distinct from automatic inference coverage.
+
 `DarwinIndirectRecordCalls` checks the current MakeScale contract and its 22 import/ABI mutations, then consumes a complete 48-byte private result through the shared by-value-copy proof. Misaligned, displaced, overlapping or out-of-frame result ranges refuse. Removing the definite-write effect also refuses, even with the complete return ABI retained.
 
 `SourceFrameAnalysis.IncomingResultAddressNeedsCompleteEntryIdentity` rejects ten entry/carrier/write mutations and a missing entry ABI. `NativeSourceHints.IndirectResultTailCallRetainsExplicitOutputAddress` re-lifts a direct tail and checks the explicit output parameter, six stores and publication gate.
