@@ -36,7 +36,7 @@ TEST(WindowsRegistrationFrameLayout, RequiresPhysicalAlignmentAndBounds) {
 }
 
 TEST(WindowsRegistrationFrameLayout, PreservesEveryProvedPhysicalResidue) {
-  for (uint32_t Alignment : {4u, 16u, 32u, 64u, 128u})
+  for (uint32_t Alignment = 4; Alignment <= 128; Alignment *= 2)
     for (uint32_t Offset = 256; Offset != 512; Offset += 4) {
       const RegistrationFrameCoordinate Coordinate{-16, Alignment, -20};
       const auto Layout =
