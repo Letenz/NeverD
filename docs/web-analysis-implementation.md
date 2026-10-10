@@ -945,3 +945,16 @@ stopped when `dev` advanced, before the incremental current-dev build completed.
 Scoped formatting and the complete integration diff's whitespace check passed.
 This is local integration evidence, not a whole-repository, GUI, cross-host or
 Zstd-enabled qualification of the new dev baseline. The five epics remain open.
+
+Before publication, `dev` advanced to `710b8368c` with opt-in native-to-LLVM
+state-preservation proofs. That revision was merged without conflicts. The same
+build targets required no recompilation. The repeated web run passed 243 of 250
+cases with the same seven skips; Session C API passed 91 of 99 with the same
+eight skips. Native-buffer loading and the compiled-capability check passed,
+with the omission-only ABI check skipped. All five affected worker smoke suites
+(Web, RealEngine, PEBrowse, NativeMapping and FunctionEdits) passed serially with
+`TMPDIR=/private/tmp`. The complete worker result above remains separate from
+this final smoke run. Logs are `/tmp/neverd-js-dev-final-build.log`,
+`/tmp/neverd-js-dev-final-web-tests.log` and
+`/tmp/neverd-js-dev-final-session-tests.log`. The newly merged proof suites were
+not part of this web integration profile.
