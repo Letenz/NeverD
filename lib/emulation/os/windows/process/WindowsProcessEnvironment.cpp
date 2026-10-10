@@ -158,6 +158,9 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
     uint64_t Address, Value;
     unsigned Size = PointerSize;
   };
+  const auto Version = Options.Windows && Options.Windows->PEBVersion
+                           ? *Options.Windows->PEBVersion
+                           : WindowsPEBVersion{};
   const Field Fields[] = {
       {TEB + TebStackBase, StackTop},
       {TEB + TebStackLimit, StackTop - Options.StackSize},
@@ -171,6 +174,10 @@ llvm::Expected<Environment> prepareEnvironment(AddressSpace &Memory,
       {PEB + PebParameters, Parameters},
       {PEB + PebHeap, HeapHandle},
       {PEB + PebLdr, Ldr},
+      {PEB + PebVersionMajor, Version.Major, DWordSize},
+      {PEB + PebVersionMinor, Version.Minor, DWordSize},
+      {PEB + PebVersionBuild, Version.Build, 2},
+      {PEB + PebVersionPlatform, Version.Platform, DWordSize},
       {Parameters + ParamsMaximumLength, ParameterSize, DWordSize},
       {Parameters + ParamsLength, ParameterSize, DWordSize},
       {Parameters + ParamsFlags, ParamsNormalized, DWordSize},

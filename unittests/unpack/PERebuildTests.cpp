@@ -126,6 +126,38 @@ protected:
   uint64_t OriginalTLS = 0, ProgramTLS = 0, Callbacks = 0, Callback = 0;
 };
 
+TEST_F(PERebuild, DLLNotificationsRequireAnExecutableOriginalEntry) {
+  const uint64_t Characteristics =
+      Linked.MachineOffset +
+      offsetof(llvm::object::coff_file_header, Characteristics);
+  for (uint16_t Machine : {uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_AMD64),
+                           uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_ARM64)}) {
+    write16le(Bytes.data() + Linked.MachineOffset, Machine);
+    write16le(Bytes.data() + Characteristics,
+              Linked.FileCharacteristics | llvm::COFF::IMAGE_FILE_DLL);
+    prepare();
+    ASSERT_FALSE(HasFailure());
+    std::vector<uint8_t> Metadata;
+    // An unchanged entry needs no dispatch at all.
+    auto Unchanged = pe::rebuildEntry(*Input, C, Input->extent(), Metadata);
+    ASSERT_TRUE(bool(Unchanged)) << llvm::toString(Unchanged.takeError());
+    EXPECT_EQ(*Unchanged, C.EntryRVA);
+    EXPECT_TRUE(Metadata.empty());
+    C.EntryRVA += 0x100;
+    C.PageAccess[Linked.Entry / 4096] = emulation::Read;
+    auto Missing = pe::rebuildEntry(*Input, C, Input->extent(), Metadata);
+    ASSERT_FALSE(bool(Missing));
+    EXPECT_NE(llvm::toString(Missing.takeError()).find("loader notifications"),
+              std::string::npos);
+    EXPECT_TRUE(Metadata.empty());
+    C.PageAccess[Linked.Entry / 4096] |= emulation::Execute;
+    auto Available = pe::rebuildEntry(*Input, C, Input->extent(), Metadata);
+    ASSERT_TRUE(bool(Available)) << llvm::toString(Available.takeError());
+    EXPECT_EQ(*Available, Input->extent());
+    EXPECT_FALSE(Metadata.empty());
+  }
+}
+
 TEST_F(PERebuild, NewImportCellsCannotConsumeProgramZeroFill) {
   plantCall(Linked.Entry);
   const auto Before = C.Memory;
