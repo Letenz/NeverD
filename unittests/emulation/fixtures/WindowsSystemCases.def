@@ -70,6 +70,7 @@ NEVERD_SYSTEM_TEXT(MissingTools,
                    "requires Clang and lld-link system DLL fixtures")
 NEVERD_SYSTEM_TEXT(ObservationLabel, "System DLL observations: ")
 NEVERD_SYSTEM_TEXT(ReturnArgument, "!R")
+NEVERD_SYSTEM_TEXT(FLSReturnArgument, "!r")
 #endif
 #ifdef NEVERD_SYSTEM_WIDE
 NEVERD_SYSTEM_WIDE(Kernel32Wide, L"KeRnEl32")
@@ -87,6 +88,12 @@ NEVERD_SYSTEM_CASE(Clocks, "!C", "0100000043000000")
 NEVERD_SYSTEM_CASE(Sections, "!S", "0100000053000000")
 NEVERD_SYSTEM_CASE(CriticalSections, "!Z", "010000005A000000")
 NEVERD_SYSTEM_CASE(NativeServices, "!Y", "0100000059000000")
+NEVERD_SYSTEM_CASE(FLSExit, "!f",
+                   "010000006600000002000000660000000300000066000000")
+NEVERD_SYSTEM_CASE(FLSReturn, "!r",
+                   "010000007200000002000000720000000300000072000000")
+NEVERD_SYSTEM_CASE(FLSNativeExit, "!u",
+                   "010000007500000002000000750000000300000075000000")
 #endif
 #ifdef NEVERD_SYSTEM_MODE
 NEVERD_SYSTEM_MODE(LoadMode, 'L')
@@ -99,6 +106,9 @@ NEVERD_SYSTEM_MODE(ClocksMode, 'C')
 NEVERD_SYSTEM_MODE(SectionsMode, 'S')
 NEVERD_SYSTEM_MODE(CriticalSectionsMode, 'Z')
 NEVERD_SYSTEM_MODE(NativeServicesMode, 'Y')
+NEVERD_SYSTEM_MODE(FLSExitMode, 'f')
+NEVERD_SYSTEM_MODE(FLSReturnMode, 'r')
+NEVERD_SYSTEM_MODE(FLSNativeExitMode, 'u')
 NEVERD_SYSTEM_MODE(NativeUnknownMode, 'y')
 NEVERD_SYSTEM_MODE(NativeUnimplementedMode, 'z')
 NEVERD_SYSTEM_MODE(CriticalUninitializedMode, 'D')
@@ -153,6 +163,9 @@ NEVERD_SYSTEM_API(FreeLibrary)
 NEVERD_SYSTEM_API(GetProcAddress)
 NEVERD_SYSTEM_API(VirtualQuery)
 NEVERD_SYSTEM_API(VirtualProtect)
+NEVERD_SYSTEM_API(FlsAlloc)
+NEVERD_SYSTEM_API(FlsGetValue)
+NEVERD_SYSTEM_API(FlsSetValue)
 #endif
 #ifdef NEVERD_SYSTEM_BUILD
 NEVERD_SYSTEM_BUILD(OutputDirectory, "windows-system-fixtures")

@@ -888,6 +888,39 @@ private slots:
                  QStringLiteral("Pseudocode-A (Rust)"));
   }
 
+  void cppPseudocodeRetainsASeparateCChoice() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-cpp.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 view->text()->language() ==
+                                     QLatin1String("cpp"),
+                             OpenTimeoutMs);
+    QCOMPARE(view->chosenLanguage(), QStringLiteral("C++"));
+    QTRY_COMPARE(bench.dockTitle(QStringLiteral("pseudocode-a")),
+                 QStringLiteral("Pseudocode-A (C++)"));
+    QVERIFY(view->text()->allText().contains(QStringLiteral("std::string")));
+    QVERIFY(representationsOf(view).contains(QStringLiteral("c")));
+    view->setRepresentation(QStringLiteral("c"));
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 view->text()->language() == QLatin1String("c"),
+                             OpenTimeoutMs);
+    QVERIFY(!view->text()->allText().contains(QStringLiteral("std::string")));
+    view->setRepresentation(QStringLiteral("source"));
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 view->text()->language() ==
+                                     QLatin1String("cpp"),
+                             OpenTimeoutMs);
+  }
+
   void pseudocodeOffersOnlyTheProgramsLanguages() {
     QTemporaryDir directory;
     const QStringList cOnly = {

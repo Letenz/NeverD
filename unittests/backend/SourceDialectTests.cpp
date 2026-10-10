@@ -8,7 +8,9 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/CSourceMap.h"
+#include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
+#include "neverd/loader/SymbolSpelling.h"
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/FileSystem.h"
@@ -45,6 +47,127 @@ std::vector<std::string> tokens(llvm::StringRef C) {
         T.Kind != csyntax::TokenKind::End)
       Result.push_back(T.Text.str());
   return Result;
+}
+
+TEST(SourceDialect, CxxUsesQualifiedNamesAndExactLibraryAliases) {
+  const char *C = "struct basic_string;\n"
+                  "int work(struct basic_string *s) { return size(s); }\n";
+  std::vector<CSourceName> Names = {
+      {CSourceName::Kind::Function, "work", "_ZN4Demo4workEi", 0x1000},
+      {CSourceName::Kind::Function, "size",
+       "_ZNKSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEE4sizeEv", 0x2000},
+      {CSourceName::Kind::Type, "basic_string",
+       "std::__cxx11::basic_string<char, std::char_traits<char>, "
+       "std::allocator<char>>",
+       std::nullopt}};
+  const auto Cpp = spell(C, SourceDialect::Cpp, Names);
+  EXPECT_TRUE(Cpp.Unread.empty());
+  EXPECT_NE(Cpp.Text.find("Demo::work(std::string *s)"), std::string::npos)
+      << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("std::string::size(s)"), std::string::npos)
+      << Cpp.Text;
+  bool Linked = false;
+  for (const auto &Name : Cpp.Names) {
+    EXPECT_NE(Name.Identifier, "basic_string");
+    if (Name.Address == 0x2000) {
+      EXPECT_EQ(Cpp.Text.substr(Name.Begin, Name.End - Name.Begin),
+                "std::string::size");
+      Linked = true;
+    }
+  }
+  EXPECT_TRUE(Linked);
+  EXPECT_EQ(tokens(spell(C, SourceDialect::C, Names).Text), tokens(C));
+  EXPECT_EQ(
+      readableCxxTypeName(
+          "std::__1::basic_string<char, OtherTraits<char>, MyAlloc<char>>"),
+      "std::basic_string<char, OtherTraits<char>, MyAlloc<char>>");
+  EXPECT_EQ(
+      readableCxxTypeName("ATL::CStringT<wchar_t, ATL::StrTraitATL<wchar_t>>"),
+      "ATL::CStringT<wchar_t, ATL::StrTraitATL<wchar_t>>");
+}
+
+TEST(SourceDialect, CxxSymbolsAreValidatedAndKeepOperatorsAndTemplates) {
+  EXPECT_EQ(cxxSourceName("?push_back@?$vector@HV?$allocator@H@std@@@std@@"
+                          "QEAAXAEBH@Z"),
+            "std::vector<int>::push_back");
+  EXPECT_EQ(cxxSourceName("_ZNSt6vectorIi7MyAllocIiEE5clearEv"),
+            "std::vector<int, MyAlloc<int>>::clear");
+  EXPECT_EQ(cxxSourceName(
+                "_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEED1Ev"),
+            "std::string::~string");
+  EXPECT_TRUE(cxxSourceName("_Zebra").empty());
+  EXPECT_TRUE(cxxSourceName("_ZN4core3fmt5write17h0123456789abcdefE").empty());
+  EXPECT_TRUE(cxxSourceName("?nodeType@QDomNode@@QEBAHXZjunk").empty());
+}
+
+TEST(SourceDialect, CxxProgramDefaultsIncludeCLinkageEntryPoints) {
+  for (auto Runtime :
+       {SourceLanguageRuntime::CxxItanium, SourceLanguageRuntime::CxxMSVC}) {
+    LanguageRuntimeInfo Language;
+    Language.Runtime = Runtime;
+    EXPECT_EQ(
+        offeredSourceDialects(Language),
+        (std::vector<SourceDialect>{SourceDialect::C, SourceDialect::Cpp}));
+    EXPECT_EQ(sourceDialectOfFunction("main", true, Language),
+              SourceDialect::Cpp);
+    EXPECT_EQ(sourceDialectOfFunction("", false, Language), SourceDialect::Cpp);
+  }
+  LanguageRuntimeInfo Plain;
+  Plain.Runtime = SourceLanguageRuntime::C;
+  EXPECT_EQ(offeredSourceDialects(Plain),
+            (std::vector<SourceDialect>{SourceDialect::C}));
+  EXPECT_EQ(sourceDialectOfFunction("main", true, Plain), SourceDialect::C);
+}
+
+TEST(SourceDialect, PlainCKeepsNativeExceptionCallsAndHandlerDefinitions) {
+  HighFunc Function;
+  Function.Entry = 0x1000;
+  Function.Name = "parent";
+  Function.ReturnType = NdType::makeVoid();
+  HighStmt Region;
+  Region.Kind = StmtKind::CxxTry;
+  Region.EHRange = {0x1000, 0x1040};
+  HighStmt Throw;
+  Throw.Kind = StmtKind::Call;
+  Throw.CallExpr = HighExpr::makeCall("_CxxThrowException", 0x3000, {});
+  Throw.CallExpr->Type = NdType::makeVoid();
+  Region.Body.push_back(Throw);
+  HighEHClause Catch;
+  Catch.Kind = HighEHClauseKind::CxxCatch;
+  Catch.HandlerVA = 0x2000;
+  Catch.TypeDescriptorVA = 0x4000;
+  Region.EHClauses.push_back(Catch);
+  HighStmt Ret;
+  Ret.Kind = StmtKind::Return;
+  Region.EHClauseBodies.push_back({Ret});
+  Function.Body.push_back(Region);
+  HighFunc Handler;
+  Handler.Entry = Catch.HandlerVA;
+  Handler.Name = "native_handler";
+  Handler.ReturnType = NdType::makeVoid();
+  Handler.Body.push_back(Ret);
+  CEmitterOptions Options;
+  Options.StructuredExceptionSyntax = false;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  ASSERT_TRUE(HighCEmitter().emit({Function, Handler}, OS, Options));
+  EXPECT_NE(Text.find("CxxThrowException("), std::string::npos) << Text;
+  // The native call also needs a declaration in the C projection.
+  EXPECT_NE(
+      Text.find("CxxThrowException(", Text.find("CxxThrowException(") + 1),
+      std::string::npos)
+      << Text;
+  EXPECT_NE(Text.find("native_handler(void)"), std::string::npos) << Text;
+  EXPECT_NE(Text.find("handler @ 0x2000"), std::string::npos) << Text;
+  const auto Tokens = tokens(Text);
+  for (const char *Keyword : {"try", "catch", "throw", "__wind", "__unwind"})
+    EXPECT_EQ(std::find(Tokens.begin(), Tokens.end(), Keyword), Tokens.end())
+        << Text;
+  // No guessed callback ABI may replace a handler embedded in its parent.
+  std::string Refused;
+  llvm::raw_string_ostream RefusedOS(Refused);
+  EXPECT_THROW(HighCEmitter().emit({Function}, RefusedOS, Options),
+               std::invalid_argument);
 }
 
 TEST(SourceDialect, ConvertsWhatCPromotes) {

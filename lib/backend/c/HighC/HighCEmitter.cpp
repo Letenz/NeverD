@@ -1373,8 +1373,9 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         }
         if (Ex.IntrinsicId == Intrinsic::None)
           Name = callIdentifier(Ex);
-        if (!isMsvcCxxThrowCallName(Name) &&
-            !isMsvcCxxThrowCallName(Ex.CallTarget) &&
+        if ((!Opts.StructuredExceptionSyntax ||
+             (!isMsvcCxxThrowCallName(Name) &&
+              !isMsvcCxxThrowCallName(Ex.CallTarget))) &&
             !HiddenCxxCtorIdentifiers.count(Name)) {
           const bool UnresolvedIndirect =
               Ex.IsIndirectCall || Name == "indirect";
@@ -1542,6 +1543,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // the same headers and prototypes.
   for (auto &F : Funcs)
     collectCallTargets(F.Body, CallTargets);
+  writeSourceRecordDeclarations(Funcs);
   // A function whose address the code takes is declared as a callee is.
   CallTargets.insert(AddressTakenFunctions.begin(),
                      AddressTakenFunctions.end());
@@ -3071,7 +3073,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                                   "entries need a projection proof");
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
     std::vector<HighFunc> Working = Funcs;
-    attachCxxFuncletBodies(Working);
+    if (Opts.StructuredExceptionSyntax)
+      attachCxxFuncletBodies(Working);
     HighCWriter W(OS, Opts, Dbg, true,
                   Opts.Image && Opts.Image == PreparedImage
                       ? &PreparedImageFunctionNames

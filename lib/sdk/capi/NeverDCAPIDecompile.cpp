@@ -274,7 +274,7 @@ static std::string emissionFailure(const std::exception &Error) {
 }
 
 static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
-                                  CSourceMap *SourceMap) {
+                                  CSourceMap *SourceMap, bool PlainC = false) {
   auto *S = toSession(Sess);
   S->clearError();
 
@@ -315,8 +315,9 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(*Output);
   }
 
-  if (const char *Cached =
-          cachedSource(*S, FuncEntry, Session::SourceRoute::HighC, SourceMap))
+  const auto Route =
+      PlainC ? Session::SourceRoute::PlainC : Session::SourceRoute::HighC;
+  if (const char *Cached = cachedSource(*S, FuncEntry, Route, SourceMap))
     return Cached;
 
   const HighFunc *HF = S->findHighFunc(FuncEntry);
@@ -325,8 +326,33 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(std::string());
   }
 
-  std::vector<HighFunc> Related = S->PipeResult.HighFuncs;
-  attachCxxFuncletBodies(Related);
+  // A single-function view needs its native EH handlers, not every function
+  // from an earlier whole-image analysis. Follow only authenticated clauses;
+  // include nested handlers once and retain their original ABI.
+  std::map<va_t, const HighFunc *> ByEntry;
+  for (const HighFunc &Func : S->PipeResult.HighFuncs)
+    ByEntry[Func.Entry] = &Func;
+  std::set<va_t> Included = {HF->Entry};
+  std::vector<const HighFunc *> Needed = {HF};
+  for (size_t I = 0; I < Needed.size(); ++I)
+    walkStmts(Needed[I]->Body, [&](const HighStmt &Stmt) {
+      if (Stmt.Kind != StmtKind::CxxTry)
+        return;
+      for (const auto &Clause : Stmt.EHClauses) {
+        const va_t Entry = Clause.Kind == HighEHClauseKind::CxxCleanup
+                               ? Clause.FilterOrActionVA
+                               : Clause.HandlerVA;
+        if (auto It = ByEntry.find(Entry);
+            It != ByEntry.end() && Included.insert(Entry).second)
+          Needed.push_back(It->second);
+      }
+    });
+  std::vector<HighFunc> Related;
+  Related.reserve(Needed.size());
+  for (const HighFunc *Func : Needed)
+    Related.push_back(*Func);
+  if (!PlainC)
+    attachCxxFuncletBodies(Related);
   const HighFunc *Attached = nullptr;
   for (const HighFunc &Func : Related)
     if (Func.Entry == FuncEntry) {
@@ -337,10 +363,13 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     Attached = HF;
 
   std::vector<HighFunc> Single = {*Attached};
+  if (PlainC)
+    Single = std::move(Related);
   std::string Out;
   llvm::raw_string_ostream OS(Out);
 
   CEmitterOptions Opts;
+  Opts.StructuredExceptionSyntax = !PlainC;
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.abiFormat();
   Opts.Image = &S->Img;
@@ -358,12 +387,11 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     return dupStr(std::string());
   }
 
-  return keptSource(*S, FuncEntry, Session::SourceRoute::HighC, std::move(Out),
-                    SourceMap);
+  return keptSource(*S, FuncEntry, Route, std::move(Out), SourceMap);
 }
 
 const char *neverd_decompile(neverd_session_t Sess, neverd_va_t FuncEntry) {
-  return decompileHighC(Sess, FuncEntry, nullptr);
+  return decompileHighC(Sess, FuncEntry, nullptr, true);
 }
 
 const char *neverd_decompile_llvm(neverd_session_t Sess,
@@ -494,8 +522,10 @@ std::string unofferedDialectReason(SourceDialect Dialect,
 const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
                                              SourceDialect Dialect) {
   auto &S = *toSession(Sess);
-  const auto Route = Dialect == SourceDialect::Rust ? Session::SourceRoute::Rust
-                                                    : Session::SourceRoute::Go;
+  const auto Route = Dialect == SourceDialect::Cpp ? Session::SourceRoute::Cpp
+                     : Dialect == SourceDialect::Rust
+                         ? Session::SourceRoute::Rust
+                         : Session::SourceRoute::Go;
   if (const auto *Cached = S.findFunctionSource(Entry, Route);
       Cached && Cached->Map)
     return *Cached;
@@ -557,8 +587,9 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
     Unread = Source.Unread;
     Names = Source.Names;
   } else {
-    const char *Raw = Stage == "llvmc" ? decompileLlvmC(Sess, Entry, 0, &Map)
-                                       : decompileHighC(Sess, Entry, &Map);
+    const char *Raw = Stage == "llvmc"
+                          ? decompileLlvmC(Sess, Entry, 0, &Map)
+                          : decompileHighC(Sess, Entry, &Map, true);
     Owned.reset(Raw);
     if (!Raw || !S.LastError.empty())
       throw std::runtime_error(S.LastError.empty() ? "source emission failed"
@@ -1101,11 +1132,14 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       }
       return dupStr(*Output);
     }
-    if (Language == NEVERD_OUTPUT_RUST || Language == NEVERD_OUTPUT_GO) {
+    if (Language == NEVERD_OUTPUT_RUST || Language == NEVERD_OUTPUT_GO ||
+        Language == NEVERD_OUTPUT_CPP) {
       if (S)
         S->setError(Language == NEVERD_OUTPUT_RUST
                         ? "Rust output is not supported for EVM bytecode"
-                        : "Go output is not supported for EVM bytecode");
+                    : Language == NEVERD_OUTPUT_GO
+                        ? "Go output is not supported for EVM bytecode"
+                        : "C++ output is not supported for EVM bytecode");
       return nullptr;
     }
     auto Output = evm::emitC(*R.Result.EVM);
@@ -1124,11 +1158,14 @@ static const char *decompileAllImpl(neverd_session_t Sess,
                     "dedicated C or Rust backend");
       return nullptr;
     }
-    if (Language == NEVERD_OUTPUT_SOLIDITY || Language == NEVERD_OUTPUT_GO) {
+    if (Language == NEVERD_OUTPUT_SOLIDITY || Language == NEVERD_OUTPUT_GO ||
+        Language == NEVERD_OUTPUT_CPP) {
       if (S)
         S->setError(Language == NEVERD_OUTPUT_SOLIDITY
                         ? "Solidity output is supported only for EVM bytecode"
-                        : "Go output is not supported for SBF programs");
+                    : Language == NEVERD_OUTPUT_GO
+                        ? "Go output is not supported for SBF programs"
+                        : "C++ output is not supported for SBF programs");
       return nullptr;
     }
     // A Solana program's own language is Rust.
@@ -1161,6 +1198,8 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   std::optional<SourceDialect> Dialect;
   if (Language == NEVERD_OUTPUT_RUST)
     Dialect = SourceDialect::Rust;
+  else if (Language == NEVERD_OUTPUT_CPP)
+    Dialect = SourceDialect::Cpp;
   else if (Language == NEVERD_OUTPUT_GO)
     Dialect = SourceDialect::Go;
   else if (Language == NEVERD_OUTPUT_SOURCE)
@@ -1178,7 +1217,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     Dialect.reset();
   if (Dialect && UseLlvmRoute) {
     if (S)
-      S->setError("Rust and Go output spell the HighC route");
+      S->setError("Source-language output spells the HighC route");
     return nullptr;
   }
 
@@ -1204,6 +1243,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.Image = &R.Img;
     COpts.UserNames = S ? &S->Renames : nullptr;
     std::vector<CSourceName> Names;
+    COpts.StructuredExceptionSyntax = Dialect.has_value();
     if (Dialect)
       COpts.SourceNames = &Names;
     try {

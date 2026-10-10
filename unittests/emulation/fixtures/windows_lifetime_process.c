@@ -6,6 +6,7 @@
 #include "WindowsLifetimeFixture.h"
 __declspec(dllimport) DWORD LeafIndex(void);
 __declspec(dllimport) DWORD MiddleIndex(void);
+__declspec(dllimport) void PrepareFLSUnload(void);
 static void tls(void *Image, DWORD Reason, void *Reserved) {
   CHECK(Image != 0);
   checkTLS(Reason);
@@ -19,6 +20,8 @@ static void tls(void *Image, DWORD Reason, void *Reserved) {
 DWORD entry(void) {
   CHECK(ThreadValue == Seed + 1);
   CHECK(LeafIndex() != MiddleIndex());
+  if (mode() == FLSUnloadMode)
+    PrepareFLSUnload();
   trace(MainRole, EntryKind, 0, 0);
   if (mode() == ReturnMode)
     return ExitStatus;

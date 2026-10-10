@@ -6,7 +6,7 @@
 ///
 /// \file
 /// The C the HighC emitter writes, spelled in the language a function was
-/// written in: Rust for Rust code, Go for Go code.  The C stays the semantic
+/// written in: C++, Rust or Go. The C stays the semantic
 /// authority.  A dialect spells exactly what the C says, with C's implicit
 /// conversions written out and the names of the source language
 /// (`core::fmt::write`, `internal/cpu.Initialize`), and shows a declaration
@@ -36,26 +36,22 @@ enum class SourceDialect : uint8_t {
 #include "neverd/backend/c/dialect/SourceDialects.def"
 };
 
-/// `c`, `rust` or `go`.
+/// `c`, `cpp`, `rust` or `go`.
 llvm::StringRef sourceDialectKey(SourceDialect Dialect);
-/// `C`, `Rust` or `Go`.
+/// `C`, `C++`, `Rust` or `Go`.
 llvm::StringRef sourceDialectDisplayName(SourceDialect Dialect);
 std::optional<SourceDialect> sourceDialectFromKey(llvm::StringRef Key);
 
-/// The dialect a runtime's code reads in other than C: Rust for Rust, Go for
-/// Go.
+/// The dialect a runtime's code reads in other than C: C++, Rust or Go.
 std::optional<SourceDialect> dialectOfRuntime(SourceLanguageRuntime Runtime);
 
-/// The dialects an image's pseudocode is offered in: C, and Rust or Go where
-/// a runtime of the image is that language.  A C or C++ program reads in C
-/// alone.
+/// C, plus each source language established by the image's runtime evidence.
 std::vector<SourceDialect>
 offeredSourceDialects(const LanguageRuntimeInfo &Language);
 
 /// The dialect a function of an image reads best in, among those the image
-/// is offered in: Rust for a Rust symbol, Go for a Go symbol, C for any
-/// other name, and the image's own language for a function the image does
-/// not name (\p Named false).
+/// is offered in. C-linkage names in a C++ image keep the image's dialect,
+/// as do functions the image does not name (\p Named false).
 SourceDialect sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
                                       const LanguageRuntimeInfo &Language);
 

@@ -18,7 +18,9 @@
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Loader.h"
+#include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELFTypes.h"
@@ -31,6 +33,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <vector>
 
 using namespace neverd;
@@ -322,6 +325,8 @@ enum class DWARFReturnFixtureKind {
   DuplicateAbstractOrigin,
   DuplicateBaseEncoding,
   DuplicateWrapperType,
+  RecordReference,
+  RecordRvalueReference,
 };
 
 void appendULEB(std::vector<uint8_t> &Bytes, uint64_t Value) {
@@ -362,7 +367,8 @@ void appendAttributeSpec(std::vector<uint8_t> &Abbrev,
   appendULEB(Abbrev, Form);
 }
 
-std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
+std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind,
+                                               unsigned CompileUnits = 1) {
   using ELFT = llvm::object::ELF64LE;
   using Elf_Ehdr = ELFT::Ehdr;
   using Elf_Shdr = ELFT::Shdr;
@@ -377,6 +383,9 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
   const bool UsesDeclaration = DuplicateSpecification || DuplicateOrigin;
   const bool BaseType = Kind == DWARFReturnFixtureKind::DuplicateBaseEncoding;
   const bool WrapperType = Kind == DWARFReturnFixtureKind::DuplicateWrapperType;
+  const bool RecordReference =
+      Kind == DWARFReturnFixtureKind::RecordReference ||
+      Kind == DWARFReturnFixtureKind::RecordRvalueReference;
 
   std::vector<uint8_t> Abbrev;
   appendULEB(Abbrev, 1);
@@ -406,11 +415,17 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
   appendULEB(Abbrev, 0);
 
   appendULEB(Abbrev, 3);
-  appendULEB(Abbrev, BaseType      ? DW_TAG_base_type
+  appendULEB(Abbrev, Kind == DWARFReturnFixtureKind::RecordReference
+                         ? DW_TAG_reference_type
+                     : Kind == DWARFReturnFixtureKind::RecordRvalueReference
+                         ? DW_TAG_rvalue_reference_type
+                     : BaseType    ? DW_TAG_base_type
                      : WrapperType ? DW_TAG_typedef
                                    : DW_TAG_pointer_type);
   Abbrev.push_back(DW_CHILDREN_no);
-  if (BaseType) {
+  if (RecordReference) {
+    appendAttributeSpec(Abbrev, DW_AT_type, DW_FORM_ref4);
+  } else if (BaseType) {
     appendAttributeSpec(Abbrev, DW_AT_byte_size, DW_FORM_data1);
     appendAttributeSpec(Abbrev, DW_AT_encoding, DW_FORM_data1);
     appendAttributeSpec(Abbrev, DW_AT_encoding, DW_FORM_data1);
@@ -458,6 +473,21 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
     appendULEB(Abbrev, 0);
     appendULEB(Abbrev, 0);
   }
+  if (RecordReference) {
+    appendULEB(Abbrev, 6);
+    appendULEB(Abbrev, DW_TAG_namespace);
+    Abbrev.push_back(DW_CHILDREN_yes);
+    appendAttributeSpec(Abbrev, DW_AT_name, DW_FORM_string);
+    appendULEB(Abbrev, 0);
+    appendULEB(Abbrev, 0);
+    appendULEB(Abbrev, 7);
+    appendULEB(Abbrev, DW_TAG_class_type);
+    Abbrev.push_back(DW_CHILDREN_no);
+    appendAttributeSpec(Abbrev, DW_AT_name, DW_FORM_string);
+    appendAttributeSpec(Abbrev, DW_AT_byte_size, DW_FORM_data1);
+    appendULEB(Abbrev, 0);
+    appendULEB(Abbrev, 0);
+  }
   appendULEB(Abbrev, 0);
 
   std::vector<uint8_t> Info;
@@ -484,7 +514,21 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
   const uint32_t ReturnTypeOffset = static_cast<uint32_t>(Info.size());
   appendULEB(Info, 3);
   std::vector<size_t> WrapperReferenceOffsets;
-  if (BaseType) {
+  if (RecordReference) {
+    const size_t ReferenceOffset = Info.size();
+    appendU32LE(Info, 0);
+    appendULEB(Info, 6);
+    constexpr llvm::StringLiteral Namespace = "Demo";
+    Info.insert(Info.end(), Namespace.begin(), Namespace.end());
+    Info.push_back(0);
+    patchU32LE(Info, ReferenceOffset, static_cast<uint32_t>(Info.size()));
+    appendULEB(Info, 7);
+    constexpr llvm::StringLiteral Record = "Widget<int>";
+    Info.insert(Info.end(), Record.begin(), Record.end());
+    Info.push_back(0);
+    Info.push_back(16);
+    Info.push_back(0);
+  } else if (BaseType) {
     Info.push_back(4);
     Info.push_back(DW_ATE_unsigned);
     Info.push_back(DW_ATE_unsigned);
@@ -544,6 +588,10 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
     patchU32LE(Info, DeclarationTypeOffset, ReturnTypeOffset);
   for (const size_t Offset : WrapperReferenceOffsets)
     patchU32LE(Info, Offset, WrappedPointerOffset);
+
+  const auto Unit = Info;
+  for (unsigned I = 1; I < CompileUnits; ++I)
+    Info.insert(Info.end(), Unit.begin(), Unit.end());
 
   std::string SectionNames(1, '\0');
   const auto appendName = [](std::string &Table, llvm::StringRef Name) {
@@ -617,6 +665,8 @@ std::vector<uint8_t> makeELFDWARFReturnFixture(DWARFReturnFixtureKind Kind) {
   Sections[SectionNameTableSection].sh_addralign = 1;
   std::memcpy(Bytes.data() + SectionTableOffset, Sections.data(),
               sizeof(Sections));
+  if (CompileUnits > 1)
+    Bytes.resize(std::max<size_t>(Bytes.size(), 256 * 1024), 0);
   return Bytes;
 }
 
@@ -1294,6 +1344,103 @@ TEST(DWARFSubprogramExtentRegistry, DuplicateSameExtentIsStickyAmbiguous) {
   Registry.insert(0x1000, Range);
   Registry.insert(0x1000, Range);
   EXPECT_TRUE(Registry.isAmbiguous(0x1000));
+}
+
+TEST(DWARFSubprogramExtentRegistry, SweepMatchesOverlapPolicyAfterMerging) {
+  using dwarf_loader_detail::SubprogramExtentRegistry;
+  using Range = dwarf_loader_detail::SubprogramRange;
+  struct Die {
+    va_t Entry;
+    std::vector<Range> Ranges;
+  };
+  std::mt19937 Random(42);
+  std::vector<Die> Dies;
+  SubprogramExtentRegistry Registry, Other;
+  for (unsigned I = 0; I < 256; ++I) {
+    Die D{Random() % 1024, {}};
+    for (unsigned J = 0, N = Random() % 4; J < N; ++J) {
+      va_t Begin = Random() % 4096;
+      D.Ranges.emplace_back(Begin, Begin + Random() % 32);
+    }
+    (I < 128 ? Registry : Other).insert(D.Entry, D.Ranges);
+    Dies.push_back(D);
+  }
+  Registry.append(std::move(Other));
+  Registry.finalize();
+  for (const Die &D : Dies) {
+    bool Expected = false;
+    // All DIEs at an entry share its ambiguity. Compare the external policy,
+    // not the interval index's component algorithm.
+    for (const Die &Owner : Dies) {
+      if (Owner.Entry != D.Entry)
+        continue;
+      Expected |= Owner.Ranges.empty();
+      for (const Range &R : Owner.Ranges)
+        Expected |= R.first >= R.second;
+      for (const Die &Candidate : Dies) {
+        if (&Owner == &Candidate)
+          continue;
+        Expected |= Owner.Entry == Candidate.Entry;
+        for (const Range &A : Owner.Ranges)
+          for (const Range &B : Candidate.Ranges)
+            Expected |= A.first < B.second && B.first < A.second;
+      }
+    }
+    EXPECT_EQ(Registry.isAmbiguous(D.Entry), Expected) << D.Entry;
+  }
+  const std::array<Range, 1> Fresh = {{{0x100000, 0x100010}}};
+  Registry.insert(0x100000, Fresh);
+  EXPECT_FALSE(Registry.isAmbiguous(0x100000));
+  Registry.insert(0x100000, Fresh);
+  EXPECT_TRUE(Registry.isAmbiguous(0x100000));
+}
+
+TEST(DWARFSourceTypes, ReferencesPreserveQualifiedRecordIdentity) {
+  ScratchDir Dir;
+  for (auto Kind : {DWARFReturnFixtureKind::RecordReference,
+                    DWARFReturnFixtureKind::RecordRvalueReference}) {
+    const auto Bytes = makeELFDWARFReturnFixture(Kind);
+    const auto Path = Dir.writeBytes("reference.elf", Bytes);
+    auto Context = DWARFDebugContext::load(Path, BinaryFormat::ELF,
+                                           DWARFLoadTrust::InImage, Bytes);
+    ASSERT_TRUE(Context);
+    auto Function = Context->resolveFunction(0x1000);
+    ASSERT_TRUE(Function && Function->ReturnType);
+    EXPECT_EQ(Function->ReturnType->Kind, NdTypeKind::Ptr);
+    const auto &Record = Function->ReturnType->Pointee;
+    ASSERT_TRUE(Record);
+    EXPECT_EQ(Record->Kind, NdTypeKind::Struct);
+    EXPECT_EQ(Record->SourceName, "Demo::Widget<int>");
+    EXPECT_EQ(Record->Size, 16);
+  }
+}
+
+TEST(DWARFParallelLoad, DuplicateDIEsAcrossWorkersCannotAuthenticateAType) {
+  ScratchDir Dir;
+  auto Bytes = makeELFDWARFReturnFixture(
+      DWARFReturnFixtureKind::PointerSizeExplicit, 16);
+  const auto Path = Dir.writeBytes("parallel.elf", Bytes);
+  const unsigned Saved = workerThreadOverride().load();
+  llvm::scope_exit Restore([&] { setWorkerThreadCount(Saved); });
+  std::vector<FunctionSym> Serial;
+  for (unsigned Threads : {1, 4}) {
+    setWorkerThreadCount(Threads);
+    auto Context = DWARFDebugContext::load(Path, BinaryFormat::ELF,
+                                           DWARFLoadTrust::InImage, Bytes);
+    ASSERT_TRUE(Context && Context->hasInfo());
+    auto Functions = Context->allFunctions();
+    ASSERT_EQ(Functions.size(), 16U);
+    if (Threads == 1)
+      Serial = Functions;
+    for (size_t I = 0; I < Functions.size(); ++I) {
+      EXPECT_EQ(Functions[I].Addr, Serial[I].Addr);
+      EXPECT_EQ(Functions[I].Name, Serial[I].Name);
+      EXPECT_EQ(Functions[I].Size, Serial[I].Size);
+      EXPECT_EQ(
+          Context->resolveAuthenticatedReturnValueState(Functions[I].Addr).Kind,
+          AuthenticatedReturnKind::Unknown);
+    }
+  }
 }
 
 TEST(DWARFSubprogramExtentRegistry, DisjointSubprogramsRemainUnique) {

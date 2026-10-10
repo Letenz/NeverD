@@ -186,6 +186,7 @@ static void clocks(void **Modules) {
           42);
 }
 #include "WindowsCriticalSectionFixture.inc"
+#include "WindowsFLSExitFixture.inc"
 #include "WindowsNativeServiceFixture.inc"
 #include "WindowsSectionFixture.inc"
 U32 entry(void) {
@@ -262,14 +263,16 @@ U32 entry(void) {
       Mode == CriticalDeletedMode || Mode == CriticalCorruptedMode ||
       Mode == CriticalOwnedDeleteMode)
     criticalSections(Modules[0], Modules[2], Mode);
+  if (flsMode(Mode))
+    flsScenario(Mode);
   U32 Result[] = {1, Mode}, Written;
   require(WriteFile(GetStdHandle(StdoutSelector), Result, sizeof(Result),
                     &Written, 0) &&
               Written == sizeof(Result),
           33);
-  if (Mode == ReturnMode)
+  if (Mode == ReturnMode || Mode == FLSReturnMode)
     return ExitStatus;
-  if (Mode == NativeExitMode) {
+  if (Mode == NativeExitMode || Mode == FLSNativeExitMode) {
     void (*Exit)(U32) = lookup(Modules[2], NativeExitName);
     Exit(ExitStatus);
   }

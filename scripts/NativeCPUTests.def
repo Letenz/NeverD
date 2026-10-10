@@ -133,6 +133,25 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ReleasedAndPostEntryDynamicSlotsDoNotBlockRecovery/"
     "{backend_title}DirectX64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.FLSCleanupCallbacksCannotBeSilentlyDiscarded/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.FLSCleanupCallbacksCannotBeSilentlyDiscarded/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.FLSCleanupRejectsRecursiveFreeOfTheActiveSlot/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated.FLSCleanupRejectsRecursiveFreeOfTheActiveSlot/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "EmptyAndReusedFLSSlotsDoNotInvokeStaleCallbacks/{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/UnpackGenerated."
+    "EmptyAndReusedFLSSlotsDoNotInvokeStaleCallbacks/"
+    "{backend_title}DirectX64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/UnpackGenerated."
     "LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage/"
     "{backend_title}X64")
@@ -2350,6 +2369,13 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "WindowsLifetimes.ExecutesStartupAndTerminationNotifications/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/WindowsLifetimes.FLSCleanupRunsBeforeDetachNotifications/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/"
+    "WindowsLifetimes.ExitCleanupRejectsUnmodeledLoaderOperations/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "WindowsLifetimes.SharesInstructionAndEventBudgetsAcrossInitialization/"
     "{backend_title}X64")
@@ -2408,6 +2434,12 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.ExecutesOriginalSystemModuleScenarios/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSystem.FLSExitCallbacksAreNotProgramInvocations/"
+    "{backend_title}X64")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Backends/WindowsSystem.FLSExitCleanupUsesTheProcessEventBudget/"
     "{backend_title}X64")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Backends/WindowsSystem.RejectsUnmodeledExportsOrdinalsAndChangedImages/"

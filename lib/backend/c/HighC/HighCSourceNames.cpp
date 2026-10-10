@@ -20,6 +20,43 @@
 
 using namespace neverd;
 
+void HighCWriter::writeSourceRecordDeclarations(
+    const std::vector<HighFunc> &Funcs) {
+  std::set<std::string> Declared;
+  std::set<const NdType *> Seen;
+  std::function<void(const TypeRef &)> Visit = [&](const TypeRef &Type) {
+    if (!Type || !Seen.insert(Type.get()).second)
+      return;
+    if (Type->Kind == NdTypeKind::Ptr) {
+      const TypeRef &Record = Type->Pointee;
+      if (Record && Record->Kind == NdTypeKind::Struct && !Record->IsEnum &&
+          !Record->SourceName.empty()) {
+        const std::string Name = cNamedTypeSpelling(Record->SourceName);
+        if (Declared.insert(Name).second)
+          OS << "typedef struct " << Name << " " << Name << ";\n";
+      }
+      Visit(Record);
+    }
+  };
+  auto Signature = [&](const FunctionSym &Function) {
+    Visit(Function.ReturnType);
+    for (const auto &[Name, Type] : Function.Params)
+      Visit(Type);
+  };
+  for (const HighFunc &Function : Funcs) {
+    Visit(Function.ReturnType);
+    for (const HighParam &Param : Function.Params)
+      Visit(Param.Type);
+    if (Dbg)
+      if (auto Found = Dbg->resolveFunction(Function.Entry))
+        Signature(*Found);
+  }
+  for (const auto &[Name, Function] : DebugExternSigs)
+    Signature(Function);
+  if (!Declared.empty())
+    OS << "\n";
+}
+
 void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {
   if (!Opts.SourceMap && !Opts.SourceNames)
     return;
@@ -58,6 +95,39 @@ void HighCWriter::recordSourceNames(const std::vector<HighFunc> &Funcs) {
       Add(CSourceName::Kind::Function, Identifier, Source, std::nullopt);
   for (const auto &[Address, Object] : ImageObjects)
     Add(CSourceName::Kind::Object, Object.Name, Object.Symbol, Address);
+  // Keep source type identity beside the C projection. A tag shared by two
+  // template instantiations is deliberately left in C, as for colliding
+  // function names; replacing either by the other would invent a layout.
+  std::set<const NdType *> Seen;
+  std::function<void(const TypeRef &)> AddType = [&](const TypeRef &Type) {
+    if (!Type || !Seen.insert(Type.get()).second)
+      return;
+    const llvm::StringRef Source = Type->SourceName;
+    if (Type->Kind == NdTypeKind::Struct &&
+        (Source.contains("::") || Source.contains('<')))
+      Add(CSourceName::Kind::Type, cNamedTypeSpelling(Type->SourceName),
+          Type->SourceName, std::nullopt);
+    AddType(Type->Pointee);
+    for (const TypeRef &Field : Type->FieldDisplayTypes)
+      AddType(Field);
+  };
+  auto AddSignature = [&](const FunctionSym &Function) {
+    AddType(Function.ReturnType);
+    for (const auto &[Name, Type] : Function.Params)
+      AddType(Type);
+  };
+  for (const HighFunc &Func : Funcs) {
+    AddType(Func.ReturnType);
+    for (const HighParam &Param : Func.Params)
+      AddType(Param.Type);
+    for (const HighLocal &Local : Func.Locals)
+      AddType(Local.Type);
+    if (Dbg)
+      if (auto Function = Dbg->resolveFunction(Func.Entry))
+        AddSignature(*Function);
+  }
+  for (const auto &[Identifier, Function] : DebugExternSigs)
+    AddSignature(Function);
   std::vector<CSourceName> Names;
   Names.reserve(ByIdentifier.size());
   for (auto &[Identifier, Name] : ByIdentifier)

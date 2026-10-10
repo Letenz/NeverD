@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -78,6 +79,9 @@ DecodedLocationExpression decodeLocationExpressionShape(
 class SubprogramExtentRegistry {
 public:
   void insert(va_t Entry, std::span<const SubprogramRange> Ranges);
+  void append(SubprogramExtentRegistry &&Other);
+  /// Finish once after ingest, before publishing the context to readers.
+  void finalize() const;
   bool isAmbiguous(va_t Entry) const;
 
 private:
@@ -87,6 +91,8 @@ private:
     bool Ambiguous = false;
   };
   std::vector<Record> Records;
+  mutable bool Dirty = false;
+  mutable std::unordered_set<va_t> AmbiguousEntries;
 };
 
 } // namespace dwarf_loader_detail

@@ -15,6 +15,9 @@
 
 #include "DialectPrinter.h"
 
+#include "neverd/backend/c/CSourceMap.h"
+#include "neverd/loader/SymbolSpelling.h"
+
 #include "llvm/ADT/StringSwitch.h"
 
 using namespace neverd;
@@ -65,12 +68,48 @@ private:
   std::string escapeIdentifier(llvm::StringRef Name) const override {
     return Name.str();
   }
-  std::optional<std::string> sourceName(llvm::StringRef) const override {
-    return std::nullopt;
+  std::optional<std::string> sourceName(llvm::StringRef Symbol) const override {
+    if (Opts.Dialect != SourceDialect::Cpp)
+      return std::nullopt;
+    std::string Spelling = cxxSourceName(Symbol);
+    return Spelling.empty() ? std::nullopt
+                            : std::optional<std::string>(std::move(Spelling));
   }
 
-  llvm::StringRef text(size_t Begin, size_t End) const {
-    return T.Source.slice(Begin, End).trim();
+  std::optional<std::string>
+  sourceTypeName(llvm::StringRef Type) const override {
+    return Opts.Dialect == SourceDialect::Cpp
+               ? std::optional<std::string>(readableCxxTypeName(Type))
+               : std::nullopt;
+  }
+
+  std::string text(size_t Begin, size_t End) const {
+    llvm::StringRef Text = T.Source.slice(Begin, End).trim();
+    if (Opts.Dialect != SourceDialect::Cpp)
+      return Text.str();
+    // Only identifiers are respelled. Strings, comments and assembler labels
+    // continue to name the original bytes and symbols.
+    auto Tokens = lex(Text);
+    if (!Tokens) {
+      llvm::consumeError(Tokens.takeError());
+      return Text.str();
+    }
+    std::string Out;
+    size_t Previous = 0;
+    for (size_t I = 0; I < Tokens->size(); ++I) {
+      const Token &Tok = (*Tokens)[I];
+      Out += Text.slice(Previous, Tok.Offset);
+      if ((Tok.Text == "struct" || Tok.Text == "class" || Tok.Text == "enum") &&
+          I + 1 < Tokens->size() && sourceType((*Tokens)[I + 1].Text)) {
+        Previous = (*Tokens)[I + 1].Offset;
+        continue;
+      }
+      Out +=
+          Tok.Kind == TokenKind::Identifier ? name(Tok.Text) : Tok.Text.str();
+      Previous = Tok.Offset + Tok.Text.size();
+    }
+    Out += Text.substr(Previous);
+    return Out;
   }
 
   static std::string paren(const Printed &P, int Min) {
@@ -85,6 +124,7 @@ private:
   Printed exprInner(const Expr *E) {
     switch (E->Kind) {
     case ExprKind::Name:
+      return Printed{name(E->Text), PrecAtom};
     case ExprKind::Integer:
     case ExprKind::Floating:
     case ExprKind::Character:
@@ -133,7 +173,7 @@ private:
       return Printed{Text, CComma};
     }
     case ExprKind::Cast:
-      return Printed{text(E->Begin, E->Ops.front()->Begin).str() +
+      return Printed{text(E->Begin, E->Ops.front()->Begin) +
                          paren(expr(E->Ops.front()), PrecUnary),
                      PrecUnary};
     case ExprKind::Call: {
@@ -156,9 +196,9 @@ private:
     case ExprKind::SizeofType:
     case ExprKind::AlignofType:
     case ExprKind::Offsetof:
-      return Printed{text(E->Begin, E->End).str(), PrecAtom};
+      return Printed{text(E->Begin, E->End), PrecAtom};
     case ExprKind::CompoundLiteral:
-      return Printed{text(E->Begin, E->Ops.front()->Begin).str() + " " +
+      return Printed{text(E->Begin, E->Ops.front()->Begin) + " " +
                          expr(E->Ops.front()).Text,
                      PrecAtom};
     case ExprKind::InitList: {
@@ -179,7 +219,7 @@ private:
       return Printed{"(" + llvm::StringRef(Body).trim().str() + ")", PrecAtom};
     }
     case ExprKind::BitCast:
-      return Printed{text(E->Begin, E->Ops.front()->Begin).str() +
+      return Printed{text(E->Begin, E->Ops.front()->Begin) +
                          expr(E->Ops.front()).Text + ")",
                      PrecAtom};
     }
@@ -328,7 +368,7 @@ private:
 
   void declarationLine(const Decl *D) {
     if (D->Body) {
-      line(text(D->Begin, D->Body->Begin).str() + " {");
+      line(text(D->Begin, D->Body->Begin) + " {");
       indent();
       body(D->Body);
       dedent();
@@ -336,17 +376,25 @@ private:
       return;
     }
     if (D->Init) {
-      line(text(D->Begin, D->Init->Begin).str() + " " + expr(D->Init).Text +
-           ";");
+      line(text(D->Begin, D->Init->Begin) + " " + expr(D->Init).Text + ";");
       return;
     }
-    line(text(D->Begin, D->End).str() + ";");
+    line(text(D->Begin, D->End) + ";");
   }
 
   void declaration(const TopLevel &Item) override {
+    // Recovered field layouts describe the binary's storage. Keep those C
+    // declarations intact rather than inventing definitions of STL aliases.
+    if (Opts.Dialect == SourceDialect::Cpp &&
+        (Item.Decls.front()->Kind == DeclKind::Record ||
+         Item.Decls.front()->Kind == DeclKind::Typedef)) {
+      line(T.Source.slice(Item.Begin, Item.End).trim());
+      trailingComments(Item.Trailing);
+      return;
+    }
     if (Item.Decls.size() > 1 || Item.Decls.front()->Kind == DeclKind::Record ||
         Item.Decls.front()->Kind == DeclKind::Typedef) {
-      line(text(Item.Begin, Item.End).str());
+      line(text(Item.Begin, Item.End));
     } else {
       declarationLine(Item.Decls.front());
     }
@@ -354,8 +402,9 @@ private:
   }
 
   void staticAssert(const TopLevel &Item) override {
-    line("_Static_assert(" + expr(Item.Assertion).Text + ", " +
-         expr(Item.Message).Text + ");");
+    line(std::string(Opts.Dialect == SourceDialect::Cpp ? "static_assert("
+                                                        : "_Static_assert(") +
+         expr(Item.Assertion).Text + ", " + expr(Item.Message).Text + ");");
     trailingComments(Item.Trailing);
   }
 };

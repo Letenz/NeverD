@@ -70,6 +70,23 @@ representation. Each worker must keep its matching engine and runtime libraries.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 
+## Source dialects and DWARF ingestion
+
+`NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
+custom template arguments, ATL names, and the C exception projection's native
+calls and handlers. `NeverDSessionCAPITests` checks detected defaults, explicit
+language pages and emission caches; `NeverDGuiController` checks the C++ title,
+switching back to C, and absence of a redundant C choice in C-only images.
+`NeverDDebugInfoTests` compares the extent sweep with a pairwise policy oracle,
+merges duplicate DIEs across parallel workers, and checks that DWARF references
+retain qualified record identity. Existing language/EH and source ABI suites
+cover the shared runtime detection and parameter-placement boundaries.
+
+For load benchmarks use Release, the same binary and warm-cache repetitions
+with `NEVERD_THREADS=1` and a fixed parallel count. Measure session loading
+separately from decompilation. Report algorithmic and parallel gains separately;
+thread count alone does not establish faster loading on every input.
+
 ## Scalar x86 floating-point state
 
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
@@ -2794,7 +2811,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5044 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5406`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5054 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5416`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 

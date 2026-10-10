@@ -222,7 +222,7 @@ signals:
 private:
   void updateStatus();
   /// The representations the loaded program offers: C beside Pseudocode
-  /// only for a program with Rust or Go code, whose Pseudocode reads those
+  /// only for a program with C++, Rust or Go code, whose Pseudocode reads those
   /// functions in their own language.
   void updateRepresentations();
   Session &session_;

@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: de55d0c8371c40ef06c66833180190f9b5ccc8446f629881d20d4389e89a464d -->
+<!-- i18n-source: c2384f22e6d167b6294f2cbed8eea7aaedcbc86523ba5b73f2e1471cf41434a9 -->
 
 <div align="center">
 
@@ -140,8 +140,9 @@ cmake --build build
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
 
-# Pseudo-code dans le langage du programme (Rust, Go ou C)
+# Pseudo-code dans le langage du programme (C++, Rust, Go ou C)
 ./build/bin/neverd decompile --language=source -o out.rs rust-binary
+./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
 # EVM

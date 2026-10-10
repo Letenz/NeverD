@@ -23,7 +23,9 @@ SourceDialectText DialectPrinter::run() {
   for (const CSourceName &Name : Opts.Names) {
     if (Name.Symbol.empty())
       continue;
-    if (auto Spelled = sourceName(Name.Symbol))
+    if (auto Spelled = Name.TheKind == CSourceName::Kind::Type
+                           ? sourceTypeName(Name.Symbol)
+                           : sourceName(Name.Symbol))
       ByName[*Spelled].push_back(Name.Identifier);
   }
   for (auto &[Spelled, Identifiers] : ByName)
@@ -247,9 +249,18 @@ Printed DialectPrinter::withComments(const Expr *E, Printed P) const {
   return P;
 }
 
+bool DialectPrinter::sourceType(llvm::StringRef Identifier) const {
+  const CSourceName *Entry = NameEntries.lookup(Identifier);
+  return Entry && Entry->TheKind == CSourceName::Kind::Type;
+}
+
 std::string DialectPrinter::name(llvm::StringRef Identifier) const {
-  if (auto It = SourceNames.find(Identifier); It != SourceNames.end())
+  if (auto It = SourceNames.find(Identifier); It != SourceNames.end()) {
+    // Type spellings are not navigable function or object identities.
+    if (sourceType(Identifier))
+      return It->second;
     return NameOpen + Identifier.str() + NameClose + It->second + NameEnd;
+  }
   return escapeIdentifier(Identifier);
 }
 

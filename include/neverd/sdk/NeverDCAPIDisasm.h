@@ -215,15 +215,18 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 
 /// Return a schema_version=1 page of native Low/Med IR with instruction
 /// anchors, or C/LLVMC with optional library regions. Representation is
-/// "low", "med", "c", "llvmc", "rust", "go" or "source"; "rust" and "go"
+/// "low", "med", "c", "llvmc", "cpp", "rust", "go" or "source"; dialects
 /// spell the HighC page in that language and "source" in the function's own
-/// (Rust, Go or C), adding dialect, unread and source_names (where each
-/// source name such as core::fmt::write is). "rust" and "go" are offered for
+/// (C++, Rust, Go or C), adding dialect, unread and source_names (where each
+/// source name such as core::fmt::write is). Dialects are offered for
 /// an image with that language's code (neverd_headers_json's
 /// language.pseudocode); for another the page is mapping_status
 /// "unsupported_representation" with the reason. Offset is an absolute
 /// zero-based rendered line and Limit is 1..2048. Text is byte-for-byte the
-/// corresponding legacy IR dump slice. Rows carry line, object_id, kind,
+/// corresponding IR dump slice. C views retain native exception calls and
+/// handler definitions, with table metadata in comments, instead of C++
+/// try/catch/throw syntax. They require the original exception runtime.
+/// Rows carry line, object_id, kind,
 /// mapping_status, addresses (hex strings), and origin_seq when available. An
 /// instruction anchor identifies the originating instruction, not every
 /// contributing instruction after data propagation. Headers, PHIs and

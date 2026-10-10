@@ -2403,6 +2403,179 @@ TEST(LowIRLoopInference, ZeroIterationWitnessDoesNotHideAnotherEntryLoop) {
   }
 }
 
+// Two sequential countdown loops have entry arms that agree on their
+// respective domains but can produce different total prefix expressions.
+// Padding changes which arm a breadth-first witness search reaches first.
+Program joinedPrefixLoops(bool SameExpression, bool ReverseCondition,
+                          bool ToggleScratch, unsigned ShortPadding) {
+  Program P;
+  P.Function.Blocks[0].Succs = {1, 2};
+  P.instruction({op(NdOp::COPY, r(0), {n(0)}), op(NdOp::COPY, r(8), {r(16)}),
+                 op(NdOp::COPY, r(24), {r(32)}),
+                 op(NdOp::INT_AND, r(56), {r(48), n(~uint64_t{1})}),
+                 op(ReverseCondition ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL,
+                    NdVar::tmp(0, 1), {r(56), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x200), NdVar::tmp(0, 1)})});
+  for (unsigned Arm = 0; Arm != 2; ++Arm) {
+    P.block(Arm + 1, 0x200 + Arm * 0x100, {Arm ? 3 : 5});
+    const bool ZeroArm = ReverseCondition ? Arm == 0 : Arm == 1;
+    P.instruction(
+        {op(NdOp::COPY, r(40), {(!SameExpression && ZeroArm) ? n(0) : r(56)}),
+         op(NdOp::BRANCH, {},
+            {n(Arm ? 0x400 : (ShortPadding ? 0xc00 : 0x600))})});
+    if (!Arm && ShortPadding)
+      P.Function.Blocks.back().Succs = {11};
+  }
+  P.block(3, 0x400, {4});
+  P.instruction({op(NdOp::BRANCH, {}, {n(0x500)})});
+  P.block(4, 0x500, {5});
+  P.instruction({op(NdOp::BRANCH, {}, {n(0x600)})});
+  P.block(5, 0x600, {6, 8});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(8), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0x900), NdVar::tmp(0, 1)})});
+  P.block(6, 0x700, {5});
+  P.instruction({op(NdOp::INT_ADD, r(0), {r(0), r(8)}),
+                 op(NdOp::INT_SUB, r(8), {r(8), n(1)})});
+  if (ToggleScratch)
+    P.instruction({op(NdOp::INT_XOR, r(40), {r(40), n(1)})});
+  P.instruction({op(NdOp::BRANCH, {}, {n(0x600)})});
+  P.block(8, 0x900, {9, 10});
+  P.instruction({op(NdOp::INT_EQUAL, NdVar::tmp(0, 1), {r(24), n(0)}),
+                 op(NdOp::COND_BR, {}, {n(0xb00), NdVar::tmp(0, 1)})});
+  P.block(9, 0xa00, {8});
+  P.instruction({op(NdOp::INT_ADD, r(0), {r(0), r(24)}),
+                 op(NdOp::INT_SUB, r(24), {r(24), n(1)})});
+  if (ToggleScratch)
+    P.instruction({op(NdOp::INT_XOR, r(40), {r(40), n(1)})});
+  P.instruction({op(NdOp::BRANCH, {}, {n(0x900)})});
+  P.block(10, 0xb00);
+  P.finish();
+  for (unsigned I = 0; I != ShortPadding; ++I) {
+    P.block(11 + I, 0xc00 + 0x100 * I,
+            {I + 1 == ShortPadding ? 5 : int(12 + I)});
+    P.instruction({op(NdOp::BRANCH, {},
+                      {n(I + 1 == ShortPadding ? 0x600 : 0xd00 + 0x100 * I)})});
+  }
+  return P;
+}
+
+TEST(LowIRLoopInference, JoinedPrefixUsesCompleteEntryTraversal) {
+  for (bool Same : {false, true})
+    for (bool Reverse : {false, true})
+      for (bool Toggle : {false, true})
+        for (unsigned Padding : {0U, 3U}) {
+          SCOPED_TRACE(::testing::Message()
+                       << Same << Reverse << Toggle << Padding);
+          const auto P = joinedPrefixLoops(Same, Reverse, Toggle, Padding);
+          const auto I = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
+                                                      {}, {0x600, 0x900});
+          ASSERT_TRUE(I.inferred()) << I.Diagnostic;
+          ASSERT_EQ(I.Plan->Cutpoints.size(), 2U);
+          const auto Check = checkLowIRLoopRefinement(
+              P.Function, P.Records, P.Function, P.Contract, *I.Plan,
+              Witness::LiftedBits, {});
+          ASSERT_TRUE(Check.proved()) << Check.Diagnostic;
+          ASSERT_TRUE(Check.Certificate);
+          EXPECT_EQ(Check.LoopInitiations, 3U);
+          EXPECT_EQ(Check.RankingChecks, 3U);
+        }
+}
+
+TEST(LowIRLoopInference, JoinedPrefixStillChecksEveryArrivalAndProgress) {
+  for (bool Toggle : {false, true}) {
+    const auto P = joinedPrefixLoops(false, false, Toggle, 0);
+    const auto I = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {},
+                                                {0x600, 0x900});
+    ASSERT_TRUE(I.inferred()) << I.Diagnostic;
+    for (unsigned Fault = 0; Fault != 3; ++Fault) {
+      SCOPED_TRACE(Fault);
+      auto Wrong = P;
+      auto &Body = Wrong.Function.Blocks[6];
+      ASSERT_EQ(Body.StartAddr, 0x700U);
+      if (Fault == 0)
+        Body.Ops[0].Opcode = NdOp::INT_SUB;
+      else if (Fault == 1)
+        Body.Ops[1].Inputs[1] = n(0);
+      else {
+        auto &Arm = Wrong.Function.Blocks[1];
+        ASSERT_EQ(Arm.StartAddr, 0x200U);
+        Arm.Ops[0].Inputs[0] = n(2);
+      }
+      const auto Check = checkLowIRLoopRefinement(
+          P.Function, P.Records, Wrong.Function, P.Contract, *I.Plan,
+          Witness::LiftedBits, {});
+      EXPECT_FALSE(Check.proved());
+      EXPECT_FALSE(Check.Certificate);
+      EXPECT_EQ(Check.Status, Status::Different) << Check.Diagnostic;
+    }
+    auto WrongRank = *I.Plan;
+    for (auto &Cut : WrongRank.Cutpoints)
+      Cut.Rank.assign(Cut.Rank.size(), n(0));
+    const auto Check =
+        checkLowIRLoopRefinement(P.Function, P.Records, P.Function, P.Contract,
+                                 WrongRank, Witness::LiftedBits, {});
+    EXPECT_FALSE(Check.proved());
+    EXPECT_FALSE(Check.Certificate);
+    EXPECT_EQ(Check.Status, Status::Different) << Check.Diagnostic;
+  }
+}
+
+TEST(LowIRLoopInference,
+     JoinedPrefixPreservesIndependentInferenceAndProofBudgets) {
+  for (bool Toggle : {false, true}) {
+    const auto P = joinedPrefixLoops(false, false, Toggle, 0);
+    const auto I = inferLowIRLoopRefinementPlan(P.Function, P.Contract, {},
+                                                {0x600, 0x900});
+    ASSERT_TRUE(I.inferred()) << I.Diagnostic;
+    LowIRLoopInferenceLimits Exact;
+    Exact.Execution.MaxOperations = I.Operations;
+    Exact.Execution.MaxSolverQueries = I.SolverQueries;
+    Exact.MaxWideningRounds = I.WideningRounds;
+    ASSERT_TRUE(inferLowIRLoopRefinementPlan(P.Function, P.Contract, Exact,
+                                             {0x600, 0x900})
+                    .inferred());
+    for (unsigned Kind = 0; Kind != 3; ++Kind) {
+      auto Short = Exact;
+      if (!Kind)
+        --Short.Execution.MaxOperations;
+      else if (Kind == 1)
+        --Short.Execution.MaxSolverQueries;
+      else
+        --Short.MaxWideningRounds;
+      const auto Refused = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
+                                                        Short, {0x600, 0x900});
+      EXPECT_FALSE(Refused.inferred());
+      EXPECT_FALSE(Refused.Plan);
+      EXPECT_EQ(Refused.Status, LowIRLoopInferenceStatus::BudgetExceeded)
+          << Refused.Diagnostic;
+    }
+    const auto Good =
+        checkLowIRLoopRefinement(P.Function, P.Records, P.Function, P.Contract,
+                                 *I.Plan, Witness::LiftedBits, {});
+    ASSERT_TRUE(Good.proved()) << Good.Diagnostic;
+    LowIRRefinementLimits Proof;
+    Proof.Execution.MaxOperations = Good.Operations;
+    Proof.Execution.MaxSolverQueries = Good.SolverQueries;
+    ASSERT_TRUE(checkLowIRLoopRefinement(P.Function, P.Records, P.Function,
+                                         P.Contract, *I.Plan,
+                                         Witness::LiftedBits, Proof)
+                    .proved());
+    for (unsigned Kind = 0; Kind != 2; ++Kind) {
+      auto Short = Proof;
+      if (!Kind)
+        --Short.Execution.MaxOperations;
+      else
+        --Short.Execution.MaxSolverQueries;
+      const auto Refused = checkLowIRLoopRefinement(
+          P.Function, P.Records, P.Function, P.Contract, *I.Plan,
+          Witness::LiftedBits, Short);
+      EXPECT_FALSE(Refused.proved());
+      EXPECT_FALSE(Refused.Certificate);
+      EXPECT_EQ(Refused.Status, Status::BudgetExceeded) << Refused.Diagnostic;
+    }
+  }
+}
+
 Program nestedWordLoops() {
   Program A;
   A.Function.Blocks[0].Succs = {1};

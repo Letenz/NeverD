@@ -1991,10 +1991,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   }
   if (operation == "decompile") {
     const auto representation = stringField(p, "representation", "c", 16);
-    // `source` reads in the function's own language; `rust` and `go` spell
+    // `source` reads in the function's own language; the named dialects spell
     // the HighC source in one, through the engine's view alone.
     const bool spelled = representation == "source" ||
-                         representation == "rust" || representation == "go";
+                         representation == "cpp" || representation == "rust" ||
+                         representation == "go";
     if (representation != "c" && representation != "llvmc" &&
         representation != "low" && representation != "med" &&
         representation != "high" && representation != "llvm" && !spelled)

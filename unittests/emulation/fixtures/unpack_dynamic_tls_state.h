@@ -12,6 +12,42 @@ __declspec(dllimport) int FlsFree(U32);
 __declspec(dllimport) void *FlsGetValue(U32);
 __declspec(dllimport) int FlsSetValue(U32, void *);
 static U32 DynamicSlot;
+static volatile U64 FLSCallbackValue;
+static U32 FLSCallbackMode, FLSCallbackFailure;
+static volatile U64 NestedFLSCallbackValue;
+
+static void cleanupNestedFLS(void *Value) {
+  NestedFLSCallbackValue = (U64)Value;
+  void *Heap = GetProcessHeap();
+  U64 *Memory = HeapAlloc(Heap, 0, sizeof(U64));
+  if (!Memory) {
+    FLSCallbackFailure = 1;
+    return;
+  }
+  *Memory = (U64)Value;
+  FLSCallbackFailure |= !HeapFree(Heap, 0, Memory);
+}
+static void cleanupFLS(void *Value) {
+  FLSCallbackValue = (U64)Value;
+  if (FLSCallbackMode == RecursiveFLSCallbackMode) {
+    FlsFree(DynamicSlot);
+    return;
+  }
+  if (FLSCallbackMode != NestedFLSCallbackMode)
+    return;
+  FLSCallbackFailure |= FlsGetValue(DynamicSlot) != Value;
+  FLSCallbackFailure |= !FlsSetValue(DynamicSlot, 0);
+  U32 Nested = FlsAlloc((void *)cleanupNestedFLS);
+  if (Nested == 0xffffffffU || Nested == DynamicSlot ||
+      !FlsSetValue(Nested, (void *)((U64)Value + 1)) || !FlsFree(Nested)) {
+    FLSCallbackFailure = 1;
+    return;
+  }
+  FLSCallbackValue += NestedFLSCallbackValue;
+}
+static int callbackFLSMode(U32 Mode) {
+  return Mode >= FreedFLSCallbackMode && Mode <= RecursiveFLSCallbackMode;
+}
 
 static int dynamicMode(U32 Mode) {
   return Mode >= DynamicTLSMode && Mode <= ClearedUnallocatedTLSValueMode;
@@ -40,6 +76,25 @@ static void createDynamicState(U32 Mode) {
     ExitProcess(FailureStatus);
 }
 static void prepareDynamicState(U32 Mode) {
+  if (callbackFLSMode(Mode)) {
+    FLSCallbackMode = Mode;
+    DynamicSlot = FlsAlloc((void *)cleanupFLS);
+    if (DynamicSlot == 0xffffffffU ||
+        !FlsSetValue(DynamicSlot, Mode == EmptyFLSCallbackMode ||
+                                          Mode == ReusedFLSCallbackMode
+                                      ? 0
+                                      : (void *)(U64)InitializeResult) ||
+        !FlsFree(DynamicSlot))
+      ExitProcess(FailureStatus);
+    if (Mode == ReusedFLSCallbackMode) {
+      DynamicSlot = FlsAlloc(0);
+      if (DynamicSlot == 0xffffffffU ||
+          !FlsSetValue(DynamicSlot, (void *)(U64)InitializeResult) ||
+          !FlsFree(DynamicSlot))
+        ExitProcess(FailureStatus);
+    }
+    return;
+  }
   if (Mode == UnallocatedTLSValueMode ||
       Mode == ClearedUnallocatedTLSValueMode) {
     DynamicSlot = 63;
@@ -59,6 +114,12 @@ static void prepareDynamicState(U32 Mode) {
   }
 }
 static int validDynamicState(U32 Mode) {
+  if (callbackFLSMode(Mode))
+    return !FLSCallbackFailure &&
+           FLSCallbackValue ==
+               (Mode == NestedFLSCallbackMode  ? 2 * InitializeResult + 1
+                : Mode == FreedFLSCallbackMode ? InitializeResult
+                                               : 0);
   if (!dynamicMode(Mode) || Mode == ClearedUnallocatedTLSValueMode)
     return 1;
   if (lateDynamicMode(Mode) || releasedDynamicMode(Mode))

@@ -34,7 +34,7 @@ constexpr int WheelLines = 3;
 constexpr char PreludeRegion[] = "prelude";
 
 /// How a representation is colored; Source takes the language the page names.
-enum class Dialect { C, Rust, Go, IR, LLVM, Source };
+enum class Dialect { C, Cpp, Rust, Go, IR, LLVM, Source };
 struct Representation {
   const char *name;
   const char *title;
@@ -122,7 +122,27 @@ const Vocabulary &vocabularyOf(Dialect dialect) {
 #define NEVERD_GO_TYPE(Word) QStringLiteral(Word),
 #include "CodeVocabulary.def"
                                 }};
-  return dialect == Dialect::Rust ? Rust : dialect == Dialect::Go ? Go : C;
+  static const Vocabulary Cpp = [] {
+    Vocabulary Words = C;
+    for (const char *Word : {"class",       "namespace",
+                             "template",    "typename",
+                             "public",      "protected",
+                             "private",     "virtual",
+                             "override",    "final",
+                             "constexpr",   "noexcept",
+                             "static_cast", "reinterpret_cast",
+                             "const_cast",  "dynamic_cast",
+                             "new",         "delete",
+                             "this",        "using",
+                             "nullptr",     "static_assert",
+                             "alignof"})
+      Words.keywords.insert(QString::fromLatin1(Word));
+    return Words;
+  }();
+  return dialect == Dialect::Cpp    ? Cpp
+         : dialect == Dialect::Rust ? Rust
+         : dialect == Dialect::Go   ? Go
+                                    : C;
 }
 
 /// Whether \p word names one of the integer or floating types the dialect
@@ -141,6 +161,8 @@ Dialect dialectOf(const QString &representation, const QString &language) {
   const Dialect dialect = entry ? entry->dialect : Dialect::C;
   if (dialect != Dialect::Source)
     return dialect;
+  if (language == QLatin1String("cpp"))
+    return Dialect::Cpp;
   if (language == QLatin1String("rust"))
     return Dialect::Rust;
   if (language == QLatin1String("go"))
@@ -150,8 +172,8 @@ Dialect dialectOf(const QString &representation, const QString &language) {
 
 /// Source languages share C's comments, strings and preprocessor-like lines.
 bool sourceDialect(Dialect dialect) {
-  return dialect == Dialect::C || dialect == Dialect::Rust ||
-         dialect == Dialect::Go;
+  return dialect == Dialect::C || dialect == Dialect::Cpp ||
+         dialect == Dialect::Rust || dialect == Dialect::Go;
 }
 const QSet<QString> &llvmWords() {
   static const QSet<QString> words = {
@@ -427,6 +449,8 @@ QString CodeText::language() const {
   switch (dialectOf(representation_, pageLanguage_)) {
   case Dialect::C:
     return QStringLiteral("c");
+  case Dialect::Cpp:
+    return QStringLiteral("cpp");
   case Dialect::Rust:
     return QStringLiteral("rust");
   case Dialect::Go:
@@ -756,7 +780,8 @@ void CodeText::highlightLine(Line &line, bool &inComment) const {
         if (words.control.contains(word))
           role = Control;
         else if (words.types.contains(word) || widthType(dialect, word) ||
-                 (dialect == Dialect::C && word.endsWith(QStringLiteral("_t"))))
+                 ((dialect == Dialect::C || dialect == Dialect::Cpp) &&
+                  word.endsWith(QStringLiteral("_t"))))
           role = Type;
         else if (words.keywords.contains(word))
           role = Keyword;
@@ -1228,6 +1253,8 @@ QString CodeView::chosenLanguage() const {
   // Language names are the same in every translation; C, the common case,
   // goes without saying.
   const QString language = text_->language();
+  if (language == QLatin1String("cpp"))
+    return QStringLiteral("C++");
   if (language == QLatin1String("rust"))
     return QStringLiteral("Rust");
   if (language == QLatin1String("go"))
@@ -1292,7 +1319,7 @@ CodeView::CodeView(Session &session, const QString &representation,
 
 void CodeView::updateRepresentations() {
   // Pseudocode reads each function in its program's languages: C, and the
-  // Rust or Go a function was written in.  C beside it is the one other
+  // C++, Rust or Go a function was written in. C beside it is the one other
   // choice, for a program with another language; until a program says, it
   // stays.
   const auto pseudocode =

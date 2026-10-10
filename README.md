@@ -135,8 +135,9 @@ cmake --build build
 ./build/bin/neverd decompile -o out.c binary
 ./build/bin/neverd patch -hello -o patched binary
 
-# Pseudocode in the program's own language (Rust, Go or C)
+# Pseudocode in the program's own language (C++, Rust, Go or C)
 ./build/bin/neverd decompile --language=source -o out.rs rust-binary
+./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
 # EVM
