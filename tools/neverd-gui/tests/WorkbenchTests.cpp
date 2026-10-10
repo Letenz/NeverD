@@ -482,6 +482,9 @@ private slots:
     }
     Workbench bench(native ? qEnvironmentVariable("NEVERD_CODE_NAV_WORKER")
                            : QString::fromLocal8Bit(TEST_WORKER));
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
     bench.window->openFile(path);
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
@@ -558,8 +561,10 @@ private slots:
     };
     QVERIFY(edit(native ? QStringLiteral("value") : QStringLiteral("v0"),
                  QStringLiteral("input_value")));
-    QTRY_VERIFY_WITH_TIMEOUT(
+    QTRY_VERIFY2_WITH_TIMEOUT(
         code->allText().contains(native ? "input_value" : "v1 = input_value +"),
+        qPrintable(code->status() + '\n' + diagnostics.join('\n') + '\n' +
+                   code->allText()),
         NativeOpenTimeoutMs);
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
     if (!native)
