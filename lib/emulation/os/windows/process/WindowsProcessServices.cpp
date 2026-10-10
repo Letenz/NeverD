@@ -13,6 +13,7 @@
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace neverd::emulation::windows_process {
 namespace {
@@ -97,14 +98,19 @@ std::optional<uint64_t> Services::unsupported(const Service &S) {
   Result.Diagnostic = std::string(text::ServiceArguments) + S.Name;
   return std::nullopt;
 }
-llvm::Error Services::complete(const FLSCleanup &Cleanup) {
+llvm::Expected<bool> Services::complete(FLSCleanup &Cleanup) {
   auto I = FLSData.find(Cleanup.Index);
   if (I == FLSData.end() || !I->second.Cleaning ||
       I->second.Callback != Cleanup.Function)
     return failure(text::FLSCallback);
-  // Keep the index allocated throughout the callback. Its value can be read
-  // or changed by guest code, and another allocation must not reuse it yet.
+  // Explicit free clears the value before each callback and repeats if the
+  // callback rearms it. Keep the same allocated index and continuation until
+  // that value stays empty; the shared execution budget bounds repetition.
   if (Cleanup.ReleaseIndex) {
+    if (I->second.Value) {
+      Cleanup.Argument = std::exchange(I->second.Value, 0);
+      return false;
+    }
     FLSSlots.reset(Cleanup.Index);
     FLSData.erase(I);
   } else {
@@ -113,12 +119,16 @@ llvm::Error Services::complete(const FLSCleanup &Cleanup) {
     I->second.Value = 0;
     I->second.Cleaning = false;
   }
-  return llvm::Error::success();
+  return true;
 }
-llvm::Expected<std::optional<FLSCleanup>>
-Services::exitCleanup(uint32_t &Next) {
-  while (Next < DynamicTLSCount) {
-    const uint32_t Index = Next++;
+llvm::Expected<std::optional<FLSCleanup>> Services::exitCleanup() {
+  // Snapshot the historical allocation bound, not the current live indices
+  // or values. Callbacks may initialize or reuse later indices in this range,
+  // but allocations above the initial bound do not extend the exit sweep.
+  if (!FLSExit)
+    FLSExit = FiberExit{0, FLSHighIndex};
+  while (FLSExit->Next < FLSExit->Limit) {
+    const uint32_t Index = FLSExit->Next++;
     auto I = FLSData.find(Index);
     if (I == FLSData.end())
       continue;
@@ -341,6 +351,7 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
         continue;
       FLSSlots.set(I);
       FLSData[I] = {A[0], 0};
+      FLSHighIndex = std::max(FLSHighIndex, I + 1);
       return Value(I);
     }
     return WinError(ErrorNotEnoughMemory, TLSOutOfIndexes);
@@ -360,7 +371,8 @@ llvm::Expected<ServiceOutcome> Services::invoke(const Service &S,
         return ServiceOutcome(unsupported(S));
       if (Data.Callback && Data.Value) {
         Data.Cleaning = true;
-        return ServiceOutcome(FLSCleanup{Index, Data.Callback, Data.Value});
+        return ServiceOutcome(
+            FLSCleanup{Index, Data.Callback, std::exchange(Data.Value, 0)});
       }
       FLSSlots.reset(Index);
       FLSData.erase(Index);
