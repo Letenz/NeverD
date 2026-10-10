@@ -39,7 +39,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified | Broader host qualification and redaction/export remain; Windows pending |
 | P2 SDK/CLI/worker | Thirty-four SDK/CLI tests passed, including navigation/storage/view anchors and direct Bun navigation/view/anchor commands; C++ worker adapter/framed-process and all nine worker regressions passed | Broader host, cancellation/resource and distribution qualification remain |
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
-| P4A Bun extraction | Fixed Linux x64 extraction, decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff implemented; five full compiler outputs, ten extraction/range and six map cases passed | Other Bun platforms remain; JSC caches stay opaque |
+| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions and independent SEA/pkg/nexe adapters remain; JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR packed/unpacked extraction; Electron manifest entries, source-visible boundaries, scoped IPC comparison, captured preload/renderer files and HTML/import-map candidates implemented; qualification recorded below | External-source HTML contexts and full import closure, runtime/window routing, distribution detection, safe export, NW.js/VSIX and broader host/release qualification remain |
 | P4C package graph/diff | Pending | npm lock v1/v2/v3, integrity/provenance, dispositions, platform artifacts |
@@ -126,6 +126,29 @@ product distribution or installation of all targets.
 No new Python, JavaScript or shell implementation/test scripts were added.
 
 ## Next implementation boundary
+
+On 2026-10-11 the Bun container reader was separated from the shared graph
+decoder and qualified for Linux, macOS and Windows x64/ARM64 input images on
+the macOS arm64 Release host. Twenty additional full pinned compiler images
+cover each new target's plain source, UTF-16, assets/maps and bytecode/maps.
+Independent C++ manifests retain full-container and member hashes; the graph
+bytes are checked in, and native runtimes stay outside the repository.
+The existing five Linux x64 images and official Claude Code input still pass.
+Mach-O tests additionally mutate typed commands, metadata aliases and platform
+declarations, including the real x64/ARM64 images. A metadata read in the new
+test initially exceeded the store's 8-MiB per-read bound; changing that test to
+bounded reads fixed it without changing production limits.
+
+The owning web run exercised 298 cases: 291 passed after that test repair;
+six map cases require unavailable LLVM Zstd support, and one ASAR-policy
+omission case is inapplicable in this enabled build. All seven selected worker
+regressions passed. The new SDK case checks all six targets' profile metadata,
+decoded sources and verified local export. Manual CLI analysis of real Linux,
+macOS and Windows ARM64 files succeeded with an unusable external-tool PATH.
+No generated target or downloaded application was executed. These results
+qualify extraction, not a Windows analyzer host, cache decoding, signature
+validation or arbitrary future Bun versions. See the
+[Bun profile](web-bun-profile.md) for precise admission and corpus contracts.
 
 The C++ source model now retains field roles, list ordinals and exact UTF-16
 values privately. Thirteen binding cases cover shadowing/hoisting, parameter
