@@ -1,6 +1,6 @@
 **Языки**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 47deab21aba179a1e8efc43cabdf488c5af9a20a1b5d8597ee427c157ed212f6 -->
+<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
 
 [← Оглавление документации](README.md)
 
@@ -1096,8 +1096,40 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-71 mandatory workloads per platform / ARM64 213 / Intel 142 unverified
+72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
 [XNU access and subject selection](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [real credential copy](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [owner authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [pathname SEARCH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c), [cached lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_cache.c), [Libc ACL properties](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/gen/filesec.c), [fstatx ACL absence](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/statx_np.c).
+
+## Статические обычные запросы с частично известными группами
+
+`darwin_files.authorization="static-ordinary-queries"` (DarwinFileAuthorization::StaticOrdinaryQueries) сохраняет неизменяемые условия монтирования, безопасности и метаданных предыдущего раздела, закрытые файловые операции, исключения стандартных потоков и независимую анонимную память. static-owner-queries остаётся только для владельца. Реальная проверка требует явных учётных данных, метаданных и ненулевого выбранного UID; root, расширенные права и R/W/X конечной ссылки не поддерживаются.
+
+Владелец использует все запрошенные биты своей категории. Для другого пользователя сравниваются результаты группы и остальных для полной маски. Равные результаты дают разрешение или EACCES13 без поиска членства; разные наборы битов также могут оба отказать. Иначе известный участник использует группу, доказанный неучастник — остальных, а неизвестное членство останавливает UnsupportedService до поиска или эффектов. Категории не смешиваются.
+
+credentials.groups — упорядоченный список групп в учётных данных ядра с EffectiveGID на позиции0 и сохранёнными повторами, а не расширенный список резолвера SDK getgroups. Выбранная основная группа и явное положительное вхождение известны; отсутствие или пропуск списка обычно не доказывает отрицание. При совпадении обеих пар UID/GID реальный контекст сохраняется. Иначе RealGID заменяет позицию0, а прежний EffectiveGID заменяет первое дополнительное вхождение RealGID. Без совпадения прежняя основная группа удаляется и memberd отключается. Только это доказанное преобразование с явным полным списком позволяет отрицательные ответы. Разные UID при одинаковых GID тоже вызывают преобразование; повтор основной группы может сохранить неизвестное внешнее членство. AT_EACCESS использует исходный эффективный контекст; входные данные неизменны.
+
+В примере реальный запрос получает отказ после вытеснения GID20, а AT_EACCESS разрешён известной эффективной основной группой20. SEARCH определяется совпадением результатов группы/остальных; выбранный UID0 и открытие файла не разрешаются.
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","metadata":{"device":7,"inode":2,"mode":32816,"link_count":1,"uid":700,"gid":20,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}},"bytes_hex":"00"}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":502,"real_gid":30,"effective_gid":20,"groups":[20,40]}}}
+```
+
+Нативные проверки ARM64 O0/O1/O2 только для чтения сохраняют270 пар raw/SDK для чужих объектов, SEARCH, ошибок, идентичности и независимого отсутствия свойства ACL. Сырой список учётных групп имеет16 элементов, расширенный SDK —17. Первый запуск ошибочно ограничил длину SDK до запросов прав; неудача сохранена. Реальные/эффективные ID равны: различия и полные преобразования доказываются фиксированным XNU и независимыми моделями, а не нативной проверкой всех внешних механизмов. Пять программных и три ARM64 HVF конфигурации проверяют настоящего гостя, C/CLI/Python, неизвестные идентичности, метаданные, root и членство. Предоставленная модель не входит в58 общих нативных эталонов. Полное разрешение групп, root, ACL/MAC, общие vnode, динамические данные, готовность/сеть, ход часов, Mach IPC/потоки, dyld/TLS и полные фреймворки остаются незавершёнными; нативный Intel HVF и физический iOS не проверены. Сроки не меняются.
+
+```text
+DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-queries
+owner bits / whole-mask group-world outcomes / EACCES13
+credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
+real credential copy / first supplementary match / displacement disables memberd
+missing membership usually unknown / explicit displaced real list proves negatives
+all40 other file routes and direct/file-backed mappings closed / typed streams only
+ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
+OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
+72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).

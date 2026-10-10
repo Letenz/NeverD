@@ -433,6 +433,25 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FileAuthorizationName,
     "Darwin component exceeds the model bound; filesystem length semantics "
     "are not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOrdinaryAuthorizationOption,
+    "Darwin static ordinary queries require an immutable ordinary environment "
+    "without known inode aliases")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOrdinaryAuthorizationScope,
+    "Darwin static ordinary queries do not authorize other vnode operations")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOrdinaryAuthorizationCredentials,
+    "Darwin ordinary authorization requires explicit credentials")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOrdinaryAuthorizationSubject,
+    "Darwin ordinary authorization requires a nonzero selected UID")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOrdinaryAuthorizationMetadata,
+    "Darwin ordinary authorization requires explicit object metadata")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOrdinaryAuthorizationGroups,
+    "Darwin ordinary authorization requires known group membership")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")

@@ -516,6 +516,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"thread-identity-missing", "21"},
           std::pair{"mach-self-ports", "4a"},
           std::pair{"owner-queries", "50"},
+          std::pair{"ordinary-queries", "47"},
+          std::pair{"ordinary-query-unknown", "21"},
+          std::pair{"ordinary-query-open", "21"},
+          std::pair{"ordinary-query-map", "21"},
           std::pair{"mach-self-port-values",
                     emulation::darwin_test::MachSelfPortsHex},
           std::pair{"mach-self-port-missing-thread", "21"},
@@ -579,13 +583,16 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool UnknownThreadIdentity = ModeName == "thread-identity-missing";
   const bool SelfPorts = ModeName.starts_with("mach-self-port");
   const bool UnknownSelfPort = ModeName.starts_with("mach-self-port-missing-");
+  const bool OrdinaryQueries = ModeName.starts_with("ordinary-quer");
+  const bool UnknownOrdinary =
+      OrdinaryQueries && ModeName != "ordinary-queries";
   const bool Entropy = ModeName.starts_with("entropy-");
   const bool UnknownEntropy = Entropy && ModeName != "entropy-replay";
-  const bool Incomplete = UnknownThreadIdentity || UnknownSelfPort ||
-                          UnknownEntropy || ProtectedLink || UnknownPathConf ||
-                          UnknownAttributes || UnknownXattrs || UnknownNames ||
-                          UnknownBulk || UnknownXattrMutation ||
-                          UnknownHardLinkName || UnknownNonblocking;
+  const bool Incomplete =
+      UnknownThreadIdentity || UnknownSelfPort || UnknownEntropy ||
+      ProtectedLink || UnknownPathConf || UnknownAttributes || UnknownXattrs ||
+      UnknownNames || UnknownBulk || UnknownXattrMutation ||
+      UnknownHardLinkName || UnknownNonblocking || UnknownOrdinary;
   const bool X64 = llvm::StringRef(File).ends_with("x86_64");
   SCOPED_TRACE(File);
   Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
@@ -1060,6 +1067,17 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::KernelPathConfJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (OrdinaryQueries) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    (*Input.getAsObject())[field::DarwinFiles] = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::OrdinaryQueriesJSON));
+    (*Input.getAsObject())[field::DarwinSystem] =
+        llvm::cantFail(llvm::json::parse(
+            emulation::darwin_test::OrdinaryQueryCredentialsJSON));
+    (*Input.getAsObject()->getArray(field::Arguments))[2] = "/unknown";
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ModeName == "owner-queries") {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -1124,6 +1142,73 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (OrdinaryQueries) {
+    const auto *Events = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Events, nullptr);
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    if (UnknownOrdinary) {
+      ASSERT_EQ(Events->size(), 2u);
+      const bool Membership = ModeName == "ordinary-query-unknown";
+      EXPECT_EQ(
+          Report->getAsObject()->getString(field::Diagnostic),
+          Membership
+              ? "Darwin ordinary authorization requires known group membership"
+              : "Darwin static ordinary queries do not authorize other vnode "
+                "operations");
+      const auto *Last = Events->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      const unsigned Number = Membership                  ? 466
+                              : ModeName.ends_with("map") ? 197
+                                                          : 5;
+      EXPECT_EQ(Last->getString(field::Number),
+                llvm::utohexstr(Number | (X64 ? 0x2000000 : 0), true));
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    } else {
+      ASSERT_EQ(Events->size(), 146u);
+      constexpr uint64_t Read[] = {0, 13, 13, 13, 0, 13, 13, 13};
+      constexpr uint64_t None[] = {0, 13, 13, 13, 13, 13, 13, 13};
+      constexpr uint64_t RW[] = {0, 13, 0, 13, 0, 13, 0, 13};
+      constexpr uint64_t X[] = {0, 0, 13, 13, 13, 13, 13, 13};
+      for (unsigned API = 0; API != 3; ++API)
+        for (unsigned Request = 0; Request != 8; ++Request) {
+          const uint64_t Expected[] = {
+              Read[Request], API == 2 ? RW[Request] : None[Request], X[Request],
+              API == 2 ? None[Request] : Read[Request]};
+          for (unsigned File = 0; File != 4; ++File) {
+            const auto *E =
+                (*Events)[API * 32 + Request * 4 + File].getAsObject();
+            ASSERT_NE(E, nullptr);
+            EXPECT_EQ(E->getString(field::Result),
+                      llvm::utohexstr(Expected[File], true));
+            EXPECT_EQ(E->getBoolean(field::Error), Expected[File] != 0);
+            EXPECT_EQ(E->getString(field::Number),
+                      llvm::utohexstr((API ? 466 : 33) | (X64 ? 0x2000000 : 0),
+                                      true));
+          }
+        }
+      constexpr uint64_t Remaining[] = {
+          0,  13, 13, 13, 0,  13, 13, 13, 0,  13, 13, 13, 0, 13, 13, 13,
+          0,  13, 13, 0,  13, 13, 0,  13, 13, 13, 13, 13, 0, 2,  0,  13,
+          13, 13, 13, 13, 0,  2,  0,  2,  0,  0,  0,  0,  0, 2};
+      for (unsigned I = 0; I != std::size(Remaining); ++I) {
+        const auto *E = (*Events)[96 + I].getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Result),
+                  llvm::utohexstr(Remaining[I], true));
+        EXPECT_EQ(E->getBoolean(field::Error), Remaining[I] != 0);
+      }
+      EXPECT_EQ((*Events)[142].getAsObject()->getString(field::Number),
+                X64 ? "1234567802000021" : "1234567800000021");
+      auto Repeated = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      auto Again = llvm::json::parse(Repeated);
+      ASSERT_TRUE(bool(Again)) << llvm::toString(Again.takeError());
+      EXPECT_EQ(*Again, *Report);
+    }
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
   if (SelfPorts) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
@@ -1634,7 +1719,9 @@ INSTANTIATE_TEST_SUITE_P(
 TEST_F(ProcessPublic, DarwinOwnerQueriesRejectContradictionsBeforeLoading) {
   for (const char *Bad :
        {"null", "true", "0", "1.5", "{}", "[]", "\"\"", "\"owner\"",
-        "\"StaticOwnerQueries\"", "\"static-owner-queries\\u0000\""}) {
+        "\"StaticOwnerQueries\"", "\"StaticOrdinaryQueries\"",
+        "\"static-owner-queries\\u0000\"",
+        "\"static-ordinary-queries\\u0000\""}) {
     const auto Request = std::string("{\"darwin_files\":{\"files\":[],") +
                          "\"authorization\":" + Bad + "}}";
     for (const char *Profile :
@@ -1647,49 +1734,59 @@ TEST_F(ProcessPublic, DarwinOwnerQueriesRejectContradictionsBeforeLoading) {
       EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     }
   }
-  for (unsigned Change = 0; Change != 6; ++Change) {
-    SCOPED_TRACE(Change);
-    auto Files = llvm::cantFail(
-        llvm::json::parse(emulation::darwin_test::OwnerQueriesJSON));
-    auto &Object = *Files.getAsObject();
-    auto *File = (*Object.getArray(field::Files))[0].getAsObject();
-    auto *Directory = (*Object.getArray(field::Directories))[0].getAsObject();
-    if (Change == 0)
-      (*File)[field::FileWritable] = true;
-    else if (Change == 1)
-      (*Directory)[field::DirectoryMutable] = true;
-    else if (Change == 2)
-      (*File->getObject(field::FileMetadata))[field::FileFlags] = 1;
-    else if (Change == 3)
-      (*File->getObject(field::FileMetadata))[field::FileMode] = 35072;
-    else if (Change == 4)
-      (*File->getObject(field::FileMetadata))[field::FileInode] = 1;
-    else
-      Object[field::FileCreationPolicy] = llvm::json::Object{};
-    llvm::json::Object RequestOptions;
-    RequestOptions[field::DarwinFiles] = std::move(Files);
-    const auto Request = jsonText(std::move(RequestOptions));
-    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
-                                          MacOSMachO64, Request.c_str()),
-              nullptr);
-    const auto Error = takeString(neverd_last_error(Session));
-    EXPECT_TRUE(llvm::StringRef(Error).contains(
-        Change == 5 ? field::FileCreationPolicy
-                    : "Darwin static owner queries"))
-        << Error;
-    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-  }
-  llvm::json::Object ValidOptions;
-  ValidOptions[field::DarwinFiles] = llvm::cantFail(
-      llvm::json::parse(emulation::darwin_test::OwnerQueriesJSON));
-  const auto Valid = jsonText(std::move(ValidOptions));
-  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
-    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
-                                          Valid.c_str()),
-              nullptr);
-    EXPECT_EQ(takeString(neverd_last_error(Session)),
-              field::DarwinFilesProfile);
-    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  for (const char *Authorization :
+       {field::StaticOwnerQueries, field::StaticOrdinaryQueries}) {
+    for (unsigned Change = 0; Change != 6; ++Change) {
+      SCOPED_TRACE(Change);
+      auto Files = llvm::cantFail(llvm::json::parse(
+          llvm::StringRef(Authorization) == field::StaticOwnerQueries
+              ? emulation::darwin_test::OwnerQueriesJSON
+              : emulation::darwin_test::OrdinaryQueriesJSON));
+      auto &Object = *Files.getAsObject();
+      auto *File = (*Object.getArray(field::Files))[0].getAsObject();
+      auto *Directory = (*Object.getArray(field::Directories))[0].getAsObject();
+      if (Change == 0)
+        (*File)[field::FileWritable] = true;
+      else if (Change == 1)
+        (*Directory)[field::DirectoryMutable] = true;
+      else if (Change == 2)
+        (*File->getObject(field::FileMetadata))[field::FileFlags] = 1;
+      else if (Change == 3)
+        (*File->getObject(field::FileMetadata))[field::FileMode] = 35072;
+      else if (Change == 4)
+        (*File->getObject(field::FileMetadata))[field::FileInode] = 1;
+      else
+        Object[field::FileCreationPolicy] = llvm::json::Object{};
+      llvm::json::Object RequestOptions;
+      RequestOptions[field::DarwinFiles] = std::move(Files);
+      const auto Request = jsonText(std::move(RequestOptions));
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                            MacOSMachO64, Request.c_str()),
+                nullptr);
+      const auto Error = takeString(neverd_last_error(Session));
+      EXPECT_TRUE(llvm::StringRef(Error).contains(
+          Change == 5 ? field::FileCreationPolicy
+          : llvm::StringRef(Authorization) == field::StaticOwnerQueries
+              ? "Darwin static owner queries"
+              : "Darwin static ordinary queries"))
+          << Error;
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+    llvm::json::Object ValidOptions;
+    ValidOptions[field::DarwinFiles] = llvm::cantFail(llvm::json::parse(
+        llvm::StringRef(Authorization) == field::StaticOwnerQueries
+            ? emulation::darwin_test::OwnerQueriesJSON
+            : emulation::darwin_test::OrdinaryQueriesJSON));
+    const auto Valid = jsonText(std::move(ValidOptions));
+    for (const char *Profile :
+         {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                            Valid.c_str()),
+                nullptr);
+      EXPECT_EQ(takeString(neverd_last_error(Session)),
+                field::DarwinFilesProfile);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
   }
 }
 

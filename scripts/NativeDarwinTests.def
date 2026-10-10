@@ -127,3 +127,5 @@ NEVERD_NATIVE_DARWIN_CASE(MachSelfPortsPreserveExplicitBitsAndIndependentRuns)
 // Explicit immutable permission environment on the native CPU. Its separate
 // owner-matched raw/SDK oracle is not a common deterministic-host workload.
 NEVERD_NATIVE_DARWIN_CASE(OwnerQueriesKeepPermissionAndUnknownBoundaries)
+NEVERD_NATIVE_DARWIN_CASE(
+    OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch)

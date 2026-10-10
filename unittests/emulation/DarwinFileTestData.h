@@ -78,6 +78,329 @@ inline constexpr char OwnerQueriesJSON[] = R"({
   "working_directory":"/"})";
 inline constexpr char OwnerQueryCredentialsJSON[] = R"({"credentials":{
   "real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20}})";
+inline DarwinFileOptions ordinaryQueryOptions() {
+  DarwinFileOptions O;
+  O.Authorization = DarwinFileAuthorization::StaticOrdinaryQueries;
+  O.Directories = {"/", "/directory"};
+  O.WorkingDirectory = "/";
+  O.Metadata["/"] = ownerQueryMetadata(040777, 1, 0);
+  O.Metadata["/"].UID = 0;
+  O.Metadata["/"].GID = 0;
+  O.Files["/agreement"] = {'a', 'b', 0, 255, 'e', 'f'};
+  O.Metadata["/agreement"] = ownerQueryMetadata(0100644, 2, 6);
+  O.Metadata["/agreement"].UID = 700;
+  O.Metadata["/agreement"].GID = 50;
+  O.Files["/group"] = {};
+  O.Metadata["/group"] = ownerQueryMetadata(0100060, 3, 0);
+  O.Metadata["/group"].UID = 700;
+  O.Metadata["/group"].GID = 20;
+  O.Files["/supplement"] = {};
+  O.Metadata["/supplement"] = ownerQueryMetadata(0100010, 4, 0);
+  O.Metadata["/supplement"].UID = 700;
+  O.Metadata["/supplement"].GID = 40;
+  O.Files["/world"] = {};
+  O.Metadata["/world"] = ownerQueryMetadata(0100004, 5, 0);
+  O.Metadata["/world"].UID = 700;
+  O.Metadata["/world"].GID = 20;
+  O.Files["/unknown"] = {};
+  O.Metadata["/unknown"] = ownerQueryMetadata(0100064, 6, 0);
+  O.Metadata["/unknown"].UID = 700;
+  O.Metadata["/unknown"].GID = 50;
+  O.Metadata["/directory"] = ownerQueryMetadata(040010, 7, 0);
+  O.Metadata["/directory"].UID = 700;
+  O.Metadata["/directory"].GID = 20;
+  O.Files["/directory/leaf"] = {};
+  O.Metadata["/directory/leaf"] = ownerQueryMetadata(0100644, 8, 0);
+  O.Metadata["/directory/leaf"].UID = 700;
+  O.Metadata["/directory/leaf"].GID = 50;
+  O.SymbolicLinks["/alias"] = {'a', 'g', 'r', 'e', 'e', 'm', 'e', 'n', 't'};
+  O.SymbolicLinks["/via"] = {'d', 'i', 'r', 'e', 'c', 't', 'o', 'r', 'y'};
+  return O;
+}
+inline constexpr char OrdinaryQueriesJSON[] = R"({
+  "authorization": "static-ordinary-queries",
+  "files": [
+    {
+      "path": "/agreement",
+      "metadata": {
+        "device": 7,
+        "inode": 2,
+        "mode": 33188,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 50,
+        "size": 6,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "bytes_hex": "616200ff6566"
+    },
+    {
+      "path": "/group",
+      "metadata": {
+        "device": 7,
+        "inode": 3,
+        "mode": 32816,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 20,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "bytes_hex": ""
+    },
+    {
+      "path": "/supplement",
+      "metadata": {
+        "device": 7,
+        "inode": 4,
+        "mode": 32776,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 40,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "bytes_hex": ""
+    },
+    {
+      "path": "/world",
+      "metadata": {
+        "device": 7,
+        "inode": 5,
+        "mode": 32772,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 20,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "bytes_hex": ""
+    },
+    {
+      "path": "/unknown",
+      "metadata": {
+        "device": 7,
+        "inode": 6,
+        "mode": 32820,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 50,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "bytes_hex": ""
+    },
+    {
+      "path": "/directory/leaf",
+      "metadata": {
+        "device": 7,
+        "inode": 8,
+        "mode": 33188,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 50,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      },
+      "bytes_hex": ""
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "metadata": {
+        "device": 7,
+        "inode": 1,
+        "mode": 16895,
+        "link_count": 2,
+        "uid": 0,
+        "gid": 0,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      }
+    },
+    {
+      "path": "/directory",
+      "metadata": {
+        "device": 7,
+        "inode": 7,
+        "mode": 16392,
+        "link_count": 2,
+        "uid": 700,
+        "gid": 20,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      }
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/alias",
+      "target_hex": "61677265656d656e74"
+    },
+    {
+      "path": "/via",
+      "target_hex": "6469726563746f7279"
+    }
+  ],
+  "working_directory": "/"
+})";
+inline constexpr char OrdinaryQueryCredentialsJSON[] = R"({"credentials":{
+  "real_uid":501,"effective_uid":502,"real_gid":30,"effective_gid":20,
+  "groups":[20,40]}})";
+
 inline constexpr char KernelPathConfHex[] =
     "0100000000000000010000000000000001000000000000000000000000000000"
     "0010000000000000000001000000000000100000000000000010000000000000"

@@ -320,9 +320,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     const llvm::StringRef Name = Key;
     if (Name == field::FileAuthorization) {
       auto Authorization = V.getAsString();
-      if (!Authorization || *Authorization != field::StaticOwnerQueries)
+      if (!Authorization || (*Authorization != field::StaticOwnerQueries &&
+                             *Authorization != field::StaticOrdinaryQueries))
         return invalid(Name);
-      Out.Authorization = DarwinFileAuthorization::StaticOwnerQueries;
+      Out.Authorization = *Authorization == field::StaticOwnerQueries
+                              ? DarwinFileAuthorization::StaticOwnerQueries
+                              : DarwinFileAuthorization::StaticOrdinaryQueries;
     } else if (Name == field::DescriptorLimit) {
       auto N = V.getAsUINT64();
       if (!N || *N > UINT32_MAX)

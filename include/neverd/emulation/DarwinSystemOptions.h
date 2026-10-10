@@ -39,6 +39,8 @@ struct DarwinResourceUsage {
 /// Fixed credential observations; alone these do not authorize permissions.
 /// Supported IDs are 0..INT32_MAX. A supplied GroupAccessList has 1..16
 /// entries, preserves order/duplicates and starts with EffectiveGID.
+/// This is the in-credential list, not the SDK's extended resolver list.
+/// Missing entries alone do not prove negative external group membership.
 /// Omitted groups are unknown; constructing this record explicitly declares
 /// its zero/root IDs. Omitting Credentials retains the profile's legacy IDs.
 struct DarwinCredentials {

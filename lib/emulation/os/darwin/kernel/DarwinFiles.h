@@ -278,9 +278,11 @@ private:
   DirectoryLookup directoryDescriptor(uint32_t FD) const;
   llvm::Expected<std::optional<Lookup>> directoryPrefix(uint64_t Address,
                                                         uint32_t DirectoryFD);
-  bool staticOwnerQueries() const;
-  Authorization authorizeOwner(const DarwinFileMetadata *Metadata,
-                               uint32_t Actions, Subject User) const;
+  bool queryEnvironment() const;
+  const char *authorizationScope() const;
+  std::optional<bool> groupMembership(uint32_t GID, Subject User) const;
+  Authorization authorize(const DarwinFileMetadata *Metadata, uint32_t Actions,
+                          Subject User) const;
   llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
                                      LookupMode Mode = LookupMode::Existing,
                                      LinkPolicy Links = {true, false},

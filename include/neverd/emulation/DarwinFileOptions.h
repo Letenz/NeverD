@@ -41,7 +41,7 @@ struct DarwinExtendedAttribute {
 /// Fixed stat64 observations. Regular-file Size must match its bytes; directory
 /// Size is an explicit nonnegative observation, not an entry count.
 /// These observations alone do not authorize catalogue access. The explicit
-/// StaticOwnerQueries environment can use Mode/UID; reads do not advance
+/// static query environments can use Mode/UID/GID; reads do not advance
 /// timestamps. Unknown metadata is not synthesized from the host.
 struct DarwinFileMetadata {
   int32_t Device = 0;
@@ -169,14 +169,23 @@ struct DarwinDirectoryEnumerationPolicy {
   bool BulkAttributes = false;
 };
 
-/// Immutable ordinary local owner authorization for access/faccessat only.
+/// Immutable ordinary local authorization for access/faccessat only.
 /// Declares no ACL, MAC, additional kauth listener, entitlement or other
 /// permission bypass; a writable/executable nonopaque local mount with
 /// ownership enabled; flags=0 and no special mode bits. Actual checks require
-/// explicit credentials, metadata and a matching nonzero owner UID. Root and
-/// nonowner authorization remain unsupported. Other vnode operations are
+/// explicit credentials, metadata and a nonzero selected UID. Root and general
+/// vnode authorization remain unsupported. Other vnode operations are
 /// closed; existing opaque standard streams remain independent.
-enum class DarwinFileAuthorization { StaticOwnerQueries };
+enum class DarwinFileAuthorization {
+  /// Actual checks require a matching owner UID; nonowners stay unsupported.
+  StaticOwnerQueries,
+  /// Same closed ordinary environment, with nonowner queries when whole-mask
+  /// group/world outcomes agree or explicit credentials prove membership.
+  /// A missing in-credential group is usually unknown external membership;
+  /// the real-credential displacement may make an explicit list authoritative.
+  /// Selected root and general vnode operations remain unsupported.
+  StaticOrdinaryQueries
+};
 
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup

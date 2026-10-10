@@ -5115,6 +5115,76 @@ static int owner_queries(const char *stop_path, unsigned scope) {
   return call(4, 1, (u64) "P", 1, 0, 0, 0, &error) == 1 && !error ? 37 : 221;
 }
 
+static int ordinary_queries(const char *stop_path, unsigned scope) {
+  unsigned error;
+  if (stop_path || scope) {
+    if (call(4, 1, (u64) "!", 1, 0, 0, 0, &error) != 1 || error)
+      return 222;
+    if (scope == 1)
+      call(5, (u64) "/agreement", 0x601, 0, 0, 0, 0, &error);
+    else if (scope == 2)
+      call(197, 0, PAGE, 1, 2, 1, 0, &error);
+    else
+      call(466, -2UL, (u64)stop_path, 2, 16, 0, 0, &error);
+    return 223;
+  }
+  const unsigned read_errors[] = {0, 13, 13, 13, 0, 13, 13, 13};
+  const unsigned no_errors[] = {0, 13, 13, 13, 13, 13, 13, 13};
+  const unsigned rw_errors[] = {0, 13, 0, 13, 0, 13, 0, 13};
+  const unsigned x_errors[] = {0, 0, 13, 13, 13, 13, 13, 13};
+#define ORDINARY_QUERY(api, path, mode, flags, expected)                       \
+  do {                                                                         \
+    int status = owner_query_result(api, path, mode, flags, expected);         \
+    if (status)                                                                \
+      return status;                                                           \
+  } while (0)
+  for (unsigned api = 0; api != 3; ++api) {
+    const unsigned flags = api == 2 ? 16 : 0;
+    for (unsigned request = 0; request != 8; ++request) {
+      // Literal outcomes for UID501/502, real GID30, effective GID20,
+      // and in-credential groups[20,40]; no pointer table or native resolver.
+      ORDINARY_QUERY(api, "/agreement", request, flags, read_errors[request]);
+      ORDINARY_QUERY(api, "/group", request, flags,
+                     api == 2 ? rw_errors[request] : no_errors[request]);
+      ORDINARY_QUERY(api, "/supplement", request, flags, x_errors[request]);
+      ORDINARY_QUERY(api, "/world", request, flags,
+                     api == 2 ? no_errors[request] : read_errors[request]);
+    }
+  }
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned request = 0; request != 8; ++request) {
+      // Effective GID50 membership is unknown only for masks2 and6.
+      // Different bit sets still determine equal whole-mask denials.
+      if (api == 2 && (request == 2 || request == 6))
+        continue;
+      ORDINARY_QUERY(api, "/unknown", request, api == 2 ? 16 : 0,
+                     read_errors[request]);
+    }
+  for (unsigned api = 0; api != 3; ++api) {
+    const unsigned flags = api == 2 ? 16 : 0;
+    ORDINARY_QUERY(api, "/directory///", 0, flags, 0);
+    ORDINARY_QUERY(api, "/directory/missing", 0, flags, api == 2 ? 2 : 13);
+    ORDINARY_QUERY(api, "/directory/leaf", 4, flags, api == 2 ? 0 : 13);
+    ORDINARY_QUERY(api, "/directory/.", 0, flags, api == 2 ? 0 : 13);
+    ORDINARY_QUERY(api, "/directory/..", 0, flags, api == 2 ? 0 : 13);
+    ORDINARY_QUERY(api, "/via/leaf", 4, flags, api == 2 ? 0 : 13);
+    ORDINARY_QUERY(api, "/alias", 4, flags, 0);
+    ORDINARY_QUERY(api, "/missing", 0, flags, 2);
+  }
+#undef ORDINARY_QUERY
+  if (call(0x1234567800000021UL, (u64) "/agreement", 4, 0, 0, 0, 0, &error) ||
+      error)
+    return 224;
+  u64 address = call(197, 0, PAGE, 3, 0x1002, -1UL, 0, &error);
+  if (error || address % PAGE)
+    return 225;
+  *(volatile u64 *)address = 0x8877665544332211UL;
+  if (*(volatile u64 *)address != 0x8877665544332211UL ||
+      call(73, address, PAGE, 0, 0, 0, 0, &error) || error)
+    return 226;
+  return call(4, 1, (u64) "G", 1, 0, 0, 0, &error) == 1 && !error ? 37 : 227;
+}
+
 static int file_access(const char *path) {
   unsigned error;
   char parent[1024];
@@ -7143,6 +7213,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
   if (equal(argv[1], "time") || equal(argv[1], "time-values"))
     return time_calls(equal(argv[1], "time-values"));
+  if (equal(argv[1], "ordinary-queries"))
+    return ordinary_queries(0, 0);
+  if (equal(argv[1], "ordinary-query-unknown"))
+    return ordinary_queries(argc < 3 ? "/unknown" : argv[2], 0);
+  if (equal(argv[1], "ordinary-query-open"))
+    return ordinary_queries(0, 1);
+  if (equal(argv[1], "ordinary-query-map"))
+    return ordinary_queries(0, 2);
   if (equal(argv[1], "owner-queries"))
     return owner_queries(0, 0);
   if (equal(argv[1], "owner-query-stop"))

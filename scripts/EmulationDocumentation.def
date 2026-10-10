@@ -43,6 +43,11 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "arm64e/PAC")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "Foundation/UIKit")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "darwin_files")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "static-owner-queries")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "static-ordinary-queries")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "DarwinFileAuthorization::StaticOrdinaryQueries")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "DarwinFileAuthorization::StaticOwnerQueries")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "EACCES13")

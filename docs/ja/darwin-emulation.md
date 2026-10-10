@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 47deab21aba179a1e8efc43cabdf488c5af9a20a1b5d8597ee427c157ed212f6 -->
+<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1098,8 +1098,40 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-71 mandatory workloads per platform / ARM64 213 / Intel 142 unverified
+72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
 [XNU access and subject selection](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [real credential copy](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [owner authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [pathname SEARCH](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_lookup.c), [cached lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_cache.c), [Libc ACL properties](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/gen/filesec.c), [fstatx ACL absence](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/statx_np.c).
+
+## グループ情報が部分的に既知の静的な通常クエリ
+
+`darwin_files.authorization="static-ordinary-queries"`（DarwinFileAuthorization::StaticOrdinaryQueries）は、前節の不変な通常環境、マウント・セキュリティ・メタデータ条件、閉じたファイル操作、標準ストリーム例外、独立した匿名メモリを維持します。旧 static-owner-queries は所有者限定のままです。実際の検査には明示的な資格情報、メタデータ、非ゼロの選択 UID が必要です。root、拡張権限、最終リンクの R/W/X は未対応です。
+
+所有者は要求した全所有者ビットを使います。非所有者では要求マスク全体についてグループとその他の結果を比較し、一致すればグループ照会なしで許可または EACCES13 を確定します。異なるビット集合も同じ拒否になり得ます。不一致なら既知のメンバーはグループ、証明された非メンバーはその他を使い、未知なら検索や効果の前に UnsupportedService で停止します。権限クラスは混合しません。
+
+credentials.groups は順序付きのカーネル資格情報リストで、先頭は EffectiveGID、重複を保持します。SDK getgroups の拡張リゾルバリストとは別です。選択された主グループと明示的な正の所属は既知ですが、欠落やリスト省略は通常、非所属を証明しません。実 UID/GID の両組が有効値と一致すれば元の文脈を保持し、そうでなければ先頭を RealGID に置換し、最初に一致する補助 RealGID の位置へ旧 EffectiveGID を移します。一致がなければ旧主グループを除いて memberd を無効化します。この証明された置換と明示的な完全リストだけが欠落の否定を確定します。GID が等しく UID が異なる場合も変換し、主グループの重複は外部所属を未知のままにできます。AT_EACCESS は元の有効文脈を使い、入力は不変です。
+
+以下では GID20 の置換により実クエリが拒否され、有効主グループ20を使う AT_EACCESS は成功します。ディレクトリ SEARCH はグループとその他の結果一致で確定し、選択 UID0 や open を許可しません。
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","metadata":{"device":7,"inode":2,"mode":32816,"link_count":1,"uid":700,"gid":20,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}},"bytes_hex":"00"}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":502,"real_gid":30,"effective_gid":20,"groups":[20,40]}}}
+```
+
+読み取り専用の原生 ARM64 O0/O1/O2 検証は270組の raw/SDK 呼び出しを保持し、非所有オブジェクト、SEARCH、エラー、同一性、独立した ACL プロパティ不在を確認します。raw 資格情報グループは16、SDK 拡張リストは17です。初回の SDK 長制限の誤りは権限照会前に停止し、失敗記録を保持します。実/有効 ID は同じため、異なる ID と完全なグループ変換は固定 XNU ソースと独立モデルの証拠であり、全外部フックの原生証明ではありません。5ソフトウェア/3 ARM64 HVF 構成で実ゲスト、C/CLI/Python、未知の ID/メタデータ/root/所属を検証します。供給モデルは元の58原生共通ケースに追加しません。完全なグループ解決、root、ACL/MAC、一般 vnode、動的資格情報、準備状態/ネットワーク、進む時計、Mach IPC/スレッド、dyld/TLS、完全なフレームワークは未完成で、原生 Intel HVF/実機 iOS は未検証です。期限は不変です。
+
+```text
+DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-queries
+owner bits / whole-mask group-world outcomes / EACCES13
+credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
+real credential copy / first supplementary match / displacement disables memberd
+missing membership usually unknown / explicit displaced real list proves negatives
+all40 other file routes and direct/file-backed mappings closed / typed streams only
+ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
+OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
+72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
