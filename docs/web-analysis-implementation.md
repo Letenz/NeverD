@@ -891,3 +891,57 @@ import closure, runtime/window routing, distribution qualification, safe export
 and the remaining framework/package/protocol consumers are still required.
 This increment does not complete an epic or establish whole-repository or
 cross-host qualification.
+
+## Integration with current dev
+
+The web checkpoint was integrated with `dev` at `22793fc9d`, retaining its
+loader-choice/identification APIs, COFF object view, unwind discovery ordering,
+UTF-8 file paths, transactional debug loading, user edits and worker background
+indexing. File and captured-buffer loading continue through the same native
+format readers. Rich Header and object metadata parsing consume the selected
+buffer, and immutable-buffer loading explicitly refuses file-loader overrides.
+
+The newer function, data-item, operand-format and load-option persistence APIs
+now enforce the existing file-backed-session boundary. Snapshot loads skip all
+sidecar discovery. The standard input-SHA query uses the captured digest and
+never falls back to opening a snapshot path. C++ regression assertions cover
+these additions alongside the existing snapshot/file parity and lifetime cases.
+
+The integration build uses macOS arm64 Release, the matching prebuilt NeverD
+LLVM 23.0.0 r4 package, pinned Capstone, Hermes and ICU 77.1. Web analysis, the JS
+parser and ASAR are enabled; emulation, semantic tests, GUI and the Python
+plugin host are disabled. This LLVM package omits Zstd, so compressed Bun-map
+decoding reports its explicit unavailable capability. Earlier integrated-LLVM
+Zstd-enabled results above remain separate evidence.
+
+The clean-worktree run caught an omitted 182-byte preserved ASAR member fixture:
+the original checkout contained it under an ignore rule, but the checkpoint did
+not. The fixture is now tracked with its existing independently checked SHA-256
+`cc402b796dc92b2b1f3a6d09515003d8400e63d8acaffc967e49c0cf015fcffe`.
+All 11 ASAR core cases then passed. The repeated full web run passed 243 of
+250 registered cases: six Bun-map cases require unavailable Zstd and one tests
+ASAR omission only. The full pinned Bun container corpus was supplied. All nine
+native handoff cases passed, including the newer persistence/SHA assertions.
+The loader-choice regression and compiled-capability test passed; the
+backend-omission-only ABI test skipped in this enabled build.
+
+The current native Session C API suite passed 91 of 99 cases; eight explicitly
+require ELF/glibc/System V fixtures unavailable on this macOS host. Logs are
+`/tmp/neverd-js-dev-{web-fixed,asar-fixed,buffer,api,session}-tests.log`.
+
+The first parallel worker run failed a temporary-path equality check and timed
+out on a large source-cache request. The path check compares its supplied path
+with the worker's canonical path; macOS's default temporary directory traverses
+a symlink. With `TMPDIR=/private/tmp`, both focused cases passed in a serial
+run. The complete serial worker suite then passed 21 of 24 cases; the remaining
+three explicitly require a glibc host compiler/strip. No timeout or assertion was
+relaxed. The retained logs are `/tmp/neverd-js-dev-worker-tests.log`,
+`/tmp/neverd-js-dev-worker-focused.log` and
+`/tmp/neverd-js-dev-worker-serial-tests.log`.
+
+Build logs are `/tmp/neverd-js-dev-configure.log` and
+`/tmp/neverd-js-dev-build-current.log`. The original first build was deliberately
+stopped when `dev` advanced, before the incremental current-dev build completed.
+Scoped formatting and the complete integration diff's whitespace check passed.
+This is local integration evidence, not a whole-repository, GUI, cross-host or
+Zstd-enabled qualification of the new dev baseline. The five epics remain open.

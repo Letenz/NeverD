@@ -2,9 +2,12 @@
 
 This table records implemented behavior separately from plans. No completed
 foundation milestone closes issues #714–#718. Qualification below is local
-macOS arm64 Release, with the repository's integrated LLVM build. The full,
-parser-disabled and backend-disabled configurations were built and checked on
-that host. Other hosts require separate evidence.
+macOS arm64 Release. The integrated-LLVM full, parser-disabled and
+backend-disabled configurations were built and checked on that host. The
+separate current-dev integration uses prebuilt LLVM 23.0.0 r4 without Zstd;
+its checks and omissions are recorded in the
+[implementation ledger](web-analysis-implementation.md#integration-with-current-dev).
+Other hosts require separate evidence.
 
 | Surface | Implemented profile | Qualification / outstanding work |
 |---|---|---|
