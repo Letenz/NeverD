@@ -1257,6 +1257,24 @@ adjacent section boundary. The shared evaluator uses the image's conservative
 relocation predicate for untagged constants; equal original VAs alone cannot
 establish equality between independently rebuilt objects.
 
+The x86 CFG builder proves local x87 call-stack effects before constructing
+TOP-state block copies. One build owns the cached machine graphs; each query
+independently bounds its complete call closure and dataflow work. Every normal
+return must agree on the stack change, and a pushed result must be initialized
+without reading an empty slot. Cycles in the call graph, incomplete lifting,
+environment restores, tag changes, unknown intrinsics and exceptional edges
+supply no summary. Loader-authenticated imports use the existing ABI tables;
+an internal function's spelling supplies no effect.
+
+Proven calls define their physical 80-bit result before SSA. Explicit return
+operands retain this convention after propagation replaces a register with a
+temporary or constant. ABI forwarder and aggregate heuristics cannot override
+it. LLVM preserves `x86_fp80`; HighIR transports the raw eighty bits through
+explicit bit casts, including separately emitted callers. This proves stack
+transport, not complete x87 control-word or exception semantics. Shared import
+target tracing also rejects partial pointer writes, opaque call barriers and
+instruction temporaries borrowed from another instruction.
+
 FH3 catch-return evidence binds the source funclet, return instruction and
 owning continuation after module discovery converges. Shared SSA verifies the
 parent's unwind, decoded prologue and converted stack effects before restoring

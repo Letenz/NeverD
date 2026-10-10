@@ -546,6 +546,17 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
   Func.ExceptionMetadata = Low.ExceptionMetadata;
   Func.RegistrationStates = Low.RegistrationStates;
   Func.CalleePopBytes = Low.CalleePopBytes;
+  bool HasReturn = false, AllX87Returns = true;
+  for (const LowBlock &Block : Low.Blocks)
+    for (const LowOp &Op : Block.Ops)
+      if (Op.Opcode == NdOp::RETURN) {
+        HasReturn = true;
+        AllX87Returns &=
+            Op.NumInputs == 1 && Op.Inputs[0].isReg() &&
+            Op.Inputs[0].Size == 10 &&
+            getTargetRegInfo(TheArch).isX87StackReg(Op.Inputs[0].Offset);
+      }
+  Func.ExplicitX87ReturnValue = HasReturn && AllX87Returns;
   if (Low.RegistrationStates && Image)
     Func.RegistrationCallerCleanupABIComplete =
         hasCallerCleanupRegistrationABI(Low, *Image);

@@ -383,6 +383,7 @@ inline void writeGraph(Budget &O, Buffer &Data, const BinaryImage &Img,
   M.n("source_parameters_bound", MF->SourceParametersBound);
   M.n("return_evidence", MF->ReturnValueEvidence);
   M.n("fp_return_x87", MF->FPReturnViaX87);
+  M.n("explicit_x87_return_value", MF->ExplicitX87ReturnValue);
   M.n("does_not_return", MF->DoesNotReturn);
   M.n("variadic", MF->IsVariadic);
   M.n("variadic_overflow_base", MF->VariadicOverflowBase);

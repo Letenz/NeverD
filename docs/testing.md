@@ -147,6 +147,20 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`X87CallStack` tests call/consume loops and forwarding chains on x86/x64 in
+ELF, COFF and Mach-O. Negative cases cover inconsistent returns, recursion,
+depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
+opaque state restoration. Builder reuse after an image edit invalidates old
+proofs. `ImportCalleeTrace` additionally checks partial pointer writes and
+instruction-local temporary identity on x86, x64 and AArch64.
+
+`X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
+machine bytes, generated LLVM, HighC and a separately generated C caller linked
+to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
+pipelines and compiled O0/O2. Its binary80 sum retains bits below double
+precision, so a premature conversion cannot pass. These checks cover return
+transport and do not certify every x87 instruction, rounding mode or exception.
+
 `NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
 can emit for scalar structure comparisons. `X64WordLane` uses independent
 `PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn

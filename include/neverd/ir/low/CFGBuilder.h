@@ -644,7 +644,11 @@ private:
 };
 } // namespace detail
 
+class X87CallEffectIndex;
+
 class CFGBuilder {
+  friend class X87CallEffectIndex;
+
 public:
   /// Build CFG for a single function starting at EntryAddr.
   LowFunc build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
@@ -1052,6 +1056,8 @@ private:
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
   /// cases move.
   void fixupFpuStack(LowFunc &Func);
+  bool SkipX87StackFixup = false;
+  std::shared_ptr<X87CallEffectIndex> X87CallEffects;
 
   /// Whether \p Target is the entry of a *different* known function — i.e. an
   /// unconditional direct branch to it is a tail call, not intra-function flow.

@@ -444,6 +444,10 @@ struct MedFunc {
   /// scalar FP return type so LLVM lowers it to st0 (instead of the XMM0 vector
   /// return used by clang's internal convention for static functions).
   bool FPReturnViaX87 = false;
+  /// LowIR explicitly bound every RETURN to the proven logical x87 top.
+  /// The operand remains the result after SSA propagation changes its carrier
+  /// to a temporary or constant; this is independent of heuristic typing.
+  bool ExplicitX87ReturnValue = false;
   /// Bytes of the result every return path defines when that is fewer than
   /// the return register holds (a `bool` left in AL over an undefined RAX);
   /// 0 otherwise.  The bytes above belong to no result.
