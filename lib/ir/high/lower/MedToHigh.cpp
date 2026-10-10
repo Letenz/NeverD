@@ -341,6 +341,9 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
     if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
         Type && Type->Size == Op.Output.Size)
       return Type;
+  if (Op.Output.Kind == MedVar::Reg && Op.Output.Size == 10 &&
+      getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))
+    return NdType::makeFloat(10);
   return NdType::makeInt(Op.Output.Size, false);
 }
 

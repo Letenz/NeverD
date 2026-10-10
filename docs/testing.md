@@ -153,6 +153,20 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`X87CallStack` tests call/consume loops and forwarding chains on x86/x64 in
+ELF, COFF and Mach-O. Negative cases cover inconsistent returns, recursion,
+depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
+opaque state restoration. Builder reuse after an image edit invalidates old
+proofs. `ImportCalleeTrace` additionally checks partial pointer writes and
+instruction-local temporary identity on x86, x64 and AArch64.
+
+`X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
+machine bytes, generated LLVM, HighC and a separately generated C caller linked
+to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
+pipelines and compiled O0/O2. Its binary80 sum retains bits below double
+precision, so a premature conversion cannot pass. These checks cover return
+transport and do not certify every x87 instruction, rounding mode or exception.
+
 `NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
 can emit for scalar structure comparisons. `X64WordLane` uses independent
 `PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn
@@ -564,6 +578,27 @@ when their full-width pointer, displacement, load width and memory history
 agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
+
+The same target's `NarrowGuard*` tests use long arithmetic prefixes before x86
+and x64 byte/word guards and AArch64 W-register guards. Low/high byte identity,
+disjoint writes and explicit index widening must retain exactly three slots
+through normal LLVM emission and verification. Changed lanes, other bytes,
+unbounded upper bits, call clobbers and exhausted budgets must not borrow the
+earlier bound. The fourth physical slot is deliberately outside that bound.
+An unrelated deep return expression exercises incomplete escape auditing:
+the proven table survives only with every relocation root retained.
+
+`LowToMedSelectorOccurrence.*` checks distinct SSA selectors for copied
+instruction addresses on x64 and AArch64 across ELF, Mach-O and COFF. Changing
+one copy's operand role must invalidate only that copy, and the complete
+LLVM module must verify. Pointer-boundary regressions retain composite table
+loads whose dispatch copies lose or change a recipe, while accepting a load
+in their shared predecessor when every recipe survives.
+
+The pointer-boundary target checks closed scalar graph retries on x64 and
+AArch64 across ELF, Mach-O and COFF. Arithmetic deeper than the initial
+recursive walk can succeed; address seeds, forbidden dependencies, mixed code
+slots and chains beyond the independent graph depth limit must still fail.
 
 The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
 diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work

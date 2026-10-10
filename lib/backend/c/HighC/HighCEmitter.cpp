@@ -1627,6 +1627,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
   // own type's, or all of it.  A function whose address the code only takes
   // reads none.
   std::map<std::string, uint16_t> ResultBytes;
+  std::map<std::string, TypeRef> FloatingResults;
   const uint16_t RegisterBytes = pointerBytes(Opts.TheArch);
   for (const HighFunc &F : Funcs)
     walkStmts(F.Body, [&](const HighStmt &S) {
@@ -1635,6 +1636,13 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
         if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::None) {
           uint16_t &Bytes = ResultBytes[callIdentifier(E)];
+          if (E.Type && E.Type->Kind == NdTypeKind::Float) {
+            auto [It, Inserted] =
+                FloatingResults.emplace(callIdentifier(E), E.Type);
+            if (!Inserted && It->second->Size != E.Type->Size)
+              throw std::runtime_error(
+                  "HighC external calls disagree on floating return width");
+          }
           if (&E != Top)
             Bytes = std::max<uint16_t>(Bytes,
                                        E.Type ? E.Type->Size : RegisterBytes);
@@ -2070,8 +2078,12 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
         const auto Read = ResultBytes.find(Name);
         const bool WholeRegister =
             Read != ResultBytes.end() && Read->second > sizeof(int32_t);
-        OS << "extern " << (WholeRegister ? Register : "int") << " " << Declared
-           << "(";
+        const auto Floating = FloatingResults.find(Name);
+        const std::string Return = Floating != FloatingResults.end()
+                                       ? typeToC(Floating->second)
+                                   : WholeRegister ? Register
+                                                   : "int";
+        OS << "extern " << Return << " " << Declared << "(";
         if (auto Arity = knownArity(Symbol, Name);
             Arity && Arity->FpArgs == 0 && Arity->IntArgs >= 0) {
           // Each argument fills one integer register: an int64_t on a 32-bit
