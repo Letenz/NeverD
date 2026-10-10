@@ -412,7 +412,10 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
         // MIN/MAX select the second source for every unordered pair.  Intel
         // raises invalid even for a QNaN, but still forwards a second-source
         // SNaN bit-for-bit rather than quieting the selected result.
-        writeLane(Result, Offset, ElementSize, OriginalB);
+        const uint64_t Selected = DAZ && isDenormal(OriginalB, Format)
+                                      ? OriginalB & Format.Sign
+                                      : OriginalB;
+        writeLane(Result, Offset, ElementSize, Selected);
       } else {
         const uint64_t Selected =
             ANaN ? OriginalA : (BNaN ? OriginalB : OriginalC);
@@ -567,9 +570,13 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
           tinyBeforeDenormalization(Kind, Left, Right, Addend, APFRounding))
         Raised |= 1U << 4;
     }
-    if (isDenormal(Bits, Format) && !UnderflowMasked) {
+    // MIN/MAX select an input, including a denormal, without producing an
+    // arithmetic underflow. FTZ must not change the selected source bits.
+    const bool IsMinMax =
+        Kind == X86FPArithKind::Minimum || Kind == X86FPArithKind::Maximum;
+    if (!IsMinMax && isDenormal(Bits, Format) && !UnderflowMasked) {
       Raised |= 1U << 4;
-    } else if (FTZ && UnderflowMasked &&
+    } else if (!IsMinMax && FTZ && UnderflowMasked &&
                (isDenormal(Bits, Format) || (Raised & (1U << 4)))) {
       Bits &= Format.Sign;
       Raised |= (1U << 4) | (1U << 5);
