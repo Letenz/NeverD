@@ -836,9 +836,7 @@ void recoverCallAbi(
       if (IntRegArgsApply)
         for (int J = static_cast<int>(OI) - 1; J >= 0; --J) {
           auto &Prev = Blk.Ops[J];
-          bool IsCall = Prev.Opcode == NdOp::CALL ||
-                        Prev.Opcode == NdOp::INDIR_CALL ||
-                        Prev.Opcode == NdOp::INTRINSIC;
+          bool IsCall = isAbiRecoveryBarrier(Prev);
           // A preceding call's return value lands in the result register, which
           // is also argument register 0 on these ABIs, so it is the reaching
           // definition for a following call's argument when nothing overwrites
@@ -961,8 +959,7 @@ void recoverCallAbi(
       bool HasStackArgAtCallSP = false;
       for (int J = static_cast<int>(OI) - 1; J >= StoreScanStart; --J) {
         auto &Prev = Blk.Ops[J];
-        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-            Prev.Opcode == NdOp::INTRINSIC)
+        if (isAbiRecoveryBarrier(Prev))
           break;
         if (Prev.Opcode == NdOp::STORE && Prev.NumInputs >= 2 &&
             Prev.MemoryAddressSpace == NdMemoryAddressSpace::Default)
@@ -1256,8 +1253,7 @@ void recoverCallAbi(
         bool HasFPSetup = false;
         for (int J = static_cast<int>(OI) - 1; J >= 0; --J) {
           const auto &Prev = Blk.Ops[J];
-          if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-              Prev.Opcode == NdOp::INTRINSIC)
+          if (isAbiRecoveryBarrier(Prev))
             break;
           if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0 &&
               isFPValueReg(Prev.Output.RegOff)) {
@@ -1317,8 +1313,7 @@ void recoverCallAbi(
 
       for (int J = static_cast<int>(OI) - 1; J >= StoreScanStart; --J) {
         auto &Prev = Blk.Ops[J];
-        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-            Prev.Opcode == NdOp::INTRINSIC)
+        if (isAbiRecoveryBarrier(Prev))
           break;
         if (Prev.Opcode != NdOp::STORE || Prev.NumInputs < 2 ||
             Prev.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -1590,9 +1585,7 @@ void recoverCallAbi(
                                      : static_cast<int>(Block->Ops.size());
             for (int J = Boundary - 1; J >= 0; --J) {
               const MedOp &Candidate = Block->Ops[J];
-              if (Candidate.Opcode == NdOp::CALL ||
-                  Candidate.Opcode == NdOp::INDIR_CALL ||
-                  Candidate.Opcode == NdOp::INTRINSIC) {
+              if (isAbiRecoveryBarrier(Candidate)) {
                 Active.erase(BlockId);
                 return std::nullopt;
               }
@@ -1678,8 +1671,7 @@ void recoverCallAbi(
             ForwardsCallResult = true;
             break;
           }
-          if (After.Opcode == NdOp::CALL || After.Opcode == NdOp::INDIR_CALL ||
-              After.Opcode == NdOp::INTRINSIC)
+          if (isAbiRecoveryBarrier(After))
             break;
           if (After.Output.Kind == MedVar::Reg &&
               (After.Output.RegOff == TRI.IntReturnReg ||

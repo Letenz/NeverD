@@ -33,6 +33,14 @@ The SBF source differential suite additionally needs `rustc`; it executes both
 generated C and generated Rust. Treat a missing compiler skip as missing
 backend evidence, not as semantic success.
 
+The native source dialect suite also uses `rustc` and `go` from `PATH`, or
+`NEVERD_TEST_RUSTC` and `NEVERD_TEST_GO`. It executes 32 Rust/C observations and
+12 Go/C observations covering integer promotion, narrowing, signed/unsigned
+comparison, arithmetic shifts and loops. The Go check compiles its generated
+scalar functions unchanged; it does not establish that every Go pseudocode
+construct is directly compilable. Missing compilers remain explicit local
+skips and are failures in the main CI outcome audit.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
@@ -48,9 +56,9 @@ check UTF-8 filenames through the Windows fixture boundary.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
-functions and checks cancellation without losing staged comments. A 20,000-line
-source fixture checks event-loop responsiveness and folded declarations across
-pages. Concurrent analysis cases check that a slow view cannot block another
+functions with Tab and checks cancellation without losing staged comments. A
+20,000-line source fixture checks event-loop responsiveness and folded
+declarations across pages. Concurrent analysis cases check that a slow view cannot block another
 function, cancellation only retires its own executor, subsequent pages keep
 their dispatcher when a third function queues, external graph snapshots survive
 interleaved requests, and opening another project retires both replicas.
@@ -59,6 +67,30 @@ retained external analysis request.
 `NeverDWorkerAnalysisSnapshot` verifies read-only replica state,
 unchanged owner files, staged comments, signature replay and stale-input
 rejection. Database restore coverage keeps pseudocode closed until requested.
+
+`NeverDWorkerCodeEdits` checks declared local targets, image-name replacements,
+UTF-8 span remapping, comments and raw string isolation, and rejection of stale,
+colliding or shadowed names. The controller edits source, C and LLVM C with a
+pinned view and a different hidden assembly location, then checks undo/redo,
+save/restart and instruction-mapped comments. Snapshot coverage also verifies
+that read-only replicas load these edits without changing durable owner files.
+
+`NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
+changed-kind, synthetic, ambiguous and mismatched-function observations.
+`SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
+Go, partial slices, conflicting spans and functions shown as C after a dialect
+refusal. `SessionCAPITest.DialectNavigationMapsOnlyTheReturnRowAcrossPages`
+checks real x64/AArch64 source and explicit dialect pages, unmapped headers and
+single-line paging without spreading return addresses across the function.
+`SessionCAPITest.CSourcePagesRetainCanonicalReturnAnchors` and the real worker's
+native mapping test verify x64 and AArch64 high-VA source rows through small
+pages, including return instruction addresses distinct from the function entry.
+The controller's `tabFromCodeUsesSelectedInstruction` verifies independent
+click/arrow navigation and both Tab directions; its optional native rows use the
+same PE/PDB and environment variables described below. Unmapped declarations
+exercise the explicit entry fallback. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
+listing jumps, rows beyond the first page, folded operations, secondary address
+round trips, cross-function navigation and missing instruction mappings.
 
 ```sh
 cmake --build build-gui --target neverd-gui-tests neverd-gui-query-tests
@@ -73,10 +105,30 @@ replies retain a finite 30-second deadline. Set `NEVERD_CODE_NAV_WORKER` and
 `functionsActivationKeepsCodeWindow`, using a supported PE with at least three
 functions. The Pseudocode profile needs a worker that supports the `source`
 representation. Each worker must keep its matching engine and runtime libraries.
+The same variables enable `native-source` and `native-llvmc` rows of
+`pseudocodeNamesAndCommentsEditTheirSource` with the controlled Windows
+`acceptance.exe`/PDB fixture (`sample(int value)`). These rows copy the inputs
+to a disposable project, edit the real output through native widgets, and
+verify persistence. `NEVERD_CODE_NAV_CAPTURE_DIR` saves window captures.
 Run `neverd-gui-tests` directly with the native Qt platform to exercise native
 widgets; CTest sets the controller's platform to `offscreen`.
 
 ## Source dialects and DWARF ingestion
+
+The main CI matrix installs Rust 1.93.1 and Go 1.27.2, records their versions,
+and uses its built CLI to emit HighC and LLVMC for small x64/AArch64 ELF inputs.
+This supplies the two optional dialect corpus/file checks without an external
+download. Empty or unreadable corpus directories fail. Reproduce those checks
+locally after building `neverd` and `NeverDSourceDialectTests`:
+
+```sh
+python3 scripts/prepare_source_dialect_corpus.py \
+  --neverd build-release/bin/neverd --output build-release/source-dialects
+NEVERD_SOURCE_DIALECT_CORPUS="$PWD/build-release/source-dialects/corpus" \
+NEVERD_SOURCE_DIALECT_FILE="$PWD/build-release/source-dialects/corpus/x64-c.c" \
+NEVERD_SOURCE_DIALECT=go \
+  ctest --test-dir build-release -L '^NeverDSourceDialectTests$' --output-on-failure
+```
 
 `NeverDSourceDialectTests` checks C++ symbol validation, STL aliases, preserved
 custom template arguments, ATL names, and the C exception projection's native
@@ -94,6 +146,17 @@ separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
+
+`NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
+can emit for scalar structure comparisons. `X64WordLane` uses independent
+`PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn
+checked backends. It verifies all eight lanes, masked imm8 indices, extended
+registers, ignored REX.W, two-byte memory reads, page faults and retry,
+observer cancellation, unchanged FLAGS/MXCSR and register preservation.
+The [Intel instruction reference](https://cdrdv2-public.intel.com/825760/325383-sdm-vol-2abcd.pdf)
+specifies these SSE2 forms separately from the SSE4.1 extraction encoding;
+MMX, VEX/EVEX and SSE4.1 neighbors remain negative controls. These instruction
+tests are independent of the compiler version used to build process fixtures.
 
 `NeverDX86FPStateAccuracyTests` compares original scalar SSE byte fixtures
 against actual NeverD Codegen objects and standalone HighC/LLVMC source.
@@ -434,6 +497,12 @@ exhaustion, incremental graph growth and cache reset. A seeded independent
 backward path-constraint oracle checks cyclic equation results. Repeated
 diamond graphs check linear evidence growth rather than a wall-clock cutoff.
 
+`ResolverLaneViews.*` in the same target checks query-local register metadata
+caching across widths, high-byte registers, architectures, temporary values
+and deliberate cache collisions. Shuffled architectural views must retain
+their cold-query answers after eviction; value and frame proofs remain outside
+this fixed-size cache.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
@@ -469,6 +538,23 @@ build-release/bin/NeverDIndCallXformTests --gtest_filter='*TailVarietyRT*'
 before the owned runtime slots. Missing maps, fixups or ownership, added filler
 slots, unindexed reads, malformed strides, address overflow and exhausted
 evidence must retain the ordinary load path.
+
+`NeverDJumpTableTests` checks repeated field loads at nonzero offsets on x64
+and AArch64. Independently computed addresses may share a switch guard only
+when their full-width pointer, displacement, load width and memory history
+agree. Borrowed RBP fields, negative displacements and both signed and unsigned
+index extensions are covered; changed bases/offsets, partial reloads, stores,
+calls and memory barriers must not recover a table from the earlier guard.
+
+The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
+diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
+counters bound proof expansion independently of machine speed. Conflicting
+coordinates, nonzero recurrences, unanchored cycles, lossy pointer casts and
+query-local budget exhaustion must fail closed. Exact slots, affine recurrences,
+scalar ranges and frame intervals consume one saturating budget, including
+nested queries. Interval regressions reject independent rootless cycles and
+mutually seeded recurrences that eventually grow into another stack slot;
+reversing PHI-arm order must preserve the result.
 
 `NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
 strings, generic builtins compiled for a different source ISA, and dead image
@@ -2000,6 +2086,16 @@ borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
+Catch-return tests require the pre-dispatch SavedESP snapshot to survive catch
+writes and subsequent continuation reads; unknown snapshots remain rejected.
+The native fixture independently edits or removes the writeback, changes its
+value/address, and moves or duplicates it before installation. Run
+`check_windows_registration_cxx_rewrite.py --saved-stack-probe` with the same
+MSVC inputs and tools as the ordinary source oracle. It derives a bounded
+machine-code probe that overwrites SavedESP with 7 and then reads the
+initialized inner guard through the restored pointer. Its report distinguishes the derived input from its
+hashed native MSVC baseline. CI runs both capture forms through all six
+preferred/rebased routes in Wine and replays those identical files on Windows.
 Cleanup projection tests check every reachable unwind state, initialization
 before state activation, missing or mismatched contracts, registration and
 SavedESP overlap, released storage, pointer taint and predecessor conflicts.
@@ -2662,6 +2758,10 @@ The required execution policy follows existing CI ownership:
   case fails the CI evidence audit.
 - Linux must also execute the SBF external oracle, upstream conformance, and
   Agave conformance suites because that leg installs their pinned dependencies.
+- Every host must execute `NeverDSourceDialectTests` and
+  `NeverDSourceAnchorTests`. Missing compilers, missing generated corpus inputs,
+  skipped checks, or omitted suites fail the audit. The CTest evidence artifact
+  includes the compiler versions, native ELF inputs, emitted C and CLI logs.
 - The only platform exceptions within these required suites are
   `ObjCEHCorpus.HonorsHostMachORewriteContractForEveryVariant` and
   `CxxItaniumEHCorpus.HonorsHostMachORewriteContractForEveryProbeVariant` on
@@ -2908,7 +3008,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5056 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5418`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5058 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5420`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 

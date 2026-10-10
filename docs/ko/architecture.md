@@ -1158,6 +1158,8 @@ UIButton의 `contentEdgeInsets`, `imageEdgeInsets`, `titleEdgeInsets` getter/set
 
 `WindowsProcessHeap`는 프로세스 힙과 제한된 개인 힙의 할당, 크기 변경, 해제 및 크기 조회를 관리합니다. 할당을 이동해도 소유 힙을 유지합니다. `HeapDestroy`는 해당 개인 힙의 블록만 해제하고 핸들을 무효화하며 다른 힙과 환경 스냅샷을 보존합니다. 알 수 없거나 폐기된 핸들, 프로세스 힙 파괴와 다른 힙의 블록에 대한 작업은 변경 전에 거부합니다. 개인 힙은 초기 크기가 한 페이지 이하인 확장 가능한 요청만 지원하며 고정 최대 크기와 더 큰 초기 커밋은 지원하지 않습니다. 네 개 제한은 살아 있는 힙 수에 적용되므로 파괴 후에는 이전 핸들을 다시 유효하게 만들지 않고 새 힙을 만들 수 있습니다. 핸들은 불투명한 모델 식별자이며 네이티브 할당자 헤더를 생성하지 않습니다. `HeapReAlloc`: 크기 변경은 기존 바이트를 보존하고 `HEAP_ZERO_MEMORY`와 `HEAP_REALLOC_IN_PLACE_ONLY`를 따릅니다. 할당 실패 시 NULL과 `ERROR_NOT_ENOUGH_MEMORY`(8)를 반환합니다. 축소, 해제, 파괴로 페이지 용량을 반환하며 실행 기한을 확인합니다. `WindowsHeapTests.cpp`는 두 ISA, 소유권, 수명 순환, 실패 원자성 및 독립적인 네이티브 Windows 결과를 검사합니다.
 
+`windows.peb_version`은 PEB의 `major`, `minor`, `build`, `platform` 필드를 명시합니다. 네 필드 모두 부호 없는 정수여야 하며 `build`는 16비트, 나머지는 32비트입니다. 생략하면 프로필의 0으로 초기화된 버전 필드를 유지합니다. `WindowsProcessEnvironment`가 x64와 ARM64 초기화를 담당합니다. 이 입력은 네이티브 서비스 번호를 선택하거나 해당 Windows 버전과의 호환성을 증명하지 않습니다. 유지된 코드가 의존하는 환경 바이트는 캡처와 네이티브 재실행에서 일치해야 합니다.
+
 `WindowsSystemModules`는 두 ISA에 대해 `ntdll.dll`, `kernelbase.dll`, `kernel32.dll`의 제한된 PE64 모델 이미지를 만듭니다. ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW`, `GetProcAddress`는 매핑된 베이스를 공유하며 PEB/LDR과 `MEM_IMAGE`도 같은 이미지를 나타냅니다. 정적 가져오기, 이름 조회와 게스트 DLL 전달은 동일한 API 게이트와 내보내기 해석기를 사용합니다. 제공자는 고정 상주하고 게스트 초기화 콜백이 없으며 일반 게스트 DLL을 모두 해제한 뒤 진입점 반환을 막지 않습니다. 헤더 또는 내보내기 메타데이터가 바뀌면 조회를 중단합니다. 미지원 시스템 내보내기 이름과 0이 아닌 서수 조회는 명시적으로 중단하며 지원 이름의 대소문자 불일치와 빈 이름은 오류 127, NULL 조회는 87을 반환합니다. 생성 바이트와 주소는 모델 정책이며 Windows DLL 버전별 배치, 네이티브 서수와 제공자 간 별칭은 재구성하지 않습니다. `WindowsSystemTests.cpp`는 자체 x64/ARM64 EXE를 네이티브 Windows와 비교하고 초기 스레드 반환을 독립적으로 8회 관측합니다.
 
 `WindowsNativeServices`는 명시적인 모델 서비스 번호를 한 곳에서 관리합니다. 번호가 있는 Nt/Zw 별칭은 진입점을 공유하며 프롤로그에 선언된 번호순으로 배치됩니다. x64 네이티브 경계는 첫 인자를 R10에서 읽고 RSP + 0x28의 스택 인자와 진입 정렬을 포함한 Win64 스텁 프레임을 유지합니다. 반환 시 RSP를 보존하고 SYSCALL의 RCX/R11 변경을 적용한 뒤 다음 명령을 실행합니다. 복사 또는 인라인 진입점은 `direct_service_number`를 기록하며 내보낸 함수 호출의 증거가 되지 않습니다. 알 수 없는 번호와 미구현 서비스는 명시적으로 중단합니다. 모델 번호는 임의의 Windows 버전 번호표가 아닙니다. [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). 내부 실행 감시는 프롤로그의 두 명령을 확인한 뒤 내보낸 함수 호출로 판정합니다. 내부로 점프하면 RCX와 R10이 같아도 번호 의존성을 유지합니다. 이 감시는 호출자 관찰자가 없어도 작동하며 요청 범위 밖의 콜백을 발생시키지 않습니다.
@@ -1457,6 +1459,8 @@ Objective-C 소스 내보내기는 전체 네이티브 단위와 개별 메서�
 ## 제한된 디렉터리 일괄 속성
 
 DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 인코딩을 소유한다. DarwinDirectory는 일괄 그룹, 명시 객체 권한과 설명 객체의 반복/커서/EOF를 소유하며 getdirentries64와 현재 자식 투영을 공유한다. dup는 한 설명을 공유하고 0 seek는 반복 계약을 재설정한다. JSON은 명시 정책 입력을 전달하며 서비스 디스패치는 파일 시스템 관측을 추측하지 않는다.
+
+복원된 DLL 진입점이 원래 PE 진입점과 다르면 로더 알림 어댑터를 생성합니다. 프로세스 연결은 선택한 진입점으로, 분리 및 스레드 알림은 원래 실행 가능한 진입점으로 전달하여 외부 래퍼의 정리 작업을 유지합니다. 원래 진입점을 사용할 수 없으면 재구성이 실패합니다. 보고서의 `entry_rva`는 선택한 진입점을 나타내며 PE 헤더는 어댑터를 가리킬 수 있습니다. 독립 DLL 테스트는 두 에뮬레이션 아키텍처와 네이티브 Windows에서 외부 정리를 검사합니다.
 
 ## 네이티브 불투명 상태 보존
 

@@ -10,6 +10,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
 #include "llvm/Support/Error.h"
@@ -223,11 +224,21 @@ TEST_F(JumpTableProposalLFP, SizedAuthoritativeSelfDispatchStaysOpaqueBranch) {
   EXPECT_TRUE(Low.JumpTables.empty());
   EXPECT_FALSE(Low.UnsafeIndirectBranchAddresses.empty());
 
-  const RunResult Run = liftToLLVMIR(proposalLFPObj());
-  ASSERT_EQ(Run.exitCode, 0) << Run.err;
-  const std::string Body =
-      llvmFunctionBody(Run.out, "jt_lfp_sized_self_callback");
-  ASSERT_FALSE(Body.empty()) << Run.out;
+  // Other functions in this deliberately adversarial object have unresolved
+  // table bases. Exercise this exact entry through the production LLVM route.
+  llvm::LLVMContext Context;
+  neverd::PipelineOptions Options;
+  Options.LiftMode = true;
+  Options.EmitDumpOutput = false;
+  Options.OnlyFunctionEntries.insert(Function->Addr);
+  const auto Result = neverd::Pipeline().run(Image, Context, Options);
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  ASSERT_NE(Result.LlvmModule, nullptr);
+  std::string IR;
+  llvm::raw_string_ostream OS(IR);
+  Result.LlvmModule->print(OS, nullptr);
+  const std::string Body = llvmFunctionBody(IR, "jt_lfp_sized_self_callback");
+  ASSERT_FALSE(Body.empty()) << IR;
   EXPECT_EQ(Body.find("call i64"), std::string::npos) << Body;
   EXPECT_NE(Body.find("llvm.trap"), std::string::npos) << Body;
   EXPECT_EQ(Body.find("switch i"), std::string::npos) << Body;
@@ -681,7 +692,7 @@ TEST_F(JumpTableProposalLFP,
       } else {
         EXPECT_EQ(Recovered.InsnAddr, Loop->Addr);
         EXPECT_EQ(std::set<neverd::va_t>(Recovered.Targets.begin(),
-                                        Recovered.Targets.end()),
+                                         Recovered.Targets.end()),
                   ExpectedTargets);
       }
     }
@@ -728,8 +739,7 @@ TEST_F(JumpTableProposalLFP,
   size_t PassingBudget = neverd::limits::kMaxJumpTableProposalStageEvidenceWork;
   ASSERT_TRUE(Complete(BuildWithBudget(PassingBudget)));
   while (FailingBudget + 1 < PassingBudget) {
-    const size_t Midpoint = FailingBudget +
-                            (PassingBudget - FailingBudget) / 2;
+    const size_t Midpoint = FailingBudget + (PassingBudget - FailingBudget) / 2;
     if (Complete(BuildWithBudget(Midpoint)))
       PassingBudget = Midpoint;
     else
@@ -801,8 +811,7 @@ TEST_F(JumpTableProposalLFP,
   EXPECT_FALSE(Builder.hasMaskFixedPointExplorationTargetsForTesting());
 }
 
-TEST_F(JumpTableProposalLFP,
-       SingleRelativeMaskRejectsOpaqueOutOfRangeReentry) {
+TEST_F(JumpTableProposalLFP, SingleRelativeMaskRejectsOpaqueOutOfRangeReentry) {
   auto ImageOrErr = neverd::loadBinary(proposalLFPObj());
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))
       << llvm::toString(ImageOrErr.takeError());
@@ -1796,9 +1805,9 @@ TEST_F(JumpTableProposalLFP, SingleRelativeMaskKeepsTableAcrossDebugBreak) {
   EXPECT_EQ(Low.UnsafeIndirectBranchAddresses.count(Branch->Addr), 0u);
   // `int3` is one byte; the instruction behind it must be decoded.
   const neverd::va_t Resume = Trap->Addr + 1;
-  EXPECT_TRUE(std::any_of(
-      Low.Blocks.begin(), Low.Blocks.end(), [&](const neverd::LowBlock &B) {
-        return B.StartAddr <= Resume && Resume < B.EndAddr;
-      }));
+  EXPECT_TRUE(std::any_of(Low.Blocks.begin(), Low.Blocks.end(),
+                          [&](const neverd::LowBlock &B) {
+                            return B.StartAddr <= Resume && Resume < B.EndAddr;
+                          }));
   EXPECT_FALSE(Builder.hasProvisionalRelativeEdgesForTesting());
 }

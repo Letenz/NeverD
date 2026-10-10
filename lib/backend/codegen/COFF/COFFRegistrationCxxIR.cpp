@@ -381,10 +381,14 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
       if (Candidate.Address == P.SourceVA && Candidate.TryIndex == P.Region &&
           Candidate.CatchIndex == P.Clause)
         Resume = &Candidate;
-    const auto *Return =
-        llvm::dyn_cast_or_null<llvm::CatchReturnInst>(next(*Anchor));
-    if (!Resume || Resume->TryIndex || Resume->CatchIndex ||
-        P.AuxVA != Resume->TargetVA ||
+    if (!Resume)
+      return rejectIR("C++ catch lost its checked runtime continuation");
+    auto Restored =
+        validateCxxContinuationRestore(*Anchor, Result.Frame, *Resume);
+    if (!Restored)
+      return Restored.takeError();
+    const auto *Return = *Restored;
+    if (Resume->TryIndex || Resume->CatchIndex || P.AuxVA != Resume->TargetVA ||
         P.Flags != uint32_t(Resume->SavedStackOffset) ||
         !BlockAt.count(Resume->TargetVA) || !Return ||
         Return->getCatchPad() != Result.Catch ||

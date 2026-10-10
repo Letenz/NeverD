@@ -21,6 +21,7 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -30,6 +31,7 @@
 #include <bit>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <utility>
@@ -418,7 +420,7 @@ MedLLVMEmitter::addrSlotKey(const MedVar &V, int Depth,
 
 std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     const MedVar &V, bool RequireEntryStackPointer,
-    const ControlValueBindings *Bindings) const {
+    const ControlValueBindings *Bindings, size_t *SharedProofBudget) const {
   if (!CurMedFunc || V.isConst())
     return std::nullopt;
 
@@ -427,6 +429,20 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   const uint64_t FpOff = TRI.FramePointer;
   const unsigned PointerSize = TRI.PointerSize;
   std::set<AddressProvenanceVarKey> Active;
+  // Both walks share one saturating budget. The recurrence proof used to run
+  // outside the slot budget and copied its visited set down every PHI/select
+  // arm, re-expanding shared DAGs exponentially.
+  size_t OwnProofBudget = FrameProofBudgetForTesting.value_or(8192);
+  size_t &RemainingSlotProofNodes =
+      SharedProofBudget ? *SharedProofBudget : OwnProofBudget;
+  auto consumeNode = [&] {
+    if (RemainingSlotProofNodes == 0)
+      return false;
+    --RemainingSlotProofNodes;
+    ++AddressProvenanceWork.FrameSlotNodes;
+    return true;
+  };
+  std::map<AddressProvenanceVarKey, med_llvm::SlotKey> ProvenSlots;
   auto sameVar = [](const MedVar &A, const MedVar &B) {
     return !A.isConst() && !B.isConst() && A.Kind == B.Kind && A.Id == B.Id &&
            A.SSAVer == B.SSAVer;
@@ -493,76 +509,94 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
     }
     return false;
   };
-  std::function<std::optional<int64_t>(const MedVar &, const MedVar &, int,
-                                       std::set<AddressProvenanceVarKey>)>
-      affineDeltaTo = [&](const MedVar &Start, const MedVar &Target, int Depth,
-                          std::set<AddressProvenanceVarKey> Seen)
-      -> std::optional<int64_t> {
-    if (Start.isConst() || Depth > 64)
+  using AffinePair =
+      std::pair<AddressProvenanceVarKey, AddressProvenanceVarKey>;
+  using AffineMemoKey = std::pair<AffinePair, int>;
+  std::set<AffinePair> ActiveAffine;
+  std::map<AffineMemoKey, std::optional<int64_t>> AffineMemo;
+  std::function<std::optional<int64_t>(const MedVar &, const MedVar &, int)>
+      affineDeltaTo = [&](const MedVar &Start, const MedVar &Target,
+                          int Depth) -> std::optional<int64_t> {
+    if (Start.isConst() || Start.Size < PointerSize || Depth > 64 ||
+        !consumeNode())
       return std::nullopt;
     if (sameExactValue(Start, Target))
       return int64_t{0};
-    if (!Seen.insert(addressProvenanceVarKey(Start)).second)
+    const AffinePair Pair{addressProvenanceVarKey(Start),
+                          addressProvenanceVarKey(Target)};
+    // Include depth because a failure at the recursion limit is not evidence
+    // for a shallower query. A cycle avoiding Target has no all-path affine
+    // relation to it, whereas reaching Target is handled above.
+    const AffineMemoKey MemoKey{Pair, Depth};
+    if (auto It = AffineMemo.find(MemoKey); It != AffineMemo.end()) {
+      ++AddressProvenanceWork.FrameSlotCacheHits;
+      return It->second;
+    }
+    if (!ActiveAffine.insert(Pair).second)
       return std::nullopt;
-
-    if (const PhiNode *Phi = lookupPhi(Start)) {
-      std::optional<int64_t> Common;
-      bool SawFeasible = false;
-      for (const auto &[PredId, Arg] : Phi->Args) {
-        PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, PredId);
-        if (Edge == PhiEdgeFeasibility::Infeasible)
-          continue;
-        if (Edge != PhiEdgeFeasibility::ProvenFeasible)
-          return std::nullopt;
-        auto Delta = affineDeltaTo(Arg, Target, Depth + 1, Seen);
-        if (!Delta || (Common && *Common != *Delta))
-          return std::nullopt;
-        Common = *Delta;
-        SawFeasible = true;
+    auto Cleanup = llvm::scope_exit([&] { ActiveAffine.erase(Pair); });
+    auto Result = [&]() -> std::optional<int64_t> {
+      if (const PhiNode *Phi = lookupPhi(Start)) {
+        std::optional<int64_t> Common;
+        bool SawFeasible = false;
+        for (const auto &[PredId, Arg] : Phi->Args) {
+          PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, PredId);
+          if (Edge == PhiEdgeFeasibility::Infeasible)
+            continue;
+          if (Edge != PhiEdgeFeasibility::ProvenFeasible)
+            return std::nullopt;
+          auto Delta = affineDeltaTo(Arg, Target, Depth + 1);
+          if (!Delta || (Common && *Common != *Delta))
+            return std::nullopt;
+          Common = *Delta;
+          SawFeasible = true;
+        }
+        return SawFeasible ? Common : std::nullopt;
       }
-      return SawFeasible ? Common : std::nullopt;
-    }
 
-    const MedOp *Def = lookupDef(Start);
-    if (!Def || Def->NumInputs < 1)
-      return std::nullopt;
-    if (auto Forwarded = pointerPreservingInput(*Def))
-      return affineDeltaTo(*Forwarded, Target, Depth + 1, Seen);
+      const MedOp *Def = lookupDef(Start);
+      if (!Def || Def->NumInputs < 1)
+        return std::nullopt;
+      if (auto Forwarded = pointerPreservingInput(*Def))
+        return affineDeltaTo(*Forwarded, Target, Depth + 1);
 
-    auto addDelta = [&](const MedVar &Base,
-                        int64_t Local) -> std::optional<int64_t> {
-      auto BaseDelta = affineDeltaTo(Base, Target, Depth + 1, Seen);
-      if (!BaseDelta)
+      auto addDelta = [&](const MedVar &Base,
+                          int64_t Local) -> std::optional<int64_t> {
+        auto BaseDelta = affineDeltaTo(Base, Target, Depth + 1);
+        if (!BaseDelta)
+          return std::nullopt;
+        int64_t Result = 0;
+        return llvm::AddOverflow(*BaseDelta, Local, Result)
+                   ? std::nullopt
+                   : std::optional<int64_t>(Result);
+      };
+      if (Def->Opcode == NdOp::INT_ADD && Def->NumInputs >= 2) {
+        if (auto Delta = signedDelta(Def->Inputs[1], Def->Output.Size))
+          return addDelta(Def->Inputs[0], *Delta);
+        if (auto Delta = signedDelta(Def->Inputs[0], Def->Output.Size))
+          return addDelta(Def->Inputs[1], *Delta);
         return std::nullopt;
-      int64_t Result = 0;
-      return llvm::AddOverflow(*BaseDelta, Local, Result)
-                 ? std::nullopt
-                 : std::optional<int64_t>(Result);
-    };
-    if (Def->Opcode == NdOp::INT_ADD && Def->NumInputs >= 2) {
-      if (auto Delta = signedDelta(Def->Inputs[1], Def->Output.Size))
-        return addDelta(Def->Inputs[0], *Delta);
-      if (auto Delta = signedDelta(Def->Inputs[0], Def->Output.Size))
-        return addDelta(Def->Inputs[1], *Delta);
+      }
+      if (Def->Opcode == NdOp::INT_SUB && Def->NumInputs >= 2) {
+        auto Delta = signedDelta(Def->Inputs[1], Def->Output.Size);
+        if (!Delta)
+          return std::nullopt;
+        int64_t Negated = 0;
+        return llvm::SubOverflow(int64_t{0}, *Delta, Negated)
+                   ? std::nullopt
+                   : addDelta(Def->Inputs[0], Negated);
+      }
+      if (selectPreservesPointerValues(*Def)) {
+        auto TrueDelta = affineDeltaTo(Def->Inputs[1], Target, Depth + 1);
+        auto FalseDelta = affineDeltaTo(Def->Inputs[2], Target, Depth + 1);
+        return TrueDelta && FalseDelta && *TrueDelta == *FalseDelta
+                   ? TrueDelta
+                   : std::nullopt;
+      }
       return std::nullopt;
-    }
-    if (Def->Opcode == NdOp::INT_SUB && Def->NumInputs >= 2) {
-      auto Delta = signedDelta(Def->Inputs[1], Def->Output.Size);
-      if (!Delta)
-        return std::nullopt;
-      int64_t Negated = 0;
-      return llvm::SubOverflow(int64_t{0}, *Delta, Negated)
-                 ? std::nullopt
-                 : addDelta(Def->Inputs[0], Negated);
-    }
-    if (selectPreservesPointerValues(*Def)) {
-      auto TrueDelta = affineDeltaTo(Def->Inputs[1], Target, Depth + 1, Seen);
-      auto FalseDelta = affineDeltaTo(Def->Inputs[2], Target, Depth + 1, Seen);
-      return TrueDelta && FalseDelta && *TrueDelta == *FalseDelta
-                 ? TrueDelta
-                 : std::nullopt;
-    }
-    return std::nullopt;
+    }();
+    AffineMemo.emplace(MemoKey, Result);
+    return Result;
   };
 
   // Cycle detection, rather than the syntactic length of an ESP/RSP
@@ -570,124 +604,133 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   // callee-save pushes, a large local frame, and one outgoing call already
   // exceed the legacy depth cap of 24.  Keep an aggregate work bound for
   // hostile/degenerate DAGs while allowing any finite normal chain.
-  size_t RemainingSlotProofNodes = 8192;
   std::function<std::optional<med_llvm::SlotKey>(const MedVar &, int)> rec =
       [&](const MedVar &Cur, int Depth) -> std::optional<med_llvm::SlotKey> {
-    if (Cur.isConst() || RemainingSlotProofNodes-- == 0)
+    if (Cur.isConst() || Cur.Size < PointerSize || !consumeNode())
       return std::nullopt;
 
     const AddressProvenanceVarKey Key = addressProvenanceVarKey(Cur);
+    if (auto It = ProvenSlots.find(Key); It != ProvenSlots.end()) {
+      ++AddressProvenanceWork.FrameSlotCacheHits;
+      return It->second;
+    }
     if (!Active.insert(Key).second)
       return std::nullopt;
-
-    const MedOp *Def = lookupDef(Cur);
-    // The lifter's entry register seeds are represented as self-copies.  They
-    // are roots, not definitions to recurse through.  Only the physical stack
-    // pointer is the preferred canonical frame origin.  A physical frame
-    // pointer with no provable definition is also an exact origin, but remains
-    // distinct from SP: only an explicit affine FP definition may unify them.
-    // This admits i386 live-in EBP slots without guessing their SP delta.
-    const bool IsSelfCopy = Def && Def->Opcode == NdOp::COPY &&
-                            Def->NumInputs >= 1 && sameVar(Cur, Def->Inputs[0]);
-    const bool IsMergedValue = lookupPhi(Cur) != nullptr;
-    const bool IsEntryStackPointer =
-        Cur.Kind == MedVar::Reg && SpOff != 0 && Cur.RegOff == SpOff &&
-        Cur.Size >= PointerSize && !IsMergedValue && (!Def || IsSelfCopy);
-    const bool IsLiveInFramePointer =
-        Cur.Kind == MedVar::Reg && FpOff != 0 && Cur.RegOff == FpOff &&
-        Cur.Size >= PointerSize && !IsMergedValue && (!Def || IsSelfCopy);
-    if (IsEntryStackPointer || IsLiveInFramePointer) {
-      Active.erase(Key);
-      if (RequireEntryStackPointer && !IsEntryStackPointer)
-        return std::nullopt;
-      return med_llvm::SlotKey{{Cur.Id, Cur.SSAVer}, 0};
-    }
-
-    std::optional<med_llvm::SlotKey> Result;
-    if (const PhiNode *Phi = lookupPhi(Cur)) {
-      bool SawRootArm = false;
-      for (const auto &[PredId, Arg] : Phi->Args) {
-        PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, PredId);
-        if (Edge == PhiEdgeFeasibility::Infeasible)
-          continue;
-        if (Edge != PhiEdgeFeasibility::ProvenFeasible) {
-          Active.erase(Key);
+    auto Cleanup = llvm::scope_exit([&] { Active.erase(Key); });
+    auto Proof = [&]() -> std::optional<med_llvm::SlotKey> {
+      const MedOp *Def = lookupDef(Cur);
+      // The lifter's entry register seeds are represented as self-copies.  They
+      // are roots, not definitions to recurse through.  Only the physical stack
+      // pointer is the preferred canonical frame origin.  A physical frame
+      // pointer with no provable definition is also an exact origin, but
+      // remains distinct from SP: only an explicit affine FP definition may
+      // unify them. This admits i386 live-in EBP slots without guessing their
+      // SP delta.
+      const bool IsSelfCopy = Def && Def->Opcode == NdOp::COPY &&
+                              Def->NumInputs >= 1 &&
+                              sameVar(Cur, Def->Inputs[0]);
+      const bool IsMergedValue = lookupPhi(Cur) != nullptr;
+      const bool IsEntryStackPointer =
+          Cur.Kind == MedVar::Reg && SpOff != 0 && Cur.RegOff == SpOff &&
+          Cur.Size >= PointerSize && !IsMergedValue && (!Def || IsSelfCopy);
+      const bool IsLiveInFramePointer =
+          Cur.Kind == MedVar::Reg && FpOff != 0 && Cur.RegOff == FpOff &&
+          Cur.Size >= PointerSize && !IsMergedValue && (!Def || IsSelfCopy);
+      if (IsEntryStackPointer || IsLiveInFramePointer) {
+        if (RequireEntryStackPointer && !IsEntryStackPointer)
           return std::nullopt;
-        }
-        if (auto Delta = affineDeltaTo(Arg, Cur, 0, {})) {
-          if (*Delta != 0) {
-            Active.erase(Key);
+        return med_llvm::SlotKey{{Cur.Id, Cur.SSAVer}, 0};
+      }
+
+      std::optional<med_llvm::SlotKey> Result;
+      if (const PhiNode *Phi = lookupPhi(Cur)) {
+        bool SawRootArm = false;
+        for (const auto &[PredId, Arg] : Phi->Args) {
+          PhiEdgeFeasibility Edge = classifyPhiIncomingEdge(*Phi, PredId);
+          if (Edge == PhiEdgeFeasibility::Infeasible)
+            continue;
+          if (Edge != PhiEdgeFeasibility::ProvenFeasible) {
             return std::nullopt;
           }
-          continue;
-        }
-        auto Arm = rec(Arg, Depth + 1);
-        if (!Arm || (Result && *Result != *Arm)) {
-          Active.erase(Key);
-          return std::nullopt;
-        }
-        Result = *Arm;
-        SawRootArm = true;
-      }
-      Active.erase(Key);
-      return SawRootArm ? Result : std::nullopt;
-    }
-
-    if (Def && Def->NumInputs >= 1) {
-      auto addOffset = [&](const MedVar &Base,
-                           int64_t Delta) -> std::optional<med_llvm::SlotKey> {
-        auto BaseKey = rec(Base, Depth + 1);
-        if (!BaseKey)
-          return std::nullopt;
-        int64_t Offset = 0;
-        if (llvm::AddOverflow(BaseKey->second, Delta, Offset))
-          return std::nullopt;
-        return med_llvm::SlotKey{BaseKey->first, Offset};
-      };
-      switch (Def->Opcode) {
-      case NdOp::COPY:
-      case NdOp::INT_ZEXT:
-      case NdOp::INT_SEXT:
-        // Width changes preserve a frame address only when neither side drops
-        // any target pointer bits.  This still admits 32->64 bookkeeping on a
-        // 32-bit target, while rejecting a lossy x86-64 low-register roundtrip.
-        if (PointerSize != 0 && Def->Output.Size >= PointerSize &&
-            Def->Inputs[0].Size >= PointerSize)
-          Result = rec(Def->Inputs[0], Depth + 1);
-        break;
-      case NdOp::SUBBYTES:
-        if (Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
-            Def->Inputs[1].ConstVal == 0 && PointerSize != 0 &&
-            Def->Output.Size >= PointerSize &&
-            Def->Inputs[0].Size >= PointerSize)
-          Result = rec(Def->Inputs[0], Depth + 1);
-        break;
-      case NdOp::INT_ADD:
-        if (Def->NumInputs >= 2 && (Def->Inputs[1].isConst() || Bindings)) {
-          if (auto Delta = signedDelta(Def->Inputs[1], Cur.Size))
-            Result = addOffset(Def->Inputs[0], *Delta);
-        }
-        if (!Result && Def->NumInputs >= 2 &&
-            (Def->Inputs[0].isConst() || Bindings)) {
-          if (auto Delta = signedDelta(Def->Inputs[0], Cur.Size))
-            Result = addOffset(Def->Inputs[1], *Delta);
-        }
-        break;
-      case NdOp::INT_SUB:
-        if (Def->NumInputs >= 2 && (Def->Inputs[1].isConst() || Bindings)) {
-          if (auto Delta = signedDelta(Def->Inputs[1], Cur.Size)) {
-            int64_t Negated = 0;
-            if (!llvm::SubOverflow(int64_t{0}, *Delta, Negated))
-              Result = addOffset(Def->Inputs[0], Negated);
+          if (auto Delta = affineDeltaTo(Arg, Cur, 0)) {
+            if (*Delta != 0) {
+              return std::nullopt;
+            }
+            continue;
           }
+          auto Arm = rec(Arg, Depth + 1);
+          if (!Arm || (Result && *Result != *Arm)) {
+            return std::nullopt;
+          }
+          Result = *Arm;
+          SawRootArm = true;
         }
-        break;
-      default:
-        break;
+        return SawRootArm ? Result : std::nullopt;
       }
-    }
-    Active.erase(Key);
-    return Result;
+
+      if (Def && Def->NumInputs >= 1) {
+        auto addOffset =
+            [&](const MedVar &Base,
+                int64_t Delta) -> std::optional<med_llvm::SlotKey> {
+          auto BaseKey = rec(Base, Depth + 1);
+          if (!BaseKey)
+            return std::nullopt;
+          int64_t Offset = 0;
+          if (llvm::AddOverflow(BaseKey->second, Delta, Offset))
+            return std::nullopt;
+          return med_llvm::SlotKey{BaseKey->first, Offset};
+        };
+        switch (Def->Opcode) {
+        case NdOp::COPY:
+        case NdOp::INT_ZEXT:
+        case NdOp::INT_SEXT:
+          // Width changes preserve a frame address only when neither side drops
+          // any target pointer bits.  This still admits 32->64 bookkeeping on a
+          // 32-bit target, while rejecting a lossy x86-64 low-register
+          // roundtrip.
+          if (PointerSize != 0 && Def->Output.Size >= PointerSize &&
+              Def->Inputs[0].Size >= PointerSize)
+            Result = rec(Def->Inputs[0], Depth + 1);
+          break;
+        case NdOp::SUBBYTES:
+          if (Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
+              Def->Inputs[1].ConstVal == 0 && PointerSize != 0 &&
+              Def->Output.Size >= PointerSize &&
+              Def->Inputs[0].Size >= PointerSize)
+            Result = rec(Def->Inputs[0], Depth + 1);
+          break;
+        case NdOp::INT_ADD:
+          if (Def->NumInputs >= 2 && (Def->Inputs[1].isConst() || Bindings)) {
+            if (auto Delta = signedDelta(Def->Inputs[1], Cur.Size))
+              Result = addOffset(Def->Inputs[0], *Delta);
+          }
+          if (!Result && Def->NumInputs >= 2 &&
+              (Def->Inputs[0].isConst() || Bindings)) {
+            if (auto Delta = signedDelta(Def->Inputs[0], Cur.Size))
+              Result = addOffset(Def->Inputs[1], *Delta);
+          }
+          break;
+        case NdOp::INT_SUB:
+          if (Def->NumInputs >= 2 && (Def->Inputs[1].isConst() || Bindings)) {
+            if (auto Delta = signedDelta(Def->Inputs[1], Cur.Size)) {
+              int64_t Negated = 0;
+              if (!llvm::SubOverflow(int64_t{0}, *Delta, Negated))
+                Result = addOffset(Def->Inputs[0], Negated);
+            }
+          }
+          break;
+        default:
+          break;
+        }
+      }
+      return Result;
+    }();
+    // A failed slot walk may depend on an active outer PHI. Cache only closed
+    // positive proofs, so traversal order cannot poison a later independent
+    // query for the same value.
+    if (Proof)
+      ProvenSlots.emplace(Key, *Proof);
+    return Proof;
   };
   return rec(V, 0);
 }

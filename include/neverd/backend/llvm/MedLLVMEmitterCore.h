@@ -119,6 +119,8 @@ private:
     uint64_t AliasNodes = 0;
     uint64_t StableOffsetProofs = 0;
     uint64_t IndexedBaseProofs = 0;
+    uint64_t FrameSlotNodes = 0;
+    uint64_t FrameSlotCacheHits = 0;
   };
 
   struct FrameReloadSourceWorkCounts {
@@ -135,6 +137,7 @@ private:
   // Test-only override for exercising fail-closed terminal-use exhaustion.
   // Production always uses the central finite limit.
   std::optional<uint64_t> TerminalUseEvidenceBudgetForTesting;
+  std::optional<size_t> FrameProofBudgetForTesting;
 
   /// Linkage for a synthesized data/table global: linkonce_odr in mergeable
   /// (sharded) mode so identical per-address globals from sibling shards merge;
@@ -1636,7 +1639,8 @@ private:
   /// Entry-only queries additionally reject an independent live-in FP root.
   std::optional<med_llvm::SlotKey>
   canonicalFrameSlotKey(const MedVar &V, bool RequireEntryStackPointer = false,
-                        const ControlValueBindings *Bindings = nullptr) const;
+                        const ControlValueBindings *Bindings = nullptr,
+                        size_t *SharedProofBudget = nullptr) const;
 
   /// True when \p V is reloaded from a stack slot that a stack-pointer-derived
   /// value was spilled to (`mov [slot],sp ; ... ; mov reg,[slot]`).  clang

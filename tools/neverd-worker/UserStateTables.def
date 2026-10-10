@@ -16,4 +16,5 @@ NEVERD_USER_STATE_TABLE("renames", "rename", ".neverd-renames.json", false)
 NEVERD_USER_STATE_TABLE("functions", "function", ".neverd-functions.json", true)
 NEVERD_USER_STATE_TABLE("items", "item", ".neverd-items.json", true)
 NEVERD_USER_STATE_TABLE("operands", "operand", ".neverd-operands.json", true)
+NEVERD_USER_STATE_TABLE("code_edits", "code", ".neverd-code.json", true)
 #undef NEVERD_USER_STATE_TABLE

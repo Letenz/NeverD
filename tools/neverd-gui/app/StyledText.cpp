@@ -117,12 +117,16 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
   QTextOption option;
   option.setWrapMode(QTextOption::NoWrap);
   layout_->setTextOption(option);
-  const auto layOut = [this] {
+  const QFontMetricsF metrics(font);
+  const auto layOut = [this, &metrics] {
     layout_->beginLayout();
     QTextLine line = layout_->createLine();
-    if (line.isValid())
-      line.setPosition(QPointF(0, 0));
     layout_->endLayout();
+    if (line.isValid()) {
+      // A script fallback can have a taller ascent than the code font. Keep
+      // the row's baseline fixed when a comment introduces that fallback.
+      line.setPosition(QPointF(0, metrics.ascent() - line.ascent()));
+    }
   };
   layOut();
   // Text beyond ASCII keeps to the fixed-width grid: every character takes
@@ -132,8 +136,7 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
   // same run, so each character's measured advance is corrected.
   if (std::any_of(text.begin(), text.end(),
                   [](QChar c) { return c.unicode() >= 0x80; })) {
-    const qreal column =
-        QFontMetricsF(font).horizontalAdvance(QLatin1Char('M'));
+    const qreal column = metrics.horizontalAdvance(QLatin1Char('M'));
     const QTextLine line = layout_->lineAt(0);
     bool corrected = false;
     for (qsizetype i = 0; i < text.size();) {

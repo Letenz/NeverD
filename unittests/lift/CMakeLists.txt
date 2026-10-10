@@ -1038,6 +1038,7 @@ target_include_directories(NeverDLiftTests PRIVATE
 
 add_neverd_unittest(NeverDJumpTableTests
   core/AffineFrameStateTests.cpp
+  core/ResolverLaneViewTests.cpp
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
@@ -1289,6 +1290,9 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationStateTestUtils.cpp
+  eh/RegistrationCxxContinuationTests.cpp
+  eh/RegistrationRealignedStateTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState
@@ -1314,6 +1318,7 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
+  eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
 
   LINK_COMPONENTS

@@ -26,6 +26,35 @@ analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
 
+The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
+notes. `UserStateTables.def` includes this state in history, recovery, read-only
+replicas and database packing. Source identity and exact row anchors prevent
+edits from silently attaching to regenerated text. The GUI selects precise
+occurrences through the existing folded-source projection; image names and
+mapped comments continue to use engine address edits. Local presentation names
+do not establish variable, type or instruction semantics.
+
+Pseudocode navigation uses instruction anchors recorded during source emission.
+HighIR statement observations retain function, address, sequence and statement
+kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
+observations retain weak handles through optimization and the private C clone.
+The source recorder publishes statement spans only when its private rendering
+reproduces ordinary source byte for byte. Instruction and library recordings use
+independent renders so navigation cannot weaken library folding evidence. The
+C API checks every occurrence against the same canonical LowIR boundaries and
+sequences used by Low/Med pages. C++, Rust and Go record individual statement
+spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
+surrounding whitespace; it never expands to an enclosing function or joins
+partial pieces. A function shown as C after a dialect refusal loses its
+statement anchors. Library folding retains its separate region projection.
+This supplies navigation evidence rather than complete expression provenance.
+Source and assembly cursors browse independently.
+Tab consumes the selected row's primary address, preserving a secondary address
+chosen by an assembly-to-source Tab so a round trip returns to the same
+instruction. Reverse navigation waits for the source pages and expands the
+mapped row's fold. An unmapped row explicitly falls back to its own function
+entry; an unmapped instruction reports the missing source mapping.
+
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
 exception runtime. The C++ printer uses the shared symbol spelling rules for
@@ -76,12 +105,28 @@ The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
 lifetime, including the untouched bytes of narrow state stores; HighIR and
 native LLVM lowering consume that same result.
+The implementation lives under `lib/ir/low/X86`: frame transfer, callee ABI,
+state initialization, ordinary transfers, C++ calls/objects, exceptional roots,
+cookies and result publication have separate translation units. The private
+state solver owns the shared lattice and cumulative work budget across them.
+The LLVM backend keeps registration lowering and callback preflight, scratch
+stack proof, outlining and security-check ABI under `lib/backend/llvm/X86`.
+COFF installation, source-IR replay, callback identity, incoming-frame proof,
+image-pointer closure and emitted SEH table checks remain separate consumers
+under `lib/backend/codegen/COFF`. Splitting these implementations does not add a
+second source-semantics owner or turn an analysis result into rewrite permission.
 It also publishes ordinary, runtime-dispatch and catch-resumption reachability.
 Empty levels alone do not identify dead code: a reached block can precede
 installation or follow removal. The call ABI consumer prunes only with complete
 state/lifetime/call proofs, current block identities and exact call receipts.
 For PE32 C++ catches, that analysis also owns the runtime catch-context stack,
 its nested-search minimum and exact returned continuation and SavedESP facts.
+The captured pre-dispatch SavedESP owns the catch-return writeback even when
+catch code changes the cell. That effect remains bound to the exact RETURN in
+LowIR and MedIR. Dedicated x86 HighIR and LLVM continuation lowering restore
+the recovered source cell; the generated runtime frame has its own physical
+SavedESP. A separate COFF continuation proof replays the snapshot and checks
+the actual store immediately before catchret, including its value and address.
 CFG construction closes those targets against function and instruction
 ownership and replays the analysis; it does not turn them into independent
 ordinary entries or insert a fabricated IP-to-state map into FuncInfo.
@@ -90,6 +135,15 @@ fields used by module function discovery and indirect-entry discovery;
 independent pointer references, exports, stated symbols and direct calls still
 create ordinary entries. Focused loading retains this parser's language-table
 ownership rather than reparsing registration data as table-driven EH.
+For a checked realigned x86 frame, the LowIR value domain keeps entry EBP and
+runtime-establisher offsets in separate register facts and cell maps. The
+alignment transfer replays the decoded entry AND and allocation; installation
+requires the actual ESI anchor, saved entry EBP, saved ESP, previous chain,
+handler and seed state. Entry-relative accesses below the saved-register area
+and runtime-relative accesses above the aligned allocation can cross coordinate
+spaces; both remain rejected without an exact projection.
+This admits bounded ordinary state propagation, not a generated C++ catch's
+parent-frame restore or native re-reconstruction; those remain unproved.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional
@@ -308,6 +362,13 @@ queries solve only new dependencies. Register/memory transparent-cycle memo
 entries are reusable only until either resolver learns a concrete result;
 both share the invalidation generation because their walks recurse into each
 other. Neither cache bypasses incomplete-proof rejection.
+
+Proof graph indexes use a private arena that outlives their containers and is
+retired with the synchronous query. Ordered insertion hints preserve duplicate
+and out-of-order point handling. A fixed-size register lane cache checks the
+complete offset/width key and uses the query's immutable target metadata.
+These storage and lookup optimizations retain the original evidence charges;
+they do not reuse CFG or value proofs across changed snapshots.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -1183,6 +1244,20 @@ registers before that call. This handles IP-map boundaries inside instructions
 as emitted by [older LLVM versions](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/llvm/lib/CodeGen/AsmPrinter/WinException.cpp#L875).
 HighIR uses only certified catch returns to form continuation jumps, including
 nested catches. Independent ordinary entries cannot borrow this frame proof.
+
+For x64 SEH, whole-module LowIR analysis can narrow an address-taken label to
+a local-unwind continuation when every address use is an exact imported
+`_local_unwind` call in the same owner. Relocation pointers, sibling users,
+selected-function scans and exhausted budgets cannot establish exclusivity.
+An independent call-site proof requires the frame argument to equal current
+SP through full-width copies, constant offsets or private spills untouched by
+an intervening opaque call or write. Generic address may-facts alone cannot
+prove a saved frame value. An operation digest binds that proof to the current
+argument-producing block prefix. Shared SSA then checks the call occurrence, parent
+unwind allocation, decoded prologue, converted SP effects and every relevant
+predecessor path. The initial contract requires an ordinary-reachable target;
+cross-funclet frame borrowing and saved frames surviving opaque calls remain
+unsupported until their memory and activation lifetimes can be proved.
 
 LLVMC preserves relocatable constant address arithmetic, and constant
 `ptrtoint` of a global denotes its address, not initializer bytes. Freeze
@@ -3607,6 +3682,8 @@ UIButton's `contentEdgeInsets`, `imageEdgeInsets` and `titleEdgeInsets` getters 
 
 `WindowsProcessHeap` owns allocation, resize, free and size queries for the process heap and bounded private heaps. Each allocation retains its owning heap when moved. `HeapDestroy` releases only that private heap’s blocks and retires its handle; other heaps and environment snapshots survive. Unknown, retired, process-heap destruction and cross-heap operations are refused before mutation. Private heaps accept growing requests with an initial size of at most one page; fixed maxima and larger initial commitments remain unsupported. The four-heap limit counts live heaps, so destruction permits further creation without revalidating stale handles. Handles are opaque model identities; native allocator headers are not materialized. `HeapReAlloc` preserves retained bytes, honors `HEAP_ZERO_MEMORY` and `HEAP_REALLOC_IN_PLACE_ONLY`, and returns NULL with `ERROR_NOT_ENOUGH_MEMORY` (8) on allocation failure. Separate page backing returns capacity on shrink, free and destruction; work observes the execution deadline. `WindowsHeapTests.cpp` checks both ISAs, ownership, lifetime turnover, failure atomicity and an independent native Windows oracle.
 
+`windows.peb_version` explicitly supplies the PEB `major`, `minor`, `build` and `platform` fields. All four unsigned integer fields are required; `build` is 16 bits and the other fields are 32 bits. Omission preserves the profile’s zero-filled version fields. `WindowsProcessEnvironment` owns their initialization on x64 and ARM64. This input does not choose native service numbers or certify compatibility with that Windows release. Capture and native replay must agree on any environment bytes on which retained code depends.
+
 `WindowsSystemModules` builds bounded PE64 model images for `ntdll.dll`, `kernelbase.dll` and `kernel32.dll` on both ISAs. Their mapped bases are shared by ASCII `GetModuleHandleA` / `GetModuleHandleW`, `LoadLibraryA` / `LoadLibraryW` and `GetProcAddress`; PEB/LDR and `MEM_IMAGE` describe those same images. Static imports, named queries and guest forwarders use the same API gates and export resolver. Providers stay pinned, have no guest initialization callbacks and do not prevent entry return after ordinary guest DLLs unload. Changed headers or export metadata stop lookup. Unknown system export names and nonzero system ordinal queries stop explicitly; case-only mismatches of modeled names and empty names return error 127, while a null query returns 87. Generated bytes and addresses are model policy; Windows DLL version layouts, native ordinals and cross-provider aliases are not reconstructed. `WindowsSystemTests.cpp` compares original x64/ARM64 executables with native Windows, including eight independent initial-thread returns.
 
 `WindowsNativeServices` owns one explicit model service catalogue. Numbered Nt/Zw aliases share a gate, ordered by the number advertised in its prologue. The x64 native boundary reads argument zero from R10 and retains the Win64 stub frame, including stack arguments at RSP + 0x28 and entry alignment. Returning services resume the next instruction with unchanged RSP and the SYSCALL RCX/R11 clobbers. Copied or inline gates carry `direct_service_number` and do not create export-call evidence. Unknown numbers and unimplemented services stop explicitly; these model numbers are not a mapping for an arbitrary Windows version. [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). Internal execution watches witness both native prologue instructions before identifying an export call. Interior jumps remain numeric bindings even when RCX equals R10. These watches also run without a caller observer and never generate callbacks outside the caller’s requested ranges.
@@ -3975,6 +4052,8 @@ DarwinFiles owns common attribute import, name/stat validity and record encoding
 ## Ordinary Darwin attribute mutations
 
 DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.
+
+When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
 
 ## Native opaque-state preservation
 

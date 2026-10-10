@@ -2312,6 +2312,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   ValNames.clear();
   UsedNames.clear();
   CapturedX87StatusCalls.clear();
+  SEHFilterFrameName.clear();
   BlockLabels.clear();
   DeferredBlockLabels.clear();
   ReferencedBlocks.clear();
@@ -8762,6 +8763,19 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
   }
   EHWrapIsCxx = functionIsCxxEH(Fn);
   EHTryDepth = 0;
+
+  if (!SEHFilterFrameName.empty()) {
+    // Capture in the parent, before Clang outlines the __except expression.
+    // Evaluating localaddress inside that expression would name the filter's
+    // frame instead. Keep the same target intrinsic used by native finally
+    // callbacks; frameaddress(0) can name a different base after realignment.
+    const std::string LocalAddress = freshVar("llvm_localaddress");
+    emitIndent(1);
+    OS << "extern void *" << LocalAddress
+       << "(void) __asm__(\"llvm.localaddress\");\n";
+    emitIndent(1);
+    OS << "void *" << SEHFilterFrameName << " = " << LocalAddress << "();\n";
+  }
 
   llvm::SmallPtrSet<const llvm::BasicBlock *, 16> SkipInTry;
   for (const EHWrapClause &Clause : EHWraps)

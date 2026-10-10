@@ -325,13 +325,40 @@ public:
     return Emitter.addrSlotKey(Address);
   }
 
+  static std::optional<std::pair<std::pair<int, int>, int64_t>>
+  canonicalFrameSlot(MedLLVMEmitter &Emitter, const MedFunc &Func,
+                     Arch TargetArch, const MedVar &Address,
+                     size_t Budget = 8192) {
+    Emitter.TargetArch = TargetArch;
+    Emitter.CurMedFunc = &Func;
+    Emitter.FrameProofBudgetForTesting = Budget;
+    Emitter.AddressProvenanceWork.FrameSlotNodes = 0;
+    Emitter.AddressProvenanceWork.FrameSlotCacheHits = 0;
+    return Emitter.canonicalFrameSlotKey(Address);
+  }
+
+  static std::pair<uint64_t, uint64_t>
+  frameSlotWork(const MedLLVMEmitter &Emitter) {
+    return {Emitter.AddressProvenanceWork.FrameSlotNodes,
+            Emitter.AddressProvenanceWork.FrameSlotCacheHits};
+  }
+
   static bool frameAccessesProvenDisjoint(MedLLVMEmitter &Emitter,
                                           const MedFunc &Func, Arch TargetArch,
                                           const MedVar &A, uint16_t ASize,
-                                          const MedVar &B, uint16_t BSize) {
+                                          const MedVar &B, uint16_t BSize,
+                                          size_t Budget = 8192) {
     Emitter.TargetArch = TargetArch;
     Emitter.CurMedFunc = &Func;
+    Emitter.FrameProofBudgetForTesting = Budget;
+    Emitter.AddressProvenanceWork.FrameSlotNodes = 0;
+    Emitter.AddressProvenanceWork.AliasNodes = 0;
     return Emitter.frameAccessesProvenDisjoint(A, ASize, B, BSize);
+  }
+
+  static uint64_t frameProofWork(const MedLLVMEmitter &Emitter) {
+    return Emitter.AddressProvenanceWork.FrameSlotNodes +
+           Emitter.AddressProvenanceWork.AliasNodes;
   }
 
   static bool collectFrameReloadSources(MedLLVMEmitter &Emitter,
@@ -21968,6 +21995,287 @@ TEST(LLVMDataPointerInvariantBoundary,
         MedLLVMEmitter().emit({Func}, Context, "shared-epilogue-fragment",
                               TargetArch, {}, &Image, Format);
     EXPECT_EQ(Module, nullptr);
+  }
+}
+
+// Shared subgraphs must not multiply the amount of frame proof work. These
+// are MedIR semantic tests and run on every supported native register model.
+struct FrameSlotProofFixture {
+  MedFunc Func;
+  MedVar SP, Address;
+  int NextId = 1;
+  uint16_t Width;
+
+  explicit FrameSlotProofFixture(Arch TargetArch)
+      : Width(getTargetRegInfo(TargetArch).PointerSize) {
+    Func.Name = "shared_frame_proof";
+    Func.Entry = 0x1000;
+    SP = temp();
+    SP.Kind = MedVar::Reg;
+    SP.RegOff = getTargetRegInfo(TargetArch).StackPointer;
+    Address = SP;
+    addBlock();
+  }
+
+  MedVar temp() {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = NextId++;
+    V.SSAVer = 1;
+    V.Size = Width;
+    return V;
+  }
+
+  int addBlock() {
+    const int Id = static_cast<int>(Func.Blocks.size());
+    MedBlock Block;
+    Block.Id = Id;
+    Block.StartAddr = Func.Entry + Id * 0x100;
+    Block.EndAddr = Block.StartAddr + 0x100;
+    Func.Blocks.push_back(std::move(Block));
+    return Id;
+  }
+
+  void op(int Block, NdOp Opcode, MedVar Output,
+          std::initializer_list<MedVar> Inputs) {
+    MedOp Op;
+    Op.Opcode = Opcode;
+    Op.Output = Output;
+    for (const MedVar &Input : Inputs)
+      Op.addInput(Input);
+    Func.Blocks[Block].Ops.push_back(std::move(Op));
+  }
+
+  void edge(int From, int To) {
+    Func.Blocks[From].Succs.push_back(To);
+    Func.Blocks[To].Preds.push_back(From);
+  }
+
+  void diamonds(unsigned Count, bool Conflict = false) {
+    int Previous = 0;
+    for (unsigned I = 0; I < Count; ++I) {
+      const int Left = addBlock();
+      const int Right = addBlock();
+      const int Join = addBlock();
+      edge(Previous, Left);
+      edge(Previous, Right);
+      edge(Left, Join);
+      edge(Right, Join);
+      const MedVar L = temp(), R = temp(), Merged = temp();
+      op(Left, NdOp::COPY, L, {Address});
+      op(Right, NdOp::INT_ADD, R,
+         {Address, MedVar::makeConst(Conflict && I == 0 ? 1 : 0, Width)});
+      PhiNode Phi;
+      Phi.Output = Merged;
+      Phi.Args = {{Left, L}, {Right, R}};
+      Func.Blocks[Join].Phis.push_back(std::move(Phi));
+      Address = Merged;
+      Previous = Join;
+    }
+  }
+
+  void recurrence(unsigned Count, unsigned Variant = 0) {
+    const int Header = addBlock();
+    edge(0, Header);
+    edge(Header, Header);
+    Address = temp();
+    MedVar Back = Address;
+    MedVar Condition = temp();
+    Condition.Kind = MedVar::Param;
+    Condition.Size = 1;
+    for (unsigned I = 0; I < Count; ++I) {
+      MedVar Selected = temp();
+      op(Header, NdOp::SELECT, Selected, {Condition, Back, Back});
+      Back = Selected;
+    }
+    if (Variant == 1) {
+      MedVar Adjusted = temp();
+      op(Header, NdOp::INT_ADD, Adjusted, {Back, MedVar::makeConst(8, Width)});
+      Back = Adjusted;
+    } else if (Variant == 2) {
+      MedVar Selected = temp();
+      op(Header, NdOp::SELECT, Selected, {Condition, Back, SP});
+      Back = Selected;
+    } else if (Variant == 4) {
+      MedVar Narrow = temp();
+      Narrow.Size = Width / 2;
+      op(Header, NdOp::SUBBYTES, Narrow, {Back, MedVar::makeConst(0, 1)});
+      MedVar Extended = temp();
+      op(Header, NdOp::INT_ZEXT, Extended, {Narrow});
+      Back = Extended;
+    }
+    PhiNode Phi;
+    Phi.Output = Address;
+    if (Variant != 3)
+      Phi.Args.push_back({0, SP});
+    Phi.Args.push_back({Header, Back});
+    if (Variant == 5)
+      std::reverse(Phi.Args.begin(), Phi.Args.end());
+    Func.Blocks[Header].Phis.push_back(std::move(Phi));
+  }
+};
+
+TEST(LLVMFrameSlotProof, SharedDiamondsRetainExactCoordinatesWithinBudget) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    for (bool Conflict : {false, true}) {
+      FrameSlotProofFixture Fixture(TargetArch);
+      Fixture.diamonds(20, Conflict);
+      MedLLVMEmitter Emitter;
+      auto Slot = MedLLVMProvenanceTestPeer::canonicalFrameSlot(
+          Emitter, Fixture.Func, TargetArch, Fixture.Address);
+      EXPECT_EQ(Slot.has_value(), !Conflict);
+      if (Slot) {
+        EXPECT_EQ(Slot->first,
+                  std::make_pair(Fixture.SP.Id, Fixture.SP.SSAVer));
+        EXPECT_EQ(Slot->second, 0);
+      }
+      auto [Nodes, Hits] = MedLLVMProvenanceTestPeer::frameSlotWork(Emitter);
+      EXPECT_LT(Nodes, 4096u);
+      if (!Conflict)
+        EXPECT_GE(Hits, 20u);
+    }
+  }
+}
+
+TEST(LLVMFrameSlotProof, SharedRecurrenceRequiresEveryArmAndAnExactRoot) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    for (unsigned Variant = 0; Variant != 6; ++Variant) {
+      SCOPED_TRACE(Variant);
+      FrameSlotProofFixture Fixture(TargetArch);
+      Fixture.recurrence(24, Variant);
+      MedLLVMEmitter Emitter;
+      auto Slot = MedLLVMProvenanceTestPeer::canonicalFrameSlot(
+          Emitter, Fixture.Func, TargetArch, Fixture.Address);
+      EXPECT_EQ(Slot.has_value(), Variant == 0 || Variant == 5);
+      if (Slot) {
+        EXPECT_EQ(Slot->first,
+                  std::make_pair(Fixture.SP.Id, Fixture.SP.SSAVer));
+        EXPECT_EQ(Slot->second, 0);
+      }
+      auto [Nodes, Hits] = MedLLVMProvenanceTestPeer::frameSlotWork(Emitter);
+      EXPECT_LT(Nodes, 256u);
+      if (Variant == 0 || Variant == 5)
+        EXPECT_GE(Hits, 20u);
+    }
+  }
+}
+
+TEST(LLVMFrameSlotProof, ExhaustionIsSharedSaturatingAndQueryLocal) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    FrameSlotProofFixture Fixture(TargetArch);
+    Fixture.recurrence(24);
+    MedLLVMEmitter Emitter;
+    for (size_t Budget : {0, 1, 8, 32, 8192, 0, 8192}) {
+      SCOPED_TRACE(Budget);
+      auto Slot = MedLLVMProvenanceTestPeer::canonicalFrameSlot(
+          Emitter, Fixture.Func, TargetArch, Fixture.Address, Budget);
+      EXPECT_EQ(Slot.has_value(), Budget == 8192);
+      auto [Nodes, Hits] = MedLLVMProvenanceTestPeer::frameSlotWork(Emitter);
+      EXPECT_LE(Nodes, Budget);
+      if (Budget < 8192)
+        EXPECT_EQ(Nodes, Budget);
+    }
+  }
+}
+
+TEST(LLVMFrameSlotProof, SharedFrameIntervalsKeepOneAggregateBudget) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    FrameSlotProofFixture Fixture(TargetArch);
+    // The first diamond contributes [SP, SP+1]; later diamonds share it.
+    Fixture.diamonds(16, true);
+    const MedVar Far = Fixture.temp();
+    Fixture.op(0, NdOp::INT_ADD, Far,
+               {Fixture.SP, MedVar::makeConst(64, Fixture.Width)});
+    MedLLVMEmitter Emitter;
+    for (size_t Budget : {0, 8, 32, 8192, 0, 8192}) {
+      SCOPED_TRACE(Budget);
+      EXPECT_EQ(MedLLVMProvenanceTestPeer::frameAccessesProvenDisjoint(
+                    Emitter, Fixture.Func, TargetArch, Fixture.Address, 8, Far,
+                    8, Budget),
+                Budget == 8192);
+      EXPECT_LE(MedLLVMProvenanceTestPeer::frameProofWork(Emitter), Budget);
+    }
+    EXPECT_FALSE(MedLLVMProvenanceTestPeer::frameAccessesProvenDisjoint(
+        Emitter, Fixture.Func, TargetArch, Fixture.Address, 8, Fixture.SP, 8));
+  }
+}
+
+TEST(LLVMFrameSlotProof, CyclicIntervalsRequireTheirOwnRootAndNoGrowth) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    for (unsigned Variant = 0; Variant != 3; ++Variant) {
+      SCOPED_TRACE(Variant);
+      FrameSlotProofFixture Fixture(TargetArch);
+      const int Loop = Fixture.addBlock();
+      Fixture.edge(0, Loop);
+      Fixture.edge(Loop, Loop);
+      const MedVar A = Fixture.temp(), B = Fixture.temp(), C = Fixture.temp();
+      const MedVar Far = Fixture.temp();
+      Fixture.op(0, NdOp::INT_ADD, Far,
+                 {Fixture.SP, MedVar::makeConst(64, Fixture.Width)});
+      PhiNode APhi;
+      APhi.Output = A;
+      APhi.Args = {{0, Fixture.SP}, {Loop, C}};
+      Fixture.Func.Blocks[Loop].Phis.push_back(std::move(APhi));
+      PhiNode BPhi;
+      BPhi.Output = B;
+      if (Variant == 2) {
+        // Incomplete SSA with an independent rootless cycle must not acquire
+        // A's SP anchor just because A also has a known predecessor.
+        BPhi.Args = {{0, B}, {Loop, B}};
+      } else {
+        BPhi.Args = {{0, Fixture.SP}, {Loop, A}};
+      }
+      Fixture.Func.Blocks[Loop].Phis.push_back(std::move(BPhi));
+      Fixture.op(Loop, NdOp::INT_ADD, C,
+                 {B, MedVar::makeConst(Variant == 1 ? 8 : 0, Fixture.Width)});
+      // Variant 1 grows by 8 every two iterations and eventually reaches Far.
+      // Variant 0 retains SP on every iteration.
+      for (bool Reverse : {false, true}) {
+        SCOPED_TRACE(Reverse);
+        if (Reverse)
+          for (auto &Phi : Fixture.Func.Blocks[Loop].Phis)
+            std::reverse(Phi.Args.begin(), Phi.Args.end());
+        MedLLVMEmitter Emitter;
+        EXPECT_EQ(MedLLVMProvenanceTestPeer::frameAccessesProvenDisjoint(
+                      Emitter, Fixture.Func, TargetArch, A, 8, Far, 8),
+                  Variant == 0);
+        EXPECT_LE(MedLLVMProvenanceTestPeer::frameProofWork(Emitter), 8192u);
+      }
+    }
+  }
+}
+
+TEST(LLVMFrameSlotProof, NarrowArithmeticCannotRetainFullPointerCoordinates) {
+  for (Arch TargetArch : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(TargetArch));
+    for (bool Narrow : {false, true}) {
+      FrameSlotProofFixture Fixture(TargetArch);
+      MedVar Address = Fixture.temp();
+      if (Narrow)
+        Address.Size /= 2;
+      Fixture.op(0, NdOp::INT_ADD, Address,
+                 {Fixture.SP, MedVar::makeConst(0, Fixture.Width)});
+      MedVar Far = Fixture.temp();
+      // The purported displacement is a full narrow-pointer modulus. A
+      // truncated pointer can alias this slot after widening to guest width.
+      Fixture.op(
+          0, NdOp::INT_ADD, Far,
+          {Fixture.SP, MedVar::makeConst(uint64_t{1} << (Fixture.Width * 4),
+                                         Fixture.Width)});
+      MedLLVMEmitter Emitter;
+      EXPECT_EQ(MedLLVMProvenanceTestPeer::canonicalFrameSlot(
+                    Emitter, Fixture.Func, TargetArch, Address)
+                    .has_value(),
+                !Narrow);
+      EXPECT_EQ(MedLLVMProvenanceTestPeer::frameAccessesProvenDisjoint(
+                    Emitter, Fixture.Func, TargetArch, Address, 1, Far, 1),
+                !Narrow);
+    }
   }
 }
 

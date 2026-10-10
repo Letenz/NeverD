@@ -1169,6 +1169,8 @@ UIButton 的 `contentEdgeInsets`、`imageEdgeInsets` 和 `titleEdgeInsets` 读�
 
 `WindowsProcessHeap` 统一管理进程堆和有界私有堆的分配、调整大小、释放与大小查询。分配移动后仍保留所属堆。`HeapDestroy` 只释放对应私有堆的对象并使句柄失效，其他堆及环境快照继续有效。未知或已销毁句柄、销毁进程堆及跨堆操作均在修改前拒绝。私有堆仅接受初始大小不超过一页的可增长请求；固定上限及更大的初始提交量仍不支持。四个堆的限制按存活数量计算，销毁后可继续创建，但旧句柄不会重新有效。句柄是模型中的不透明标识，不生成原生分配器头部。`HeapReAlloc`: 调整大小保留原有字节，遵守 `HEAP_ZERO_MEMORY` 和 `HEAP_REALLOC_IN_PLACE_ONLY`，分配失败返回 NULL 并设置 `ERROR_NOT_ENOUGH_MEMORY`（8）。独立页后备在缩小、释放及销毁时归还容量，操作受执行期限约束。`WindowsHeapTests.cpp` 覆盖两种 ISA、所有权、生命周期周转、失败原子性和独立原生 Windows 对照。
 
+`windows.peb_version` 显式提供 PEB 的 `major`、`minor`、`build` 和 `platform` 字段。四个无符号整数字段必须齐全；`build` 为 16 位，其余为 32 位。省略此选项时保留配置的零填充版本字段。`WindowsProcessEnvironment` 统一负责 x64 与 ARM64 的初始化。此输入不选择原生系统调用编号，也不证明对应 Windows 版本的兼容性。捕获与原生重放必须在保留代码所依赖的环境字节上保持一致。
+
 `WindowsSystemModules` 为两种 ISA 构造有界的 `ntdll.dll`、`kernelbase.dll` 和 `kernel32.dll` PE64 模型映像。ASCII `GetModuleHandleA` / `GetModuleHandleW`、`LoadLibraryA` / `LoadLibraryW` 与 `GetProcAddress` 共用其映射基址；PEB/LDR 和 `MEM_IMAGE` 描述同一批映像。静态导入、按名称查询和客户 DLL 转发使用相同 API 跳板与导出解析器。提供方固定驻留，不执行客户初始化回调，普通客户 DLL 全部卸载后不会阻止入口返回。头部或导出元数据改变会停止查询。未知系统导出名称和非零系统序号查询明确停止；已建模名称的大小写不匹配和空名称返回错误 127，空指针查询返回 87。生成的字节和地址属于模型策略，不复刻特定 Windows DLL 布局、原生序号或跨提供方别名。`WindowsSystemTests.cpp` 对照原始 x64/ARM64 EXE 与原生 Windows，并独立观察八次初始线程返回。
 
 `WindowsNativeServices` 统一管理显式模型服务编号。带编号的 Nt/Zw 别名共享入口，并按序言中声明的编号排列。x64 原生服务边界从 R10 读取首参，保留 Win64 桩函数的栈布局，包括 RSP + 0x28 的栈参数及入口对齐要求。返回时继续执行下一条指令，保持 RSP，并应用 SYSCALL 的 RCX/R11 覆盖语义。复制或内联入口记录 `direct_service_number`，不构成导出函数调用证据。未知编号和未实现服务明确停止；模型编号不能代表任意 Windows 版本。 [Nt/Zw](https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/using-nt-and-zw-versions-of-the-native-system-services-routines). 内部执行观察必须见证两条入口序言指令，才认定导出函数调用。跳入入口中部即使 RCX 等于 R10，仍保留编号依赖。该观察在没有调用方观察器时也生效，且不会向调用方请求范围之外发送观察回调。
@@ -1470,6 +1472,8 @@ Objective-C 源码导出器对完整原生单元和各方法单元同时关闭 `
 ## 有界目录批量属性
 
 DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；DarwinDirectory 负责批量分组、显式对象授权和描述对象拥有的迭代/游标/EOF 状态，与 getdirentries64 共用当前子项投影。dup 共享同一描述对象，零 seek 重置迭代契约。JSON 提供显式策略输入，服务派发不推断文件系统观察。
+
+恢复的 DLL 入口与原始 PE 入口不同时，写入器生成加载器通知适配器：进程附加进入选定入口，卸载和线程通知进入原始的可执行入口，以保留外层包装函数的清理。原始入口不可用时重建失败。报告的 `entry_rva` 仍表示选定的程序入口，PE 头可以指向适配器。独立包装 DLL 测试在两种仿真架构和原生 Windows 上检查选定函数之外的清理。
 
 ## 原生不透明状态保持
 

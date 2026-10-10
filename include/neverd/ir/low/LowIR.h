@@ -1081,6 +1081,19 @@ struct LowCxxContinuationEntryEvidence {
   int ReturnSeq = -1;
 };
 
+/// A code address used only as the target of this function's authenticated
+/// Win64 _local_unwind calls. The first argument is the current entry-relative
+/// SP at each call; MedIR must still certify it against the unwind prologue.
+struct LowSEHLocalUnwindEvidence {
+  va_t Target = InvalidVA;
+  va_t CallAddr = InvalidVA;
+  int CallSeq = -1;
+  va_t Callee = InvalidVA;
+  int64_t FrameOffset = 0;
+  /// Bind the independent argument proof to the exact current block prefix.
+  std::string OperationDigest;
+};
+
 struct LowFunctionTemporary {
   uint64_t Offset = 0;
   uint16_t Bytes = 0;
@@ -1131,6 +1144,7 @@ struct LowFunc {
   /// not retained here: downstream reconstruction must bind exact exits.
   std::vector<LowCxxContinuationExitEvidence> CxxContinuationExits;
   std::vector<LowCxxContinuationEntryEvidence> CxxContinuationEntries;
+  std::vector<LowSEHLocalUnwindEvidence> SEHLocalUnwindContinuations;
   /// Distinguishes a completed analysis whose exact occurrence set is empty
   /// from a function for which no stable module-level certificate was
   /// published.  False always requires CxxContinuationExits to be empty.

@@ -72,6 +72,13 @@ private:
 llvm::Expected<RebuiltImage>
 rebuild(const Image &Input, const Capture &Observed, const RebuildPlan &Plan);
 
+/// Dispatch process attach to the recovered entry, retaining the original
+/// DLL entry for other loader notifications. Returns the actual header RVA.
+llvm::Expected<uint64_t> rebuildEntry(const Image &Input,
+                                      const Capture &Observed,
+                                      uint64_t MetadataRVA,
+                                      std::vector<uint8_t> &Metadata);
+
 struct DelayImportRange {
   uint64_t Begin, End;
 };

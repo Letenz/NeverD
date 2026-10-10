@@ -54,6 +54,7 @@ bool command(const QString &operation) {
                                         "signatures_load",
                                         "annotation_set",
                                         "rename",
+                                        "code_edit",
                                         "function_create",
                                         "function_delete",
                                         "item_define",

@@ -1,5 +1,6 @@
 #include "Engine.h"
 
+#include "CodeEdits.h"
 #include "Contributions.h"
 #include "EngineSymbols.h"
 #include "GraphSnapshot.h"
@@ -165,6 +166,11 @@ IRViewFunction irViewFunction() {
   // Additive C ABI capability: an older matching engine can still run the GUI.
   static const auto function =
       engineSymbol<IRViewFunction>("neverd_ir_view_json");
+  return function;
+}
+SessionJsonFunction headersFunction() {
+  static const auto function =
+      engineSymbol<SessionJsonFunction>("neverd_headers_json");
   return function;
 }
 /// Engine code text under workbench function names: every identifier token
@@ -462,6 +468,7 @@ bool Engine::keepsOperandFormats() {
   return static_cast<bool>(operandFormats());
 }
 bool Engine::reloadUserState() {
+  reloadCodeEdits();
   const bool annotations = neverd_annotations_load(session_) == 0;
   const bool renames = neverd_renames_load(session_) == 0;
   const bool functions = reloadFunctionEdits();
@@ -565,7 +572,11 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   if (!view)
     return std::nullopt;
   const auto &aliases = listing().functionAliases();
-  if (aliases.empty())
+  const bool sourceView = representation == "c" || representation == "llvmc" ||
+                          representation == "source" ||
+                          representation == "cpp" || representation == "rust" ||
+                          representation == "go";
+  if (aliases.empty() && !sourceView)
     return std::nullopt;
   const auto key = hexAddress(address) + ":" + representation + ":" +
                    std::to_string(revision_) + ":" +
@@ -575,10 +586,22 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
     // The whole function, from as many engine pages as it fills: the engine
     // emits it once and pages it from there.
     Json full;
+    auto backendRepresentation = representation;
     for (std::size_t next = 0;;) {
-      auto page = backendJson(view(session_, address, representation.c_str(),
-                                   next, EnginePageLines),
-                              true);
+      auto page =
+          backendJson(view(session_, address, backendRepresentation.c_str(),
+                           next, EnginePageLines),
+                      true);
+      // Older page APIs offer HighC but not the automatic source dialect.
+      // Keep the Pseudocode action useful, with the actual dialect reported.
+      if (next == 0 && representation == "source" && page.is_object() &&
+          !page.contains("text") &&
+          page.value("mapping_status", std::string()) ==
+              "unsupported_representation") {
+        backendRepresentation = "c";
+        page = backendJson(view(session_, address, "c", next, EnginePageLines),
+                           true);
+      }
       if (!page.is_object() || !page.contains("text") ||
           !page["text"].is_string() || !page.contains("rows") ||
           !page["rows"].is_array() ||
@@ -611,9 +634,30 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
     }
     full["complete"] = true;
     full["next_offset"] = nullptr;
+    full["representation"] = representation;
+    if (representation == "source" && backendRepresentation == "c")
+      full["dialect"] = "c";
+    if (sourceView)
+      CodeEdits::decorate(
+          full, codeEditRow(address), address, representation,
+          backendJson(neverd_renames_json(session_)),
+          backendJson(neverd_annotations_json(session_)),
+          [this](const std::string &name) -> std::optional<std::uint64_t> {
+            Json target;
+            try {
+              target = execute("resolve", {{"query", name}});
+            } catch (const Error &) {
+              return std::nullopt;
+            }
+            if (target.is_object() && target.contains("address") &&
+                target["address"].is_string())
+              return parseAddress(target["address"].get<std::string>());
+            return std::nullopt;
+          });
     std::vector<std::pair<std::size_t, std::ptrdiff_t>> shift;
-    full["text"] =
-        renameIdentifiers(full["text"].get<std::string>(), aliases, shift);
+    if (!sourceView)
+      full["text"] =
+          renameIdentifiers(full["text"].get<std::string>(), aliases, shift);
     const std::size_t base = full.value("byte_offset", std::size_t{0});
     if (auto regions = full.find("library_regions");
         regions != full.end() && regions->is_array())
@@ -673,16 +717,18 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   }
   page["rows"] = std::move(rows);
   const std::size_t base = namedView_.value("byte_offset", std::size_t{0});
-  if (auto names = namedView_.find("source_names");
-      names != namedView_.end() && names->is_array()) {
+  for (const char *field : {"source_names", "code_names"}) {
+    if (!namedView_.contains(field) || !namedView_[field].is_array())
+      continue;
+    const auto &names = namedView_[field];
     Json onPage = Json::array();
-    for (const auto &name : *names) {
+    for (const auto &name : names) {
       const auto begin = name.value("begin_byte", std::size_t{0});
       const auto nameEnd = name.value("end_byte", std::size_t{0});
       if (nameEnd > base + startByte && begin < base + endByte)
         onPage.push_back(name);
     }
-    page["source_names"] = std::move(onPage);
+    page[field] = std::move(onPage);
   }
   page["offset"] = start;
   page["byte_offset"] = base + startByte;
@@ -807,7 +853,8 @@ ProjectHistory &Engine::history() {
          {"renames", backendJson(neverd_renames_json(session_))},
          {"functions", functionEditRows()},
          {"items", dataItemRows()},
-         {"operands", operandFormatRows()}});
+         {"operands", operandFormatRows()},
+         {"code_edits", codeEdits_}});
   }
   return *history_;
 }
@@ -817,7 +864,9 @@ Json Engine::metadata() const {
   const bool deferred =
       !analyzed_ && (folded(arch) == "evm" || folded(arch) == "sbf");
   // The language whose runtime built the image, as the engine read it.
-  const auto headers = backendJson(neverd_headers_json(session_));
+  const auto headers = headersFunction()
+                           ? backendJson(headersFunction()(session_))
+                           : Json::object();
   using DiagnosticsFunction = const char *(*)(neverd_session_t);
   static const auto diagnosticsFunction =
       engineSymbol<DiagnosticsFunction>("neverd_session_load_diagnostics_json");
@@ -869,7 +918,42 @@ Json Engine::userState() const {
           {"renames", backendJson(neverd_renames_json(session_))},
           {"functions", functionEditRows()},
           {"items", dataItemRows()},
-          {"operands", operandFormatRows()}};
+          {"operands", operandFormatRows()},
+          {"code_edits", codeEdits_}};
+}
+
+void Engine::reloadCodeEdits() {
+  codeEdits_ = readCodeEdits(ownedString(neverd_session_file_path(session_)));
+}
+
+Json Engine::readCodeEdits(const std::string &binary) {
+  const auto path = utf8Path(binary + ".neverd-code.json");
+  if (!fs::exists(path))
+    return Json::array();
+  if (fs::file_size(path) > 16 * 1024 * 1024)
+    throw Error("resource_limit", "Code edit sidecar exceeds 16 MiB");
+  std::ifstream input(path, std::ios::binary);
+  if (!input)
+    throw Error("load_failed", "Cannot read code edit sidecar");
+  const std::string text((std::istreambuf_iterator<char>(input)), {});
+  auto rows = parseJson(text, 16 * 1024 * 1024);
+  if (!rows.is_array() || rows.size() > 16384)
+    throw Error("invalid_request", "Invalid code edit table");
+  for (const auto &row : rows)
+    CodeEdits::validateRow(row);
+  std::set<std::uint64_t> addresses;
+  for (const auto &row : rows)
+    if (!addresses.insert(parseAddress(row.at("addr").get<std::string>()))
+             .second)
+      throw Error("invalid_request", "Duplicate function in code edit table");
+  return rows;
+}
+
+Json Engine::codeEditRow(std::uint64_t address) const {
+  for (const auto &row : codeEdits_)
+    if (parseAddress(row.at("addr").get<std::string>()) == address)
+      return row;
+  return nullptr;
 }
 
 Json Engine::analysisSnapshot() {
@@ -920,8 +1004,11 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   // Committed edits have one writer. Loading them is safe only when they
   // still match the version exported by that writer. A racing edit causes
   // rejection; the GUI retires this replica on the new owner revision.
-  for (const char *table : {"renames", "functions", "items", "operands"})
-    if (actual.at(table) != expected.at(table))
+  for (const char *table :
+       {"renames", "functions", "items", "operands", "code_edits"})
+    if (actual.at(table) != (std::string_view(table) == "code_edits"
+                                 ? expected.value(table, Json::array())
+                                 : expected.at(table)))
       throw Error("stale_snapshot",
                   "Project edits changed while opening analysis");
   for (const auto &row : actual.at("annotations"))
@@ -1116,8 +1203,15 @@ Json Engine::execute(const std::string &operation, const Json &p) {
           &loadProgress_);
     // The load dialog's choices: the debug information beside the input, and
     // idle-time analysis.
-    if (!p.value("debug_info", true))
-      neverd_session_set_debug_info_enabled(next.get(), 0);
+    if (!p.value("debug_info", true)) {
+      using DebugInfoFunction = void (*)(neverd_session_t, int);
+      const auto set = engineSymbol<DebugInfoFunction>(
+          "neverd_session_set_debug_info_enabled");
+      if (!set)
+        throw Error("unsupported",
+                    "This engine cannot disable debug information");
+      set(next.get(), 0);
+    }
     if (!chosenLoader.empty() &&
         loadOptions().set(next.get(), chosenLoader.c_str()) != 0)
       throw Error("invalid_request",
@@ -1129,8 +1223,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error(
           "input_changed",
           "Input changed while loading; retry after the writer finishes");
+    auto nextCodeEdits =
+        readCodeEdits(ownedString(neverd_session_file_path(next.get())));
     neverd_session_destroy(session_);
     session_ = next.release();
+    codeEdits_ = std::move(nextCodeEdits);
     if (!reuseLock)
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
@@ -1543,6 +1640,47 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     }
     return page(items, p, {"text"});
   }
+  if (operation == "code_edit") {
+    requireWriter();
+    if (dirty_)
+      throw Error("unsaved_changes", "Save staged comments before a code edit");
+    const auto address = parseAddress(stringField(p, "address"));
+    auto &store = history();
+    const auto before = codeEditRow(address);
+    const auto after = CodeEdits::change(before, p);
+    prepareFunction(address);
+    if (!namedViewPage(address, stringField(p, "representation"), 0, 1))
+      throw Error("unsupported",
+                  "The engine does not expose editable source targets");
+    CodeEdits::validateChange(namedView_, p);
+    if (before == after)
+      return {{"saved", false}, {"address", hexAddress(address)}};
+    const auto checkpoint = store;
+    auto state = store.committedState();
+    auto &rows = state["code_edits"];
+    rows.erase(std::remove_if(rows.begin(), rows.end(),
+                              [&](const Json &row) {
+                                return parseAddress(
+                                           row.at("addr").get<std::string>()) ==
+                                       address;
+                              }),
+               rows.end());
+    rows.push_back(after);
+    try {
+      store.stage({{"kind", "code"},
+                   {"address", hexAddress(address)},
+                   {"before", before},
+                   {"after", after}});
+      store.persist(state);
+    } catch (...) {
+      store = checkpoint;
+      throw;
+    }
+    codeEdits_ = std::move(rows);
+    invalidate();
+    ++revision_;
+    return {{"saved", true}, {"address", hexAddress(address)}};
+  }
   if (operation == "save") {
     requireWriter();
     auto &store = history();
@@ -1553,6 +1691,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     return {{"saved", true}, {"dirty", false}};
   }
   if (operation == "reload") {
+    reloadCodeEdits();
     const bool annotationsLoaded = neverd_annotations_load(session_) == 0;
     const bool renamesLoaded = neverd_renames_load(session_) == 0;
     const bool functionsLoaded = reloadFunctionEdits();
