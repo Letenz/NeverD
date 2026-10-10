@@ -6848,7 +6848,43 @@ static int entropy_replay(unsigned mode) {
   return 37;
 }
 
+/* Native IDs are compared only within one process. Literal virtual bytes
+ * never enter the deterministic native reference inventory. */
+static int thread_identity(unsigned mode) {
+  unsigned error;
+  const char marker = mode == 2 ? '!' : 'T';
+  if (mode == 2) {
+    if (call(4, 1, (u64)&marker, 1, 0, 0, 0, &error) != 1 || error || secondary)
+      return 213;
+    call(372, -1UL, -1UL, -1UL, -1UL, -1UL, -1UL, &error);
+    return 214;
+  }
+  u64 id = call(372, -1UL, 0x8000000000000000UL, 0x1122334455667788UL, 1, -1UL,
+                0x123456789abcdef0UL, &error);
+  if (error || secondary || (!mode && !id))
+    return 215;
+  const u64 prefixes[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 seeds[] = {0, -1UL, 0x8000000000000000UL};
+  for (unsigned p = 0; p != 3; ++p)
+    for (unsigned a = 0; a != 3; ++a)
+      if (call(prefixes[p] | 372, seeds[a], ~seeds[a], 0x1122334455667788UL,
+               -1UL, 1, -1UL, &error) != id ||
+          error || secondary)
+        return 216;
+  u64 output = mode ? (u64)&id : (u64)&marker;
+  u64 size = mode ? sizeof(id) : 1;
+  if (call(4, 1, output, size, 0, 0, 0, &error) != size || error || secondary)
+    return 217;
+  return 37;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
+  if (argc >= 2 && equal(argv[1], "thread-identity"))
+    return thread_identity(0);
+  if (argc >= 2 && equal(argv[1], "thread-identity-value"))
+    return thread_identity(1);
+  if (argc >= 2 && equal(argv[1], "thread-identity-missing"))
+    return thread_identity(2);
   if (argc >= 2 && equal(argv[1], "entropy-replay"))
     return entropy_replay(0);
   if (argc >= 2 && equal(argv[1], "entropy-missing"))

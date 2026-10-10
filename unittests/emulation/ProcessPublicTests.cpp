@@ -508,6 +508,10 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"process-priority", "51"},
           std::pair{"virtual-process-priority",
                     emulation::darwin_test::PriorityHex},
+          std::pair{"thread-identity", "54"},
+          std::pair{"thread-identity-value",
+                    emulation::darwin_test::ThreadIdentityHex},
+          std::pair{"thread-identity-missing", "21"},
           std::pair{"entropy-replay", "52"},
           std::pair{"entropy-missing", "21"},
           std::pair{"entropy-exhausted", "21"},
@@ -562,9 +566,12 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       ModeName == "hard-links-name-unsupported" ||
       ModeName == "hard-links-attributes-unsupported";
   const bool UnknownNonblocking = ModeName == "nonblocking-flags-unsupported";
+  const bool ThreadIdentity = ModeName.starts_with("thread-identity");
+  const bool UnknownThreadIdentity = ModeName == "thread-identity-missing";
   const bool Entropy = ModeName.starts_with("entropy-");
   const bool UnknownEntropy = Entropy && ModeName != "entropy-replay";
-  const bool Incomplete = UnknownEntropy || ProtectedLink || UnknownPathConf ||
+  const bool Incomplete = UnknownThreadIdentity || UnknownEntropy ||
+                          ProtectedLink || UnknownPathConf ||
                           UnknownAttributes || UnknownXattrs || UnknownNames ||
                           UnknownBulk || UnknownXattrMutation ||
                           UnknownHardLinkName || UnknownNonblocking;
@@ -578,8 +585,10 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       std::string(
           R"({"backend":"unicorn","timeout_microseconds":10000000,"darwin_time":)") +
       emulation::darwin_test::TimeJSON + R"(,"darwin_system":)" +
-      ((ModeName == "credentials" || ModeName == "virtual-credentials" ||
-        ModeName == "created-file-metadata")
+      ((ThreadIdentity && !UnknownThreadIdentity)
+           ? emulation::darwin_test::ThreadIdentityJSON
+       : (ModeName == "credentials" || ModeName == "virtual-credentials" ||
+          ModeName == "created-file-metadata")
            ? emulation::darwin_test::CredentialsJSON
        : (ModeName == "resource-limits" ||
           ModeName == "virtual-resource-limits")
@@ -1040,6 +1049,11 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::KernelPathConfJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (ThreadIdentity) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (Entropy) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     auto System = llvm::cantFail(
@@ -1070,6 +1084,103 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (ThreadIdentity) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    const auto *Services = Report->getAsObject()->getArray(field::Services);
+    ASSERT_NE(Services, nullptr);
+    if (UnknownThreadIdentity) {
+      EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+                "Darwin current-thread identity observation is not configured");
+      ASSERT_EQ(Services->size(), 2u);
+      const auto *Last = Services->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number), X64 ? "2000174" : "174");
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+      EXPECT_EQ(Last->get(field::ThreadID), nullptr);
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    } else {
+      const auto check = [&](const llvm::json::Value &Value,
+                             llvm::StringRef ExpectedValue) {
+        const auto *Events = Value.getAsObject()->getArray(field::Services);
+        ASSERT_NE(Events, nullptr);
+        ASSERT_EQ(Events->size(), 11u);
+        for (unsigned I = 0; I != 10; ++I) {
+          const auto *Event = (*Events)[I].getAsObject();
+          ASSERT_NE(Event, nullptr);
+          EXPECT_EQ(Event->getString(field::Number),
+                    I < 4   ? (X64 ? "2000174" : "174")
+                    : I < 7 ? (X64 ? "1234567802000174" : "1234567800000174")
+                            : (X64 ? "ffffffff02000174" : "ffffffff00000174"));
+          EXPECT_EQ(Event->getString(field::Result), ExpectedValue);
+          EXPECT_EQ(Event->getBoolean(field::Error), false);
+          EXPECT_EQ(Event->get(field::ThreadID), nullptr);
+        }
+        const auto *Write = Events->back().getAsObject();
+        ASSERT_NE(Write, nullptr);
+        const auto Size = ModeName == "thread-identity" ? "1" : "8";
+        EXPECT_EQ(Write->getString(field::Number), X64 ? "2000004" : "4");
+        EXPECT_EQ(Write->getString(field::Result), Size);
+        EXPECT_EQ(Write->getBoolean(field::Error), false);
+        EXPECT_EQ(Write->get(field::ThreadID), nullptr);
+        const auto *WriteArgs = Write->getArray(field::Arguments);
+        ASSERT_NE(WriteArgs, nullptr);
+        ASSERT_EQ(WriteArgs->size(), 6u);
+        EXPECT_EQ((*WriteArgs)[0].getAsString(), "1");
+        EXPECT_EQ((*WriteArgs)[2].getAsString(), Size);
+        const auto *Arguments =
+            Events->front().getAsObject()->getArray(field::Arguments);
+        ASSERT_NE(Arguments, nullptr);
+        EXPECT_EQ(*Arguments,
+                  (llvm::json::Array{"ffffffffffffffff", "8000000000000000",
+                                     "1122334455667788", "1",
+                                     "ffffffffffffffff", "123456789abcdef0"}));
+      };
+      check(*Report, "fedcba9876543210");
+      auto Repeated = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      auto Again = llvm::json::parse(Repeated);
+      ASSERT_TRUE(bool(Again)) << llvm::toString(Again.takeError());
+      EXPECT_EQ(*Again, *Report);
+      if (ModeName == "thread-identity-value") {
+        struct Sample {
+          const char *Wire, *Hex, *Result;
+        };
+        for (const auto &S : {Sample{"0", "0000000000000000", "0"},
+                              Sample{"\"9223372036854775808\"",
+                                     "0000000000000080", "8000000000000000"},
+                              Sample{"\"18446744073709551615\"",
+                                     "ffffffffffffffff", "ffffffffffffffff"},
+                              Sample{"9007199254740991", "ffffffffffff1f00",
+                                     "1fffffffffffff"}}) {
+          SCOPED_TRACE(S.Wire);
+          auto Input = llvm::cantFail(llvm::json::parse(Options));
+          (*Input.getAsObject()->getObject(
+              field::DarwinSystem))[field::ThreadID] =
+              llvm::cantFail(llvm::json::parse(S.Wire));
+          const auto Request = llvm::formatv("{0}", Input).str();
+          auto Text = takeString(neverd_emulate_process_json(
+              Session, Path.c_str(), Profile, Request.c_str()));
+          auto Exact = llvm::json::parse(Text);
+          ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+          EXPECT_EQ(Exact->getAsObject()->getString(field::Stop), "exited");
+          EXPECT_EQ(Exact->getAsObject()->getInteger(field::ExitStatus), 37);
+          EXPECT_EQ(Exact->getAsObject()->getString(field::Stdout), S.Hex);
+          check(*Exact, S.Result);
+          auto Repeat = takeString(neverd_emulate_process_json(
+              Session, Path.c_str(), Profile, Request.c_str()));
+          auto Repeated = llvm::json::parse(Repeat);
+          ASSERT_TRUE(bool(Repeated)) << llvm::toString(Repeated.takeError());
+          EXPECT_EQ(*Repeated, *Exact);
+          EXPECT_EQ(runCLIRequest(Path, Profile, Request, Output),
+                    process_cli::GuestFailure);
+          ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Exact));
+          EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+        }
+      }
+    }
+  }
   if (Entropy) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
@@ -1368,6 +1479,32 @@ INSTANTIATE_TEST_SUITE_P(
           C = '_';
       return Name;
     });
+
+TEST_F(ProcessPublic,
+       DarwinThreadIdentityRejectsMalformedObservationsBeforeLoading) {
+  for (const char *Bad :
+       {"null", "true", "false", "{}", "[]", "1.5", "-1", "9007199254740992",
+        "18446744073709551616", "\"-1\"", "\"1.5\"", "\"0x10\"", "\"x\"",
+        "\"\"", "\"18446744073709551616\"", "\"1\\u0000\""}) {
+    const auto Request =
+        std::string("{\"darwin_system\":{\"thread_id\":") + Bad + "}}";
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("thread_id"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    EXPECT_EQ(neverd_emulate_process_json(
+                  Session, "missing.macho", Profile,
+                  R"({"darwin_system":{"thread_id":"18446744073709551615"}})"),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+}
 
 TEST_F(ProcessPublic, DarwinEntropyRejectsMalformedReplayBeforeLoading) {
   for (const char *Bad :

@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
+<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1020,3 +1020,22 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).
+
+## هوية صريحة للخيط الحالي
+
+يقرأ BSD thread_selfid372 الرصد الاختياري الثابت `DarwinSystemOptions::ThreadID` / JSON `darwin_system.thread_id`. كل نمط uint64 بما فيه الصفر معروف؛ يؤدي الحذف إلى UnsupportedService. تحفظ السلاسل العشرية64 بت، وتقتصر أرقام JSON على الأعداد الصحيحة الدقيقة حتى2^53-1. لا تستنتج الهوية من المضيف أو PID أو منفذ Mach. يتجاهل النداء بلا معاملات الحوامل الستة ولا يصل إلى الذاكرة. يحتفظ تحليل low32 القائم برقم النداء الخام الكامل في الأحداث؛ تحفظ طبقة إرجاع BSD القيمة64 بت وتمسح carry وRDX/X1. صيغ Mach غير مدعومة.
+
+تحافظ عمليات التنفيذ المتكررة على الرصد وتبقى الخيارات المنفصلة مستقلة. لا يخصص ذلك معرفات أو يضمن تفردها أو ينشئ هوية أحداث المجدول، ولا ينفذ دورة حياة الخيوط أو pthread أو TLS أو Mach IPC. تحفظ مجسات ARM64 الأصلية O0/O1/O2 عدد24 نداءً تقارن النتيجة بمعرف pthread الحالي من SDK مع معاملات عشوائية والبتات العليا للرقم. يقارن البرنامج الأصلي المشترك العلاقات داخل عملية واحدة فقط؛ تستبعد بايتات المعرف الصريحة من القائمة الأصلية الحتمية. يظل Intel HVF وiOS الفعلي والتوافق الكامل غير متحقق أو غير مكتمل.
+
+```text
+BSD thread_selfid372 / Wide / ThreadID / darwin_system.thread_id
+known uint64 including0 / missing -> UnsupportedService / no memory
+full64 return / low32 resolution / carry clear / RDX-X1 zero / raw event number
+thread-identity / thread-identity-value / thread-identity-missing
+4 model cases / 20 transport parameters / 16 public cases / 5 Python profiles
+69 mandatory workloads per platform / ARM64 207 / Intel 138 unverified
+original ARM64 O0/O1/O2 probes24 / native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).

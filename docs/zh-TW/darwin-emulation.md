@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
+<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
 
 [← 文件索引](README.md)
 
@@ -1022,3 +1022,22 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).
+
+## 明確的目前執行緒身分
+
+原始 BSD thread_selfid372 讀取不可變的選用 `DarwinSystemOptions::ThreadID`，JSON 欄位為 `darwin_system.thread_id`。所有 uint64 位元模式（包含零）都是已知觀測；省略時以 UnsupportedService 停止。十進位字串保留完整64位元，JSON 數值僅接受不超過2^53-1的精確整數。不從主機、PID 或 Mach 埠推論 ID。無參數呼叫忽略六個參數載體且不存取記憶體；既有低32位元解析保留事件中的完整原始編號，BSD 回傳層保留64位元結果並清除 carry 與 RDX/X1。Mach 編號仍不支援。
+
+重複執行保留輸入觀測，不同選項互相獨立；不配置 ID、不保證唯一性、不寫入排程事件身分，也不實作執行緒生命週期、pthread、TLS 或 Mach IPC。原始 ARM64 O0/O1/O2 探針保留24次呼叫，與 SDK 目前 pthread ID 比較並檢查任意參數及編號高32位元。原生通用程式只比較同一程序內的關係；明確 ID 位元組不加入確定性原生參考清單。Intel HVF、iOS 實機與完整 OS 相容性仍未驗證或未完成。
+
+```text
+BSD thread_selfid372 / Wide / ThreadID / darwin_system.thread_id
+known uint64 including0 / missing -> UnsupportedService / no memory
+full64 return / low32 resolution / carry clear / RDX-X1 zero / raw event number
+thread-identity / thread-identity-value / thread-identity-missing
+4 model cases / 20 transport parameters / 16 public cases / 5 Python profiles
+69 mandatory workloads per platform / ARM64 207 / Intel 138 unverified
+original ARM64 O0/O1/O2 probes24 / native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).

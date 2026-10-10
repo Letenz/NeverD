@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
+<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1022,3 +1022,22 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).
+
+## 明示的な現在のスレッド識別子
+
+BSD thread_selfid372 は不変の省略可能な `DarwinSystemOptions::ThreadID` / JSON `darwin_system.thread_id` を読み取ります。ゼロを含む全 uint64 ビット列を既知の観測として扱い、省略時は UnsupportedService で停止します。十進文字列は64ビットすべてを保持し、JSON 数値は2^53-1以下の正確な整数に限られます。ホスト、PID、Mach ポートから ID を推測しません。引数なし呼び出しは六つの引数を無視し、メモリにアクセスしません。既存の下位32ビット解析はイベントの元の番号全体を保持し、BSD 戻り値処理は64ビット結果と carry、RDX/X1 のクリアを担当します。Mach 番号は未対応です。
+
+再実行でも入力観測を保持し、別のオプションは独立です。ID の割り当て、一意性、スケジューラのイベント識別、スレッドのライフサイクル、pthread、TLS、Mach IPC は実装しません。ARM64 O0/O1/O2 の原生プローブは24回の呼び出しで SDK の現在の pthread ID、任意引数と番号の上位32ビットを確認します。共通の原生プログラムは同じプロセス内の関係だけを比較し、指定 ID のバイト列は決定的な原生参照一覧から除外します。Intel HVF、実機 iOS、完全な OS 互換性は未検証または未完成です。
+
+```text
+BSD thread_selfid372 / Wide / ThreadID / darwin_system.thread_id
+known uint64 including0 / missing -> UnsupportedService / no memory
+full64 return / low32 resolution / carry clear / RDX-X1 zero / raw event number
+thread-identity / thread-identity-value / thread-identity-missing
+4 model cases / 20 transport parameters / 16 public cases / 5 Python profiles
+69 mandatory workloads per platform / ARM64 207 / Intel 138 unverified
+original ARM64 O0/O1/O2 probes24 / native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).

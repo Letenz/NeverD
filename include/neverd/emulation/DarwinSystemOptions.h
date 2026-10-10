@@ -107,6 +107,10 @@ struct DarwinSystemOptions {
   /// Missing is unknown; an empty queue is explicitly exhausted. Each run
   /// owns a fresh cursor; admitted success/whole EFAULT consumes one record.
   std::optional<std::vector<std::vector<uint8_t>>> EntropyReads;
+  /// Fixed opaque current-thread observation for raw thread_selfid. Missing
+  /// is unknown; every supplied uint64 value, including zero, is known. Does
+  /// not infer host/PID/Mach identity, allocation or thread scheduling.
+  std::optional<uint64_t> ThreadID;
 };
 } // namespace neverd::emulation
 #endif

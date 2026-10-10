@@ -129,6 +129,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::GetPgrp:
   case ServiceKind::GetPGID:
   case ServiceKind::GetSID:
+  case ServiceKind::ThreadSelfID:
   case ServiceKind::IsSetUGID:
   case ServiceKind::GetLogin:
   case ServiceKind::GetPriority:

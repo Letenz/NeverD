@@ -81,6 +81,87 @@ protected:
     return emulateProcess(Path, GetParam().OS, Options);
   }
 };
+TEST_P(DarwinProcess, ThreadIdentityPreservesExplicitBitsAndIndependentRuns) {
+  Options.InstructionQuantum = 1024;
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto check = [&](const ProcessResult &R, uint64_t ID) {
+    EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 37);
+    EXPECT_TRUE(R.StandardError.empty());
+    EXPECT_EQ(R.SelectedBackend, GetParam().Backend);
+    std::vector<const ProcessServiceEvent *> Calls;
+    for (const auto &E : R.Services)
+      if (uint32_t(E.Number) == Class + 372)
+        Calls.push_back(&E);
+    ASSERT_EQ(Calls.size(), 10u);
+    for (unsigned I = 0; I != 10; ++I) {
+      EXPECT_EQ(Calls[I]->Result, ID);
+      EXPECT_EQ(Calls[I]->Error, false);
+      EXPECT_FALSE(Calls[I]->ThreadID);
+      const uint64_t Prefix = I < 4   ? 0
+                              : I < 7 ? 0x1234567800000000ULL
+                                      : 0xffffffff00000000ULL;
+      EXPECT_EQ(Calls[I]->Number, Prefix | (Class + 372));
+    }
+    EXPECT_EQ(Calls.front()->Arguments[0], UINT64_MAX);
+    EXPECT_EQ(Calls.front()->Arguments[1], 0x8000000000000000ULL);
+    EXPECT_EQ(Calls.front()->Arguments[2], 0x1122334455667788ULL);
+    EXPECT_EQ(Calls.front()->Arguments[3], 1u);
+    EXPECT_EQ(Calls.front()->Arguments[4], UINT64_MAX);
+    EXPECT_EQ(Calls.front()->Arguments[5], 0x123456789abcdef0ULL);
+  };
+  Options.DarwinSystem = darwin_test::threadIdentityOptions();
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("thread-identity");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    check(*R, 0xfedcba9876543210ULL);
+    EXPECT_EQ(R->StandardOutput, "T");
+  }
+  struct Sample {
+    uint64_t ID;
+    const char *Hex;
+  };
+  for (const auto &S :
+       {Sample{0, "0000000000000000"}, Sample{1, "0100000000000000"},
+        Sample{0x100000001ULL, "0100000001000000"},
+        Sample{0x8000000000000000ULL, "0000000000000080"},
+        Sample{UINT64_MAX, "ffffffffffffffff"}}) {
+    SCOPED_TRACE(S.ID);
+    Options.DarwinSystem->ThreadID = S.ID;
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto R = run("thread-identity-value");
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      check(*R, S.ID);
+      EXPECT_EQ(R->StandardOutput, llvm::fromHex(S.Hex));
+      EXPECT_EQ(Options.DarwinSystem->ThreadID, S.ID);
+    }
+  }
+  auto Independent = Options;
+  Independent.DarwinSystem->ThreadID = 0xfedcba9876543210ULL;
+  auto R = emulateProcess(Path, GetParam().OS, Independent);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  check(*R, 0xfedcba9876543210ULL);
+  EXPECT_EQ(R->StandardOutput, llvm::fromHex(darwin_test::ThreadIdentityHex));
+  EXPECT_EQ(Options.DarwinSystem->ThreadID, UINT64_MAX);
+  for (bool Present : {false, true}) {
+    Options.DarwinSystem.reset();
+    if (Present)
+      Options.DarwinSystem.emplace();
+    auto Missing = run("thread-identity-missing");
+    ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+    EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Missing->Diagnostic,
+              "Darwin current-thread identity observation is not configured");
+    EXPECT_EQ(Missing->StandardOutput, "!");
+    ASSERT_EQ(Missing->Services.size(), 2u);
+    EXPECT_EQ(Missing->Services.back().Number, Class + 372);
+    EXPECT_FALSE(Missing->Services.back().Result);
+    EXPECT_FALSE(Missing->Services.back().Error);
+    EXPECT_FALSE(Missing->Services.back().ThreadID);
+  }
+}
+
 TEST_P(DarwinProcess, EntropyReplayKeepsBytesFaultOrderAndFreshRunLifetime) {
   Options.InstructionQuantum = 1024;
   Options.DarwinSystem = darwin_test::entropyReplayOptions();

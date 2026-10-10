@@ -190,6 +190,7 @@ NEVERD_DARWIN_SERVICE(GetGroups, 79, Int)
 NEVERD_DARWIN_SERVICE(GetPgrp, 81, Int)
 NEVERD_DARWIN_SERVICE(GetPGID, 151, Int)
 NEVERD_DARWIN_SERVICE(GetSID, 310, Int)
+NEVERD_DARWIN_SERVICE(ThreadSelfID, 372, Wide)
 NEVERD_DARWIN_SERVICE(IsSetUGID, 327, Int)
 NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
 NEVERD_DARWIN_SERVICE(GetPriority, 100, Int)
@@ -282,6 +283,9 @@ NEVERD_DARWIN_DIAGNOSTIC(ProcessGroupObservation,
                          "Darwin process group observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(ProcessSessionObservation,
                          "Darwin process session observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ThreadIDObservation,
+    "Darwin current-thread identity observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(ProcessTaintObservation,
                          "Darwin process taint observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(

@@ -500,6 +500,99 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertIsNone(result["android"]["native_calls"][-1]["result"])
         self.assertIn("no explicit linux_time input", result["diagnostic"])
 
+    def test_darwin_thread_identity_preserves_full_bits_and_independent_runs(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import NeverDError, Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        reason = "Darwin current-thread identity observation is not configured"
+        samples = ((0, b"\x00" * 8),
+                   (4294967297, bytes.fromhex("0100000001000000")),
+                   ("9223372036854775808", bytes.fromhex("0000000000000080")),
+                   ("18364758544493064720", bytes.fromhex("1032547698badcfe")),
+                   ("18446744073709551615", b"\xff" * 8))
+        for profile, architecture in (("macos", "x86_64"), ("macos", "arm64"),
+                                      ("ios", "arm64"), ("ios-simulator", "x86_64"),
+                                      ("ios-simulator", "arm64")):
+            path = str((Path(fixtures) / f"{profile}-{architecture}").resolve(strict=True))
+            name = f"{profile}-macho64-v1"
+            x64 = architecture == "x86_64"
+            numbers = ["2000174" if x64 else "174"] * 4 + [
+                "1234567802000174" if x64 else "1234567800000174"] * 3 + [
+                "ffffffff02000174" if x64 else "ffffffff00000174"] * 3
+            options = {"backend": "unicorn", "instruction_quantum": 1024,
+                       "timeout_microseconds": 5000000,
+                       "arguments": ["guest", "thread-identity-value"]}
+            for wire, expected in samples:
+                options["darwin_system"] = {"thread_id": wire}
+                request = json.dumps(options)
+                previous = None
+                for repeat in range(2):
+                    with self.subTest(profile=name, architecture=architecture, thread_id=wire, repeat=repeat):
+                        result = session.emulate_process(path, name, request)
+                        self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                        self.assertEqual(result["exit_status"], 37)
+                        self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
+                        self.assertEqual(result["stderr_hex"], "")
+                        self.assertEqual(len(result["services"]), 11)
+                        write = result["services"][-1]
+                        self.assertEqual(write["number"], "2000004" if x64 else "4")
+                        self.assertEqual(write["arguments"][0], "1")
+                        self.assertEqual(write["arguments"][2], "8")
+                        self.assertEqual(write["result"], "8")
+                        self.assertFalse(write["error"])
+                        calls = result["services"][:10]
+                        self.assertEqual([call["number"] for call in calls], numbers)
+                        self.assertEqual([call["result"] for call in calls], [f"{int(wire):x}"] * 10)
+                        self.assertEqual([call["error"] for call in calls], [False] * 10)
+                        self.assertEqual(calls[0]["arguments"], ["ffffffffffffffff", "8000000000000000",
+                                         "1122334455667788", "1", "ffffffffffffffff", "123456789abcdef0"])
+                        for call in calls:
+                            self.assertNotIn("thread_id", call)
+                        if previous is not None:
+                            self.assertEqual(result, previous)
+                        previous = result
+                        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            options["arguments"][1] = "thread-identity"
+            options["darwin_system"] = {"thread_id": "18364758544493064720"}
+            result = session.emulate_process(path, name, json.dumps(options))
+            self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+            self.assertEqual(bytes.fromhex(result["stdout_hex"]), b"T")
+            options["arguments"][1] = "thread-identity-missing"
+            for present in (False, True):
+                options.pop("darwin_system", None)
+                if present:
+                    options["darwin_system"] = {}
+                result = session.emulate_process(path, name, json.dumps(options))
+                self.assertEqual(result["stop_reason"], "unsupported_service")
+                self.assertEqual(result["diagnostic"], reason)
+                self.assertEqual(bytes.fromhex(result["stdout_hex"]), b"!")
+                self.assertEqual(len(result["services"]), 2)
+                self.assertEqual(result["services"][-1]["number"], "2000174" if x64 else "174")
+                self.assertIsNone(result["services"][-1]["result"])
+                self.assertNotIn("error", result["services"][-1])
+                self.assertNotIn("thread_id", result["services"][-1])
+            for bad in (None, True, False, {}, [], -1, 1.5, 9007199254740992,
+                        "", "-1", "1.5", "0x10", "x", "18446744073709551616", "1\x00"):
+                options["darwin_system"] = {"thread_id": bad}
+                with self.assertRaises(NeverDError) as caught:
+                    session.emulate_process(path, name, json.dumps(options))
+                self.assertIn("thread_id", str(caught.exception))
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_entropy_replay_preserves_bytes_errors_and_fresh_runs(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

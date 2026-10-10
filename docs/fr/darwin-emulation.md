@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: d7972780d0b2e70fc12f3027cbc45ee9cfc53eaa054f205de1b81375f8ca0d5c -->
+<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
 
 [← Index de la documentation](README.md)
 
@@ -1020,3 +1020,22 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).
+
+## Identité explicite du thread courant
+
+BSD thread_selfid372 lit l’observation immuable facultative `DarwinSystemOptions::ThreadID` / JSON `darwin_system.thread_id`. Toute valeur uint64, zéro compris, est connue; l’absence arrête UnsupportedService. Les chaînes décimales conservent64 bits; les nombres JSON exigent un entier exact au plus2^53-1. Aucun ID n’est déduit de l’hôte, du PID ou d’un port Mach. Cet appel sans arguments ignore les six registres d’arguments et n’accède pas à la mémoire. La résolution existante sur32 bits préserve le numéro brut complet dans les événements; le retour BSD conserve64 bits et efface carry et RDX/X1. Les formes Mach restent non prises en charge.
+
+Les exécutions répétées conservent l’observation et les options distinctes restent indépendantes. Cela n’alloue aucun ID, ne garantit aucune unicité et ne crée aucune identité d’événement du planificateur, ni cycle de vie pthread, TLS ou Mach IPC. Les sondes ARM64 originales O0/O1/O2 conservent24 appels comparant le résultat au SDK pthread courant, avec arguments arbitraires et bits hauts du numéro. Le programme natif commun compare uniquement des relations dans un même processus; les octets d’ID fournis sont exclus de l’inventaire natif déterministe. Intel HVF, iOS physique et la compatibilité OS complète restent non vérifiés ou incomplets.
+
+```text
+BSD thread_selfid372 / Wide / ThreadID / darwin_system.thread_id
+known uint64 including0 / missing -> UnsupportedService / no memory
+full64 return / low32 resolution / carry clear / RDX-X1 zero / raw event number
+thread-identity / thread-identity-value / thread-identity-missing
+4 model cases / 20 transport parameters / 16 public cases / 5 Python profiles
+69 mandatory workloads per platform / ARM64 207 / Intel 138 unverified
+original ARM64 O0/O1/O2 probes24 / native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).

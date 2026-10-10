@@ -259,6 +259,10 @@ systemService(GuestMemory &Memory, uint64_t PageSize, ServiceKind Kind,
     return Options && Options->SessionID
                ? returned(*Options->SessionID)
                : unsupported(Result, diagnostic::ProcessSessionObservation);
+  case ServiceKind::ThreadSelfID:
+    return Options && Options->ThreadID
+               ? returned(*Options->ThreadID)
+               : unsupported(Result, diagnostic::ThreadIDObservation);
   case ServiceKind::IsSetUGID:
     return Options && Options->ProcessTainted
                ? returned(*Options->ProcessTainted)

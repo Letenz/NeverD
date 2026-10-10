@@ -1783,3 +1783,22 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU getentropy ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [XNU generation/copyout boundary](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/dev/random/randomdev.c).
+
+## Explicit current-thread identity
+
+Raw BSD thread_selfid372 reads the immutable optional `DarwinSystemOptions::ThreadID` / JSON `darwin_system.thread_id`. Every supplied uint64 bit pattern, including zero, is known; omission stops UnsupportedService. Decimal strings preserve all64 bits; numeric JSON is limited to exact integers up to2^53-1. No ID is inferred from the host, PID or a Mach port. The no-argument call ignores all six carriers and accesses no memory. Existing low32 syscall resolution preserves the complete raw number in events; the shared BSD return owner preserves full64 values, clears carry and clears RDX/X1. Mach spellings remain unsupported.
+
+Repeated executions reuse the supplied observation; independent options remain independent. This does not allocate IDs, guarantee uniqueness, create scheduler event identities, or model thread lifecycle, pthreads, TLS or Mach IPC. Original ARM64 O0/O1/O2 probes retain24 calls comparing raw results with the SDK current pthread ID, arbitrary argument seeds and high32 numbers. The stable common fixture compares relationships within one native process; literal supplied-ID bytes are excluded from the deterministic native reference inventory. Native Intel HVF, physical iOS and full OS compatibility remain unverified or incomplete.
+
+```text
+BSD thread_selfid372 / Wide / ThreadID / darwin_system.thread_id
+known uint64 including0 / missing -> UnsupportedService / no memory
+full64 return / low32 resolution / carry clear / RDX-X1 zero / raw event number
+thread-identity / thread-identity-value / thread-identity-missing
+4 model cases / 20 transport parameters / 16 public cases / 5 Python profiles
+69 mandatory workloads per platform / ARM64 207 / Intel 138 unverified
+original ARM64 O0/O1/O2 probes24 / native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).
