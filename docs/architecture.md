@@ -1474,7 +1474,7 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
-`ir/X86FPState.h` owns scalar SSE numerical/state contracts. Legacy
+`ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
 containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
 defines both transports through ordinary SSA; auxiliary-output discovery and
@@ -1489,6 +1489,21 @@ evidence. Its configured reset environment remains the concrete starting
 profile. Generic external FLOAT operations, packed FP, VEX arithmetic and
 remaining x87 control/TOP/tag semantics retain their separate contracts;
 this scalar state surface does not certify them.
+
+Legacy/VEX ROUND extends that state surface through whole-instruction
+`X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
+MXCSR rounding, and bit 3 suppresses precision only. Packed results complete
+together; an unmasked invalid operand prevents newly raised precision status
+from other lanes, while preserving existing sticky bits. Scalar upper-lane
+passthrough and VEX upper zeroing retain their lifter ownership.
+`X86FPRoundMemoryState` additionally owns the entire source access. Native and
+C lowering execute memory ROUND inside the incoming/outgoing CSR scope,
+preserving legacy packed alignment faults without a preceding ordinary LOAD.
+Its eight-byte address carrier owns Default/FS/GS; numerical width comes from
+the result aggregate, independently of target pointer width. Concrete x64
+evaluation requires authenticated 48/57-bit canonical-address context and
+segment bases. Unknown context refuses; known memory faults retain incoming
+CSR and publish no numerical result. This does not extend EVEX/SAE coverage.
 
 Swift consumes the same typed HighIR state contract for scalar SSE arithmetic.
 Its x86_64-only compiler pointer intrinsics import and commit MXCSR; numerical
