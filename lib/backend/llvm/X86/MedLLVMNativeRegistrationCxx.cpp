@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationCxxCatch.h"
 #include "MedLLVMRegistrationCxxContinuation.h"
 #include "MedLLVMRegistrationCxxStack.h"
 #include "MedLLVMRegistrationIncoming.h"
@@ -67,7 +68,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     return false;
   const auto &Cxx = *EH.Cxx;
   const auto &Try = Cxx.TryBlocks[0];
-  const auto &Catch = Try.Handlers[0];
   const auto FrameBytes = FrameAlloca->getAllocationSize(Mod->getDataLayout());
   const auto Coordinate = cxxRegistrationFrameCoordinate(EH, &States);
   const auto Layout =
@@ -78,9 +78,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           : std::nullopt;
   if (!Layout)
     return false;
-  const auto CatchPlan = projectX86RegistrationCatch(EH, States, *Layout);
-  if (!CatchPlan)
+  const auto CatchOwners = projectX86RegistrationCatchBlocks(Func);
+  if (!CatchOwners)
     return false;
+  std::vector<RegistrationCxxCatchPlan> Catches(Try.Handlers.size());
+  for (uint32_t Index = 0; Index < Catches.size(); ++Index) {
+    auto Object = projectX86RegistrationCatch(EH, States, *Layout, 0, Index);
+    if (!Object)
+      return false;
+    Catches[Index].Object = *Object;
+  }
 
   const auto EntryABI = getX86RegistrationCxxEntryABI(Func, Parent);
   if (!EntryABI)
@@ -121,14 +128,14 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   for (const auto &State : States.Blocks)
     if (State.Reached && !Matched.count(&State))
       return false;
-  const auto HandlerIt = BlocksAt.find(Catch.HandlerVA);
-  if (HandlerIt == BlocksAt.end())
-    return false;
-  auto *Handler = HandlerIt->second;
-  auto CatchToken =
-      windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0, 0);
-  if (!CatchToken)
-    return false;
+  for (uint32_t Index = 0; Index < Catches.size(); ++Index) {
+    const auto Handler = BlocksAt.find(Try.Handlers[Index].HandlerVA);
+    if (Handler == BlocksAt.end() ||
+        !windows_eh_semantics::getCxxCatchSemanticToken(EH, Arch::X86, 0,
+                                                        Index))
+      return false;
+    Catches[Index].Handler = Handler->second;
+  }
 
   struct Operation {
     llvm::Instruction *IR;
@@ -142,6 +149,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     const RegistrationBlockState *State;
     bool Throw;
     bool Borrow;
+    uint32_t CatchIndex;
     std::string Name;
   };
   struct CleanupPlan {
@@ -153,7 +161,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   std::vector<CallPlan> Calls;
   std::map<uint32_t, CleanupPlan> Cleanups;
   std::map<llvm::ReturnInst *, const RegistrationCxxContinuation *> Resumes;
-  std::set<llvm::BasicBlock *> CatchBlocks;
   std::set<llvm::Instruction *> ChainInstructions;
   size_t Work = 0;
   auto *I8 = llvm::Type::getInt8Ty(*Ctx);
@@ -169,11 +176,13 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     return "__nd_registration_" + ABI.str() + "_" + llvm::utohexstr(Target);
   };
   if (!med_llvm_eh::canMaterializeExternalFunctionDeclaration(
-          *Mod, "__CxxFrameHandler3", PersonalityType) ||
-      (Catch.TypeDescriptorVA &&
-       !med_llvm_eh::canMaterializeExternalDataDeclaration(
-           *Mod, makeNdDataSymbol(Catch.TypeDescriptorVA), I8, false)))
+          *Mod, "__CxxFrameHandler3", PersonalityType))
     return false;
+  for (const auto &Catch : Try.Handlers)
+    if (Catch.TypeDescriptorVA &&
+        !med_llvm_eh::canMaterializeExternalDataDeclaration(
+            *Mod, makeNdDataSymbol(Catch.TypeDescriptorVA), I8, false))
+      return false;
   if (auto *Existing = Mod->getFunction("__CxxFrameHandler3")) {
     auto Address = rewrite_source::getOriginalVA(*Existing);
     if (!Address) {
@@ -192,7 +201,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     if (State->CallbackOnly) {
       if (State->CxxMinimumTryLevel != Try.TryHigh + 1)
         return false;
-      CatchBlocks.insert(IR);
+      Catches[CatchOwners->at(Block.Id)].Blocks.insert(IR);
     }
     for (const auto &Op : Block.Ops) {
       if (++Work > limits::kMaxRegistrationEHStateWork)
@@ -213,7 +222,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       if (Op.Opcode == NdOp::RETURN && State->CallbackOnly) {
         auto *Return = llvm::dyn_cast<llvm::ReturnInst>(IR->getTerminator());
         const auto *Resume = States.cxxContinuation(Op.Addr, Op.OriginSeq);
-        if (!Return || !Resume || Resume->TryIndex || Resume->CatchIndex ||
+        if (!Return || !Resume || Resume->TryIndex ||
+            Resume->CatchIndex != CatchOwners->at(Block.Id) ||
             !BlocksAt.count(Resume->TargetVA) ||
             Resume->SavedStackOffset > -16 ||
             !Layout->runtimeOffset(Resume->SavedStackOffset, 0) ||
@@ -270,7 +280,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
               : Borrow ? BorrowType
                        : LeafType))
         return false;
-      Calls.push_back({Call, Effect, State, Throw, Borrow, Name});
+      Calls.push_back(
+          {Call, Effect, State, Throw, Borrow,
+           State->CallbackOnly ? CatchOwners->at(Block.Id) : UINT32_MAX, Name});
       Operations.push_back({Call, &Op, State->BlockId, 2});
       // The shared receipt and fresh callee proof agree that this call never
       // returns. Its lifted post-call stack/register operations cannot execute
@@ -279,18 +291,21 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         break;
     }
   }
-  if (!CatchBlocks.count(Handler) || Resumes.empty() ||
-      Resumes.size() != States.CxxContinuations.size() ||
+  if (Resumes.empty() || Resumes.size() != States.CxxContinuations.size() ||
       Calls.size() != States.CallFrameEffects.size())
     return false;
-  for (auto *Block : CatchBlocks)
-    for (auto *Pred : llvm::predecessors(Block))
-      if (!CatchBlocks.count(Pred))
-        return false;
-  for (auto *Block : CatchBlocks)
-    for (auto *Succ : llvm::successors(Block))
-      if (!CatchBlocks.count(Succ))
-        return false;
+  for (const auto &Catch : Catches) {
+    if (!Catch.Blocks.count(Catch.Handler))
+      return false;
+    for (auto *Block : Catch.Blocks) {
+      for (auto *Pred : llvm::predecessors(Block))
+        if (!Catch.Blocks.count(Pred))
+          return false;
+      for (auto *Succ : llvm::successors(Block))
+        if (!Catch.Blocks.count(Succ))
+          return false;
+    }
+  }
 
   for (uint32_t State = 0; State < Cxx.UnwindMap.size(); ++State) {
     const auto &Action = Cxx.UnwindMap[State];
@@ -385,27 +400,29 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           return false;
     }
 
-  std::optional<RegistrationCxxStackPlan> Stack;
-  if (EH.Registration->hasCxxCallbackStack()) {
-    const auto SourceBlock = llvm::find_if(Func.Blocks, [&](const auto &Block) {
-      return Block.StartAddr == Catch.HandlerVA;
-    });
-    if (SourceBlock == Func.Blocks.end())
-      return false;
-    std::vector<llvm::StoreInst *> Stores;
-    for (const auto &Event : Operations)
-      if (Event.Kind == 1 && CatchBlocks.count(Event.IR->getParent()))
-        Stores.push_back(llvm::cast<llvm::StoreInst>(Event.IR));
-    const std::vector<llvm::BasicBlock *> Body(CatchBlocks.begin(),
-                                               CatchBlocks.end());
-    auto Plan = prepareRegistrationCxxStack(*SourceBlock, *Handler, Body,
-                                            VarAllocs, Stores);
-    if (!Plan) {
-      llvm::consumeError(Plan.takeError());
-      return false;
+  if (EH.Registration->hasCxxCallbackStack())
+    for (uint32_t Index = 0; Index < Catches.size(); ++Index) {
+      auto &Catch = Catches[Index];
+      const auto SourceBlock =
+          llvm::find_if(Func.Blocks, [&](const auto &Block) {
+            return Block.StartAddr == Try.Handlers[Index].HandlerVA;
+          });
+      if (SourceBlock == Func.Blocks.end())
+        return false;
+      std::vector<llvm::StoreInst *> Stores;
+      for (const auto &Event : Operations)
+        if (Event.Kind == 1 && Catch.Blocks.count(Event.IR->getParent()))
+          Stores.push_back(llvm::cast<llvm::StoreInst>(Event.IR));
+      const std::vector<llvm::BasicBlock *> Body(Catch.Blocks.begin(),
+                                                 Catch.Blocks.end());
+      auto Plan = prepareRegistrationCxxStack(*SourceBlock, *Catch.Handler,
+                                              Body, VarAllocs, Stores);
+      if (!Plan) {
+        llvm::consumeError(Plan.takeError());
+        return false;
+      }
+      Catch.Stack = *Plan;
     }
-    Stack = *Plan;
-  }
 
   const auto Incoming = x86_registration::prepareIncomingFrame(
       Func, Parent, RegistrationIncomingIR);
@@ -443,14 +460,6 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       llvm::MDNode::get(*Ctx,
                         {med_llvm_eh::mdUInt(*Ctx, EH.CodeRange.Begin, 64),
                          med_llvm_eh::mdUInt(*Ctx, FrameEntrySPOffset, 64)}));
-  llvm::Constant *Type = llvm::ConstantPointerNull::get(Ptr);
-  if (Catch.TypeDescriptorVA) {
-    Type = Mod->getNamedGlobal(makeNdDataSymbol(Catch.TypeDescriptorVA));
-    if (!Type)
-      Type = new llvm::GlobalVariable(
-          *Mod, I8, false, llvm::GlobalValue::ExternalLinkage, nullptr,
-          makeNdDataSymbol(Catch.TypeDescriptorVA));
-  }
   // Bind retained source occurrences to exact block intervals before calls
   // split the blocks and before the runtime catch entry is installed.
   auto *SideEffect =
@@ -479,30 +488,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   }
   auto *None = llvm::ConstantTokenNone::get(*Ctx);
   auto *Dispatch =
-      llvm::BasicBlock::Create(*Ctx, "registration.cxx.dispatch", &Parent);
-  llvm::IRBuilder<> D(Dispatch);
-  auto *Switch = D.CreateCatchSwitch(None, nullptr, 1);
-  Switch->addHandler(Handler);
-  llvm::IRBuilder<> H(&*Handler->getFirstInsertionPt());
-  auto *Pad = H.CreateCatchPad(
-      Switch, {Type, H.getInt32(Catch.Adjectives),
-               CatchPlan->Home ? static_cast<llvm::Value *>(FrameAlloca)
-                               : llvm::ConstantPointerNull::get(Ptr)});
-  if (const auto &Home = CatchPlan->Home)
-    Pad->setMetadata(
-        llvm::RewriteWinX86CxxCatchObjectAttachment,
-        llvm::MDNode::get(*Ctx,
-                          {med_llvm_eh::mdUInt(*Ctx, 1, 32),
-                           med_llvm_eh::mdUInt(*Ctx, Home->Offset, 32),
-                           med_llvm_eh::mdUInt(*Ctx, Home->slotSize(), 32)}));
-  if (!med_llvm_eh::attachRewriteWinEHSemanticToken(*Pad, *CatchToken))
-    llvm_unreachable("prevalidated C++ catch semantic token rejected");
-  med_llvm_eh::emitWindowsEHProvenanceAnchor(
-      H, Model, Role::RegionDispatch, EH.CodeRange.Begin, Catch.HandlerVA, 0, 0,
-      Pad, Catch.TypeDescriptorVA, Catch.Adjectives);
-
-  if (Stack)
-    emitRegistrationCxxStack(*Stack, EH.CodeRange.Begin, Catch.HandlerVA);
+      emitRegistrationCxxCatches(EH, Catches, *FrameAlloca, Parent);
 
   std::map<int32_t, llvm::BasicBlock *> Unwinds;
   Unwinds.emplace(Try.TryLow, Dispatch);
@@ -585,7 +571,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     } else {
       llvm::SmallVector<llvm::OperandBundleDef, 1> Bundles;
       if (Plan.State->CallbackOnly)
-        Bundles.emplace_back("funclet", Pad);
+        Bundles.emplace_back("funclet", Catches[Plan.CatchIndex].Pad);
       Call = B.CreateCall(Callee, Args, Bundles);
     }
     Call->setCallingConv(Callee->getCallingConv());
@@ -621,7 +607,8 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   for (const auto &[Return, Resume] : Resumes)
     emitRegistrationCxxContinuation(*Return, *FrameAlloca, Layout->Establisher,
                                     *EH.Registration->RegistrationOffset - 4,
-                                    *Pad, *BlocksAt.at(Resume->TargetVA),
+                                    *Catches[Resume->CatchIndex].Pad,
+                                    *BlocksAt.at(Resume->TargetVA),
                                     EH.CodeRange.Begin, *Resume);
   for (const auto &Access : States.ChainAccesses) {
     auto *I = RegistrationChainIR.at({Access.Address, Access.OpSeq});

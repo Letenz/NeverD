@@ -161,7 +161,7 @@ record 推导生成 cookie 偏移，包括运行时的虚拟帧基址；安装�
 预编译包会拒绝原生安装。EH4 还要求 `LLVM_NEVERD_X86_REGISTRATION_COOKIES`，
 GS 初始化还要求 `LLVM_NEVERD_X86_REGISTRATION_GS`。
 
-x86 C++ 原生重建目前支持一个同步 try 和一个 catch，源 unwind state 最多 128 个。
+x86 C++ 原生重建目前支持一个同步 try 下的有序多个 catch，源 unwind state 最多 128 个。
 catch 可以按值或引用绑定经过检查的标量，也可以没有局部对象，或采用 `catch(...)`。
 无绑定对象的 typed catch 保留准确的 RTTI 和 adjectives；catch-all 保留空 RTTI 和原生
 catch-all adjective。没有对象 home 仍要求完整的源证明，且不得存在运行时对象访问；
@@ -180,6 +180,13 @@ GS wrapper。保留的每个调用、throw type 和 cleanup relay 都需要独�
 SavedESP 将其地址存入父帧。安装器重放源契约，并独立核验实际 LLVM 对齐、边界、
 每次 catch 入口的初始化、回调生命周期及最终写回；仅有帧布局描述不足以允许重建。
 
+每条 catch 分别绑定自己的 catchpad、对象 home、临时栈和精确 continuation；分派顺序
+必须与源 HandlerMap 一致。其他 catch 的对象初始化或临时栈不能供当前 catch 使用。
+共享 callback block、多个或嵌套 try 上下文仍被拒绝。对于一个同步 try，HighIR 可以
+依据完整调用及状态证明，合并被运行时恢复块隔开的不返回分支；不能因此为异步异常
+或原先未保护的调用添加 handler。C/C++ 输出保留原生对象位置和读取时的临时值，
+不把可变 catch 对象猜成可以随处替换的不可变源表达式。
+
 LLVM 重新发射物理 registration、需要时才存在的 catch home、有序 cleanup dispatch、
 完整 FuncInfo 和私有 handler。安装器检查无对象字段和空 RTTI 字段必须为字面零值，
 且没有重叠 fixup，防止重定位将其变成指针。公开安装要求编译器同时提供
@@ -189,7 +196,9 @@ LLVM 重新发射物理 registration、需要时才存在的 catch home、有序
 指令。当前运行样本覆盖整数按值/引用捕获、无绑定对象的 typed catch、捕获有符号与无符号
 抛出值的 catch-all、调用者参数读写、嵌套析构及强制重定位。固定 MSVC 风格帧使用独立汇编样本，
 LLVM 固定帧及重新对齐帧使用编译器生成的父函数，固定帧覆盖短立即数及完整宽度的
-栈分配。所有样本均链接捕获的 MSVC CRT 库；CI 在 Windows
+栈分配。多 catch 样本在同一函数中组合有符号按值、无符号引用与 catch-all，检查
+三条恢复路径、引用写回和四种调用者栈布局，并覆盖两种安装模式及强制重定位。
+所有样本均链接捕获的 MSVC CRT 库；CI 在 Windows
 上重放完全相同的 PE 文件。其他 try/catch 图、未经证明的对象类型或入口 ABI、
 未经证明的动态帧，
 以及 GS 或异步 C++ 仍保留分析信息，并拒绝原生安装。

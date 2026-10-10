@@ -1370,7 +1370,7 @@ Die KVM-Abnahme verlangt den Abbruch einer echten vCPU ohne selbstständigen Aus
 
 Mit `native_cpu_only=true` aktiviert `native_driver_tests=true` die `NeverDNativeDriverTests` ohne Unicorn. Vor der Konfiguration prüft `build_wdk_driver_fixtures.py` den vollständigen SHA-256 der offiziellen Microsoft-Pakete WDK/SDK 10.0.26100.6584 und baut 48 normale/CFG/DBG-Treiberimages aus den Originalquellen. `WDKDriverFixtures.def` deklariert Paketidentitäten, Compiler- und Linkerargumente sowie Fixture-Zuordnungen. Unveränderte Microsoft-Dateien und ihre Lizenzen bleiben in den lokalen Build-/Cache-Verzeichnissen; CI lädt nur Build-Metadaten und Protokolle hoch. Das Manifest enthält Werkzeugversionen, Befehle, Quell-/Header-Hashes und Hashes der erzeugten Images.
 
-`NativeDriverTests.def` verlangt 230 WHP-Ergebnisse aus allen 115 Workloads in `DriverBuiltinImages.def` und `DriverBackendParityCases.def`: 27 eingebaute Images, 48 WDK-Images und 40 Anfrageszenarien an ursprünglichen und verschobenen Adressen. Das vollständige Pflichtinventar lautet `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 2 image MDLs = 5449`. Die 30 Wartemengenprüfungen umfassen sechzehn portable Modellfälle und vierzehn eigene native Treiberfälle. `run_native_cpu_ci.py --with-drivers` bewahrt genaue Identitäten und JUnit-Nachweise bei deaktiviertem Unicorn. Fehlende oder übersprungene Pflicht-Fixtures lassen diese optionale Prüfung scheitern; gewöhnliche Builds halten externe Fixtures optional. Feste Images behalten ihre erwartete Relokationsablehnung. Native ARM64-Gastausführung bleibt ungeprüft.
+`NativeDriverTests.def` verlangt 230 WHP-Ergebnisse aus allen 115 Workloads in `DriverBuiltinImages.def` und `DriverBackendParityCases.def`: 27 eingebaute Images, 48 WDK-Images und 40 Anfrageszenarien an ursprünglichen und verschobenen Adressen. Das vollständige Pflichtinventar lautet `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 4 image memory checks = 5451`. Die 30 Wartemengenprüfungen umfassen sechzehn portable Modellfälle und vierzehn eigene native Treiberfälle. `run_native_cpu_ci.py --with-drivers` bewahrt genaue Identitäten und JUnit-Nachweise bei deaktiviertem Unicorn. Fehlende oder übersprungene Pflicht-Fixtures lassen diese optionale Prüfung scheitern; gewöhnliche Builds halten externe Fixtures optional. Feste Images behalten ihre erwartete Relokationsablehnung. Native ARM64-Gastausführung bleibt ungeprüft.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injiziert Fristablauf, Stopp und beides vor zwei unterschiedlichen Startinstruktionen. Geprüft werden genaue Phasendiagnose, eigene Nachrichtenlebensdauer, Fehlertyp und Ursachenbits, eine unveränderte gemeinsame Frist sowie freigegebener Speicherbesitz. Echte Transportfehler und Zustandsabweichungen bleiben getrennt. Das native x64-Startvalidierungsbudget beträgt `5 s`; normale Gastfristen und Einzelschrittzulagen bleiben unverändert.
 
@@ -1742,6 +1742,33 @@ Die MainActor-Fixture prüft den vollständigen Ablauf für feste Metadaten und 
 `ZeroTimeoutPollRetainsReadinessAndOrderedCopies` prüft O0/O2-Rohaufrufe für acht GKI-Versionen: lebende, negative und geschlossene Deskriptoren, Duplikatzählung, Argumentverengung, Zeitlimit-/Maskenreihenfolge, schreibgeschützte Null-timespecs, vollständigen Metadatenimport vor Bereitschaft sowie frühere `revents` bei späteren Schreibfehlern. `ZeroTimeoutPollKeepsUnobservedBoundaries` erhält unbekannte Kernel, Grenzen, Masken, Warte- und Bereitschaftszustände. Androids `ReleasedGKIZeroTimeoutPollSharesRawAndBionicResults` prüft gemeinsame Tabelle und errno-Besitz in sechs Verpackungsprofilen.
 
 ## Begrenzte Verzeichnisattribute in Gruppen
+
+bulk-attributes prüft ganze Gruppen, Namen/Typen als Menge, Schutz unbenutzter Bytes, low32 FD, bitmap-Wörter, native Fehler, dup, unabhängige open, EOF und Null-rewind. Literal-/Unbekannt-Modi sind nur virtuell. Modelle decken vollständiges stat, Invalidierung, NFD/255-Byte-Namen, Ein-/Ausgabealias, Transport-/Budgetfehler, Verschieben/SWAP/Entfernen/Wiederverwenden und explizite Rechte ab. Pflichtinventar:65 Fälle pro Plattform,195 ARM64 und130 Intel. Lokal wurde nur passendes ARM64 HVF geprüft. native5s, guest/Python5,000,000us/quantum1024 und public10s bleiben gleich.
+
+## Begrenzte Darwin-Hardlinks
+
+link folgt dem letzten symbolischen Ziel; linkat mit flags=0 wählt das Linkobjekt, AT_SYMLINK_FOLLOW das Ziel. Nur low32 0/0x40 sind zulässig, andere niedrige Bits liefern EINVAL vor dem Import. Quellensuche und Verzeichnis-EPERM gehen dem Zielimport voraus; vorhandene Ziele liefern EEXIST. Das Ziel benötigt Änderungsrecht und dieselbe ausdrücklich festgelegte Mount-Domäne. Anfängliche Identitätsaliasse sowie bekannte Geräte-, Modus- und Flag-Konflikte bleiben unzulässig.
+
+Ein Alias kostet nur Eintrag und Pfad/NUL, keinen neuen inode. Bytes, Attributrechte, Metadatengültigkeit und Mapping-Leases gehören dem gemeinsamen Objekt. Explizite Richtlinien aktualisieren Linkzahl und ctime; ohne sie bleibt vollständiges stat unbekannt. Attributänderungen invalidieren stat, Inhaltsänderungen Attributbeobachtungen. Gehaltene Beschreibungen und letzte Mappings behalten Namenskosten; Ersetzung verrechnet nur sofort freigebbare Kosten. Teilbäume wählen genaue Identitäten und Eltern; externe Aliasnamen bleiben stehen, relative symbolische Ziele verwenden den gewählten Eintragselternteil.
+
+F_GETPATH/ATTR_CMN_NAME bleiben nach mehreren Namen auch bei einem oder keinem Namen unzulässig; kein allgemeines APFS-Cachemodell wird behauptet. bulk NAME stammt vom tatsächlichen Eintrag; gewöhnliches rename/SWAP desselben Objekts behält beide Namen. EXCL-Großschreibung, O_SYMLINK, Intel HVF, physisches iOS, ACL, kohärente Mappings/EOF-Signale, dyld, Mach IPC, Threads und vollständige Frameworks bleiben Lücken. Frühere Ausschlüsse werden nur innerhalb dieses Vertrags erweitert.
+
+```text
+link(9), linkat(471), AT_SYMLINK_FOLLOW=0x40
+DarwinFiles, FileEntry, LinkEntry, NameIdentity, Contents, LinkNode
+LinkedNames, HadMultipleNames, DetachedNames
+F_GETPATH, ATTR_CMN_NAME, getattrlist(220), fgetattrlist(228), getattrlistat(476)
+getattrlistbulk(461), O_SYMLINK
+hard-links
+hard-links-values
+hard-links-name-unsupported
+hard-links-attributes-unsupported
+HardLink*, HardLinksShareObjectsAndRetainExplicitNameBoundary
+native5s / compile120s / drain1s / reap1s
+guest/Python5,000,000us / quantum1024 / public10s
+34 model cases / 20 guest cases / 20 public cases / 5 Python profiles
+65 mandatory workloads per platform / ARM64 195 / Intel 130
+```
 
 bulk-attributes prüft ganze Gruppen, Namen/Typen als Menge, Schutz unbenutzter Bytes, low32 FD, bitmap-Wörter, native Fehler, dup, unabhängige open, EOF und Null-rewind. Literal-/Unbekannt-Modi sind nur virtuell. Modelle decken vollständiges stat, Invalidierung, NFD/255-Byte-Namen, Ein-/Ausgabealias, Transport-/Budgetfehler, Verschieben/SWAP/Entfernen/Wiederverwenden und explizite Rechte ab. Pflichtinventar:63 Fälle pro Plattform,189 ARM64 und126 Intel. Lokal wurde nur passendes ARM64 HVF geprüft. native5s, guest/Python5,000,000us/quantum1024 und public10s bleiben gleich.
 

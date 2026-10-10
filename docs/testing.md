@@ -794,6 +794,12 @@ and deliberate cache collisions. Shuffled architectural views must retain
 their cold-query answers after eviction; value and frame proofs remain outside
 this fixed-size cache.
 
+The two-table linear-copy cases cover more than sixteen address/base copies,
+partial address clobbers and exhausted shared evidence. Both C routes, including
+optimized and unoptimized LLVMC, execute every byte selector and four table-select
+inputs at O0/O2 with undefined-behavior traps against the fixture formula.
+The existing deep selector-copy refusals remain covered independently.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
@@ -1023,7 +1029,7 @@ Leading-phase regressions cover two and three sequential loops reusing one count
 
 `InterpreterMachineStateModel.*` in `NeverDLowIRRefinementTests` uses independent LowIR examples to check raw entry flags, status versus guest RAX, all 17 state words, partial register lanes, packed flags, sticky dynamic rejection, guest frame writes, both branch arms and cyclic inference followed by a fresh proof. Wrong outputs, lost status, changed memory, stale instruction records, malformed inputs and exhausted generation budgets must fail. Existing machine-source tests also exercise both C routes at O0/O2; model tests alone do not certify compiled C.
 
-`NeverDLLVMInterpreterModelTests` checks independently written LLVM against full-state LowIR oracles: widths, parallel PHIs, switches, guest memory, separate status, poison guards, intrinsic ranges, rejected contracts and all four construction budgets. It checks a complete arbitrary-word countdown proof and rejects changed status. Independently written C compiled at O1/O2 must match the same observations. These tests validate the admitted model; automatic invariant discovery and compiler correctness remain separate obligations. Variable-shift cases cover all four widths, masked and branch-bounded counts, boundary and oversized counts, no-wrap/exact flags, strict poison rejection and compiled C at O1/O2.
+`NeverDLLVMInterpreterModelTests` checks independently written LLVM against full-state LowIR oracles: widths, parallel PHIs, switches, guest memory, separate status, poison guards, intrinsic ranges, rejected contracts and all four construction budgets. Constant state GEPs retain 8/16/32/64-bit element allocation strides, chained negative offsets and complete byte observations; wrapped scaling, object escapes, dynamic indices and guest-pointer GEPs remain refused. It checks a complete arbitrary-word countdown proof and rejects changed status. Independently written C compiled at O1/O2 must match the same observations. These tests validate the admitted model; automatic invariant discovery and compiler correctness remain separate obligations. Variable-shift cases cover all four widths, masked and branch-bounded counts, boundary and oversized counts, no-wrap/exact flags, strict poison rejection and compiled C at O1/O2.
 
 `LLVMGuestAlignment.*` compares loads and stores with independent byte-memory oracles: aligned and misaligned domains, free high address bits, parsed default alignment, partial widths, unused or overwritten accesses, unreachable branches and exact/one-short construction budgets. `InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` checks native stack stores, matching entry congruences and altered source effects through both fresh relations.
 
@@ -2636,6 +2642,20 @@ Set `NEVERD_REGISTRATION_OUTPUT_CXX_PE32` to save the manual transaction's EXE;
 `NEVERD_REGISTRATION_OUTPUT_CXX_COLLISION_PE32` save the public variants.
 Structural success is not runtime evidence.
 
+`check_windows_registration_multiple_catch.py` uses the same test binary and
+captured CRT libraries for ordered value/reference/catch-all clauses. Its fixed
+and aligned compiler parents each have a wrong-result control. The 32-image
+matrix checks three throws with four caller stack layouts per execution,
+including both CLI patch modes and forced relocation. The source test also
+rejects reordered pads, cross-clause homes/stacks/continuations, malformed
+emitted tables and incomplete HighIR scope proofs. Public C/C++ output must
+retain all callback bodies and resume labels; C receives a syntax check.
+`replay_windows_registration_multiple_catch.py` validates exact source/object,
+IR, installation, decompilation and PE identities before replaying the same
+files on Windows. Its Python admission suite rejects incomplete, stale or
+substituted evidence.
+
+
 The focused Windows EH workflow first builds and executes genuine MSVC x86
 value/reference source fixtures on Windows, then transfers those exact inputs
 to Linux. With the pinned compiler's handler receipts, Linux runs the complete
@@ -3413,7 +3433,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 2 image MDLs = 5449`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 4 image memory checks = 5451`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -4117,7 +4137,7 @@ See [released GKI contracts](android-gki-kernels.md).
 
 ## Bounded bulk directory attributes
 
-The bulk-attributes workload checks whole groups, name/type membership, guarded unused bytes, low32 FD, bitmap words, native errors, dup/shared progress, independent opens, cached EOF and zero rewind. Literal and unknown modes are virtual-only. Model tests also cover full stat, invalidation, NFD/255-byte names, request/output aliasing, transport/budget failures, held moves/SWAP/removal/reuse and explicit authorization. Required native inventory is 63 workloads per platform: 189 matching ARM64 cases and 126 Intel cases. Only matching ARM64 HVF execution is locally verified. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
+The bulk-attributes workload checks whole groups, name/type membership, guarded unused bytes, low32 FD, bitmap words, native errors, dup/shared progress, independent opens, cached EOF and zero rewind. Literal and unknown modes are virtual-only. Model tests also cover full stat, invalidation, NFD/255-byte names, request/output aliasing, transport/budget failures, held moves/SWAP/removal/reuse and explicit authorization. Required native inventory is 65 workloads per platform: 195 matching ARM64 cases and 130 Intel cases. Only matching ARM64 HVF execution is locally verified. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.
 
 
 ## Darwin ordinary attribute mutations
@@ -4127,7 +4147,3 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` checks original modeled execution, restoration, section permissions and original/restored native Windows execution. It covers private-heap reallocation/free, encoded interior pointers, FLS callback rearming, recursive locks, LastError and reserved/committed/protected virtual pages. `MaterializationRequiresKnownSupportedState` rejects absent version inputs and dynamic TLS. `RuntimeRestorationHasTheSameCAPIAndCLIContract` compares exact bytes and reports. Linux construction checks and Wine observations do not replace native Windows lifecycle evidence.
 
 `NeverDUnpackDriverTests` covers packed DriverEntry recovery, static/dynamic kernel imports, retained kernel resources, entry ABI/control state, malformed exports, scheduling, request/unload lifecycle, C API/CLI parity and PE checksums. The native driver inventory requires matching KVM/WHP cases; Windows also checks ImageHlp. This does not certify a native kernel load. See [unpacking](unpack.md).
-
-## Native opaque-state checks
-
-`X86PreservedState.*` checks fresh scalar forms, exact bank aliases, strict reset behavior and stale byte/span/version refusal. `OriginalBinaryUndefinedIndependence.*Opaque*` covers branches, internal callees, exhaustive indirect targets, exact profiles and independently decoded metadata exact/one-short budgets. `BinaryLowIR*.*Opaque*` covers selected versus arbitrary undefined choices, multiple inductive sources, late rank/budget refusal, true-entry scalar preservation and a later-source byte change with identical LowIR but a changed execution digest. `NativeUndefinedIndependence.*Opaque*` and `NativeStackControl.*FreshMemoryCall*` check grouped interiors, boundaries before cuts, stale records and target evaluation before stack mutation. Rebuild affected metadata consumers, including `NeverDInterpreterLLVMRefinementTests`; report sanitizer and compiled-fault coverage separately from ordinary test results.

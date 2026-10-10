@@ -534,6 +534,11 @@ before any independent entry. A missing or changed occurrence cannot borrow
 another copy's value. LLVM and HighIR consume the same block-specific plan.
 Composite target-load authentication requires every dispatch copy to retain
 its recipe, including when the load precedes the branch in a separate block.
+The two-table recognizer walks address and base COPY envelopes iteratively.
+Each reaching-definition lookup starts strictly before the previous one and
+debits the candidate evidence account, so the finite prefix itself bounds
+these walks. Recursive expression and selector proofs retain their separate
+depth limits; longer copies grant no address, target or domain authority.
 
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
@@ -4350,11 +4355,3 @@ When a recovered DLL entry differs from its original PE entry, the writer emits 
 `support/X86Addressing.h` owns the width-specific interpretation of absent ordinary SIB indices for both lifting and checked execution. `EIZ` is absent only with a 32-bit address, and `RIZ` only with a 64-bit address; neither is a base register or VSIB vector index. REX.X-selected R12/R12D remains a real scaled index. `X64Address` regressions compare original processor execution, access observations, cancellation and memory faults at both privilege levels, while `X86NoIndexAddress` retains the strict lifting and malformed-alias checks.
 
 Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an explicit LOCK prefix. The shared RAM transaction retains the original effective address, serializes publication and discards cancelled or faulted writes; the processor executes the original exchange. `X64Address` tests cover address/register overlap, partial register writes, cache-line and page crossings, observers and missing-page faults. MMIO exchanges retain their provider and natural-alignment requirements; other locked instruction families retain their existing admission rules.
-
-## Native opaque-state preservation
-
-The optional C++ `NativePreservedState` contract requests the closed `LegacyIntegerOpaqueV1` set: vector containers 0–31, bits `[0,512)`; APX R16–R31, bits `[0,64)`; x87 control-word bits `[0,16)`; and defined MXCSR bits `[0,16)`. XMM/YMM alias the low 128/256 bits of each 64-byte vector container. Optional components are covered only where architecturally present. MXCSR has a separate component identity. Modeled GPRs, flags, memory, stack, opmasks, other x87 state, CET and every unlisted component are excluded.
-
-Fresh strict x64 decoding supplies a separate instruction-form audit bound to original bytes, complete LowIR operations and semantic version. Missing writes or complete undefined-output metadata cannot establish this fact. The native executor checks every reached instruction, grouped interior and internal callee before cuts or effects. Physical CALL/RET receipts bind original and expanded spans; only the exact CET-disabled RDSSP profile owner can supply its special audit. Every source segment, successor, observation and rank must finish before publication. Existing budgets charge the extra metadata inspection; stale evidence or a failed last segment yields no certificate.
-
-Finite independence derives `AllUndefinedChoices`; finite and inductive refinement derive only `SelectedWitness` and reject requests for all choices. Checking both named witnesses cannot strengthen that scope. Static LowIR APIs cannot authorize native preservation. Omission retains existing behavior and schema 17; requests bind schema 18 and the execution summary. This opt-in architectural prerequisite does not certify an ordinary ABI, physical-CPU undefined choices or the default C output.

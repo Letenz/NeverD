@@ -227,8 +227,8 @@ EH4 also requires `LLVM_NEVERD_X86_REGISTRATION_COOKIES`; GS initialization
 requires `LLVM_NEVERD_X86_REGISTRATION_GS`. The older published r3 package
 rejects native installation.
 
-Native x86 C++ reconstruction currently supports one synchronous try and one
-catch, with at most 128 source unwind states. A catch may bind a checked scalar
+Native x86 C++ reconstruction currently supports one synchronous try with
+ordered catches, with at most 128 source unwind states. A catch may bind a checked scalar
 by value or reference, omit its local object, or be `catch(...)`. An unbound
 typed catch retains its exact RTTI and adjectives; catch-all retains null RTTI
 and its native catch-all adjective. An absent object home requires complete
@@ -258,6 +258,17 @@ the source contract and independently checks actual LLVM alignment, bounds,
 initialization at every catch entry, callback lifetime and the final writeback.
 A frame-layout descriptor alone cannot authorize reconstruction.
 
+Each clause retains its own catchpad, object home, scratch stack and exact
+continuation. Dispatch order must match the source HandlerMap. A sibling catch
+cannot borrow another clause's implicit object initialization or callback stack.
+Shared callback blocks and multiple or nested try contexts remain rejected.
+HighIR can gather terminal branches of one synchronous try even when runtime
+resume blocks interrupt their address order. It requires complete call and
+state receipts; asynchronous faults and unprotected calls cannot acquire a new
+handler through this projection. C and C++ output retain explicit native object
+homes and load snapshots instead of assuming a mutable catch object is an
+immutable source expression.
+
 LLVM recreates the physical registration, an object home only when required,
 ordered cleanup dispatch, complete FuncInfo and private handler. The installer
 checks that absent object/RTTI fields are literal zero with no overlapping
@@ -272,7 +283,11 @@ catch-all with signed and unsigned throws, caller argument reads and writes,
 and nested destruction, including
 forced relocation. Fixed MSVC-style frames use an independent assembly fixture;
 LLVM fixed and realigned frames use compiler-generated parents. Fixed-frame
-coverage includes both short and full-width stack allocations. All fixtures
+coverage includes both short and full-width stack allocations. Ordered-catch
+fixtures combine signed value, unsigned reference and catch-all clauses in one
+function and check all three continuations and reference writes across four
+caller stack layouts. Both installation modes and forced rebasing participate
+in the same-file runtime matrix. All fixtures
 link the captured MSVC CRT libraries. The CI replay executes the identical PE files on Windows. Other
 try/catch graphs, unproved object types or entry ABIs, unproved dynamic frames
 and GS or asynchronous C++ remain available for analysis and are rejected for
