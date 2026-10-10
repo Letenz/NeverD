@@ -153,6 +153,20 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`X87CallStack` tests call/consume loops and forwarding chains on x86/x64 in
+ELF, COFF and Mach-O. Negative cases cover inconsistent returns, recursion,
+depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
+opaque state restoration. Builder reuse after an image edit invalidates old
+proofs. `ImportCalleeTrace` additionally checks partial pointer writes and
+instruction-local temporary identity on x86, x64 and AArch64.
+
+`X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
+machine bytes, generated LLVM, HighC and a separately generated C caller linked
+to native callees. Linux x64 hosts execute both i386 and x64, default/NoOpt
+pipelines and compiled O0/O2. Its binary80 sum retains bits below double
+precision, so a premature conversion cannot pass. These checks cover return
+transport and do not certify every x87 instruction, rounding mode or exception.
+
 `NeverDX64MemoryUpdateTests` also checks the SSE2 word transfers that Clang 21
 can emit for scalar structure comparisons. `X64WordLane` uses independent
 `PINSRW` and `PEXTRW` encodings across the available KVM, WHP, HVF and Unicorn
@@ -703,6 +717,27 @@ when their full-width pointer, displacement, load width and memory history
 agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
+
+The same target's `NarrowGuard*` tests use long arithmetic prefixes before x86
+and x64 byte/word guards and AArch64 W-register guards. Low/high byte identity,
+disjoint writes and explicit index widening must retain exactly three slots
+through normal LLVM emission and verification. Changed lanes, other bytes,
+unbounded upper bits, call clobbers and exhausted budgets must not borrow the
+earlier bound. The fourth physical slot is deliberately outside that bound.
+An unrelated deep return expression exercises incomplete escape auditing:
+the proven table survives only with every relocation root retained.
+
+`LowToMedSelectorOccurrence.*` checks distinct SSA selectors for copied
+instruction addresses on x64 and AArch64 across ELF, Mach-O and COFF. Changing
+one copy's operand role must invalidate only that copy, and the complete
+LLVM module must verify. Pointer-boundary regressions retain composite table
+loads whose dispatch copies lose or change a recipe, while accepting a load
+in their shared predecessor when every recipe survives.
+
+The pointer-boundary target checks closed scalar graph retries on x64 and
+AArch64 across ELF, Mach-O and COFF. Arithmetic deeper than the initial
+recursive walk can succeed; address seeds, forbidden dependencies, mixed code
+slots and chains beyond the independent graph depth limit must still fail.
 
 The pointer-boundary target's `LLVMFrameSlotProof` cases exercise shared PHI
 diamonds and loop-carried SELECT DAGs for x86, x64, ARM and AArch64. Deterministic work
@@ -2371,9 +2406,38 @@ language graph. The genuine input test also reloads each public output through
 the ordinary COFF loader and requires the same complete generated FuncInfo
 graph. It also checks the separate ESI anchor, allocation/alignment and biased
 state observations. Changed prologue bytes cannot retain the checked anchor.
-Canonical metadata and source digests retain every coordinate; the EBP state
-solver and native classifier reject the realigned model until its state
-transfers are proved.
+Canonical metadata and source digests retain every coordinate. The realigned
+state proof checks independent callback allocation, initialized spills, exact
+parent-frame recovery, preserved callback calls and balanced runtime returns;
+HighIR and the native classifier retain their separate frame-lowering gates.
+`NeverDWindowsRegistrationRealignedTests` emits a 64-byte-aligned frame with a
+catch that calls a checked thiscall leaf on its parent local. Run
+`check_windows_registration_realigned.py --test-binary <test-binary>
+--runtime-libs <native-msvc-library-directory> --output <directory>` to compile
+its driver, exercise four caller stack layouts in Wine,
+and relift preferred/rebased PE32 images through LowIR and annotated HighIR.
+The continuation reads its local through the actual restored ESP. The driver
+checks that value, caller bytes and FS chain restoration; the
+wrong-result control must exit with 1 at both bases. Machine-code mutations,
+independent roots, mixed ECX/EDX link publication, uninitialized or released
+callback slots, missing call contracts and saved-entry-EBP borrows must reject.
+The same PE verifies distinct MedIR runtime roots and HighIR/LLVM address
+expressions at every ABI-compatible alignment residue, including PE32 address
+wraparound. Missing, changed or incomplete no-return receipts cannot remove a
+normal edge to create a continuation root. Runtime COPY definitions cannot
+alias the ordinary incoming register in pointer and frame-slot proofs.
+HighIR restores SavedESP before either an explicit continuation jump or its
+folded body. Incomplete lifetime/callback proofs, changed return receipts and
+unproved frame geometry cannot synthesize that writeback.
+`replay_windows_registration_realigned.py` authenticates the captured file
+matrix and runs those identical four images on native Windows in the EH CI job.
+The first Windows fixture job captures the selected x86 MSVC release link
+libraries with `check_windows_registration_cxx.py --capture-runtime-libraries`.
+The cross-linker verifies their manifest and hashes before linking the probe;
+the capture records that library provenance alongside the generated object.
+Use these native libraries for CRT RTTI definitions: a Wine-only import stub
+can admit exports that the native CRT does not provide.
+This is generated-frame analysis/runtime evidence, not source reconstruction.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation

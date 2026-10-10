@@ -1296,6 +1296,8 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationRealignedStateTests.cpp
+  eh/RegistrationRealignedTestUtils.cpp
+  eh/RegistrationCallbackStateTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState
@@ -1317,6 +1319,15 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
 
   LINK_COMPONENTS
   WindowsRegistrationFrame
+)
+
+add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
+  eh/WindowsRegistrationRealignedTests.cpp
+
+  LINK_COMPONENTS
+  IRHigh
+  BackendLLVM
+  CodeGen
 )
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
@@ -2160,6 +2171,7 @@ if(NOT CLANG_EXEC)
 endif()
 
 set(X86_64_TEST_SOURCES
+  x86_64/test_jumptable_narrow_guard_x64.s
   x86_64/test_arith.c
   x86_64/test_muldiv.c
   x86_64/test_control_flow.c
@@ -2228,6 +2240,7 @@ set(X86_64_TEST_SOURCES
 )
 
 set(X86_32_TEST_SOURCES
+  x86_32/test_jumptable_narrow_guard_i386.s
   x86_32/test_extern_calls_i386.c
   x86_32/test_extern_calls_nopic_i386.c
   x86_32/test_return_join_i386.c
@@ -2259,6 +2272,7 @@ set(X86_32_TEST_SOURCES
 )
 
 set(AARCH64_TEST_SOURCES
+  aarch64/test_jumptable_narrow_guard_a64.s
   aarch64/test_extern_calls_a64.c
   aarch64/test_extern_calls_nopic_a64.c
   aarch64/test_return_join_a64.c

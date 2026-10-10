@@ -1261,12 +1261,27 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
         ProofQueries.back().UseDefinedAlternativesAsOccurrenceRoots = true;
 
       int DefIndex = -1;
+      const TargetRegInfo &TRI = getTargetRegInfo(CurrentImg->Arch);
       for (int I = std::min(Before, static_cast<int>(Ops.size()) - 1); I >= 0;
            --I) {
         if (!consumeGuardBuildWork())
           return Finish({});
-        if (Ops[I].Output.Space == V.Space &&
-            Ops[I].Output.Offset == V.Offset && Ops[I].Output.Size == V.Size) {
+        const NdVar &Output = Ops[I].Output;
+        const bool Exact = Output.Space == V.Space &&
+                           Output.Offset == V.Offset && Output.Size == V.Size;
+        const bool DefinedLane =
+            V.isReg() && Output.isReg() && V.Size < Output.Size &&
+            TRI.isSubRegOf(V.Offset, V.Size, Output.Offset, Output.Size);
+        // A register-wide extension emitted for an EAX/W write carries known
+        // upper bits. Replacing it with an opaque full-register occurrence
+        // would lose that fact and disconnect an ECX guard from an RCX index.
+        // Keep the existing exact-width producer/query for this lane.
+        const bool ExtendsThisLane = (Ops[I].Opcode == NdOp::INT_ZEXT ||
+                                      Ops[I].Opcode == NdOp::INT_SEXT) &&
+                                     Ops[I].NumInputs == 1 &&
+                                     Ops[I].Inputs[0].Size == V.Size &&
+                                     V.Offset == Output.Offset;
+        if (Exact || (DefinedLane && !ExtendsThisLane)) {
           DefIndex = I;
           break;
         }
@@ -1294,14 +1309,16 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
         return Finish(Node);
       if (!consumeGuardBuildWork(/*query + one alternative=*/2))
         return Finish({});
-      Node->HasDef = true;
+      const bool DefinedLane = Def.Output.Size != V.Size;
+      const NdVar DefinedValue = DefinedLane ? V : Def.Output;
+      Node->HasDef = !DefinedLane;
       Node->Def = Def;
       Node->DefQuery = ProofQueries.size();
       ProofQueries.push_back({
           V,
           UseAddr,
           UseSeq,
-          {{Def.Output, Def.Addr, Def.Seq, /*DefinedAtPoint=*/true}},
+          {{DefinedValue, Def.Addr, Def.Seq, /*DefinedAtPoint=*/true}},
           /*AllowZeroExtension=*/false,
           /*AllowSignExtension=*/false,
       });
@@ -1319,7 +1336,7 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       IndexQuery.UseAddr = Info.IndexUseAddr;
       IndexQuery.UseSeq = Info.IndexUseSeq;
       IndexQuery.Alternatives.resize(1);
-      IndexQuery.Alternatives.front() = {Def.Output, Def.Addr, Def.Seq,
+      IndexQuery.Alternatives.front() = {DefinedValue, Def.Addr, Def.Seq,
                                          /*DefinedAtPoint=*/true};
       IndexQuery.AllowZeroExtension = true;
       IndexQuery.AllowSignExtension = true;
@@ -1327,6 +1344,11 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       ProofQueries[Node->DefQuery].UseDefinedAlternativesAsOccurrenceRoots =
           true;
       Node->IndexQueryUsesDefinition = true;
+      // A contained architectural lane is an identity candidate, not a
+      // narrower version of the producer's arithmetic. Both reaching-value
+      // queries must prove that very lane; otherwise this leaf stays unknown.
+      if (DefinedLane)
+        return Finish(Node);
       for (int I = 0; I < Def.NumInputs; ++I) {
         // Charge the input scan independently from recursive collection.
         if (!consumeGuardBuildWork())

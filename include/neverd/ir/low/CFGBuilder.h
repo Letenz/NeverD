@@ -645,7 +645,11 @@ private:
 };
 } // namespace detail
 
+class X87CallEffectIndex;
+
 class CFGBuilder {
+  friend class X87CallEffectIndex;
+
 public:
   /// Build CFG for a single function starting at EntryAddr.
   LowFunc build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
@@ -1059,6 +1063,8 @@ private:
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
   /// cases move.
   void fixupFpuStack(LowFunc &Func);
+  bool SkipX87StackFixup = false;
+  std::shared_ptr<X87CallEffectIndex> X87CallEffects;
 
   /// Whether \p Target is the entry of a *different* known function — i.e. an
   /// unconditional direct branch to it is a tail call, not intra-function flow.
@@ -1264,6 +1270,8 @@ private:
     /// occurrences.  Compare those definitions as occurrence-local SSA roots
     /// without re-resolving their inputs.  Callers must separately
     /// authenticate the relation that grants each producer.
+    /// A contained architectural register lane names the complete writer as
+    /// its root, while comparisons retain the lane's exact offset and width.
     bool UseDefinedAlternativesAsOccurrenceRoots = false;
     /// The candidate is an exact i386 GOT-base model use whose reaching value
     /// may be reloaded from a caller-frame spill.  Calls are transparent to

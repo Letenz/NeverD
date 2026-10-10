@@ -1646,6 +1646,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   if (const auto Arity = libc::libcArityForSymbol(Name))
     if (const uint16_t Bytes = libc::floatReturnBytes(*Arity))
       return NdType::makeFloat(Bytes);
+  if (E.Type && E.Type->Kind == NdTypeKind::Float)
+    return E.Type;
   return {};
 }
 

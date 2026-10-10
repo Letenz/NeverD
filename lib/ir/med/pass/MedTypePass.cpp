@@ -564,6 +564,15 @@ inferReturnType(const MedFunc &Func, const TargetRegInfo &TRI, Arch TheArch,
   DefinedReturnBytes = 0;
   uint16_t DefaultSize = TRI.PointerSize > 0 ? TRI.PointerSize : 4;
 
+  // CFG construction can prove the exact logical x87 top at every return.
+  // Its explicit operand is the returned value, including across calls and
+  // joins; do not rediscover a different physical slot by backward scanning.
+  if (Func.ExplicitX87ReturnValue) {
+    ReturnViaX87 = true;
+    DefinedReturnBytes = 10;
+    return NdType::makeFloat(10);
+  }
+
   // The epilogue register-restore filter below applies to x86/x86-64: a `pop`
   // into the integer return register right before `ret` is a stack-cleanup /
   // PIC-base restore (i386 `pop eax` for the GOT base, x86-64 `pop rax` undoing
