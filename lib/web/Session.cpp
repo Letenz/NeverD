@@ -1,3 +1,14 @@
+//===- Session.cpp - Offline analysis session --------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline analysis session.
+///
+//===----------------------------------------------------------------------===//
+
 #include "PathPolicy.h"
 #include "RecoveryParser.h"
 #include "SessionInternal.h"

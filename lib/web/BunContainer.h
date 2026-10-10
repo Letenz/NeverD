@@ -1,3 +1,14 @@
+//===- BunContainer.h - Bun native container locations -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Bun native container locations.
+///
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "neverd/web/Bun.h"

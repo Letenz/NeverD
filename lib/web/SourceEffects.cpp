@@ -1,3 +1,14 @@
+//===- SourceEffects.cpp - Conservative JavaScript effects -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Conservative JavaScript effects.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/SourceEffects.h"
 
 #include "SourceModel.h"

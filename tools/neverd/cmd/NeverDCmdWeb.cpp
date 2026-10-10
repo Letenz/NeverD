@@ -1,3 +1,14 @@
+//===- NeverDCmdWeb.cpp - Offline web analysis commands ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline web analysis commands.
+///
+//===----------------------------------------------------------------------===//
+
 #include "../NeverDCLI.h"
 
 #include "neverd/sdk/NeverDCAPIWeb.h"

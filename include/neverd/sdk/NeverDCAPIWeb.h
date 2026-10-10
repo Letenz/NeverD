@@ -1,4 +1,14 @@
-//===- NeverDCAPIWeb.h - Offline web artifact analysis -----------*- C -*-===//
+//===- NeverDCAPIWeb.h - Offline web analysis C interface --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline web analysis C interface.
+///
+//===----------------------------------------------------------------------===//
+
 #ifndef NEVERD_SDK_CAPI_WEB_H
 #define NEVERD_SDK_CAPI_WEB_H
 

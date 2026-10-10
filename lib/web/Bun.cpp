@@ -1,3 +1,14 @@
+//===- Bun.cpp - Qualified Bun graph extraction ------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Qualified Bun graph extraction.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/Bun.h"
 
 #include "BunContainer.h"

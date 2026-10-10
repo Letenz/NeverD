@@ -1,3 +1,14 @@
+//===- HermesLexemes.h - Embedded parser token conversion --------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Embedded parser token conversion.
+///
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 // Parser-only boundary. Do not include LLVM headers in this translation unit.

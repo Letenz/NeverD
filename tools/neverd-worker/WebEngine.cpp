@@ -1,3 +1,14 @@
+//===- WebEngine.cpp - Offline analysis worker adapter -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline analysis worker adapter.
+///
+//===----------------------------------------------------------------------===//
+
 #include "WebEngine.h"
 
 #include <algorithm>

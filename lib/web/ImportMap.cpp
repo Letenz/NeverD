@@ -1,3 +1,14 @@
+//===- ImportMap.cpp - Bounded import map resolution -------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Bounded import map resolution.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/ImportMap.h"
 
 #include "JsonReader.h"

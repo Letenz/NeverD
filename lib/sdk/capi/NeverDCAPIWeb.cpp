@@ -1,3 +1,14 @@
+//===- NeverDCAPIWeb.cpp - Offline web analysis C interface ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline web analysis C interface.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/sdk/NeverDCAPIWeb.h"
 
 #ifdef NEVERD_ENABLE_WEB_ANALYSIS

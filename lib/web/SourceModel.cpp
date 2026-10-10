@@ -1,3 +1,14 @@
+//===- SourceModel.cpp - Validated JavaScript source models ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Validated JavaScript source models.
+///
+//===----------------------------------------------------------------------===//
+
 #include "SourceModel.h"
 
 #include "neverd/web/Session.h"

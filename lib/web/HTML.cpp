@@ -1,3 +1,14 @@
+//===- HTML.cpp - Captured HTML script evidence ------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Captured HTML script evidence.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/HTML.h"
 
 #include "neverd/web/Session.h"

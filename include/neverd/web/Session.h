@@ -1,3 +1,14 @@
+//===- Session.h - Offline analysis session ----------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline analysis session.
+///
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "neverd/web/NativeInput.h"

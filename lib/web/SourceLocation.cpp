@@ -1,3 +1,14 @@
+//===- SourceLocation.cpp - Source coordinate conversion ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Source coordinate conversion.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/SourceLocation.h"
 
 #include "neverd/web/Artifact.h"

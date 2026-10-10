@@ -1,3 +1,14 @@
+//===- SourceBindings.cpp - JavaScript lexical binding analysis --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// JavaScript lexical binding analysis.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/SourceBindings.h"
 
 #include "SourceModel.h"

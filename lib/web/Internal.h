@@ -1,3 +1,14 @@
+//===- Internal.h - Private artifact admission contracts ---------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Private artifact admission contracts.
+///
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "neverd/web/Artifact.h"

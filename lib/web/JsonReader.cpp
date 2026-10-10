@@ -1,3 +1,14 @@
+//===- JsonReader.cpp - Bounded JSON admission -------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Bounded JSON admission.
+///
+//===----------------------------------------------------------------------===//
+
 #include "JsonReader.h"
 
 #include "neverd/web/Artifact.h"

@@ -1,3 +1,14 @@
+//===- SourceNavigation.cpp - Source containment and lexical links -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Source containment and lexical links.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/SourceNavigation.h"
 
 #include "SourceModel.h"

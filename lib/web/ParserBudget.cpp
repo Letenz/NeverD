@@ -1,3 +1,14 @@
+//===- ParserBudget.cpp - JavaScript parser resource limits ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// JavaScript parser resource limits.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/ParserBudget.h"
 
 #include "neverd/web/Session.h"

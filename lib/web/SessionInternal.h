@@ -1,3 +1,14 @@
+//===- SessionInternal.h - Private session state and caches ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Private session state and caches.
+///
+//===----------------------------------------------------------------------===//
+
 #pragma once
 
 #include "ArtifactView.h"

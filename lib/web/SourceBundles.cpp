@@ -1,3 +1,14 @@
+//===- SourceBundles.cpp - Qualified bundle source partitions ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Qualified bundle source partitions.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/SourceBundles.h"
 
 #include "SourceModel.h"

@@ -1,3 +1,14 @@
+//===- ElectronIPC.cpp - Scoped Electron IPC evidence ------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Scoped Electron IPC evidence.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/ElectronIPC.h"
 
 #include "ElectronSelection.h"

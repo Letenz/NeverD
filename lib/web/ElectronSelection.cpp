@@ -1,3 +1,14 @@
+//===- ElectronSelection.cpp - Shared Electron evidence selection ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Shared Electron evidence selection.
+///
+//===----------------------------------------------------------------------===//
+
 #include "ElectronSelection.h"
 
 #include "JsonReader.h"

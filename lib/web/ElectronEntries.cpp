@@ -1,3 +1,14 @@
+//===- ElectronEntries.cpp - Captured Electron entry candidates --------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Captured Electron entry candidates.
+///
+//===----------------------------------------------------------------------===//
+
 #include "neverd/web/ElectronEntries.h"
 
 #include "ElectronSelection.h"

@@ -1,3 +1,14 @@
+//===- ElectronSource.cpp - Electron source boundaries -----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Electron source boundaries.
+///
+//===----------------------------------------------------------------------===//
+
 #include "SourceModel.h"
 
 #include "neverd/web/Electron.h"

@@ -1,3 +1,14 @@
+//===- BlobStoreTests.cpp - Private immutable blob storage tests -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Private immutable blob storage tests.
+///
+//===----------------------------------------------------------------------===//
+
 #include "BlobStore.h"
 #include "Internal.h"
 #include "gtest/gtest.h"

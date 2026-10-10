@@ -1,3 +1,14 @@
+//===- SourceMaps.cpp - Bounded source map decoding --------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Bounded source map decoding.
+///
+//===----------------------------------------------------------------------===//
+
 #include "JsonReader.h"
 
 #include "neverd/web/Artifact.h"

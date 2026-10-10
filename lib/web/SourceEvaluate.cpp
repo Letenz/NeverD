@@ -1,3 +1,14 @@
+//===- SourceEvaluate.cpp - Finite primitive evaluation ----------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Finite primitive evaluation.
+///
+//===----------------------------------------------------------------------===//
+
 #include "PrimitiveNumbers.h"
 #include "SourceModel.h"
 
