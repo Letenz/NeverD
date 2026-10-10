@@ -1367,21 +1367,22 @@ class KernelImageMDL : public KernelMDLChain {
 protected:
   uint64_t ImageBase = 0;
 
-  void initializeImage(uint64_t Base, bool Gap = false) {
+  void initializeImage(uint64_t Base, bool Gap = false,
+                       uint64_t DataSize = profile::PageSize) {
     Model.reset();
-    Memory = take(UnicornBackend::create(8 * 1024 * 1024));
+    Memory = take(UnicornBackend::create(2 * DataSize + 8 * 1024 * 1024));
     ASSERT_TRUE(Memory);
     Result = DriverResult{};
     ImageBase = Base;
     DriverImage Image;
     Image.Base = Base;
-    Image.Entry = Base + (Gap ? 4 : 2) * profile::PageSize;
-    Image.Size = (Gap ? 5 : 3) * profile::PageSize;
+    Image.Entry = Base + DataSize + (Gap ? 3 : 1) * profile::PageSize;
+    Image.Size = DataSize + (Gap ? 4 : 2) * profile::PageSize;
     for (unsigned I = 0; I != 3; ++I) {
       DriverImageRegion Region;
-      Region.Address = Base + (Gap && I == 2 ? 4 : I) * profile::PageSize;
+      Region.Address = I == 2 ? Image.Entry : Base + I * profile::PageSize;
       Region.Permissions = Read | (I == 1 ? Write : I == 2 ? Execute : 0);
-      Region.Bytes.assign(profile::PageSize, 0x31 + I);
+      Region.Bytes.assign(I == 1 ? DataSize : profile::PageSize, 0x31 + I);
       success(Memory->map(Region.Address, Region.Bytes.size(), Read | Write));
       success(Memory->write(Region.Address, Region.Bytes));
       success(Memory->protect(Region.Address, Region.Bytes.size(),
@@ -1514,6 +1515,29 @@ TEST_F(KernelImageMDL, ImageOwnershipIsIndependentOfTheUserAddressHeuristic) {
   call("MmUnlockPages", {MDL});
   call("IoFreeMdl", {MDL});
   EXPECT_TRUE(take(Model->hasUnpackDependencies()));
+}
+
+TEST_F(KernelImageMDL, LargeImageLocksAreIndependentOfThePoolArenaSize) {
+  constexpr uint64_t DataSize = 3 * 1024 * 1024;
+  initializeImage(0x180000000, false, DataSize);
+  const auto Address = ImageBase + profile::PageSize / 2;
+  const auto Length = DataSize + profile::PageSize;
+  const auto MDL = call("IoAllocateMdl", {Address, Length, 0, 0, 0});
+  auto Locked =
+      Model->call("MmProbeAndLockPages", {MDL, KernelMode, IoWriteAccess});
+  ASSERT_TRUE(bool(Locked)) << llvm::toString(Locked.takeError());
+  const auto Alias = call("MmGetSystemAddressForMdlSafe",
+                          {MDL, NormalPagePriority | MdlMappingNoExecute});
+  ASSERT_NE(Alias, 0u);
+  for (uint64_t Offset : {uint64_t(0), DataSize / 2, Length - 1}) {
+    put(Alias + Offset, 0x69, 1);
+    EXPECT_EQ(get(Address + Offset, 1), 0x69u);
+  }
+  EXPECT_FALSE(take(Memory->canAccess(ImageBase, 1, Write)));
+  call("MmUnlockPages", {MDL});
+  call("IoFreeMdl", {MDL});
+  EXPECT_FALSE(take(Memory->canAccess(Alias, 1, Read)));
+  EXPECT_EQ(get(Address + Length - 1, 1), 0x69u);
 }
 
 TEST_F(KernelImageMDL, MappedHolesAndOutsideBytesDoNotAcquireImageOwnership) {

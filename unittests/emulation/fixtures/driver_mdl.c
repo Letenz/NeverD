@@ -93,7 +93,7 @@ static U8 *Pool;
 static MDL *Descriptor;
 static volatile U64 Observed;
 static U8 LeakDescriptor;
-static U8 ImageBuffer[8192];
+static U8 ImageBuffer[3 * 1024 * 1024 + 8192];
 static const volatile U8 ReadOnlyImageBuffer[8192] = {[17] = 0x51,
                                                       [4112] = 0x73};
 
@@ -148,22 +148,23 @@ static NTSTATUS Dispatch(DEVICE_OBJECT *Ignored, IRP *Request) {
       if (Temporary)
         IoFreeMdl(Temporary);
       ImageBuffer[17] = 0x51;
-      ImageBuffer[4112] = 0x73;
+      ImageBuffer[sizeof(ImageBuffer) - 18] = 0x73;
       const volatile U8 *Views[] = {ImageBuffer, ReadOnlyImageBuffer};
       for (unsigned I = 0; I != 2; ++I) {
-        Temporary = IoAllocateMdl((void *)(Views[I] + 17), 4096, 0, 0, 0);
+        const U32 Length = I == 0 ? sizeof(ImageBuffer) - 34 : 4096;
+        Temporary = IoAllocateMdl((void *)(Views[I] + 17), Length, 0, 0, 0);
         if (!Temporary) {
           Status = StatusInvalidParameter;
           break;
         }
         MmProbeAndLockPages(Temporary, 0, 1);
         Other = SystemAddress(Temporary, 0x40000010U);
-        if (!Other || Other[0] != 0x51 || Other[4095] != 0x73) {
+        if (!Other || Other[0] != 0x51 || Other[Length - 1] != 0x73) {
           Status = StatusInvalidParameter;
         } else {
           Other[0] = 0x62;
-          Other[4095] = 0x84;
-          if (Views[I][17] != 0x62 || Views[I][4112] != 0x84)
+          Other[Length - 1] = 0x84;
+          if (Views[I][17] != 0x62 || Views[I][Length + 16] != 0x84)
             Status = StatusInvalidParameter;
         }
         if (Other)
