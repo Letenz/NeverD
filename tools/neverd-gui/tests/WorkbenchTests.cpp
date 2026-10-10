@@ -1793,6 +1793,103 @@ private slots:
     QVERIFY(bench.session.filePath().isEmpty());
   }
 
+  void startupQuickStartDoesNotWaitForExposureOrWorker_data() {
+    QTest::addColumn<bool>("go");
+    QTest::newRow("close") << false;
+    QTest::newRow("go") << true;
+  }
+
+  void startupQuickStartDoesNotWaitForExposureOrWorker() {
+    QFETCH(bool, go);
+    QTemporaryDir directory;
+    Workbench bench(directory.filePath(QStringLiteral("missing-worker.exe")));
+    // The initial exposure has already happened, and no engine can become
+    // ready.
+    QVERIFY(QTest::qWaitForWindowExposed(bench.window.get()));
+    int shown = 0;
+    bool clickedGo = false;
+    QTimer close;
+    connect(&close, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<QuickStartDialog *>(QApplication::activeModalWidget());
+      if (!dialog)
+        return;
+      ++shown;
+      if (go)
+        for (auto *button : dialog->findChildren<QPushButton *>())
+          if (button->text() == QStringLiteral("&Go")) {
+            clickedGo = true;
+            QTest::mouseClick(button, Qt::LeftButton);
+            return;
+          }
+      dialog->reject();
+    });
+    close.start(5);
+    bench.window->scheduleQuickStart();
+    QTRY_COMPARE_WITH_TIMEOUT(shown, 1, 1000);
+    QCOMPARE(clickedGo, go);
+    QVERIFY(bench.window->isVisible());
+    QVERIFY(bench.session.filePath().isEmpty());
+    QVERIFY(!bench.session.loaded());
+    QVERIFY(!QApplication::activeModalWidget());
+    bench.window->hide();
+    bench.window->show();
+    QTest::qWait(50);
+    QCOMPARE(shown, 1);
+  }
+
+  void openingAFileCancelsStartupQuickStart_data() {
+    QTest::addColumn<QString>("mode");
+    QTest::newRow("before-worker-ready") << QStringLiteral("open");
+    QTest::newRow("drop-before-queued-dialog") << QStringLiteral("drop");
+    QTest::newRow("already-loaded") << QStringLiteral("loaded");
+  }
+
+  void openingAFileCancelsStartupQuickStart() {
+    QFETCH(QString, mode);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    Workbench bench;
+    if (mode == QLatin1String("drop"))
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.identifiesFiles(), OpenTimeoutMs);
+    if (mode == QLatin1String("loaded")) {
+      bench.window->openFile(path);
+      QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    }
+    int shown = 0;
+    QTimer dismiss;
+    connect(&dismiss, &QTimer::timeout, this, [&] {
+      if (auto *dialog = qobject_cast<QuickStartDialog *>(
+              QApplication::activeModalWidget())) {
+        ++shown;
+        dialog->reject();
+      }
+    });
+    dismiss.start(5);
+    LoadDialogAcceptor loadDialogs;
+    bench.window->scheduleQuickStart();
+    if (mode == QLatin1String("drop"))
+      QVERIFY(dropFile(bench.window.get(), path));
+    else if (mode == QLatin1String("open"))
+      bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // Process the startup callback even when the session was already loaded.
+    QTest::qWait(50);
+    QCOMPARE(shown, 0);
+    QCOMPARE(bench.session.filePath(), path);
+    // Explicitly opening Quick Start from the menu still works in a project.
+    QTimer::singleShot(0, bench.window.get(), [&] {
+      if (auto *dialog = qobject_cast<QuickStartDialog *>(
+              QApplication::activeModalWidget())) {
+        ++shown;
+        dialog->reject();
+      }
+    });
+    bench.window->showQuickStart();
+    QCOMPARE(shown, 1);
+    QVERIFY(bench.session.loaded());
+  }
+
   void quickStartShowsRecentFilesAndStartsAsChosen() {
     // As IDA's Quick start: New, Go and Previous, the recent files and
     // whether it greets the next start.  Each recent file shows its format,
