@@ -2633,6 +2633,20 @@ Set `NEVERD_REGISTRATION_OUTPUT_CXX_PE32` to save the manual transaction's EXE;
 `NEVERD_REGISTRATION_OUTPUT_CXX_COLLISION_PE32` save the public variants.
 Structural success is not runtime evidence.
 
+`check_windows_registration_multiple_catch.py` uses the same test binary and
+captured CRT libraries for ordered value/reference/catch-all clauses. Its fixed
+and aligned compiler parents each have a wrong-result control. The 32-image
+matrix checks three throws with four caller stack layouts per execution,
+including both CLI patch modes and forced relocation. The source test also
+rejects reordered pads, cross-clause homes/stacks/continuations, malformed
+emitted tables and incomplete HighIR scope proofs. Public C/C++ output must
+retain all callback bodies and resume labels; C receives a syntax check.
+`replay_windows_registration_multiple_catch.py` validates exact source/object,
+IR, installation, decompilation and PE identities before replaying the same
+files on Windows. Its Python admission suite rejects incomplete, stale or
+substituted evidence.
+
+
 The focused Windows EH workflow first builds and executes genuine MSVC x86
 value/reference source fixtures on Windows, then transfers those exact inputs
 to Linux. With the pinned compiler's handler receipts, Linux runs the complete
