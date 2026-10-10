@@ -127,7 +127,7 @@ Löschen wird aufgeschoben, solange Dateiobjekte oder eingereihte/laufende Work-
 
 Images verwenden ihre bevorzugte Basisadresse, sofern das Szenario keine gültige
 Relokationsadresse auswählt, und müssen ausführbare PE32+-x64-Dateien mit nativem
-Subsystem sein. Importe dürfen aus `ntoskrnl.exe`, `ntkrnlmp.exe` oder `WDFLDR.SYS` stammen.
+Subsystem sein. Importe dürfen aus `ntoskrnl.exe`, `ntkrnlmp.exe`, `HAL.dll` oder `WDFLDR.SYS` stammen.
 Der Ausführungsloader unterstützt validierte x64-`DIR64`-Basisrelokationen und
 eine begrenzte Security-Cookie-Ladekonfiguration. Der deterministische Gast-Cookie
 wird vor dem Einstiegswrapper initialisiert. Andere nicht modellierte
@@ -672,7 +672,7 @@ einschließlich Geräteobjekten und Callback-Adressen des Treibers. Gastadressen
 sind Hexadezimalzeichenfolgen, damit JSON-Verbraucher keine 64-Bit-Präzision
 verlieren. Das Objekt `configuration` protokolliert Limits, Dienstnamen und
 `kernel_exports`-Überschreibungen sowie die `registry`-Eingabe des Laufs. Das
-Profil lautet `wdm-x64-scheduled-v86`. `nt_status` bleibt das
+Profil lautet `wdm-x64-scheduled-v87`. `nt_status` bleibt das
 DriverEntry-Ergebnis, während `scenario_success` Initialisierung und
 abgeschlossene Anforderungen gemeinsam beschreibt. `phase`, `requests` und
 `unload_completed` kennzeichnen die ausgeführten Teile des angeforderten
@@ -837,3 +837,9 @@ Geprüftes Unicorn verwendet `MachineRunControl`: Ein Zeitrahmen umfasst ARM64-P
 `RunDeadline::invoke` weist einen bereits gestoppten oder abgelaufenen WHP-Eintritt vor dem Hostaufruf zurück, bewahrt bei Abbruch das tatsächliche Hostergebnis und bestätigt das Ende der Unterbrechungsrückrufe vor Freigabe des geliehenen Stopptokens. KVM und WHP prüfen das vollständig erfasste private Zustandspaket im aufrufenden Thread mit Ausführungsrecht, bevor sie einen gleichzeitigen Stopp oder Fristablauf einordnen. Tatsächliche Host- und Erfassungsfehler sowie authentifizierte x64-CPU-Ausnahmen behalten Vorrang. Ein gewöhnlicher Erfolgszustand bleibt bis zum Ende der Abbruchprüfung privat; eine bestätigte Unterbrechung verwirft spekulative CPU/RAM-Effekte und erlaubt einen neuen Versuch. Vorbereitung, native Ausführung und Erfassung teilen sich eine einzige Schrittfrist. Die Abbruchkontrolle ist kooperativ und garantiert keine harte Echtzeitgrenze.
 
 Explizite CPU0-Präemption, virtuelle Zeit und Grenzen beschreibt [Treiber-Scheduling](driver-scheduling.md).
+
+## HAL-Exporte und Leistungszähler
+
+`HAL.dll` ist ein eigener Importanbieter mit einem von Groß-/Kleinschreibung unabhängigen Modulnamen. Statische Imports und `MmGetSystemRoutineAddress` teilen die exakten, schreibungsabhängigen Exportidentitäten von Kernel und HAL; widersprüchliche aktive Identitäten werden abgelehnt. `kernel_exports` überschreibt bekannte HAL-Routinen im HAL-Namensraum; andere explizite Deklarationen bleiben Kernel-Exporte. Unbekannte HAL-Imports behalten verzögerte Traps und erhalten nicht allein durch ihren Namen einen Kernel-API-Vertrag.
+
+`KeQueryPerformanceCounter` liefert die gemeinsame Scheduler-Zeit in 100-ns-Einheiten bei einer festen Frequenz von 10.000.000 pro Sekunde. Der optionale Ausgabezeiger wird auf einen vollständigen Schreibzugriff über acht Bytes und die Objektlebensdauer geprüft. Jeder gültige x64-IRQL ist zulässig. Der kooperative Modus bewegt die Zeit nur an bestehenden Scheduling-Grenzen; der Instruktionszeitmodus behält seine Konfiguration. Lesen erzeugt weder eine zweite Uhr noch Zeitfortschritt. Dies ist ein deterministisches Profil, keine Messung der Host-Hardware. Die unabhängig kompilierte Laufzeit-Fixture prüft statische/dynamische Identität, Frequenz und Monotonie an bevorzugten und verschobenen Adressen auf nativen CPU-Backends.

@@ -281,6 +281,10 @@ public:
                                   bool IsWrite) const;
 
 private:
+  static std::optional<unsigned> halArgumentCount(llvm::StringRef Name);
+  llvm::Expected<uint64_t> callHAL(llvm::StringRef Name,
+                                   llvm::ArrayRef<uint64_t> Arguments);
+  llvm::Expected<uint64_t> queryPerformanceCounter(uint64_t Frequency);
   llvm::Expected<uint64_t> setCancelRoutine(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> mapMDL(llvm::ArrayRef<uint64_t> A);
   llvm::Expected<uint64_t> unmapMDL(llvm::ArrayRef<uint64_t> A);

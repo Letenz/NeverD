@@ -128,7 +128,7 @@ La suppression est différée tant que subsistent des objets fichiers ou des ré
 Les images utilisent leur base préférée sauf si un scénario sélectionne une
 adresse de relocalisation valide. Elles doivent être des exécutables PE32+ x64
 avec le sous-système natif. Les imports peuvent provenir de `ntoskrnl.exe`,
-`ntkrnlmp.exe` ou `WDFLDR.SYS`. Le chargeur d’exécution prend en charge les relocalisations
+`ntkrnlmp.exe`, `HAL.dll` ou `WDFLDR.SYS`. Le chargeur d’exécution prend en charge les relocalisations
 de base x64 `DIR64` validées et une configuration de chargement limitée pour le
 cookie de sécurité, initialisé avant l’enveloppe d’entrée avec un cookie invité
 déterministe. Les autres champs de configuration de chargement non
@@ -677,7 +677,7 @@ invitées sont des chaînes hexadécimales afin que les consommateurs JSON ne
 perdent pas de précision sur 64 bits. L’objet `configuration` enregistre les
 limites, le nom du service, les substitutions `kernel_exports` et l’entrée
 `registry` de l’exécution. Le profil est
-`wdm-x64-scheduled-v86`. `nt_status` reste le résultat de DriverEntry, tandis
+`wdm-x64-scheduled-v87`. `nt_status` reste le résultat de DriverEntry, tandis
 que `scenario_success` décrit conjointement l’initialisation et les requêtes
 terminées. `phase`, `requests` et `unload_completed` identifient les parties du
 cycle demandé qui ont été exécutées. Chaque appel d’API et écriture CPU indique
@@ -841,3 +841,9 @@ Unicorn vérifié utilise `MachineRunControl` : une seule allocation couvre main
 `RunDeadline::invoke` refuse une entrée WHP déjà arrêtée ou expirée avant l'appel hôte, conserve le résultat hôte réel pendant l'annulation et attend la fin des rappels d'interruption avant de libérer le jeton emprunté. KVM et WHP valident l'état privé entièrement capturé sur le thread appelant détenteur du bail d'exécution, avant de classer un arrêt ou une échéance simultanés. Les erreurs réelles d'hôte ou de capture et les exceptions CPU x64 authentifiées restent prioritaires. Un état ordinaire réussi reste privé jusqu'à la fin des contrôles d'annulation ; une interruption acquittée abandonne les effets CPU/RAM spéculatifs et autorise une nouvelle tentative. Préparation, exécution native et capture partagent un seul délai de grâce par pas. Ce contrôle est coopératif et ne garantit aucune limite stricte en temps réel.
 
 La préemption explicite CPU0, le temps virtuel et les limites sont décrits dans [l’ordonnancement des pilotes](driver-scheduling.md).
+
+## Exports HAL et compteur de performances
+
+`HAL.dll` est un fournisseur distinct dont le nom de module est insensible à la casse. Les imports statiques et `MmGetSystemRoutineAddress` partagent les identités exactes, sensibles à la casse, du noyau et de HAL ; les identités actives contradictoires sont refusées. `kernel_exports` remplace les routines HAL connues dans leur espace HAL ; les autres déclarations explicites restent des exports du noyau. Les imports HAL inconnus conservent leurs pièges différés, sans recevoir un contrat du noyau simplement parce que leur nom correspond.
+
+`KeQueryPerformanceCounter` renvoie le temps partagé de l’ordonnanceur en unités de 100 ns, à une fréquence fixe de 10 000 000 par seconde. Le pointeur de sortie facultatif est vérifié pour une écriture complète de huit octets et pour la durée de vie de l’objet. Tous les IRQL x64 valides sont admis. Le mode coopératif avance uniquement aux frontières existantes ; le mode cadencé par instructions conserve son réglage. Une lecture ne crée pas une seconde horloge et ne fait pas avancer le temps. Ce profil est déterministe, sans mesure du matériel hôte. Le programme de test compilé indépendamment vérifie l’identité statique/dynamique, la fréquence et la monotonie aux adresses préférées et relocalisées sur les moteurs CPU natifs.

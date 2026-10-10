@@ -47,15 +47,17 @@ public:
   };
 
   /// Recognized PE import providers, folded case-insensitively. The kernel's
-  /// multiprocessor spelling aliases ntoskrnl; WDFLDR keeps its own namespace.
+  /// multiprocessor spelling aliases ntoskrnl; HAL and WDFLDR keep their own
+  /// namespaces.
   /// Returned names have static storage. Loader validation shares this policy.
   static std::optional<llvm::StringRef>
   canonicalImportModule(llvm::StringRef Module);
 
   llvm::Error initialize(const DriverOptions &Options);
   llvm::Expected<uint64_t> bindImport(const DriverImport &Import);
-  /// Kernel-only dynamic lookup, including kernel_exports scenario overrides.
-  /// Static WDF imports and bound function tables never imply kernel presence.
+  /// Kernel/HAL dynamic lookup, including kernel_exports scenario overrides.
+  /// Static WDF imports and bound function tables never imply system presence.
+  /// Conflicting identities are refused rather than selecting a guessed owner.
   llvm::Expected<uint64_t> resolve(llvm::StringRef Name) const;
   /// Register one stable table thunk per binding and exact function spelling.
   /// Registration conveys identity only; unknown functions retain lazy traps

@@ -185,7 +185,7 @@ inventing requests or unload.
 
 Images use their preferred base unless a scenario selects a valid relocated
 address, and must be PE32+ x64 executables with the native subsystem. Imports
-may come from `ntoskrnl.exe`, `ntkrnlmp.exe` or `WDFLDR.SYS`.
+may come from `ntoskrnl.exe`, `ntkrnlmp.exe`, `HAL.dll` or `WDFLDR.SYS`.
 The execution loader supports validated x64 `DIR64` base relocations and a
 limited security-cookie load configuration, initialized before the entry wrapper
 with a deterministic guest cookie. Other unmodeled load-configuration
@@ -991,7 +991,7 @@ and driver callback addresses. Guest addresses are hexadecimal strings so
 JSON consumers do not lose 64-bit precision.
 The `configuration` object records the run's limits, service name,
 `kernel_exports` overrides and original `registry` input.
-The profile is `wdm-x64-scheduled-v86`. `nt_status` remains the DriverEntry
+The profile is `wdm-x64-scheduled-v87`. `nt_status` remains the DriverEntry
 result, while `scenario_success` describes initialization and completed
 requests together. `phase`, `requests`, and `unload_completed` identify which
 parts of the requested lifecycle ran. Each API call and CPU write also records
@@ -1184,3 +1184,9 @@ use Unicorn. The existing ISA and OS contracts remain authoritative. See
 evidence and Intel runtime coverage are reported separately.
 
 Explicit CPU0 preemption, clock semantics and current limits are described in [driver scheduling](driver-scheduling.md).
+
+## HAL exports and performance counter
+
+`HAL.dll` is a separate, case-insensitive import provider. Static imports and `MmGetSystemRoutineAddress` share exact, case-sensitive export identities across the kernel and HAL; conflicting live identities are refused. `kernel_exports` overrides known HAL routines in their HAL namespace; other explicit declarations remain kernel exports. Unknown HAL imports retain lazy traps, without acquiring a kernel API contract merely from their name.
+
+`KeQueryPerformanceCounter` returns the shared scheduler time in 100 ns ticks with a fixed frequency of 10,000,000 ticks per second. Its optional output pointer is checked for the complete eight-byte write and object lifetime. The call is available at every valid x64 IRQL. Cooperative mode advances time only at existing scheduling boundaries; instruction-clock mode retains its configured timing. Counter reads never create a second clock or advance time themselves. This is a deterministic profile, not a measurement of host hardware. The independently compiled runtime fixture checks static/dynamic identity, frequency and monotonicity at preferred and rebased addresses on native CPU backends.

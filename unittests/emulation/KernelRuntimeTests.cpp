@@ -357,8 +357,14 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
                                    "driver_runtime.sys",
                                4 * 1024 * 1024);
   ASSERT_TRUE(static_cast<bool>(Image)) << llvm::toString(Image.takeError());
+  bool HasHALImport = false;
   for (const auto &Import : Image->Imports)
-    EXPECT_NE(Import.Name, "ExAllocatePool2");
+    if (Import.Name == "KeQueryPerformanceCounter") {
+      EXPECT_TRUE(llvm::StringRef(Import.Module).equals_insensitive("hal.dll"));
+      HasHALImport = true;
+    } else
+      EXPECT_NE(Import.Name, "ExAllocatePool2");
+  EXPECT_TRUE(HasHALImport);
   auto Result = emulateDriver(std::filesystem::path(NEVERD_DRIVER_FIXTURES) /
                               "driver_runtime.sys");
   ASSERT_TRUE(static_cast<bool>(Result)) << llvm::toString(Result.takeError());
@@ -372,6 +378,7 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
             "-00042|0x0000ab|18446744073709551615|abc|Copied");
   unsigned DebugCalls = 0;
   unsigned AllocateCalls = 0;
+  unsigned CounterCalls = 0;
   for (const auto &Call : Result->Calls) {
     if (Call.Name == "DbgPrint") {
       ++DebugCalls;
@@ -387,11 +394,16 @@ TEST(KernelRuntimeExecution, CompiledDriverUsesDynamicPoolAndWin64Varargs) {
       // Win64 passes an int in the low 32 bits; the raw slot's high bits
       // are unspecified and are intentionally retained by the trace.
       EXPECT_EQ(static_cast<uint32_t>(Call.Arguments[6]), 3u);
+    } else if (Call.Name == "KeQueryPerformanceCounter") {
+      ++CounterCalls;
+      EXPECT_EQ(Call.Arguments.size(), 1u);
+      EXPECT_EQ(Call.Result, 0u);
     } else if (Call.Name == "ExAllocatePool2")
       ++AllocateCalls;
   }
   EXPECT_EQ(DebugCalls, 2u);
   EXPECT_EQ(AllocateCalls, 1u);
+  EXPECT_EQ(CounterCalls, 3u);
 }
 } // namespace
 } // namespace neverd::emulation

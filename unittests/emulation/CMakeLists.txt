@@ -625,6 +625,14 @@ add_custom_command(OUTPUT "${_driver_import_lib}"
 
 include(UnpackDriverFixtures.cmake)
 
+set(_driver_hal_lib "${_driver_fixture_dir}/hal.lib")
+add_custom_command(OUTPUT "${_driver_hal_lib}"
+  COMMAND "${NEVERD_DRIVER_LLD_LINK}" /lib /machine:x64
+    "/def:${CMAKE_CURRENT_SOURCE_DIR}/fixtures/hal.def"
+    "/out:${_driver_hal_lib}"
+  DEPENDS fixtures/hal.def
+  VERBATIM)
+
 set(_driver_outputs)
 set(_driver_case 0)
 foreach(_driver_name success failure unknown fault loop devices readonly privileged opaque gs apifault pendingentry opaqueargument)
@@ -658,6 +666,10 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
     set(_driver_entry DriverEntry)
   endif()
   set(_driver_additional_dependencies)
+  set(_driver_additional_libraries)
+  if(_driver_name STREQUAL "driver_runtime")
+    list(APPEND _driver_additional_libraries "${_driver_hal_lib}")
+  endif()
   if(_driver_name STREQUAL "driver_mdl")
     list(APPEND _driver_additional_dependencies fixtures/driver_mdl_actions.h)
   endif()
@@ -704,7 +716,9 @@ foreach(_driver_name loader driver_io driver_direct driver_runtime driver_mdl dr
     COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 "/entry:${_driver_entry}"
       /subsystem:native /driver /nodefaultlib /dynamicbase /base:0x180000000
       "/out:${_driver_image}" "${_driver_object}" "${_driver_import_lib}"
+      ${_driver_additional_libraries}
     DEPENDS "${_driver_source}" "${_driver_import_lib}"
+      ${_driver_additional_libraries}
       ${_driver_additional_dependencies}
     VERBATIM)
   list(APPEND _driver_outputs "${_driver_image}")
