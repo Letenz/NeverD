@@ -2267,9 +2267,38 @@ language graph. The genuine input test also reloads each public output through
 the ordinary COFF loader and requires the same complete generated FuncInfo
 graph. It also checks the separate ESI anchor, allocation/alignment and biased
 state observations. Changed prologue bytes cannot retain the checked anchor.
-Canonical metadata and source digests retain every coordinate; the EBP state
-solver and native classifier reject the realigned model until its state
-transfers are proved.
+Canonical metadata and source digests retain every coordinate. The realigned
+state proof checks independent callback allocation, initialized spills, exact
+parent-frame recovery, preserved callback calls and balanced runtime returns;
+HighIR and the native classifier retain their separate frame-lowering gates.
+`NeverDWindowsRegistrationRealignedTests` emits a 64-byte-aligned frame with a
+catch that calls a checked thiscall leaf on its parent local. Run
+`check_windows_registration_realigned.py --test-binary <test-binary>
+--runtime-libs <native-msvc-library-directory> --output <directory>` to compile
+its driver, exercise four caller stack layouts in Wine,
+and relift preferred/rebased PE32 images through LowIR and annotated HighIR.
+The continuation reads its local through the actual restored ESP. The driver
+checks that value, caller bytes and FS chain restoration; the
+wrong-result control must exit with 1 at both bases. Machine-code mutations,
+independent roots, mixed ECX/EDX link publication, uninitialized or released
+callback slots, missing call contracts and saved-entry-EBP borrows must reject.
+The same PE verifies distinct MedIR runtime roots and HighIR/LLVM address
+expressions at every ABI-compatible alignment residue, including PE32 address
+wraparound. Missing, changed or incomplete no-return receipts cannot remove a
+normal edge to create a continuation root. Runtime COPY definitions cannot
+alias the ordinary incoming register in pointer and frame-slot proofs.
+HighIR restores SavedESP before either an explicit continuation jump or its
+folded body. Incomplete lifetime/callback proofs, changed return receipts and
+unproved frame geometry cannot synthesize that writeback.
+`replay_windows_registration_realigned.py` authenticates the captured file
+matrix and runs those identical four images on native Windows in the EH CI job.
+The first Windows fixture job captures the selected x86 MSVC release link
+libraries with `check_windows_registration_cxx.py --capture-runtime-libraries`.
+The cross-linker verifies their manifest and hashes before linking the probe;
+the capture records that library provenance alongside the generated object.
+Use these native libraries for CRT RTTI definitions: a Wine-only import stub
+can admit exports that the native CRT does not provide.
+This is generated-frame analysis/runtime evidence, not source reconstruction.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation
