@@ -775,6 +775,12 @@ and deliberate cache collisions. Shuffled architectural views must retain
 their cold-query answers after eviction; value and frame proofs remain outside
 this fixed-size cache.
 
+The two-table linear-copy cases cover more than sixteen address/base copies,
+partial address clobbers and exhausted shared evidence. Both C routes, including
+optimized and unoptimized LLVMC, execute every byte selector and four table-select
+inputs at O0/O2 with undefined-behavior traps against the fixture formula.
+The existing deep selector-copy refusals remain covered independently.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

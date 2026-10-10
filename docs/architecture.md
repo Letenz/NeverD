@@ -510,6 +510,11 @@ before any independent entry. A missing or changed occurrence cannot borrow
 another copy's value. LLVM and HighIR consume the same block-specific plan.
 Composite target-load authentication requires every dispatch copy to retain
 its recipe, including when the load precedes the branch in a separate block.
+The two-table recognizer walks address and base COPY envelopes iteratively.
+Each reaching-definition lookup starts strictly before the previous one and
+debits the candidate evidence account, so the finite prefix itself bounds
+these walks. Recursive expression and selector proofs retain their separate
+depth limits; longer copies grant no address, target or domain authority.
 
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
