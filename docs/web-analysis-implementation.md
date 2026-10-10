@@ -1060,7 +1060,8 @@ source locations and rejects the newly exposed illegal rest trailing comma.
 
 NeverD exported all 2,345 JS modules (44,768,763 UTF-8 bytes), 244 assets and
 10,005 exact regions, with a full original and per-file read-back hash checks.
-2,303 modules have verified readable copies; 42 preserve raw source and parser
+At that checkpoint, 2,303 modules had verified readable copies; 42 preserved raw
+source and parser
 diagnostics, including confirmed unsupported resource-management syntax. The
 artifact contains no source maps. Original TypeScript, erased names/types and
 native/JSC decompilation are not claimed. A repeated run with an unusable
@@ -1091,3 +1092,33 @@ counts and precise limitations are recorded in
 [the qualification](web-claude-code-qualification.md). Proprietary input and
 recovered code remain outside the repository. This increment supplies practical
 evidence for #714/#718; it does not close the five epics.
+
+## Complete shipped-JavaScript recovery — 2026-10-11
+
+The remaining 42 syntax failures are resolved. The private C++ Hermes extension
+retains `using` and `await using` kinds, original ranges and lexer newline state.
+Lexical binding and conservative disposal effects use the same retained model;
+resource declarations are never rewritten as ordinary constants. Grammar and
+consumer checks are described in the
+[resource-management profile](web-resource-management-profile.md).
+
+Once the large module parsed, its 1,165,398 nodes exceeded the old recovery cap.
+The separate offline profile now admits two million nodes; the interactive
+limits remain unchanged. NeverD exported and reparse-verified all **2,345** JS
+modules with **zero** parse, readability or projection failures. The completed
+directory has 14,698 files and 615,294,413 bytes. An optional C++ regression
+repeats recovery and original-byte preservation across every module of the
+hash-pinned official artifact. The target still has zero source maps; erased
+TypeScript and original repository structure are not claimed.
+
+All 291 web cases completed with 284 passes, seven explicit capability/config
+skips and zero failures, including the full 2,345-module C++ recovery regression.
+
+The former SourceCache timeout is also resolved: C++ profiling isolated
+whole-document regex scans over long comments. Worker decoration now uses its
+comment/literal-aware tokens for asm linkage and anchored image-marker checks.
+The 9,000-row regression and existing cache transport tests pass without
+relaxing their deadlines. A canonical macOS fixture temporary path removes the
+snapshot alias assumption. Expanded native worker checks retain the separate
+libc++ fixture mismatch and one address-mapping failure that passed on retry,
+as documented in the [qualification](web-claude-code-qualification.md).

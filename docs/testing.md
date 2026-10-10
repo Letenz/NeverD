@@ -371,6 +371,16 @@ tests cover malformed prelinked indices, counts, aliases and alignment.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
 Async-rest source spans and illegal trailing commas have parser regressions.
+Resource-declaration tests cover contextual keywords, line terminators,
+initialization, loops, source types, immutable lexical bindings and conservative
+disposal effects. With the same official-artifact environment variable,
+`WebSourceRecovery.ClaudeCode21296AllJavaScriptWhenSupplied` checks all 2,345
+modules for reparse-verified readability and preservation of every original
+byte in order; it never executes the target. Allow several minutes on a busy
+host. The worker's C++ code-edit regression includes 9,000 long comment rows,
+real asm linkage and fake linkage inside comments. Existing source-cache
+transport checks exercise cache reuse and byte-budget eviction without raising
+their response deadlines.
 `WebSDK.BunExport*` and `WebSDK.CLIBunExport*` check captured-byte preservation,
 all region contents, raw/readable/index output, stale revisions, destination
 and symlink refusal, metadata canaries and an unusable external-tool PATH.

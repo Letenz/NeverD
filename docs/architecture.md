@@ -384,6 +384,11 @@ The parser integration preserves original locations when converting async-arrow
 spread nodes to rest bindings; parser admission additionally checks the owned
 token after a rest binding for a forbidden comma. No consumer repairs missing
 locations or guesses this syntax independently.
+The same private parser owns resource-declaration grammar and original
+`using`/`await using` kinds. `SourceBindings` owns their immutable lexical
+bindings and `SourceEffects` owns conservative registration/disposal effects;
+formatting cannot remove or lower them. See the
+[resource-management profile](web-resource-management-profile.md).
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR members. Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`

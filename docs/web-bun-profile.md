@@ -108,13 +108,13 @@ Unsupported projections preserve raw bytes and report a failure code; an empty
 substitute is never written.
 
 When the embedded parser is enabled, the separate sequential recovery profile
-`hermes-602befee-recovery-js-v1` admits at most 32 MiB of source, 1,000,000 nodes,
+`hermes-602befee-recovery-js-v2` admits at most 32 MiB of source, 2,000,000 nodes,
 2,000,000 lexemes, 16,777,216 decoded UTF-16 code units, a 256 MiB parser arena and
 1,600,000 work units with a cooperative 30-second check. It does not enlarge
 interactive caches or claim a process-wide memory/CPU bound. This uses the
 same parser and semantic admission, including the async-rest source-location
 fix and parser-token check for forbidden rest trailing commas. The ordinary
-parser profile is now `hermes-602befee-js-v2`.
+parser profile is now `hermes-602befee-js-v3`.
 
 `mNNNNN.readable.js` only inserts whitespace at parser-owned token boundaries.
 All original bytes, including comments and licenses, remain in order. Before
@@ -123,8 +123,9 @@ child roles/ordinals and complete retained attribute values. The status is
 `verified_same_parser_tree`, not a runtime equivalence proof: source text
 reflection and source positions necessarily change. Failed parsing, budgets or
 tree mismatches produce no readable file and retain diagnostic codes and
-original UTF-8 offsets in the manifest. The pinned parser does not support
-explicit resource-management declarations (`using` / `await using`).
+original UTF-8 offsets in the manifest. The private C++ parser extension retains
+explicit resource-management declarations (`using` / `await using`); see the
+[resource-management profile](web-resource-management-profile.md).
 
 The index contains no JavaScript and declares `default-src 'none'`. Export
 does not run target code, install packages, invoke a formatter or restore

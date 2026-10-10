@@ -56,7 +56,14 @@ integration also generates a private copy of `JSParserImpl.cpp` with one
 source-location fix: async-arrow rest parameters retain the original spread
 node's parser-owned source range. It requires the pinned code to match exactly
 once, retains upstream notices, and does not modify the fetched sources.
-This fix is exposed as parser profile `hermes-602befee-js-v2`.
+The 2026-10-11 C++ extension adds resource-declaration grammar, preserves the
+`using`/`await using` ESTree kinds and validates their names/async contexts in
+the private semantic-validator copy. Its private lexer header also restores
+newline state during lookahead backtracking. These edits are recorded with
+exact-match anchors in `cmake/hermes-parser/Patches.cmake`; all copies retain
+their upstream notices. NeverD's added grammar is in
+`lib/web/HermesResourceDeclarations.inc`. The parser profile is
+`hermes-602befee-js-v3`.
 The integration selects the parser dependency graph and excludes upstream VM,
 tool and test targets. Enabled builds stage the license set beside libneverd,
 inside the SDK and under the installed `share/neverd/licenses/hermes`.
