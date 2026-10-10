@@ -857,6 +857,16 @@ TEST_F(KernelExportLookup, ModuleQueryRetainsBorrowedRecoveryDependencies) {
       Borrowed.count(*KernelExportRegistry::moduleBase("ntoskrnl.exe")));
   EXPECT_TRUE(Borrowed.count(*KernelExportRegistry::moduleBase("hal.dll")));
   EXPECT_FALSE(Borrowed.count(0x180000000));
+  const auto Contains = [&](uint64_t Pointer) {
+    for (const auto &[Base, Size] : Borrowed)
+      if (Pointer >= Base && Pointer - Base < Size)
+        return true;
+    return false;
+  };
+  for (const auto &[Address, Export] : Exports.entries()) {
+    EXPECT_FALSE(Contains(Address));
+    EXPECT_TRUE(Contains(Address + 1));
+  }
 }
 
 } // namespace
