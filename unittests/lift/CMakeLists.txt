@@ -3711,6 +3711,10 @@ add_neverd_unittest(NeverDX86EncodingAccuracyTests
   x86_64/X86_64_EncodingAccuracyTests.cpp
   LINK_COMPONENTS Decode Lift Loader)
 
+add_neverd_unittest(NeverDX86FPMinMaxAccuracyTests
+  x86_64/X86_64_FPMinMaxAccuracyTests.cpp
+  LINK_COMPONENTS IRLow Loader)
+
 add_neverd_unittest(NeverDX86RdSspAccuracyTests
   x86_64/X86_64_RdSspAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
