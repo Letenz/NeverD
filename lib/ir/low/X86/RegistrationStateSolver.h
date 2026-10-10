@@ -58,6 +58,10 @@ public:
 
 private:
   bool initialize();
+  bool validateRealignedLayout();
+  bool realignedMemoryIsDisjoint(const FrameValue &Address,
+                                 uint16_t Width) const;
+  bool realignedInstallationReady(const FrameState &Frame) const;
   bool initializeContracts();
   void initializeCookies();
   void collectOccurrences();

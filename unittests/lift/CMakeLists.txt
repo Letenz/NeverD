@@ -1287,6 +1287,7 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationRealignedStateTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState

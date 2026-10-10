@@ -26,12 +26,13 @@ void RegistrationStateSolver::recordCatchReturn(
                            ? After.Frame.Cells.find(int32_t(SavedSlot))
                            : After.Frame.Cells.end();
   const bool Valid =
-      After.CxxCatchStacks.size() == 1 && !After.Parent &&
-      !After.OtherCallback && !After.Unknown && !Facts[I].Invalid &&
-      After.Installed && !After.Uninstalled && !After.Levels.empty() &&
-      Op.Seq >= 0 && Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
-      &Op == &Block.Ops.back() && Block.Succs.empty() && Target.Constant &&
-      !Target.MayBeFrame && EH.CodeRange.contains(*Target.Constant) &&
+      !Chain.RealignedFrame && After.CxxCatchStacks.size() == 1 &&
+      !After.Parent && !After.OtherCallback && !After.Unknown &&
+      !Facts[I].Invalid && After.Installed && !After.Uninstalled &&
+      !After.Levels.empty() && Op.Seq >= 0 && Op.NumInputs == 1 &&
+      Op.Inputs[0].Size == 4 && &Op == &Block.Ops.back() &&
+      Block.Succs.empty() && Target.Constant && !Target.MayBeFrame &&
+      EH.CodeRange.contains(*Target.Constant) &&
       *Target.Constant != Function.Entry &&
       SavedSP != After.Frame.Cells.end() && SavedSP->second.Offset &&
       *SavedSP->second.Offset <= SavedSlot && Boundary != Boundaries.end() &&
@@ -112,7 +113,7 @@ bool RegistrationStateSolver::recordRuntimeMemory(
     const auto Stored = RuntimeTransfer.read(*Memory.StoredValue);
     const auto PrivateAddress = Transfer.read(*Memory.Address);
     if (PrivateAddress.Offset && !RuntimeAddress.MayBeFrame) {
-      if (!charge(After.RuntimeObject.Cells.size() +
+      if (!charge(After.RuntimeObject.cellCount() +
                   (Memory.AccessSize + 3) / 4 + 1))
         return false;
       After.RuntimeObject.store(*PrivateAddress.Offset, Memory.AccessSize,

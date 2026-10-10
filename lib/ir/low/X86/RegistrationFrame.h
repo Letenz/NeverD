@@ -17,12 +17,14 @@
 namespace neverd {
 struct LowOp;
 struct NdVar;
+struct RegistrationRealignedFrame;
 } // namespace neverd
 
 namespace neverd::registration_state {
 
-/// Values relative to the established EBP, in the PE32 address domain. Unknown
-/// values retain possible frame provenance when paths or arithmetic disagree.
+/// Values in the PE32 address domain. Offset names the runtime establisher;
+/// EntryOffset names a separate pre-alignment EBP. Unknown values retain
+/// possible frame provenance when paths or arithmetic disagree.
 struct FrameValue {
   std::optional<int32_t> Offset;
   std::optional<uint32_t> Constant;
@@ -40,8 +42,17 @@ struct FrameValue {
   bool SecurityCookie = false;
   std::optional<int32_t> CookieFrameOffset;
   uint32_t CookieXOR = 0;
+  /// Entry EBP is independent of the realigned runtime establisher. It must
+  /// never satisfy an Offset query, even when both displacements are zero.
+  std::optional<int32_t> EntryOffset;
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
+  static FrameValue entryFrame(int32_t Offset) {
+    FrameValue Result;
+    Result.MayBeFrame = true;
+    Result.EntryOffset = Offset;
+    return Result;
+  }
   static FrameValue constant(uint32_t Value) {
     return {{}, Value, false, false};
   }
@@ -60,12 +71,17 @@ struct FrameState {
   /// writes override this default; a missing map entry is not a zero value.
   bool OtherRegistersMayBeFrame = false;
   std::map<int32_t, FrameValue> Cells;
+  std::map<int32_t, FrameValue> EntryCells;
+  size_t cellCount() const { return Cells.size() + EntryCells.size(); }
 
   bool merge(const FrameState &Other);
+  void forgetCellValues();
 
   void store(int32_t Offset, uint16_t Width, const FrameValue &Value);
 
   FrameValue load(std::optional<int32_t> Offset, uint16_t Width) const;
+  void storeEntry(int32_t Offset, uint16_t Width, const FrameValue &Value);
+  FrameValue loadEntry(int32_t Offset, uint16_t Width) const;
 };
 
 /// One block transfer. Registers and frame cells survive instructions and CFG
@@ -73,9 +89,10 @@ struct FrameState {
 class FrameTransfer {
 public:
   FrameTransfer(FrameState &State, int32_t RegistrationOffset,
-                va_t SecurityCookieVA = 0)
+                va_t SecurityCookieVA = 0,
+                const RegistrationRealignedFrame *Realigned = nullptr)
       : State(State), RegistrationOffset(RegistrationOffset),
-        SecurityCookieVA(SecurityCookieVA) {}
+        SecurityCookieVA(SecurityCookieVA), Realigned(Realigned) {}
 
   void beginInstruction(va_t Address);
 
@@ -88,9 +105,12 @@ public:
   void write(const LowOp &Op, FrameValue Value, va_t CookieCheckVA = 0);
 
 private:
+  std::optional<FrameValue> evaluateRealignment(const LowOp &Op) const;
+
   FrameState &State;
   int32_t RegistrationOffset;
   va_t SecurityCookieVA;
+  const RegistrationRealignedFrame *Realigned;
   std::map<uint64_t, FrameValue> Temps;
   va_t Instruction = InvalidVA;
 };

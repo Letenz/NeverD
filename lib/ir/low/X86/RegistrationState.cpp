@@ -66,7 +66,7 @@ bool RegistrationStateSolver::initialize() {
     Result.Diagnostics.push_back("registration metadata is incomplete");
     return false;
   }
-  if (Chain.RealignedFrame) {
+  if (Chain.RealignedFrame && !validateRealignedLayout()) {
     Result.Diagnostics.push_back("realigned registration frame requires a "
                                  "separate coordinate transfer proof");
     return false;
@@ -156,7 +156,7 @@ bool RegistrationStateSolver::initialize() {
          Block.InstructionBoundaries)
       HasInstallBoundary |=
           Instruction.Address == Chain.ChainInstallVA &&
-          Instruction.Size == 7 &&
+          Instruction.Size == Chain.chainInstallInstructionSize() &&
           Instruction.Address + Instruction.Size == Block.EndAddr;
   if (!HasInstallBoundary) {
     Result.Diagnostics.push_back(

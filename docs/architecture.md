@@ -95,6 +95,15 @@ fields used by module function discovery and indirect-entry discovery;
 independent pointer references, exports, stated symbols and direct calls still
 create ordinary entries. Focused loading retains this parser's language-table
 ownership rather than reparsing registration data as table-driven EH.
+For a checked realigned x86 frame, the LowIR value domain keeps entry EBP and
+runtime-establisher offsets in separate register facts and cell maps. The
+alignment transfer replays the decoded entry AND and allocation; installation
+requires the actual ESI anchor, saved entry EBP, saved ESP, previous chain,
+handler and seed state. Entry-relative accesses below the saved-register area
+and runtime-relative accesses above the aligned allocation can cross coordinate
+spaces; both remain rejected without an exact projection.
+This admits bounded ordinary state propagation, not a generated C++ catch's
+parent-frame restore or native re-reconstruction; those remain unproved.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional

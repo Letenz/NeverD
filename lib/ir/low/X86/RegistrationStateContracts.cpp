@@ -150,7 +150,7 @@ bool RegistrationStateSolver::projectFrameObject(
         End > 0 ||
         (Begin < int64_t(*Chain.TryLevelOffset) + 4 &&
          int64_t(*Chain.RegistrationOffset) - (KnownCxx ? 4 : 0) < End) ||
-        !charge(size_t(End - Begin) + State.Frame.Cells.size()))
+        !charge(size_t(End - Begin) + State.Frame.cellCount()))
       return false;
     if (Reads) {
       for (int64_t Byte = Begin; Byte < End; ++Byte)

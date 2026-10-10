@@ -60,7 +60,7 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
       for (const auto &Read : Contract.ImageReads)
         ImageReads.emplace(Read.Begin, Read.End);
       for (const auto &Write : Effect.FrameWrites) {
-        if (!charge(After.Frame.Cells.size())) {
+        if (!charge(After.Frame.cellCount())) {
           Valid = false;
           break;
         }
@@ -93,8 +93,8 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
     After.InitializedFrameBytes.clear();
     // A callee without a checked borrow may change cells reached by an
     // escaped register or stack pointer. Keep taint but drop identities.
-    for (auto &[Offset, Cell] : After.Frame.Cells)
-      Cell = registration_state::join(Cell, {});
+    if (charge(After.Frame.cellCount()))
+      After.Frame.forgetCellValues();
     return std::nullopt;
   }
   return CallTransfer{*SP, Effect.DoesNotReturn, Effect.EndAddress};
