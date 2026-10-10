@@ -268,6 +268,8 @@ class OutcomePolicyTests(unittest.TestCase):
                 "NeverDSemanticFixtureTests",
                 "NeverDPipelineOutcomeTests",
                 "NeverDImageAnalysisBoundaryTests",
+                "NeverDSourceDialectTests",
+                "NeverDSourceAnchorTests",
             ):
                 with self.subTest(profile=profile, label=label):
                     self.assertIn(label, required_labels(profile))
@@ -306,6 +308,24 @@ class OutcomePolicyTests(unittest.TestCase):
         self.assertIn(
             "child-runner coverage is not inferred", format_summary(report, "host")
         )
+
+    def test_missing_dialect_compilers_or_corpus_fail_every_profile(self):
+        for profile in ("linux-semantic", "macos-patch", "windows-focused"):
+            for name, reason in (
+                ("RustViewComputesWhatCComputes", "no rustc"),
+                ("GoViewComputesWhatCComputes", "no go"),
+                ("CorpusReadsBackAsTheSameC", "NEVERD_SOURCE_DIALECT_CORPUS is not set"),
+                ("OneFile", "NEVERD_SOURCE_DIALECT_FILE is not set"),
+            ):
+                test = record("SourceDialect." + name, "NeverDSourceDialectTests")
+                with self.subTest(profile=profile, name=name):
+                    report = self.audit(
+                        policy_records(profile) + (test,),
+                        {test: ("notrun", "SKIP_REGULAR_EXPRESSION_MATCHED", reason)},
+                        profile,
+                    )
+                    self.assertFalse(report["ok"])
+                    self.assertEqual(report["counts"]["required_skips"], 1)
 
     def test_disabled_and_infrastructure_failure_are_never_optional(self):
         optional = record("optional", "optional")
