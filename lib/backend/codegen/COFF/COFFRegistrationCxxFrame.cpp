@@ -22,14 +22,17 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
   const auto &States = *Proof->Source.RegistrationStates;
   coff_registration::RegistrationCxxFrameContract Contract;
   Contract.Image = &Image;
-  Contract.Catch = Proof->Catch;
-  if (const auto &Home = Proof->CatchHome) {
-    Contract.HomeOffset = Home->Offset;
-    Contract.ObjectSize = Home->ObjectSize;
-    Contract.Reference = Home->Reference;
+  for (const auto &Catch : Proof->Catches) {
+    auto &Invocation = Contract.Catches.emplace_back();
+    Invocation.Catch = Catch.Pad;
+    if (const auto &Home = Catch.Home) {
+      Invocation.HomeOffset = Home->Offset;
+      Invocation.ObjectSize = Home->ObjectSize;
+      Invocation.Reference = Home->Reference;
+    }
+    Invocation.CallbackStack = Catch.Stack;
+    Invocation.CallbackBlocks = Catch.Blocks;
   }
-  Contract.CallbackStack = Proof->CallbackStack;
-  Contract.CallbackBlocks = Proof->CallbackBlocks;
   Contract.SavedStackOffset = int64_t(Proof->Frame.Establisher) +
                               *Source.Registration->RegistrationOffset - 4;
   auto Ranges = coff_loader::getCheckedX86CxxMetadataRanges(Image, Source);
@@ -87,12 +90,14 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
   for (const auto &Access : States.RuntimeObjectAccesses) {
     const auto Found =
         Operations.find({Access.Address, uint32_t(Access.OpSeq)});
-    if (Found == Operations.end() || Access.TryIndex || Access.CatchIndex ||
-        !Contract.Reference ||
+    if (Found == Operations.end() || Access.TryIndex ||
+        Access.CatchIndex >= Contract.Catches.size() ||
+        !Contract.Catches[Access.CatchIndex].Reference ||
         !Contract.RuntimeAccesses
              .emplace(Found->second,
                       coff_registration::RegistrationRuntimeAccess{
-                          Access.Offset, Access.Width, Access.Write})
+                          Access.Offset, Access.Width, Access.Write,
+                          Contract.Catches[Access.CatchIndex].Catch})
              .second)
       return coff_registration::rejectIR(
           "C++ runtime object lost its exact source access");
