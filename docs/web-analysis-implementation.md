@@ -187,6 +187,20 @@ values are pinned by optional C++ tests. Targets and lifecycle scripts never
 ran. See the [archive/integrity profile](web-package-archive-profile.md) and
 [real-artifact qualification](web-claude-code-qualification.md).
 
+After merging dev through `6db31ba1e`, the restored macOS arm64 Release
+configuration exercised 352 owning web cases: 345 passed and seven explicitly
+skipped (six unavailable LLVM Zstd map cases and the inapplicable ASAR-policy
+omission case). This includes both real npm originals, the full Bun corpus
+and all 2,345 Claude Code JavaScript modules. The compiled-capability case
+and all five selected C++ worker cases passed; the API backend-omission case
+was inapplicable and skipped. With JS and zlib disabled, 39 of 42 focused core
+and 10 of 11 SDK cases passed, with unavailable gzip cases explicitly skipped;
+both official original SRI checks still passed. With the entire backend
+disabled, both ABI availability cases and four generic worker cases passed,
+and the web worker case explicitly skipped. Web, JS and zlib support are
+restored. Formatting and whitespace checks passed. These are feature-owning
+checks, not a whole-repository or cross-host qualification.
+
 On 2026-10-11 the Bun container reader was separated from the shared graph
 decoder and qualified for Linux, macOS and Windows x64/ARM64 input images on
 the macOS arm64 Release host. Twenty additional full pinned compiler images
