@@ -19,6 +19,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 
 #include "../../../loader/Swift/SwiftErrorSourceProjection.h"
+#include "HighEntryStackOffsets.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
@@ -340,6 +341,9 @@ TypeRef MedToHighConverter::sourceCallResultType(const MedOp &Op) const {
     if (auto Type = sourceABICallResultType(Op.SourceCallHint->Signature);
         Type && Type->Size == Op.Output.Size)
       return Type;
+  if (Op.Output.Kind == MedVar::Reg && Op.Output.Size == 10 &&
+      getTargetRegInfo(TargetArch).isX87StackReg(Op.Output.RegOff))
+    return NdType::makeFloat(10);
   return NdType::makeInt(Op.Output.Size, false);
 }
 
@@ -592,24 +596,8 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
 void MedToHighConverter::indexMedDefinitions() {
   if (!CurMed || EntryOffsetDefsFor == CurMed)
     return;
-  EntryOffsetDefs.clear();
-  EntryOffsetPhis.clear();
-  EntryOffsetPhiCache.clear();
-  auto Key = [](const MedVar &V) {
-    return std::make_tuple(static_cast<int>(V.Kind), V.Id, V.SSAVer);
-  };
-  for (const auto &Blk : CurMed->Blocks) {
-    for (const auto &Phi : Blk.Phis)
-      if (auto [It, Inserted] =
-              EntryOffsetPhis.try_emplace(Key(Phi.Output), &Phi);
-          !Inserted)
-        It->second = nullptr;
-    for (const auto &Op : Blk.Ops)
-      if (auto [It, Inserted] =
-              EntryOffsetDefs.try_emplace(Key(Op.Output), &Op);
-          !Inserted)
-        It->second = nullptr;
-  }
+  EntryStackOffsets =
+      std::make_shared<detail::HighEntryStackOffsets>(*CurMed, TargetArch);
   EntryOffsetDefsFor = CurMed;
 }
 
@@ -617,8 +605,7 @@ const MedOp *MedToHighConverter::uniqueMedDefinition(const MedVar &V) {
   if (!CurMed)
     return nullptr;
   indexMedDefinitions();
-  auto DefIt = EntryOffsetDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
-  return DefIt == EntryOffsetDefs.end() ? nullptr : DefIt->second;
+  return EntryStackOffsets->uniqueDefinition(V);
 }
 
 ExprPtr MedToHighConverter::memoryAddressExpr(const MedVar &V,
@@ -1193,6 +1180,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   ParamCopyIndexFunc = nullptr;
   LoadedEntrySlotsFor = nullptr;
   EntryOffsetDefsFor = nullptr;
+  EntryStackOffsets.reset();
   SourceParameters = Med.SourceTypeHint
                          ? sourceABIParameters(*Med.SourceTypeHint)
                          : std::vector<SourceABIParameter>{};

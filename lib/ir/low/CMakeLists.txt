@@ -1,6 +1,7 @@
 add_neverd_component_library(NeverDIRLowValidation
   LowIR.cpp
   LowNoReturn.cpp
+  LowPreservedState.cpp
   LowUndefinedEffects.cpp
   X87PartialRemainder.cpp
 
