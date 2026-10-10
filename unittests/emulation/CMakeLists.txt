@@ -317,6 +317,7 @@ include(WindowsDeferredFixtures.cmake)
 add_neverd_unittest(NeverDUnpackExecutionTests
   UnpackExecutionTests.cpp
   UnpackGeneratedTests.cpp
+  WindowsNativeFailure.cpp
   UnpackLibraryTests.cpp
   TIMEOUT 300
   LINK_COMPONENTS Unpack)

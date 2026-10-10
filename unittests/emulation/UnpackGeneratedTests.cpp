@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 #include "HvfTestPolicy.h"
 #include "UnpackGeneratedTestSupport.h"
+#include "WindowsNativeFailure.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessObserver.h"
@@ -122,11 +123,12 @@ protected:
     const auto Native = Path.string();
     std::string Diagnostic;
     bool Failed = false;
-    EXPECT_EQ(llvm::sys::ExecuteAndWait(Native, {Native}, std::nullopt, {}, 30,
-                                        0, &Diagnostic, &Failed),
-              Status)
-        << Diagnostic;
+    const auto Actual = llvm::sys::ExecuteAndWait(
+        Native, {Native}, std::nullopt, {}, 30, 0, &Diagnostic, &Failed);
+    EXPECT_EQ(Actual, Status) << Diagnostic;
     EXPECT_FALSE(Failed) << Diagnostic;
+    if (Actual != Status && !Failed)
+      diagnoseNativeFailure(Path.c_str());
 #else
     (void)Path;
     (void)Status;
