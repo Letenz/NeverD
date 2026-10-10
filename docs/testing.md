@@ -820,6 +820,18 @@ optimized and unoptimized LLVMC, execute every byte selector and four table-sele
 inputs at O0/O2 with undefined-behavior traps against the fixture formula.
 The existing deep selector-copy refusals remain covered independently.
 
+`ResolverCountLane.*` checks that scalar POPCOUNT/LZCOUNT results and their
+zero-extended low bytes identify the same value on x86, x64 and AArch64 LowIR.
+Malformed operands, wider inputs, different byte lanes, unrelated operations
+and exhausted work remain negative controls; cached answers retain cold work
+charges. `JumpTableCountLane.*` uses actual x64 TZCNT/POPCNT/LZCNT instructions
+with 32/64-bit inputs and byte/full-width guards. High-bit arithmetic and
+partial-register writes must prevent recovery. Relative-table HighC and
+absolute-table HighC, optimized LLVMC and unoptimized LLVMC execute zero,
+all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
+The existing deep-arithmetic narrow guards must retain their exact-definition
+proof before the batched extension-range fallback is considered.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
