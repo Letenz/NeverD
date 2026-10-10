@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
+<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -1039,3 +1039,31 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).
+
+## Explizite Mach-Selbstportbeobachtungen
+
+Die rohen Mach-Aufrufe thread_self_trap27, task_self_trap28 und host_self_trap29 lesen unabhängige optionale uint32-Beobachtungen DarwinSystemOptions::ThreadSelfPort, TaskSelfPort und HostSelfPort über darwin_system.thread_self_port, task_self_port und host_self_port. Jede Abfrage benötigt nur ihr Feld. Fehlen bleibt unbekannt und stoppt UnsupportedService; Null, gleiche Namen und alle32-Bit-Muster sind explizit. Exakte Zahlen und Dezimalstrings bis UINT32_MAX übernehmen nicht die positiven pid_t-Grenzen von process_group_id/session_id.
+
+Der Systembesitzer wandelt den Namen über das vorzeichenbehaftete int32-Kernelergebnis in raw64 um: 0x80000001 wird0xffffffff80000001 und UINT32_MAX wirdUINT64_MAX. Die Mach-Bindung erhält Flags und X1/RDX sowie die x64-RCX/R11-Regeln, ignoriert Argumente und greift nicht auf Speicher zu. Low32-Auflösung erhält die vollständige rohe Nummer im Ereignis. Mach-Abfragen lassen BSD error weg und erzeugen keine Scheduler-ThreadID. Wiederverwendung und unabhängige Optionen ändern die Beobachtungen nicht.
+
+Die ursprüngliche ARM64-O0/O1/O2-Vorbereitung bewahrt432 rohe Beobachtungen, alle16 NZCV, High32-Präfixe, Registerwerte und SDK-Vergleiche. Native bit31-Portnamen wurden nicht beobachtet; hohe Vorzeichenerweiterung beruht auf dem festen XNU-Rückgabevertrag und unabhängigen Literaltests für Modell/Gast/öffentliche API. Das gemeinsame native Programm prüft nur Beziehungen im selben Prozess; virtuelle Namen und fehlende Eingaben sind keine deterministischen nativen Referenzen. Keine Namen/Sendereferenzen, lebenden Rechte, Eindeutigkeit oder IPC/Lebensdauer/Planung werden abgeleitet. Berechtigungen/ACL, Bereitschaftswarten, fortschreitende Uhren, echte Mach-IPC/Threads, dyld/TLS und vollständige Laufzeiten/Frameworks bleiben unvollständig. Native Intel HVF und physisches iOS bleiben ungeprüft.
+
+```json
+{"darwin_system":{"thread_self_port":2147483649,"task_self_port":0,"host_self_port":"4294967295"}}
+```
+
+```text
+Mach thread_self_trap27 / task_self_trap28 / host_self_trap29
+ThreadSelfPort / TaskSelfPort / HostSelfPort / uint32 / signed-int32 -> raw64
+known0 / missing -> UnsupportedService / no arguments or memory
+low32 resolution / complete raw number / flags and RDX-X1 preserved / no BSD error
+mach-self-ports / mach-self-port-values / mach-self-port-missing
+MachSelfPortsPreserveExplicitBitsAndIndependentRuns
+6 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+70 mandatory workloads per platform / ARM64 210 / Intel 140 unverified
+original ARM64 O0/O1/O2 probes432 / no native bit31 name observed
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).

@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
+<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
 
 [← 문서 목록](README.md)
 
@@ -1041,3 +1041,31 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).
+
+## 명시적 Mach 자체 포트 관측
+
+원시 Mach thread_self_trap27, task_self_trap28, host_self_trap29는 독립적인 선택 uint32 관측 DarwinSystemOptions::ThreadSelfPort, TaskSelfPort, HostSelfPort를 읽습니다. JSON은 darwin_system.thread_self_port, task_self_port, host_self_port입니다. 각 쿼리는 선택한 필드만 요구합니다. 누락은 미지 상태로 UnsupportedService를 일으키며 0, 같은 이름, 모든32비트 패턴은 명시적 값입니다. UINT32_MAX까지 정확한 정수 또는 십진 문자열을 받으며 process_group_id/session_id의 양수 pid_t 제한을 적용하지 않습니다.
+
+시스템 소유자가 이름을 부호 있는 int32 커널 결과를 통해 raw64로 변환합니다. 0x80000001은0xffffffff80000001, UINT32_MAX는UINT64_MAX를 반환합니다. 기존 Mach 바인딩은 플래그와 X1/RDX, x64 RCX/R11 덮어쓰기 규칙을 유지하며 인자를 무시하고 메모리에 접근하지 않습니다. 하위32비트 해석 후에도 이벤트는 전체 원시 번호를 보존합니다. Mach 쿼리 이벤트는 BSD error를 생략하며 스케줄러 ThreadID를 만들지 않습니다. 재사용한 옵션과 독립 옵션은 관측을 바꾸지 않습니다.
+
+원본 ARM64 O0/O1/O2 준비는432번 원시 관측, 전체16 NZCV, 상위32비트 번호, 레지스터 시드와 SDK 비교를 보존합니다. 네이티브 bit31 포트 이름은 관측되지 않았습니다. 상위 비트 부호 확장은 고정 XNU 반환 경로 계약이며 독립 리터럴 모델/게스트/공개 테스트로 확인합니다. 공통 네이티브 프로그램은 같은 프로세스 내 관계만 비교하며 가상 이름과 누락 모드는 결정적 네이티브 참조에 포함하지 않습니다. 이름/송신 참조 할당, 유효 권한 인증, 유일성, IPC/수명/스케줄링은 구현하지 않습니다. 권한/ACL, 준비 대기, 진행 시계, 실제 Mach IPC/스레드, dyld/TLS, 완전한 런타임/프레임워크는 미완성입니다. 네이티브 Intel HVF와 실제 iOS 장치는 미검증입니다.
+
+```json
+{"darwin_system":{"thread_self_port":2147483649,"task_self_port":0,"host_self_port":"4294967295"}}
+```
+
+```text
+Mach thread_self_trap27 / task_self_trap28 / host_self_trap29
+ThreadSelfPort / TaskSelfPort / HostSelfPort / uint32 / signed-int32 -> raw64
+known0 / missing -> UnsupportedService / no arguments or memory
+low32 resolution / complete raw number / flags and RDX-X1 preserved / no BSD error
+mach-self-ports / mach-self-port-values / mach-self-port-missing
+MachSelfPortsPreserveExplicitBitsAndIndependentRuns
+6 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+70 mandatory workloads per platform / ARM64 210 / Intel 140 unverified
+original ARM64 O0/O1/O2 probes432 / no native bit31 name observed
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).

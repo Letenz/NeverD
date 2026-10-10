@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
+<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
 
 [← 文档索引](README.md)
 
@@ -1145,3 +1145,31 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).
+
+## 显式 Mach 自身端口观测
+
+原始 Mach thread_self_trap27、task_self_trap28 和 host_self_trap29 分别读取独立的可选 uint32 观测：DarwinSystemOptions::ThreadSelfPort、TaskSelfPort、HostSelfPort，对应 darwin_system.thread_self_port、task_self_port、host_self_port。每次查询只要求自身字段。缺失表示未知并停止为 UnsupportedService；零、相等的名称及全部32位模式均是显式值。输入接受 UINT32_MAX 范围内的精确整数或十进制字符串，不套用 process_group_id/session_id 的正 pid_t 限制。
+
+系统层将名称经有符号 int32 内核结果转换为原始64位载体：0x80000001 返回0xffffffff80000001，UINT32_MAX 返回UINT64_MAX。现有 Mach 绑定保留标志与 X1/RDX，并保留 x64 RCX/R11 的系统调用覆盖规则；忽略全部参数且不访问内存。低32位解析保留事件中的完整原始号码。Mach 查询事件不带 BSD error 字段，也不会生成调度器 ThreadID。重复使用选项保留观测，独立选项互不影响。
+
+原生 ARM64 O0/O1/O2 探针保留432次原始观测，覆盖全部16种 NZCV、高32位号码前缀、寄存器种子和 SDK 对照。未观测到原生 bit31 端口名称；高位符号扩展依据固定 XNU 返回路径，并由独立字面值的模型、客体和公共测试检查。公共原生程序只比较同一进程内的关系；虚拟名称和缺失输入模式不进入原生确定性参考。这些观测不分配名称或发送引用，不认证有效权限、不推断唯一性，也不实现 IPC、生命周期或线程调度。权限/ACL、就绪等待、推进时钟、真实 Mach IPC/线程、dyld/TLS 和完整运行时/框架仍有缺口；原生 Intel HVF 与物理 iOS 仍未验证。
+
+```json
+{"darwin_system":{"thread_self_port":2147483649,"task_self_port":0,"host_self_port":"4294967295"}}
+```
+
+```text
+Mach thread_self_trap27 / task_self_trap28 / host_self_trap29
+ThreadSelfPort / TaskSelfPort / HostSelfPort / uint32 / signed-int32 -> raw64
+known0 / missing -> UnsupportedService / no arguments or memory
+low32 resolution / complete raw number / flags and RDX-X1 preserved / no BSD error
+mach-self-ports / mach-self-port-values / mach-self-port-missing
+MachSelfPortsPreserveExplicitBitsAndIndependentRuns
+6 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+70 mandatory workloads per platform / ARM64 210 / Intel 140 unverified
+original ARM64 O0/O1/O2 probes432 / no native bit31 name observed
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).

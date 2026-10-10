@@ -114,7 +114,8 @@ std::string jsonText(llvm::json::Object Value) {
 // Pass the original JSON as one argument. cmd.exe splits embedded newlines
 // even inside shell quotes and also expands percent signs in guest strings.
 int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
-                  llvm::StringRef Options, llvm::StringRef Output) {
+                  llvm::StringRef Options, llvm::StringRef Output,
+                  bool CaptureErrors = false) {
   // LLVM's redirects open an existing file without truncating it. Repeated
   // invocations can produce a shorter JSON report, so remove the old suffix.
   std::error_code OutputError;
@@ -131,8 +132,9 @@ int runCLIRequest(llvm::StringRef Path, llvm::StringRef Profile,
       "--" + std::string(process_cli::OptionsOption) + "=" + Options.str();
   const llvm::StringRef Args[] = {NEVERD_PROCESS_CLI, process_cli::Command,
                                   Path, ProfileArg, OptionsArg};
-  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
-                                                      llvm::StringRef("")};
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, CaptureErrors ? llvm::StringRef("") : Output,
+      CaptureErrors ? Output : llvm::StringRef("")};
   std::string Error;
   const int Status = llvm::sys::ExecuteAndWait(
       NEVERD_PROCESS_CLI, Args, std::nullopt, Redirects, 30, 0, &Error);
@@ -512,6 +514,12 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"thread-identity-value",
                     emulation::darwin_test::ThreadIdentityHex},
           std::pair{"thread-identity-missing", "21"},
+          std::pair{"mach-self-ports", "4a"},
+          std::pair{"mach-self-port-values",
+                    emulation::darwin_test::MachSelfPortsHex},
+          std::pair{"mach-self-port-missing-thread", "21"},
+          std::pair{"mach-self-port-missing-task", "21"},
+          std::pair{"mach-self-port-missing-host", "21"},
           std::pair{"entropy-replay", "52"},
           std::pair{"entropy-missing", "21"},
           std::pair{"entropy-exhausted", "21"},
@@ -568,10 +576,12 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool UnknownNonblocking = ModeName == "nonblocking-flags-unsupported";
   const bool ThreadIdentity = ModeName.starts_with("thread-identity");
   const bool UnknownThreadIdentity = ModeName == "thread-identity-missing";
+  const bool SelfPorts = ModeName.starts_with("mach-self-port");
+  const bool UnknownSelfPort = ModeName.starts_with("mach-self-port-missing-");
   const bool Entropy = ModeName.starts_with("entropy-");
   const bool UnknownEntropy = Entropy && ModeName != "entropy-replay";
-  const bool Incomplete = UnknownThreadIdentity || UnknownEntropy ||
-                          ProtectedLink || UnknownPathConf ||
+  const bool Incomplete = UnknownThreadIdentity || UnknownSelfPort ||
+                          UnknownEntropy || ProtectedLink || UnknownPathConf ||
                           UnknownAttributes || UnknownXattrs || UnknownNames ||
                           UnknownBulk || UnknownXattrMutation ||
                           UnknownHardLinkName || UnknownNonblocking;
@@ -1049,6 +1059,26 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::KernelPathConfJSON));
     Options = llvm::formatv("{0}", Input).str();
   }
+  if (SelfPorts) {
+    auto Input = llvm::cantFail(llvm::json::parse(Options));
+    (*Input.getAsObject())[field::Quantum] = 1024;
+    auto System = llvm::cantFail(
+        llvm::json::parse(emulation::darwin_test::MachSelfPortsJSON));
+    if (UnknownSelfPort) {
+      const auto Selection = ModeName.drop_front(
+          llvm::StringRef("mach-self-port-missing-").size());
+      const auto Selected = Selection == "thread" ? field::SystemThreadSelfPort
+                            : Selection == "task" ? field::SystemTaskSelfPort
+                                                  : field::SystemHostSelfPort;
+      System.getAsObject()->erase(Selected);
+      (*System.getAsObject())[field::ThreadID] = "18446744073709551615";
+      auto *Arguments = Input.getAsObject()->getArray(field::Arguments);
+      (*Arguments)[1] = "mach-self-port-missing";
+      (*Arguments)[2] = Selection;
+    }
+    (*Input.getAsObject())[field::DarwinSystem] = std::move(System);
+    Options = llvm::formatv("{0}", Input).str();
+  }
   if (ThreadIdentity) {
     auto Input = llvm::cantFail(llvm::json::parse(Options));
     (*Input.getAsObject())[field::Quantum] = 1024;
@@ -1084,6 +1114,116 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
     EXPECT_EQ(Report->getAsObject()->getInteger(field::ExitStatus), 37);
   }
   EXPECT_EQ(Report->getAsObject()->getString(field::Stdout), Expected);
+  if (SelfPorts) {
+    EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    if (UnknownSelfPort) {
+      const auto Selection = ModeName.drop_front(
+          llvm::StringRef("mach-self-port-missing-").size());
+      const unsigned Q = Selection == "thread" ? 0
+                         : Selection == "task" ? 1
+                                               : 2;
+      EXPECT_EQ(Report->getAsObject()->getString(field::Diagnostic),
+                "Darwin current-" + Selection.str() +
+                    " Mach port observation is not configured");
+      const auto *Events = Report->getAsObject()->getArray(field::Services);
+      ASSERT_NE(Events, nullptr);
+      ASSERT_EQ(Events->size(), 2u);
+      const auto *Last = Events->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number),
+                llvm::utohexstr(X64 ? uint64_t(0x1000000 | (27 + Q))
+                                    : uint64_t(-int64_t(27 + Q)),
+                                true));
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+      EXPECT_EQ(Last->get(field::ThreadID), nullptr);
+      ASSERT_NE(Last->get(field::Result), nullptr);
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+    } else {
+      const auto check = [&](const llvm::json::Value &Value,
+                             const std::array<llvm::StringRef, 3> &Results) {
+        const auto *Events = Value.getAsObject()->getArray(field::Services);
+        ASSERT_NE(Events, nullptr);
+        ASSERT_EQ(Events->size(), 22u);
+        for (unsigned Q = 0; Q != 3; ++Q) {
+          const uint32_t Low = X64 ? 0x1000000 | (27 + Q) : 0u - (27 + Q);
+          for (unsigned I = 0; I != 7; ++I) {
+            const auto *Event = (*Events)[Q * 7 + I].getAsObject();
+            ASSERT_NE(Event, nullptr);
+            const uint64_t Prefix = !I      ? (X64 ? 0 : 0xffffffff00000000ULL)
+                                    : I < 3 ? 0
+                                    : I < 5 ? 0x1234567800000000ULL
+                                            : 0xffffffff00000000ULL;
+            EXPECT_EQ(Event->getString(field::Number),
+                      llvm::utohexstr(Prefix | Low, true));
+            EXPECT_EQ(Event->getString(field::Result), Results[Q]);
+            EXPECT_EQ(Event->get(field::Error), nullptr);
+            EXPECT_EQ(Event->get(field::ThreadID), nullptr);
+            const auto *Args = Event->getArray(field::Arguments);
+            ASSERT_NE(Args, nullptr);
+            ASSERT_EQ(Args->size(), 6u);
+            EXPECT_EQ((*Args)[0].getAsString(), "ffffffffffffffff");
+            EXPECT_EQ((*Args)[X64 ? 2 : 1].getAsString(), "1122334455667788");
+            EXPECT_EQ((*Args)[X64 ? 1 : 2].getAsString(), "8877665544332211");
+          }
+        }
+        const auto *Write = Events->back().getAsObject();
+        ASSERT_NE(Write, nullptr);
+        const auto Size = ModeName == "mach-self-ports" ? "1" : "18";
+        EXPECT_EQ(Write->getString(field::Number), X64 ? "2000004" : "4");
+        EXPECT_EQ(Write->getString(field::Result), Size);
+        EXPECT_EQ(Write->getBoolean(field::Error), false);
+        EXPECT_EQ(Write->get(field::ThreadID), nullptr);
+        const auto *Args = Write->getArray(field::Arguments);
+        ASSERT_NE(Args, nullptr);
+        ASSERT_EQ(Args->size(), 6u);
+        EXPECT_EQ((*Args)[0].getAsString(), "1");
+        EXPECT_EQ((*Args)[2].getAsString(), Size);
+      };
+      check(*Report, {"ffffffff80000001", "0", "ffffffffffffffff"});
+      auto Repeated = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      auto Again = llvm::json::parse(Repeated);
+      ASSERT_TRUE(bool(Again)) << llvm::toString(Again.takeError());
+      EXPECT_EQ(*Again, *Report);
+      if (ModeName == "mach-self-port-values") {
+        struct Sample {
+          const char *Wire, *Hex, *Result;
+        };
+        for (const auto &S :
+             {Sample{"0", "0000000000000000", "0"},
+              Sample{"1", "0100000000000000", "1"},
+              Sample{"2147483647", "ffffff7f00000000", "7fffffff"},
+              Sample{"2147483648", "00000080ffffffff", "ffffffff80000000"},
+              Sample{"\"2147483649\"", "01000080ffffffff", "ffffffff80000001"},
+              Sample{"4294967295", "ffffffffffffffff", "ffffffffffffffff"},
+              Sample{"\"4294967295\"", "ffffffffffffffff",
+                     "ffffffffffffffff"}}) {
+          SCOPED_TRACE(S.Wire);
+          auto Input = llvm::cantFail(llvm::json::parse(Options));
+          for (const char *Field :
+               {field::SystemThreadSelfPort, field::SystemTaskSelfPort,
+                field::SystemHostSelfPort})
+            (*Input.getAsObject()->getObject(field::DarwinSystem))[Field] =
+                llvm::cantFail(llvm::json::parse(S.Wire));
+          const auto Request = llvm::formatv("{0}", Input).str();
+          auto Text = takeString(neverd_emulate_process_json(
+              Session, Path.c_str(), Profile, Request.c_str()));
+          auto Exact = llvm::json::parse(Text);
+          ASSERT_TRUE(bool(Exact)) << llvm::toString(Exact.takeError());
+          EXPECT_EQ(Exact->getAsObject()->getString(field::Stop), "exited");
+          EXPECT_EQ(Exact->getAsObject()->getInteger(field::ExitStatus), 37);
+          EXPECT_EQ(Exact->getAsObject()->getString(field::Stdout),
+                    std::string(S.Hex) + S.Hex + S.Hex);
+          check(*Exact, {S.Result, S.Result, S.Result});
+          EXPECT_EQ(runCLIRequest(Path, Profile, Request, Output),
+                    process_cli::GuestFailure);
+          ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Exact));
+          EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+        }
+      }
+    }
+  }
   if (ThreadIdentity) {
     EXPECT_EQ(Report->getAsObject()->getString(field::Stderr), "");
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
@@ -1446,7 +1586,8 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       EXPECT_EQ(Last->get(field::Error), nullptr);
     }
   }
-  if (llvm::StringRef(Mode).starts_with("mach-")) {
+  if (ModeName == "mach-time" || ModeName == "mach-timebase-values" ||
+      ModeName == "mach-clock-values") {
     const auto *Services = Report->getAsObject()->getArray(field::Services);
     ASSERT_NE(Services, nullptr);
     const bool Clocks = llvm::StringRef(Mode) == "mach-clock-values";
@@ -1479,6 +1620,54 @@ INSTANTIATE_TEST_SUITE_P(
           C = '_';
       return Name;
     });
+
+TEST_F(ProcessPublic,
+       DarwinMachSelfPortsRejectMalformedObservationsBeforeLoading) {
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const char *Field :
+       {field::SystemThreadSelfPort, field::SystemTaskSelfPort,
+        field::SystemHostSelfPort}) {
+    for (const char *Bad :
+         {"null", "true", "false", "{}", "[]", "1.5", "-1", "4294967296",
+          "9007199254740992", "18446744073709551615", "\"-1\"", "\"1.5\"",
+          "\"0x10\"", "\"x\"", "\"\"", "\"4294967296\"",
+          "\"18446744073709551615\"", "\"1\\u0000\""}) {
+      const auto Request =
+          std::string("{\"darwin_system\":{\"") + Field + "\":" + Bad + "}}";
+      for (const char *Profile :
+           {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+        EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                              Request.c_str()),
+                  nullptr);
+        EXPECT_NE(takeString(neverd_last_error(Session)).find(Field),
+                  std::string::npos);
+        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      }
+      EXPECT_EQ(
+          runCLIRequest("missing.macho", MacOSMachO64, Request, Output, true),
+          process_cli::Error);
+      auto Error = llvm::MemoryBuffer::getFile(Output);
+      ASSERT_TRUE(bool(Error)) << Error.getError().message();
+      EXPECT_TRUE((*Error)->getBuffer().contains(Field));
+    }
+    // A valid Darwin field still rejects a foreign profile before loading.
+    const auto Foreign =
+        std::string("{\"darwin_system\":{\"") + Field + "\":0}}";
+    for (const char *Profile :
+         {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                            Foreign.c_str()),
+                nullptr);
+      EXPECT_EQ(takeString(neverd_last_error(Session)),
+                field::DarwinSystemProfile);
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+  }
+}
 
 TEST_F(ProcessPublic,
        DarwinThreadIdentityRejectsMalformedObservationsBeforeLoading) {

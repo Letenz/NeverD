@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 1939e117643388dff149085b992e1ad646feefca63b630abec9b09122e15c2f1 -->
+<!-- i18n-source: 6b97c519ec7571ed3662f187b14b7e01d5dd18954fa582e38dba79c2f915a113 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1041,3 +1041,31 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).
+
+## 明示的な Mach 自己ポート観測
+
+生の Mach thread_self_trap27、task_self_trap28、host_self_trap29 は独立した任意の uint32 観測 DarwinSystemOptions::ThreadSelfPort、TaskSelfPort、HostSelfPort を読みます。JSON は darwin_system.thread_self_port、task_self_port、host_self_port です。各問い合わせは選択したフィールドだけを必要とします。欠落は未知として UnsupportedService で停止し、ゼロ、同じ名前、全32ビットパターンは明示値です。UINT32_MAX までの正確な整数と十進文字列を受け入れ、process_group_id/session_id の正の pid_t 制約は適用しません。
+
+システム所有層は符号付き int32 のカーネル結果を通して raw64 に変換します。0x80000001 は0xffffffff80000001、UINT32_MAX はUINT64_MAX になります。既存 Mach バインドはフラグと X1/RDX、x64 RCX/R11 の上書き規則を保ち、引数を無視してメモリに触れません。低32ビットで解決してもイベントには完全な生番号が残ります。Mach 問い合わせは BSD error を省略し、スケジューラ ThreadID を生成しません。再実行と独立した設定は観測を変更しません。
+
+元の ARM64 O0/O1/O2 準備は432回の生観測、全16 NZCV、高32ビット番号、レジスタ種子、SDK 比較を保存します。原生 bit31 ポート名は観測していません。高位の符号拡張は固定 XNU 戻り経路に基づき、独立したリテラルのモデル・ゲスト・公開テストで検証します。共通ネイティブプログラムは同一プロセス内の関係だけを比較し、仮想名と欠落モードは確定的ネイティブ参照に含めません。名前・送信参照の割り当て、権利認証、一意性、IPC・寿命・スケジューリングは提供しません。権限/ACL、準備待ち、進行時計、実際の Mach IPC/スレッド、dyld/TLS、完全なランタイム/フレームワークは未完成です。ネイティブ Intel HVF と実機 iOS は未検証です。
+
+```json
+{"darwin_system":{"thread_self_port":2147483649,"task_self_port":0,"host_self_port":"4294967295"}}
+```
+
+```text
+Mach thread_self_trap27 / task_self_trap28 / host_self_trap29
+ThreadSelfPort / TaskSelfPort / HostSelfPort / uint32 / signed-int32 -> raw64
+known0 / missing -> UnsupportedService / no arguments or memory
+low32 resolution / complete raw number / flags and RDX-X1 preserved / no BSD error
+mach-self-ports / mach-self-port-values / mach-self-port-missing
+MachSelfPortsPreserveExplicitBitsAndIndependentRuns
+6 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+70 mandatory workloads per platform / ARM64 210 / Intel 140 unverified
+original ARM64 O0/O1/O2 probes432 / no native bit31 name observed
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).

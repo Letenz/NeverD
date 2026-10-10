@@ -238,6 +238,9 @@ NEVERD_DARWIN_SERVICE(SymlinkAt, 474, Int)
 // Positive trap indices. ARM64 encodes their negative low-32-bit value;
 // x64 uses the Mach syscall class. Fast ARM64 clocks have no x64 trap slot.
 #ifdef NEVERD_DARWIN_MACH_SERVICE
+NEVERD_DARWIN_MACH_SERVICE(ThreadSelfPort, 27, false)
+NEVERD_DARWIN_MACH_SERVICE(TaskSelfPort, 28, false)
+NEVERD_DARWIN_MACH_SERVICE(HostSelfPort, 29, false)
 NEVERD_DARWIN_MACH_SERVICE(TimebaseInfo, 89, false)
 NEVERD_DARWIN_MACH_SERVICE(AbsoluteTime, 3, true)
 NEVERD_DARWIN_MACH_SERVICE(ContinuousTime, 4, true)
@@ -286,6 +289,15 @@ NEVERD_DARWIN_DIAGNOSTIC(ProcessSessionObservation,
 NEVERD_DARWIN_DIAGNOSTIC(
     ThreadIDObservation,
     "Darwin current-thread identity observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    ThreadSelfPortObservation,
+    "Darwin current-thread Mach port observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    TaskSelfPortObservation,
+    "Darwin current-task Mach port observation is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    HostSelfPortObservation,
+    "Darwin current-host Mach port observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(ProcessTaintObservation,
                          "Darwin process taint observation is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(

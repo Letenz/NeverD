@@ -111,6 +111,13 @@ struct DarwinSystemOptions {
   /// is unknown; every supplied uint64 value, including zero, is known. Does
   /// not infer host/PID/Mach identity, allocation or thread scheduling.
   std::optional<uint64_t> ThreadID;
+  /// Independent raw Mach self-port names, not live rights or IPC authority.
+  /// Missing is unknown; every uint32 pattern, including zero, is explicit.
+  /// Raw trap returns sign-extend the name through the native int32 carrier.
+  /// No host/PID/thread identity, reference allocation or lifetime is inferred.
+  std::optional<uint32_t> ThreadSelfPort;
+  std::optional<uint32_t> TaskSelfPort;
+  std::optional<uint32_t> HostSelfPort;
 };
 } // namespace neverd::emulation
 #endif

@@ -194,7 +194,7 @@ darwinSystemOptionsFromJSON(const llvm::json::Value &Value) {
       return invalid(Name);                                                    \
     continue;                                                                  \
   }
-#define NEVERD_DARWIN_PROCESS_FIELD(Member, Field)                             \
+#define NEVERD_DARWIN_PROCESS_FIELD(Member, Field, Admission)                  \
   if (Name == field::Field) {                                                  \
     if (!parse(V, Out.Member))                                                 \
       return invalid(Name);                                                    \

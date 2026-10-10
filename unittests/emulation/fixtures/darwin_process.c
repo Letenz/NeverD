@@ -1828,6 +1828,53 @@ static int preserved_mach(struct mach_observation value, unsigned carry) {
          value.second == 0x1122334455667788UL &&
          value.third == 0x8877665544332211UL;
 }
+/* Independent fixed observations exercise the original no-argument Mach ABI.
+ * Equal/zero names are permitted; this does not grant a live IPC right. */
+static int mach_self_ports(int emit_values) {
+  u64 names[3];
+  const u64 prefixes[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  int check = 50;
+#define SELF_EXPECT(expression)                                                \
+  do {                                                                         \
+    ++check;                                                                   \
+    if (!(expression))                                                         \
+      return check;                                                            \
+  } while (0)
+  for (unsigned q = 0; q != 3; ++q) {
+    const u64 plain = mach_number(27 + q);
+    struct mach_observation first = raw_trap(plain, (u64)-1, mach_flags(1));
+    SELF_EXPECT(preserved_mach(first, 1));
+    names[q] = first.value;
+    SELF_EXPECT(first.value == (u64)(long)(int)(unsigned)first.value);
+    for (unsigned p = 0; p != 3; ++p)
+      for (unsigned carry = 0; carry != 2; ++carry) {
+        struct mach_observation next = raw_trap(
+            (plain & 0xffffffffUL) | prefixes[p], (u64)-1, mach_flags(carry));
+        SELF_EXPECT(preserved_mach(next, carry));
+        SELF_EXPECT(next.value == names[q]);
+      }
+  }
+  unsigned error;
+  const u64 size = emit_values ? sizeof(names) : 1;
+  SELF_EXPECT(call(4, 1, emit_values ? (u64)names : (u64) "J", size, 0, 0, 0,
+                   &error) == size &&
+              !error);
+#undef SELF_EXPECT
+  return 37;
+}
+static int mach_self_port_missing(const char *selection) {
+  unsigned index = equal(selection, "thread") ? 27
+                   : equal(selection, "task") ? 28
+                   : equal(selection, "host") ? 29
+                                              : 0;
+  if (!index)
+    return 79;
+  unsigned error;
+  if (call(4, 1, (u64) "!", 1, 0, 0, 0, &error) != 1 || error)
+    return 78;
+  return (int)raw_trap(mach_number(index), (u64)-1, mach_flags(1)).value;
+}
+
 static int mach_timebase(int emit_values) {
   unsigned char bytes[10];
   unsigned error;
@@ -7015,6 +7062,11 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
   if (equal(argv[1], "time") || equal(argv[1], "time-values"))
     return time_calls(equal(argv[1], "time-values"));
+  if (equal(argv[1], "mach-self-ports") ||
+      equal(argv[1], "mach-self-port-values"))
+    return mach_self_ports(equal(argv[1], "mach-self-port-values"));
+  if (equal(argv[1], "mach-self-port-missing"))
+    return argc < 3 ? 79 : mach_self_port_missing(argv[2]);
   if (equal(argv[1], "mach-time") || equal(argv[1], "mach-timebase-values"))
     return mach_timebase(equal(argv[1], "mach-timebase-values"));
   if (equal(argv[1], "mach-clock-values"))

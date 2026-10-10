@@ -81,6 +81,114 @@ protected:
     return emulateProcess(Path, GetParam().OS, Options);
   }
 };
+TEST_P(DarwinProcess, MachSelfPortsPreserveExplicitBitsAndIndependentRuns) {
+  Options.InstructionQuantum = 1024;
+  const bool X64 = GetParam().ISA == GuestArchitecture::X64;
+  const auto check = [&](const ProcessResult &R,
+                         const std::array<uint64_t, 3> &Carriers) {
+    EXPECT_EQ(R.Stop, ProcessStopReason::Exited) << R.Diagnostic;
+    EXPECT_EQ(R.ExitStatus, 37);
+    EXPECT_TRUE(R.StandardError.empty());
+    EXPECT_EQ(R.SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R.Services.size(), 22u);
+    for (unsigned Q = 0; Q != 3; ++Q) {
+      const uint32_t Low = X64 ? 0x1000000 | (27 + Q) : 0u - (27 + Q);
+      for (unsigned I = 0; I != 7; ++I) {
+        const auto &E = R.Services[Q * 7 + I];
+        const uint64_t Prefix = !I      ? (X64 ? 0 : 0xffffffff00000000ULL)
+                                : I < 3 ? 0
+                                : I < 5 ? 0x1234567800000000ULL
+                                        : 0xffffffff00000000ULL;
+        EXPECT_EQ(E.Number, Prefix | Low);
+        EXPECT_EQ(E.Result, Carriers[Q]);
+        EXPECT_FALSE(E.Error);
+        EXPECT_FALSE(E.ThreadID);
+        EXPECT_EQ(E.Arguments[0], UINT64_MAX);
+        EXPECT_EQ(E.Arguments[X64 ? 2 : 1], 0x1122334455667788ULL);
+        EXPECT_EQ(E.Arguments[X64 ? 1 : 2], 0x8877665544332211ULL);
+      }
+    }
+    const auto &Write = R.Services.back();
+    EXPECT_EQ(Write.Number, X64 ? 0x2000004u : 4u);
+    EXPECT_EQ(Write.Arguments[0], 1u);
+    EXPECT_EQ(Write.Result, Write.Arguments[2]);
+    EXPECT_EQ(Write.Error, false);
+    EXPECT_FALSE(Write.ThreadID);
+  };
+  Options.DarwinSystem = darwin_test::machSelfPortOptions();
+  const std::array<uint64_t, 3> Mixed = {0xffffffff80000001ULL, 0, UINT64_MAX};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("mach-self-ports");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    check(*R, Mixed);
+    EXPECT_EQ(R->StandardOutput, "J");
+  }
+  struct Sample {
+    uint32_t Name;
+    uint64_t Carrier;
+    const char *Hex;
+  };
+  for (const auto &S :
+       {Sample{0, 0, "0000000000000000"}, Sample{1, 1, "0100000000000000"},
+        Sample{0x7fffffff, 0x7fffffff, "ffffff7f00000000"},
+        Sample{0x80000000, 0xffffffff80000000ULL, "00000080ffffffff"},
+        Sample{0x80000001, 0xffffffff80000001ULL, "01000080ffffffff"},
+        Sample{UINT32_MAX, UINT64_MAX, "ffffffffffffffff"}}) {
+    SCOPED_TRACE(S.Name);
+    Options.DarwinSystem->ThreadSelfPort = S.Name;
+    Options.DarwinSystem->TaskSelfPort = S.Name;
+    Options.DarwinSystem->HostSelfPort = S.Name;
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto R = run("mach-self-port-values");
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      check(*R, {S.Carrier, S.Carrier, S.Carrier});
+      EXPECT_EQ(R->StandardOutput,
+                llvm::fromHex(std::string(S.Hex) + S.Hex + S.Hex));
+      EXPECT_EQ(Options.DarwinSystem->ThreadSelfPort, S.Name);
+      EXPECT_EQ(Options.DarwinSystem->TaskSelfPort, S.Name);
+      EXPECT_EQ(Options.DarwinSystem->HostSelfPort, S.Name);
+    }
+  }
+  auto Independent = Options;
+  Independent.DarwinSystem = darwin_test::machSelfPortOptions();
+  auto R = emulateProcess(Path, GetParam().OS, Independent);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  check(*R, Mixed);
+  EXPECT_EQ(R->StandardOutput, llvm::fromHex(darwin_test::MachSelfPortsHex));
+  EXPECT_EQ(Options.DarwinSystem->ThreadSelfPort, UINT32_MAX);
+  const std::array<std::optional<uint32_t> DarwinSystemOptions::*, 3> Members =
+      {&DarwinSystemOptions::ThreadSelfPort, &DarwinSystemOptions::TaskSelfPort,
+       &DarwinSystemOptions::HostSelfPort};
+  const char *Selections[] = {"thread", "task", "host"};
+  for (unsigned Q = 0; Q != 3; ++Q) {
+    Options.Arguments[2] = Selections[Q];
+    for (unsigned State = 0; State != 3; ++State) {
+      Options.DarwinSystem.reset();
+      if (State)
+        Options.DarwinSystem.emplace();
+      if (State == 2) {
+        Options.DarwinSystem = darwin_test::machSelfPortOptions();
+        Options.DarwinSystem->ThreadID = UINT64_MAX;
+        ((*Options.DarwinSystem).*Members[Q]).reset();
+      }
+      auto Missing = run("mach-self-port-missing");
+      ASSERT_TRUE(bool(Missing)) << llvm::toString(Missing.takeError());
+      EXPECT_EQ(Missing->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(Missing->Diagnostic,
+                std::string("Darwin current-") + Selections[Q] +
+                    " Mach port observation is not configured");
+      EXPECT_EQ(Missing->StandardOutput, "!");
+      ASSERT_EQ(Missing->Services.size(), 2u);
+      EXPECT_EQ(Missing->Services.back().Number,
+                X64 ? uint64_t(0x1000000 | (27 + Q))
+                    : uint64_t(-int64_t(27 + Q)));
+      EXPECT_FALSE(Missing->Services.back().Result);
+      EXPECT_FALSE(Missing->Services.back().Error);
+      EXPECT_FALSE(Missing->Services.back().ThreadID);
+    }
+  }
+}
+
 TEST_P(DarwinProcess, ThreadIdentityPreservesExplicitBitsAndIndependentRuns) {
   Options.InstructionQuantum = 1024;
   const uint64_t Class =

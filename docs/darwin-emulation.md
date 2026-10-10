@@ -1802,3 +1802,31 @@ owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU thread_selfid ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master), [libpthread current-thread owner](https://github.com/apple-oss-distributions/libpthread/blob/42d026df5b07825070f60134b980a1ec2552dfee/kern/kern_support.c).
+
+## Explicit Mach self-port observations
+
+Raw Mach thread_self_trap27, task_self_trap28 and host_self_trap29 read independent optional uint32 observations: DarwinSystemOptions::ThreadSelfPort, TaskSelfPort and HostSelfPort, encoded by darwin_system.thread_self_port, task_self_port and host_self_port. Each query requires only its selected field. Missing is unknown and stops UnsupportedService; zero, equal names and every32-bit pattern are explicit values. Inputs accept exact integers or decimal strings through UINT32_MAX. They do not inherit the positive pid_t bounds of process_group_id/session_id.
+
+The system owner converts the name through the signed int32 kernel result into the raw64 carrier: 0x80000001 becomes0xffffffff80000001 and UINT32_MAX becomesUINT64_MAX. The existing Mach binding preserves flags and X1/RDX, keeps x64 RCX/R11 syscall clobbers, ignores all arguments and accesses no memory. Low32 resolution retains the full raw number in events. Mach query events omit the BSD error field and never synthesize a scheduler ThreadID. Reusing options preserves the observation; independent options remain independent.
+
+Original ARM64 O0/O1/O2 preparation retains432 raw observations, all16 NZCV combinations, high32 number prefixes, seeded carriers and SDK agreement. No native bit31 port name was observed; high-bit sign extension is a pinned XNU return-path contract with independent literal model/guest/public tests. The common native fixture checks only within-process relationships. Literal virtual names and missing-input modes do not enter native deterministic references. These observations do not allocate names or send references, authenticate live rights, infer uniqueness or implement IPC/lifetime/thread scheduling. Permission/ACL enforcement, readiness, advancing clocks, real Mach IPC/threads, dyld/TLS and full runtimes/frameworks remain incomplete. Native Intel HVF and physical iOS remain unverified.
+
+```json
+{"darwin_system":{"thread_self_port":2147483649,"task_self_port":0,"host_self_port":"4294967295"}}
+```
+
+```text
+Mach thread_self_trap27 / task_self_trap28 / host_self_trap29
+ThreadSelfPort / TaskSelfPort / HostSelfPort / uint32 / signed-int32 -> raw64
+known0 / missing -> UnsupportedService / no arguments or memory
+low32 resolution / complete raw number / flags and RDX-X1 preserved / no BSD error
+mach-self-ports / mach-self-port-values / mach-self-port-missing
+MachSelfPortsPreserveExplicitBitsAndIndependentRuns
+6 model cases / 20 transport parameters / 26 public cases / 5 Python profiles
+70 mandatory workloads per platform / ARM64 210 / Intel 140 unverified
+original ARM64 O0/O1/O2 probes432 / no native bit31 name observed
+native5s / compile120s / drain1s / reap1s
+owner/build1200s / guest/Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU Mach trap table](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/syscall_sw.c), [self-port name owners](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_tt.c), [host-port owner](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/kern/ipc_host.c), [ARM64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/arm64/bsd_arm64.c), [x64 return](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/osfmk/i386/bsd_i386.c).

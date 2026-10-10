@@ -500,6 +500,124 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertIsNone(result["android"]["native_calls"][-1]["result"])
         self.assertIn("no explicit linux_time input", result["diagnostic"])
 
+    def test_darwin_mach_self_ports_preserve_raw_carriers_and_independent_inputs(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import NeverDError, Session
+        from neverd_plugin.ffi import HostAPI
+
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        fields = ("thread_self_port", "task_self_port", "host_self_port")
+        mixed = dict(zip(fields, (2147483649, 0, "4294967295")))
+        samples = ((0, "0000000000000000", "0"),
+                   (1, "0100000000000000", "1"),
+                   (2147483647, "ffffff7f00000000", "7fffffff"),
+                   (2147483648, "00000080ffffffff", "ffffffff80000000"),
+                   ("2147483649", "01000080ffffffff", "ffffffff80000001"),
+                   (4294967295, "ffffffffffffffff", "ffffffffffffffff"),
+                   ("4294967295", "ffffffffffffffff", "ffffffffffffffff"))
+        for profile, architecture in (("macos", "x86_64"), ("macos", "arm64"),
+                                      ("ios", "arm64"), ("ios-simulator", "x86_64"),
+                                      ("ios-simulator", "arm64")):
+            path = str((Path(fixtures) / f"{profile}-{architecture}").resolve(strict=True))
+            name = f"{profile}-macho64-v1"
+            x64 = architecture == "x86_64"
+            numbers = []
+            for q in range(3):
+                low = (0x1000000 | (27 + q)) if x64 else (-(27 + q) & 0xffffffff)
+                prefixes = [0 if x64 else 0xffffffff00000000, 0, 0,
+                            0x1234567800000000, 0x1234567800000000,
+                            0xffffffff00000000, 0xffffffff00000000]
+                numbers.extend(f"{prefix | low:x}" for prefix in prefixes)
+
+            def check(result, carriers, expected):
+                self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                self.assertEqual(result["exit_status"], 37)
+                self.assertEqual(bytes.fromhex(result["stdout_hex"]), expected)
+                self.assertEqual(result["stderr_hex"], "")
+                calls = result["services"]
+                self.assertEqual(len(calls), 22)
+                self.assertEqual([c["number"] for c in calls[:21]], numbers)
+                self.assertEqual([c["result"] for c in calls[:21]],
+                                 [v for value in carriers for v in [value] * 7])
+                for call in calls[:21]:
+                    self.assertNotIn("error", call)
+                    self.assertNotIn("thread_id", call)
+                    self.assertEqual(call["arguments"][0], "ffffffffffffffff")
+                    self.assertEqual(call["arguments"][2 if x64 else 1], "1122334455667788")
+                    self.assertEqual(call["arguments"][1 if x64 else 2], "8877665544332211")
+                self.assertEqual(calls[-1]["number"], "2000004" if x64 else "4")
+                self.assertEqual(calls[-1]["arguments"][0], "1")
+                self.assertEqual(calls[-1]["arguments"][2], f"{len(expected):x}")
+                self.assertEqual(calls[-1]["result"], f"{len(expected):x}")
+                self.assertFalse(calls[-1]["error"])
+                self.assertNotIn("thread_id", calls[-1])
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+            options = {"backend": "unicorn", "instruction_quantum": 1024,
+                       "timeout_microseconds": 5000000,
+                       "arguments": ["guest", "mach-self-port-values"]}
+            for wire, hex_bytes, carrier in samples:
+                options["darwin_system"] = dict.fromkeys(fields, wire)
+                request = json.dumps(options)
+                previous = None
+                for repeat in range(2):
+                    with self.subTest(profile=name, architecture=architecture, port=wire, repeat=repeat):
+                        result = session.emulate_process(path, name, request)
+                        check(result, [carrier] * 3, bytes.fromhex(hex_bytes * 3))
+                        if previous is not None:
+                            self.assertEqual(result, previous)
+                        previous = result
+            options["darwin_system"] = mixed.copy()
+            result = session.emulate_process(path, name, json.dumps(options))
+            check(result, ["ffffffff80000001", "0", "ffffffffffffffff"],
+                  bytes.fromhex("01000080ffffffff0000000000000000ffffffffffffffff"))
+            options["arguments"][1] = "mach-self-ports"
+            result = session.emulate_process(path, name, json.dumps(options))
+            check(result, ["ffffffff80000001", "0", "ffffffffffffffff"], b"J")
+            for q, selection in enumerate(("thread", "task", "host")):
+                options["arguments"] = ["guest", "mach-self-port-missing", selection]
+                for state in range(3):
+                    options.pop("darwin_system", None)
+                    if state:
+                        options["darwin_system"] = {}
+                    if state == 2:
+                        options["darwin_system"] = {**mixed, "thread_id": "18446744073709551615"}
+                        del options["darwin_system"][fields[q]]
+                    result = session.emulate_process(path, name, json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "unsupported_service")
+                    self.assertEqual(result["diagnostic"],
+                                     f"Darwin current-{selection} Mach port observation is not configured")
+                    self.assertEqual(bytes.fromhex(result["stdout_hex"]), b"!")
+                    self.assertEqual(len(result["services"]), 2)
+                    last = result["services"][-1]
+                    number = (0x1000000 | (27 + q)) if x64 else (-(27 + q) & 0xffffffffffffffff)
+                    self.assertEqual(last["number"], f"{number:x}")
+                    self.assertIsNone(last["result"])
+                    self.assertNotIn("error", last)
+                    self.assertNotIn("thread_id", last)
+            for field in fields:
+                for bad in (None, True, False, {}, [], -1, 1.5, 4294967296,
+                            9007199254740992, 18446744073709551615,
+                            "", "-1", "1.5", "0x10", "x", "4294967296",
+                            "18446744073709551615", "1\x00"):
+                    options["darwin_system"] = {field: bad}
+                    with self.assertRaises(NeverDError) as caught:
+                        session.emulate_process(path, name, json.dumps(options))
+                    self.assertIn(field, str(caught.exception))
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_thread_identity_preserves_full_bits_and_independent_runs(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
