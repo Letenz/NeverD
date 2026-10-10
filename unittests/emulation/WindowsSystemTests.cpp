@@ -407,7 +407,8 @@ TEST(WindowsSystemNative, RunsOriginalSystemModuleExecutable) {
       llvm::outs() << ObservationLabel << C.Argument << ' ' << Status << ' '
                    << llvm::toHex((*Out)->getBuffer()) << '\n';
       EXPECT_EQ(Status, ExitStatus) << llvm::toHex((*Err)->getBuffer());
-      EXPECT_TRUE((*Err)->getBuffer().empty());
+      EXPECT_TRUE((*Err)->getBuffer().empty())
+          << llvm::toHex((*Err)->getBuffer());
       EXPECT_EQ(llvm::toHex((*Out)->getBuffer()), C.Expected);
     }
   }
