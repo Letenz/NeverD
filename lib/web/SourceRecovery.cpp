@@ -13,7 +13,7 @@
 
 #include "RecoveryParser.h"
 
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 
 #include <algorithm>
 

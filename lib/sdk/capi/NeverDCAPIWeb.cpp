@@ -273,6 +273,67 @@ const char *neverd_web_electron_manifest_analyze_json(
 #endif
 }
 
+const char *neverd_web_packages_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *InputKind, size_t InputKindSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.analyzePackages(buffer(ExpectedRevision, RevisionSize, 20),
+                             buffer(ArtifactID, ArtifactIDSize, 64),
+                             buffer(InputKind, InputKindSize, 32));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_package_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.packageRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                            buffer(AnalysisID, AnalysisIDSize, 64),
+                            buffer(RecordKind, RecordKindSize, 32), Offset,
+                            Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_packages_compare_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *BeforeID, size_t BeforeIDSize,
+    const char *AfterID, size_t AfterIDSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.comparePackages(buffer(ExpectedRevision, RevisionSize, 20),
+                             buffer(BeforeID, BeforeIDSize, 64),
+                             buffer(AfterID, AfterIDSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_package_diff_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *DiffID, size_t DiffIDSize, uint64_t Offset,
+    uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.packageDiffRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                                buffer(DiffID, DiffIDSize, 64), Offset, Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_electron_source_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize) {

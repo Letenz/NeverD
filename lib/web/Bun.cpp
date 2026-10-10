@@ -13,8 +13,8 @@
 
 #include "BunContainer.h"
 
+#include "neverd/web/Error.h"
 #include "neverd/web/Limits.h"
-#include "neverd/web/Session.h"
 #include "neverd/web/SourceLocation.h"
 
 #include <algorithm>

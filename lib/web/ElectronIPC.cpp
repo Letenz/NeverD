@@ -13,7 +13,7 @@
 
 #include "ElectronSelection.h"
 
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 
 #include <algorithm>
 #include <map>

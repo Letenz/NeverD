@@ -360,6 +360,16 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebPackages.*` in `NeverDWebArtifactTests` covers npm v1/v2/v3 placement,
+hidden locks, aliases/workspaces, optional/peer rules, declaration conflicts,
+field evidence coverage, two-root diffs and metadata budgets. The optional
+`NEVERD_NPM_CLI_1190_LOCK` path enables the pinned full npm CLI v11.9.0 lockfile
+case described in the [package profile](web-package-profile.md). It performs
+no download or installation. `WebPackageSDK.*` and `NeverDWorkerWeb` exercise
+metadata pages, stale IDs, private canaries and direct/framed adapter parity.
+Run the owning web CTest directory after changes to shared artifact/error or
+session boundaries; unavailable parser/compression/host profiles remain explicit.
+
 The Bun profile's C++ cases add preserved compiler graph hashes, synthetic
 hostile ELF/graph layouts, source encoding and immutable range checks. Set
 `NEVERD_BUN_142_CORPUS` to the pinned full-image corpus to qualify complete

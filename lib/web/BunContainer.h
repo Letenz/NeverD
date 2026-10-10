@@ -12,7 +12,7 @@
 #pragma once
 
 #include "neverd/web/Bun.h"
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 
 namespace neverd::web::bun_detail {
 struct Range {

@@ -12,8 +12,8 @@
 #pragma once
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Error.h"
 #include "neverd/web/Limits.h"
-#include "neverd/web/Session.h"
 
 #include "llvm/Support/JSON.h"
 

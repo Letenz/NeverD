@@ -14,7 +14,7 @@
 #include "JsonReader.h"
 #include "ada.h"
 
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 
 #include <algorithm>
 #include <set>

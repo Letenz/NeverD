@@ -13,6 +13,8 @@
 #include "Internal.h"
 #include "gtest/gtest.h"
 
+#include "neverd/web/Session.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/SHA256.h"

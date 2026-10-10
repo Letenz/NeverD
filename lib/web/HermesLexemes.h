@@ -14,7 +14,7 @@
 // Parser-only boundary. Do not include LLVM headers in this translation unit.
 #include "hermes/Parser/JSParser.h"
 
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 #include "neverd/web/Source.h"
 
 #include <algorithm>

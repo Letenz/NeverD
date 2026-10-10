@@ -11,8 +11,8 @@
 
 #pragma once
 
+#include "neverd/web/Error.h"
 #include "neverd/web/HTML.h"
-#include "neverd/web/Session.h"
 
 #include <algorithm>
 #include <functional>

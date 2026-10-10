@@ -11,7 +11,7 @@
 
 #include "neverd/web/ParserBudget.h"
 
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 
 namespace neverd::web {
 namespace {

@@ -12,7 +12,7 @@
 #include "neverd/web/SourceLocation.h"
 
 #include "neverd/web/Artifact.h"
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 
 #include <algorithm>
 

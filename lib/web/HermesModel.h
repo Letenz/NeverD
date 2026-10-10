@@ -16,7 +16,7 @@
 #include "hermes/AST/ESTree.h"
 
 #include "neverd/web/Artifact.h"
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 #include "neverd/web/Source.h"
 
 namespace neverd::web {

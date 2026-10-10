@@ -19,8 +19,8 @@
 #include "llvh/Support/MemoryBuffer.h"
 
 #include "neverd/web/Artifact.h"
+#include "neverd/web/Error.h"
 #include "neverd/web/ParserBudget.h"
-#include "neverd/web/Session.h"
 #include "neverd/web/Source.h"
 
 #include <cfenv>

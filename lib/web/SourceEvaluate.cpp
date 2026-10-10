@@ -13,7 +13,7 @@
 #include "SourceModel.h"
 
 #include "neverd/web/Artifact.h"
-#include "neverd/web/Session.h"
+#include "neverd/web/Error.h"
 #include "neverd/web/SourceValues.h"
 
 #include "llvm/ADT/APFloat.h"
