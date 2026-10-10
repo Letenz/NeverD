@@ -222,7 +222,7 @@ it under `share/neverd/licenses/webpack`.
 
 ## Bun layout reference and generated corpus
 
-The independent C++ Bun reader follows the ELF, standalone graph and serialized
+The independent C++ Bun reader follows the ELF/Mach-O/PE, standalone graph and serialized
 source-map data formats from `oven-sh/bun` commit
 `744846f844374847c902b5e7fd59b4342a51ef99` (`bun-v1.4.2`). The self-authored
 fixture graph data may contain JavaScript scaffolding emitted by that compiler.

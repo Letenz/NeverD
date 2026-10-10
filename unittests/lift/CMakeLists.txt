@@ -1041,6 +1041,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/AffineFrameStateTests.cpp
   core/ResolverGraphCacheTests.cpp
   core/ResolverLaneViewTests.cpp
+  core/JumpTableCountLaneTests.cpp
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
@@ -2240,6 +2241,7 @@ set(X86_64_TEST_SOURCES
   x86_64/test_jumptable_lost_published.s
   x86_64/test_jumptable_target_ownership.s
   x86_64/test_jumptable_selector_occurrence.s
+  x86_64/test_jumptable_count_lane.s
   x86_64/test_jumptable_mask_equal_bound.s
   x86_64/test_jumptable_field_reload.s
   x86_64/test_module_address_owner_induction.s

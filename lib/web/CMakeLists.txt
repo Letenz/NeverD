@@ -1,5 +1,8 @@
 add_neverd_component_library(NeverDWeb
   ArtifactStore.cpp
+  packages/PackageReader.cpp
+  packages/PackageDiff.cpp
+  SessionPackages.cpp
   HTML.cpp
   HTMLReferences.cpp
   HTMLLinks.cpp
@@ -16,6 +19,7 @@ add_neverd_component_library(NeverDWeb
   PathPolicy.cpp
   BlobStore.cpp
   Bun.cpp
+  BunContainer.cpp
   BunSourceMap.cpp
   SessionBun.cpp
   SessionBunExport.cpp

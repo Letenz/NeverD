@@ -1,3 +1,14 @@
+//===- SessionBunExport.cpp - Verified Bun recovery export -------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Verified Bun recovery export.
+///
+//===----------------------------------------------------------------------===//
+
 #include "ExportDirectory.h"
 #include "RecoveryParser.h"
 #include "SessionInternal.h"
@@ -167,6 +178,9 @@ std::string Session::exportBun(std::string_view ExpectedRevision,
       {"status", "ok"},
       {"export_profile", "bun-local-evidence-export-v1"},
       {"layout_profile", E.Profile},
+      {"container_format", E.ContainerFormat},
+      {"platform", E.Platform},
+      {"architecture", E.Architecture},
       {"extraction_id", E.ID},
       {"original_sha256", Original->BlobHash},
       {"original_bytes", std::to_string(Original->Content.size())},

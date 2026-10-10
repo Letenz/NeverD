@@ -360,6 +360,16 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebPackages.*` in `NeverDWebArtifactTests` covers npm v1/v2/v3 placement,
+hidden locks, aliases/workspaces, optional/peer rules, declaration conflicts,
+field evidence coverage, two-root diffs and metadata budgets. The optional
+`NEVERD_NPM_CLI_1190_LOCK` path enables the pinned full npm CLI v11.9.0 lockfile
+case described in the [package profile](web-package-profile.md). It performs
+no download or installation. `WebPackageSDK.*` and `NeverDWorkerWeb` exercise
+metadata pages, stale IDs, private canaries and direct/framed adapter parity.
+Run the owning web CTest directory after changes to shared artifact/error or
+session boundaries; unavailable parser/compression/host profiles remain explicit.
+
 The Bun profile's C++ cases add preserved compiler graph hashes, synthetic
 hostile ELF/graph layouts, source encoding and immutable range checks. Set
 `NEVERD_BUN_142_CORPUS` to the pinned full-image corpus to qualify complete
@@ -443,6 +453,15 @@ Navigation/anchor cases compare ordinary, Bun and compressed-map storage
 precision, committed-view coverage, revisions and direct/framed query parity.
 CLI cases also exercise `bun-navigate`, `bun-view` and `bun-anchor` with an
 unusable external-tool PATH.
+
+The optional `NEVERD_BUN_142_CROSS_CORPUS` is documented in the
+[Bun cross-container corpus](../unittests/web/fixtures/bun/cross/README.md).
+`WebBun.CrossPlatformFullCompilerContainersWhenSupplied` validates twenty pinned
+ELF/Mach-O/PE compiler images for the additional ARM64/x64 targets; absent full
+images are a skip. Preserved graph tests use synthetic wrappers and cannot
+replace this qualification. All reads, negative mutations and golden member
+checks are C++, and the generated targets are never run.
+
 `NeverDWebNativeTests` compares file and immutable-buffer loading of synthetic
 ELF/PE/thin Mach-O, verifies direct native bytes and static decompilation after
 web/input destruction, rejects truncated images and implicit universal slices,
@@ -790,6 +809,18 @@ partial address clobbers and exhausted shared evidence. Both C routes, including
 optimized and unoptimized LLVMC, execute every byte selector and four table-select
 inputs at O0/O2 with undefined-behavior traps against the fixture formula.
 The existing deep selector-copy refusals remain covered independently.
+
+`ResolverCountLane.*` checks that scalar POPCOUNT/LZCOUNT results and their
+zero-extended low bytes identify the same value on x86, x64 and AArch64 LowIR.
+Malformed operands, wider inputs, different byte lanes, unrelated operations
+and exhausted work remain negative controls; cached answers retain cold work
+charges. `JumpTableCountLane.*` uses actual x64 TZCNT/POPCNT/LZCNT instructions
+with 32/64-bit inputs and byte/full-width guards. High-bit arithmetic and
+partial-register writes must prevent recovery. Relative-table HighC and
+absolute-table HighC, optimized LLVMC and unoptimized LLVMC execute zero,
+all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
+The existing deep-arithmetic narrow guards must retain their exact-definition
+proof before the batched extension-range fallback is considered.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new

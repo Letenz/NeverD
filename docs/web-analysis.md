@@ -4,7 +4,7 @@ The `neverd web` command and independent C API inspect admitted files without
 executing them. The current implementation provides immutable artifact
 inventory, JavaScript syntax and lexical-binding queries, bounded primitive
 values, conservative effect metadata, module evidence, qualified bundle partitions,
-reviewed source views and source-map decoding. Versioned Bun ELF profiles preserve source, asset,
+reviewed source views and source-map decoding. Versioned Bun ELF/Mach-O/PE profiles preserve source, asset,
 map and cache ranges and feeds decoded source into the same analysis API.
 The ASAR reader admits packed members and explicitly associated captured
 unpacked files, with shared source/map/native selection and integrity checks.
@@ -20,6 +20,8 @@ JavaScript, package, desktop and protocol work remains in progress; see the
 
 ```console
 neverd web capabilities
+neverd web packages ./package-lock.json npm-lock
+neverd web packages ./package.json package-json
 neverd web bun-export ./standalone-elf ./new-recovery-directory
 neverd web inspect ./input-directory
 neverd web source ./bundle.js script
@@ -71,6 +73,12 @@ installation, plugin loading, subprocess analyzer or automatic network/file
 resolution. Input bytes are data, including `eval`, `require`, imports,
 source-map references and executable configuration files.
 
+The [package evidence profile](web-package-profile.md) adds explicitly selected
+npm v1/v2/v3 lockfile and manifest inspection, bounded graph pages and comparisons
+of two supplied roots. Placement candidates, integrity declarations, missing
+evidence and version/platform uncertainty remain separate; it neither installs
+packages nor issues a benignness verdict.
+
 Bun extraction is explicitly selected and follows
 [versioned layouts](web-bun-profile.md). Module/region pages preserve original
 container offsets and hashes; derived source IDs select strict UTF-8 decoding
@@ -81,7 +89,9 @@ decoded-source identities remain separate. The producer's lost names/unmapped
 boundaries are reported explicitly; JSC caches remain opaque. The original
 container and native asset members can be selected for the explicit native
 handoff described below. Raw export is available through the CLI and C API;
-the worker does not expose filesystem export. Other Bun platforms remain pending.
+the worker does not expose filesystem export. Bun input profiles cover Linux,
+macOS and Windows on x64/ARM64; the [matrix](web-bun-profile.md) distinguishes
+input formats from host qualification and remaining unsupported layouts.
 
 ## SDK lifecycle
 

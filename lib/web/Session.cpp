@@ -1,3 +1,14 @@
+//===- Session.cpp - Offline analysis session --------------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Offline analysis session.
+///
+//===----------------------------------------------------------------------===//
+
 #include "PathPolicy.h"
 #include "RecoveryParser.h"
 #include "SessionInternal.h"
@@ -60,6 +71,25 @@ std::string Session::capabilities() {
                          {"max_cached_map_segments", 200000},
                          {"resolves_external_references", false}}};
   Operations.emplace_back("electron_manifest_analyze");
+  for (const auto *Name : {"packages_analyze", "package_records",
+                           "packages_compare", "package_diff_records"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "node_package_metadata"},
+      {"profile", std::string(PackageProfile)},
+      {"input_kinds", llvm::json::Array{"npm-lock", "package-json"}},
+      {"npm_lock_versions", llvm::json::Array{1, 2, 3}},
+      {"max_metadata_bytes", std::to_string(MaxPackageMetadataBytes)},
+      {"max_instances", MaxPackageInstances},
+      {"max_dependencies", MaxPackageEdges},
+      {"max_cached", 4},
+      {"max_cached_diffs", 4},
+      {"dependency_resolution", "supplied_placement_candidates_only"},
+      {"verifies_version_satisfaction", false},
+      {"integrity_verification", "declarations_only"},
+      {"advisory_analysis", "unavailable"},
+      {"executes_input", false},
+      {"resolves_external_references", false}});
   Operations.emplace_back("html_analyze");
   Operations.emplace_back("html_records");
   Analyses.emplace_back(llvm::json::Object{
@@ -121,11 +151,13 @@ std::string Session::capabilities() {
       {"executes_input", false},
       {"companion_file_discovery", false},
       {"resource_domain", "native_loader_and_pipeline"}});
+  llvm::json::Array BunProfiles;
+  for (const auto &P : bunProfiles())
+    BunProfiles.emplace_back(P);
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "bun_standalone_extraction"},
       {"profile", std::string(BunProfile)},
-      {"profiles", llvm::json::Array{std::string(BunProfile),
-                                     std::string(BunPrelinkedProfile)}},
+      {"profiles", std::move(BunProfiles)},
       {"max_modules", MaxBunModules},
       {"max_builtins", MaxBunBuiltins},
       {"max_private_name_bytes", std::to_string(MaxBunNameBytes)},
@@ -399,6 +431,8 @@ std::string Session::commit(std::string_view Token) {
   State->ElectronSources.clear();
   State->ElectronIPCs.clear();
   State->ElectronEntryAnalyses.clear();
+  State->PackageAnalyses.clear();
+  State->PackageDiffs.clear();
   State->HTMLDocuments.clear();
   State->CachedNodes = 0;
   State->CachedLexemes = 0;

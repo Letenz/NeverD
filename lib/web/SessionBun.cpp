@@ -1,3 +1,14 @@
+//===- SessionBun.cpp - Bun extraction publication ---------------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Bun extraction publication.
+///
+//===----------------------------------------------------------------------===//
+
 #include "SessionInternal.h"
 
 namespace neverd::web {
@@ -10,6 +21,9 @@ llvm::json::Object summary(const BunExtraction &E, uint64_t Revision) {
       {"extraction_id", E.ID},
       {"artifact_id", E.ArtifactID},
       {"profile", E.Profile},
+      {"container_format", E.ContainerFormat},
+      {"platform", E.Platform},
+      {"architecture", E.Architecture},
       {"layout_status", "compatible"},
       {"producer_version_verified", false},
       {"graph_offset", std::to_string(E.GraphOffset)},

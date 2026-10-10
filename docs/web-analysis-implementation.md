@@ -39,10 +39,10 @@ their existing scope; no Python support for web APIs is claimed.
 | P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified | Broader host qualification and redaction/export remain; Windows pending |
 | P2 SDK/CLI/worker | Thirty-four SDK/CLI tests passed, including navigation/storage/view anchors and direct Bun navigation/view/anchor commands; C++ worker adapter/framed-process and all nine worker regressions passed | Broader host, cancellation/resource and distribution qualification remain |
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
-| P4A Bun extraction | Fixed Linux x64 extraction, decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff implemented; five full compiler outputs, ten extraction/range and six map cases passed | Other Bun platforms remain; JSC caches stay opaque |
+| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions and independent SEA/pkg/nexe adapters remain; JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR packed/unpacked extraction; Electron manifest entries, source-visible boundaries, scoped IPC comparison, captured preload/renderer files and HTML/import-map candidates implemented; qualification recorded below | External-source HTML contexts and full import closure, runtime/window routing, distribution detection, safe export, NW.js/VSIX and broader host/release qualification remain |
-| P4C package graph/diff | Pending | npm lock v1/v2/v3, integrity/provenance, dispositions, platform artifacts |
+| P4C package graph/diff | Versioned npm v1/v2/v3 graph, captured manifests, metadata-only SDK/CLI/worker and two-root evidence comparison implemented | Archive admission, integrity verification, source behavior, advisory/provenance, dispositions and readable reports remain |
 | P4D passive interfaces/HAR | Pending | Static-only, HAR-only, correlation, uncertainty and redaction tests |
 | P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
 | P6 stream/log consumers | Pending | SSE/JSONL/JSON-RPC/MCP versioned records, truncation and canary tests |
@@ -126,6 +126,58 @@ product distribution or installation of all targets.
 No new Python, JavaScript or shell implementation/test scripts were added.
 
 ## Next implementation boundary
+
+The Node metadata increment adds `node-package-evidence-v1` through C++ core,
+session, SDK, CLI and worker layers. Twenty-six core tests include the pinned
+npm CLI v11.9.0 lockfile: 1,230 instances and 2,426 dependency declarations.
+Three SDK/CLI tests and five selected C++ worker regressions passed. Package
+checks run with an unusable external-tool PATH. Review regressions distinguish
+legacy fetch specifications from package versions, optional normalization,
+workspace peer context, hidden-lock bases, unrecorded package boundaries and
+missing manifest coverage. See the [package profile](web-package-profile.md).
+The owning web regression completed 327 cases: 320 passed and seven explicitly
+skipped (six unavailable LLVM Zstd map cases and the inapplicable ASAR-policy
+omission case). This includes complete Claude Code readable-source recovery
+and the six-platform Bun corpus. The enabled-backend capability test passed;
+the backend-omission-only API case was inapplicable and skipped.
+
+The official Claude Code 2.1.296 registry response was separately inspected as
+explicit `package-json` evidence: one root, eight optional platform dependency
+declarations, two scripts and one bin declaration. Its 3,531 bytes have SHA-256
+`0fb79dc0c21d02fc14feeb7f9a86fa15ca3937598f9f3a6a03816bb15e7fa6e4`.
+This is a projection of supplied registry metadata, not inspection of an npm
+tarball or proof that its native binary matches the standalone distribution.
+No declared script ran and no dependency was resolved. Archive/hash comparison
+is the next package boundary; #715 remains partial.
+
+The user-required LLVM filename/project/Doxygen headers now cover the web
+implementation and its C++ fixtures/adapters. Package algorithms have their
+own `lib/web/packages` directory. Fixed diagnostics moved to `web/Error.h`,
+removing the bottom-up dependency from readers/algorithms to the session API.
+The existing `Session.h` still includes that contract for source compatibility.
+
+On 2026-10-11 the Bun container reader was separated from the shared graph
+decoder and qualified for Linux, macOS and Windows x64/ARM64 input images on
+the macOS arm64 Release host. Twenty additional full pinned compiler images
+cover each new target's plain source, UTF-16, assets/maps and bytecode/maps.
+Independent C++ manifests retain full-container and member hashes; the graph
+bytes are checked in, and native runtimes stay outside the repository.
+The existing five Linux x64 images and official Claude Code input still pass.
+Mach-O tests additionally mutate typed commands, metadata aliases and platform
+declarations, including the real x64/ARM64 images. A metadata read in the new
+test initially exceeded the store's 8-MiB per-read bound; changing that test to
+bounded reads fixed it without changing production limits.
+
+The owning web run exercised 298 cases: 291 passed after that test repair;
+six map cases require unavailable LLVM Zstd support, and one ASAR-policy
+omission case is inapplicable in this enabled build. All seven selected worker
+regressions passed. The new SDK case checks all six targets' profile metadata,
+decoded sources and verified local export. Manual CLI analysis of real Linux,
+macOS and Windows ARM64 files succeeded with an unusable external-tool PATH.
+No generated target or downloaded application was executed. These results
+qualify extraction, not a Windows analyzer host, cache decoding, signature
+validation or arbitrary future Bun versions. See the
+[Bun profile](web-bun-profile.md) for precise admission and corpus contracts.
 
 The C++ source model now retains field roles, list ordinals and exact UTF-16
 values privately. Thirteen binding cases cover shadowing/hoisting, parameter
