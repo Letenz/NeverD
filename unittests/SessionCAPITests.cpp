@@ -3560,6 +3560,58 @@ TEST_F(SessionCAPITest,
   }
 }
 
+TEST_F(SessionCAPITest, CSourcePagesRetainCanonicalReturnAnchors) {
+  for (bool AArch64 : {false, true}) {
+    const uint64_t Base = AArch64 ? 0xffff800000400000ULL : 0x400000;
+    const auto Path = write("source-anchors.elf", makeNativeELF(AArch64, Base));
+    ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+    const auto Entry = neverd_session_entry_addr(Session);
+    const auto Return = Entry + (AArch64 ? 4 : 5);
+    for (const char *Stage : {"c", "llvmc", "source"}) {
+      SCOPED_TRACE(Stage);
+      const auto Original =
+          takeString(std::strcmp(Stage, "llvmc") == 0
+                         ? neverd_decompile_llvm(Session, Entry)
+                         : neverd_decompile(Session, Entry));
+      ASSERT_FALSE(Original.empty());
+      std::string Text;
+      size_t Offset = 0, Mapped = 0;
+      for (;;) {
+        auto Page =
+            takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
+        ASSERT_EQ(Page.getString("mapping_status"), "instruction_anchors");
+        EXPECT_EQ(Page.getInteger("byte_offset"), Text.size());
+        const auto Chunk = Page.getString("text");
+        ASSERT_TRUE(Chunk);
+        Text += Chunk->str();
+        const auto *Rows = Page.getArray("rows");
+        ASSERT_NE(Rows, nullptr);
+        for (const auto &Value : *Rows) {
+          const auto *Row = Value.getAsObject();
+          ASSERT_NE(Row, nullptr);
+          const auto *Addresses = Row->getArray("addresses");
+          ASSERT_NE(Addresses, nullptr);
+          if (!Addresses->empty()) {
+            ASSERT_EQ(Addresses->size(), 1u);
+            const auto Address = Addresses->front().getAsString();
+            ASSERT_TRUE(Address);
+            EXPECT_EQ(std::stoull(Address->str(), nullptr, 16), Return);
+            EXPECT_EQ(Row->getString("mapping_status"), "instruction_anchor");
+            ++Mapped;
+          }
+        }
+        if (Page.getBoolean("complete").value_or(false))
+          break;
+        ASSERT_TRUE(Page.getInteger("next_offset"));
+        Offset = *Page.getInteger("next_offset");
+        ASSERT_LT(Offset, 1000u);
+      }
+      EXPECT_EQ(Text, Original);
+      EXPECT_GT(Mapped, 0u);
+    }
+  }
+}
+
 TEST_F(SessionCAPITest, SourceViewsReadInTheProgramsLanguages) {
   // Pages of two lines reassemble the whole text; the first page says what
   // the text reads in, and each page the source names on it.
@@ -3744,7 +3796,8 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
     for (;;) {
       auto Page =
           takeView(neverd_ir_view_json(Session, Entry, Stage, Offset, 2));
-      ASSERT_EQ(Page.getString("mapping_status"), "library_regions");
+      EXPECT_TRUE(Page.getString("mapping_status") == "library_regions" ||
+                  Page.getString("mapping_status") == "instruction_anchors");
       EXPECT_EQ(Page.getInteger("byte_offset"), Assembled.size());
       ASSERT_TRUE(Page.getString("text"));
       Assembled += Page.getString("text")->str();

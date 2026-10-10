@@ -276,7 +276,8 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
             R.Scope != sigs::LibraryFeatureScope::WholeFunction)
           SourceRegions.push_back(&R);
       auto Append = [&](sigs::LibraryOccurrence Occurrence, const ExprPtr &Expr,
-                        HighSourceKind Kind = HighSourceKind::Expression) {
+                        HighSourceKind Kind = HighSourceKind::Expression,
+                        std::optional<StmtKind> StatementKind = std::nullopt) {
         if (SourceOverflow)
           return;
         if (Sources[FI].size() >= 100000) {
@@ -287,7 +288,8 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
         }
         if (Expr)
           SourceIndex[Expr.get()].push_back(Sources[FI].size());
-        Sources[FI].push_back({MF.Entry, Occurrence, Expr, Kind});
+        Sources[FI].push_back(
+            {MF.Entry, Occurrence, Expr, Kind, StatementKind});
       };
       auto Observe = [&](sigs::LibraryOccurrence Occurrence,
                          const ExprPtr &Expr) {
@@ -332,11 +334,13 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
               Append(O, Expr);
         }
       };
+      Local.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
+        Append({Op.Addr, Op.OriginSeq}, {},
+               S.Kind == StmtKind::Store ? HighSourceKind::Store
+                                         : HighSourceKind::Statement,
+               S.Kind);
+      });
       if (RecognizedFunctions.contains(MF.Entry)) {
-        Local.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
-          if (S.Kind == StmtKind::Store)
-            Append({Op.Addr, Op.OriginSeq}, {}, HighSourceKind::Store);
-        });
         Local.setExpressionObserver(
             [&, FI](const MedOp &Op, const ExprPtr &Expr) {
               Observe({Op.Addr, Op.OriginSeq}, Expr);
@@ -449,7 +453,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   Result.HighFuncs = std::move(Pending);
   for (auto &Source : Sources)
     for (auto &Observation : Source)
-      if (Observation.Kind == HighSourceKind::Store ||
+      if (Observation.Kind != HighSourceKind::Expression ||
           !Observation.Expression.expired())
         Result.HighSources.push_back(std::move(Observation));
 }

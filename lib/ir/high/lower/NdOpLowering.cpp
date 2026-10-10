@@ -103,8 +103,6 @@ void MedToHighConverter::lowerStore(HighFunc &Func, const MedOp &CurOp) {
     else
       S.StoreVal = medvarToExpr(CurOp.Inputs[1]);
   }
-  if (StatementObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
-    StatementObserver(CurOp, S);
   Func.Body.push_back(std::move(S));
 }
 

@@ -288,30 +288,30 @@ bool anyStatement(const Stmt *S, bool StopAtSwitch, Fn &&Match) {
   if (Match(S))
     return true;
   switch (S->Kind) {
-  case StmtKind::While:
-  case StmtKind::DoWhile:
-  case StmtKind::For:
+  case csyntax::StmtKind::While:
+  case csyntax::StmtKind::DoWhile:
+  case csyntax::StmtKind::For:
     return false;
-  case StmtKind::Switch:
+  case csyntax::StmtKind::Switch:
     if (StopAtSwitch)
       return false;
     return anyStatement(S->Then, StopAtSwitch, Match);
-  case StmtKind::Compound:
+  case csyntax::StmtKind::Compound:
     for (const Stmt *Child : S->Body)
       if (anyStatement(Child, StopAtSwitch, Match))
         return true;
     return false;
-  case StmtKind::If:
+  case csyntax::StmtKind::If:
     return anyStatement(S->Then, StopAtSwitch, Match) ||
            anyStatement(S->Else, StopAtSwitch, Match);
-  case StmtKind::Try:
+  case csyntax::StmtKind::Try:
     if (anyStatement(S->Then, StopAtSwitch, Match))
       return true;
     for (const Handler &H : S->Handlers)
       if (anyStatement(H.Body, StopAtSwitch, Match))
         return true;
     return false;
-  case StmtKind::PseudoBlock:
+  case csyntax::StmtKind::PseudoBlock:
     return anyStatement(S->Then, StopAtSwitch, Match);
   default:
     return false;
@@ -322,13 +322,14 @@ bool anyStatement(const Stmt *S, bool StopAtSwitch, Fn &&Match) {
 
 bool DialectPrinter::continuesLoop(const Stmt *Body) {
   return anyStatement(Body, /*StopAtSwitch=*/false, [](const Stmt *S) {
-    return S->Kind == StmtKind::Continue;
+    return S->Kind == csyntax::StmtKind::Continue;
   });
 }
 
 bool DialectPrinter::breaksOut(const Stmt *Body) {
-  return anyStatement(Body, /*StopAtSwitch=*/true,
-                      [](const Stmt *S) { return S->Kind == StmtKind::Break; });
+  return anyStatement(Body, /*StopAtSwitch=*/true, [](const Stmt *S) {
+    return S->Kind == csyntax::StmtKind::Break;
+  });
 }
 
 bool DialectPrinter::callsNoreturn(const Expr *E) const {
@@ -351,23 +352,23 @@ bool DialectPrinter::callsNoreturn(const Expr *E) const {
 
 bool DialectPrinter::jumps(const Stmt *S) const {
   switch (S->Kind) {
-  case StmtKind::Break:
-  case StmtKind::Continue:
-  case StmtKind::Return:
-  case StmtKind::Goto:
-  case StmtKind::Throw:
-  case StmtKind::Leave:
+  case csyntax::StmtKind::Break:
+  case csyntax::StmtKind::Continue:
+  case csyntax::StmtKind::Return:
+  case csyntax::StmtKind::Goto:
+  case csyntax::StmtKind::Throw:
+  case csyntax::StmtKind::Leave:
     return true;
-  case StmtKind::Expression:
+  case csyntax::StmtKind::Expression:
     return callsNoreturn(S->Value);
-  case StmtKind::Compound:
+  case csyntax::StmtKind::Compound:
     for (auto It = S->Body.rbegin(); It != S->Body.rend(); ++It)
-      if ((*It)->Kind != StmtKind::Comment)
+      if ((*It)->Kind != csyntax::StmtKind::Comment)
         return jumps(*It);
     return false;
-  case StmtKind::If:
+  case csyntax::StmtKind::If:
     return S->Else && jumps(S->Then) && jumps(S->Else);
-  case StmtKind::While:
+  case csyntax::StmtKind::While:
     // `while (1)` without a break never completes.
     return S->Value->Value && *S->Value->Value != 0 && !breaksOut(S->Then);
   default:
@@ -378,12 +379,12 @@ bool DialectPrinter::jumps(const Stmt *S) const {
 std::optional<std::vector<SwitchArm>>
 DialectPrinter::switchArms(const Stmt *Switch) const {
   const Stmt *Body = Switch->Then;
-  if (Body->Kind != StmtKind::Compound)
+  if (Body->Kind != csyntax::StmtKind::Compound)
     return std::nullopt;
   std::vector<SwitchArm> Arms;
   for (const Stmt *S : Body->Body) {
-    const bool IsLabel =
-        S->Kind == StmtKind::Case || S->Kind == StmtKind::Default;
+    const bool IsLabel = S->Kind == csyntax::StmtKind::Case ||
+                         S->Kind == csyntax::StmtKind::Default;
     if (IsLabel) {
       if (Arms.empty() || !Arms.back().Body.empty())
         Arms.emplace_back();
@@ -391,7 +392,7 @@ DialectPrinter::switchArms(const Stmt *Switch) const {
       continue;
     }
     if (Arms.empty()) {
-      if (S->Kind == StmtKind::Comment)
+      if (S->Kind == csyntax::StmtKind::Comment)
         continue;
       return std::nullopt;
     }
@@ -400,7 +401,7 @@ DialectPrinter::switchArms(const Stmt *Switch) const {
   for (size_t I = 0; I + 1 < Arms.size(); ++I) {
     const std::vector<const Stmt *> &B = Arms[I].Body;
     auto Last = std::find_if(B.rbegin(), B.rend(), [](const Stmt *S) {
-      return S->Kind != StmtKind::Comment;
+      return S->Kind != csyntax::StmtKind::Comment;
     });
     Arms[I].FallsThrough = Last == B.rend() || !jumps(*Last);
   }

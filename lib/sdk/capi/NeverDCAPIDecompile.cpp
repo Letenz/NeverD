@@ -557,6 +557,12 @@ const Session::FunctionSource &dialectSource(neverd_session_t Sess, va_t Entry,
     if (auto Moved = Spelled.mapOffset(Definition.Begin))
       Definitions.push_back({Definition.Entry, *Moved});
   Map.Definitions = std::move(Definitions);
+  std::vector<CSourceAnchor> Anchors;
+  for (const auto &Anchor : Map.Anchors)
+    if (auto Moved = Spelled.map(Anchor.Span.Begin, Anchor.Span.End))
+      Anchors.push_back(
+          {Anchor.Function, {Moved->first, Moved->second}, Anchor.Occurrences});
+  Map.Anchors = std::move(Anchors);
   S.rememberFunctionSource(Entry, Route, std::move(Spelled.Text), &Map);
   Session::FunctionSource &Kept = *S.findFunctionSource(Entry, Route);
   Kept.Unread = std::move(Spelled.Unread);
@@ -600,6 +606,28 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   llvm::StringRef Full(Spelled);
   if (Full.size() > 32 * 1024 * 1024 || !llvm::json::isUTF8(Full))
     throw std::length_error("source view exceeds the UTF-8/32 MiB budget");
+  // Use the same canonical LowIR instruction/sequence gate as Low/Med pages.
+  // Neither a HighStmt address nor a surviving LLVM handle alone proves that
+  // the address is an original instruction boundary in this function.
+  const LowFunc *Low = S.findLowFunc(Entry);
+  const auto Canonical =
+      Low ? instructionOrigins(*Low) : std::set<std::pair<va_t, int>>();
+  std::vector<const CSourceAnchor *> Anchors;
+  for (const auto &Anchor : Map.Anchors)
+    if (Anchor.Function == Entry && Anchor.Span.Begin < Anchor.Span.End &&
+        Anchor.Span.End <= Full.size() && !Anchor.Occurrences.empty() &&
+        llvm::all_of(
+            Anchor.Occurrences,
+            [&](const auto &O) {
+              return Canonical.contains({O.Address, O.Sequence});
+            }))
+      Anchors.push_back(&Anchor);
+  std::stable_sort(Anchors.begin(), Anchors.end(),
+                   [](const auto *A, const auto *B) {
+                     return A->Span.Begin < B->Span.Begin;
+                   });
+  size_t NextAnchor = 0;
+  std::vector<const CSourceAnchor *> ActiveAnchors;
   llvm::json::Array Regions;
   for (const auto &Region : Map.Regions) {
     const auto &Match = (*Map.Recognitions)[Region.Recognition];
@@ -631,6 +659,13 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
     const size_t Newline = Full.find('\n', Start);
     const size_t End =
         Newline == llvm::StringRef::npos ? Full.size() : Newline + 1;
+    // Sweep spans once, retaining only events intersecting this physical row.
+    // A large function must not scan every instruction span for every line.
+    while (NextAnchor < Anchors.size() && Anchors[NextAnchor]->Span.Begin < End)
+      ActiveAnchors.push_back(Anchors[NextAnchor++]);
+    std::erase_if(ActiveAnchors, [Start](const auto *Anchor) {
+      return Anchor->Span.End <= Start;
+    });
     if (Total >= Offset && Total - Offset < Limit) {
       if (Text.empty())
         ByteOffset = Start;
@@ -639,6 +674,20 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
             "source page exceeds 2 MiB; request fewer lines");
       Text.append(Full.data() + Start, End - Start);
       std::set<va_t> Origins;
+      std::optional<va_t> Primary;
+      size_t SmallestSpan = std::numeric_limits<size_t>::max();
+      if (!Full.slice(Start, End).trim().empty())
+        for (const auto *Anchor : ActiveAnchors)
+          if (Anchor->Span.Begin < End && Start < Anchor->Span.End) {
+            for (const auto &Origin : Anchor->Occurrences)
+              Origins.insert(Origin.Address);
+            const size_t Width = Anchor->Span.End - Anchor->Span.Begin;
+            if (Width < SmallestSpan) {
+              SmallestSpan = Width;
+              Primary = Anchor->Occurrences.front().Address;
+            }
+          }
+      const bool InstructionAnchor = Primary.has_value();
       for (const auto &Region : Map.Regions) {
         const auto &Match = (*Map.Recognitions)[Region.Recognition];
         if (Match.Function != Entry || !Region.Mapped)
@@ -649,6 +698,10 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
               Origins.insert(Origin.Address);
       }
       llvm::json::Array Addresses;
+      if (Primary) {
+        Addresses.push_back(vaHex(*Primary));
+        Origins.erase(*Primary);
+      }
       for (va_t Address : Origins)
         Addresses.push_back(vaHex(Address));
       Rows.push_back(llvm::json::Object{
@@ -657,7 +710,9 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
            (Stage + ":" + vaHex(Entry) + ":line:" + std::to_string(Total))
                .str()},
           {"kind", "source"},
-          {"mapping_status", Origins.empty() ? "unmapped" : "library_region"},
+          {"mapping_status", InstructionAnchor ? "instruction_anchor"
+                             : Origins.empty() ? "unmapped"
+                                               : "library_region"},
           {"addresses", std::move(Addresses)}});
     }
     ++Total;
@@ -669,7 +724,8 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
       {"schema_version", 1},
       {"address", vaHex(Entry)},
       {"representation", Stage},
-      {"mapping_status", "library_regions"},
+      {"mapping_status",
+       Anchors.empty() ? "library_regions" : "instruction_anchors"},
       {"provenance_complete", false},
       {"text", std::move(Text)},
       {"rows", std::move(Rows)},

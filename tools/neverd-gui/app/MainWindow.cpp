@@ -1091,10 +1091,18 @@ void MainWindow::connectActions() {
   on(ActionId::JumpPreviousFunction, [this] { stepFunction(false); });
   on(ActionId::JumpPseudocode, [this] {
     // From any pseudocode or IR window back to the disassembly.
-    if (focusedCodeView()) {
-      if (auto *dock = docks_.value(DisassemblyDock))
-        dock->raise();
-      disassembly_->focusContent();
+    if (auto *view = focusedCodeView()) {
+      // Consume the selected row's explicit mapping again: background cursor
+      // synchronization may still be queued, or the assembly may have moved
+      // independently while this source window was pinned.
+      if (const auto address = view->text()->currentAddress())
+        navigate(*address);
+      else if (const auto function = view->text()->function()) {
+        output_->append(tr("This source line has no instruction address "
+                           "mapping; showing the function entry"),
+                        1);
+        navigate(*function);
+      }
     } else {
       showPseudocode(CodeView::pseudocodeRepresentation());
     }
