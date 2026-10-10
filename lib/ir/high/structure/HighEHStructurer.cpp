@@ -463,7 +463,10 @@ codeRangesMatching(const ExceptionFunction &EH, const CxxExceptionInfo &Cxx,
                    Pred Live,
                    const RegistrationStateAnalysis *Registration = nullptr) {
   if (EH.Registration) {
-    if (!Registration)
+    // Realigned LowIR can prove runtime resumption without a MedIR/HighIR
+    // coordinate lowering for that frame. Keep its handler and continuation
+    // annotations until the callback body has that separate lowering proof.
+    if (!Registration || EH.Registration->RealignedFrame)
       return {};
     auto Ranges = registrationRangesWhere(*Registration, Live);
     return Ranges ? std::move(*Ranges) : std::vector<ExceptionAddressRange>{};

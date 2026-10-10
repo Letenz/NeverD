@@ -108,8 +108,16 @@ requires the actual ESI anchor, saved entry EBP, saved ESP, previous chain,
 handler and seed state. Entry-relative accesses below the saved-register area
 and runtime-relative accesses above the aligned allocation can cross coordinate
 spaces; both remain rejected without an exact projection.
-This admits bounded ordinary state propagation, not a generated C++ catch's
-parent-frame restore or native re-reconstruction; those remain unproved.
+A separate callback coordinate owns only allocated, initialized bytes below
+that invocation's return PC. Push/pop recovery must restore runtime EBP and
+balance ESP before a non-nested realigned catch can resume. Dispatch preserves
+the authenticated saved entry EBP; callback pointers lose their exact identity
+when an invocation ends or another begins. Checked callback calls borrow parent
+objects using the pre-dispatch stack snapshot, while preserving their private
+ESP. Parent administration, including the saved entry EBP, cannot be borrowed.
+These LowIR facts do not supply MedIR/HighIR frame-root lowering or native
+re-reconstruction. HighIR retains handler/continuation annotations for the
+realigned model instead of claiming an executable structured catch body.
 The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional

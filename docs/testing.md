@@ -2115,9 +2115,22 @@ language graph. The genuine input test also reloads each public output through
 the ordinary COFF loader and requires the same complete generated FuncInfo
 graph. It also checks the separate ESI anchor, allocation/alignment and biased
 state observations. Changed prologue bytes cannot retain the checked anchor.
-Canonical metadata and source digests retain every coordinate; the EBP state
-solver and native classifier reject the realigned model until its state
-transfers are proved.
+Canonical metadata and source digests retain every coordinate. The realigned
+state proof checks independent callback allocation, initialized spills, exact
+parent-frame recovery, preserved callback calls and balanced runtime returns;
+HighIR and the native classifier retain their separate frame-lowering gates.
+`NeverDWindowsRegistrationRealignedTests` emits a 64-byte-aligned frame with a
+catch that calls a checked thiscall leaf on its parent local. Run
+`check_windows_registration_realigned.py --test-binary <test-binary> --output
+<directory>` to compile its driver, exercise four caller stack layouts in Wine,
+and relift preferred/rebased PE32 images through LowIR and annotated HighIR.
+The driver checks return values, caller bytes and FS chain restoration; the
+wrong-result control must exit with 1 at both bases. Machine-code mutations,
+independent roots, mixed ECX/EDX link publication, uninitialized or released
+callback slots, missing call contracts and saved-entry-EBP borrows must reject.
+`replay_windows_registration_realigned.py` authenticates the captured file
+matrix and runs those identical four images on native Windows in the EH CI job.
+This is generated-frame analysis/runtime evidence, not source reconstruction.
 Real MSVC directory-size64/declared-size192 load-configs must remain supported
 with complete section bounds.
 Final generic PE validation also checks valid and invalid CF/EH continuation

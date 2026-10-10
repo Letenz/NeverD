@@ -88,8 +88,12 @@ continuation 保留注释，同时撤销原生重建权限。这些推导结果�
 对于直接使用 EBP 的帧，catch 可以改写 SavedESP；运行时返回时仍会把派发前捕获的
 指针写回该单元，再恢复 ESP。LowIR 与 MedIR 将这个隐式内存效果绑定到准确的
 catch RETURN，HighIR 与原生 LLVM 显式生成写回。PE 安装器重新分析原始代码，
-核对写入地址、值和顺序。未知的派发前快照不能靠 catch 写入补造；重新对齐的
-回调栈及其父帧恢复仍未包含在这个契约中。
+核对写入地址、值和顺序。未知的派发前快照不能靠 catch 写入补造。
+对于已经验证的重新对齐帧，LowIR 分别跟踪回调私有栈、已初始化的保存单元和入口 EBP。
+非嵌套 catch 必须平衡自己的 ESP 并恢复运行时 EBP，才能建立 continuation。
+经检查的调用可以借用已初始化的父帧对象，其边界取自派发前的栈快照；保存入口 EBP
+的管理单元不能作为借用对象。HighIR 保留 handler 与 continuation 注释。
+这些对齐帧的 MedIR/HighIR 坐标降级和原生再次重建仍未支持。
 栈偏移证明、HighIR 与 LLVM 共享同一坐标。非法根操作或相互冲突的
 保存栈值不能获得这些保证。
 结构化 catch 保留到已检查 continuation 的显式转移；回退注释保留 catch-object 偏移、
