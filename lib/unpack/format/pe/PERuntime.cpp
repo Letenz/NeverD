@@ -97,10 +97,18 @@ llvm::Expected<RebuiltImage> appendRuntime(RebuiltImage Out,
   if (H.Directories.size() <= llvm::COFF::IAT ||
       Out.Sections.size() != Main.regions().size())
     return failure("native runtime requires complete rebuilt PE metadata");
-  const uint64_t Count = Main.regions().size() + Code.regions().size() + 1;
+  if (Code.headers().SectionAlignment != H.SectionAlignment ||
+      Bias % H.SectionAlignment)
+    return failure("native runtime requires matching PE section alignment");
+  // The separately linked image needs a 64 KiB image base and reserves its
+  // own header page. Cover that gap explicitly: Windows rejects an image
+  // whose section RVAs are not adjacent, even though Wine can map it.
+  const uint64_t Padding = Bias + Code.regions().front().RVA - Main.extent();
+  const uint64_t Count =
+      Main.regions().size() + Code.regions().size() + 1 + (Padding != 0);
   // Existing headers and file-only debug payloads keep their file offsets.
   // Refuse an image without room rather than overwrite a source section.
-  if (Count > UINT16_MAX || H.SectionTableOffset > H.SizeOfHeaders ||
+  if (Count > value::MaxSections || H.SectionTableOffset > H.SizeOfHeaders ||
       Count > (H.SizeOfHeaders - H.SectionTableOffset) / sizeof(coff_section))
     return failure("native runtime needs more PE section-header capacity");
   auto Initializer = exported(Code, "restore");
@@ -244,7 +252,7 @@ llvm::Expected<RebuiltImage> appendRuntime(RebuiltImage Out,
     S.VirtualSize = Size;
     S.VirtualAddress = RVA;
     S.SizeOfRawData = RawSize;
-    S.PointerToRawData = Offset;
+    S.PointerToRawData = RawSize ? Offset : 0;
     S.Characteristics = Flags;
     put(Output, H.SectionTableOffset + Out.Sections.size() * sizeof(S), S);
     Output.resize(Offset + RawSize, 0);
@@ -252,6 +260,9 @@ llvm::Expected<RebuiltImage> appendRuntime(RebuiltImage Out,
     Out.Sections.push_back({Name.take_front(8).str(), RVA, Size, RawSize, 0});
     return true;
   };
+  if (Padding && !AddSection(".ndpad", Main.extent(), Padding,
+                             llvm::COFF::IMAGE_SCN_CNT_UNINITIALIZED_DATA, {}))
+    return failure("native runtime padding exceeds file-offset width");
   for (size_t I = 0; I < Code.regions().size(); ++I) {
     const auto &R = Code.regions()[I];
     const auto Flags = Code.headers().Sections[I].Characteristics;
