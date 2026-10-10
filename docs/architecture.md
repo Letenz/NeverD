@@ -26,6 +26,14 @@ analysis call cannot be interrupted safely. Replica revisions and analysis
 discovery never advance the writable project's state. All workers use the
 same public C API; this split does not duplicate engine semantics.
 
+The worker's `CodeEdits` owns pseudocode presentation aliases and unmapped line
+notes. `UserStateTables.def` includes this state in history, recovery, read-only
+replicas and database packing. Source identity and exact row anchors prevent
+edits from silently attaching to regenerated text. The GUI selects precise
+occurrences through the existing folded-source projection; image names and
+mapped comments continue to use engine address edits. Local presentation names
+do not establish variable, type or instruction semantics.
+
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
 exception runtime. The C++ printer uses the shared symbol spelling rules for

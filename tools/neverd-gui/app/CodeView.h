@@ -48,6 +48,10 @@ public:
   /// Highlight rows mapped to \p address and reveal the first.
   void revealAddress(Address address);
   QString currentToken() const;
+  /// The selected source name's image address or declared-local identity.
+  std::optional<QJsonObject> renameTarget() const;
+  /// The original source row under the cursor, independent of folding.
+  std::optional<QJsonObject> commentTarget() const;
   QString selectedText() const;
   QString allText() const;
   bool findText(const QString &text, bool forward);
@@ -166,6 +170,12 @@ private:
   /// The source names of every page by their spelling, and those spellings
   /// by their first character, longest first.
   QHash<QString, SourceName> sourceNames_;
+  struct EditName {
+    int begin, end;
+    QJsonObject target;
+  };
+  QVector<EditName> editNames_;
+  bool editMetadata_ = false;
   QHash<QChar, QVector<QString>> sourceNameIndex_;
   /// The length of a source name at \p position of \p text, or 0.
   int sourceNameLength(const QString &text, int position) const;

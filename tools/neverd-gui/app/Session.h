@@ -162,6 +162,7 @@ public:
   void deleteFunction(Address entry, std::optional<quint64> epoch = {});
   void rename(Address function, const QString &name,
               std::optional<quint64> epoch = {});
+  void editCode(const QJsonObject &edit, quint64 epoch);
   void setComment(Address address, const QString &text,
                   std::optional<quint64> epoch = {});
   void undo();

@@ -73,6 +73,10 @@ private:
   Json analysisSnapshot();
   Json restoreAnalysis(const Json &snapshot);
   Json userState() const;
+  Json codeEdits_ = Json::array();
+  void reloadCodeEdits();
+  static Json readCodeEdits(const std::string &binary);
+  Json codeEditRow(std::uint64_t address) const;
   std::string inputHash() const;
   bool analyzed_ = false;
   bool dirty_ = false;
