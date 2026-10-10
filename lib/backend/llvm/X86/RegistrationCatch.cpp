@@ -33,8 +33,12 @@ projectX86RegistrationCatch(const ExceptionFunction &EH,
       Object.FrameOffset != Catch.CatchObjectOffset ||
       Object.Reference != (Catch.Adjectives == 8))
     return std::nullopt;
+  const auto SourceOffset =
+      EH.Registration->cxxSourceFrameOffset(Object.FrameOffset);
+  if (!SourceOffset)
+    return std::nullopt;
   const auto Offset = Frame.runtimeOffset(
-      Object.FrameOffset, Object.Reference ? 4 : Object.ObjectSize);
+      *SourceOffset, Object.Reference ? 4 : Object.ObjectSize);
   if (!Offset)
     return std::nullopt;
   return X86RegistrationCatchPlan{
