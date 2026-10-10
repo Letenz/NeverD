@@ -95,6 +95,8 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 
 `NeverDLLVMInterpreterModelTests` 將獨立編寫的 LLVM 與完整狀態 LowIR 參考實作比較，涵蓋位寬、平行 PHI、switch、客體記憶體、獨立狀態碼、poison 檢查、內建函式值域、被拒絕的契約及四種建模預算。測試完成任意字長倒數迴圈的完整證明，並拒絕遭改寫的狀態碼。獨立 C 用例經 O1/O2 編譯後必須滿足相同觀察契約。這些測試驗證受支援的模型；自動不變量發現與編譯器正確性仍是獨立義務。 變數位移用例涵蓋全部四種位寬、經遮罩或分支限制的位移量、邊界及越界位移量、無回繞與精確旗標、嚴格 poison 拒絕，以及 O1/O2 編譯後的 C。
 
+`LLVMGuestAlignment.*` 將載入和儲存與獨立位元組記憶體參考實作比較，涵蓋正確和錯誤的對齊域、自由高位址位元、解析後的預設對齊、部分寬度、未使用或被覆寫的存取、不可達分支及恰好/少一單位的建構預算。`InterpreterLLVMRefinement.GuestAlignmentRequiresBothFreshPremises` 透過兩次新鮮關係檢查驗證原生堆疊儲存、相符的入口同餘條件和遭改寫的原始碼效果。
+
 `NeverDLLVMScalarEquivalenceTests` 涵蓋完整迴圈域、零次迴圈、PHI 同時交換、switch、高位輸入、最後分區反例、產生 poison 的額外更新、回傳範圍、不支援的契約，以及精確、少一單位及零預算。獨立雙寬與溢位參考實作涵蓋各支援字寬的漏斗位移端點及帶溢位約束的乘法；獨立巢狀迴圈 C 於 O1/O2 檢查編譯器輸入形態。狀態模型測試也檢查漏斗位移端點。`SymExpr.ConstantWindowSharesActualWorkWithoutRelaxingQueryCeilings` 檢查累計查詢計費與不變的局部上限。
 
 `LLVMScalarDecision.*` 涵蓋深層精確位移/擴展約束、常數分支決策、兩條迴圈回邊、保留高資料位元、末端未定義操作、不終止、已檢查函式的後續修改，以及精確/少一/局部預算。`LLVMScalarDecisionCompiled.DeepOneAndTwoBackedgeOracles` 將獨立撰寫的單回邊和雙回邊遞推與無號 C oracle 在 O0/O2 下比較，共 32,768 次呼叫。這些是純量模型檢查，不代表原生 ABI 或完整二進位還原涵蓋。
@@ -146,6 +148,10 @@ v4 測試固定前綴大小與填充，拒絕截斷配置和未知旗標，保�
 受條件保護的倒數測試涵蓋拒絕本體模板後的重試、任意字長輸入的完整迴圈頭證明、切點與查詢預算的累計計費，以及真實入口契約違規時立即拒絕。
 
 `NeverDInterpreterLLVMRefinementTests` 檢查全新的原生到 LLVM 組合證明、精確文字／函式綁定、獨立預算、完整觀察項及刻意擴大的原始碼域。修改位元組、殘餘程式、結果、旗標、狀態碼、框架寫入、poison 或錯誤／過期迴圈方案，都必須拒絕組合憑據。任意字長倒數要求兩段歸納前提；獨立 C 案例在 O1/O2 編譯後驗證實際序列化 LLVM 輸入。狀態模型回歸拒絕隱藏入口回邊，對入口集合計費且不複製附屬來源資訊。
+
+`InterpreterLLVMRefinement.Preservation*` 涵蓋局部／重疊範圍、非法請求、獨立計算的準備開銷、兩端相同的最終破壞、跨迴圈的入口保存／還原、新鮮不透明狀態證據及後期拒絕。`NeverDPEFixedImageTests` 也是 API 使用端，需要重新建置。未提供請求時的結果、計數與摘要另行對照基準。
+
+`InterpreterLLVMRefinement.Collection*` 檢查有限與歸納證明所需的保留／延遲策略、可達壞分支、後期原始碼拒絕、入口保存及全部四種原生策略身分。編譯組合層遺漏傳遞的故障，確認每項必要選項確實到達原生檢查器。
 
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
@@ -1192,7 +1198,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5058 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets = 5420`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 11 driver UNPACK + 6 clock reads + 2 image MDLs = 5449`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1566,6 +1572,10 @@ MainActor 測試資料檢查完整的固定中繼資料與靜態表流程，拒�
 ## 有界目錄批次屬性
 
 bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護區、low32 FD、bitmap 字、原生錯誤、dup 共用進度、獨立 open、快取 EOF 與零 rewind。字面值與未知模式僅用於虛擬環境。模型另涵蓋完整 stat、失效、NFD/255位元組名稱、輸入/輸出別名、傳輸/預算失敗、移動/SWAP/刪除/重用及明確授權。每個平台必需63個工作負載：ARM64 為189例，Intel 為126例；本地僅驗證匹配的 ARM64 HVF。native5s、guest/Python5,000,000us/quantum1024、public10s 不變。
+
+`MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` 檢查原程式的模型執行、恢復、區段權限及原始與恢復程式的 Windows 原生執行，涵蓋私有堆積擴容與釋放、編碼內部指標、FLS 回呼重設、遞迴鎖、LastError，以及虛擬頁面的保留、提交與保護。`MaterializationRequiresKnownSupportedState` 拒絕缺失版本及動態 TLS；`RuntimeRestorationHasTheSameCAPIAndCLIContract` 比較精確位元組及報告。Linux 建構檢查與 Wine 觀察不能取代原生 Windows 生命週期證據。
+
+`NeverDUnpackDriverTests` 涵蓋 DriverEntry 恢復、靜態／動態核心匯入、殘留核心資源、入口 ABI／控制狀態、畸形匯出、排程、要求／卸載生命週期、C API／CLI 一致性與 PE 檢查碼。原生驅動清單要求對應 KVM／WHP 案例執行；Windows 另以 ImageHlp 對照。這不代表原生核心載入驗收。見[脫殼](unpack.md)。
 
 ## 原生不透明狀態檢查
 

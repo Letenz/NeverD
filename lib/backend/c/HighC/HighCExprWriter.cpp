@@ -1668,6 +1668,8 @@ TypeRef HighCWriter::knownCallReturnType(const HighExpr &E) const {
   if (const auto Arity = libc::libcArityForSymbol(Name))
     if (const uint16_t Bytes = libc::floatReturnBytes(*Arity))
       return NdType::makeFloat(Bytes);
+  if (E.Type && E.Type->Kind == NdTypeKind::Float)
+    return E.Type;
   return {};
 }
 
@@ -3944,6 +3946,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     return "(0 /* truncated: expr too deep */)";
 
   switch (E.Kind) {
+  case ExprKind::EntryRegister:
+    return registrationEntryExpression(E);
   case ExprKind::Var:
   case ExprKind::Phi: {
     // HighIR arithmetic still operates on machine bytes when source type
@@ -5439,8 +5443,9 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
   if (Stmt.Kind == StmtKind::Block)
     return stmtsEffectivelyEmpty(Stmt.Body);
 
-  const bool HideEHRuntimeMemory =
-      CurrentFunc && CurrentFunc->ExceptionMetadata.has_value();
+  const bool HideEHRuntimeMemory = CurrentFunc &&
+                                   CurrentFunc->ExceptionMetadata.has_value() &&
+                                   !preservesRegistrationMemory(*CurrentFunc);
   auto HiddenEH = [&](NdMemoryAddressSpace Space) {
     // x86 SEH registration is FS:[0].  x64 GS holds the TEB/TLS pointer and
     // must print when the value is used (NtCurrentTeb / __readgsqword).
