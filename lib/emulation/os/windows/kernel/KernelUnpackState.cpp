@@ -29,6 +29,11 @@ std::map<uint64_t, uint64_t> KernelModel::unpackAllocations() const {
       Out.emplace(Address, Size);
   for (const auto &[Address, Allocation] : Allocations)
     Out[Address] = Allocation.Size;
+  // PE metadata is readable even without a module-list call. A pointer into a
+  // modeled provider remains borrowed state; never treat the input image as
+  // such a dependency, since that is the image being recovered.
+  for (size_t I = 0; I + 1 < LoadedModules.size(); ++I)
+    Out[LoadedModules[I].Base] = LoadedModules[I].Size;
   return Out;
 }
 

@@ -9,6 +9,8 @@ EXPORTS
   ZwClose
   RtlInitUnicodeString
   ExAllocatePool
+  NtQuerySystemInformation
+  ZwQuerySystemInformation
   ExAllocatePoolWithTag
   ExFreePoolWithTag
   IoCreateDevice

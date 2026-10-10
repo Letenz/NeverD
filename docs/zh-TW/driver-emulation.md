@@ -323,6 +323,7 @@ neither 要求可宣告 `user_buffers`（`id`、`size`、選用 `input`／`acces
 | `ExRaiseStatus`, `ExRaiseAccessViolation`, `ExRaiseDatatypeMisalignment` | 引發客體例外，無正常 API 返回；真正 C 篩選函式／處理常式及展開 finally，使用者 CPU 訪存例外的有限恢復見下文 |
 | `ExAllocatePool2` | 分頁／非分頁 NX 配置，預設清零；建模未初始化與快取對齊旗標；無效的必要旗標傳回 NULL，配額／可執行集區及引發的配置例外會停止 |
 | `MmGetSystemRoutineAddress` | 透過共用匯出清單解析客體計數式名稱 |
+| `NtQuerySystemInformation`, `ZwQuerySystemInformation` | 在 PASSIVE_LEVEL 支援類別 `11`（`SystemModuleInformation`）：零長度大小查詢，以及模擬提供者和輸入驅動程式的完整 Win64 模組記錄。部分緩衝區和未知資訊類別會明確停止。 |
 | `MmMapIoSpace`, `MmMapIoSpaceEx`, `MmUnmapIoSpace` | 宣告之轉譯子範圍的非快取映射、共用 RO／RW 別名，以及原始基址／長度完全相符的解除映射 |
 | `IoGetDmaAdapter` | 明確 Internal 匯流排主控版本 0／1 描述與 PASSIVE_LEVEL 的版本一繫結表；更新版本探查傳回 NULL |
 | `AllocateCommonBuffer`, `FreeCommonBuffer`, `GetDmaAlignment`, `PutDmaAdapter` | 共用一致性 RAM 上的 adapter 表方法、確切配置身分與獨立 adapter 壽命 |
@@ -468,7 +469,7 @@ python3 scripts/validate_windows_driver_sample.py \
 
 JSON 報告區分 `stop_reason`、可為空值的 `nt_status` 和 `nt_success`、停止位置 PC，以及指令計數。它保留停止前收集的 API 呼叫及可觀察狀態，包括裝置物件與驅動程式回呼位址。客體位址以十六進位字串表示，避免 JSON 使用端遺失 64 位元精確度。
 
-`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v89`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
+`configuration` 物件記錄本次執行的限制、服務名稱與 `kernel_exports` 覆寫值。設定識別為 `wdm-x64-scheduled-v90`。`nt_status` 始終是 DriverEntry 的結果，而 `scenario_success` 綜合描述初始化及已完成請求的結果。`phase`、`requests` 和 `unload_completed` 表明請求生命週期的哪些部分已執行。每次 API 呼叫及 CPU 寫入也會記錄階段（`driver_entry`、`add_device:<ID>`、`request:N`, `callback:N` 或 `unload`）。每個請求報告派送狀態與 I/O 狀態、是否完成、information 長度及傳回的 `output_hex` 位元組。`preferred_image_base` 描述原始 PE 基底位址。`security_cookie` 是已初始化 cookie 的客體位址；若不需要 cookie，則為 `"0x0"`。請求報告欄位為 `kind`、`device`、`device_id`、`pnp`、`file`, `requestor_process_id`、`byte_offset`、`code`、`irp`、`completed`、`cancel_requested_at_100ns`、`dispatch_status`、`io_status`、`information`、`information_hex` 和 `output_hex`。 `configuration.registry` 保留原始登錄配置。 `information_hex` 以十六進位字串精確保留原始 64 位元 `IoStatus.Information`；原有數值欄位 `information` 仍然保留。
 
 工作項目觀察記錄使用 `callback:N` 階段。待處理請求的 `dispatch_status` 保留 `STATUS_PENDING`，最終完成狀態分別記錄於 `io_status`，並據此計算該請求對 `scenario_success` 的影響。
 
@@ -586,3 +587,5 @@ CPU0 顯式搶占、虛擬時鐘語義與目前邊界見[驅動程式排程](dri
 `KeQueryPerformanceCounter` 傳回排程器共用的 100 ns 時鐘值，固定頻率為每秒 10,000,000 次。選用輸出指標會檢查完整八位元組寫入權限與物件生命週期。呼叫支援所有有效 x64 IRQL。協作模式只在既有排程邊界推進時間；指令時鐘模式沿用設定的計時方式。讀取計數器不會建立第二個時鐘或自行推進時間。這是確定性的執行設定，不是主機硬體量測。獨立編譯的執行階段樣本在原始及重新定位位址上檢查靜態／動態識別、頻率與單調性，並由原生 CPU 後端執行。
 
 `RDTSC` 與 `RDTSCP` 和 `KeQueryPerformanceCounter` 共用 10 MHz 排程時鐘。`RDTSCP` 在 ECX 中傳回單一模型處理器的編號零。EAX/EDX（以及 RDTSCP 的 ECX）清除高 32 位元，其他暫存器與旗標保持不變。協作模式下讀取不推進時間；明確指令排程模式在計入本條已允許指令後讀取時間，結果不依賴時間片長度。溢位會在寫入暫存器結果前停止，指令預算與觀察器停止仍有效。此設定不測量主機 TSC 頻率，也不揭露主機處理器身分；MSR 存取、RDPMC 與其他未建模 CPU 查詢仍不支援。
+
+`KernelModuleImages` 根據 `KernelExportRegistry` 產生可讀的 PE 標頭和匯出表；靜態匯入、動態查找和模組列舉共用相同位址。提供者程式碼保持不透明，清單描述的是模擬環境，而非主機核心。兩個輸出皆在寫入前檢查，包括集區記憶體生命週期與重疊。Nt 查詢要求已知的核心 previous-mode；Zw 查詢採用核心呼叫契約。完整模組查詢會保留明確的復原相依性，即使其緩衝區已釋放；提供者映像指標也以借用狀態追蹤。`KernelExportTests.cpp` 檢查 PE 解析、權限、ABI 欄位、寫入拒絕和復原相依性；原創編譯執行階段測試程式在 CPU 後端走訪這些匯出表。
