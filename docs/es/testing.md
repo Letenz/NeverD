@@ -152,6 +152,8 @@ Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plant
 
 `NeverDInterpreterLLVMRefinementTests` comprueba composiciones nuevas, vínculo exacto texto/función, presupuestos independientes, observaciones completas y dominios fuente ampliados. Cambios de bytes, residuos, resultados, indicadores, estados, escrituras, poison o planes falsos/obsoletos deben impedir el comprobante compuesto. Los contadores de palabra arbitraria requieren ambas premisas inductivas; ejemplos C independientes compilados en O1/O2 prueban el LLVM serializado real. Las regresiones rechazan vueltas ocultas a la entrada y limitan raíces sin copiar procedencia auxiliar.
 
+`InterpreterLLVMRefinement.Preservation*` cubre rangos parciales o solapados, peticiones inválidas, coste de preparación calculado independientemente, alteraciones finales idénticas, guardado/restauración de valores de entrada a través de bucles, evidencia opaca nueva y rechazos tardíos. Reconstruir también el consumidor de API `NeverDPEFixedImageTests`. Comparar por separado resultados, contadores y resúmenes sin petición con la base.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests

@@ -152,6 +152,8 @@ I test del conto alla rovescia protetto coprono il nuovo tentativo dopo il rifiu
 
 `NeverDInterpreterLLVMRefinementTests` controlla nuove prove composte, legame esatto testo/funzione, budget indipendenti, osservazioni complete e domini sorgente più ampi. Byte, residui, risultati, flag, stato, scritture, poison e piani errati/obsoleti devono impedire l’attestazione composta. I contatori di parola arbitraria richiedono entrambe le premesse induttive; esempi C indipendenti compilati O1/O2 verificano LLVM serializzato effettivo. Le regressioni rifiutano ritorni nascosti all’ingresso e limitano le radici senza copiare provenienza accessoria.
 
+`InterpreterLLVMRefinement.Preservation*` copre intervalli parziali o sovrapposti, richieste errate, costo di preparazione calcolato indipendentemente, alterazioni finali identiche, salvataggio/ripristino dei valori iniziali attraverso i cicli, nuove prove opache e rifiuti tardivi. Ricostruire anche il consumatore API `NeverDPEFixedImageTests`. Confrontare separatamente risultati, contatori e digest senza richiesta con la base.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
