@@ -4391,6 +4391,91 @@ TEST_F(JTE_X86_64, TwoTableSelectorSharesCandidateGraphBudget) {
   EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
 }
 
+TEST_F(JTE_X86_64, TwoTableLinearCopiesUseTheSharedWorkBudget) {
+  auto ImageOrErr = neverd::loadBinary(selectorOccurrenceX64Obj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  const neverd::BinaryImage &Image = *ImageOrErr;
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image.Arch, Image.Mode));
+  for (const char *Name : {"jt_selector_twotable_address_copies",
+                           "jt_selector_twotable_base_copies"}) {
+    SCOPED_TRACE(Name);
+    const auto *Function = Image.findSymbol(Name);
+    ASSERT_NE(Function, nullptr);
+    neverd::CFGBuilder Builder;
+    const auto Low = Builder.build(Image, Decoder, Function->Addr, Name);
+    ASSERT_EQ(Low.JumpTables.size(), 1u);
+    EXPECT_EQ(Low.JumpTables.front().Targets.size(), 8u);
+    EXPECT_EQ(Low.JumpTables.front().CaseLabels,
+              (std::vector<int64_t>{0, 8, 16, 24, 32, 40, 48, 56}));
+    EXPECT_TRUE(Low.UnsafeIndirectBranchAddresses.empty());
+    EXPECT_FALSE(lowFunctionHasOpcode(Low, neverd::NdOp::INDIR_CALL));
+
+    neverd::CFGBuilder ExhaustedBuilder;
+    ExhaustedBuilder.setMaskFixedPointEvidenceBudgetForTesting(0);
+    const auto Exhausted =
+        ExhaustedBuilder.build(Image, Decoder, Function->Addr, Name);
+    EXPECT_TRUE(Exhausted.JumpTables.empty());
+    EXPECT_TRUE(lowFunctionHasOpcode(Exhausted, neverd::NdOp::INDIR_BR));
+    EXPECT_FALSE(lowFunctionHasOpcode(Exhausted, neverd::NdOp::INDIR_CALL));
+    EXPECT_FALSE(Exhausted.UnsafeIndirectBranchAddresses.empty());
+  }
+
+  const auto *Clobbered =
+      Image.findSymbol("jt_selector_twotable_address_clobber");
+  ASSERT_NE(Clobbered, nullptr);
+  neverd::CFGBuilder ClobberedBuilder;
+  const auto ClobberedLow = ClobberedBuilder.build(
+      Image, Decoder, Clobbered->Addr, Clobbered->Name);
+  EXPECT_TRUE(ClobberedLow.JumpTables.empty());
+}
+
+TEST_F(JTE_X86_64, TwoTableLinearCopiesExecuteTheOriginalSelection) {
+  for (const char *Name : {"jt_selector_twotable_address_copies",
+                           "jt_selector_twotable_base_copies"}) {
+    for (unsigned Route : {0u, 1u, 2u}) {
+      SCOPED_TRACE(std::string(Name) + ":" + std::to_string(Route));
+      const auto File = tmpFile("copy-selection.c");
+      std::vector<std::string> Args = {
+          "decompile", selectorOccurrenceX64Obj().string(),
+          "--func", Name, "-o", File.string()};
+      if (Route != 0)
+        Args.push_back("--llvm");
+      if (Route == 2)
+        Args.push_back("--no-opt");
+      const auto Recovered = exec(ndBin(), Args);
+      ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+      std::ifstream Input(File);
+      const std::string Source((std::istreambuf_iterator<char>(Input)), {});
+      ASSERT_EQ(Source.find("unresolved indirect branch"), std::string::npos);
+      std::ofstream Out(File, std::ios::app);
+      Out << "\nint main(void) {\n"
+             "const uint32_t selectors[] = {0, 1, 2, UINT32_MAX};\n"
+             "for (uint32_t x = 0; x < 256; ++x)\n"
+             "for (unsigned c = 0; c < 4; ++c)\n"
+             "if ("
+          << Name
+          << "(x, selectors[c]) != "
+             "((selectors[c] ? 7200 : 7100) + (x & 3))) return 1;\n"
+             "return 0; }\n";
+      Out.close();
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        SCOPED_TRACE(Optimization);
+        const auto Exe = tmpFile(std::string("copy-selection") +
+                                neverd::test::executableSuffix());
+        const auto Built = exec(
+            NEVERD_TEST_CLANG,
+            {"-std=c11", Optimization, "-fsanitize=undefined",
+             "-fsanitize-trap=undefined", File.string(), "-o", Exe.string()});
+        ASSERT_TRUE(Built.ok()) << Built.err;
+        const auto Run = exec(Exe.string(), {});
+        EXPECT_TRUE(Run.ok()) << Run.err;
+      }
+    }
+  }
+}
+
 TEST_F(JTE_X86_64, TwoTableSelectorBudgetExhaustionFailsClosed) {
   auto ImageOrErr = neverd::loadBinary(selectorOccurrenceX64Obj());
   ASSERT_TRUE(static_cast<bool>(ImageOrErr))

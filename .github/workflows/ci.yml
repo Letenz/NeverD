@@ -1873,8 +1873,9 @@ jobs:
     name: Native CPU (${{ inputs.native_cpu_backend == 'kvm' && 'Linux x64 KVM' || 'Windows x64 WHP' }})
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.native_cpu_only && !inputs.native_arm64_only && !inputs.windows_eh_only }}
     runs-on: ${{ inputs.native_cpu_backend == 'kvm' && 'ubuntu-24.04' || 'windows-latest' }}
-    # Include a cold build and the full native instruction/driver inventory.
-    timeout-minutes: 60
+    # A cold Windows build plus the full driver inventory can exceed one hour.
+    # Per-test execution deadlines remain independently bounded.
+    timeout-minutes: 90
     env:
       NEVERD_NATIVE_CPU_BACKEND: ${{ inputs.native_cpu_backend }}
       NEVERD_NATIVE_DRIVER_TESTS: ${{ inputs.native_driver_tests && 'ON' || 'OFF' }}
