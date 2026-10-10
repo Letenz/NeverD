@@ -50,7 +50,7 @@ def validate_capture(root: Path, capture: dict) -> list[tuple]:
         parent = root / name
         if case.get("contract_sha256") != file_digest(parent / "contract.json") or \
                 case.get("ir_sha256") != file_digest(parent / "source.ll") or \
-                require_test_result(parent / "rewrite.xml") != 1:
+                require_test_result(parent / "rewrite.xml") != 3:
             raise ValueError("realigned source reconstruction proof changed")
         receipt = json.loads((parent / "contract.json").read_text())
         original = PE32((parent / "original.exe").read_bytes())

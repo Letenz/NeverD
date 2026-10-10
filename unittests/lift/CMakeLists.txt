@@ -1325,10 +1325,12 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
 add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/WindowsRegistrationRealignedTests.cpp
   eh/WindowsRegistrationRealignedNativeTests.cpp
+  eh/WindowsRegistrationHighCallbackTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
 
   LINK_COMPONENTS
   IRHigh
+  BackendC
   BackendLLVM
   CodeGen
 )

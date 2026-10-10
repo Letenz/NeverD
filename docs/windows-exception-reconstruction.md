@@ -114,9 +114,19 @@ root definitions; HighIR and LLVM express the aligned parent coordinate from
 the original entry ESP without inventing a constant stack displacement. Exact
 no-return call receipts remove ordinary fallthrough before SSA while preserving
 exceptional entries. HighIR restores the captured SavedESP through that same
-aligned coordinate before transferring to a checked continuation. It keeps
-handler and continuation annotations; full structured callback lowering remains
-unsupported. Native reconstruction supports the checked scalar-catch subset
+aligned coordinate before transferring to a checked continuation. A checked
+runtime-only catch CFG becomes an explicit clause, including its private ESP
+input and the complete callback body. The input is captured at callback entry;
+HighC names it with an explicit runtime-ABI intrinsic in its analysis view.
+Explicit C retains the callback as a labelled native entry in the parent,
+skipped by ordinary fallthrough; C++ pseudocode includes it in the catch clause.
+Neither view implements a standalone exception dispatcher. Checked helper calls
+use their retained callee ABI and current SSA arguments, so callback spills do
+not become extra call arguments. Explicit FS accesses remain visible when
+aligned, byte-addressed registration stores depend on them.
+Ordinary incoming edges, incomplete roots, changed return receipts or a body
+that cannot move as one region retain handler and continuation annotations.
+Native reconstruction supports the checked scalar-catch subset
 below, including its separate invocation stack.
 An unproven continuation or conflicting return retains annotations and
 withdraws native authority. These facts remain separate from the source
@@ -125,7 +135,9 @@ Only callback-pointer fields authenticated by the FuncInfo parser are excluded
 from ordinary indirect-entry discovery. Another reference to the same target
 retains its independent ordinary-entry role. MedIR gives runtime-only catch and
 cleanup roots the established parent EBP, keeps their private callback ESP
-unknown, and gives a checked continuation its saved parent ESP. Stack-offset
+distinct, and gives a checked continuation its saved parent ESP. The checked
+catch projection captures its own ESP; a cleanup still needs its own callback
+ABI proof before its body can be embedded. Stack-offset
 proofs, HighIR and LLVM use the same coordinates. Malformed root carriers and
 conflicting saved-stack values cannot acquire those guarantees.
 Structured catches keep an explicit transfer to the checked continuation;

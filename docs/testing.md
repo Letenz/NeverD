@@ -2270,14 +2270,15 @@ state observations. Changed prologue bytes cannot retain the checked anchor.
 Canonical metadata and source digests retain every coordinate. The realigned
 state proof checks independent callback allocation, initialized spills, exact
 parent-frame recovery, preserved callback calls and balanced runtime returns;
-HighIR retains its separate full-clause projection gate; native lowering needs
+HighIR requires a closed callback CFG and current runtime-root/continuation
+bindings before it moves the full body into a clause. Native lowering needs
 the additional physical-layout and callback-stack proofs described below.
 `NeverDWindowsRegistrationRealignedTests` emits a 64-byte-aligned frame with a
 catch that calls a checked thiscall leaf on its parent local. Run
 `check_windows_registration_realigned.py --test-binary <test-binary>
 --runtime-libs <native-msvc-library-directory> --output <directory>` to compile
 its driver, exercise four caller stack layouts in Wine,
-and relift preferred/rebased PE32 images through LowIR and annotated HighIR.
+and relift preferred/rebased PE32 images through LowIR and structured HighIR.
 The continuation reads its local through the actual restored ESP. The driver
 checks that value, caller bytes and FS chain restoration; the
 wrong-result control must exit with 1 at both bases. Machine-code mutations,
@@ -2291,6 +2292,20 @@ alias the ordinary incoming register in pointer and frame-slot proofs.
 HighIR restores SavedESP before either an explicit continuation jump or its
 folded body. Incomplete lifetime/callback proofs, changed return receipts and
 unproved frame geometry cannot synthesize that writeback.
+`WindowsRegistrationHighCallback` checks the distinct entry-register identity,
+one capture at the callback entry, complete clause extraction, and HighC's
+explicit runtime-input spelling. Root/state/return mutations reject the
+projection. Splitting the callback into multiple ordinary blocks keeps all of
+them in the region; an independent predecessor invalidates the whole region.
+Call-identity and callee-contract mutations withdraw the exact argument ABI;
+a changed ECX definition must remain the current argument instead of reverting
+to the historical frame address. The runner also invokes the public `neverd`
+CLI (the test binary's sibling, or `--neverd`) in C and C++ modes at both bases.
+It checks the complete body and single object argument, and syntax-checks the
+explicit C view with Clang. C++ output remains structured analysis pseudocode.
+Replay requires both output hashes and the C syntax-check evidence.
+Capture and replay require all three emission/identity checks and all three
+analysis checks at each base, with no failures or skips.
 `replay_windows_registration_realigned.py` authenticates the captured file
 matrix and runs those identical four images on native Windows in the EH CI job.
 The first Windows fixture job captures the selected x86 MSVC release link
@@ -2304,6 +2319,8 @@ This is generated-frame analysis/runtime evidence, not source reconstruction.
 and reference parents, lifts their real PE32 instructions and reconstructs
 through the public patcher and both CLI modes. Pass `--test-binary`,
 `--patch-binary`, `--runtime-libs` and `--output`. Four caller stack layouts
+also require the callback HighIR checks on each typed source and control.
+The runtime probes
 check the catch value, reference effect, caller PC and restored FS chain.
 All four source/control profiles and four installation routes execute at two
 forced bases (32 executions). CLI bytes must equal the checked public output;

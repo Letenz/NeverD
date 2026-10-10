@@ -95,8 +95,15 @@ catch RETURN，HighIR 与原生 LLVM 显式生成写回。PE 安装器重新分�
 的管理单元不能作为借用对象。MedIR 保留独立的运行时入口定义；HighIR 与 LLVM
 从原始入口 ESP 表达父帧对齐关系，不将其误当成固定栈偏移。SSA 构造前仅根据
 精确匹配的 no-return 调用证明移除普通落入边，保留异常入口。HighIR 在转移到已检查的
-continuation 前，使用同一对齐坐标写回捕获的 SavedESP，同时保留 handler 与
-continuation 注释；这些对齐帧的完整结构化回调降级仍未支持。原生重建支持下文经过
+continuation 前，使用同一对齐坐标写回捕获的 SavedESP。已证明仅由运行时进入的
+catch CFG 可成为显式子句，包含独立 ESP 输入及完整回调正文。ESP 在回调入口捕获，
+HighC 在分析视图中以明确的运行时 ABI intrinsic 表示该输入。显式 C 将回调保留为父函数
+内带标签的原生入口，普通执行路径跳过它；C++ 伪代码将正文放入 catch 子句。两种视图
+均不提供独立的异常派发器实现。经检查的 helper 调用采用保留的 callee ABI 和当前 SSA
+实参，回调保存寄存器的压栈不会变成额外参数。对齐帧的字节寻址 registration 存储仍
+依赖 FS 读取时，这些链表操作会完整显示。普通前驱、不完整的入口
+证明、变更的返回记录，或无法整体移动的正文，仍保留 handler 与 continuation 注释。
+原生重建支持下文经过
 检查的标量 catch 子集，并为每次回调提供独立的临时栈。
 栈偏移证明、HighIR 与 LLVM 共享同一坐标。非法根操作或相互冲突的
 保存栈值不能获得这些保证。

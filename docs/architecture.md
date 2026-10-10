@@ -162,9 +162,25 @@ exact no-return call fallthroughs before SSA, preserving exceptional edges and
 the continuation's independent runtime frame. Shared coordinate projection
 expresses the aligned establisher from entry ESP for HighIR and LLVM, while
 entry-stack proofs cannot claim a fixed displacement. Pointer-copy and slot
-proofs keep each runtime definition's identity. Full callback lowering and
-native re-reconstruction have separate contracts. HighIR retains
-handler/continuation annotations for this model. Native scalar-catch lowering
+proofs keep each runtime definition's identity. The MedIR callback owner binds
+private ESP definitions to the current runtime-only entry and checks the whole
+ordinary catch CFG against exact source ranges and continuation receipts.
+HighIR captures that input with an `EntryRegister` expression at the callback
+entry, rather than substituting the parent's ESP or an unknown value. Copy
+propagation cannot move the capture. Realigned catches become clause bodies
+only when all callback blocks can move together without admitting an ordinary
+entry or absorbing unprotected code. SavedESP restoration precedes the checked
+continuation. HighC spells the runtime input as an explicit EH-view intrinsic;
+it does not supply a standalone C implementation of the exception runtime.
+The explicit C view retains an embedded callback as a labelled native entry
+inside the parent, skipped by ordinary fallthrough, without assigning it a C
+function ABI. Aligned frames retain their explicit FS chain accesses because
+their byte-addressed node stores still consume the previous-head definition.
+The MedIR call owner binds each retained callee ABI to its current occurrence.
+HighIR reads that call's current ECX SSA value and uses the proved argument
+count; a private EBP spill cannot become an extra stack argument.
+Unproved or ambiguous bodies retain handler/continuation annotations.
+Native scalar-catch lowering
 projects the source coordinate only into an allocation with proved physical
 alignment. A dedicated catch-stack planner bounds private ESP uses; catch
 objects, cleanup borrows and continuation writeback share the parent projection.
