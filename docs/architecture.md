@@ -1533,6 +1533,15 @@ evaluation requires authenticated 48/57-bit canonical-address context and
 segment bases. Unknown context refuses; known memory faults retain incoming
 CSR and publish no numerical result. This does not extend EVEX/SAE coverage.
 
+Stack-argument recovery consumes the authenticated source address and byte
+extent of arithmetic, ROUND and APPROX12 memory contracts. A proven immutable
+scalar incoming argument can supply the corresponding value contract without
+changing numerical/MXCSR completion. A two-slot i386 scalar uses explicit byte
+composition. Packed, straddling, written or escaped sources keep their original
+memory contract, and every covered argument home is initialized. Segmented or
+malformed sources do not establish ordinary incoming stack arguments. Both
+register ABIs and i386 use the same memory-read and source-rebinding owner.
+
 Legacy/VEX RCP/RSQRT use `X86FPApprox12State` raw numerical results and
 `X86FPApprox12MemoryState` instruction-owned source access. These instructions
 have no MXCSR input, output or exception effect; an unknown CSR stays unknown.

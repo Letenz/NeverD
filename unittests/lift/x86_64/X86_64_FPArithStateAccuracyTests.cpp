@@ -6,6 +6,7 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/X86FPStateShape.h"
 
 #include <array>
@@ -1138,6 +1139,155 @@ TEST_F(X86FPArithFixture,
     ASSERT_EQ(Result.MedFuncs.size(), 1U);
     EXPECT_FALSE(Result.MedFuncs.front().FPParamScalarBytes.count(0x100));
   }
+}
+
+class X86FPArithStackAccuracy : public X86FPStateFixture {
+protected:
+  void compareStackArguments(bool IsDouble, bool Declared) {
+    if (!nativeX64())
+      GTEST_SKIP() << "native x86_64 host required";
+    const unsigned Registers = hostFormat() == BinaryFormat::COFF ? 4 : 8;
+    const unsigned Offset = hostFormat() == BinaryFormat::COFF ? 40 : 8;
+    const std::string Scalar = IsDouble ? "double" : "float";
+    std::vector<uint8_t> Bytes;
+    for (unsigned I = 1; I < Registers; ++I)
+      Bytes.insert(Bytes.end(), {static_cast<uint8_t>(IsDouble ? 0xf2 : 0xf3),
+                                 0x0f, 0x58, static_cast<uint8_t>(0xc0 | I)});
+    Bytes.insert(Bytes.end(),
+                 {static_cast<uint8_t>(IsDouble ? 0xf2 : 0xf3), 0x0f, 0x58,
+                  0x44, 0x24, static_cast<uint8_t>(Offset), 0xc3});
+    const auto Native = file("stack-native.s");
+    const auto NativeObject = file("stack-native.o");
+    auto NativeText = assembly(Bytes);
+    for (size_t Position = 0;
+         (Position = NativeText.find("isa_probe", Position)) !=
+         std::string::npos;)
+      NativeText.replace(Position, 9, "native_probe");
+    write(Native, NativeText);
+    auto Built = command(Compiler, {"-c", Native, "-o", NativeObject});
+    ASSERT_EQ(Built.Status, 0) << Built.Error;
+    std::string Signature, Arguments;
+    for (unsigned I = 0; I <= Registers; ++I) {
+      if (I) {
+        Signature += ',';
+        Arguments += ',';
+      }
+      Signature += Scalar;
+      Arguments += I == 0 ? "left" : I == Registers ? "right" : "zero";
+    }
+    const auto Common = floatingDriver(IsDouble, false);
+    const auto Values = Common.find("static const");
+    const auto Main = Common.find("int main(void)");
+    std::string Driver =
+        "\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n"
+        "#include <immintrin.h>\nextern " +
+        Scalar + " native_probe(" + Signature + ");\n" +
+        Common.substr(Values, Main - Values) + R"(
+int main(void) {
+  uint32_t saved = _mm_getcsr();
+  for (unsigned rounding = 0; rounding < 4; ++rounding)
+    for (unsigned environment = 0; environment < 4; ++environment)
+      for (unsigned sticky = 0; sticky < 2; ++sticky)
+        for (unsigned a = 0; a < sizeof(values)/sizeof(values[0]); ++a)
+          for (unsigned b = 0; b < sizeof(values)/sizeof(values[0]); ++b) {
+)";
+    Driver += Scalar +
+              " left, right, zero = 0;\n"
+              "memcpy(&left, &values[a], sizeof(left));\n"
+              "memcpy(&right, &values[b], sizeof(right));\n"
+              "uint32_t state = 0x1f80 | (rounding << 13) | "
+              "((environment & 1) ? 0x40 : 0) | "
+              "((environment & 2) ? 0x8000 : 0) | (sticky ? 0x25 : 0);\n"
+              "_mm_setcsr(state);\n" +
+              Scalar + " expected = native_probe(" + Arguments +
+              ");\nuint32_t expected_state = _mm_getcsr();\n"
+              "_mm_setcsr(state);\n" +
+              Scalar + " actual = isa_probe(" + Arguments + R"();
+uint32_t actual_state = _mm_getcsr(); _mm_setcsr(saved);
+if (memcmp(&actual, &expected, sizeof(actual)) || actual_state != expected_state) {
+  printf("stack argument mismatch a=%u b=%u state=%08x expected=%08x actual=%08x\n",
+         a, b, state, expected_state, actual_state);
+  return 1;
+}
+}
+return 0;
+}
+)";
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(NoOpt);
+      auto Image = image(Bytes);
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.NoOpt = NoOpt;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Entry};
+      if (Declared) {
+        SourceFunctionTypeHint Hint;
+        Hint.Origin = SourceFunctionTypeHint::OriginKind::NativeAnalysis;
+        Hint.Architecture = Arch::X64;
+        Hint.HasExplicitABI = true;
+        Hint.ReturnType = NdType::makeFloat(IsDouble ? 8 : 4);
+        const auto &TRI = getTargetRegInfo(Arch::X64);
+        for (unsigned I = 0; I <= Registers; ++I) {
+          SourceParameterTypeHint Parameter;
+          Parameter.Name = "arg" + std::to_string(I);
+          Parameter.Type = Hint.ReturnType;
+          Parameter.Location.Kind =
+              I == Registers ? SourceABICarrierKind::Stack
+                             : SourceABICarrierKind::FloatingRegister;
+          Parameter.Location.RegisterOffset =
+              I == Registers ? 0 : TRI.FPParamRegs[I];
+          Parameter.Location.EntryStackOffset = I == Registers ? Offset : 0;
+          Parameter.Location.ValueBytes = IsDouble ? 8 : 4;
+          Hint.Parameters.push_back(Parameter);
+        }
+        Hint.ReturnLocation.Kind = SourceABICarrierKind::FloatingRegister;
+        Hint.ReturnLocation.RegisterOffset = TRI.FPReturnReg;
+        Hint.ReturnLocation.ValueBytes = IsDouble ? 8 : 4;
+        Options.SourceTypeHints[Entry] = Hint;
+      }
+      auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_EQ(Result.HighFuncs.size(), 1u);
+      const auto &Function = Result.HighFuncs[0];
+      ASSERT_EQ(Function.Params.size(), Registers + 1);
+      if (Declared) {
+        ASSERT_EQ(Result.MedFuncs.size(), 1u);
+        ASSERT_TRUE(Result.MedFuncs[0].SourceParametersBound);
+        ASSERT_TRUE(Function.SourceTypeHint);
+      }
+      for (const auto &Parameter : Function.Params) {
+        ASSERT_NE(Parameter.Type, nullptr);
+        EXPECT_EQ(Parameter.Type->Kind, NdTypeKind::Float);
+        EXPECT_EQ(Parameter.Type->Size, IsDouble ? 8 : 4);
+      }
+      CEmitterOptions Emission;
+      Emission.TheArch = Arch::X64;
+      Emission.Format = hostFormat();
+      std::string Source;
+      llvm::raw_string_ostream Out(Source);
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Out, Emission));
+      retain(NoOpt ? "stack-noopt.c" : "stack-default.c", Source);
+      const auto C = file("stack-driver.c");
+      write(C, Source + Driver);
+      for (const char *Optimization : {"-O0", "-O2"}) {
+        const auto Executable =
+            file(std::string("stack") + Optimization + ".exe");
+        Built = command(Compiler,
+                        {Optimization, NativeObject, C, "-o", Executable});
+        ASSERT_EQ(Built.Status, 0) << Built.Error << Source;
+        const auto Actual = command(Executable, {});
+        EXPECT_EQ(Actual.Status, 0) << Actual.Out << Actual.Error << Source;
+      }
+    }
+  }
+};
+
+TEST_F(X86FPArithStackAccuracy, DeclaredFloatStackArgumentBindsItsSourceABI) {
+  compareStackArguments(false, true);
+}
+TEST_F(X86FPArithStackAccuracy, DeclaredDoubleStackArgumentBindsItsSourceABI) {
+  compareStackArguments(true, true);
 }
 
 } // namespace

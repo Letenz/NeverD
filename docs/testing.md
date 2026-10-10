@@ -334,6 +334,12 @@ destination/RHS aliasing, unaligned scalar/VEX memory, unmasked exceptions,
 instruction-wide exception priority, legacy alignment and protected cross-page
 sources. Discarded numerical results must retain state changes and faults.
 Scalar C return probes separately verify floating type, raw bits and state.
+Declared scalar stack-argument probes compare original execution and readable C
+through default/NoOpt and O0/O2, including complete raw results and MXCSR. They
+exercise the fifth Win64 or ninth SysV floating argument. `MedCallingConvFPStack`
+additionally checks arithmetic, ROUND and APPROX12 incoming ranges across
+ELF/Mach-O/COFF and x86-32/x64, two-slot composition, writes, escaped addresses,
+packed/straddling home initialization and malformed or segmented refusals.
 Low/Med/High and owned assembly tests reject malformed roles, controls, state
 pointers, effects and addressing contracts. Native execution requires x64 and
 OS-enabled AVX; descriptor checks also cover x86-32 without claiming native
