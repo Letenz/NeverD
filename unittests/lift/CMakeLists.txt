@@ -150,6 +150,7 @@ add_neverd_unittest(NeverDLiftTests
   core/SourceAggregateTests.cpp
   core/SourceCallReturnTests.cpp
   core/HighSSADefinitionTests.cpp
+  core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/ObjCCallHintTests.cpp
   core/SwiftFieldReceiverTests.cpp
@@ -895,6 +896,7 @@ add_neverd_unittest(NeverDX86CarryArithmeticFlagTests
 )
 
 add_neverd_unittest(NeverDX86UndefinedEffectsTests
+  x86_64/X86_64_PreservedStateTests.cpp
   x86_64/X86_64_UndefinedEffectsTests.cpp
   x86_64/X86_64_ShiftUndefinedEffectsTests.cpp
   x86_64/X86_64_DoubleShiftUndefinedEffectsTests.cpp
@@ -1037,6 +1039,8 @@ target_include_directories(NeverDLiftTests PRIVATE
 
 add_neverd_unittest(NeverDJumpTableTests
   core/AffineFrameStateTests.cpp
+  core/ResolverGraphCacheTests.cpp
+  core/ResolverLaneViewTests.cpp
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
@@ -1187,6 +1191,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighValueForwardTests.cpp
   core/HighCIntegerConversionTests.cpp
   core/HighSSADefinitionTests.cpp
+  core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
   LINK_COMPONENTS
@@ -1291,6 +1296,8 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationRealignedStateTests.cpp
+  eh/RegistrationRealignedTestUtils.cpp
+  eh/RegistrationCallbackStateTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState
@@ -1312,6 +1319,15 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
 
   LINK_COMPONENTS
   WindowsRegistrationFrame
+)
+
+add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
+  eh/WindowsRegistrationRealignedTests.cpp
+
+  LINK_COMPONENTS
+  IRHigh
+  BackendLLVM
+  CodeGen
 )
 
 add_neverd_unittest(NeverDWindowsRegistrationNativeTests
@@ -2155,6 +2171,7 @@ if(NOT CLANG_EXEC)
 endif()
 
 set(X86_64_TEST_SOURCES
+  x86_64/test_jumptable_narrow_guard_x64.s
   x86_64/test_arith.c
   x86_64/test_muldiv.c
   x86_64/test_control_flow.c
@@ -2223,6 +2240,7 @@ set(X86_64_TEST_SOURCES
 )
 
 set(X86_32_TEST_SOURCES
+  x86_32/test_jumptable_narrow_guard_i386.s
   x86_32/test_extern_calls_i386.c
   x86_32/test_extern_calls_nopic_i386.c
   x86_32/test_return_join_i386.c
@@ -2254,6 +2272,7 @@ set(X86_32_TEST_SOURCES
 )
 
 set(AARCH64_TEST_SOURCES
+  aarch64/test_jumptable_narrow_guard_a64.s
   aarch64/test_extern_calls_a64.c
   aarch64/test_extern_calls_nopic_a64.c
   aarch64/test_return_join_a64.c

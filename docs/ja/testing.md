@@ -150,6 +150,8 @@ v4 テストはプレフィックスのサイズとパディング、切り詰�
 
 `NeverDInterpreterLLVMRefinementTests` は新規の合成証明、正確なテキスト／関数の結合、独立予算、全観測項目、広いソース領域を検証します。バイト、残余、結果、フラグ、ステータス、フレーム書込み、poison、誤った／古いループ案の変更は合成証明を拒否させます。任意ワード幅のカウントダウンは両帰納前提を要求し、独立 C 例の O1/O2 コンパイルは実際の LLVM テキストを検証します。状態モデルの回帰は隠れた入口後退辺を拒否し、付随する出自情報をコピーせずルートを予算計上します。
 
+`InterpreterLLVMRefinement.Preservation*` は部分範囲と重複、不正要求、独立計算した準備コスト、両側の同一破壊、ループをまたぐ入口値の保存と復元、新しい不透明状態の証拠、後段の拒否を検証します。API 利用側の `NeverDPEFixedImageTests` も再ビルドします。要求省略時の結果・カウンタ・ダイジェストは別途ベースラインと比較します。
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
@@ -1624,3 +1626,7 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` は元プログラムのモデル実行、復元、セクション権限、元と復元結果の Windows ネイティブ実行を検証します。ヒープ再割り当て・解放、符号化した内部ポインター、FLS コールバックの再設定、再帰ロック、LastError、仮想ページの予約・コミット・保護を含みます。`MaterializationRequiresKnownSupportedState` はバージョン欠落と動的 TLS を拒否し、`RuntimeRestorationHasTheSameCAPIAndCLIContract` は正確なバイト列と報告を比較します。Linux での構築検証や Wine の観測は Windows ネイティブの寿命検証を代替しません。
 
 `NeverDUnpackDriverTests` は入口、カーネルインポート、残存資源、ABI、エクスポート、スケジューリング、要求とアンロード、C API/CLI、PE チェックサムを検証します。KVM/WHP の必須ケースと Windows ImageHlp 比較は、ネイティブカーネルへのロード証明ではありません。 [UNPACK](unpack.md).
+
+## 不透明状態の検査
+
+`X86PreservedState.*` は新しいスカラー形式、正確な別名、厳密リセット、古いバイト/操作列/バージョンの拒否を検査する。`OriginalBinaryUndefinedIndependence.*Opaque*` は分岐、内部呼び出し、完全な間接宛先、正確なプロファイル、独立デコードから算出したメタデータ予算の一致/1 不足を扱う。`BinaryLowIR*.*Opaque*` は証人と任意の未定義選択、複数の帰納ソース、後半の順位/予算失敗、真の入口スカラー保存、同一 LowIR の後続ソースバイト変更による実行ダイジェスト変更を検査する。`NativeUndefinedIndependence.*Opaque*` と `NativeStackControl.*FreshMemoryCall*` はグループ内部、切点前境界、古い記録、スタック変更前の宛先評価を扱う。`NeverDInterpreterLLVMRefinementTests` を含むメタデータ利用側を再ビルドし、sanitizer とコンパイル済み故障注入の結果は通常テストと分けて報告する。

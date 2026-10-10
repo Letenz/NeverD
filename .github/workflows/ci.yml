@@ -77,6 +77,10 @@ jobs:
     env:
       NEVERD_LLVM_PREBUILT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.use_prebuilt_llvm && 'ON' || 'OFF' }}
       SCCACHE_GHA_ENABLED: 'true'
+      GOTOOLCHAIN: local
+      NEVERD_SOURCE_DIALECT_CORPUS: ${{ github.workspace }}/build-ci/source-dialects/corpus
+      NEVERD_SOURCE_DIALECT_FILE: ${{ github.workspace }}/build-ci/source-dialects/corpus/x64-c.c
+      NEVERD_SOURCE_DIALECT: go
 
     strategy:
       fail-fast: false
@@ -121,6 +125,25 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ matrix.python_version }}
+
+      - name: Set up Go for source differential tests
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: '1.27.2'
+          cache: false
+
+      - name: Set up and verify source dialect compilers
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustc_path="$(rustup which --toolchain "$RUST_TOOLCHAIN" rustc)"
+          echo "NEVERD_TEST_RUSTC=$rustc_path" >> "$GITHUB_ENV"
+          mkdir -p build-ci/source-dialects
+          rustup run "$RUST_TOOLCHAIN" rustc --version > build-ci/source-dialects/toolchains.txt
+          go version >> build-ci/source-dialects/toolchains.txt
+          cat build-ci/source-dialects/toolchains.txt
+        env:
+          RUST_TOOLCHAIN: '1.93.1'
 
       # Keep the default source-built LLVM contract while avoiding recompiling
       # unchanged LLVM and NeverD translation units on every runner.  The GHA
@@ -197,6 +220,7 @@ jobs:
             scripts.tests.test_ci_configuration \
             scripts.tests.test_audit_ci_test_inventory \
             scripts.tests.test_audit_ci_test_results \
+            scripts.tests.test_prepare_source_dialect_corpus \
             scripts.tests.test_run_native_cpu_ci \
             scripts.tests.test_probe_native_host \
             scripts.tests.test_run_native_cpu_methods \
@@ -305,6 +329,16 @@ jobs:
           cmake -E touch build-ci/.neverd-capability-build-complete
         env:
           BUILD_PARALLEL: ${{ matrix.parallel }}
+
+      - name: Generate native source dialect corpus
+        if: ${{ !cancelled() && steps.default_build.outcome == 'success' }}
+        shell: bash
+        run: |
+          "$PYTHON" scripts/prepare_source_dialect_corpus.py \
+            --neverd build-ci/bin/neverd \
+            --output build-ci/source-dialects
+        env:
+          PYTHON: ${{ matrix.python }}
 
       - name: Run emulation regressions
         id: emulation
@@ -1786,6 +1820,7 @@ jobs:
             build-ci/ctest-results.xml
             build-ci/ctest-exit-status.txt
             build-ci/ctest-outcomes.json
+            build-ci/source-dialects/
             ctest.log
           if-no-files-found: error
 
@@ -2113,7 +2148,7 @@ jobs:
         with:
           arch: x86
       - name: Build and execute genuine value/reference source images
-        run: python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-source-inputs
+        run: python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-source-inputs --capture-runtime-libraries
       - name: Preserve the exact native MSVC source inputs
         uses: actions/upload-artifact@v4
         with:
@@ -2150,7 +2185,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
             install --yes --no-install-recommends lld wine wine32:i386
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_windows_registration_libraries -v
       - name: Fetch genuine MSVC C++ source inputs
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         uses: actions/download-artifact@v4
@@ -2223,7 +2258,7 @@ jobs:
           cmake --build build-windows-eh --parallel 4 --target \
             NeverDRegistrationStateTests NeverDRegistrationEHTests NeverDLiftTests \
             NeverDMedStackAlignmentTests NeverDNoReturnTests \
-            NeverDWindowsRegistrationFrameTests \
+            NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationRealignedTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
             NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests neverd
       - name: Verify registration state and canonical LLVM metadata
@@ -2245,6 +2280,14 @@ jobs:
           python scripts/check_windows_registration_frame.py \
             --object build-windows-eh/evidence/frame-runtime.obj \
             --output build-windows-eh/evidence/callback-runtime \
+            --wine-prefix "$RUNNER_TEMP/neverd-wine32"
+      - name: Execute and relift realigned x86 catch callbacks
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        run: |
+          python scripts/check_windows_registration_realigned.py \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
+            --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+            --output build-windows-eh/evidence/realigned-callback \
             --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Verify x86 recovery and ARM32 cross-target PE reconstruction
         run: |
@@ -2376,6 +2419,9 @@ jobs:
       - name: Replay the identical catch SavedESP probes with the Windows CRT
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_cxx.py --evidence-root build-windows-eh/evidence/source-cxx-snapshot --output build-windows-eh/native-cxx-snapshot-replay.json
+      - name: Replay the identical realigned callback probes with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_realigned.py --evidence-root build-windows-eh/evidence/realigned-callback --output build-windows-eh/native-realigned-replay.json
       - name: Preserve native loader evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -2385,6 +2431,7 @@ jobs:
             build-windows-eh/native-replay.json
             build-windows-eh/native-cxx-replay.json
             build-windows-eh/native-cxx-snapshot-replay.json
+            build-windows-eh/native-realigned-replay.json
             build-windows-eh/runtime-diagnostics.json
             build-windows-eh/cxx-original/
           if-no-files-found: error

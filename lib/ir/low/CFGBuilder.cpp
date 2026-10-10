@@ -632,6 +632,7 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
   // cannot be proven makes the return that breaks the proof unsupported.
   KeptOwnInteriorCallTargets.clear();
   RegistrationCallees.reset();
+  X87CallEffects.reset();
   for (;;) {
     LowFunc Func = buildOnce(Img, Dec, EntryAddr, FuncName);
     if (OwnInteriorCallSites.empty())
@@ -661,6 +662,7 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
   RelativeRelocationRootSourceCacheSlotCount = 0;
   RelativeRelocationRootSourceCache.clear();
   RelativeRelocationRootSourceCacheLookupCountForTesting = 0;
+  CachedResolverGraph.reset();
   Insns.clear();
   BlockStarts.clear();
   ExploredAddrs.clear();

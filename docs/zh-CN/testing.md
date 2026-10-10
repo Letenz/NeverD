@@ -147,6 +147,8 @@ v4 测试固定前缀大小及填充，拒绝截断布局和未知标志，保�
 
 `NeverDInterpreterLLVMRefinementTests` 检查全新的原生到 LLVM 组合证明、精确文本／函数绑定、独立预算、完整观察项及刻意扩大的源码域。修改字节、残余程序、结果、标志、状态码、栈帧写入、poison 或错误／过期循环方案，都必须拒绝组合凭据。任意字长倒计数要求两段归纳前提；独立 C 用例在 O1/O2 编译后验证真实序列化 LLVM 输入。状态模型回归拒绝隐藏入口回边，对入口集合计费且不复制附属来源信息。
 
+`InterpreterLLVMRefinement.Preservation*` 覆盖局部／重叠范围、非法请求、独立计算的准备开销、两端相同的最终破坏、跨循环的入口保存／恢复、新鲜不透明状态证据及后期拒绝。`NeverDPEFixedImageTests` 也是 API 使用方，需要重新构建。未提供请求时的结果、计数与摘要另行对照基线。
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
@@ -1532,3 +1534,7 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` 检查原程序的模型执行、恢复、节权限，以及原程序与恢复程序在 Windows 上的原生执行，覆盖私有堆扩容和释放、内部编码指针、FLS 回调重装、递归锁、LastError 及虚拟内存的保留、提交和保护。`MaterializationRequiresKnownSupportedState` 拒绝缺失版本输入及动态 TLS；`RuntimeRestorationHasTheSameCAPIAndCLIContract` 比较精确字节和报告。Linux 构建检查及 Wine 观察不能替代原生 Windows 生命周期证据。
 
 `NeverDUnpackDriverTests` 覆盖 DriverEntry 恢复、静态／动态内核导入、遗留内核资源、入口 ABI／控制状态、畸形导出、调度、请求／卸载生命周期、C API／CLI 一致性及 PE 校验和。原生驱动清单要求对应 KVM／WHP 用例执行；Windows 还对照 ImageHlp。这不代表原生内核加载验收。见[脱壳](unpack.md)。
+
+## 原生不透明状态检查
+
+`X86PreservedState.*` 检查新鲜标量形式、精确寄存器别名、严格重置及字节/操作段/版本陈旧拒绝。`OriginalBinaryUndefinedIndependence.*Opaque*` 覆盖分支、内部调用、完整间接目标、精确配置及独立解码的元数据预算恰好够用/少一单位边界。`BinaryLowIR*.*Opaque*` 覆盖选择见证与任意未定义选择、多归纳源、后期秩/预算拒绝、真实入口标量保持，以及 LowIR 不变但后续源段字节改变时执行摘要必须变化。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 检查分组内部、切点前边界、陈旧记录及栈修改前的目标求值。重建受影响的元数据消费者，包括 `NeverDInterpreterLLVMRefinementTests`；分别报告 sanitizer、编译故障注入与普通测试结果。

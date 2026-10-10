@@ -152,6 +152,8 @@ Los tests de cuenta regresiva protegida cubren reintentos tras rechazar la plant
 
 `NeverDInterpreterLLVMRefinementTests` comprueba composiciones nuevas, vínculo exacto texto/función, presupuestos independientes, observaciones completas y dominios fuente ampliados. Cambios de bytes, residuos, resultados, indicadores, estados, escrituras, poison o planes falsos/obsoletos deben impedir el comprobante compuesto. Los contadores de palabra arbitraria requieren ambas premisas inductivas; ejemplos C independientes compilados en O1/O2 prueban el LLVM serializado real. Las regresiones rechazan vueltas ocultas a la entrada y limitan raíces sin copiar procedencia auxiliar.
 
+`InterpreterLLVMRefinement.Preservation*` cubre rangos parciales o solapados, peticiones inválidas, coste de preparación calculado independientemente, alteraciones finales idénticas, guardado/restauración de valores de entrada a través de bucles, evidencia opaca nueva y rechazos tardíos. Reconstruir también el consumidor de API `NeverDPEFixedImageTests`. Comparar por separado resultados, contadores y resúmenes sin petición con la base.
+
 ```sh
 cmake --build build-release --target NeverDLLVMCScalarLoopRecoveryTests --parallel 4
 build-release/bin/NeverDLLVMCScalarLoopRecoveryTests
@@ -1725,3 +1727,7 @@ bulk-attributes verifica grupos completos, conjunto de nombres/tipos, guardas de
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` verifica ejecución modelada original, restauración, permisos y ejecución nativa Windows de ambas imágenes: reasignación/liberación del heap, punteros interiores codificados, rearme FLS, bloqueos recursivos, LastError y páginas virtuales reservadas, comprometidas y protegidas. `MaterializationRequiresKnownSupportedState` rechaza versión ausente y TLS dinámico. `RuntimeRestorationHasTheSameCAPIAndCLIContract` compara bytes exactos e informes. Las comprobaciones de construcción Linux y observaciones Wine no sustituyen evidencia del ciclo de vida nativo Windows.
 
 `NeverDUnpackDriverTests` cubre entrada, imports del núcleo, recursos retenidos, ABI, exports, planificación, solicitudes y descarga, C API/CLI y suma PE. Los casos obligatorios KVM/WHP e ImageHlp en Windows no prueban una carga nativa en el núcleo. [UNPACK](unpack.md).
+
+## Pruebas del estado opaco
+
+`X86PreservedState.*` comprueba formas escalares nuevas, alias exactos, reinicio estricto y rechazo de bytes/secuencias/versiones obsoletos. `OriginalBinaryUndefinedIndependence.*Opaque*` cubre ramas, llamadas internas, destinos indirectos exhaustivos, perfiles exactos y presupuestos de metadatos exactos/menos uno derivados de decodificación independiente. `BinaryLowIR*.*Opaque*` cubre testigos frente a elecciones indefinidas arbitrarias, múltiples fuentes inductivas, rechazo tardío de rango/presupuesto, preservación escalar desde la entrada real y cambios posteriores de bytes con LowIR idéntico pero resumen distinto. `NativeUndefinedIndependence.*Opaque*` y `NativeStackControl.*FreshMemoryCall*` comprueban interiores de grupos, límites previos al corte, recibos obsoletos y evaluación del destino antes de modificar la pila. Reconstruir consumidores afectados, incluido `NeverDInterpreterLLVMRefinementTests`; informar por separado sanitizers, fallos compilados y pruebas ordinarias.

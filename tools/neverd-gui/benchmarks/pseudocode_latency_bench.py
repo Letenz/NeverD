@@ -81,6 +81,10 @@ def main():
     parser.add_argument("--worker", type=Path, required=True)
     parser.add_argument("--engine", type=Path, required=True,
                         help="matching libneverd; its directory is prepended to the library path")
+    parser.add_argument("--baseline-engine", type=Path,
+                        help="compare another engine, alternating run order")
+    parser.add_argument("--baseline-worker", type=Path,
+                        help="worker paired with --baseline-engine (defaults to --worker)")
     parser.add_argument("--ida-python", type=Path)
     parser.add_argument("--entry", action="append", required=True,
                         type=lambda value: f"0x{int(value, 0):x}")
@@ -93,17 +97,28 @@ def main():
     args = parser.parse_args()
     if args.samples < 1 or args.threads < 1 or args.timeout <= 0:
         parser.error("samples, threads and timeout must be positive")
+    if args.baseline_worker and not args.baseline_engine:
+        parser.error("--baseline-worker requires --baseline-engine")
     worker, engine, binary = (path.resolve() for path in
                               (args.worker, args.engine, args.binary))
     if engine.name != "libneverd.so" or platform.system() != "Linux":
         parser.error("this controlled library-loading profile currently requires Linux/libneverd.so")
+    engines = {"neverd": engine}
+    workers = {"neverd": worker}
+    if args.baseline_engine:
+        baseline = args.baseline_engine.resolve()
+        if baseline.name != "libneverd.so":
+            parser.error("--baseline-engine must name libneverd.so")
+        engines["baseline"] = baseline
+        workers["baseline"] = (args.baseline_worker.resolve()
+                               if args.baseline_worker else worker)
     os.environ["NEVERD_THREADS"] = str(args.threads)
     os.environ["NEVERD_NATIVE_PHASES"] = "1"
     library_path = os.environ.get("LD_LIBRARY_PATH")
-    os.environ["LD_LIBRARY_PATH"] = str(engine.parent) + (os.pathsep + library_path if library_path else "")
     report = dict(schema=1, kind="fresh-function-source-latency", platform=platform.platform(),
                   started_at=datetime.now(timezone.utc).isoformat(),
                   logical_cpus=os.cpu_count(), threads=args.threads,
+                  cpu_affinity=sorted(os.sched_getaffinity(0)),
                   representation=args.representation,
                   binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
                   worker_sha256=hashlib.sha256(worker.read_bytes()).hexdigest(),
@@ -114,17 +129,31 @@ def main():
                            "Wall-clock measurements include other host activity; load is recorded.",
                            "Source hashes check reproducibility, not semantic equivalence to the binary."],
                   samples=[])
+    if "baseline" in engines:
+        report["baseline_engine_sha256"] = hashlib.sha256(engines["baseline"].read_bytes()).hexdigest()
+        report["baseline_worker_sha256"] = hashlib.sha256(workers["baseline"].read_bytes()).hexdigest()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="neverd-source-latency-") as directory:
         scratch = Path(directory)
         for sample in range(args.samples):
             for entry in args.entry:
-                copy = scratch / f"input-{sample}-{entry}-{binary.name}"
-                shutil.copyfile(binary, copy)
                 row = dict(sample=sample + 1, entry=entry, load_average=os.getloadavg())
-                row["neverd"] = run_worker(worker, copy, entry, args.representation, args.timeout)
+                order = list(engines)
+                if sample % 2:
+                    order.reverse()
+                row["engine_order"] = order
+                for name in order:
+                    copy = scratch / f"input-{sample}-{entry}-{name}-{binary.name}"
+                    shutil.copyfile(binary, copy)
+                    os.environ["LD_LIBRARY_PATH"] = str(engines[name].parent) + (
+                        os.pathsep + library_path if library_path else "")
+                    load_before = os.getloadavg()
+                    row[name] = run_worker(workers[name], copy, entry, args.representation, args.timeout)
+                    row[name].update(load_before=load_before, load_after=os.getloadavg())
                 if args.ida_python:
                     try:
+                        copy = scratch / f"input-{sample}-{entry}-ida-{binary.name}"
+                        shutil.copyfile(binary, copy)
                         # Preserve a virtual environment's python symlink:
                         # resolving it selects the base interpreter's modules.
                         ida = comparison.run_ida(args.ida_python.absolute(), copy, [int(entry, 0)],
@@ -136,7 +165,7 @@ def main():
                 report["samples"].append(row)
                 args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
                 print(json.dumps(row), flush=True)
-    return int(any(row["neverd"]["status"] != "ok" or
+    return int(any(any(row[name]["status"] != "ok" for name in engines) or
                    row.get("ida", {}).get("decompile_failures") for row in report["samples"]))
 
 

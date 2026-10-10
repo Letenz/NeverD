@@ -265,6 +265,8 @@ private slots:
                             {}});
     const auto baseline = plain.layout(font, 1, color).lineAt(0);
     const auto decorated = annotated.layout(font, 1, color).lineAt(0);
+    QCOMPARE(baseline.position().y() + baseline.ascent(),
+             decorated.position().y() + decorated.ascent());
     for (int at = 0; at <= prefix.size(); ++at)
       QVERIFY2(std::abs(baseline.cursorToX(at) - decorated.cursorToX(at)) < 0.1,
                qPrintable(QStringLiteral("Code column %1 moved: %2 -> %3")

@@ -400,6 +400,11 @@ constexpr size_t kMaxCallEffectExtraLifts = 256;
 /// A no-return proof for an internal callee lifts it, and its own proofs
 /// lift their callees in turn; one this many proofs deep counts as returning.
 constexpr unsigned kMaxNoReturnProofDepth = 4;
+/// One x87 call-effect proof must close every returning path and callee under
+/// these independent limits. Incomplete proofs grant no stack or return fact.
+constexpr unsigned kMaxX87CallProofDepth = 16;
+constexpr size_t kMaxX87CallProofFunctions = 128;
+constexpr size_t kMaxX87CallProofWork = 262144;
 /// Alignment no-ops between a call and the next function are fewer bytes
 /// than the widest function alignment compilers use (64); a longer run is
 /// not taken as padding.
