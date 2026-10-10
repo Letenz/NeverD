@@ -465,9 +465,8 @@ codeRangesMatching(const ExceptionFunction &EH, const CxxExceptionInfo &Cxx,
                    Pred Live,
                    const RegistrationStateAnalysis *Registration = nullptr) {
   if (EH.Registration) {
-    if (!Registration ||
-        (EH.Registration->RealignedFrame &&
-         !realignedRegistrationFrameCoordinate(EH, Registration)))
+    if (!Registration || (EH.Registration->hasCxxCallbackStack() &&
+                          !cxxRegistrationFrameCoordinate(EH, Registration)))
       return {};
     auto Ranges = registrationRangesWhere(*Registration, Live);
     return Ranges ? std::move(*Ranges) : std::vector<ExceptionAddressRange>{};
@@ -632,7 +631,7 @@ void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
   const CxxExceptionInfo &Cxx = *EH.Cxx;
   for (uint32_t TryIndex = 0; TryIndex < Cxx.TryBlocks.size(); ++TryIndex) {
     const CxxTryBlock &Try = Cxx.TryBlocks[TryIndex];
-    if (EH.Registration && EH.Registration->RealignedFrame &&
+    if (EH.Registration && EH.Registration->hasCxxCallbackStack() &&
         llvm::any_of(Try.Handlers, [&](const auto &Catch) {
           return !registrationCallbackRegion(Med, Catch.HandlerVA);
         })) {
@@ -731,8 +730,8 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
     if (Action.ActionVA == 0 || coveredByTry(State))
       continue;
     // A cleanup needs its own entry/return ABI proof before it can supply a
-    // realigned clause body. Catch projection does not establish that ABI.
-    if (EH.Registration && EH.Registration->RealignedFrame) {
+    // callback clause body. Catch projection does not establish that ABI.
+    if (EH.Registration && EH.Registration->hasCxxCallbackStack()) {
       ++Rejected;
       continue;
     }
@@ -1350,7 +1349,7 @@ uniqueHandlerBlockRange(const MedFunc &Med, const ExceptionFunction &EH,
   if (Callback) {
     Ranges = std::move(Callback->Ranges);
   } else {
-    if (EH.Registration && EH.Registration->RealignedFrame)
+    if (EH.Registration && EH.Registration->hasCxxCallbackStack())
       return std::nullopt;
     const MedBlock *Match = nullptr;
     for (const MedBlock &Block : Med.Blocks) {
@@ -1665,7 +1664,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         Candidate.HasTryStates && !Candidate.Cover.empty();
     const bool SeparateRegistrationCxx =
         SplitRegistrationCxx ||
-        (EH.Registration && EH.Registration->RealignedFrame &&
+        (EH.Registration && EH.Registration->hasCxxCallbackStack() &&
          Candidate.Kind == StmtKind::CxxTry);
     std::optional<std::vector<HighStmt>> OriginalBody;
     bool RegionInstalled = false;
@@ -1709,7 +1708,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         // A closed native CFG is not enough if earlier structuring scattered
         // its statements into several lists. Move the complete callback from
         // its actual entry, or restore the original function transactionally.
-        if (EH.Registration->RealignedFrame) {
+        if (EH.Registration->hasCxxCallbackStack()) {
           bool Left = SeparatedBodies[C].front().Addr != Clause.HandlerVA;
           walkStmts(Func.Body, [&](const HighStmt &Stmt) {
             Left |= Stmt.Addr != 0 && Stmt.Addr != InvalidVA &&

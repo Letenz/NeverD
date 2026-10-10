@@ -623,9 +623,8 @@ classifyWindowsEHNativeSource(const ExceptionFunction &EH, Arch TargetArch,
     if (!EH.PersonalityVA || Chain.HandlerVA != EH.PersonalityVA ||
         !Chain.ScopeTableVA || Chain.ScopeTableVA != EH.HandlerDataVA ||
         Chain.ScopeTableVA != EH.Cxx->NativeFuncInfoVA ||
-        Chain.RegistrationOffset != -12 || Chain.TryLevelOffset != -4 ||
-        Chain.SeededTryLevel != -1 || Chain.HasSecurityCookies ||
-        !Chain.Scopes.empty() ||
+        !Chain.cxxRuntimeFrameOffset() || Chain.SeededTryLevel != -1 ||
+        Chain.HasSecurityCookies || !Chain.Scopes.empty() ||
         Chain.TryLevelStores.size() > limits::kMaxRegistrationEHRecords ||
         !EH.CodeRange.contains(Chain.ChainInstallVA))
       return reject(Model,

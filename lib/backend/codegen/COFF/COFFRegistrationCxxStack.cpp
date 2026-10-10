@@ -16,7 +16,7 @@ namespace neverd::coff_registration {
 llvm::Error bindCxxCatchStack(CxxIRControlProof &Proof, const MedFunc &Source,
                               const llvm::Function &Function) {
   const auto &EH = *Source.ExceptionMetadata;
-  const bool Realigned = EH.Registration->RealignedFrame.has_value();
+  const bool PrivateStack = EH.Registration->hasCxxCallbackStack();
   const va_t Callback = EH.Cxx->TryBlocks[0].Handlers[0].HandlerVA;
   size_t Work = 0;
   unsigned Expected = 0;
@@ -37,7 +37,7 @@ llvm::Error bindCxxCatchStack(CxxIRControlProof &Proof, const MedFunc &Source,
       if (const auto *MD =
               I.getMetadata(windows_eh_md::RegistrationCatchStackAttachment)) {
         Stack = llvm::dyn_cast<llvm::AllocaInst>(&I);
-        if (!Realigned || Proof.CallbackStack || !Stack ||
+        if (!PrivateStack || Proof.CallbackStack || !Stack ||
             MD->getNumOperands() != 2 ||
             metadataInteger(*MD, 0, 64) != Source.Entry ||
             metadataInteger(*MD, 1, 64) != Callback ||
@@ -50,13 +50,13 @@ llvm::Error bindCxxCatchStack(CxxIRControlProof &Proof, const MedFunc &Source,
       }
       if (I.getMetadata(windows_eh_md::RegistrationRootAttachment)) {
         const auto *Store = llvm::dyn_cast<llvm::StoreInst>(&I);
-        if (!Realigned || Seed || !Store || Store->isAtomic() ||
+        if (!PrivateStack || Seed || !Store || Store->isAtomic() ||
             Store->isVolatile() || &Block != Proof.Catch->getParent())
           return rejectIR("C++ callback ESP has no unique runtime definition");
         Seed = Store;
       }
     }
-  if (!Realigned)
+  if (!PrivateStack)
     return llvm::Error::success();
   if (Expected != 1 || !Seed || !Stack)
     return rejectIR("C++ callback stack lost its source ESP binding");
