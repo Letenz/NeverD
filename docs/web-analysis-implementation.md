@@ -43,7 +43,7 @@ their existing scope; no Python support for web APIs is claimed.
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR packed/unpacked extraction; Electron manifest entries, source-visible boundaries, scoped IPC comparison, captured preload/renderer files and HTML/import-map candidates implemented; qualification recorded below | External-source HTML contexts and full import closure, runtime/window routing, distribution detection, safe export, NW.js/VSIX and broader host/release qualification remain |
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and shared source/Bun/native consumers implemented; two official Claude Code npm packages qualify original digest and payload evidence | Source behavior, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
-| P4D passive interfaces/HAR | Pending | Static-only, HAR-only, correlation, uncertainty and redaction tests |
+| P4D passive interfaces/HAR | Native HAR preview/commit, direct fetch/WebSocket source candidates and explicit method/origin/path comparison implemented | XHR/wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
 | P6 stream/log consumers | Pending | SSE/JSONL/JSON-RPC/MCP versioned records, truncation and canary tests |
 | P7 Tauri/Wails/Node-family | Pending | Actual asset extraction and bridge/native links for each named profile |
@@ -159,6 +159,33 @@ implementation and its C++ fixtures/adapters. Package algorithms have their
 own `lib/web/packages` directory. Fixed diagnostics moved to `web/Error.h`,
 removing the bottom-up dependency from readers/algorithms to the session API.
 The existing `Session.h` still includes that contract for source compatibility.
+
+## Passive interfaces and reviewed HAR — 2026-10-11
+
+Native C++ HAR preview/commit, direct fetch/WebSocket source candidates and
+explicit method/origin/path comparison now share SDK, CLI and worker results.
+Private URLs, header/cookie/query/body values and arbitrary names remain
+excluded from metadata. Tokens bind the immutable original and revision;
+the CLI requires an explicit hash/policy receipt. Candidate matches preserve
+separate source inference and imported-observation classes. Independent review
+corrected base-dependent URL coercion and missing URL-query/form preview counts.
+See the [interface profile](web-interface-profile.md).
+
+The restored macOS arm64 Release run exercised 373 owning web cases: 366
+passed and seven explicitly skipped (six unavailable LLVM Zstd map cases and
+the inapplicable ASAR-policy omission case). The original Bun/Claude/npm corpus
+remained enabled, including all 2,345 recovered JS modules and the new
+container-to-source interface check. That check locates one fetch in Claude
+module 1,897 at byte 65,473, length 52; its runtime URL/options remain unknown.
+No traffic was supplied or invented. Enabled API availability and all five
+selected C++ worker regressions passed.
+
+With only JS disabled, all 11 HAR/SDK cases and five worker cases passed;
+source-dependent APIs reported unavailable. With the entire web backend
+disabled, both ABI cases and four generic worker cases passed, while the web
+worker case explicitly skipped. Both feature switches are restored. Formatting
+and whitespace checks passed. #717 remains partial: broader source request
+flow, response/transformation evidence, schema export and stream adapters remain.
 
 ## Original npm archives and SRI — 2026-10-11
 

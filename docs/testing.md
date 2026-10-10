@@ -360,6 +360,17 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebInterfaces.*` and `WebSourceInterfaces.*` cover passive HAR admission,
+fixed redaction classifications, missing/malformed fields, source anchors,
+shadowing/eval, options inheritance, method normalization, credential and
+WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+`WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
+hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
+cache limits, canary exclusion and direct/framed parity. Run the owning web
+directory after changes to these shared session boundaries. HAR remains
+available without the parser; source/interface comparison requires it.
+See the [interface profile](web-interface-profile.md).
+
 `WebPackageArchive.*`, `WebPackageIntegrity.*` and `WebPackageDigest.*` in
 `NeverDWebArtifactTests` cover bounded tar/PAX/gzip admission, shared storage,
 strongest SRI declarations, original compressed-byte scope and independent

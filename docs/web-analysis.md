@@ -1,5 +1,10 @@
 # Offline web analysis
 
+Passive HAR/source interface commands and their explicit redaction preview
+workflow are documented in the [interface profile](web-interface-profile.md).
+Use `neverd web har-preview` before hash-bound `har-import` or
+`interface-correlate`; `neverd web interfaces` supports source-only candidates.
+
 The `neverd web` command and independent C API inspect admitted files without
 executing them. The current implementation provides immutable artifact
 inventory, JavaScript syntax and lexical-binding queries, bounded primitive

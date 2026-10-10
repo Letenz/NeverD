@@ -3,10 +3,22 @@
 `lib/web` owns this schema, identity construction and publication rules.
 CLI/SDK adapters must not reconstruct identities or infer additional analysis
 claims. This schema describes metadata inspection and explicit local Bun
-evidence export; findings, transform receipts and observations require separate
-contracts.
+evidence export and the bounded passive observation contract described below.
+General findings and transform receipts still require separate contracts.
 
 ## Identity and immutable evidence
+
+Passive interface records use the [versioned interface profile](web-interface-profile.md).
+HAR preview/commit is distinct from original artifact capture. Preview tokens
+bind the immutable artifact/hash, revision, policy and preview sequence; only
+committed captures can publish observation pages or participate in comparison.
+Public observation IDs never contain vendor IDs or private endpoint hashes.
+One-to-many pairs retain both evidence classes, the exact method/origin/path
+rule and ignored fields. A pair never upgrades static inference to observed
+source execution. Reimport revokes pending tokens, analyses and comparisons.
+HAR/source/correlation caches each admit four results, with one pending HAR
+preview and pages limited to 128 records. Ordinary output has no raw URL,
+query/cookie/header value, body, vendor field or unrecognized target name.
 
 Hashes are lowercase hexadecimal SHA-256. A blob hash covers exact bytes.
 An occurrence/artifact ID also identifies its provenance: identical bytes
@@ -28,6 +40,10 @@ Domain labels and field order are defined in
 | Snapshot/project | Sorted admitted tree, member bytes and kinds |
 | Artifact occurrence | Snapshot/provenance, relative member identity and blob |
 | Source unit | Artifact occurrence, parser-input blob hash (raw or explicit decoded projection), parser profile, explicit source type |
+| HAR capture | Artifact occurrence, original bytes SHA-256 and HAR profile |
+| HAR observation / request / response | Capture and entry ordinal, then observation ID and side-specific domain |
+| Source interface | Source/binding/value analysis IDs and profile, then call node ID and fixed kind |
+| Interface correlation / pair | Selected source-interface and committed capture IDs plus rule profile; each pair adds both public occurrence IDs |
 | Bun extraction | Original artifact occurrence/hash and explicit layout profile |
 | Bun region | Extraction ID (already bound to the full original hash), region ordinal/kind and original offset/size; separate raw range hash retained |
 | Bun module | Extraction ID and module-table ordinal |

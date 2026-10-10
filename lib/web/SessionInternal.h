@@ -21,6 +21,7 @@
 #include "neverd/web/ElectronEntries.h"
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
+#include "neverd/web/Interfaces.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
@@ -71,6 +72,12 @@ struct Session::Impl {
   std::map<std::string, PackageDiff> PackageDiffs;
   std::map<std::string, PackageArchive> PackageArchives;
   std::map<std::string, PackageIntegrityResult> PackageIntegrity;
+  std::map<std::string, HARCapture> HARCaptures;
+  std::optional<HARCapture> PendingHAR;
+  std::string HARPreviewToken;
+  uint64_t HARPreviewSequence = 0;
+  std::map<std::string, SourceInterfaces> InterfaceSources;
+  std::map<std::string, InterfaceCorrelation> InterfaceCorrelations;
   uint64_t CachedArchiveBytes = 0;
   struct HTMLResults {
     HTMLDocument Document;
@@ -101,7 +108,8 @@ struct Session::Impl {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    AsarExtractions.empty() && ElectronManifests.empty() &&
                    HTMLDocuments.empty() && PackageAnalyses.empty() &&
-                   PackageArchives.empty() && PackageIntegrity.empty()
+                   PackageArchives.empty() && PackageIntegrity.empty() &&
+                   HARCaptures.empty() && InterfaceSources.empty()
                ? "not_analyzed"
                : "partial";
   }

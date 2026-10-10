@@ -102,6 +102,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdWebPackages.cpp
   cmd/NeverDCmdWebArchive.cpp
   cmd/NeverDCmdWebIntegrity.cpp
+  cmd/NeverDCmdWebInterfaces.cpp
 
   LINK_LIBS
   neverd_shared

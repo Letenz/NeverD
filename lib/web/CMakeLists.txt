@@ -5,6 +5,10 @@ add_neverd_component_library(NeverDWeb
   packages/PackageArchive.cpp
   packages/PackageIntegrity.cpp
   packages/SHA512.cpp
+  interfaces/Endpoint.cpp
+  interfaces/HAR.cpp
+  interfaces/Correlation.cpp
+  SessionInterfaces.cpp
   SessionPackages.cpp
   SessionPackageArchive.cpp
   SessionPackageIntegrity.cpp
@@ -79,6 +83,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   include("${CMAKE_SOURCE_DIR}/cmake/NeverDJavaScriptParser.cmake")
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
+    interfaces/SourceInterfaces.cpp
     SourceRecovery.cpp
     SourceModel.cpp SourceBindings.cpp SourceEvaluate.cpp SourceEffects.cpp SourceModules.cpp HTMLModules.cpp
     SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)

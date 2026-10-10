@@ -401,6 +401,13 @@ comparison; `SessionPackageIntegrity` binds selected captured registry/lock
 declarations to selected original artifacts. Archive validation, byte equality,
 publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
+`interfaces/Endpoint` owns private URL comparison keys and fixed public
+vocabularies. `interfaces/HAR` owns bounded capture admission;
+`interfaces/SourceInterfaces` consumes the shared syntax/binding/value models;
+`interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
+owns redaction preview/commit, revision/cache lifetime and public metadata.
+Transports cannot publish uncommitted HAR observations or reinterpret a match
+as source execution. See the [passive interface profile](web-interface-profile.md).
 `web/Error.h` owns fixed diagnostics independently of `Session`; artifact
 readers and semantic algorithms do not depend on the session API to fail.
 `SourceNavigation` owns syntax containment and lexical links; `SessionAnchor`
