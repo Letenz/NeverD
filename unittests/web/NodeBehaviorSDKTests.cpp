@@ -156,6 +156,15 @@ protected:
         S, Revision.data(), Revision.size(), ID.data(), ID.size(), Kind.data(),
         Kind.size(), Offset, Limit));
   }
+  // Archive members need the pinned ICU path policy, as in
+  // PackageArchiveSDKTests; without it extraction reports unavailability.
+  static bool packageArchivesAvailable() {
+    const auto Caps = take(neverd_web_capabilities_json());
+    for (const auto &A : *Caps.getAsObject()->getArray("analysis"))
+      if (field(A, "kind") == "package_archive")
+        return A.getAsObject()->getBoolean("available").value_or(false);
+    return false;
+  }
   static std::string read(const std::filesystem::path &Path) {
     std::ifstream F(Path, std::ios::binary);
     return {std::istreambuf_iterator<char>(F), {}};
@@ -266,6 +275,8 @@ TEST_F(WebNodeBehaviorSDK,
 }
 
 TEST_F(WebNodeBehaviorSDK, UnavailableAndUnownedSourcesRemainVisible) {
+  if (!packageArchivesAvailable())
+    GTEST_SKIP() << "Pinned archive path policy unavailable";
   const auto Archive = Root / "unknown.tar";
   std::ofstream(Archive, std::ios::binary) << finishTar(
       tarMember("package/package-lock.json",
@@ -277,11 +288,14 @@ TEST_F(WebNodeBehaviorSDK, UnavailableAndUnownedSourcesRemainVisible) {
   const auto A = take(neverd_web_package_archive_extract_json(
       S, Revision.data(), Revision.size(), Artifacts[0].data(),
       Artifacts[0].size(), "tar", 3));
+  ASSERT_EQ(field(A, "status"), "ok") << llvm::formatv("{0}", A).str();
   const auto ArchiveID = field(A, "archive_id");
   const auto Page = take(neverd_web_package_archive_records_json(
       S, Revision.data(), Revision.size(), ArchiveID.data(), ArchiveID.size(),
       0, 128));
+  ASSERT_EQ(field(Page, "status"), "ok") << llvm::formatv("{0}", Page).str();
   const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_GE(Items.size(), 4u);
   const auto P = packages(field(Items[0], "member_id"), "npm-lock");
   std::vector<std::string> Sources;
   for (unsigned I = 1; I <= 3; ++I)
@@ -313,6 +327,8 @@ TEST_F(WebNodeBehaviorSDK, UnavailableAndUnownedSourcesRemainVisible) {
 
 TEST_F(WebNodeBehaviorSDK,
        ExtractedSEAAndBunSourcesKeepDeliveryOnlyAssociation) {
+  if (!packageArchivesAvailable())
+    GTEST_SKIP() << "Pinned archive path policy unavailable";
   const auto Archive = Root / "native.tar";
   const auto SEABytes =
       neverd::web::sea_test::elf(neverd::web::sea_test::blob(0, Script));
@@ -327,11 +343,14 @@ TEST_F(WebNodeBehaviorSDK,
   const auto A = take(neverd_web_package_archive_extract_json(
       S, Revision.data(), Revision.size(), Artifacts[0].data(),
       Artifacts[0].size(), "tar", 3));
+  ASSERT_EQ(field(A, "status"), "ok") << llvm::formatv("{0}", A).str();
   const auto ArchiveID = field(A, "archive_id");
   const auto Page = take(neverd_web_package_archive_records_json(
       S, Revision.data(), Revision.size(), ArchiveID.data(), ArchiveID.size(),
       0, 128));
+  ASSERT_EQ(field(Page, "status"), "ok") << llvm::formatv("{0}", Page).str();
   const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_GE(Items.size(), 5u);
   const auto P = packages(field(Items[0], "member_id"));
   const auto SEAArtifact = field(Items[1], "member_id");
   constexpr std::string_view SEAProfile = "node-sea-22.15.0-elf-x64-v1";
