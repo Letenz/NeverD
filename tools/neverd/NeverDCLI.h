@@ -211,6 +211,7 @@ extern llvm::cl::list<std::string> WebArguments;
 int runWeb();
 int runWebRewrite();
 int runWebBehavior();
+int runWebBehaviorDiff();
 int runWebPackages();
 int runWebArchive();
 int runWebDesktop();

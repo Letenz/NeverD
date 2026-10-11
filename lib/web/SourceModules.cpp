@@ -14,6 +14,7 @@
 #include "SourceModel.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/SourceOrigins.h"
 
 #include <algorithm>
 #include <map>
@@ -486,14 +487,27 @@ analyzeSourceModules(const SourceAnalysis &Source,
   return Inventory(Source, Bindings).run();
 }
 
-SourceModuleLinks linkSourceModules(const SourceAnalysis &Source,
-                                    const SourceModuleAnalysis &Modules,
-                                    const Snapshot &Input) {
+namespace {
+SourceModuleLinks link(const SourceAnalysis &Source,
+                       const SourceModuleAnalysis &Modules,
+                       const Snapshot &Input, const SourceOrigins *Origins) {
   if (Source.ID != Modules.SourceID)
     throw Error("source_analysis_mismatch");
+  if (Origins &&
+      (Origins->SourceID != Source.ID || Origins->ModuleID != Modules.ID ||
+       Origins->BindingID != Modules.BindingID ||
+       (Origins->Status == "partial" &&
+        Origins->Nodes.size() != Source.Nodes.size())))
+    throw Error("source_origin_mismatch");
   SourceModuleLinks Result;
   Result.ID = identity("source-module-links",
                        {JavaScriptModuleLinkProfile, Modules.ID, Input.ID});
+  if (Origins) {
+    Result.Profile = NodeModuleLinkProfile;
+    Result.ID =
+        identity("source-node-module-links",
+                 {NodeModuleLinkProfile, Modules.ID, Origins->ID, Input.ID});
+  }
   Result.Status = "ok";
   if (Modules.Status != "ok" && Modules.Status != "partial") {
     Result.Status = "unavailable";
@@ -517,12 +531,25 @@ SourceModuleLinks linkSourceModules(const SourceAnalysis &Source,
       if (!Members.emplace(A.MemberPath, &A).second)
         throw Error("invalid_artifact_snapshot");
     }
-    for (const auto &R : Modules.Requests) {
+    for (size_t Index = 0; Index < Modules.Requests.size(); ++Index) {
+      const auto &R = Modules.Requests[Index];
       Step();
       SourceModuleLink L;
+      bool Require = false;
+      if (Origins && R.Kind == "require_call_candidate" &&
+          Origins->Status == "partial" && R.Node < Origins->Nodes.size()) {
+        const auto &O = Origins->Nodes[R.Node];
+        Require = !R.Optional && R.ArgumentCount == 1 && O &&
+                  O->Request == Index && O->Construction == None &&
+                  O->Members.empty() &&
+                  (O->Evidence == "external" ||
+                   O->Evidence == "caller_selected_commonjs_parameter");
+        if (Require)
+          L.OriginEvidence = O->Evidence;
+      }
       if (R.Kind == "dynamic_import")
         L.Status = "dynamic_import_boundary";
-      else if (R.Kind != "esm_import" && R.Kind != "esm_reexport")
+      else if (R.Kind != "esm_import" && R.Kind != "esm_reexport" && !Require)
         L.Status = "unverified_callee";
       else if (R.Specifier == None)
         L.Status = "nonliteral_specifier";
@@ -563,5 +590,19 @@ SourceModuleLinks linkSourceModules(const SourceAnalysis &Source,
     Result.Requests.clear();
   }
   return Result;
+}
+} // namespace
+
+SourceModuleLinks linkSourceModules(const SourceAnalysis &Source,
+                                    const SourceModuleAnalysis &Modules,
+                                    const Snapshot &Input) {
+  return link(Source, Modules, Input, nullptr);
+}
+
+SourceModuleLinks linkNodeSourceModules(const SourceAnalysis &Source,
+                                        const SourceModuleAnalysis &Modules,
+                                        const SourceOrigins &Origins,
+                                        const Snapshot &Input) {
+  return link(Source, Modules, Input, &Origins);
 }
 } // namespace neverd::web

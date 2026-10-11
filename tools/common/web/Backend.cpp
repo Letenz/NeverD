@@ -89,6 +89,10 @@ struct API {
   WEB_API(neverd_web_node_behavior_records_json)
   WEB_API(neverd_web_package_behavior_analyze_json)
   WEB_API(neverd_web_package_behavior_records_json)
+  WEB_API(neverd_web_package_behavior_diff_analyze_json)
+  WEB_API(neverd_web_package_behavior_diff_records_json)
+  WEB_API(neverd_web_package_install_analyze_json)
+  WEB_API(neverd_web_package_install_records_json)
   WEB_API(neverd_web_asar_extract_json)
   WEB_API(neverd_web_electron_manifest_analyze_json)
   WEB_API(neverd_web_desktop_manifest_analyze_json)
@@ -568,19 +572,64 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     analysisState_ = "partial";
     return value;
   }
+  if (operation == "web_package_behavior_diff_analyze") {
+    fields(p, {"revision", "package_diff_id", "before_package_behavior_id",
+               "after_package_behavior_id"});
+    if (!api().neverd_web_package_behavior_diff_analyze_json)
+      throw Error("capability_unavailable",
+                  "Behavior comparison is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_diff_id", 64);
+    Json options{{"schema_version", 1}};
+    for (const auto *key :
+         {"before_package_behavior_id", "after_package_behavior_id"})
+      if (p.contains(key))
+        options[key] = required(p, key, 64);
+    const auto encoded = options.dump();
+    auto value = result(api().neverd_web_package_behavior_diff_analyze_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_install_analyze") {
+    fields(p, {"revision", "package_analysis_id", "package_behavior_id"});
+    if (!api().neverd_web_package_install_analyze_json)
+      throw Error("capability_unavailable",
+                  "Installation evidence is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_analysis_id", 64);
+    Json options{{"schema_version", 1}};
+    if (p.contains("package_behavior_id"))
+      options["package_behavior_id"] = required(p, "package_behavior_id", 64);
+    const auto encoded = options.dump();
+    auto value = result(api().neverd_web_package_install_analyze_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
   if (operation == "web_electron_ipc_records" ||
       operation == "web_electron_entry_records" ||
-      operation == "web_package_behavior_records") {
+      operation == "web_package_behavior_records" ||
+      operation == "web_package_behavior_diff_records" ||
+      operation == "web_package_install_records") {
     const bool ipc = operation == "web_electron_ipc_records";
     const bool package = operation == "web_package_behavior_records";
-    const auto idField = package ? "package_behavior_id"
-                         : ipc   ? "electron_ipc_id"
-                                 : "electron_entries_id";
+    const bool install = operation == "web_package_install_records";
+    const bool diff = operation == "web_package_behavior_diff_records";
+    const auto idField = diff      ? "package_behavior_diff_id"
+                         : install ? "package_install_id"
+                         : package ? "package_behavior_id"
+                         : ipc     ? "electron_ipc_id"
+                                   : "electron_entries_id";
     fields(p, {"revision", idField, "record_kind", "offset", "limit"});
-    const auto records = package
-                             ? api().neverd_web_package_behavior_records_json
-                         : ipc ? api().neverd_web_electron_ipc_records_json
-                               : api().neverd_web_electron_entry_records_json;
+    const auto records =
+        diff      ? api().neverd_web_package_behavior_diff_records_json
+        : install ? api().neverd_web_package_install_records_json
+        : package ? api().neverd_web_package_behavior_records_json
+        : ipc     ? api().neverd_web_electron_ipc_records_json
+                  : api().neverd_web_electron_entry_records_json;
     if (!records)
       throw Error("capability_unavailable",
                   "Selected source evidence is unavailable");

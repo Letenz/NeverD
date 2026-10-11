@@ -207,6 +207,10 @@ Heartbeat retains its native fields and adds
 | `web_bun_records` | Exact `revision`, `extraction_id`, `record_kind: modules/regions`, optional page fields; original offsets/hashes and private decoded source IDs |
 | `web_source_analyze` | Exact `revision`, `artifact_id`, explicit `source_type` |
 | `web_source_nodes` | Exact `revision`, `source_id`, optional page fields |
+| `web_package_behavior_diff_analyze` | Exact `revision`, retained `package_diff_id`, optional matching `before_package_behavior_id` / `after_package_behavior_id`; missing/degraded coverage cannot become zero behavior |
+| `web_package_behavior_diff_records` | Exact `revision`, `package_behavior_diff_id`, `record_kind:pairs/patterns/occurrences`, optional page fields (max 512); original occurrence anchors and fixed syntax counts per file candidate |
+| `web_package_install_analyze` | Exact `revision`, `package_analysis_id`, optional matching `package_behavior_id`; captured lifecycle entry and selected module/behavior candidates, with explicit absent evidence and no execution |
+| `web_package_install_records` | Exact `revision`, `package_install_id`, `record_kind:scripts/sources/requests/associations`, optional `offset:0,limit:128` (max 512); command byte offsets and opaque evidence chains, no command/path/argument disclosure |
 | `web_source_bindings_analyze` | Exact `revision`, analyzed `source_id`; returns lexical-binding status and counts |
 | `web_source_binding_records` | Exact `revision`, `source_id`, `record_kind: scopes/bindings/declarations/references`, optional page fields |
 | `web_source_semantics_analyze` | Exact `revision`, `source_id`; returns bounded primitive/effect analysis status and counts |

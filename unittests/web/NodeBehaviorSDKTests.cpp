@@ -165,6 +165,21 @@ protected:
         return A.getAsObject()->getBoolean("available").value_or(false);
     return false;
   }
+  Value install(std::string_view Package, std::string_view Behavior = {}) {
+    llvm::json::Object Options{{"schema_version", 1}};
+    if (!Behavior.empty())
+      Options["package_behavior_id"] = std::string(Behavior);
+    const auto Text = llvm::formatv("{0}", Value(std::move(Options))).str();
+    return take(neverd_web_package_install_analyze_json(
+        S, Revision.data(), Revision.size(), Package.data(), Package.size(),
+        Text.data(), Text.size()));
+  }
+  Value installRows(std::string_view ID, std::string_view Kind,
+                    uint64_t Offset = 0, uint64_t Limit = 128) {
+    return take(neverd_web_package_install_records_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), Kind.data(),
+        Kind.size(), Offset, Limit));
+  }
   static std::string read(const std::filesystem::path &Path) {
     std::ifstream F(Path, std::ios::binary);
     return {std::istreambuf_iterator<char>(F), {}};
@@ -198,6 +213,176 @@ protected:
 #endif
   }
 };
+
+TEST_F(WebNodeBehaviorSDK, InstallTraceOptionalSelectionPrivacyAndCache) {
+  std::ofstream(Input / "package.json")
+      << R"({"name":"CANARY_PACKAGE","scripts":{
+    "install":"node a00.js CANARY_ARG","preinstall":"node CANARY_MISSING.js",
+    "postinstall":"node inspect a00.js"}})";
+  open(Input);
+  const auto P = packages(Artifacts[17]);
+  const auto Empty = install(P);
+  ASSERT_EQ(field(Empty, "status"), "ok");
+  EXPECT_EQ(Empty.getAsObject()->getInteger("script_count"), 3);
+  EXPECT_EQ(Empty.getAsObject()->getInteger("source_count"), 0);
+  const auto EmptyID = field(Empty, "package_install_id");
+  const auto Decl = installRows(EmptyID, "scripts");
+  const auto &Items = *Decl.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 3u);
+  EXPECT_EQ(field(Items[0], "status"), "entry_source_unselected");
+  EXPECT_EQ(field(Items[1], "status"), "node_option_or_subcommand_boundary");
+  EXPECT_EQ(field(Items[2], "status"), "not_captured_or_unavailable");
+  const auto B = aggregate(P, {source(Artifacts[1])});
+  const auto BID = field(B, "package_behavior_id");
+  const auto A = install(P, BID);
+  const auto ID = field(A, "package_install_id");
+  ASSERT_FALSE(ID.empty());
+  EXPECT_NE(ID, EmptyID);
+  EXPECT_EQ(A.getAsObject()->getInteger("association_count"), 1);
+  for (const auto *Key :
+       {"runtime_resolution_verified", "reachability_verified",
+        "executable_identity_verified", "selection_complete",
+        "lifecycle_activation_verified"})
+    EXPECT_EQ(A.getAsObject()->getBoolean(Key), false);
+  for (const auto *Kind : {"scripts", "sources", "requests", "associations"})
+    EXPECT_EQ(field(installRows(ID, Kind), "status"), "ok");
+  const auto Associations = installRows(ID, "associations");
+  ASSERT_EQ(Associations.getAsObject()->getArray("items")->size(), 1u);
+  const auto &Call = (*Associations.getAsObject()->getArray("items"))[0];
+  // Package behavior uses a temporary model. This report must remain useful
+  // when the independently queried Node behavior cache is empty.
+  const auto NodeID = field(Call, "node_behavior_id");
+  EXPECT_EQ(code(take(neverd_web_node_behavior_records_json(
+                S, Revision.data(), Revision.size(), NodeID.data(),
+                NodeID.size(), 0, 1))),
+            "unknown_node_behavior");
+  const auto OriginalPage = rows(BID, "records");
+  ASSERT_EQ(OriginalPage.getAsObject()->getArray("items")->size(), 1u);
+  const auto &Original = (*OriginalPage.getAsObject()->getArray("items"))[0];
+  EXPECT_EQ(field(Call, "behavior_record_id"), field(Original, "record_id"));
+  for (const auto *Key : {"node_id", "api_class", "kind", "origin_evidence",
+                          "byte_offset", "byte_length"})
+    EXPECT_EQ(field(Call, Key), field(Original, Key));
+  EXPECT_EQ(field(install(P, BID), "package_install_id"), ID);
+  EXPECT_EQ(code(installRows(ID, "paths")), "invalid_record_kind");
+  EXPECT_EQ(code(installRows(ID, "scripts", 0, 513)), "invalid_page");
+  const auto B2 = aggregate(P, {source(Artifacts[2])});
+  EXPECT_EQ(code(install(P, field(B2, "package_behavior_id"))),
+            "package_install_cache_budget_exceeded");
+  const std::string Bad = R"({"schema_version":1,"execute":true})";
+  EXPECT_EQ(code(take(neverd_web_package_install_analyze_json(
+                S, Revision.data(), Revision.size(), P.data(), P.size(),
+                Bad.data(), Bad.size()))),
+            "invalid_package_install_options");
+  const auto OldRevision = Revision;
+  open(Input);
+  EXPECT_EQ(code(take(neverd_web_package_install_records_json(
+                S, OldRevision.data(), OldRevision.size(), ID.data(), ID.size(),
+                "scripts", 7, 0, 1))),
+            "stale_revision");
+  EXPECT_EQ(code(installRows(ID, "scripts")), "unknown_package_install");
+  const auto CLI = run(
+      {"package-install", Input.string(), "17", "package-json", "1:commonjs"},
+      0);
+  ASSERT_EQ(CLI.size(), 5u);
+  EXPECT_EQ(CLI[0].getAsObject()->getInteger("association_count"), 1);
+  EXPECT_EQ(CLI[0].getAsObject()->getInteger("script_count"), 3);
+}
+
+TEST_F(WebNodeBehaviorSDK,
+       ManifestAndLockOnlyInstallCoverageNeedsNoFakeSource) {
+  const auto Manifest = Input / "package.json";
+  std::ofstream(Manifest)
+      << R"({"scripts":{"install":"node CANARY_ABSENT.js"}})";
+  open(Manifest);
+  auto P = packages(Artifacts[0]);
+  auto A = install(P);
+  auto Page = installRows(field(A, "package_install_id"), "scripts");
+  EXPECT_EQ(field((*Page.getAsObject()->getArray("items"))[0], "status"),
+            "no_directory_inventory");
+  auto CLI =
+      run({"package-install", Manifest.string(), "0", "package-json"}, 0);
+  ASSERT_EQ(CLI.size(), 5u);
+  EXPECT_EQ(CLI[0].getAsObject()->getInteger("source_count"), 0);
+  const auto Lock = Root / "lock.json";
+  std::ofstream(Lock) << R"({"lockfileVersion":3,"packages":{
+    "":{"hasInstallScript":true}}})";
+  open(Lock);
+  P = packages(Artifacts[0], "npm-lock");
+  A = install(P);
+  EXPECT_EQ(A.getAsObject()->getInteger("install_presence_count"), 1);
+  Page = installRows(field(A, "package_install_id"), "scripts");
+  const auto &Row = (*Page.getAsObject()->getArray("items"))[0];
+  EXPECT_EQ(field(Row, "status"), "manifest_not_supplied");
+  EXPECT_TRUE(Row.getAsObject()->get("script_id")->getAsNull());
+  CLI = run({"package-install", Lock.string(), "0", "npm-lock"}, 0);
+  ASSERT_EQ(CLI.size(), 5u);
+  EXPECT_EQ(CLI[0].getAsObject()->getInteger("install_presence_count"), 1);
+  const auto Archive = Root / "inert.tar";
+  std::ofstream(Archive, std::ios::binary)
+      << finishTar(tarMember("package/package.json",
+                             R"({"scripts":{"install":"node index.js"}})") +
+                   tarMember("package/index.js", Script));
+  CLI = run({"archive-package-install", Archive.string(), "tar", "0", "0",
+             "package-json", "1:commonjs"},
+            0);
+  ASSERT_EQ(CLI.size(), 5u);
+  EXPECT_EQ(CLI[0].getAsObject()->getInteger("association_count"), 1);
+}
+
+TEST_F(WebNodeBehaviorSDK,
+       InstallAssociationPagingUsesActualIndependentCounts) {
+  std::ofstream(Input / "package.json") << R"({"scripts":{
+    "install":"node a00.js","postinstall":"node a00.js"}})";
+  std::ofstream Source(Input / "a00.js");
+  for (unsigned I = 0; I < 300; ++I)
+    Source << "require('node:fs').writeFileSync('CANARY_PATH','CANARY_DATA');";
+  Source.close();
+  open(Input);
+  const auto P = packages(Artifacts[17]);
+  const auto B = aggregate(P, {source(Artifacts[1])});
+  ASSERT_EQ(B.getAsObject()->getInteger("record_count"), 300);
+  const auto A = install(P, field(B, "package_behavior_id"));
+  ASSERT_EQ(A.getAsObject()->getInteger("association_count"), 600);
+  const auto ID = field(A, "package_install_id");
+  const auto First = installRows(ID, "associations", 0, 512);
+  EXPECT_EQ(First.getAsObject()->getInteger("next_offset"), 512);
+  EXPECT_EQ(First.getAsObject()->getArray("items")->size(), 512u);
+  const auto Last = installRows(ID, "associations", 512, 512);
+  EXPECT_EQ(Last.getAsObject()->getArray("items")->size(), 88u);
+  EXPECT_EQ(Last.getAsObject()->getBoolean("page_complete"), true);
+  EXPECT_TRUE(installRows(ID, "associations", 600)
+                  .getAsObject()
+                  ->getArray("items")
+                  ->empty());
+  EXPECT_EQ(code(installRows(ID, "associations", 601)), "invalid_page");
+}
+
+TEST_F(WebNodeBehaviorSDK,
+       InstallBudgetFailurePublishesNoResultOrCachedChains) {
+  llvm::json::Object Scripts;
+  for (const auto *Name :
+       {"preinstall", "install", "postinstall", "prepare", "prepublish",
+        "prepublishOnly", "prepack", "postpack", "publish"})
+    Scripts[Name] = "node a00.js";
+  std::ofstream(Input / "package.json")
+      << llvm::formatv(
+             "{0}", Value(llvm::json::Object{{"scripts", std::move(Scripts)}}))
+             .str();
+  std::ofstream Source(Input / "a00.js");
+  for (unsigned I = 0; I < 1000; ++I)
+    Source << "require('node:fs').writeFileSync('CANARY_PATH','CANARY_DATA');";
+  Source.close();
+  open(Input);
+  const auto P = packages(Artifacts[17]);
+  const auto B = aggregate(P, {source(Artifacts[1])});
+  ASSERT_EQ(B.getAsObject()->getInteger("record_count"), 1000);
+  const auto A = install(P, field(B, "package_behavior_id"));
+  EXPECT_EQ(code(A), "package_install_association_budget_exceeded");
+  const auto Meta = take(neverd_web_metadata_json(S));
+  EXPECT_EQ(Meta.getAsObject()->getInteger("package_install_count"), 0);
+  EXPECT_EQ(field(install(P), "status"), "ok");
+}
 
 TEST_F(WebNodeBehaviorSDK,
        MetadataAndPagingExposeOnlyFixedVocabularyAndAnchors) {

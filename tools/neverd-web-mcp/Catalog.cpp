@@ -307,6 +307,21 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
        text("package_analysis_id"),
        {"source_ids", Field::Kind::StringArray, true, 16, 1}});
   Page("web_package_behavior_records", "package_behavior_id", true);
+  Add("web_package_behavior_diff_analyze",
+      "Compare recognized syntax counts for explicitly selected package "
+      "sources; "
+      "missing or degraded coverage remains incomparable, without a safety "
+      "verdict.",
+      {decimal("revision"), text("package_diff_id"),
+       text("before_package_behavior_id", 64, false),
+       text("after_package_behavior_id", 64, false)});
+  Page("web_package_behavior_diff_records", "package_behavior_diff_id", true);
+  Add("web_package_install_analyze",
+      "Trace declared install entry file candidates and optionally selected "
+      "source evidence; preserve missing coverage without executing commands.",
+      {decimal("revision"), text("package_analysis_id"),
+       text("package_behavior_id", 64, false)});
+  Page("web_package_install_records", "package_install_id", true);
   for (const auto *Operation :
        {"web_source_bindings_analyze", "web_source_semantics_analyze",
         "web_source_modules_analyze", "web_source_bundles_analyze",

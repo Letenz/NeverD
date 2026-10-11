@@ -52,8 +52,11 @@ std::string selected(const char *Owned, const char *Key) {
 
 int runWebBehavior() {
   const auto &Command = WebArguments[0];
-  const bool Archive = Command == "archive-package-behavior";
-  const bool Package = Archive || Command == "package-behavior";
+  const bool Install =
+      Command == "package-install" || Command == "archive-package-install";
+  const bool Archive = Command == "archive-package-behavior" ||
+                       Command == "archive-package-install";
+  const bool Package = Archive || Command == "package-behavior" || Install;
   const bool Bun = Command == "bun-node-behavior";
   const size_t FirstSource = Archive ? 6 : Package ? 4 : Bun ? 3 : 2;
   auto Usage = [] {
@@ -64,10 +67,12 @@ int runWebBehavior() {
            "<source-index:type>... | archive-package-behavior <root> "
            "<tar|tgz|zip> <archive-index> <manifest-member-index> "
            "<npm-lock|package-json> <source-member-index:type>...\n"
+           "package-install and archive-package-install accept the same "
+           "package arguments with zero to 16 selected sources\n"
            "type: script, module, or commonjs; at most 16 selected sources\n";
     return 2;
   };
-  if (WebArguments.size() <= FirstSource ||
+  if (WebArguments.size() < FirstSource + (Install ? 0 : 1) ||
       WebArguments.size() > FirstSource + (Package ? 16 : 1))
     return Usage();
   const std::string Format = Archive ? WebArguments[2] : "";
@@ -173,6 +178,48 @@ int runWebBehavior() {
                     llvm::json::Value(llvm::json::Object{
                         {"schema_version", 1}, {"source_ids", std::move(IDs)}}))
           .str();
+  if (Install) {
+    llvm::json::Object InstallOptions{{"schema_version", 1}};
+    if (!Sources.empty()) {
+      const auto B = reply(neverd_web_package_behavior_analyze_json(
+          G.S, Revision.data(), Revision.size(), PackageID.data(),
+          PackageID.size(), Options.data(), Options.size()));
+      if (!B)
+        return 1;
+      InstallOptions["package_behavior_id"] = field(*B, "package_behavior_id");
+    }
+    const auto O =
+        llvm::formatv("{0}", llvm::json::Value(std::move(InstallOptions)))
+            .str();
+    const auto A =
+        reply(neverd_web_package_install_analyze_json(
+                  G.S, Revision.data(), Revision.size(), PackageID.data(),
+                  PackageID.size(), O.data(), O.size()),
+              true);
+    if (!A)
+      return 1;
+    const auto ID = field(*A, "package_install_id");
+    for (const std::string Kind :
+         {"scripts", "sources", "requests", "associations"}) {
+      uint64_t Offset = 0;
+      for (;;) {
+        const auto Page =
+            reply(neverd_web_package_install_records_json(
+                      G.S, Revision.data(), Revision.size(), ID.data(),
+                      ID.size(), Kind.data(), Kind.size(), Offset, 128),
+                  true);
+        if (!Page)
+          return 1;
+        const auto Next = Page->getAsObject()->getInteger("next_offset");
+        if (!Next)
+          break;
+        if (*Next <= 0 || uint64_t(*Next) <= Offset || *Next > 8192)
+          return 1;
+        Offset = *Next;
+      }
+    }
+    return 0;
+  }
   const auto Analysis = reply(
       Package ? neverd_web_package_behavior_analyze_json(
                     G.S, Revision.data(), Revision.size(), PackageID.data(),

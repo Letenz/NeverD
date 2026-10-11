@@ -558,6 +558,36 @@ that shared boundary require the owning Web directory, worker/MCP parity and
 parser/backend omission checks, followed by restoration of the enabled build.
 See the [Node behavior profile](web-node-behavior-profile.md).
 
+`WebPackageInstall.*` covers command grammar and reserved Node dispatch, exact
+entries, mixed namespaces/selections, deferred code, ESM/CJS chains and cycles,
+shadowed or written require, unknown sources, independent package ownership,
+embedded delivery and atomic budgets. Tar symlinks, encrypted/unsupported ZIP
+members and absent files preserve the same honest unavailable boundary.
+`WebPackageInstallReal.*` selects the two JS members from the original pinned
+Claude npm archive and checks six entry-associated calls against the existing
+behavior records. `WebNodeBehaviorSDK.*` also covers optional selection, 512-row
+trace paging, canaries, cache/revision invalidation and directory/archive CLI
+compositions with an unusable PATH. Worker/MCP test the same metadata; MCP also
+checks manifest-only and lock-only coverage. Follow shared-boundary changes with
+complete owning Web regression and both omission profiles, then restore ON.
+See the [installation trace profile](web-package-install-profile.md).
+
+`WebPackageBehaviorDiff.*` checks changed arguments with equal pattern counts,
+per-file deltas that cannot cancel, original occurrence anchors, absent and
+unselected sources, parse failure, source modes, root/platform context, embedded
+delivery and aggregate limits. The unchanged Buffer call plus the existing
+value-budget fixture must produce incomparable coverage, never a fake encoding
+delta. `WebPackageBehaviorDiffSDK.*` repeats that counterexample through the
+public API, resolves records with an empty independent Node behavior cache,
+pages 600 occurrences, checks cache/revision invalidation and the shared
+16-source limit, and runs directory/archive CLI composition with an unusable
+PATH. Worker/MCP check shared summary/page equality and strict schemas.
+`NEVERD_CLAUDE_CODE_BEHAVIOR_DIFF_DIR` optionally supplies the two hash-pinned
+`claude-code-2.1.295.tgz` and `claude-code-2.1.296.tgz` wrappers for
+`WebPackageBehaviorDiffReal.*`. Follow with complete Web regression, parser and
+backend omission checks and restoration ON. See the
+[comparison profile](web-package-behavior-diff-profile.md).
+
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
 and independent metadata/work bounds. `WebDesktopSDK.*` checks distinct profile

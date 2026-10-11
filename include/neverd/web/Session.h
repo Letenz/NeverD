@@ -86,6 +86,20 @@ public:
                                      std::string_view BehaviorID,
                                      std::string_view RecordKind,
                                      uint64_t Offset, uint64_t Limit) const;
+  std::string comparePackageBehavior(std::string_view ExpectedRevision,
+                                     std::string_view PackageDiffID,
+                                     std::string_view OptionsJSON);
+  std::string packageBehaviorDiffRecords(std::string_view ExpectedRevision,
+                                         std::string_view DiffID,
+                                         std::string_view RecordKind,
+                                         uint64_t Offset, uint64_t Limit) const;
+  std::string analyzePackageInstall(std::string_view ExpectedRevision,
+                                    std::string_view PackageAnalysisID,
+                                    std::string_view OptionsJSON);
+  std::string packageInstallRecords(std::string_view ExpectedRevision,
+                                    std::string_view InstallID,
+                                    std::string_view RecordKind,
+                                    uint64_t Offset, uint64_t Limit) const;
   std::string packageRecords(std::string_view ExpectedRevision,
                              std::string_view AnalysisID,
                              std::string_view RecordKind, uint64_t Offset,

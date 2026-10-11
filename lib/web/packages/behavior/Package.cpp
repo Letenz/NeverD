@@ -114,6 +114,11 @@ analyzePackageBehavior(const PackageAnalysis &P,
     Row.BehaviorID = B.ID;
     Row.Status = B.Status;
     Row.Reason = B.Reason;
+    Row.SourceType = S.SourceType;
+    Row.SourceHash = S.BlobHash;
+    Row.SourceBytes = I.SourceBytes;
+    Row.OriginStatus = B.OriginStatus;
+    Row.ValueStatus = B.ValueStatus;
     Row.DeliveryArtifactID = S.ArtifactID;
     std::set<std::string_view> Seen;
     while (!Files.count(Row.DeliveryArtifactID)) {

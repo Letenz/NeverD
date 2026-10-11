@@ -19,6 +19,10 @@ add_neverd_component_library(NeverDWeb
   SessionPackages.cpp
   SessionNodeBehavior.cpp
   SessionPackageBehavior.cpp
+  SessionPackageBehaviorDiff.cpp
+  packages/behavior/DiffPublication.cpp
+  SessionPackageInstall.cpp
+  packages/install/Publication.cpp
   packages/behavior/Publication.cpp
   SessionPackageArchive.cpp
   SessionPackageIntegrity.cpp
@@ -116,6 +120,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     packages/behavior/Rules.cpp
     packages/behavior/Source.cpp
     packages/behavior/Package.cpp
+    packages/behavior/Diff.cpp
+    packages/install/Command.cpp
+    packages/install/Trace.cpp
     interfaces/SourceInterfaces.cpp
     interfaces/SourceContext.cpp
     interfaces/SourceFetch.cpp

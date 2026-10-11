@@ -61,7 +61,9 @@ void closedArguments() {
                     "electron_ipc_analyze", "source_rewrite_analyze",
                     "source_rewrite_records", "node_behavior_analyze",
                     "node_behavior_records", "package_behavior_analyze",
-                    "package_behavior_records"}),
+                    "package_behavior_records", "package_install_analyze",
+                    "package_install_records", "package_behavior_diff_analyze",
+                    "package_behavior_diff_records"}),
       0);
   const auto &View = C.find("neverd_web_source_view_preview");
   const Json Valid{{"revision", "1"}, {"source_id", "s"}};
@@ -104,6 +106,25 @@ void closedArguments() {
     refuses([&] { IPC.payload(Selection); });
   }
   const auto &Behavior = C.find("neverd_web_package_behavior_analyze");
+  const auto &Diff = C.find("neverd_web_package_behavior_diff_analyze");
+  Diff.payload({{"revision", "1"}, {"package_diff_id", "d"}});
+  Diff.payload({{"revision", "1"},
+                {"package_diff_id", "d"},
+                {"before_package_behavior_id", "b"},
+                {"after_package_behavior_id", "a"}});
+  refuses([&] {
+    Diff.payload(
+        {{"revision", "1"}, {"package_diff_id", "d"}, {"execute", false}});
+  });
+  const auto &Install = C.find("neverd_web_package_install_analyze");
+  Install.payload({{"revision", "1"}, {"package_analysis_id", "p"}});
+  Install.payload({{"revision", "1"},
+                   {"package_analysis_id", "p"},
+                   {"package_behavior_id", "b"}});
+  refuses([&] {
+    Install.payload(
+        {{"revision", "1"}, {"package_analysis_id", "p"}, {"execute", true}});
+  });
   Json PackageSelection{{"revision", "1"},
                         {"package_analysis_id", "p"},
                         {"source_ids", Json::array({"s"})}};
