@@ -68,6 +68,20 @@ public:
                                      std::string_view ArtifactID,
                                      std::string_view DeclarationID,
                                      std::string_view PackageID);
+  std::string importPackageAdvisory(std::string_view ExpectedRevision,
+                                    std::string_view ArtifactID,
+                                    std::string_view DescriptorArtifactID);
+  std::string packageAdvisoryRecords(std::string_view ExpectedRevision,
+                                     std::string_view AdvisoryID,
+                                     std::string_view RecordKind,
+                                     uint64_t Offset, uint64_t Limit) const;
+  std::string matchPackageAdvisories(std::string_view ExpectedRevision,
+                                     std::string_view PackageAnalysisID,
+                                     std::string_view OptionsJSON);
+  std::string packageAdvisoryMatchRecords(std::string_view ExpectedRevision,
+                                          std::string_view MatchesID,
+                                          uint64_t Offset,
+                                          uint64_t Limit) const;
   std::string packageArchiveRecords(std::string_view ExpectedRevision,
                                     std::string_view ArchiveID, uint64_t Offset,
                                     uint64_t Limit) const;

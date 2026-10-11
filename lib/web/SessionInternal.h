@@ -25,6 +25,7 @@
 #include "neverd/web/Interfaces.h"
 #include "neverd/web/Nexe.h"
 #include "neverd/web/NodeBehavior.h"
+#include "neverd/web/PackageAdvisories.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/PackageBehaviorDiff.h"
 #include "neverd/web/PackageInstall.h"
@@ -92,6 +93,10 @@ struct Session::Impl {
   std::map<std::string, PackageDiff> PackageDiffs;
   std::map<std::string, PackageArchive> PackageArchives;
   std::map<std::string, PackageIntegrityResult> PackageIntegrity;
+  std::map<std::string, PackageEvidenceDescriptor> PackageEvidenceDescriptors;
+  std::map<std::string, PackageAdvisory> PackageAdvisories;
+  std::map<std::string, PackageAdvisoryMatches> PackageAdvisoryMatchResults;
+  uint64_t PackageEvidenceBytes = 0;
   std::map<std::string, HARCapture> HARCaptures;
   std::map<std::string, StreamCapture> StreamCaptures;
   std::optional<StreamCapture> PendingStream;
@@ -135,8 +140,8 @@ struct Session::Impl {
                    ElectronManifests.empty() && DesktopManifests.empty() &&
                    HTMLDocuments.empty() && PackageAnalyses.empty() &&
                    PackageArchives.empty() && PackageIntegrity.empty() &&
-                   HARCaptures.empty() && InterfaceSources.empty() &&
-                   StreamCaptures.empty()
+                   PackageAdvisories.empty() && HARCaptures.empty() &&
+                   InterfaceSources.empty() && StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }

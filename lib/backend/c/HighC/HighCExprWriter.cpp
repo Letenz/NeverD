@@ -20,6 +20,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
+#include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
@@ -997,6 +998,28 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
+    if (!x87ConstantControlShapeIsValid(
+            E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
+      llvm::report_fatal_error("invalid HighC x87 constant/control contract");
+    const std::string Word = MemoryIdentifiers.allocate("x87_control");
+    if (E.IntrinsicId == Intrinsic::X87ReadControl)
+      return "({ uint16_t " + Word +
+             "; __asm__ volatile(\"fnstcw %0\" : \"=m\"(" + Word +
+             ") :: \"memory\"); " + Word + "; })";
+    const unsigned Index = E.IntrinsicId == Intrinsic::X87LoadConstant ? 1 : 0;
+    const std::string Init = "({ uint16_t " + Word + " = (uint16_t)(" +
+                             exprStr(*E.Operands[Index]) + "); ";
+    if (E.IntrinsicId == Intrinsic::X87WriteControl)
+      return Init + "__asm__ volatile(\"fldcw %0\" :: \"m\"(" + Word +
+             ") : \"memory\"); })";
+    const std::string Value = MemoryIdentifiers.allocate("x87_constant");
+    return Init + "unsigned _BitInt(80) " + Value +
+           " = 0; __asm__ volatile(\"fldcw (%1)\\n\\t" +
+           X87ConstantMnemonics[E.Operands[0]->ConstVal] +
+           "\\n\\tfstpt (%0)\" :: \"r\"(&" + Value + "), \"r\"(&" + Word +
+           ") : \"st\", \"memory\"); " + Value + "; })";
+  }
   if (E.IntrinsicId == Intrinsic::CetRdSsp) {
     const auto Shape = x86ShadowStackReadHighShape(E, Opts.TheArch);
     if (!x86ShadowStackReadShapeIsValid(Shape))

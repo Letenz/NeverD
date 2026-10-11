@@ -1298,6 +1298,15 @@ int main(int argc, char **argv) {
     std::ofstream(packageRoot / "z.original") << "abc";
     std::ofstream(packageRoot / "zz.registry")
         << R"({"name":"SECRET_WEB","dist":{"integrity":"sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="}})";
+    std::ofstream(packageRoot / "zzza.advisory")
+        << R"({"id":"SECRET_WEB_GHSA","modified":"2026-10-10T00:00:00Z",
+          "affected":[{"package":{"ecosystem":"npm","name":"SECRET_WEB"},
+          "versions":["1.0.0"]}]})";
+    std::ofstream(packageRoot / "zzzb.descriptor")
+        << R"({"schema_version":1,"source":"SECRET_WEB_FEED",
+          "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})";
+    std::ofstream(packageRoot / "zzzc.package")
+        << R"({"name":"SECRET_WEB","version":"1.0.0"})";
     const Json packagePreview{{"schema_version", 1},
                               {"path", packageRoot.string()}};
     preview = web.execute("web_import_preview", packagePreview);
@@ -1529,6 +1538,80 @@ int main(int argc, char **argv) {
                          packageRevision, packageProject);
     check(reply["error"]["code"] == "invalid_request",
           "Worker integrity accepted an execution flag");
+    const Json advisoryImport{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][8]["artifact_id"]},
+        {"descriptor_artifact_id",
+         packageArtifacts["items"][9]["artifact_id"]}};
+    const auto advisory =
+        web.execute("web_package_advisory_import", advisoryImport);
+    reply = process.call("web_package_advisory_import", advisoryImport,
+                         packageRevision, packageProject);
+    check(reply["payload"] == advisory &&
+              advisory["publisher_authenticated"] == false &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker changed advisory source evidence or disclosed private "
+          "declarations");
+    for (const auto *kind : {"affected", "severities"}) {
+      const Json args{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"package_advisory_id", advisory["package_advisory_id"]},
+                      {"record_kind", kind}};
+      const auto direct = web.execute("web_package_advisory_records", args);
+      reply = process.call("web_package_advisory_records", args,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed or disclosed captured advisory records");
+    }
+    const Json advisoryPackageArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][10]["artifact_id"]},
+        {"input_kind", "package-json"}};
+    const auto advisoryPackage =
+        web.execute("web_packages_analyze", advisoryPackageArgs);
+    reply = process.call("web_packages_analyze", advisoryPackageArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] == advisoryPackage,
+          "Advisory package inventory differs");
+    Json advisoryMatchArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_analysis_id", advisoryPackage["package_analysis_id"]}};
+    for (const bool selected : {false, true}) {
+      if (selected)
+        advisoryMatchArgs["advisory_ids"] =
+            Json::array({advisory["package_advisory_id"]});
+      const auto matched =
+          web.execute("web_package_advisories_match", advisoryMatchArgs);
+      reply = process.call("web_package_advisories_match", advisoryMatchArgs,
+                           packageRevision, packageProject);
+      check(
+          reply["payload"] == matched &&
+              matched["declared_version_match_count"] == (selected ? 1 : 0) &&
+              matched["exploitability_verified"] == false &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker upgraded selected version evidence into an execution claim");
+      const Json page{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"package_advisory_matches_id",
+                       matched["package_advisory_matches_id"]}};
+      const auto direct =
+          web.execute("web_package_advisories_match_records", page);
+      reply = process.call("web_package_advisories_match_records", page,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed original advisory match anchors");
+    }
+    auto invalidAdvisory = advisoryImport;
+    invalidAdvisory["fetch"] = true;
+    reply = process.call("web_package_advisory_import", invalidAdvisory,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted remote metadata fetching");
     for (const auto &a : caps["analysis"])
       if (a["kind"] == "package_archive") {
         hasArchive = a["available"];

@@ -70,6 +70,13 @@ Missing or degraded source coverage remains incomparable; pattern counts do
 not establish call correspondence or a safety verdict. See the
 [comparison profile](web-package-behavior-diff-profile.md).
 
+The four package advisory tools import captured OSV/source/time artifacts,
+page affected/severity declarations, match explicit advisory IDs to an existing
+package analysis and page original match anchors. They remain available with
+JavaScript parsing omitted. Missing or unsupported evidence remains explicit;
+the tools never fetch a feed, validate a publisher or infer exploitability.
+See the [advisory profile](web-package-advisory-profile.md).
+
 MCP does not expose source review options or raw export. Structural source
 views replace private identifiers/literals/comments according to the shared
 view policy. A preview token remains a backend publication token, not proof

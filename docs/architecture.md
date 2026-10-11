@@ -652,6 +652,16 @@ comparison; `SessionPackageIntegrity` binds selected captured registry/lock
 declarations to selected original artifacts. Archive validation, byte equality,
 publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
+`packages/evidence/Descriptor` owns captured metadata source/time admission.
+`packages/advisories/Reader` retains bounded OSV declarations; `SemVer` and
+`Match` own exact declared npm identity and version membership, including
+unsupported coverage. `Publication` emits fixed states and original anchors.
+`SessionPackageAdvisories` atomically retains imports, shared descriptors and
+explicit match selections under independent session-wide count/byte budgets.
+These metadata owners do not depend on the JS parser and do not alter existing
+inventory or integrity results. All consumers use the same owners; no transport
+fetches a feed or interprets a negative row as package safety. See the
+[advisory profile](web-package-advisory-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
@@ -1921,6 +1931,18 @@ invalid conversions. HighC and the LLVM lowering select that same policy;
 both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
+
+`ir/X87Constant.h` owns binary80 constant-ROM values and the bounded explicit
+control-word contracts. `X87ReadControl` imports the actual word at each read;
+`X87WriteControl` commits it, and `X87LoadConstant` retains its selector and
+incoming word. Native LLVM and both C routes execute the original constant
+instruction into raw eighty-bit storage, so Windows binary64 long double
+cannot narrow it. Concrete values round directly from the ROM according to RC,
+independently of PC. Waiting concrete boundaries refuse unknown or pending
+state. These value contracts share the existing CFG stack projection; they do
+not establish complete source TOP/tag/condition-code or fault-order semantics.
+Reserved control fields remain outside concrete admission. Swift refuses this
+completion surface until it has an equivalent lowering.
 
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate

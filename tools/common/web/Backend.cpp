@@ -72,6 +72,10 @@ struct API {
   WEB_API(neverd_web_package_archive_extract_json)
   WEB_API(neverd_web_package_archive_records_json)
   WEB_API(neverd_web_package_integrity_verify_json)
+  WEB_API(neverd_web_package_advisory_import_json)
+  WEB_API(neverd_web_package_advisory_records_json)
+  WEB_API(neverd_web_package_advisories_match_json)
+  WEB_API(neverd_web_package_advisories_match_records_json)
   WEB_API(neverd_web_har_preview_json)
   WEB_API(neverd_web_stream_preview_json)
   WEB_API(neverd_web_stream_commit_json)
@@ -416,6 +420,71 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         artifact.size(), format.data(), format.size()));
     analysisState_ = "partial";
     return value;
+  }
+  if (operation == "web_package_advisory_import") {
+    fields(p, {"revision", "artifact_id", "descriptor_artifact_id"});
+    if (!api().neverd_web_package_advisory_import_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto artifact = required(p, "artifact_id", 64);
+    const auto descriptor = required(p, "descriptor_artifact_id", 64);
+    auto value = result(api().neverd_web_package_advisory_import_json(
+        session_, revision.data(), revision.size(), artifact.data(),
+        artifact.size(), descriptor.data(), descriptor.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_advisory_records") {
+    fields(p, {"revision", "package_advisory_id", "record_kind", "offset",
+               "limit"});
+    if (!api().neverd_web_package_advisory_records_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_advisory_id", 64);
+    const auto kind = required(p, "record_kind", 16);
+    return result(api().neverd_web_package_advisory_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_package_advisories_match") {
+    fields(p, {"revision", "package_analysis_id", "advisory_ids"});
+    if (!api().neverd_web_package_advisories_match_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_analysis_id", 64);
+    Json options{{"schema_version", 1}};
+    if (const auto selected = p.find("advisory_ids"); selected != p.end()) {
+      if (!selected->is_array() || selected->size() > 16)
+        throw Error("invalid_request", "Invalid advisory selection");
+      for (const auto &advisory : *selected)
+        if (!advisory.is_string() ||
+            advisory.get_ref<const std::string &>().size() != 64)
+          throw Error("invalid_request", "Invalid advisory selection");
+      options["advisory_ids"] = *selected;
+    }
+    const auto encoded = options.dump();
+    auto value = result(api().neverd_web_package_advisories_match_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_advisories_match_records") {
+    fields(p, {"revision", "package_advisory_matches_id", "offset", "limit"});
+    if (!api().neverd_web_package_advisories_match_records_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_advisory_matches_id", 64);
+    return result(api().neverd_web_package_advisories_match_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_package_integrity_verify") {
     fields(p, {"revision", "artifact_id", "declaration_id", "package_id"});

@@ -19,6 +19,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
+#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -557,6 +558,40 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Result;
   }
 
+  if (isX87ConstantControlIntrinsic(IC)) {
+    if (!x87ConstantControlShapeIsValid(
+            IC, x87ConstantControlMedShape(Op, TargetArch)))
+      llvm::report_fatal_error("invalid x87 constant/control contract");
+    llvm::IRBuilder<> EntryBuilder(&CurFunc->getEntryBlock(),
+                                   CurFunc->getEntryBlock().begin());
+    auto *Word =
+        EntryBuilder.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_control");
+    auto *Ptr = llvm::PointerType::get(*Ctx, 0);
+    llvm::SmallVector<llvm::Type *, 2> Types{Ptr};
+    llvm::SmallVector<llvm::Value *, 2> Args{Word};
+    std::string Text = IC == I::X87ReadControl ? "fnstcw ($0)" : "fldcw ($0)";
+    const char *Constraints = X87ControlConstraints;
+    llvm::AllocaInst *Value = nullptr;
+    if (IC != I::X87ReadControl)
+      Builder.CreateStore(
+          getVar(Op.Inputs[IC == I::X87LoadConstant ? 2 : 1], Builder), Word);
+    if (IC == I::X87LoadConstant) {
+      Value = EntryBuilder.CreateAlloca(Builder.getIntNTy(80), nullptr,
+                                        "x87_constant");
+      Text = x87ConstantAsm(Op.Inputs[1].ConstVal);
+      Constraints = X87ConstantConstraints;
+      Types.push_back(Ptr);
+      Args = {Value, Word};
+    }
+    auto *Type = llvm::FunctionType::get(Builder.getVoidTy(), Types, false);
+    auto *Asm = llvm::InlineAsm::get(Type, Text, Constraints, true);
+    auto *Call = Builder.CreateCall(Asm, Args);
+    Call->setMetadata(X87ConstantAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+    return Value ? Builder.CreateLoad(Builder.getIntNTy(80), Value)
+           : IC == I::X87ReadControl
+               ? Builder.CreateLoad(Builder.getInt16Ty(), Word)
+               : nullptr;
+  }
   if (isX86FPStateIntrinsic(IC)) {
     const auto Shape = x86FPStateMedShape(Op, TargetArch);
     if (!x86FPStateShapeIsValid(IC, Shape))

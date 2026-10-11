@@ -24,6 +24,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -3910,6 +3911,23 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return true;
   }
 
+  if (auto Selector = classifyX87ConstantAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error(
+          "x87 constant/control C projection requires x86");
+    emitIndent(Indent);
+    if (*Selector >= 7) {
+      OS << "__asm__ volatile(\"" << (*Selector == 7 ? "fnstcw" : "fldcw")
+         << " (%0)\" :: \"r\"(" << valueStr(Call.getArgOperand(0))
+         << ") : \"memory\");\n";
+    } else {
+      OS << "__asm__ volatile(\"fldcw (%1)\\n\\t"
+         << X87ConstantMnemonics[*Selector] << "\\n\\tfstpt (%0)\" :: \"r\"("
+         << valueStr(Call.getArgOperand(0)) << "), \"r\"("
+         << valueStr(Call.getArgOperand(1)) << ") : \"st\", \"memory\");\n";
+    }
+    return true;
+  }
   if (auto Shape = classifyX86FPStateAsm(Call)) {
     if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
       llvm::report_fatal_error("x86 FP state C projection requires x86");

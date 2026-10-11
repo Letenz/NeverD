@@ -16,6 +16,7 @@
 #include "neverd/ir/low/NdOpEmulator.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <algorithm>
@@ -587,7 +588,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
       if (Id == Intrinsic::X87Fprem || Id == Intrinsic::X87Fprem1 ||
           Id == Intrinsic::X87ReadStatus || Id == Intrinsic::X87Fninit ||
           Id == Intrinsic::X87Fnclex || Id == Intrinsic::X87Wait ||
-          Id == Intrinsic::X87Ffree || Id == Intrinsic::X87Fincstp)
+          Id == Intrinsic::X87Ffree || Id == Intrinsic::X87Fincstp ||
+          isX87ConstantControlIntrinsic(Id))
         return executeX87(Op);
       if (Id == Intrinsic::MaskedLoadB || Id == Intrinsic::MaskedLoadW ||
           Id == Intrinsic::MaskedLoadD || Id == Intrinsic::MaskedLoadQ ||

@@ -238,6 +238,19 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Compare two retained package analyses in the same revision.",
       {decimal("revision"), text("before_id"), text("after_id")});
   Page("web_package_diff_records", "diff_id");
+  Add("web_package_advisory_import",
+      "Import captured OSV metadata and source/time declarations without "
+      "fetching or authenticating the publisher.",
+      {decimal("revision"), text("artifact_id"),
+       text("descriptor_artifact_id")});
+  Page("web_package_advisory_records", "package_advisory_id", true);
+  Add("web_package_advisories_match",
+      "Match declared npm versions against explicitly selected advisory "
+      "metadata; unknown coverage and exploitability remain explicit.",
+      {decimal("revision"),
+       text("package_analysis_id"),
+       {"advisory_ids", Field::Kind::StringArray, false, 16, 0}});
+  Page("web_package_advisories_match_records", "package_advisory_matches_id");
   Add("web_package_integrity_verify",
       "Compare captured bytes to selected integrity declarations; not a "
       "benignness verdict.",

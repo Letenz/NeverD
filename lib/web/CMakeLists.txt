@@ -8,6 +8,12 @@ add_neverd_component_library(NeverDWeb
   archives/ZipPayload.cpp
   packages/PackageIntegrity.cpp
   packages/SHA512.cpp
+  packages/evidence/Descriptor.cpp
+  packages/advisories/SemVer.cpp
+  packages/advisories/Reader.cpp
+  packages/advisories/Match.cpp
+  packages/advisories/Publication.cpp
+  SessionPackageAdvisories.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp

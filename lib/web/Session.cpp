@@ -211,6 +211,31 @@ std::string Session::capabilities() {
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
   Operations.emplace_back("package_integrity_verify");
+  for (const auto *Name :
+       {"package_advisory_import", "package_advisory_records",
+        "package_advisories_match", "package_advisories_match_records"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_advisories"},
+      {"profile", std::string(PackageAdvisoryProfile)},
+      {"descriptor_profile", std::string(PackageEvidenceProfile)},
+      {"available", true},
+      {"max_input_bytes", MaxPackageEvidenceInputBytes},
+      {"max_retained_metadata_bytes", MaxPackageEvidenceRetainedBytes},
+      {"max_descriptors", MaxPackageEvidenceDescriptors},
+      {"max_imports", MaxPackageAdvisoryImports},
+      {"max_affected_entries", MaxPackageAdvisoryEntries},
+      {"max_selectors", MaxPackageAdvisorySelectors},
+      {"max_severities", MaxPackageAdvisorySeverities},
+      {"max_records", MaxPackageAdvisoryMatches},
+      {"max_cached_matches", MaxCachedPackageAdvisoryMatches},
+      {"max_steps", MaxPackageEvidenceSteps},
+      {"fetches_remote_data", false},
+      {"publisher_authenticated", false},
+      {"feed_completeness_verified", false},
+      {"freshness_assessed", false},
+      {"reachability_verified", false},
+      {"exploitability_verified", false}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "package_integrity"},
       {"profile", std::string(PackageIntegrityProfile)},
@@ -708,6 +733,10 @@ std::string Session::commit(std::string_view Token) {
   State->PackageBehaviorDiffs.clear();
   State->PackageArchives.clear();
   State->PackageIntegrity.clear();
+  State->PackageAdvisoryMatchResults.clear();
+  State->PackageAdvisories.clear();
+  State->PackageEvidenceDescriptors.clear();
+  State->PackageEvidenceBytes = 0;
   State->HARCaptures.clear();
   State->StreamCaptures.clear();
   State->PendingStream.reset();
@@ -767,6 +796,12 @@ std::string Session::metadata() const {
       {"package_behavior_count", State->PackageBehaviors.size()},
       {"package_behavior_diff_count", State->PackageBehaviorDiffs.size()},
       {"package_install_count", State->PackageInstalls.size()},
+      {"package_advisory_count", State->PackageAdvisories.size()},
+      {"package_advisory_matches_count",
+       State->PackageAdvisoryMatchResults.size()},
+      {"package_evidence_descriptor_count",
+       State->PackageEvidenceDescriptors.size()},
+      {"package_evidence_retained_bytes", State->PackageEvidenceBytes},
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},
