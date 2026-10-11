@@ -649,6 +649,7 @@ private:
 
 class X87CallEffectIndex;
 class X87CallGraphCache;
+struct CallRegisterBody;
 /// Share bounded immutable x87 graph facts during one unchanged-image
 /// operation, including explicit projection exclusions of complete CFGs.
 /// Replace the cache when image bytes/metadata or borrowed analysis indexes
@@ -663,6 +664,12 @@ std::shared_ptr<X87CallGraphCache> createX87CallGraphCache();
 std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
     const NoReturnCalleeProver *NonReentrantProver,
     const libc::NoReturnTargetIndex *NonReentrantTargets = nullptr);
+/// Additionally retain up to 32 MiB of call-summary input blocks. This is
+/// opt-in: ordinary x87 users keep the compact graph-only cache.
+std::shared_ptr<X87CallGraphCache>
+createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
+                        const libc::NoReturnTargetIndex *NonReentrantTargets,
+                        bool RetainCallRegisterBodies);
 
 class CFGBuilder {
   friend class X87CallEffectIndex;
@@ -673,6 +680,19 @@ public:
   /// Build CFG for a single function starting at EntryAddr.
   LowFunc build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                 const std::string &FuncName = "");
+
+  /// Reuse only the inputs to an ordinary x64 call-register summary, under
+  /// these exact immutable-image indexes and default CFG proof limits.
+  /// No-return decisions are replayed at depth zero and every skipped x87
+  /// normalization must be proved to make no change. Null requests the usual
+  /// independent build. This cannot supply a normalized/output LowFunc.
+  static std::shared_ptr<const CallRegisterBody> cachedCallRegisterBody(
+      const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+      va_t Entry, const std::set<va_t> *Entries,
+      const libc::NoReturnTargetIndex *NoReturnTargets,
+      const NoReturnCalleeProver *NoReturnCallees,
+      const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+      const ExecutableCodeOwnerIndex *CodeOwners);
 
   size_t relativeRelocationRootSourceCacheBuildCountForTesting() const {
     return RelativeRelocationRootSourceCacheBuildCountForTesting;
@@ -1036,6 +1056,7 @@ private:
   std::array<size_t, 3> x87CallGraphCacheStatsForTesting() const;
   std::array<size_t, 5> x87CallGraphFlightStatsForTesting() const;
   bool waitForX87CallGraphWaitersForTesting(size_t Count) const;
+  std::array<size_t, 2> callRegisterBodyCacheStatsForTesting() const;
   std::optional<int> x87CallEffectForTesting(const BinaryImage &Image,
                                              va_t Entry, size_t &Remaining,
                                              unsigned Depth = 0);
@@ -1130,6 +1151,16 @@ private:
   bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
                           const std::string &Name);
   bool SkipX87StackFixup = false;
+  // Optional evidence across *all* raw-build normalization stages, including
+  // speculative CFGs and own-interior-call retries. It never escapes a build.
+  struct CallRegisterBodyWitness {
+    static constexpr size_t MaxDependencies = 4096;
+    bool Complete = true;
+    std::set<va_t> Calls;
+    std::vector<std::pair<va_t, bool>> NoReturnAnswers;
+  };
+  CallRegisterBodyWitness *CollectCallRegisterBody = nullptr;
+  void recordSkippedFpuFixup(const LowFunc &Func);
   unsigned X87CallProofThreads = 1;
   std::shared_ptr<X87CallEffectIndex> X87CallEffects;
   std::shared_ptr<X87CallGraphCache> SharedX87CallGraphs;

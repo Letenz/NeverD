@@ -2959,10 +2959,11 @@ namespace {
 /// Guard dispatch pointer, as ntoskrnl's KeGuardDispatchICall does with
 /// `jmp [__guard_dispatch_icall_fptr]`.  Whichever dispatcher the runtime
 /// installs in that pointer calls RAX with the caller's argument registers.
-bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
-  if (F.Blocks.size() != 1)
+bool forwardsToGuardDispatch(const BinaryImage &Img,
+                             llvm::ArrayRef<LowBlock> Blocks) {
+  if (Blocks.size() != 1)
     return false;
-  const std::vector<LowOp> &Ops = F.Blocks.front().Ops;
+  const std::vector<LowOp> &Ops = Blocks.front().Ops;
   if (Ops.size() != 2 || Ops[0].Opcode != NdOp::INDIR_CALL ||
       Ops[0].NumInputs != 1 || Ops[1].Opcode != NdOp::RETURN)
     return false;
@@ -3187,9 +3188,10 @@ void computeCallRegisterEffects(
   // A call a constant format describes reads exactly what it names; the
   // functions MedIR converts also pass those arguments (FormattedCall).
   std::map<va_t, GPRReadWidths> FixedCallReads;
-  auto CollectFormattedCalls = [&](const LowFunc &F, bool Converted) {
+  auto CollectFormattedCalls = [&](llvm::ArrayRef<LowBlock> Blocks,
+                                   bool Converted) {
     std::map<va_t, FormattedCall> Calls;
-    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    pipeline_detail::collectFormattedCalls(Img, Blocks, Calls);
     for (auto &[Address, Call] : Calls) {
       GPRReadWidths &Reads = FixedCallReads[Address];
       for (const FormattedCallArgument &Argument : Call.Arguments)
@@ -3202,10 +3204,10 @@ void computeCallRegisterEffects(
     }
   };
   for (const LowFunc &LF : Result.LowFuncs) {
-    CollectFormattedCalls(LF, /*Converted=*/true);
+    CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
     Effects[LF.Entry] =
         localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads);
-    if (forwardsToGuardDispatch(Img, LF))
+    if (forwardsToGuardDispatch(Img, LF.Blocks))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
     Work.push_back(LF.Entry);
@@ -3246,6 +3248,7 @@ void computeCallRegisterEffects(
     for (size_t Begin = 0; Begin < Pending.size(); Begin += BatchSize) {
       const size_t Count = std::min(BatchSize, Pending.size() - Begin);
       std::vector<LowFunc> Bodies(Count);
+      std::vector<std::shared_ptr<const CallRegisterBody>> CachedBodies(Count);
       std::vector<uint64_t> Weights(Count, 0);
       std::atomic<bool> Initialized{true};
       uint64_t Bytes = 0;
@@ -3273,6 +3276,11 @@ void computeCallRegisterEffects(
             ExtraCFG.setX87CallGraphCache(X87Graphs);
             for (size_t I; (I = Claim()) < N;) {
               const auto &[Entry, Name] = Pending[Begin + I];
+              CachedBodies[I] = CFGBuilder::cachedCallRegisterBody(
+                  X87Graphs, Img, Entry, &FuncEntries, &NoReturnTargets,
+                  &NoReturnCallees, &AbsoluteRelocationRoots, CodeOwnerIndex);
+              if (CachedBodies[I])
+                continue;
               Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry, Name);
             }
           },
@@ -3282,11 +3290,13 @@ void computeCallRegisterEffects(
         return;
       for (size_t I = 0; I < Count; ++I) {
         const va_t Callee = Pending[Begin + I].first;
-        const LowFunc &Body = Bodies[I];
-        CollectFormattedCalls(Body, /*Converted=*/false);
+        const CallRegisterBodyView Body =
+            CachedBodies[I] ? CallRegisterBodyView(*CachedBodies[I])
+                            : CallRegisterBodyView(Bodies[I]);
+        CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
         Effects[Callee] =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
-        if (forwardsToGuardDispatch(Img, Body))
+        if (forwardsToGuardDispatch(Img, Body.Blocks))
           GuardForwarders.insert(Callee);
         Work.push_back(Callee);
       }
@@ -3425,7 +3435,12 @@ void Pipeline::buildLowIR(
   // Share immutable x87 graph facts only inside this image analysis.
   // Context keys snapshot the changing CFG protection sets; the immutable
   // indexes above outlive every worker and every graph retained here.
-  auto X87Graphs = createX87CallGraphCache(&NoReturnCallees, &NoReturnTargets);
+  // A restricted run later summarizes unselected callees. Whole-module runs
+  // already own their output bodies, so they keep only the compact x87 cache.
+  auto X87Graphs = createX87CallGraphCache(
+      &NoReturnCallees, &NoReturnTargets,
+      /*RetainCallRegisterBodies=*/!Opts.OnlyFunctionEntries.empty() ||
+          Opts.MaxFunctions != 0);
   // A small selected-function batch runs inline. Give its independent call
   // proofs the otherwise unused worker quota; parallel CFG batches and the
   // extra-callee frontier keep their existing outer parallelism.

@@ -1414,6 +1414,14 @@ image indexes and the existing synchronized no-return cache may be shared.
 Summary publication and format-call collection retain the original order,
 depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
+Restricted pipeline runs may reuse machine blocks constructed for an x87 callee
+proof as `CallRegisterBody` inputs. This type contains only blocks and coverage
+facts; it is not a `LowFunc` and cannot become SSA or emitted code. Register,
+stack-argument and formatted-call analyses read the same block view for cold
+and reused bodies. Format-derived call reads are still collected at ordered
+publication, so overlapping call sites cannot inherit a different contract
+because a worker completed earlier.
+
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
@@ -1865,9 +1873,10 @@ and index identities bind each graph to its construction context. Image bytes,
 ownership and relocation metadata remain unchanged while a cache is shared.
 The pipeline's final additive `CodeRefTargets` publication may retain these raw
 graphs with its existing memoized no-return indexes: raw graph builders skip
-stack/tag normalization and do not consume that inventory. Every ordinary CFG
-still computes its tag-entry seeds against the new references; normalized CFGs
-and caller-dependent effect answers are never retained. Cache locks cover lookup
+stack/tag normalization and do not consume that inventory. Ordinary x87
+normalization still computes its tag-entry seeds against the new references;
+normalized output CFGs and caller-dependent effect answers are never retained.
+Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated
@@ -1881,6 +1890,33 @@ without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
 supply no summary. Loader-authenticated imports use the existing ABI tables;
 an internal function's spelling supplies no effect.
+
+Call-register body retention is a separate opt-in inventory of at most 128
+entries and 32 MiB, including its frozen construction context, block/vector
+capacities and dependency receipts. Active readers may keep evicted immutable
+entries alive; the allowance bounds retained cache payload rather than total
+RSS. Image bytes and metadata must remain unchanged for the operation, with
+the same exception for additive `CodeRefTargets` publication as raw graphs.
+Only complete, nontruncated x64 bodies with registered callback owners qualify.
+Every skipped normalization stage, including speculative CFGs and build
+retries, records local stack use and exact direct/loaded-slot call targets.
+Any local ST/MMX alias, TOP change/reset or FXAM rejects retention. Each of the
+two dependency inventories is limited to 4096 entries; exhaustion retains the
+ordinary build.
+
+Reuse requires the exact entry/protection inventories and borrowed index
+identities of a default ordinary extra-callee build. Each depth-sensitive
+no-return answer is replayed at ordinary depth zero; disagreement requests a
+cold build. Each observed call target is then checked with its own ordinary
+x87 proof allowance. A proven floating return also requests a cold build,
+because it changes the call's output register. Zero or unknown effects preserve
+the original normalization's unchanged-call behavior; unknown does not become
+a proved zero effect. Thus normalization could change no operation at any
+recorded stage, even when the compact x87 projection itself refused exceptional
+edges. Lookup/publication alone holds the cache mutex; replay runs outside it.
+Synchronous replay reentry requests an ordinary build, and exception unwinding
+restores that guard before another request. Whole-module runs retain only the
+compact x87 graph inventory.
 
 Concurrent requests for an identical x87 graph may join one construction. The
 pending inventory is separately bounded to 32 entries and 1 MiB of retained
