@@ -1897,6 +1897,48 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "X64Integer.MissingSourcePagePreservesBothProductHalves/"
     "{backend}User")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanPreservesWidthsAndDefinedFlags/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanPreservesWidthsAndDefinedFlags/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanAliasedExtendedRegisterKeepsUntouchedBits/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanReadStopPreservesDestinationAndFlags/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanReadStopPreservesDestinationAndFlags/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanCrossPageReadChecksCompleteSpan/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanCrossPageReadChecksCompleteSpan/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanMemoryFaultPreservesDestinationAndFlags/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanLockPrefixRejectsWithoutDataObservations/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanDeviceSourceRejectsWithoutCallbacks/"
+    "{backend}Supervisor")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "ExplicitBackends/X64Integer.BitScanDeviceSourceRejectsWithoutCallbacks/"
+    "{backend}User")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "ExplicitBackends/"
     "X64FPTransport.LogicalCPUSwitchingRestoresPhysicalFPAndTLS/"
     "{backend}Supervisor")
