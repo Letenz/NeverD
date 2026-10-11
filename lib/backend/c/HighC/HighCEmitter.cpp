@@ -2278,6 +2278,19 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         noteImageAddress(E.ConstVal);
         if (!AccessAddresses.count(&E))
           ImageObjects[E.ConstVal].AddressTaken = true;
+      } else if (!AccessAddresses.count(&E) && Opts.Image &&
+                 Opts.Image->isELF() && Opts.Image->IsRelocatable &&
+                 (E.ConstProvenance == ConstantAddressProvenance::Address ||
+                  E.ConstProvenance ==
+                      ConstantAddressProvenance::DataAddress)) {
+        // An unnamed object whose start the code keeps as a value, at an
+        // address its relocation proves, is declared whole: the initializer
+        // of a local table that -O0 code copies with memcpy.  Only the
+        // sections of an ELF object hold one translation unit's data.  The
+        // unnamed bytes around such an address in a linked image are a whole
+        // section of other objects, and a Mach-O object's metadata sections
+        // point at symbols the output does not define.
+        NoteWhole(E.ConstVal, nullptr, false);
       }
     }
     // A data import read names the import's slot; the read-only pointer it
