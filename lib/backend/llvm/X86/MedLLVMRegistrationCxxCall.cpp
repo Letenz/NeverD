@@ -50,7 +50,7 @@ std::optional<va_t> throwInfoAddress(const llvm::Value *Value,
 std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const BinaryImage &Image, const RegistrationCalleeFrameContract &Contract,
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,
-    size_t &Work) {
+    size_t &Work, bool ResultUnused) {
   if (Contract.Target != Effect.Target ||
       Contract.StackPopBytes != Effect.StackPopBytes ||
       (!Contract.isInitializer() && Effect.StackPopBytes) ||
@@ -132,17 +132,19 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     ABI.Convention = llvm::CallingConv::X86_ThisCall;
     ABI.BorrowsECX = ABI.Initializer = true;
   } else {
-    const auto Proof =
-        getCheckedX86RegistrationObjectCalleeABI(Image, Effect.Target, &Work);
-    if (!Proof || !Proof->HasIndependentScalarReturn || Proof->StackPopBytes ||
-        Effect.DoesNotReturn ||
+    const auto Proof = getCheckedX86RegistrationObjectCalleeABI(
+        Image, Effect.Target, &Work, RegistrationLeafResult::Discarded);
+    if (!Proof || (!Proof->HasIndependentScalarReturn && !ResultUnused) ||
+        Proof->StackPopBytes || Effect.DoesNotReturn ||
         (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
       return std::nullopt;
     ABI.BorrowsECX = !Proof->ECXReads.empty() || !Proof->ECXWrites.empty();
     if (ABI.BorrowsECX != Effect.ECXFrameOffset.has_value())
       return std::nullopt;
-    ABI.Type = ABI.BorrowsECX ? llvm::FunctionType::get(I32, {Ptr}, false)
-                              : llvm::FunctionType::get(I32, false);
+    ABI.DiscardResult = !Proof->HasIndependentScalarReturn;
+    auto *Return = ABI.DiscardResult ? Void : I32;
+    ABI.Type = ABI.BorrowsECX ? llvm::FunctionType::get(Return, {Ptr}, false)
+                              : llvm::FunctionType::get(Return, false);
     ABI.Convention =
         ABI.BorrowsECX ? llvm::CallingConv::X86_ThisCall : llvm::CallingConv::C;
   }

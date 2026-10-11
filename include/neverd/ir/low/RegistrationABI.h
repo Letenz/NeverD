@@ -74,6 +74,8 @@ std::optional<RegistrationLeafCalleeABI> getCheckedX86RegistrationLeafCalleeABI(
 /// unproved; an observed graph result requires an independent 32-bit scalar.
 /// Transitive code, object and image effects belong to this invocation's proof.
 /// Each caller still owns object extent, contents, lifetime and return usage.
+/// The public root has no stack arguments or callee cleanup; scalar child
+/// arguments are proved only within their parent's private invocation.
 std::optional<RegistrationLeafCalleeABI>
 getCheckedX86RegistrationObjectCalleeABI(
     const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,

@@ -30,12 +30,13 @@ struct RegistrationCxxCallABI {
   bool BorrowsECX = false;
   bool RuntimeThrow = false;
   bool Initializer = false;
+  bool DiscardResult = false;
   uint64_t ThrowInfoVA = 0;
 };
 std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const BinaryImage &Image, const RegistrationCalleeFrameContract &Contract,
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,
-    size_t &Work);
+    size_t &Work, bool ResultUnused);
 } // namespace med_llvm_eh
 } // namespace neverd
 #endif

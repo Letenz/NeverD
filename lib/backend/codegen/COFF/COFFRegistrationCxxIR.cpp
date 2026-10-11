@@ -17,6 +17,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/ir/med/X86RegistrationCallResult.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
@@ -317,6 +318,8 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     }
   }
   std::map<std::pair<va_t, uint32_t>, const llvm::CallBase *> CallsAt;
+  std::map<const llvm::CallBase *, const RegistrationCallFrameEffect *>
+      SourceCallEffects;
   for (const auto *Call : ActualCalls)
     if (const auto *MD =
             Call->getMetadata(windows_eh_md::RegistrationOperationAttachment)) {
@@ -373,15 +376,31 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
                                       Effect.RuntimeThrow})
              .second)
       return rejectIR("C++ call changed its runtime funclet context");
+    SourceCallEffects.emplace(Call, &Effect);
   }
   if (ActualCalls.size() != Result.Calls.size())
     return rejectIR("C++ IR gained an unproved external call");
+  size_t CallResultWork = 0;
   for (const auto &[Call, Receipt] : Result.Calls) {
     const auto *Callee = Call->getCalledFunction();
     const bool Throw = Receipt.Contract.isThrow();
     const bool Borrow = Receipt.ObjectFrameOffset.has_value();
     const bool RuntimeThrow = Receipt.Contract.isRuntimeThrow();
     const bool Initializer = Receipt.Contract.isInitializer();
+    bool DiscardResult = false;
+    if (!Throw && !Receipt.Cleanup && !Initializer) {
+      const auto Fresh = getCheckedX86RegistrationObjectCalleeABI(
+          Image, Receipt.Contract.Target, &CallResultWork,
+          RegistrationLeafResult::Discarded);
+      if (!Fresh)
+        return rejectIR("C++ returning call lost its current object contract");
+      DiscardResult = !Fresh->HasIndependentScalarReturn;
+      const auto SourceCall = SourceCallEffects.find(Call);
+      if (DiscardResult && (SourceCall == SourceCallEffects.end() ||
+                            !hasUnusedX86RegistrationCallResult(
+                                Med, *SourceCall->second, CallResultWork)))
+        return rejectIR("C++ void call discarded an observed source result");
+    }
     const unsigned ScalarWords =
         Initializer ? Receipt.Contract.StackPopBytes / 4 : 0;
     if (RuntimeThrow != Receipt.RuntimeThrow.has_value() || !Callee ||
@@ -396,7 +415,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
         Call->getCallingConv() != Callee->getCallingConv() ||
         Call->getFunctionType() != Callee->getFunctionType() ||
         (Borrow && !Call->getArgOperand(0)->getType()->isPointerTy()) ||
-        (Throw || Receipt.Cleanup || Initializer
+        (Throw || Receipt.Cleanup || Initializer || DiscardResult
              ? !Call->getType()->isVoidTy()
              : !Call->getType()->isIntegerTy(32)) ||
         Call->doesNotReturn() != Throw || Callee->doesNotReturn() != Throw ||

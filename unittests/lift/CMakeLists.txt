@@ -1457,6 +1457,15 @@ target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/backend/llvm/emit
 )
 
+add_neverd_unittest(NeverDRegistrationCallResultTests
+  eh/RegistrationCallResultTests.cpp
+  eh/RegistrationLLVMCallResultTests.cpp
+  LINK_COMPONENTS IRMed BackendLLVM
+)
+target_include_directories(NeverDRegistrationCallResultTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/backend/llvm/X86
+)
+
 target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}

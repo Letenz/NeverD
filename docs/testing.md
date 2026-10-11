@@ -3578,6 +3578,14 @@ code writes, recursion, depth, distinct-node and work exhaustion, and changed
 transitive code. The input-PE32 test requires complete runtime object and cleanup
 state, both destructor identities, two actual child calls and closure of their
 code ranges in the parent's current contracts.
+`NeverDRegistrationCallResultTests` independently checks source result-use
+proofs and LLVM deletion plans. SSA copies, extensions and PHIs may transport
+an unused result; returns, branches, source stores, implicit call arguments,
+preserved call inputs, ambiguous definitions and exhausted budgets reject.
+LLVM plans remove only integer transports into exact emitter-owned store-only
+slots, retaining the call and rejecting loads, escapes, metadata, volatile and
+atomic stores. O1 destructor graph cases exercise the ordinary void member
+calls exposed when the compiler inlines the outer destructor.
 `SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` checks the
 frontend IR argument types for the C/C++ views on every host: a C declaration
 with unknown parameters cannot become a zero-argument C++ prototype. Both views

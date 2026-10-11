@@ -2284,6 +2284,7 @@ jobs:
           cmake --build build-windows-eh --parallel 4 --target \
             NeverDRegistrationStateTests NeverDRegistrationEHTests NeverDLiftTests \
             NeverDMedStackAlignmentTests NeverDMedLLVMDeadSlotsTests NeverDNoReturnTests \
+            NeverDRegistrationCallResultTests \
             NeverDSourceDialectTests NeverDHighControlFlowTests \
             NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationRealignedTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
@@ -2300,6 +2301,7 @@ jobs:
           build-windows-eh/bin/NeverDRegistrationEHTests --gtest_output=xml:build-windows-eh/evidence/registration.xml
           build-windows-eh/bin/NeverDMedStackAlignmentTests --gtest_output=xml:build-windows-eh/evidence/stack.xml
           build-windows-eh/bin/NeverDMedLLVMDeadSlotsTests --gtest_output=xml:build-windows-eh/evidence/dead-slots.xml
+          build-windows-eh/bin/NeverDRegistrationCallResultTests --gtest_output=xml:build-windows-eh/evidence/call-results.xml
           build-windows-eh/bin/NeverDNoReturnTests --gtest_output=xml:build-windows-eh/evidence/noreturn.xml
           build-windows-eh/bin/NeverDWindowsRegistrationFrameTests --gtest_output=xml:build-windows-eh/evidence/frame.xml
           build-windows-eh/bin/NeverDWindowsEHMetadataEncoderTests --gtest_output=xml:build-windows-eh/evidence/metadata.xml

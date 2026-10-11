@@ -83,8 +83,9 @@ getCheckedX86RegistrationObjectCalleeABI(const BinaryImage &Image, va_t Target,
   registration_abi::ObjectCallbackContext Context;
   auto ABI = registration_abi::checkedObjectCallbackCalleeABI(Image, Target,
                                                               Work, Context);
-  if (!ABI || (ResultKind == RegistrationLeafResult::Observed &&
-               !ABI->HasIndependentScalarReturn))
+  if (!ABI || ABI->StackPopBytes ||
+      (ResultKind == RegistrationLeafResult::Observed &&
+       !ABI->HasIndependentScalarReturn))
     return std::nullopt;
   return ABI;
 }

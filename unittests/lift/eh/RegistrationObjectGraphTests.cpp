@@ -229,6 +229,18 @@ TEST(RegistrationObjectGraph, BindsPrivateScalarArgumentsAndExactCleanup) {
   }
 }
 
+TEST(RegistrationObjectGraph, DoesNotExposeUnboundRootScalarArguments) {
+  ObjectGraphImage F;
+  F.install(0, {0x8b, 0x44, 0x24, 4, 0x89, 0x01, 0xc2, 4, 0});
+  // Scalar arguments are admissible only at a child occurrence whose private
+  // outgoing words were proved. Ordinary source contracts currently bind only
+  // a zero-pop root; its caller cannot inherit the child's argument authority.
+  EXPECT_FALSE(
+      getCheckedX86RegistrationObjectCalleeABI(F.Image, F.Image.Entry));
+  EXPECT_FALSE(getCheckedX86RegistrationObjectCalleeABI(
+      F.Image, F.Image.Entry, nullptr, RegistrationLeafResult::Discarded));
+}
+
 TEST(RegistrationObjectGraph, RetainsMayEffectsAcrossConditionalChildCalls) {
   ObjectGraphImage F;
   // An independently loaded scalar controls whether this invocation calls

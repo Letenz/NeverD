@@ -3747,6 +3747,13 @@ domain; a source-observed root needs its own independent scalar result.
 Transitive code and image effects join the same closure at source analysis,
 LLVM emission and independent COFF installation. Runtime destruction has no
 constructor return-this or must-initialization authority.
+`RegistrationCallResult.cpp` owns the current-SSA proof of an unused ordinary
+result, shared by native emission and independent COFF admission. Its bounded
+transport closure rejects every observation, implicit call arguments and
+preserved call inputs included. `MedLLVMRegistrationCallResult.cpp` separately
+binds that proof to removable integer transports ending only in exact emitter
+slots without loads, escapes or source effects. The call remains executable;
+neither proof invents a callee return type or grants unbound root arguments.
 `RegistrationCopyABI.cpp` binds the CRT's ECX destination and callee-popped source
 pointer to separate address domains in the shared private-frame transfer. Source
 storage is read-only; every returning path must initialize every destination

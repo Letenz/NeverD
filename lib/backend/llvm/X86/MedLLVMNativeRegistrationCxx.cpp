@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../eh/MedLLVMEHHelpers.h"
+#include "MedLLVMRegistrationCallResult.h"
 #include "MedLLVMRegistrationCxxBlocks.h"
 #include "MedLLVMRegistrationCxxCall.h"
 #include "MedLLVMRegistrationCxxCatch.h"
@@ -23,6 +24,7 @@
 #include "neverd/backend/llvm/X86RegistrationEntry.h"
 #include "neverd/backend/llvm/X86RegistrationLayout.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/med/X86RegistrationCallResult.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 #include "neverd/loader/ExceptionInfo.h"
@@ -163,6 +165,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     med_llvm_eh::RegistrationCxxCallABI ABI;
     X86RegistrationCatchIdentity CatchIdentity;
     std::string Name;
+    llvm::SmallVector<llvm::Instruction *, 8> DiscardedResult;
   };
   struct CleanupPlan {
     const RegistrationCleanupFrameContract *Contract;
@@ -273,17 +276,33 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           return false;
       }
       const bool Throw = Contract.isThrow();
+      const bool ResultUnused =
+          !Throw && !Contract.isInitializer() &&
+          hasUnusedX86RegistrationCallResult(Func, *Effect, Work);
       const auto ABI = med_llvm_eh::getCheckedRegistrationCxxCallABI(
-          *Img, Contract, *Effect, *Call, Work);
+          *Img, Contract, *Effect, *Call, Work, ResultUnused);
       if (!ABI || (ABI->ThrowInfoVA &&
                    !med_llvm_eh::canMaterializeExternalDataDeclaration(
                        *Mod, makeNdDataSymbol(ABI->ThrowInfoVA), I8, true)))
         return false;
-      const auto Name =
-          CalleeName(Effect->Target, ABI->RuntimeThrow ? "runtime_throw"
-                                     : Throw           ? "throw"
-                                     : ABI->BorrowsECX ? "ecx"
-                                                       : "leaf");
+      llvm::SmallVector<llvm::Instruction *, 8> DiscardedResult;
+      if (ABI->DiscardResult) {
+        llvm::SmallVector<llvm::AllocaInst *, 32> PrivateSlots;
+        for (const auto &[Key, Slot] : VarAllocs)
+          PrivateSlots.push_back(Slot);
+        auto Plan = med_llvm_eh::unusedRegistrationCallResultPlan(
+            *Call, PrivateSlots, Work);
+        if (!Plan)
+          return false;
+        DiscardedResult = std::move(*Plan);
+      }
+      const auto Name = CalleeName(
+          Effect->Target, ABI->RuntimeThrow ? "runtime_throw"
+                          : Throw           ? "throw"
+                          : ABI->DiscardResult
+                              ? (ABI->BorrowsECX ? "ecx_void" : "leaf_void")
+                          : ABI->BorrowsECX ? "ecx"
+                                            : "leaf");
       if (!med_llvm_eh::canMaterializeExternalFunctionDeclaration(*Mod, Name,
                                                                   ABI->Type))
         return false;
@@ -292,7 +311,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
            State->CallbackOnly
                ? CatchOwners->at(Block.Id)
                : X86RegistrationCatchIdentity{UINT32_MAX, UINT32_MAX},
-           Name});
+           Name, std::move(DiscardedResult)});
       Operations.push_back({Call, &Op, State->BlockId, 2});
       // The shared receipt and fresh callee proof agree that this call never
       // returns. Its lifted post-call stack/register operations cannot execute
@@ -594,6 +613,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
   };
   for (const auto &Plan : Calls) {
     auto *Old = Plan.Call;
+    for (auto *Unused : Plan.DiscardedResult) {
+      assert(Unused->use_empty() && "prevalidated private result transport");
+      Unused->eraseFromParent();
+    }
     llvm::IRBuilder<> B(Old);
     auto *Callee = llvm::cast<llvm::Function>(
         Mod->getOrInsertFunction(Plan.Name, Plan.ABI.Type).getCallee());
@@ -668,7 +691,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
     for (auto &Operation : Operations)
       if (Operation.IR == Old)
         Operation.IR = Call;
-    if (!Plan.Throw) {
+    if (!Plan.Throw && !Plan.ABI.DiscardResult) {
       llvm::Value *Result = Call;
       if (Plan.ABI.Initializer || Old->getType() != Call->getType()) {
         if (auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Call))

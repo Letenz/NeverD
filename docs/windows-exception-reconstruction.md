@@ -422,7 +422,12 @@ patch modes, forced bases and a second reconstruction. A separate destructor-gra
 fixture retains two out-of-line member calls and checks those same lifetime
 observations. Ordinary observed graph calls additionally require an independently
 computed scalar return; discarding a runtime result cannot authorize its use
-at an ordinary call.
+at an ordinary call. An ordinary call without an independent result can be
+lowered as void only when current SSA proves that copies, extensions and PHIs
+carry no observed result, and its LLVM uses end exclusively in exact
+emitter-private store-only slots. Both native emission and independent COFF
+installation repeat the source-use proof. Roots with unbound stack arguments
+remain rejected; private graph children retain their checked scalar arguments.
 
 A nontrivial runtime copy constructor is also supported when its independent
 LowIR proof separates the destination in ECX from the source pointer in one
