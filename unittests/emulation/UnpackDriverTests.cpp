@@ -25,6 +25,8 @@
 #include <windows.h>
 // ImageHlp declarations require the Windows types above.
 #include <imagehlp.h>
+// The SDK macro otherwise expands LLVM's qualified PE characteristic below.
+#undef IMAGE_FILE_DLL
 #endif
 
 namespace neverd::unpack {
