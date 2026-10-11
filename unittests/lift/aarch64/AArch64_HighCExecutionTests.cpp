@@ -56,3 +56,31 @@ void upd4(long *s, int n) {
 )C",
                        "structptr", {"structptr", "upd4"});
 }
+
+// EXT takes a register-width window of two concatenated vectors; the C
+// builds it from the two pieces, since no C integer on AArch64 holds the
+// pair.
+TEST_F(AArch64_HighCExecution, AnExtWindowNeedsNoWiderInteger) {
+  expectRunsLikeSource(R"C(
+typedef unsigned char v16u8 __attribute__((vector_size(16)));
+#if defined(__aarch64__)
+#define VBARRIER(v) __asm__("" : "+w"(v))
+#else
+#define VBARRIER(v) (void)0
+#endif
+int window(int a) {
+  v16u8 x, y;
+  for (int i = 0; i < 16; i++) {
+    x[i] = (unsigned char)(a + i * 5);
+    y[i] = (unsigned char)(a * 3 - i);
+  }
+  VBARRIER(x);
+  VBARRIER(y);
+  v16u8 z = __builtin_shufflevector(x, y, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                                    21, 22, 23, 24, 25, 26, 27);
+  VBARRIER(z);
+  return z[0] + z[5] * 7 + z[15] * 13 + z[3] * 3;
+}
+)C",
+                       "window", {"window"});
+}

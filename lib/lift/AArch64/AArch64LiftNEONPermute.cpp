@@ -148,8 +148,9 @@ bool liftNEONPermute(AArch64Lifter &L, AArch64Lifter::LiftState &S,
   }
   // NEON EXT (extract from pair) — ext Vd, Vn, Vm, #index concatenates Vn:Vm
   // (Vn in the low bytes) and extracts a register-width window starting at byte
-  // `index`.  Implemented as CONCAT(Vm,Vn) then SUBBYTES at byte `index`.
-  // (Previously an intrinsic with no backend handler -> returned 0.)
+  // `index`: Vn's bytes from `index` up, then Vm's below it.  Building that
+  // window from the two pieces needs no value wider than a register, which C
+  // has no integer for on AArch64.
   case AARCH64_INS_EXT: {
     if (ARM64.op_count < 4)
       break;
@@ -178,9 +179,11 @@ bool liftNEONPermute(AArch64Lifter &L, AArch64Lifter::LiftState &S,
       S.emit(NdOp::COPY, Dst, {B});
       break;
     }
-    NdVar Combined = S.makeTemp(RegBytes * 2);
-    S.emit(NdOp::CONCAT, Combined, {B, A}); // B high, A low
-    S.emit(NdOp::SUBBYTES, Dst, {Combined, NdVar::cst(Index, 4)});
+    NdVar Low = S.makeTemp(static_cast<uint16_t>(RegBytes - Index));
+    S.emit(NdOp::SUBBYTES, Low, {A, NdVar::cst(Index, 4)});
+    NdVar High = S.makeTemp(static_cast<uint16_t>(Index));
+    S.emit(NdOp::SUBBYTES, High, {B, NdVar::cst(0, 4)});
+    S.emit(NdOp::CONCAT, Dst, {High, Low});
     break;
   }
   // NEON TBL/TBX — per-byte table lookup using a SELECT chain.
