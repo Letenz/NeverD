@@ -486,6 +486,13 @@ semantics remain distinct. All adapters consume these same results.
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
+`archives/Zip` separately owns ZIP32 local/central agreement and framing;
+`ZipPayload` owns stored/raw-deflate decoding, exact size and CRC validation.
+`archives/PathIndex` owns the shared portable archive namespace. ZIP reuses the
+archive model and aggregate cache/spool budget; transport and desktop manifest
+consumers do not parse container records. `ArtifactView` composes exact stored
+payload offsets and compressed member frames for nested consumers. See the
+[ZIP profile](web-zip-profile.md).
 `packages/PackageIntegrity` owns shared SRI classification and original-byte
 comparison; `SessionPackageIntegrity` binds selected captured registry/lock
 declarations to selected original artifacts. Archive validation, byte equality,
@@ -544,6 +551,13 @@ does not depend on the JS parser. `ElectronIPC` owns explicit manifest-scoped
 channel comparisons; `SessionElectronIPC` only selects cached evidence and
 publishes bounded source/channel/endpoint pages. No transport infers routing.
 `ElectronSelection` owns shared manifest/source admission for scoped consumers.
+`desktop/Manifest` separately owns bounded manifest/hash/name admission and
+exact captured file comparison for NW.js and VS Code extensions;
+`desktop/NWManifest` and `desktop/VSIXManifest` own their declaration rules.
+`SessionDesktop` owns profile/revision-bound caches and fixed metadata replies.
+Individual opaque-key Bun/SEA assets never acquire a directory namespace.
+The C API, CLI, worker and MCP only select and publish this common evidence.
+See the [desktop manifest profile](web-desktop-manifest-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker
@@ -712,6 +726,14 @@ outer-account exhaustion, symbolic failure or use of pointer-named symbolic
 values or merges excludes the batch. Image metadata is immutable during a
 build, and every new build discards this state.
 These caches do not bypass proposal validation, rollback or fixed-point stages.
+Control-dependence queries acquire the same exact graph and retain at most 64
+completed batches under an independent 1 MiB allowance. The load address and
+ordered branch inventory bind each batch; hits pay its original traversal work
+and a smaller allowance follows the normal incomplete path. Cold traversals
+reuse dense block visitation storage while preserving walk order and logical
+work charges. Value and memory reconstruction split their ordered memo indexes
+by block ID, retaining full keys, stable recursive references and the original
+global entry counts used by evidence accounting.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -1721,12 +1743,18 @@ evidence. Its configured reset environment remains the concrete starting
 profile. Generic external FLOAT operations and remaining x87 control/TOP/tag
 semantics retain their separate contracts.
 
-Legacy/VEX ADD/SUB/MUL/DIV/SQRT/MIN/MAX scalar and packed forms extend this
+Legacy/VEX ADD/SUB/MUL/DIV/SQRT/MIN/MAX scalar and packed forms, plus packed
+HADD/HSUB and ADDSUB, extend this
 completion scope with `X86FPArithState` and `X86FPArithMemoryState`. One
 aggregate carries the complete raw numerical result and outgoing MXCSR;
 packed lanes complete together, retaining instruction-wide exception priority.
 SQRT consumes only its RHS and requires an exact zero dummy LHS. Control bit
-5 identifies VEX packed memory and does not enable SAE. Memory accesses remain
+5 identifies VEX packed memory and does not enable SAE. Bits 6/7 select
+horizontal pair reduction or alternating subtraction/addition; these controls
+exclude scalar and incompatible arithmetic kinds. Horizontal pairs retain
+physical low-then-high NaN source priority within each 128-bit block. Alternating
+lanes share the common evaluator's two-stage exception completion rather than
+committing separate scalar operations. Memory accesses remain
 inside the incoming/outgoing CSR scope, preserving legacy packed alignment
 faults and complete source reads even when the numerical result is discarded.
 The lifter owns scalar source merging and VEX upper zeroing. Low/Med/High
@@ -1734,10 +1762,22 @@ shape validators and LLVM/C assembly authentication consume the same contract;
 only exact scalar numerical slices acquire floating type provenance. LLVM and
 readable C execute the actual instruction, and concrete execution reuses the
 common packed evaluator and authenticated memory access owner. Existing scalar
-ADD/SUB/MUL/DIV register contracts remain valid. Horizontal arithmetic, FMA,
+ADD/SUB/MUL/DIV register contracts remain valid. FMA4,
 EVEX/SAE, enabled alignment checking and unavailable CPU-feature faults retain
 their separate contracts. Swift explicitly refuses this new completion surface
 until it has an equivalent lowering.
+
+VEX FMA3 uses append-only `X86FPFmaState` and `X86FPFmaMemoryState` contracts.
+Their six LowIR inputs retain the physical destination, vvvv and r/m sources
+and incoming MXCSR. A two-byte control retains132/213/231 order, source signs,
+scalar/packed width and alternating addends. These sources are never commuted
+or negated through ordinary FLOAT nodes: native LLVM and both C projections
+execute the original operation. Concrete evaluation maps physical sources to
+the common single-rounding FMA evaluator, including same-lane invalid priority
+over denormal evidence. Memory access completes inside that instruction's CSR
+scope. Scalar output merges the old destination's upper 128 bits; VEX zeroes
+the remaining upper vector. Immutable scalar stack sources reuse the matching
+six-input value contract, preserving both other numerical inputs and CSR.
 
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects

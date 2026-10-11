@@ -98,6 +98,73 @@ auto ascendingLowerBound(
   return Values.lower_bound(K);
 }
 
+// Resolver keys begin with a dense block ID. Split their ordered indexes by
+// that already known coordinate rather than searching every block's states in
+// one tree. Full keys remain in each shard, so collisions only cost another
+// ordered lookup. Nodes/iterators stay stable across recursive insertions, and
+// size() retains the global count used by the unchanged evidence charges.
+template <typename Key, typename Value> class ResolverBlockMemo {
+  using Map = std::map<Key, Value>;
+  static constexpr size_t Shards = 64;
+  std::array<Map, Shards> Maps;
+  std::array<bool, Shards> Used{};
+  std::vector<size_t> Active;
+  size_t Count = 0;
+
+  static size_t shard(const Key &K) {
+    return static_cast<unsigned>(std::get<0>(K)) % Shards;
+  }
+
+public:
+  struct Iterator {
+    Map *Owner = nullptr;
+    typename Map::iterator Position;
+    auto *operator->() const { return &*Position; }
+    bool operator==(const Iterator &Other) const {
+      return Owner == Other.Owner && (!Owner || Position == Other.Position);
+    }
+  };
+
+  size_t size() const { return Count; }
+  Iterator end() const { return {}; }
+  Iterator find(const Key &K) {
+    Map &M = Maps[shard(K)];
+    const auto I = M.find(K);
+    return I == M.end() ? end() : Iterator{&M, I};
+  }
+  template <typename... Args>
+  std::pair<Iterator, bool> try_emplace(const Key &K, Args &&...Values) {
+    const size_t S = shard(K);
+    Map &M = Maps[S];
+    const auto [I, Inserted] = M.try_emplace(K, std::forward<Args>(Values)...);
+    if (Inserted) {
+      if (!Used[S]) {
+        Active.push_back(S);
+        Used[S] = true;
+      }
+      ++Count;
+    }
+    return {{&M, I}, Inserted};
+  }
+  void erase(Iterator I) {
+    I.Owner->erase(I.Position);
+    --Count;
+  }
+  size_t erase(const Key &K) {
+    const size_t Removed = Maps[shard(K)].erase(K);
+    Count -= Removed;
+    return Removed;
+  }
+  void clear() {
+    for (size_t S : Active) {
+      Maps[S].clear();
+      Used[S] = false;
+    }
+    Active.clear();
+    Count = 0;
+  }
+};
+
 bool intrinsicMayClobberFrameMemory(const LowOp &Op) {
   if (Op.Opcode != NdOp::INTRINSIC)
     return false;
@@ -2553,6 +2620,64 @@ struct CFGBuilder::ResolverGraphCache {
   mutable size_t ValueBytes = 0;
   mutable size_t ValueHits = 0;
 
+  // Control queries need only the frozen graph, the ordered branch inventory
+  // and the load address. Their answers do not depend on value reconstruction
+  // modes or relocation occurrence inventories. Keep their much smaller
+  // payload under an independent bound; an incomplete traversal is never
+  // published, and a hit must pay the entire original traversal charge.
+  struct ConditionBatch {
+    std::vector<va_t> Branches;
+    va_t Load;
+    std::vector<std::optional<bool>> Results;
+    size_t Work;
+    size_t Bytes;
+  };
+  static constexpr size_t MaxConditionBatches = 64;
+  static constexpr size_t MaxConditionBytes = 1024 * 1024;
+  mutable std::list<ConditionBatch> ConditionBatches;
+  mutable size_t ConditionBytes = 0;
+
+  const ConditionBatch *findConditions(llvm::ArrayRef<va_t> Branches, va_t Load,
+                                       size_t Available) const {
+    for (auto It = ConditionBatches.begin(); It != ConditionBatches.end(); ++It)
+      if (It->Load == Load && It->Work <= Available &&
+          llvm::ArrayRef<va_t>(It->Branches) == Branches) {
+        ConditionBatches.splice(ConditionBatches.begin(), ConditionBatches, It);
+        return &ConditionBatches.front();
+      }
+    return nullptr;
+  }
+
+  void rememberConditions(llvm::ArrayRef<va_t> Branches, va_t Load,
+                          const std::vector<std::optional<bool>> &Results,
+                          size_t Work) const {
+    constexpr size_t FixedBytes = sizeof(ConditionBatch) + 24 * sizeof(void *);
+    constexpr size_t PerQuery = sizeof(va_t) + sizeof(std::optional<bool>);
+    if (Branches.size() != Results.size() ||
+        Branches.size() > (MaxConditionBytes - FixedBytes) / PerQuery)
+      return;
+    ConditionBatch Batch{
+        {Branches.begin(), Branches.end()}, Load, Results, Work, FixedBytes};
+    // Check actual capacities before admitting or evicting anything.
+    auto Account = [&](size_t Count, size_t Size) {
+      if (Count > (MaxConditionBytes - Batch.Bytes) / Size)
+        return false;
+      Batch.Bytes += Count * Size;
+      return true;
+    };
+    if (!Account(Batch.Branches.capacity(), sizeof(va_t)) ||
+        !Account(Batch.Results.capacity(), sizeof(std::optional<bool>)))
+      return;
+    while (!ConditionBatches.empty() &&
+           (ConditionBatches.size() >= MaxConditionBatches ||
+            Batch.Bytes > MaxConditionBytes - ConditionBytes)) {
+      ConditionBytes -= ConditionBatches.back().Bytes;
+      ConditionBatches.pop_back();
+    }
+    ConditionBytes += Batch.Bytes;
+    ConditionBatches.push_front(std::move(Batch));
+  }
+
   static bool accountValueBytes(size_t &Bytes, size_t Count, size_t Size) {
     if (Bytes > MaxValueBytes || Count > (MaxValueBytes - Bytes) / Size)
       return false;
@@ -2839,6 +2964,47 @@ struct CFGBuilder::ResolverGraphCache {
         return false;
     }
     return true;
+  }
+
+  // The value and control projections must use exactly the same graph owner
+  // and storage callback. A local lease keeps pointer-bearing snapshots alive
+  // even when a nested query replaces the builder's one retained graph.
+  struct Lease {
+    std::shared_ptr<const ResolverGraphCache> Cached;
+    std::optional<ResolverFlowGraph> Fresh;
+    const ResolverFlowGraph &graph() const {
+      return Cached ? Cached->Graph : *Fresh;
+    }
+  };
+
+  static Lease acquire(const CFGBuilder &B,
+                       std::vector<ResolverInsnSnapshot> &Snapshot,
+                       const std::set<va_t> &ProofRoots, size_t *Budget,
+                       bool &Complete) {
+    Lease Result;
+    Complete = false;
+    if (Budget && B.CachedResolverGraph &&
+        B.CachedResolverGraph->matches(B, Snapshot, ProofRoots)) {
+      Complete = consumeResolverGraphWork(Budget, B.CachedResolverGraph->Work);
+      if (Complete)
+        Result.Cached = B.CachedResolverGraph;
+      return Result;
+    }
+    const size_t Before = Budget ? *Budget : 0;
+    Result.Fresh.emplace(buildResolverFlowGraph(
+        Snapshot, B.BlockStarts, ProofRoots, B.DiscoveredCodeRefSources,
+        [&](va_t Address, const std::set<va_t> *ActiveOwners) {
+          return B.resolvedJumpTableOwnsStorageAddress(Address, ActiveOwners,
+                                                       Budget);
+        },
+        Budget, &Complete));
+    if (Complete && Budget && canRetain(B, Snapshot, ProofRoots)) {
+      Result.Cached = std::make_shared<ResolverGraphCache>(
+          B, std::move(Snapshot), ProofRoots, Before - *Budget,
+          std::move(*Result.Fresh));
+      B.CachedResolverGraph = Result.Cached;
+    }
+    return Result;
   }
 };
 
@@ -4680,41 +4846,16 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                          ? *ActiveJumpTableProofRoots
                                          : PersistentCFGRoots;
   bool GraphComplete = false;
-  std::optional<ResolverFlowGraph> FreshGraph;
-  // Keep a local owner: a nested query may replace the builder's cache while
-  // this synchronous proof is still using its immutable graph.
-  std::shared_ptr<const ResolverGraphCache> ReusedGraph;
-  if (GraphWorkBudget && CachedResolverGraph &&
-      CachedResolverGraph->matches(*this, Snapshot, ProofRoots)) {
-    GraphComplete =
-        consumeResolverGraphWork(GraphWorkBudget, CachedResolverGraph->Work);
-    if (GraphComplete)
-      ReusedGraph = CachedResolverGraph;
-  } else {
-    const size_t Before = GraphWorkBudget ? *GraphWorkBudget : 0;
-    FreshGraph.emplace(buildResolverFlowGraph(
-        Snapshot, BlockStarts, ProofRoots, DiscoveredCodeRefSources,
-        [&](va_t Address, const std::set<va_t> *ActiveOwners) {
-          return resolvedJumpTableOwnsStorageAddress(Address, ActiveOwners,
-                                                     GraphWorkBudget);
-        },
-        GraphWorkBudget, &GraphComplete));
-    if (GraphComplete && GraphWorkBudget &&
-        ResolverGraphCache::canRetain(*this, Snapshot, ProofRoots)) {
-      ReusedGraph = std::make_shared<ResolverGraphCache>(
-          *this, std::move(Snapshot), ProofRoots, Before - *GraphWorkBudget,
-          std::move(*FreshGraph));
-      CachedResolverGraph = ReusedGraph;
-    }
-  }
+  const auto GraphLease = ResolverGraphCache::acquire(
+      *this, Snapshot, ProofRoots, GraphWorkBudget, GraphComplete);
   if (!GraphComplete) {
     if (QueryAnalysisComplete)
       std::fill(QueryAnalysisComplete->begin(), QueryAnalysisComplete->end(),
                 false);
     return Results;
   }
-  const ResolverFlowGraph &Graph =
-      ReusedGraph ? ReusedGraph->Graph : *FreshGraph;
+  const ResolverFlowGraph &Graph = GraphLease.graph();
+  const auto &ReusedGraph = GraphLease.Cached;
   // A cache hit pays the full cold graph charge, including storage ownership.
   // Resource-incomplete graphs never enter the cache. Reuse a value batch only
   // after every ordinary graph/output charge, and only when the remaining
@@ -5028,8 +5169,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // definition (including a loop-carried store/arithmetic update) publishes
   // Value or Invalid, advancing the generation before a cycle can be reused.
   uint64_t ResolverMemoGeneration = 0;
-  std::map<ValueKey, ResolverMemoEntry> ValueMemo;
-  std::map<MemoryKey, ResolverMemoEntry> MemoryMemo;
+  ResolverBlockMemo<ValueKey, ResolverMemoEntry> ValueMemo;
+  ResolverBlockMemo<MemoryKey, ResolverMemoEntry> MemoryMemo;
   std::map<LaneKey, std::optional<bool>> FrameAddressTaintMemo;
   bool QueryResolverAnalysisIncomplete = false;
   bool QueryResolverDepthExceeded = false;
@@ -12107,7 +12248,7 @@ std::vector<std::optional<bool>> CFGBuilder::tableLoadConditionValues(
     if (!consumeWork() ||
         !consumeWork(orderedSetLookupWork(SnapshotByAddr.size())))
       return Results;
-    auto Position = SnapshotByAddr.lower_bound(S.Addr);
+    auto Position = ascendingLowerBound(SnapshotByAddr, S.Addr);
     if (Position == SnapshotByAddr.end() || Position->first != S.Addr) {
       if (!consumeWork(5))
         return Results;
@@ -12118,36 +12259,59 @@ std::vector<std::optional<bool>> CFGBuilder::tableLoadConditionValues(
                                          ? *ActiveJumpTableProofRoots
                                          : PersistentCFGRoots;
   bool GraphComplete = false;
-  const ResolverFlowGraph Graph = buildResolverFlowGraph(
-      Snapshot, BlockStarts, ProofRoots, DiscoveredCodeRefSources,
-      [&](va_t Address, const std::set<va_t> *ActiveOwners) {
-        return resolvedJumpTableOwnsStorageAddress(Address, ActiveOwners,
-                                                   EvidenceBudget);
-      },
-      EvidenceBudget, &GraphComplete);
+  const auto GraphLease = ResolverGraphCache::acquire(
+      *this, Snapshot, ProofRoots, EvidenceBudget, GraphComplete);
   if (!GraphComplete) {
     Complete = false;
     return Results;
   }
+  const ResolverFlowGraph &Graph = GraphLease.graph();
+  const size_t ControlWorkBefore = *EvidenceBudget;
+  if (GraphLease.Cached)
+    if (const auto *Batch = GraphLease.Cached->findConditions(
+            BranchAddrs, Info.TableLoadAddr, *EvidenceBudget)) {
+      *EvidenceBudget -= Batch->Work;
+      if (AnalysisComplete)
+        *AnalysisComplete = true;
+      return Batch->Results;
+    }
+  auto RememberComplete = [&] {
+    if (Complete && GraphLease.Cached)
+      GraphLease.Cached->rememberConditions(
+          BranchAddrs, Info.TableLoadAddr, Results,
+          ControlWorkBefore - *EvidenceBudget);
+    if (AnalysisComplete)
+      *AnalysisComplete = Complete;
+  };
   if (!consumeWork(orderedSetLookupWork(Graph.InsnToBlock.size())))
     return Results;
   auto LI = Graph.InsnToBlock.find(Info.TableLoadAddr);
   if (LI == Graph.InsnToBlock.end()) {
-    if (AnalysisComplete)
-      *AnalysisComplete = Complete;
+    RememberComplete();
     return Results;
   }
   const int LoadBlock = LI->second;
 
+  // Block IDs are dense in this immutable graph. Reuse one visitation array
+  // and LIFO buffer across all guard queries instead of allocating an ordered
+  // set and one list node per edge on every walk. SeenCount keeps every old
+  // logical lookup/insertion charge, including the budget-failure boundary.
+  std::vector<uint32_t> Seen(Graph.Blocks.size(), 0);
+  uint32_t Generation = 0;
+  std::vector<int> Work;
   auto reachable = [&](llvm::ArrayRef<int> Starts, int Target,
                        int Excluded) -> std::optional<bool> {
-    std::list<int> Work;
+    if (++Generation == 0) {
+      std::fill(Seen.begin(), Seen.end(), 0);
+      ++Generation;
+    }
+    Work.clear();
+    size_t SeenCount = 0;
     for (int Start : Starts) {
       if (!consumeWork(4))
         return std::nullopt;
       Work.push_back(Start);
     }
-    std::set<int> Seen;
     while (!Work.empty()) {
       if (!consumeWork())
         return std::nullopt;
@@ -12155,20 +12319,21 @@ std::vector<std::optional<bool>> CFGBuilder::tableLoadConditionValues(
       Work.pop_back();
       if (B == Excluded)
         continue;
-      if (!consumeWork(orderedSetLookupWork(Seen.size())))
+      if (!consumeWork(orderedSetLookupWork(SeenCount)))
         return std::nullopt;
-      auto SeenPosition = Seen.lower_bound(B);
-      if (SeenPosition != Seen.end() && *SeenPosition == B)
+      const bool ValidBlock = B >= 0 && B < static_cast<int>(Seen.size());
+      if (ValidBlock && Seen[B] == Generation)
         continue;
       if (!consumeWork(3))
         return std::nullopt;
-      Seen.emplace_hint(SeenPosition, B);
+      ++SeenCount;
       if (B == Target)
         return true;
-      if (B < 0 || B >= static_cast<int>(Graph.Blocks.size())) {
+      if (!ValidBlock) {
         Complete = false;
         return std::nullopt;
       }
+      Seen[B] = Generation;
       for (int S : Graph.Blocks[B].Succs) {
         if (!consumeWork() || !consumeWork(3))
           return std::nullopt;
@@ -12196,8 +12361,7 @@ std::vector<std::optional<bool>> CFGBuilder::tableLoadConditionValues(
     return Results;
   }
   if (!*RootReaches) {
-    if (AnalysisComplete)
-      *AnalysisComplete = Complete;
+    RememberComplete();
     return Results;
   }
   for (size_t QueryIndex = 0; QueryIndex < BranchAddrs.size(); ++QueryIndex) {
@@ -12272,8 +12436,7 @@ std::vector<std::optional<bool>> CFGBuilder::tableLoadConditionValues(
     if (*TrueReaches != *FalseReaches)
       Results[QueryIndex] = *TrueReaches;
   }
-  if (AnalysisComplete)
-    *AnalysisComplete = Complete;
+  RememberComplete();
   return Results;
 }
 

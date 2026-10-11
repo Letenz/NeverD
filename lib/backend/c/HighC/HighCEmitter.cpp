@@ -445,6 +445,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Names;
   FloatToIntegerHelpers.clear();
   LeadingZeroHelpers.clear();
+  SaturatingLaneHelpers.clear();
   PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
@@ -511,6 +512,13 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       if (Inserted && Bits)
         It->second = GlobalIdentifierAllocator.allocate(
             "neverd_clz" + std::to_string(Bits), "nd_clz");
+    }
+    if (const auto Bits = x86SaturatingLaneBits(E)) {
+      auto [It, Inserted] =
+          SaturatingLaneHelpers.try_emplace({E.IntrinsicId, *Bits});
+      if (Inserted)
+        It->second = GlobalIdentifierAllocator.allocate(
+            x86SaturatingLaneHelperName(E.IntrinsicId, *Bits), "nd_saturate");
     }
     if (auto Shape = floatToIntegerConversion(E)) {
       auto [It, Inserted] = FloatToIntegerHelpers.try_emplace(Shape->key());
@@ -667,6 +675,8 @@ void HighCWriter::writeMemoryHelpers() {
        << (Bits == 32 ? "__builtin_clz" : "__builtin_clzll")
        << "(value) : " << Bits << ";\n}\n\n";
   }
+  for (const auto &[Key, Name] : SaturatingLaneHelpers)
+    writeX86SaturatingLaneHelper(OS, Name, Key.first, Key.second);
   // The accesses' types or assumptions are written only when an access can
   // name a type; otherwise every access keeps its portable byte copy.
   UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
@@ -1360,7 +1370,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       // The x87 helpers, collected with the unit's types, need no header.
       else if (Ex.IntrinsicId != Intrinsic::None && !IsX87Helper &&
                (intrinsicCName(Ex.IntrinsicId) ||
-                x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
+                x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId) ||
+                armIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
       if (Opts.Format == BinaryFormat::COFF &&
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&

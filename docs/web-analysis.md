@@ -33,6 +33,10 @@ neverd web capabilities
 neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
+neverd web archive ./extension.vsix zip
+neverd web desktop-manifest ./captured-app nwjs 2
+neverd web desktop-manifest ./package.json vsix
+neverd web archive-desktop ./extension.vsix zip 0 3 vsix
 neverd web bun-export ./standalone-elf ./new-recovery-directory
 neverd web inspect ./input-directory
 neverd web source ./bundle.js script
@@ -94,6 +98,16 @@ bounded tar/local-PAX/single-gzip members and compare explicitly selected
 original artifacts with captured registry or npm-lock SRI declarations.
 Source, package, Bun and native consumers share the immutable member selection.
 SHA equality, archive validity and publisher authenticity are separate claims.
+The separate [ZIP32 profile](web-zip-profile.md) admits stored/deflate members
+through the same APIs with explicit `zip` format, retaining member CRC results,
+unavailable reasons and original/expanded ranges.
+The [desktop manifest profiles](web-desktop-manifest-profile.md) read explicitly
+selected NW.js and VS Code extension declarations and compare exact available
+files within the selected manifest's captured namespace. Directory layouts,
+ZIP origins, absent or unsupported entries and runtime uncertainty remain
+separate. Member and artifact indices must come from the current inventory;
+the command examples do not prescribe their ordering. No profile launches an
+application, extension, runtime or native helper.
 
 Bun extraction is explicitly selected and follows
 [versioned layouts](web-bun-profile.md). Module/region pages preserve original
