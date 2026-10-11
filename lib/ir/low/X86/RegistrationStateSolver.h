@@ -13,7 +13,6 @@
 #include "neverd/ir/low/LowIR.h"
 
 #include <compare>
-#include <deque>
 #include <map>
 #include <set>
 #include <tuple>
@@ -26,6 +25,21 @@ struct CxxCatchContext {
   /// The CRT captures SavedESP before entering a catch and restores that
   /// snapshot on return or guard unwind, even if the catch rewrites the slot.
   std::optional<int32_t> SavedStackOffset;
+  std::optional<CallbackFrameAddress> SavedCallback;
+  std::optional<va_t> SuspendedCallback;
+  std::optional<int32_t> SuspendedStackOffset;
+  std::map<int32_t, FrameValue> SuspendedCells;
+  std::set<int32_t> SuspendedInitializedBytes;
+  size_t cellCount() const {
+    return 1 + SuspendedCells.size() + SuspendedInitializedBytes.size();
+  }
+  FrameValue savedStack() const {
+    if (SavedCallback)
+      return FrameValue::callbackFrame(SavedCallback->Entry,
+                                       SavedCallback->Offset);
+    return SavedStackOffset ? FrameValue::frame(*SavedStackOffset)
+                            : FrameValue{{}, {}, false, true};
+  }
   auto operator<=>(const CxxCatchContext &) const = default;
 };
 
@@ -44,7 +58,6 @@ struct Domain {
   std::set<int32_t> Levels;
   FrameState Frame;
   FrameState RuntimeObject;
-  std::optional<RegistrationCxxCatchObject> RuntimeIdentity;
   std::set<int32_t> InitializedFrameBytes;
   bool Reached = false;
   bool Unknown = false;
@@ -56,6 +69,13 @@ struct Domain {
   bool Uninstalled = false;
   bool Installed = false;
   bool CanDispatch = false;
+  size_t catchCellCount() const {
+    size_t Count = 0;
+    for (const auto &Stack : CxxCatchStacks)
+      for (const auto &Context : Stack)
+        Count += Context.cellCount();
+    return Count;
+  }
 };
 
 struct BlockFacts {
@@ -68,7 +88,6 @@ struct BlockFacts {
 struct ActivationState {
   Domain Incoming;
   BlockFacts Facts;
-  bool Queued = false;
 };
 
 int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx);
@@ -89,6 +108,7 @@ public:
 
 private:
   bool initialize();
+  bool initializeOrder();
   bool validateRealignedLayout();
   bool realignedMemoryIsDisjoint(const FrameValue &Address,
                                  uint16_t Width) const;
@@ -96,7 +116,12 @@ private:
   bool callbackCanReturn(const Domain &State) const;
   bool callbackReturnInstruction(size_t I, const LowOp &Op) const;
   std::optional<int32_t> parentStackOffset(const Domain &State) const;
+  void preserveCxxFrameCells(Domain &Root, const Domain &Source);
   bool initializeContracts();
+  std::optional<RegistrationRuntimeThrow>
+  runtimeThrowArguments(const Domain &State,
+                        const RegistrationCalleeFrameContract &Callee,
+                        std::vector<RegistrationObjectExtent> &Reads);
   void initializeCookies();
   void collectOccurrences();
   void seedEntries();
@@ -116,10 +141,14 @@ private:
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
                     const FrameTransfer &Transfer, const BlockFacts &Facts,
                     std::optional<RegistrationCxxContinuation> &CatchReturn);
+  void resumeCxxCatch(const Domain &After,
+                      const RegistrationCxxContinuation &Return);
   bool recordRuntimeMemory(size_t I, Domain &After, const LowOp &Op,
                            const FrameTransfer &Transfer,
                            const FrameTransfer &RuntimeTransfer,
                            const BlockFacts &Facts);
+  bool runtimeObjectIsLive(const Domain &State,
+                           std::pair<uint32_t, uint32_t> Identity);
   bool transferBlock(size_t I, const Domain &Before, BlockFacts &Facts);
   void dispatchBlock(size_t I, const Domain &Before, const BlockFacts &Facts);
   std::vector<RegistrationCxxSearch> cxxSearches(const Domain &State,
@@ -169,7 +198,8 @@ private:
   std::map<va_t, RegistrationTryLevelStore> Stores;
   std::set<int32_t> AllLevels;
   std::vector<std::map<SEHActivation, ActivationState>> States;
-  std::deque<std::pair<size_t, SEHActivation>> Work;
+  std::vector<size_t> Order;
+  std::set<std::tuple<size_t, size_t, SEHActivation>> Work;
   size_t WorkUsed = 0;
   bool Exhausted = false;
   bool ProvenInstallation = false;

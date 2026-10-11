@@ -37,16 +37,22 @@ RegistrationStateSolver::RegistrationStateSolver(
       CompleteRuntimeObjects(CheckRuntimeObjects) {}
 
 RegistrationStateAnalysis RegistrationStateSolver::run() {
-  if (!initialize() || !initializeContracts())
+  if (!initialize())
+    return std::move(Result);
+  if (!initializeOrder()) {
+    Result.Diagnostics.push_back(
+        "registration-state ordering budget exhausted");
+    return std::move(Result);
+  }
+  if (!initializeContracts())
     return std::move(Result);
   initializeCookies();
   collectOccurrences();
   seedEntries();
   while (!Work.empty() && !Exhausted) {
-    const auto [I, Activation] = Work.front();
-    Work.pop_front();
+    const auto [Priority, I, Activation] = *Work.begin();
+    Work.erase(Work.begin());
     auto &State = States[I].at(Activation);
-    State.Queued = false;
     // Transfers can merge back into this node. Keep the input snapshot stable
     // while ordinary and exceptional successors update their own activations.
     const Domain Before = State.Incoming;
@@ -164,7 +170,9 @@ bool RegistrationStateSolver::initialize() {
          Block.InstructionBoundaries)
       HasInstallBoundary |=
           Instruction.Address == Chain.ChainInstallVA &&
-          Instruction.Size == Chain.chainInstallInstructionSize() &&
+          Instruction.Size != 0 &&
+          Instruction.Control == LowInstructionControl::None &&
+          Instruction.Address <= InvalidVA - Instruction.Size &&
           Instruction.Address + Instruction.Size == Block.EndAddr;
   if (!HasInstallBoundary) {
     Result.Diagnostics.push_back(

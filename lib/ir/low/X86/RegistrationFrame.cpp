@@ -9,9 +9,6 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/X86Regs.h"
 
-#include <algorithm>
-#include <bit>
-
 namespace neverd::registration_state {
 
 FrameValue join(FrameValue Left, const FrameValue &Right) {
@@ -27,13 +24,6 @@ FrameValue join(FrameValue Left, const FrameValue &Right) {
 }
 
 namespace {
-template <typename Map> auto firstOverlappingCell(Map &Cells, int32_t Offset) {
-  // A cell covers four bytes regardless of the access width. Include cells
-  // beginning before this access, without wrapping at INT32_MIN.
-  return Cells.lower_bound(
-      static_cast<int32_t>(std::max(int64_t(INT32_MIN), int64_t(Offset) - 3)));
-}
-
 bool mergeCells(std::map<int32_t, FrameValue> &Cells,
                 const std::map<int32_t, FrameValue> &Other) {
   bool Changed = false;
@@ -63,68 +53,7 @@ bool mergeCells(std::map<int32_t, FrameValue> &Cells,
   return Changed;
 }
 
-void storeCell(std::map<int32_t, FrameValue> &Cells, int32_t Offset,
-               uint16_t Width, const FrameValue &Value) {
-  for (auto It = firstOverlappingCell(Cells, Offset);
-       It != Cells.end() && int64_t(It->first) < int64_t(Offset) + Width;) {
-    if (int64_t(It->first) < int64_t(Offset) + Width &&
-        int64_t(Offset) < int64_t(It->first) + 4) {
-      const bool FullyOverwritten =
-          Offset <= It->first &&
-          int64_t(It->first) + 4 <= int64_t(Offset) + Width;
-      if (!FullyOverwritten && It->second.MayBeFrame) {
-        It->second = {{}, {}, false, true};
-        ++It;
-      } else
-        It = Cells.erase(It);
-    } else
-      ++It;
-  }
-  if (Width == 4 && Value != FrameValue{})
-    Cells[Offset] = Value;
-  else if (Value.MayBeFrame)
-    // A pointer can be split into narrow writes and reconstructed by a
-    // later load. Retain conservative four-byte coverage for every written
-    // chunk, including a final partial chunk, rather than dropping its
-    // provenance merely because this store is not a full pointer width.
-    for (uint32_t I = 0; I < Width; I += 4)
-      Cells[static_cast<int32_t>(uint32_t(Offset) + I)] = {{}, {}, false, true};
-}
-
-FrameValue loadCell(const std::map<int32_t, FrameValue> &Cells,
-                    std::optional<int32_t> Offset, uint16_t Width) {
-  if (Offset && Width == 4)
-    if (auto It = Cells.find(*Offset); It != Cells.end())
-      return It->second;
-  for (auto It = Offset ? firstOverlappingCell(Cells, *Offset) : Cells.begin();
-       It != Cells.end() &&
-       (!Offset || int64_t(It->first) < int64_t(*Offset) + Width);
-       ++It) {
-    const auto &[Cell, Value] = *It;
-    if (Value.MayBeFrame &&
-        (!Offset || (int64_t(Cell) < int64_t(*Offset) + Width &&
-                     int64_t(*Offset) < int64_t(Cell) + 4)))
-      return {{}, {}, false, true};
-  }
-  return {};
-}
-
 } // namespace
-
-size_t FrameState::cellAccessWork(uint16_t Width, bool Write) const {
-  // Each coordinate is a map with distinct integer keys, so at most Width+3
-  // four-byte cells overlap. Red-black searches need at most twice the bit
-  // width of their size. A load can search twice (exact and overlapping).
-  const size_t Count =
-      std::max({Cells.size(), EntryCells.size(), CallbackCells.size()});
-  size_t Work =
-      1 + 4 * std::bit_width(Count) + std::min(Count, size_t(Width) + 3);
-  if (Write) {
-    const size_t Inserts = (size_t(Width) + 3) / 4;
-    Work += Inserts * (1 + 2 * std::bit_width(Count + Inserts));
-  }
-  return Work;
-}
 
 bool FrameState::merge(const FrameState &Other) {
   bool Changed = false;
@@ -185,37 +114,6 @@ void FrameState::forgetCellValues() {
         ++It;
       }
     }
-}
-
-void FrameState::store(int32_t Offset, uint16_t Width,
-                       const FrameValue &Value) {
-  storeCell(Cells, Offset, Width, Value);
-}
-void FrameState::storeEntry(int32_t Offset, uint16_t Width,
-                            const FrameValue &Value) {
-  storeCell(EntryCells, Offset, Width, Value);
-}
-FrameValue FrameState::load(std::optional<int32_t> Offset,
-                            uint16_t Width) const {
-  auto Value = loadCell(Cells, Offset, Width);
-  if (!Offset) {
-    Value = join(Value, loadCell(EntryCells, std::nullopt, Width));
-    Value = join(Value, loadCell(CallbackCells, std::nullopt, Width));
-  }
-  return Value;
-}
-FrameValue FrameState::loadEntry(int32_t Offset, uint16_t Width) const {
-  return loadCell(EntryCells, Offset, Width);
-}
-
-void FrameState::storeCallback(int32_t Offset, uint16_t Width,
-                               const FrameValue &Value) {
-  storeCell(CallbackCells, Offset, Width, Value);
-  for (int64_t Byte = Offset; Byte < int64_t(Offset) + Width; ++Byte)
-    InitializedCallbackBytes.insert(int32_t(Byte));
-}
-FrameValue FrameState::loadCallback(int32_t Offset, uint16_t Width) const {
-  return loadCell(CallbackCells, Offset, Width);
 }
 
 void FrameTransfer::beginInstruction(va_t Address) {
@@ -350,13 +248,19 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
     if (Op.Opcode == NdOp::INT_ADD && Left.Constant && Right.EntryOffset)
       return FrameValue::entryFrame(
           static_cast<int32_t>(*Left.Constant + uint32_t(*Right.EntryOffset)));
-    if (Left.Offset && Right.Constant)
-      return FrameValue::frame(static_cast<int32_t>(
+    if (Left.Offset && Right.Constant) {
+      auto Result = FrameValue::frame(static_cast<int32_t>(
           uint32_t(*Left.Offset) +
           (Op.Opcode == NdOp::INT_ADD ? *Right.Constant : -*Right.Constant)));
-    if (Op.Opcode == NdOp::INT_ADD && Left.Constant && Right.Offset)
-      return FrameValue::frame(
+      Result.ExceptionObject = Left.ExceptionObject;
+      return Result;
+    }
+    if (Op.Opcode == NdOp::INT_ADD && Left.Constant && Right.Offset) {
+      auto Result = FrameValue::frame(
           static_cast<int32_t>(*Left.Constant + uint32_t(*Right.Offset)));
+      Result.ExceptionObject = Right.ExceptionObject;
+      return Result;
+    }
     if (Left.Constant && Right.Constant)
       return FrameValue::constant(Op.Opcode == NdOp::INT_ADD
                                       ? *Left.Constant + *Right.Constant

@@ -39,11 +39,25 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     const LowBlock &Block = Function.Blocks[I];
     std::set<int32_t> Levels;
     std::set<RegistrationCxxSearch> Searches;
+    std::set<std::vector<std::pair<uint32_t, uint32_t>>> CatchStacks;
     bool Reached = false, Parent = false, Callback = false;
     bool Unknown = false, CanDispatch = false;
     int32_t Minimum = INT32_MAX;
     for (const auto &[Activation, Node] : States[I]) {
       const Domain &State = Node.Incoming;
+      for (const auto &Stack : State.CxxCatchStacks) {
+        if (!charge(Stack.size() + 1)) {
+          Result.Complete = Result.RegistrationLifetimeComplete = false;
+          Result.Blocks.clear();
+          Result.Diagnostics.push_back(
+              "registration catch output budget exhausted");
+          return std::move(Result);
+        }
+        std::vector<std::pair<uint32_t, uint32_t>> Identities;
+        for (const auto &Context : Stack)
+          Identities.emplace_back(Context.TryIndex, Context.CatchIndex);
+        CatchStacks.insert(std::move(Identities));
+      }
       const BlockFacts &Facts = Node.Facts;
       const bool Unproven =
           State.Reached &&
@@ -102,7 +116,8 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
                              CanDispatch,
                              Minimum == INT32_MAX ? 0 : Minimum,
                              Reached,
-                             {Searches.begin(), Searches.end()}});
+                             {Searches.begin(), Searches.end()},
+                             {CatchStacks.begin(), CatchStacks.end()}});
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
   if (!Result.CxxContinuationsComplete) {

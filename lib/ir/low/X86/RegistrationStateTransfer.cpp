@@ -27,7 +27,7 @@ bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
 bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                                             BlockFacts &Facts) {
   const LowBlock &Block = Function.Blocks[I];
-  if (!charge(Before.CxxCatchStacks.size() + 1))
+  if (!charge(Before.catchCellCount() + 1))
     return true;
   Domain After = Before;
   FrameTransfer Transfer(
@@ -44,51 +44,42 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     After.Levels.clear();
   };
   for (const LowOp &Op : Block.Ops) {
+    Transfer.beginInstruction(Op.Addr);
+    RuntimeTransfer.beginInstruction(Op.Addr);
+    const auto Memory = lowMemoryOperands(Op);
+    size_t MemoryWork = 0;
+    if (Memory.Address && Op.Opcode == NdOp::LOAD &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      const auto Address = Transfer.read(*Memory.Address);
+      MemoryWork = After.Frame.memoryAccessWork(Address, Memory.AccessSize);
+      if (CheckRuntimeObjects && Address.Offset)
+        MemoryWork += After.RuntimeObject.memoryAccessWork(
+            FrameValue::frame(*Address.Offset), Memory.AccessSize);
+    }
+    // Known frame accesses visit an ordered interval. Ambiguous addresses
+    // retain the full-scan charge before inspecting possible pointer cells.
     size_t RegisterBytes = Op.Output.Size;
     for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
       RegisterBytes += Op.Inputs[Input].Size;
-    if (!charge(1 + RegisterBytes))
+    if (!charge(1 + RegisterBytes + MemoryWork))
       break;
-    Transfer.beginInstruction(Op.Addr);
-    RuntimeTransfer.beginInstruction(Op.Addr);
-    if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
-      // Exact parent addresses use an ordered interval lookup. An ambiguous
-      // address may alias every coordinate, and retains the full scan charge.
-      const auto Address = Transfer.read(Op.Inputs[0]);
-      const size_t FrameWork = Address.Offset
-                                   ? After.Frame.cellAccessWork(Op.Output.Size)
-                                   : After.Frame.cellCount() + 1;
-      if (!charge(FrameWork))
-        break;
-      if (CheckRuntimeObjects) {
-        const auto RuntimeAddress = RuntimeTransfer.read(Op.Inputs[0]);
-        const size_t RuntimeWork =
-            RuntimeAddress.Offset
-                ? After.RuntimeObject.cellAccessWork(Op.Output.Size)
-                : After.RuntimeObject.cellCount() + 1;
-        if (!charge(RuntimeWork +
-                    (Address.Offset
-                         ? After.RuntimeObject.cellAccessWork(Op.Output.Size)
-                         : 0)))
-          break;
-      }
-    }
     const FrameValue Value = Transfer.evaluate(Op, After.Installed);
-    FrameValue RuntimeValue =
-        CheckRuntimeObjects ? RuntimeTransfer.evaluate(Op, After.Installed)
-                            : FrameValue{};
+    FrameValue RuntimeValue;
+    if (CheckRuntimeObjects) {
+      if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
+        const auto Address = Transfer.read(Op.Inputs[0]);
+        if (Address.Offset)
+          RuntimeValue =
+              After.RuntimeObject.load(Address.Offset, Op.Output.Size);
+      } else
+        RuntimeValue = RuntimeTransfer.evaluate(Op, After.Installed);
+    }
     if (CheckRuntimeObjects &&
         (Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::COND_BR ||
          Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL))
       for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
         if (RuntimeTransfer.read(Op.Inputs[Input]).MayBeFrame)
           CompleteRuntimeObjects = false;
-    if (CheckRuntimeObjects && Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
-      const auto Address = Transfer.read(Op.Inputs[0]);
-      RuntimeValue = Address.Offset ? After.RuntimeObject.load(Address.Offset,
-                                                               Op.Output.Size)
-                                    : FrameValue{};
-    }
     recordCatchReturn(I, After, Op, Transfer, Facts, CatchReturn);
     if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN &&
         (!callbackCanReturn(After) || !callbackReturnInstruction(I, Op)))
@@ -105,7 +96,6 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       if (!New)
         It->second = registration_state::join(It->second, Value);
     }
-    const auto Memory = lowMemoryOperands(Op);
     if (Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
       const auto Address = Transfer.read(*Memory.Address);
@@ -354,7 +344,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
                      Chain.RealignedFrame->SavedParentFrameOffset, 4))
           Invalidate();
         if (Address.Offset) {
-          if (!charge(After.Frame.cellAccessWork(Width, true)))
+          if (!charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             break;
           After.Frame.store(*Address.Offset, Width, Stored);
           if (CheckCalls) {
@@ -374,7 +364,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         } else if (Address.CallbackAddress) {
           if (!After.Frame.callbackMemoryIsPrivate(*Address.CallbackAddress,
                                                    Width) ||
-              !charge(After.Frame.cellAccessWork(Width, true) + Width))
+              !charge(After.Frame.memoryAccessWork(Address, Width, true) +
+                      Width + 1))
             Invalidate();
           else
             After.Frame.storeCallback(Address.CallbackAddress->Offset, Width,
@@ -384,7 +375,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           // the newly allocated frame. Do not guess aliases below it.
           if (*Address.EntryOffset < -12 ||
               int64_t(*Address.EntryOffset) + Width > 4 || After.Installed ||
-              !charge(After.Frame.cellAccessWork(Width, true)))
+              !charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             Invalidate();
           else
             After.Frame.storeEntry(*Address.EntryOffset, Width, Stored);
@@ -516,42 +507,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       merge(It->second, After);
     }
   }
-  if (CatchReturn) {
-    const auto Resume = Entries.find(CatchReturn->TargetVA);
-    if (Resume != Entries.end()) {
-      if (!charge(After.Frame.cellCount() + After.RuntimeObject.cellCount() +
-                  2))
-        return true;
-      Domain Continued = After;
-      auto Stack = *Continued.CxxCatchStacks.begin();
-      Stack.pop_back();
-      Continued.Parent = Stack.empty();
-      Continued.Callback = !Stack.empty();
-      Continued.OtherCallback = false;
-      Continued.CxxCatchStacks.clear();
-      if (!Stack.empty())
-        Continued.CxxCatchStacks.insert(std::move(Stack));
-      Continued.RuntimeIdentity.reset();
-      const int32_t SavedSlot = *Chain.RegistrationOffset - 4;
-      Continued.Frame.store(SavedSlot, 4,
-                            FrameValue::frame(CatchReturn->SavedStackOffset));
-      Continued.RuntimeObject.store(SavedSlot, 4, {});
-      if (Chain.hasCxxCallbackStack()) {
-        Continued.Frame.leaveCallback();
-        // The CRT's call frame does not promise the callback's general
-        // registers at its continuation. The restore block rebuilds them.
-        for (auto &Register : Continued.Frame.Registers)
-          Register = {{}, {}, false, true};
-        Continued.Frame.OtherRegisterBytes.clear();
-        Continued.Frame.OtherRegistersMayBeFrame = true;
-      }
-      Continued.Frame.Registers[x86reg::RBP / x86reg::GeneralRegStride] =
-          FrameValue::frame(*Chain.cxxRuntimeFrameOffset());
-      Continued.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
-          FrameValue::frame(CatchReturn->SavedStackOffset);
-      merge(Resume->second, Continued);
-    }
-  }
+  if (CatchReturn)
+    resumeCxxCatch(After, *CatchReturn);
   dispatchBlock(I, Before, Facts);
   return true;
 }

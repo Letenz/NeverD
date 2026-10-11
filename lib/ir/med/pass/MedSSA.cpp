@@ -1141,7 +1141,7 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
           Root != 0 && RegistrationRoots.isCxxHandler(Func.Blocks[Root]);
       const auto RestoredCxxSP =
           Root == 0 ? std::nullopt
-                    : RegistrationRoots.restoredStackOffset(Func.Blocks[Root]);
+                    : RegistrationRoots.restoredStack(Func.Blocks[Root]);
       const bool IsWindowsRuntimeRoot =
           CxxContinuationRoots.count(Root) || LocalUnwindRoots.count(Root) ||
           (Root != 0 &&
