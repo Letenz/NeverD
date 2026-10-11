@@ -983,6 +983,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
+budget boundary, including completion flags and masks. It covers owned temporary
+overrides, equal-sized edge changes, roots, different builders, nested leases,
+new invocations after instruction/storage changes, depth refusals, oversized
+keys and the legacy null-budget path.
 `ResolverConditionQueryCache.*` checks shared value/control graph ownership,
 ordered control queries, temporary certified edges, roots and storage-owner
 changes, and every small-fixture budget boundary. An independent graph-walk
