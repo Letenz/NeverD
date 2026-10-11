@@ -825,12 +825,13 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
   const auto Shape = x86FPStateMedShape(Op);
   if (!x86FPStateShapeIsValid(Id, Shape))
     return std::nullopt;
-  const bool Approx = Id == Intrinsic::X86FPApprox12MemoryState;
-  const bool Scalar = Approx ? x86FPApprox12IsScalar(Shape.Control)
+  const bool Scalar = Id == Intrinsic::X86FPApprox12MemoryState
+                          ? x86FPApprox12IsScalar(Shape.Control)
                       : Id == Intrinsic::X86FPRoundMemoryState
                           ? x86FPRoundStateIsScalar(Shape.Control)
                           : x86FPArithStateIsScalar(Shape.Control);
-  return StackMemoryRead{1, Shape.OutputSize - (Approx ? 0 : 4), Scalar};
+  return StackMemoryRead{
+      1, x86FPStateMemoryBytes(Id, Shape.OutputSize, Shape.Control), Scalar};
 }
 
 void preserveFPStackHomes(
