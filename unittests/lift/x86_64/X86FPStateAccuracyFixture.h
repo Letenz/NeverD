@@ -354,6 +354,7 @@ int main(void) {
          (Index = NativeText.find("isa_probe", Index)) != std::string::npos;)
       NativeText.replace(Index, 9, "native_probe");
     write(Original, NativeText);
+    retain("native.s", NativeText);
     auto Built = command(Compiler, {"-c", Original, "-o", OriginalObject});
     ASSERT_EQ(Built.Status, 0) << Built.Error;
     if (Fault) {
@@ -460,6 +461,9 @@ int main(void) {
         CDriver.replace(Position, 28, "isa_probe((void *)actual)");
       }
       write(C, Source + CDriver);
+      retain(std::string(LLVM ? "llvm" : "high") +
+                 (SourceNoOpt ? "-noopt-driver.c" : "-driver.c"),
+             CDriver);
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(Optimization);
         const auto Executable =

@@ -1,5 +1,7 @@
 //===- NdOpEmulatorX86FPConvert.cpp - Exact x86 SIMD conversions --------===//
 
+#include "X86FPConvertRounding.h"
+
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 
@@ -90,33 +92,6 @@ uint64_t signMask(uint16_t Size) {
   return Size == 4 ? UINT64_C(0x80000000) : UINT64_C(0x8000000000000000);
 }
 
-// SSE tests exponent range after rounding to the destination precision but
-// before denormalization. APFloat's finite directed-overflow representative
-// and tininess-after-rounding status alone do not encode that boundary.
-int narrowSingleRoundedExponent(uint64_t Bits,
-                                llvm::APFloat::roundingMode Rounding) {
-  const bool Negative = (Bits >> 63) != 0;
-  const unsigned Exponent = (Bits >> 52) & 0x7ff;
-  if (!Exponent)
-    return -1022;
-  const uint64_t Mantissa =
-      (UINT64_C(1) << 52) | (Bits & UINT64_C(0x000fffffffffffff));
-  uint64_t Rounded = Mantissa >> 29;
-  const uint64_t Remainder = Mantissa & ((UINT64_C(1) << 29) - 1);
-  bool Up = false;
-  if (Remainder) {
-    if (Rounding == llvm::APFloat::rmNearestTiesToEven)
-      Up = Remainder > (UINT64_C(1) << 28) ||
-           (Remainder == (UINT64_C(1) << 28) && (Rounded & 1));
-    else if (Rounding == llvm::APFloat::rmTowardPositive)
-      Up = !Negative;
-    else if (Rounding == llvm::APFloat::rmTowardNegative)
-      Up = Negative;
-  }
-  Rounded += Up;
-  return int(Exponent) - 1023 + (Rounded == (UINT64_C(1) << 24));
-}
-
 } // namespace
 
 bool NdOpEmulator::executeX86FPConvert(const LowOp &Op) {
@@ -199,7 +174,8 @@ bool NdOpEmulator::executeX86FPConvert(const LowOp &Op) {
         uint32_t LaneRaised = statusFlags(Status) & ~1U;
         if (SourceElementSize == 8 && DestinationElementSize == 4 &&
             (statusFlags(Status) & (1U << 5))) {
-          const auto Exponent = narrowSingleRoundedExponent(Bits, APFRounding);
+          const auto Exponent =
+              x86NarrowRoundedExponent(Bits, 11, 52, 23, APFRounding);
           if ((Converted & UINT64_C(0x7fffffff)) == UINT64_C(0x7f7fffff) &&
               Exponent > 127)
             LaneRaised |= 1U << 3;

@@ -456,6 +456,64 @@ TEST(MedCallingConvFPStack,
     }
 }
 
+TEST(MedCallingConvFPStack, F16CReadsRetainSourceHomesAndStoresAreNotReads) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 4; ++Control) {
+      if (Control & 1)
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86F16CDestinationBytes(Control) + 4, Arch::X64);
+      Read.addInput(
+          MedVar::makeConst(unsigned(Intrinsic::X86F16CReadState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0, 1));
+      Read.addInput(MedVar::makeConst(0x1f80, 4));
+      const auto Descriptor = med_calling_conv_detail::stackMemoryRead(Read);
+      ASSERT_TRUE(Descriptor);
+      EXPECT_EQ(Descriptor->Bytes, x86F16CSourceBytes(Control));
+      EXPECT_FALSE(Descriptor->ScalarFP);
+      MedOp Store;
+      Store.Opcode = NdOp::INTRINSIC;
+      Store.Output = temp(9, 0, 4, Arch::X64);
+      Store.addInput(
+          MedVar::makeConst(unsigned(Intrinsic::X86F16CStoreState), 2));
+      Store.addInput(Address);
+      Store.addInput(MedVar::makeConst(0, x86F16CSourceBytes(Control | 1)));
+      Store.addInput(MedVar::makeConst(Control | 1, 1));
+      Store.addInput(MedVar::makeConst(0, 1));
+      Store.addInput(MedVar::makeConst(0x1f80, 4));
+      EXPECT_TRUE(x86FPStateShapeIsValid(Intrinsic::X86F16CStoreState,
+                                         x86FPStateMedShape(Store)));
+      EXPECT_FALSE(med_calling_conv_detail::stackMemoryRead(Store));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      EXPECT_EQ(F.Blocks[0].Ops.back().Inputs[0].ConstVal,
+                Read.Inputs[0].ConstVal);
+      const unsigned Slots = x86F16CSourceBytes(Control) / 8;
+      ASSERT_EQ(F.MutableStackParamHomes.size(), Slots);
+      for (unsigned Slot = 0; Slot < Slots; ++Slot) {
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].first,
+                  int(Layout.Registers.size() + Slot));
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].second,
+                  Layout.EntryStackBase + int64_t(Slot * 8));
+      }
+    }
+}
+
 TEST(MedCallingConvFPStack, MemoryOwnershipAndMalformedReadsAreConservative) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (unsigned Mode = 0; Mode < 8; ++Mode) {

@@ -366,6 +366,28 @@ cmake --build build-release --target NeverDX86FPPackedConvertStateTests
 ctest --test-dir build-release -L '^NeverDX86FPPackedConvertStateTests$' --output-on-failure
 ```
 
+`NeverDX86F16CStateTests` compares VEX128/256 VCVTPH2PS and VCVTPS2PH
+register, memory-source and memory-destination forms against native x64 bytes.
+SDK Codegen and HighC/LLVMC run at default/NoOpt and C O0/O2. Full numerical,
+YMM, memory and MXCSR observations cover every imm8 encoding, immediate/MXCSR
+rounding, DAZ, FTZ, NaN payloads, narrowing padding, aliases, unaligned accesses
+and discarded results. The concrete oracle exhausts all binary16 encodings
+and tests directed and deterministic random binary32 inputs. Low/Med/High,
+decoded metadata and owned asm contracts reject altered roles and state.
+Protected-page probes retain complete read faults, unmasked floating exception
+priority over writes, and no partial cross-page store. Newly raised masked
+status at a failed cross-page store varies even for identical native
+bytes on the same host: this observer checks other state and atomicity, and
+the concrete regression requires a subsequent exact MXCSR read to refuse.
+Native GS store observers use private allocated targets through the Windows
+TEB base. Native Linux/macOS, x86-32, AVX-512 and unavailable-feature faults
+remain unexecuted coverage in a Windows-only run.
+
+```sh
+cmake --build build-release --target NeverDX86F16CStateTests
+ctest --test-dir build-release -L '^NeverDX86F16CStateTests$' --output-on-failure
+```
+
 `NeverDX86FPRoundAccuracyTests` compares original legacy/VEX scalar and packed
 ROUND bytes with actual SDK Codegen and HighC/LLVMC at default/NoOpt and O0/O2.
 Directed controls cover all immediate rounding selectors, ignored high bits,

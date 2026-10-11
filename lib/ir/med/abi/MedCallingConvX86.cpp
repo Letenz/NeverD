@@ -825,6 +825,10 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
   const auto Shape = x86FPStateMedShape(Op);
   if (!x86FPStateShapeIsValid(Id, Shape))
     return std::nullopt;
+  if (Id == Intrinsic::X86F16CStoreState)
+    return std::nullopt;
+  if (Id == Intrinsic::X86F16CReadState)
+    return StackMemoryRead{1, x86F16CSourceBytes(Shape.Control), false};
   if (Id == Intrinsic::X86FPPackedConvertMemoryState)
     return StackMemoryRead{1, x86FPPackedConvertSourceBytes(Shape.Control),
                            false};
