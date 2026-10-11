@@ -58,8 +58,8 @@ FrameValue loadCell(const std::map<int32_t, FrameValue> &Cells,
 
 } // namespace
 
-size_t FrameState::memoryAccessWork(const FrameValue &Address,
-                                    uint16_t Width) const {
+size_t FrameState::memoryAccessWork(const FrameValue &Address, uint16_t Width,
+                                    bool Write) const {
   if (!Address.MayBeFrame)
     return 0;
   const auto *Space = &Cells;
@@ -72,8 +72,14 @@ size_t FrameState::memoryAccessWork(const FrameValue &Address,
     return Cells.size() + EntryCells.size() + CallbackCells.size();
   // A known byte range intersects only keys in [Offset - 3, Offset + Width).
   // Include both ordered-map searches and the maximum overlapping entries.
-  return 4 * std::bit_width(Space->size()) +
-         std::min(Space->size(), size_t(Width) + 3) + 1;
+  const size_t Count = Space->size();
+  size_t Work =
+      4 * std::bit_width(Count) + std::min(Count, size_t(Width) + 3) + 1;
+  if (Write) {
+    const size_t Inserts = (size_t(Width) + 3) / 4;
+    Work += Inserts * (1 + 2 * std::bit_width(Count + Inserts));
+  }
+  return Work;
 }
 
 void FrameState::store(int32_t Offset, uint16_t Width,

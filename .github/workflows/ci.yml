@@ -2134,7 +2134,7 @@ jobs:
           retention-days: 14
 
   windows-eh-cxx-fixtures:
-    name: Windows EH (MSVC PE32 C++ source fixtures)
+    name: Windows EH (MSVC source runtime fixtures)
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && inputs.windows_eh_llvm_artifact_run != '' }}
     runs-on: windows-2025
     timeout-minutes: 25
@@ -2151,6 +2151,24 @@ jobs:
           arch: x86
       - name: Build and execute genuine value/reference source images
         run: python scripts/check_windows_registration_cxx.py --output build-windows-eh/cxx-source-inputs --capture-runtime-libraries
+      - name: Check nonlocal finally observation admission
+        run: python -m unittest scripts.tests.test_check_windows_nonlocal_finally -v
+      - name: Observe native PE32 finally returns and nonlocal exits
+        run: python scripts/check_windows_nonlocal_finally.py --arch x86 --output build-windows-eh/nonlocal-finally/x86
+      - name: Select the native x64 MSVC compiler
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+      - name: Observe native x64 finally returns and nonlocal exits
+        run: python scripts/check_windows_nonlocal_finally.py --arch x64 --output build-windows-eh/nonlocal-finally/x64
+      - name: Preserve original finally control-flow observations
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-eh-msvc-finally-continuations
+          path: build-windows-eh/nonlocal-finally/
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve the exact native MSVC source inputs
         uses: actions/upload-artifact@v4
         with:
@@ -2194,6 +2212,12 @@ jobs:
         with:
           name: windows-eh-msvc-pe32-cxx-sources
           path: build-windows-eh/cxx-source-inputs
+      - name: Fetch genuine MSVC nonlocal finally inputs
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-eh-msvc-finally-continuations
+          path: build-windows-eh/nonlocal-finally
       - name: Observe original x86 SEH and C++ EH across GS and optimization modes
         run: python scripts/check_windows_registration_eh.py --output build-windows-eh/evidence/original-runtime --wine-prefix "$RUNNER_TEMP/neverd-wine32"
       - name: Fetch the exact compiler build for native registration reconstruction
@@ -2262,7 +2286,8 @@ jobs:
             NeverDMedStackAlignmentTests NeverDMedLLVMDeadSlotsTests NeverDNoReturnTests \
             NeverDWindowsRegistrationFrameTests NeverDWindowsRegistrationRealignedTests \
             NeverDWindowsEHMetadataEncoderTests NeverDWindowsEHCorpusTests \
-            NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests neverd
+            NeverDCOFFExceptionPatchTests NeverDWindowsRegistrationNativeTests \
+            NeverDPipelineOutcomeTests neverd
       - name: Verify registration state and canonical LLVM metadata
         env:
           NEVERD_REGISTRATION_RUNTIME_OBJECT: build-windows-eh/evidence/frame-runtime.obj
@@ -2282,8 +2307,16 @@ jobs:
             --gtest_filter=RegistrationRethrowHighC.*:RegistrationThrowHighC.*:RegistrationObject.RequiresOneTrivialIdentityCopy \
             --gtest_output=xml:build-windows-eh/evidence/rethrow-source.xml
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
-            --gtest_filter=RegistrationPHICopy.* \
+            --gtest_filter=RegistrationPHICopy.*:SafeSEHReference.* \
             --gtest_output=xml:build-windows-eh/evidence/callback-copy.xml
+      - name: Verify source LLVM against native MSVC finally inputs
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          NEVERD_NONLOCAL_FINALLY_INPUTS: build-windows-eh/nonlocal-finally
+        run: |
+          build-windows-eh/bin/NeverDPipelineOutcomeTests \
+            --gtest_filter=PipelineOutcome.NativeFinallyInputsRetainSourceLLVM \
+            --gtest_output=xml:build-windows-eh/evidence/nonlocal-finally-source.xml
       - name: Execute generated x86 callback frames with real exceptions
         run: |
           python scripts/check_windows_registration_frame.py \

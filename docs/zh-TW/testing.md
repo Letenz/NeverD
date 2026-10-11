@@ -1437,6 +1437,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDOwnInteriorCallTests` 涵蓋 x86 與 x86-64 函式直接 call 自身 unwind 範圍內標籤的情況，分別在 Microsoft x64 `.pdata` 條目、System V x86-64 DWARF FDE 與 i386 DWARF FDE 下測試。只為壓入返回位址而做的 call 會提升為壓堆疊加跳轉，x86-64 直線與迴圈兩種情形產生的 C 在 `-O0` 與 `-O2` 下以 AddressSanitizer 與未定義行為陷阱執行。返回時恰好彈出該 call 自身返回位址的目標仍是一般呼叫；切換堆疊之後的返回或低於入口堆疊指標的返回會被拒絕。從 i386 註冊鏈還原的範圍不能界定函式本體，因此其中的 call 仍是 call。
 
+將目標判定為一般子程序前，返回位址槽檢查會拒絕重疊寫入、未知寫入、原子寫入及效果未證明的被呼叫函式寫入。PE、ELF 和 Mach-O 案例涵蓋返回位址的部分寬度破壞及 i386 擴寬記憶體位址。私有堆疊寫入、捨棄的返回位址和終止分支仍可通過驗證。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 與 `QDomNode::isDocument` 的形態檢查 x86-64 System V 呼叫約定。摘要顯示會讀取某個引數暫存器的直接被呼叫者會收到呼叫者的值，包括原樣傳遞的傳入 `this`；虛擬呼叫會取得支配區塊載入 `RDI` 的物件；在某條路徑上不寫 `RAX` 就返回、在其他路徑上只傳遞被呼叫者結果的方法為 void；在比較鏈之前寫入 `AL` 的位元組在每條路徑上都是返回值。產生的程式在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 檢查 CoreImage 提供方、CIImage 工廠、完整 48 位元組邏輯記錄與 x2 指標，拒絕缺失或錯誤的提供方、x86_64 及衝突宣告。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 區分原始呼叫與沿用相同機器位址的結果賦值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒絕 24 類憑據、參數、儲存、框架、中繼資料、匯入、重複呼叫與儲存 IR 的修改，包括同時一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 執行未修改的產生 C，對照獨立從編譯器觀察到的 x2 指標接收函式，檢查六個浮點位元模式、選擇器與接收者身分、單次求值、傳回物件、合法副本寫入、輸入不變性與邊界保護。其他主機略過此實體 ABI 執行測試。
@@ -1623,3 +1625,13 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 ## 原生不透明狀態檢查
 
 `X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
+
+`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。
+
+`RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
+
+`PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 檢查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的最佳化與未最佳化原始碼投影。單函式和分片 LLVM 發射保留相同的不完整原生 EH 明確契約；二進位重寫仍拒絕該契約。
+
+`RegistrationCallNoReturn` 拒絕變更的指令範圍、目標、操作範圍、條件呼叫，以及錯誤架構或格式下的使用。對齊堆疊 PE32 案例同時檢查已獨立證明終止的呼叫和依賴目前證明刪除的普通後繼邊；記憶體證據失效不能重新產生已不存在的普通邊。
+
+`SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。

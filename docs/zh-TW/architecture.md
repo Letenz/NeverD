@@ -1434,3 +1434,5 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 普通 RAM 的 `XCHG` 支援未對齊的 8/16/32/64 位元運算元，包含顯式 LOCK 前綴與隱式加鎖兩種形式。共用 RAM 交易保留入口有效位址、序列化發布結果，並捨棄取消或錯誤時的寫入；處理器執行原始交換指令。`X64Address` 涵蓋位址與暫存器重疊、部分暫存器寫入、快取列與頁面跨界、觀察回呼及缺頁錯誤。MMIO 交換仍要求提供者契約和自然對齊，其他 LOCK 指令系列沿用既有准入規則。
 
 DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩，並拒絕未建模的訊號狀態操作。Select 與 Pselect 共用 immediateSelect，統一處理位元圖、容量下界、提供方與依序複製；timeval 與 timespec 保留各自的欄位寬度及邊界。完整的非空遮罩需要後續的訊號狀態模型。
+
+`isCheckedX86SafeSEHHandlerReference` 使用既有 SafeSEH 解碼器、不可變的表與標頭位元組，以及具有重定位的 load-config 指標，驗證保留的 PE32 處理器入口。LLVM 在輸出任何函式本體前宣告此來源身分，包括分片省略的本體。表成員資格不證明語言 personality、可呼叫 ABI 或原生 EH 重建權限；各使用端仍執行獨立檢查。

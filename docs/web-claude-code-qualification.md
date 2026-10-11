@@ -19,7 +19,7 @@ The candidate passed complete retained-tree/GetValue-scaffolding checks,
 surviving lexical-reference projection and exact inverse validation. The
 exported original also matched recovered `m01047.js` byte-for-byte. Local
 `original.js`, `candidate.js` and `receipt.json` are retained under
-`<recovery-root>/2.1.296/boolean-branches/module-01047/`.
+`<local-recovery>/boolean-branches/module-01047/`.
 No target was executed and no sample source is committed.
 
 The same profile on module 1897 retained all 1,007 candidates, with zero
@@ -56,7 +56,7 @@ Complete reparse, retained syntax and lexical-graph comparison, and exact
 inverse verification passed. Rest parameters and exported function names
 remain unchanged. The exported original also matches the earlier recovered
 `m00001.js` byte-for-byte. Local files are in
-`<recovery-root>/2.1.296/scope-renaming/module-00001/`:
+`<local-recovery>/scope-renaming/module-00001/`:
 `original.js`, `candidate.js` and `receipt.json`. Sample source is not committed.
 
 The same command on module 228, 245,964 bytes with SHA-256
@@ -137,7 +137,8 @@ The original module is 156,255 bytes with SHA-256
 Both candidates passed complete reparse, retained outer-tree comparison,
 primitive SameValue and exact inverse verification. The exported originals
 also matched the previously recovered `m01897.js` byte for byte. The private
-local output directories are
+local outputs are under
+`<local-recovery>/primitive-rewrites/`, in
 `module-01897-strings` and `module-01897-constants`; each contains
 `original.js`, `candidate.js` and `receipt.json`. No sample content is committed.
 
