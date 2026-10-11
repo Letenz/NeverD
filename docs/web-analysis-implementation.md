@@ -42,9 +42,9 @@ their existing scope; no Python support for web APIs is claimed.
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions and independent pkg/nexe adapters remain; Node SEA is qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and shared source/Bun/native consumers implemented; two official Claude Code npm packages qualify original digest and payload evidence | Source behavior, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
+| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and selected source behavior/inventory joins implemented; two official Claude Code npm packages qualify original digest and payload evidence | Install-entry propagation, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
-| P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
+| P5 reversible source projections | Reviewed display, original/projected ranges and explicit primitive rewrites with pass-bound receipts, local semantic checks, exact inverse and refusal tests implemented | Scope renaming, branch/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader and stored-source/asset consumers implemented; qualification below | Tauri/Wails bridges/assets, pkg/nexe, other SEA layouts and host qualification remain |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
@@ -1648,3 +1648,71 @@ suites passed; worker Web and the optional Claude MCP case skipped. Logs are
 These checks establish local primitive substitutions, not whole-program or
 source-reflection equivalence. Scope renaming, branch/control-flow transforms
 and the other epics' pending capabilities still prevent completion of #714–#718.
+
+## Selected Node source and package behavior — 2026-10-11
+
+`node-22.15-static-behavior-v1` adds fixed process, filesystem, HTTP, native-load
+and Buffer call syntax classes through C++ core, session, C API, CLI, worker
+and MCP. Shared source bindings, module origins and primitive values own
+semantic admission. Rules preserve exact import/member forms and overload
+uncertainty; ordinary pages contain fixed classes and opaque anchors, not
+commands, paths, URLs or payload values. The independent plan review required
+exact default-import identity, separate promise method tables, ordinal-only
+argument anchors, unknown package ownership and a 16-source aggregate that
+does not depend on the four-result source cache. See the
+[profile](web-node-behavior-profile.md).
+
+The real standalone module 1,897 exposed a valid class name with two binding
+identities on one syntax node. A minimal failing regression confirmed that
+origins and paths incorrectly rejected the whole binding model. The shared
+declaration projection now preserves this ambiguity consistently across
+origins, paths, navigation and bundles. Full declaration occurrences are
+unchanged. Exact ESM import-row evidence advances origins to profile v2.
+The real module now yields a partial result with zero supported Node patterns
+and 1,461 unattributed calls, not a clean or complete result.
+
+NeverD's actual CLI extracted the two JavaScript members of the pinned Claude
+Code npm wrapper, analyzed them as CommonJS and joined both to its manifest
+inventory. It found eight call sites in five fixed API classes. No lifecycle
+script or sample ran; PATH excluded external tools. Exact hashes, counts,
+aggregate identities and limits are in the
+[qualification record](web-claude-code-qualification.md#selected-node-source-behavior--2026-10-11).
+
+The first SDK run caught two test mistakes: a native ELF fixture selected the
+SEA preparation-blob profile, and the repeated CLI test did not truncate its
+redirect files. Correcting the profile and redirects made all five new SDK
+cases pass, including 16-source/4-cache independence, 19 declared entries
+with 16 retained anchors, archive unknown ownership, unavailable sources,+Bun/SEA delivery-only relations, foreign selection and revision revocation.
+The SDK failures did not require changing product extraction semantics.
+
+Enabled qualification on macOS arm64 Release with prebuilt LLVM 23 r4:
+490 registered owning Web cases, 483 passed and seven explicit skips (six
+LLVM Zstd cases unavailable in this build and one ASAR-omission-only case).
+The supplied six-platform Bun corpus, SEA corpus/images, npm/VSIX artifacts
+and all 2,345 real Claude JavaScript recovery/reparse cases were enabled.
+Worker Web, the four general MCP suites, the separate real Claude MCP process
+case and enabled C ABI availability passed. A final review consolidated the
+unchanged aggregate byte/node/ancestry/entry ceilings into the profile owner.
+Logs: `/tmp/neverd-node-behavior-full-web.log`,
+`/tmp/neverd-node-behavior-sdk-fixed-tests.log`,
+`/tmp/neverd-node-behavior-shared-tests.log`,
+`/tmp/neverd-node-behavior-{worker-tests,mcp-tests,mcp-claude,api-tests}.log`.
+
+Parser omission passed explicit unavailability checks for all four new ABI
+functions, worker Web and the four MCP suites; five parser-dependent SDK
+cases skipped explicitly. Backend omission passed both ABI cases and four
+MCP suites; worker Web and the optional Claude MCP case skipped. Logs:
+`/tmp/neverd-node-behavior-nojs-{api,worker,mcp,sdk}.log` and
+`/tmp/neverd-node-behavior-disabled-{api,worker,mcp}.log`.
+
+Both feature options were restored to ON and the owning targets rebuilt.
+All 49 focused source/package/shared-consumer cases (including both real
+artifacts), five Node SDK cases, worker Web, four MCP suites and enabled ABI
+availability passed again. The published ceilings match the shared profile.
+Restoration logs use `/tmp/neverd-node-behavior-restored-*.log`.
+
+This advances #715 source inspection and shared #714 semantics. Install-entry
+propagation, source-behavior comparison, external advisory/provenance imports,
+analyst dispositions, readable reports, other runtime/desktop adapters and
+the rest of the acceptance matrix remain outstanding. The five epics are
+not complete.

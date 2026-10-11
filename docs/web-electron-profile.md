@@ -32,10 +32,10 @@ selection explicitly reports `framework_evidence: caller_selected_profile`.
 ## Source-visible boundaries
 
 `electron-static-boundaries-v1` consumes the shared syntax, binding, module and
-finite primitive-value owners. `javascript-module-origin-candidates-v1` owns
+finite primitive-value owners. `javascript-module-origin-candidates-v2` owns
 syntactic provenance from ESM imports and literal require candidates through
 unwritten variable initializers, object destructuring and static member access.
-It retains module-request identities and distinguishes constructed instances
+It retains module-request and exact ESM import-row identities and distinguishes constructed instances
 from their constructor. Aliasing never establishes initialization, reachability,
 object contents, getter behavior or a runtime function value.
 

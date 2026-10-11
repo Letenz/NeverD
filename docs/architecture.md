@@ -494,6 +494,16 @@ evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
 comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
+`packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
+consumes shared bindings/module origins/values, and `Package` owns exact
+inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+the two behavior session adapters own selection, cache and revision boundaries.
+Source ownership, delivery package and declared entry remain distinct.
+`SourceModel::indexSourceDeclarations` supplies the order-independent unique
+binding projection for origins, paths, navigation and bundles; valid class
+outer/inner declarations preserve ambiguity without poisoning other nodes.
+The full binding declaration model stays authoritative. See the
+[Node behavior profile](web-node-behavior-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.

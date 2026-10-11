@@ -17,6 +17,9 @@ add_neverd_component_library(NeverDWeb
   streams/Relations.cpp
   SessionStreams.cpp
   SessionPackages.cpp
+  SessionNodeBehavior.cpp
+  SessionPackageBehavior.cpp
+  packages/behavior/Publication.cpp
   SessionPackageArchive.cpp
   SessionPackageIntegrity.cpp
   HTML.cpp
@@ -103,6 +106,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   include("${CMAKE_SOURCE_DIR}/cmake/NeverDJavaScriptParser.cmake")
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
+    packages/behavior/Rules.cpp
+    packages/behavior/Source.cpp
+    packages/behavior/Package.cpp
     interfaces/SourceInterfaces.cpp
     interfaces/SourceContext.cpp
     interfaces/SourceFetch.cpp

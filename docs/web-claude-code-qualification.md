@@ -1,5 +1,49 @@
 # Claude Code 2.1.296: offline NeverD qualification
 
+## Selected Node source behavior — 2026-10-11
+
+The native C++ archive/package/source pipeline selected the two JavaScript
+members of the hash-pinned 29,001-byte npm wrapper described below. The actual
+CLI ran with `PATH=/neverd-no-external-tools`:
+
+```console
+neverd web archive-package-behavior claude-code-2.1.296.tgz tgz 0 3 package-json 0:commonjs 1:commonjs
+```
+
+NeverD's tar/gzip reader retained all seven members, member 3 supplied the
+manifest, and members 0 and 1 supplied the two JavaScript sources. Their
+exact artifact IDs joined the same one-package inventory. This command
+does not install the package or execute its lifecycle declarations.
+
+| Member | Bytes | SHA-256 | Recognized calls | Unattributed calls |
+| --- | ---: | --- | ---: | ---: |
+| 0 | 4,997 | `61ad63033d9c8155d5e60a29f45dc4665afa07631c0b108e62cc83bf45ba490e` | 2 | 36 |
+| 1 | 8,375 | `32a7b2429d7447c5aa043e383bcf9a72e0b233dff66336ea4b5b32531da981ad` | 6 | 38 |
+
+The eight call records comprise three `child_process.spawnSync`, two
+`fs.copyFileSync`, and one each of `fs.unlinkSync`, `fs.writeFileSync` and
+`fs.chmodSync`. Every record retains its source/call/request anchors; every
+source row retains its exact package file relation. Both results are partial,
+with no direct declared-entry match and no install-entry propagation claim.
+The aggregate ID is
+`5835c8ecfde88f1ddfce34961c82b380ec29622da60624333dd303acdeeffcbd`;
+the package analysis ID is
+`d2969ea82ad98f56927c1ad20c475183d5519ccfad197f72f9f48e75f1bbc115`.
+Local metadata is preserved in `/tmp/neverd-node-behavior-claude-npm.jsonl`.
+The optional C++ regression uses NeverD's extractor and checks the pinned
+hashes, eight calls and five API classes. No sample source is committed.
+
+The separately selected standalone module 1,897 produced **zero** supported
+Node call patterns and 1,461 unattributed call expressions. Analysis of that
+real source exposed a shared class-declaration indexing bug: the outer and
+inner class name bindings legitimately share an AST node. A minimal failing
+C++ fixture established the cause; the shared unique-binding projection now
+preserves that ambiguity without rejecting unrelated declarations. Origins,
+paths, navigation and bundles use the same projection. The real module now
+returns partial evidence rather than an invalid-binding result. Neither its
+zero matches nor the wrapper's eight matches supplies a safety verdict.
+See the [Node behavior profile](web-node-behavior-profile.md).
+
 ## Reversible primitive rewrites — 2026-10-11
 
 The native C++ `bun-rewrite` and receipt-bound `bun-rewrite-export` commands

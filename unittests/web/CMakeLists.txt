@@ -48,6 +48,8 @@ target_compile_definitions(NeverDWebSourceMapTests PRIVATE
   NEVERD_WEB_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   add_neverd_unittest(NeverDWebSourceTests
+    NodeBehaviorTests.cpp
+    PackageBehaviorTests.cpp
     SourceInterfaceTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
@@ -59,6 +61,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceRewriteTests.cpp
     RewriteExportTests.cpp
     SourceBindingTests.cpp
+    SourceDeclarationIndexTests.cpp
     SourceValueTests.cpp
     SourceEffectTests.cpp
     SourceModuleTests.cpp
@@ -83,6 +86,7 @@ if(TARGET neverd_shared)
   add_neverd_unittest(NeverDWebSDKTests
     SDKTests.cpp
     RewriteSDKTests.cpp
+    NodeBehaviorSDKTests.cpp
     PackageSDKTests.cpp
     PackageArchiveSDKTests.cpp
     PackageIntegritySDKTests.cpp

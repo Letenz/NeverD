@@ -106,6 +106,9 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("source_semantic_records"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_rewrite_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_rewrite_records"), bool(NEVERD_TEST_WEB_JS));
+  for (const auto Op : {"node_behavior_analyze", "node_behavior_records",
+                        "package_behavior_analyze", "package_behavior_records"})
+    EXPECT_EQ(Has(Op), bool(NEVERD_TEST_WEB_JS));
 #ifndef _WIN32
   EXPECT_EQ(Has("source_rewrite_export"), bool(NEVERD_TEST_WEB_JS));
 #else
@@ -131,6 +134,13 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
                                                1),
         neverd_web_source_rewrite_export_json(Session, "1", 1, "rewrite", 7,
                                               "receipt", 7, "output", 6),
+        neverd_web_node_behavior_analyze_json(Session, "1", 1, "source", 6),
+        neverd_web_node_behavior_records_json(Session, "1", 1, "behavior", 8, 0,
+                                              1),
+        neverd_web_package_behavior_analyze_json(Session, "1", 1, "package", 7,
+                                                 "{}", 2),
+        neverd_web_package_behavior_records_json(Session, "1", 1, "behavior", 8,
+                                                 "sources", 7, 0, 1),
         neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
         neverd_web_interface_records_json(Session, "1", 1, "analysis", 8, 0, 1),
         neverd_web_interfaces_compare_json(Session, "1", 1, "analysis", 8,
@@ -196,6 +206,13 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                          nullptr, 0),
         neverd_web_package_diff_records_json(nullptr, nullptr, 0, nullptr, 0, 0,
                                              1),
+        neverd_web_node_behavior_analyze_json(nullptr, nullptr, 0, nullptr, 0),
+        neverd_web_node_behavior_records_json(nullptr, nullptr, 0, nullptr, 0,
+                                              0, 1),
+        neverd_web_package_behavior_analyze_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0),
+        neverd_web_package_behavior_records_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, 0, 1),
         neverd_web_electron_manifest_analyze_json(nullptr, nullptr, 0, nullptr,
                                                   0),
         neverd_web_electron_source_analyze_json(nullptr, nullptr, 0, nullptr,

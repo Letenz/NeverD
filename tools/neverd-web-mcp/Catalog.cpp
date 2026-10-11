@@ -285,6 +285,17 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       {decimal("revision"), text("artifact_id"),
        choice("source_type", {"script", "module", "commonjs"})});
   Page("web_source_nodes", "source_id");
+  Selected("web_node_behavior_analyze", "source_id",
+           "Inspect fixed Node builtin call patterns in selected source; "
+           "syntax evidence does not establish runtime behavior or a verdict.");
+  Page("web_node_behavior_records", "node_behavior_id");
+  Add("web_package_behavior_analyze",
+      "Associate explicitly selected source patterns with exact package "
+      "inventory evidence; preserve unknown ownership and coverage.",
+      {decimal("revision"),
+       text("package_analysis_id"),
+       {"source_ids", Field::Kind::StringArray, true, 16, 1}});
+  Page("web_package_behavior_records", "package_behavior_id", true);
   for (const auto *Operation :
        {"web_source_bindings_analyze", "web_source_semantics_analyze",
         "web_source_modules_analyze", "web_source_bundles_analyze",
