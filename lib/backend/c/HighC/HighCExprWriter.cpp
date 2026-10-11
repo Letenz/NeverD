@@ -3761,6 +3761,23 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
       E = E->Operands[0].get();
       continue;
     }
+    // The low bytes of an extension, as wide as what it extends, are that
+    // value: i386 `SUBBYTES((i64)(esp - 12), 0)` is `esp - 12`.
+    if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+        E->Operands.size() == 2 && E->Operands[1] &&
+        E->Operands[1]->Kind == ExprKind::Const &&
+        E->Operands[1]->ConstVal == 0 && E->Type) {
+      const HighExpr *Extension = E->Operands[0].get();
+      if (Extension->Kind == ExprKind::UnaryOp &&
+          (Extension->Op == NdOp::INT_ZEXT ||
+           Extension->Op == NdOp::INT_SEXT) &&
+          !Extension->Operands.empty() && Extension->Operands[0] &&
+          Extension->Operands[0]->Type &&
+          Extension->Operands[0]->Type->Size == E->Type->Size) {
+        E = Extension->Operands[0].get();
+        continue;
+      }
+    }
     break;
   }
   return E;
