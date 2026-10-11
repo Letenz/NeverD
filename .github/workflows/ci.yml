@@ -2441,7 +2441,7 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           root = Path('build-windows-eh/evidence')
-          for name in ('state', 'registration', 'stack', 'noreturn', 'frame', 'metadata', 'planner', 'rethrow-source', 'ir-pe', 'corpus'):
+          for name in ('state', 'registration', 'stack', 'dead-slots', 'noreturn', 'frame', 'metadata', 'planner', 'rethrow-source', 'callback-copy', 'ir-pe', 'corpus'):
               result = ET.parse(root / (name + '.xml')).getroot()
               assert int(result.get('tests', '0')) > 0, name
               assert not result.findall('.//skipped'), name
