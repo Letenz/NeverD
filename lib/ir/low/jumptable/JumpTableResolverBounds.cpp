@@ -1771,7 +1771,8 @@ uint32_t CFGBuilder::inferBoundsFromMaskWithAbsoluteProof(
               Queries, nullptr, &QueryComplete, Rec.Addr, Targets,
               EvidenceBudget, /*LocalMatchEvidenceLimit=*/0,
               SharedTargetBranches, &FeasibleMasks,
-              kMaskDomainResolverDepthLimit, CertifiedEdgeOverrides);
+              kMaskDomainResolverDepthLimit, CertifiedEdgeOverrides,
+              /*UseGroupContext=*/true, &QueryScope);
           if (!consumeBudgetProducts({{QueryCount, 2}}))
             return std::nullopt;
           if (Matches.size() != Queries.size() ||

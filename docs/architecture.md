@@ -798,8 +798,8 @@ exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
 under a separate 8 MiB retained-payload allowance. Within one read-only target
-role or mask-domain invocation, an explicit local scope can reuse its validated
-graph without recopying the instruction snapshot. That scope is bound to its
+role, load-address role or mask-domain invocation, a local scope can reuse its
+validated graph without recopying the instruction snapshot. It is bound to its
 builder and cannot cross instruction, block or storage-owner mutations.
 Each query still compares roots and owned effective edge overrides, including
 temporary and empty overrides, and pays the original snapshot and graph work.

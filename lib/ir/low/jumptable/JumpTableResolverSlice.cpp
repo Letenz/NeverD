@@ -9801,6 +9801,8 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
   if (Info.LoadRoles.empty())
     return false;
 
+  ResolverQueryScope QueryScope(*this);
+
   auto consumeWork = [&](size_t Amount = 1) {
     if (!consumeResolverGraphWork(AggregateEvidenceBudget, Amount)) {
       Complete = false;
@@ -10256,7 +10258,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
           Queries, &QueriesComplete, nullptr, InvalidVA, nullptr,
           AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
           nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
-          CertifiedEdgeOverrides);
+          CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
       if (!QueriesComplete || Results.size() != Queries.size()) {
         Complete = false;
         return false;
@@ -10654,7 +10656,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         ScaleQueries, &ScaleQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides);
+        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
     if (!ScaleQueriesComplete || Results.size() != ScaleQueries.size()) {
       Complete = false;
       return false;
@@ -11940,7 +11942,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         AddressQueries, &AddressQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides);
+        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
     if (!AddressQueriesComplete ||
         AddressResults.size() != AddressQueries.size()) {
       Complete = false;
@@ -12081,7 +12083,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         LoadQueries, &LoadQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides);
+        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
     if (!LoadQueriesComplete || LoadResults.size() != LoadQueries.size()) {
       Complete = false;
       return false;
