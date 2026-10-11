@@ -654,6 +654,23 @@ const char *neverd_web_package_review_append_json(
 #endif
 }
 
+const char *neverd_web_package_review_restore_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *JournalJSON,
+    size_t JournalSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.restorePackageReview(buffer(ExpectedRevision, RevisionSize, 20),
+                                  buffer(AssessmentID, AssessmentIDSize, 64),
+                                  buffer(ExpectedHead, ExpectedHeadSize, 64),
+                                  buffer(JournalJSON, JournalSize, 256 * 1024));
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_package_review_decisions_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,

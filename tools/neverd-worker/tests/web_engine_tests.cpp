@@ -318,6 +318,7 @@ int main(int argc, char **argv) {
                   "source_navigation_analyze") != caps["operations"].end();
     Json navigationSummary, navigationRecords, navigationRequest, anchorResult,
         anchorRequest;
+    Json navigationFeatures, navigationFeatureRequest;
     Json viewPreview, viewCommit, viewRecords, viewChunk, viewQuery,
         viewCommitRequest;
     Json bundleSourceRequest, bundleRequest, bundleRecordsRequest,
@@ -430,6 +431,17 @@ int main(int argc, char **argv) {
         navigationRequest["record_kind"] = "calls";
         navigationRecords =
             web.execute("web_source_navigation_records", navigationRequest);
+        navigationFeatureRequest = bindingRequest;
+        navigationFeatureRequest["record_kind"] = "features";
+        navigationFeatures = web.execute("web_source_navigation_records",
+                                         navigationFeatureRequest);
+        check(navigationFeatures.at("client_features").at("status") ==
+                      "partial" &&
+                  navigationFeatures.at("client_features")
+                          .at("feature_inventory_complete") == false &&
+                  navigationFeatures.dump().find("SECRET_WEB") ==
+                      std::string::npos,
+              "Client source patterns lost coverage or exposed private values");
         check(navigationRecords.at("runtime_call_graph") == "not_analyzed" &&
                   navigationRecords.dump().find("SECRET_WEB") ==
                       std::string::npos,
@@ -586,6 +598,10 @@ int main(int argc, char **argv) {
                              "1", project);
         check(reply.at("payload") == navigationRecords,
               "Worker navigation records differ");
+        reply = process.call("web_source_navigation_records",
+                             navigationFeatureRequest, "1", project);
+        check(reply.at("payload") == navigationFeatures,
+              "Worker client source features differ");
         reply = process.call("web_source_anchor", anchorRequest, "1", project);
         check(reply.at("payload") == anchorResult,
               "Worker source/storage/view anchor differs");
@@ -1748,6 +1764,26 @@ int main(int argc, char **argv) {
     check(history["items"].size() == 1 &&
               history["items"][0]["assertion_source"] == "caller",
           "Worker changed immutable analyst history");
+    const Json journal{
+        {"schema_version", 1},
+        {"profile", "offline-package-review-journal-v1"},
+        {"package_assessment_id", reviewed["package_assessment_id"]},
+        {"review_root_id", reviewed["review_root_id"]},
+        {"review_head_id", reviewed["review_head_id"]},
+        {"decisions", history["items"]}};
+    Json restore{{"schema_version", 1},
+                 {"revision", packageRevision},
+                 {"package_assessment_id", reviewed["package_assessment_id"]},
+                 {"expected_review_head", reviewed["review_head_id"]},
+                 {"journal_json", journal.dump()}};
+    const auto restored = assessmentCall("web_package_review_restore", restore);
+    check(restored["replayed"] == true && restored["restored_events"] == 0,
+          "Worker charged an identical review journal twice");
+    restore["notes"] = "SECRET_WEB";
+    reply = process.call("web_package_review_restore", restore, packageRevision,
+                         packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted an arbitrary review note");
     assessmentCall("web_package_assessment_report", assessmentPage);
     assessmentSelection["raw"] = true;
     reply = process.call("web_package_assessment_create", assessmentSelection,

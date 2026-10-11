@@ -53,8 +53,8 @@ clears the worker's prepared-entry marker before another view can reuse it.
 Consecutive restricted x64 analyses may share a session-owned
 `PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
 relocation-root and executable-owner indexes borrowed by the bounded raw x87
-graph and call-register body caches. Each selection still builds its output
-IR, replays the ordinary proof obligations and recomputes caller-dependent
+graph and machine-body caches. Each selection owns independent output IR,
+replays the ordinary proof obligations and recomputes caller-dependent
 register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
 No-return proof and lazy-name memo entries are cleared between runs, so they
@@ -729,6 +729,15 @@ with one shared 256-event/256-KiB review allowance. Review-head checks cover all
 finding, history and report pages. Consumers do not reinterpret an original
 digest as installed-tree proof or an analyst disposition as analyzer confidence.
 See the [assessment profile](web-package-assessment-profile.md).
+`SessionPackageReviewRestore` owns only bounded journal decoding and the locked
+serialize-before-publish transaction. `Disposition` validates the entire supplied
+chain and exact prior prefix before charging a suffix; clients never reimplement
+the hash recipe or finding membership. `tools/neverd-gui/web/PackageSession`
+coordinates one private configured worker and complete revision/head-bound pages.
+`FindingModel`/`PackageReviewDialog` present fixed evidence and caller assertions;
+`ReviewJournal` owns bounded local canonical JSON and atomic file replacement.
+The GUI has no engine semantics, LLVM or target runtime dependency. See the
+[journal and desktop profile](web-package-review-journal.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
@@ -748,7 +757,15 @@ cannot infer a protocol or bypass publication. See the
 [stream profiles](web-stream-profile.md).
 `web/Error.h` owns fixed diagnostics independently of `Session`; artifact
 readers and semantic algorithms do not depend on the session API to fail.
-`SourceNavigation` owns syntax containment and lexical links; `SessionAnchor`
+`SourceNavigation` owns syntax containment and lexical links.
+`features/Analysis` consumes that model for client syntax candidates;
+`features/Recognize` owns the fixed vocabulary and `features/Publication` owns
+metadata-only output. `SessionNavigation` composes both independently bounded
+results without changing the generic navigation identity or promoting lexical
+initializer links to runtime targets. Feature failure does not invalidate a
+valid generic navigation index. See the
+[client source profile](web-client-feature-profile.md).
+`SessionAnchor`
 joins source coordinates, original storage and committed display views. Bun
 source range conversion uses the same decoder as source extraction. Compressed
 sources return containing frames instead of fabricated per-character offsets.
@@ -1451,6 +1468,18 @@ and reused bodies. Format-derived call reads are still collected at ordered
 publication, so overlapping call sites cannot inherit a different contract
 because a worker completed earlier.
 
+Initial default x64 construction can also reconstruct a complete `LowFunc`
+from this inventory when the full metadata payload was retained. Machine
+blocks have one cache owner. The separate function payload preserves coverage,
+roots, jump-table storage and selector certificates, relocation provenance,
+temporaries and code references. The loader-owned exception record is borrowed
+from the immutable image and copied into each result; it is not duplicated in
+the retained payload. Requested names are rebound at the consumer. Missing or
+oversized metadata and registration-state ownership require an ordinary build.
+Protected-table and cross-function continuation rebuilds always use their
+explicit policies. A `CallRegisterBody` projection alone remains insufficient
+for output reconstruction.
+
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
@@ -1920,12 +1949,15 @@ environment restores, tag changes, unknown intrinsics and exceptional edges
 supply no summary. Loader-authenticated imports use the existing ABI tables;
 an internal function's spelling supplies no effect.
 
-Call-register body retention is a separate opt-in inventory of at most 128
+Machine-body retention is a separate opt-in inventory of at most 128
 entries and 32 MiB, including its frozen construction context, block/vector
-capacities and dependency receipts. Active readers may keep evicted immutable
-entries alive; the allowance bounds retained cache payload rather than total
-RSS. Image bytes and metadata must remain unchanged for the operation, with
-the same exception for additive `CodeRefTargets` publication as raw graphs.
+capacities, nested function metadata and dependency receipts. Active readers
+may keep evicted immutable entries alive; the allowance bounds retained cache
+payload rather than total RSS. Completed block vectors release construction
+slack before retention, with actual capacities checked again against the same
+allowance. Image bytes and metadata must remain unchanged
+for the operation, with the same exception for additive `CodeRefTargets`
+publication as raw graphs.
 Only complete, nontruncated x64 bodies with registered callback owners qualify.
 Every skipped normalization stage, including speculative CFGs and build
 retries, records local stack use and exact direct/loaded-slot call targets.

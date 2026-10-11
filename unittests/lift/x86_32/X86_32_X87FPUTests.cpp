@@ -789,6 +789,17 @@ cachedRegisterBody(const std::shared_ptr<X87CallGraphCache> &Cache,
                                             nullptr, Prover, nullptr, nullptr);
 }
 
+std::optional<LowFunc>
+cachedFunction(const std::shared_ptr<X87CallGraphCache> &Cache,
+               const BinaryImage &Image,
+               const std::set<va_t> *Entries = nullptr,
+               const NoReturnCalleeProver *Prover = nullptr,
+               const std::string &Name = "") {
+  return CFGBuilder::cachedDefaultFunction(Cache, Image, Image.Entry, Name,
+                                           Entries, nullptr, Prover, nullptr,
+                                           nullptr);
+}
+
 void expectSameRegisterBody(const LowFunc &Cold, const CallRegisterBody &Warm) {
   EXPECT_EQ(Warm.Complete, Cold.hasCompleteLiftCoverage());
   EXPECT_EQ(Warm.UnsafeIndirectBranches,
@@ -832,7 +843,200 @@ void expectSameRegisterBody(const LowFunc &Cold, const CallRegisterBody &Warm) {
     }
   }
 }
+
+void expectSameFunctionFacts(const LowFunc &Cold, const LowFunc &Warm) {
+  CallRegisterBody Body;
+  Body.Blocks = Warm.Blocks;
+  Body.Complete = Warm.hasCompleteLiftCoverage();
+  Body.UnsafeIndirectBranches = !Warm.UnsafeIndirectBranchAddresses.empty();
+  expectSameRegisterBody(Cold, Body);
+  EXPECT_EQ(Warm.Entry, Cold.Entry);
+  EXPECT_EQ(Warm.OriginalSize, Cold.OriginalSize);
+  EXPECT_EQ(Warm.Name, Cold.Name);
+  EXPECT_EQ(Warm.DebugName, Cold.DebugName);
+  EXPECT_EQ(Warm.SourceFile, Cold.SourceFile);
+  EXPECT_EQ(Warm.SourceLine, Cold.SourceLine);
+  EXPECT_EQ(Warm.ModuleAnalysisRoots, Cold.ModuleAnalysisRoots);
+  EXPECT_EQ(Warm.OrdinaryModuleAnalysisRoots, Cold.OrdinaryModuleAnalysisRoots);
+  EXPECT_EQ(Warm.EverPublishedJumpTableBranchAddresses,
+            Cold.EverPublishedJumpTableBranchAddresses);
+  EXPECT_EQ(Warm.UnsafeIndirectBranchAddresses,
+            Cold.UnsafeIndirectBranchAddresses);
+  EXPECT_EQ(Warm.RelocatedInstructionAddressOccurrences,
+            Cold.RelocatedInstructionAddressOccurrences);
+  EXPECT_EQ(Warm.RelocatedInstructionScalarModelOccurrences,
+            Cold.RelocatedInstructionScalarModelOccurrences);
+  EXPECT_EQ(Warm.I386GetPcOccurrences, Cold.I386GetPcOccurrences);
+  EXPECT_EQ(Warm.CodeRefTargets, Cold.CodeRefTargets);
+  EXPECT_EQ(Warm.DecodedInstructionCount, Cold.DecodedInstructionCount);
+  EXPECT_EQ(Warm.LiftedInstructionCount, Cold.LiftedInstructionCount);
+  EXPECT_EQ(Warm.DecodeFailureAddresses, Cold.DecodeFailureAddresses);
+  EXPECT_EQ(Warm.UnsupportedInstructionAddresses,
+            Cold.UnsupportedInstructionAddresses);
+  EXPECT_EQ(Warm.UnprovenReturnAddresses, Cold.UnprovenReturnAddresses);
+  EXPECT_EQ(Warm.TruncatedPathAddresses, Cold.TruncatedPathAddresses);
+  EXPECT_EQ(Warm.CalleePopBytes, Cold.CalleePopBytes);
+  ASSERT_EQ(Warm.FunctionTemporaries.size(), Cold.FunctionTemporaries.size());
+  for (size_t I = 0; I < Cold.FunctionTemporaries.size(); ++I) {
+    EXPECT_EQ(Warm.FunctionTemporaries[I].Offset,
+              Cold.FunctionTemporaries[I].Offset);
+    EXPECT_EQ(Warm.FunctionTemporaries[I].Bytes,
+              Cold.FunctionTemporaries[I].Bytes);
+  }
+  ASSERT_EQ(Warm.JumpTables.size(), Cold.JumpTables.size());
+  for (size_t I = 0; I < Cold.JumpTables.size(); ++I) {
+    const auto &A = Cold.JumpTables[I], &B = Warm.JumpTables[I];
+    EXPECT_EQ(B.InsnAddr, A.InsnAddr);
+    EXPECT_EQ(B.BaseAddr, A.BaseAddr);
+    EXPECT_EQ(B.HasBaseAddr, A.HasBaseAddr);
+    EXPECT_EQ(B.EntrySize, A.EntrySize);
+    EXPECT_EQ(B.EntryStride, A.EntryStride);
+    EXPECT_EQ(B.StorageRanges, A.StorageRanges);
+    EXPECT_EQ(B.ExactPhysicalStorageRange, A.ExactPhysicalStorageRange);
+    EXPECT_EQ(B.SuppressibleRelocationSlots, A.SuppressibleRelocationSlots);
+    EXPECT_EQ(B.AuthenticatedTableLoads, A.AuthenticatedTableLoads);
+    EXPECT_EQ(B.SelectorUseRefs, A.SelectorUseRefs);
+    EXPECT_EQ(B.CompositeSelectorUseRef, A.CompositeSelectorUseRef);
+    EXPECT_EQ(B.IndexRegOff, A.IndexRegOff);
+    EXPECT_EQ(B.IsRelative, A.IsRelative);
+    EXPECT_EQ(B.IsSigned, A.IsSigned);
+    EXPECT_EQ(B.TargetBase, A.TargetBase);
+    EXPECT_EQ(B.HasTargetBase, A.HasTargetBase);
+    EXPECT_EQ(B.IsPEImageRelativeRVA, A.IsPEImageRelativeRVA);
+    EXPECT_EQ(B.TableLoadAddr, A.TableLoadAddr);
+    EXPECT_EQ(B.PreScaledIndex, A.PreScaledIndex);
+    EXPECT_EQ(B.TwoTableSelect, A.TwoTableSelect);
+    EXPECT_EQ(B.TwoTableOffset, A.TwoTableOffset);
+    EXPECT_EQ(B.TwoTableHiPositive, A.TwoTableHiPositive);
+    EXPECT_EQ(B.TwoLevelIndex, A.TwoLevelIndex);
+    EXPECT_EQ(B.MutatedUnsafe, A.MutatedUnsafe);
+    EXPECT_EQ(B.Targets, A.Targets);
+    EXPECT_EQ(B.SlotIndices, A.SlotIndices);
+    EXPECT_EQ(B.HasDispatchSlotMap, A.HasDispatchSlotMap);
+    EXPECT_EQ(B.CaseLabels, A.CaseLabels);
+  }
+  EXPECT_EQ(Warm.ExceptionMetadata.has_value(),
+            Cold.ExceptionMetadata.has_value());
+  EXPECT_EQ(Warm.RegistrationStates.has_value(),
+            Cold.RegistrationStates.has_value());
+  EXPECT_EQ(Warm.CxxContinuationExitAnalysisComplete,
+            Cold.CxxContinuationExitAnalysisComplete);
+  EXPECT_EQ(Warm.CxxContinuationExits.size(), Cold.CxxContinuationExits.size());
+  EXPECT_EQ(Warm.CxxContinuationEntries.size(),
+            Cold.CxxContinuationEntries.size());
+  EXPECT_EQ(Warm.SEHLocalUnwindContinuations.size(),
+            Cold.SEHLocalUnwindContinuations.size());
+}
 } // namespace
+
+TEST(CompleteFunctionCache, DefaultBodiesPreserveFactsAndUseTheRequestedName) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    auto Image = registerBodyImage(
+        Format, {0x48, 0x8d, 0x05, 0xf9, 0, 0, 0, 0x85, 0xff, 0x74, 1, 0xc3,
+                 0x31, 0xc0, 0xc3}); // address-taken callee; two returns
+    const std::set<va_t> Entries{0x1000, 0x1100};
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed, Cold;
+    Seed.setKnownFuncEntries(&Entries);
+    Cold.setKnownFuncEntries(&Entries);
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    for (const std::string Name :
+         {std::string{}, std::string("selected_name")}) {
+      auto Warm = cachedFunction(Cache, Image, &Entries, nullptr, Name);
+      ASSERT_TRUE(Warm);
+      const auto Original = Cold.build(Image, Dec, Image.Entry, Name);
+      ASSERT_FALSE(Original.CodeRefTargets.empty());
+      expectSameFunctionFacts(Original, *Warm);
+      // A consumer may mutate its own output without changing the cache.
+      Warm->Blocks.clear();
+      EXPECT_FALSE(cachedFunction(Cache, Image, &Entries)->Blocks.empty());
+    }
+  }
+}
+
+TEST(CompleteFunctionCache, JumpTableStorageAndOccurrenceMetadataSurviveReuse) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  // Bound the full RDI used by the address, and authenticate the fixed linked
+  // table address. A 32-bit CMP alone would leave its upper address bits free.
+  auto Image = registerBodyImage(
+      BinaryFormat::ELF,
+      {0x48, 0x83, 0xff, 1,    0x77, 0x16, 0xff, 0x24, 0xfd, 0, 0x20,
+       0,    0,    0xcc, 0xcc, 0xcc, 0xb8, 1,    0,    0,    0, 0xc3,
+       0xb8, 2,    0,    0,    0,    0xc3, 0x31, 0xc0, 0xc3});
+  Image.LoadsAtLinkAddress = true;
+  Segment Table;
+  Table.Name = ".rodata";
+  Table.VA = 0x2000;
+  Table.Size = Table.FileSz = 16;
+  Table.Flags = SegmentFlags::Readable;
+  Table.Data.resize(16);
+  for (unsigned I = 0; I != 2; ++I) {
+    const va_t Target = 0x1010 + I * 6;
+    for (unsigned J = 0; J != 8; ++J)
+      Table.Data[I * 8 + J] = static_cast<uint8_t>(Target >> (J * 8));
+    Image.DataPtrRelocSlots.insert(Table.VA + I * 8);
+  }
+  Image.Segments.push_back(std::move(Table));
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed, Cold;
+  Seed.setX87CallGraphCache(Cache);
+  Access::query(Seed, Image, Image.Entry);
+  const auto Warm = cachedFunction(Cache, Image);
+  ASSERT_TRUE(Warm);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  const auto Original = Cold.build(Image, Dec, Image.Entry);
+  ASSERT_EQ(Original.JumpTables.size(), 1u);
+  EXPECT_EQ(Original.JumpTables.front().Targets.size(), 2u);
+  ASSERT_FALSE(Original.JumpTables.front().AuthenticatedTableLoads.empty());
+  expectSameFunctionFacts(Original, *Warm);
+}
+
+TEST(CompleteFunctionCache, ExceptionRecordsAreCopiedFromTheFrozenImage) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image = x87RejectedGraphImage(Arch::X64, true);
+  Image.Segments.front().Data[0] = 0x31;
+  Image.Segments.front().Data[1] = 0xc0;
+  Image.Segments.front().Data[0x10] = 0x31;
+  Image.Segments.front().Data[0x11] = 0xc9;
+  auto &EH = Image.ExceptionMetadata.Functions.front();
+  EH.PersonalityName = "__gxx_personality_v0";
+  EH.Diagnostics.push_back(std::string(128 * 1024, 'x'));
+  EH.Dwarf.emplace();
+  EH.Dwarf->Instructions.emplace_back();
+  EH.Dwarf->Instructions.back().Expression = {1, 2, 3};
+  EH.Itanium->TypeTable.emplace_back();
+  EH.Itanium->TypeTable.back().TypeName = "test_exception_type";
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed, Cold;
+  Seed.setX87CallGraphCache(Cache);
+  Access::query(Seed, Image, Image.Entry);
+  auto Warm = cachedFunction(Cache, Image);
+  ASSERT_TRUE(Warm);
+  ASSERT_TRUE(Warm->ExceptionMetadata);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  const auto Original = Cold.build(Image, Dec, Image.Entry);
+  expectSameFunctionFacts(Original, *Warm);
+  EXPECT_EQ(Warm->ExceptionMetadata->Itanium->CallSites.size(), 1u);
+  // The large loader-owned diagnostic is not duplicated inside the cache.
+  EXPECT_LT(Access::summaryStats(Seed)[1], 128u * 1024);
+  Seed.setX87CallGraphCache(nullptr);
+  Cache.reset();
+  Image = BinaryImage{};
+  EXPECT_EQ(Warm->ExceptionMetadata->PersonalityName, "__gxx_personality_v0");
+  EXPECT_EQ(Warm->ExceptionMetadata->Diagnostics.front(),
+            std::string(128 * 1024, 'x'));
+  EXPECT_EQ(Warm->ExceptionMetadata->Dwarf->Instructions.front().Expression,
+            (std::vector<uint8_t>{1, 2, 3}));
+  EXPECT_EQ(Warm->ExceptionMetadata->Itanium->TypeTable.front().TypeName,
+            "test_exception_type");
+}
 
 TEST(CallRegisterBodyCache, CompleteBranchesKeepMachineAndRegisterFacts) {
   using Access = detail::X87CallGraphCacheTestAccess;
@@ -886,6 +1090,7 @@ TEST(CallRegisterBodyCache,
     Seed.setX87CallGraphCache(Cache);
     Access::query(Seed, Image, Image.Entry);
     EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
   }
   auto Image = registerBodyImage(BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xc3},
                                  {0xd9, 0xe8, 0xc3});
@@ -895,6 +1100,7 @@ TEST(CallRegisterBodyCache,
   EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
             std::optional<int>(-1));
   EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+  EXPECT_FALSE(cachedFunction(Cache, Image));
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Image));
   EXPECT_TRUE(hasX87CallDefinition(Seed.build(Image, Dec, Image.Entry)));
@@ -923,6 +1129,7 @@ TEST(CallRegisterBodyCache, NoReturnDecisionsMustAgreeAtOrdinaryDepth) {
     EXPECT_GT(Access::summaryStats(Seed)[0], 0u);
     const auto Body = cachedRegisterBody(Cache, Image, nullptr, &Proof);
     EXPECT_EQ(bool(Body), !Different);
+    EXPECT_EQ(bool(cachedFunction(Cache, Image, nullptr, &Proof)), !Different);
     if (Body) {
       Decoder Dec;
       ASSERT_TRUE(Dec.init(Image));
@@ -956,6 +1163,7 @@ TEST(CallRegisterBodyCache, LoadedImportSlotsRetainFloatingReturnDefinitions) {
   EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
             std::optional<int>(-1));
   EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+  EXPECT_FALSE(cachedFunction(Cache, Image));
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Image));
   EXPECT_TRUE(hasX87CallDefinition(Seed.build(Image, Dec, Image.Entry)));
@@ -983,11 +1191,14 @@ TEST(CallRegisterBodyCache, ReplayReentryAndExceptionsKeepAnOrdinaryFallback) {
   Proof.OnReplay = [&] {
     ++Reentries;
     EXPECT_FALSE(cachedRegisterBody(Cache, Image, nullptr, &Proof));
+    EXPECT_FALSE(cachedFunction(Cache, Image, nullptr, &Proof));
   };
   EXPECT_TRUE(cachedRegisterBody(Cache, Image, nullptr, &Proof));
   EXPECT_GT(Reentries, 0u);
   Proof.OnReplay = [] { throw std::runtime_error("replay failed"); };
   EXPECT_THROW(cachedRegisterBody(Cache, Image, nullptr, &Proof),
+               std::runtime_error);
+  EXPECT_THROW(cachedFunction(Cache, Image, nullptr, &Proof),
                std::runtime_error);
   Proof.OnReplay = {};
   EXPECT_TRUE(cachedRegisterBody(Cache, Image, nullptr, &Proof));
@@ -1034,9 +1245,13 @@ TEST(CallRegisterBodyCache, ExactContextAndExplicitOptInAreRequired) {
     Seed.setX87CallGraphCache(Cache);
     Access::query(Seed, Image, Image.Entry);
     EXPECT_EQ(bool(cachedRegisterBody(Cache, Image, &Entries)), Enabled);
+    EXPECT_EQ(bool(cachedFunction(Cache, Image, &Entries)), Enabled);
     EXPECT_FALSE(cachedRegisterBody(Cache, Image, &Changed));
+    EXPECT_FALSE(cachedFunction(Cache, Image, &Changed));
     EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
     EXPECT_FALSE(cachedRegisterBody(Cache, Other, &Entries));
+    EXPECT_FALSE(cachedFunction(Cache, Other, &Entries));
   }
   for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
     auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
@@ -1052,13 +1267,15 @@ TEST(CallRegisterBodyCache, ExactContextAndExplicitOptInAreRequired) {
       Image.Mode = InstructionMode::Default;
     Seed.setX87CallGraphCache(Cache);
     Access::query(Seed, Image, Image.Entry);
-    if (Mutation < 3)
+    if (Mutation < 3) {
       EXPECT_FALSE(cachedRegisterBody(Cache, Image));
-    else {
+      EXPECT_FALSE(cachedFunction(Cache, Image));
+    } else {
       // The caller must retire the cache on byte/metadata mutation. A fresh
       // operation has no receipt from an earlier image even at the same VA.
       Cache = createX87CallGraphCache(nullptr, nullptr, true);
       EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+      EXPECT_FALSE(cachedFunction(Cache, Image));
     }
   }
 }
@@ -1098,6 +1315,7 @@ TEST(CallRegisterBodyCache, IncompleteBodiesAreNotRetained) {
     Seed.setX87CallGraphCache(Cache);
     Access::query(Seed, Image, Image.Entry);
     EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
     EXPECT_EQ(Access::summaryStats(Seed)[0], 0u);
   }
 }
@@ -1151,13 +1369,36 @@ TEST(CallRegisterBodyCache, BlockPayloadEnforcesTheByteLimitBeforeEntryLimit) {
   CFGBuilder Seed;
   Seed.setKnownFuncEntries(&Entries);
   Seed.setX87CallGraphCache(Cache);
+  size_t Filled = 0, BodiesThatFit = 0;
   for (va_t Entry : Entries) {
     Access::query(Seed, Image, Entry);
+    if (++Filled == 1) {
+      const auto Body = cachedRegisterBody(Cache, Image, &Entries);
+      ASSERT_TRUE(Body);
+      size_t LiveBytes = Body->Blocks.size() * sizeof(LowBlock);
+      for (const auto &Block : Body->Blocks)
+        LiveBytes += Block.Ops.size() * sizeof(LowOp) +
+                     Block.InstructionBoundaries.size() *
+                         sizeof(LowInstructionBoundary) +
+                     (Block.Succs.size() + Block.Preds.size()) * sizeof(int);
+      ASSERT_GT(LiveBytes, 0u);
+      // Identical straight-line bodies fit together after reserving 4 MiB
+      // for their contexts/metadata. Construction slack must not evict them.
+      BodiesThatFit = 28u * 1024 * 1024 / LiveBytes;
+      ASSERT_GT(BodiesThatFit, 1u);
+      ASSERT_LT(BodiesThatFit, Count);
+    }
+    if (Filled == BodiesThatFit) {
+      EXPECT_EQ(Access::summaryStats(Seed)[0], Filled);
+      EXPECT_TRUE(cachedRegisterBody(Cache, Image, &Entries));
+      EXPECT_TRUE(cachedFunction(Cache, Image, &Entries));
+    }
     EXPECT_LE(Access::summaryStats(Seed)[1], 32u * 1024 * 1024);
   }
   EXPECT_GT(Access::summaryStats(Seed)[0], 0u);
   EXPECT_LT(Access::summaryStats(Seed)[0], Count);
   EXPECT_FALSE(cachedRegisterBody(Cache, Image, &Entries));
+  EXPECT_FALSE(cachedFunction(Cache, Image, &Entries));
   EXPECT_TRUE(CFGBuilder::cachedCallRegisterBody(
       Cache, Image, *Entries.rbegin(), &Entries, nullptr, nullptr, nullptr,
       nullptr));
@@ -1190,7 +1431,8 @@ TEST(CallRegisterBodyCache, ParallelReadersAndEvictionKeepBorrowedBodiesAlive) {
     Workers.push_back(std::async(std::launch::async, [&] {
       Start.arrive_and_wait();
       for (unsigned J = 0; J != 16; ++J)
-        if (cachedRegisterBody(Cache, Image, &Entries) != First)
+        if (cachedRegisterBody(Cache, Image, &Entries) != First ||
+            !cachedFunction(Cache, Image, &Entries))
           return false;
       return true;
     }));
@@ -1199,6 +1441,7 @@ TEST(CallRegisterBodyCache, ParallelReadersAndEvictionKeepBorrowedBodiesAlive) {
   for (va_t Entry : Entries)
     Access::query(Seed, Image, Entry);
   EXPECT_FALSE(cachedRegisterBody(Cache, Image, &Entries));
+  EXPECT_FALSE(cachedFunction(Cache, Image, &Entries));
   EXPECT_LE(Access::summaryStats(Seed)[0], 128u);
   EXPECT_LE(Access::summaryStats(Seed)[1], 32u * 1024 * 1024);
   ASSERT_EQ(First->Blocks.size(), 1u);

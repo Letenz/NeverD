@@ -31,6 +31,7 @@ add_neverd_component_library(NeverDWeb
   packages/assessment/Publication.cpp
   packages/assessment/Report.cpp
   SessionPackageAssessments.cpp
+  SessionPackageReviewRestore.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp
@@ -100,6 +101,7 @@ add_neverd_component_library(NeverDWeb
   SessionBundles.cpp
   SessionView.cpp
   SessionNavigation.cpp
+  features/Publication.cpp
   SessionAnchor.cpp
   SessionNative.cpp
   LLVM_COMPONENTS Support
@@ -178,7 +180,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     rewrite/Validate.cpp
     rewrite/Export.cpp
     SourceModel.cpp SourceBindings.cpp SourceEvaluate.cpp SourceEffects.cpp SourceModules.cpp HTMLModules.cpp
-    SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
+    SourceBundles.cpp SourceView.cpp SourceNavigation.cpp
+    features/Analysis.cpp features/Recognize.cpp
+    SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
   target_link_libraries(NeverDWeb PRIVATE neverd_js_parser)
   target_compile_definitions(NeverDWeb PRIVATE NEVERD_ENABLE_WEB_JAVASCRIPT=1)
   if(MSVC)

@@ -3504,8 +3504,16 @@ void Pipeline::buildLowIR(
     LocalCFG.setX87CallGraphCache(X87Graphs);
     LocalCFG.setX87CallProofThreads(X87ProofThreads);
     for (size_t I; (I = Claim()) < N;) {
-      AllLow[I] = LocalCFG.build(Img, LocalDec, Candidates[I].first,
-                                 Candidates[I].second);
+      // Only the initial default construction may reuse a complete body.
+      // Module table arbitration and continuation closure below still rebuild
+      // with their own protected roots and policies.
+      auto Cached = CFGBuilder::cachedDefaultFunction(
+          X87Graphs, Img, Candidates[I].first, Candidates[I].second,
+          &FuncEntries, &NoReturnTargets, &NoReturnCallees,
+          &AbsoluteRelocationRoots, CodeOwnerIndex);
+      AllLow[I] = Cached ? std::move(*Cached)
+                         : LocalCFG.build(Img, LocalDec, Candidates[I].first,
+                                          Candidates[I].second);
       trimFuncStorage(AllLow[I]);
     }
   });
@@ -3852,8 +3860,9 @@ void Pipeline::buildLowIR(
   // CodeRefTargets affects later address propagation and x87 tag entry seeds,
   // but not the raw machine graphs retained by X87Graphs: their builders skip
   // floating-stack normalization. Keep those facts for extra-callee analysis.
-  // Every ordinary builder still normalizes its own stack and tags against the
-  // newly published roots; no normalized CFG or caller's effect answer is
+  // Ordinary builders normalize stack and tags against the newly published
+  // roots. Complete-function reuse requires the independent no-stack witness;
+  // neither a tag-dependent normalized CFG nor a caller's effect answer is
   // shared.
 
   size_t FuncCount = 0;

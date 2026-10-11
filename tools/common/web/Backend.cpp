@@ -83,6 +83,7 @@ struct API {
   WEB_API(neverd_web_package_assessment_create_json)
   WEB_API(neverd_web_package_assessment_findings_json)
   WEB_API(neverd_web_package_review_append_json)
+  WEB_API(neverd_web_package_review_restore_json)
   WEB_API(neverd_web_package_review_decisions_json)
   WEB_API(neverd_web_package_assessment_report_json)
   WEB_API(neverd_web_har_preview_json)
@@ -471,6 +472,21 @@ Json Backend::execute(const std::string &operation, const Json &p) {
                     id.size(), encoded.data(), encoded.size()));
     analysisState_ = "partial";
     return value;
+  }
+  if (operation == "web_package_review_restore") {
+    fields(p, {"revision", "package_assessment_id", "expected_review_head",
+               "journal_json"});
+    const auto call = api().neverd_web_package_review_restore_json;
+    if (!call)
+      throw Error("capability_unavailable",
+                  "Package review restoration is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_assessment_id", 64);
+    const auto head = required(p, "expected_review_head", 64);
+    const auto journal = required(p, "journal_json", 256 * 1024);
+    return result(call(session_, revision.data(), revision.size(), id.data(),
+                       id.size(), head.data(), head.size(), journal.data(),
+                       journal.size()));
   }
   if (operation == "web_package_review_append") {
     fields(p, {"revision", "package_assessment_id", "expected_review_head",

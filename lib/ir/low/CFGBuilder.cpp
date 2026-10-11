@@ -1036,6 +1036,8 @@ LowFunc CFGBuilder::buildOnce(const BinaryImage &Img, Decoder &Dec,
 
   LowFunc Func;
   Func.Entry = EntryAddr;
+  if (CollectCallRegisterBody)
+    CollectCallRegisterBody->Exception = Exception;
   if (Exception)
     Func.ExceptionMetadata = *Exception;
   Func.Name = FuncName.empty()

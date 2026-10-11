@@ -116,6 +116,43 @@ void discovery(Harness &H, const Json &Caps) {
   }
 }
 
+void clientSourceFeatures(Harness &H) {
+  const auto Artifact = H.import(0);
+  const auto S = H.same("web_source_analyze", {{"revision", H.Revision},
+                                               {"artifact_id", Artifact},
+                                               {"source_type", "script"}});
+  const Json Args{{"revision", H.Revision}, {"source_id", S.at("source_id")}};
+  const auto N = H.same("web_source_navigation_analyze", Args);
+  const auto &F = N.at("client_features");
+  require(F.at("profile") == "javascript-client-syntax-features-v1" &&
+              F.at("status") == "partial" && F.at("record_count") == 7 &&
+              F.at("feature_inventory_complete") == false &&
+              F.at("api_identity") == "not_authenticated" &&
+              F.at("effective_policy") == "not_analyzed",
+          "MCP promoted client syntax candidates or lost their coverage");
+  auto Page = Args;
+  Page["record_kind"] = "features";
+  Page["limit"] = 1;
+  const auto First = H.same("web_source_navigation_records", Page);
+  require(First.at("items").size() == 1 && First.at("next_offset") == 1 &&
+              First.at("items")[0].at("confidence") == "source_syntax_only" &&
+              First.at("items")[0].at("callback_source_link") ==
+                  "lexical_declaration_or_initializer" &&
+              First.at("items")[0].at("runtime_callback_target") ==
+                  "not_proven",
+          "MCP changed client callback syntax or paging");
+  Page["offset"] = 1;
+  Page["limit"] = 512;
+  const auto Rest = H.same("web_source_navigation_records", Page);
+  require(Rest.at("items").size() == 6 && Rest.at("page_complete") == true,
+          "MCP lost client pattern continuation");
+  redacted(N);
+  redacted(First);
+  redacted(Rest);
+  Page["execute"] = true;
+  invalid([&] { H.get("web_source_navigation_records", Page); });
+}
+
 void sourceAndMaps(Harness &H) {
   const auto Artifact = H.import(0);
   const Json SourceArgs{{"revision", H.Revision},
@@ -378,6 +415,22 @@ void offlineAssessments() {
   require(Decisions.at("items").size() == 1 &&
               Decisions.at("items")[0].at("assertion_source") == "caller",
           "MCP upgraded an analyst assertion into analyzer proof");
+  const Json Journal{{"schema_version", 1},
+                     {"profile", "offline-package-review-journal-v1"},
+                     {"package_assessment_id", ID},
+                     {"review_root_id", U.at("review_root_id")},
+                     {"review_head_id", U.at("review_head_id")},
+                     {"decisions", Decisions.at("items")}};
+  Json Restore{{"revision", H.Revision},
+               {"package_assessment_id", ID},
+               {"expected_review_head", U.at("review_head_id")},
+               {"journal_json", Journal.dump()}};
+  const auto Restored = H.same("web_package_review_restore", Restore);
+  require(Restored.at("replayed") == true &&
+              Restored.at("restored_events") == 0,
+          "MCP charged a journal replay twice");
+  Restore["raw"] = true;
+  invalid([&] { H.get("web_package_review_restore", Restore); });
   const auto Report = H.same("web_package_assessment_report", Page);
   redacted(Report);
   require(Report.at("report_format") == "markdown" &&
@@ -775,6 +828,13 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
       booleanBranches(H);
+      F.write("source",
+              "function CANARY_CALLBACK(v){return v;}"
+              "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
+              "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+              "const settings={permissions:{deny:['CANARY']},"
+              "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};");
+      clientSourceFeatures(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);

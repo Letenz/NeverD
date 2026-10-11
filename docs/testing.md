@@ -232,6 +232,18 @@ also run with body retention enabled; cached blocks grant no larger proof
 allowance. Full pipeline checks still exercise format-derived arguments and
 register/stack summaries through their ordinary consumers.
 
+`CompleteFunctionCache` compares reconstructed default functions with cold
+builds, including address-taken roots, instruction coverage, relocation
+provenance, jump-table storage and exact selector/load occurrences. Exception
+records retain nested language data and remain owned by each result after the
+image and cache are destroyed. Names are rebound and output mutations cannot
+alter later results. The body-cache cases also exercise complete-function
+refusal for floating returns, local x87 state, incomplete input, changed
+contexts and depth-sensitive no-return answers, plus replay exceptions,
+concurrent readers and byte/entry eviction. The byte-limit case also keeps a
+working set whose live bodies fit the allowance, so construction slack cannot
+silently replace useful cached functions.
+
 `X87CallGraphCache` compares independent builders with and without shared
 graphs, including exact remaining proof budgets, recursion-depth failures,
 changed image and analysis contexts, concurrent queries and bounded eviction.
@@ -642,12 +654,32 @@ metadata refusal, subject receipt ownership, exact behavior/comparison owners,
 source byte anchors, 610-finding paging, head-bound reports, immutable caller
 assertions, stale heads and revisions, last-request replay, shared 256-event
 capacity, atomic refusal, reset and CLI JSON/Markdown without an external PATH.
-Worker and MCP compare all five operations to the shared API and reject arbitrary
+Worker and MCP compare assessment/review operations to the shared API and reject arbitrary
 notes, safety scores and raw-export fields. Run the owning Web directory and
 worker/MCP/ABI checks, then the focused suites with JS omitted and all additive
 C stubs with Web omitted. Restore both build flags and rerun affected checks.
 The [assessment profile](web-package-assessment-profile.md) documents explicit
 selection, evidence relationships, report fields and shared limits.
+
+The additive journal cases also check entire-chain validation, exact-prefix
+restoration, zero-charge current-head replay, shared suffix capacity, late
+tampering, duplicate/unknown JSON fields and reconstruction after capture reset.
+`WebAvailability.*` includes the always-exported restore symbol and discovery.
+Use the full Web regression and worker/MCP/ABI checks for this shared mutation
+boundary, then JS/backend omission and enabled restoration.
+
+With Qt and `NEVERD_WORKER_WEB_ENGINE_TESTS=ON`, `NeverDGuiWebReview` uses only
+C++ fixtures and the production worker. It covers canonical journal persistence,
+failed-write preservation, duplicate/byte/record refusal, fixed confidence versus
+assertion columns, multi-page inventories, tar/registry ancestry, worker restart,
+atomic late-chain refusal, changed-input rejection and RTL/large-font controls.
+The optional `NEVERD_CLAUDE_CODE_21296_CROSS_DIR` selects the already pinned macOS
+ARM64 Claude platform package; `NEVERD_GUI_WEB_RECEIPT` explicitly writes its
+metadata receipt and a local widget PNG for visual review. No sample is executed
+or committed. Backend omission skips dependent positive cases and qualifies an
+explicit unavailable window; journals/models still work. Run the existing GUI
+unit/controller/language and smoke suites when modifying workbench commands.
+See the [journal/desktop profile](web-package-review-journal.md).
 
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
@@ -834,6 +866,17 @@ execute packages and do not require the optional JS parser.
 consumer over tar/gzip/stored and deflate ZIP, retained original/expanded
 origins, exact recovered bytes, unavailable/non-Bun refusal, existing-output
 preservation and metadata canaries with an unusable external-tool PATH.
+`WebSourceFeatures` checks the fixed client syntax vocabulary, exact callback
+source/conditional-test links, unresolved names/shapes, privacy and independent
+feature exhaustion. `WebSDK.ClientFeaturePagesKeepConfidenceAnchorsAndPrivateValues`
+checks paging, shared function IDs, revision invalidation and private-value
+canaries. Worker/MCP compare the same feature metadata through the existing
+navigation C APIs. `WebSourceFeatures.CapturedClaudeClientUnitsWhenSupplied`
+uses the cross-platform environment above to inspect all 2,364 JS units in the
+pinned macOS ARM64 archive sequentially and records parser/feature coverage,
+including exact refusal reasons. See the
+[actual client qualification](web-client-feature-qualification.md); it does not
+claim complete feature attribution or run a target runtime.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16

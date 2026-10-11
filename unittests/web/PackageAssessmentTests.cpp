@@ -359,4 +359,118 @@ TEST_F(WebPackageAssessment, CombinedOwnerRecordsRespectTheRetainedBudget) {
   // An independent, smaller selection still works after the failed compose.
   EXPECT_EQ(composePackageAssessment(P, N, {}).Findings.size(), 10u);
 }
+TEST_F(WebPackageAssessment, RestoreValidatesWholeChainAndChargesOnlySuffix) {
+  const auto N = inventory();
+  const auto P = analyzePackages(N, N.Artifacts[1].ID, "package-json");
+  const auto A = composePackageAssessment(P, N, {});
+  const auto Root = createPackageReview(A);
+  const auto First = appendPackageReview(A, Root, Root.HeadID, A.Findings[0].ID,
+                                         PackageDisposition::NeedsReview, {})
+                         .State;
+  const auto Second =
+      appendPackageReview(A, First, First.HeadID, A.Findings[1].ID,
+                          PackageDisposition::FalsePositive, {})
+          .State;
+  const auto Full = restorePackageReview(A, Root, Root.HeadID, Second, {});
+  EXPECT_EQ(Full.AddedEvents, 2u);
+  EXPECT_EQ(Full.AddedBytes, 2048u);
+  EXPECT_FALSE(Full.Replay);
+  const auto Suffix =
+      restorePackageReview(A, First, First.HeadID, Second, {1, 1024});
+  EXPECT_EQ(Suffix.AddedEvents, 1u);
+  EXPECT_EQ(Suffix.State.HeadID, Second.HeadID);
+  const auto Replay =
+      restorePackageReview(A, Second, Second.HeadID, Second, {0, 0});
+  EXPECT_TRUE(Replay.Replay);
+  EXPECT_EQ(Replay.AddedEvents, 0u);
+  EXPECT_EQ(Replay.AddedBytes, 0u);
+  EXPECT_EQ(Root.Decisions.size(), 0u);
+  EXPECT_EQ(First.Decisions.size(), 1u);
+}
+
+TEST_F(WebPackageAssessment, RestoreRefusesDivergentPrefixAndStaleHead) {
+  const auto N = inventory();
+  const auto P = analyzePackages(N, N.Artifacts[1].ID, "package-json");
+  const auto A = composePackageAssessment(P, N, {});
+  const auto Root = createPackageReview(A);
+  const auto First = appendPackageReview(A, Root, Root.HeadID, A.Findings[0].ID,
+                                         PackageDisposition::NeedsReview, {})
+                         .State;
+  const auto Other = appendPackageReview(A, Root, Root.HeadID, A.Findings[0].ID,
+                                         PackageDisposition::AcceptedRisk, {})
+                         .State;
+  fails([&] { (void)restorePackageReview(A, First, First.HeadID, Other, {}); },
+        "package_review_prefix_mismatch");
+  fails([&] { (void)restorePackageReview(A, First, First.HeadID, Root, {}); },
+        "package_review_prefix_mismatch");
+  fails([&] { (void)restorePackageReview(A, First, Root.HeadID, First, {}); },
+        "stale_package_review_head");
+  validatePackageReview(A, First);
+}
+
+TEST_F(WebPackageAssessment, RestoreRejectsTamperingBeforeAnyPrefixIsAccepted) {
+  const auto N = inventory();
+  const auto P = analyzePackages(N, N.Artifacts[1].ID, "package-json");
+  const auto A = composePackageAssessment(P, N, {});
+  const auto Root = createPackageReview(A);
+  const auto First = appendPackageReview(A, Root, Root.HeadID, A.Findings[0].ID,
+                                         PackageDisposition::NeedsReview, {})
+                         .State;
+  const auto Valid =
+      appendPackageReview(A, First, First.HeadID, A.Findings[1].ID,
+                          PackageDisposition::FalsePositive, {})
+          .State;
+  for (int Case = 0; Case < 5; ++Case) {
+    auto Invalid = Valid;
+    auto &D = Invalid.Decisions.back();
+    if (Case == 0)
+      D.FindingID = identity("foreign-finding", {"other"});
+    else if (Case == 1)
+      D.ID = identity("foreign-decision", {"other"});
+    else if (Case == 2)
+      D.ParentHead = Root.HeadID;
+    else if (Case == 3)
+      D.Index = 0;
+    else
+      D.Disposition = PackageDisposition::AcceptedRisk;
+    fails(
+        [&] { (void)restorePackageReview(A, Root, Root.HeadID, Invalid, {}); },
+        "package_review_chain_mismatch");
+    EXPECT_TRUE(Root.Decisions.empty());
+  }
+  auto Foreign = Valid;
+  Foreign.AssessmentID = identity("foreign-assessment", {"other"});
+  fails([&] { (void)restorePackageReview(A, Root, Root.HeadID, Foreign, {}); },
+        "package_review_owner_mismatch");
+}
+
+TEST_F(WebPackageAssessment, RestoreRespectsSharedEventsAndByteCapacity) {
+  const auto N = inventory();
+  const auto P = analyzePackages(N, N.Artifacts[1].ID, "package-json");
+  const auto A = composePackageAssessment(P, N, {});
+  const auto Root = createPackageReview(A);
+  const auto First = appendPackageReview(A, Root, Root.HeadID, A.Findings[0].ID,
+                                         PackageDisposition::NeedsReview, {})
+                         .State;
+  const auto Second =
+      appendPackageReview(A, First, First.HeadID, A.Findings[1].ID,
+                          PackageDisposition::FalsePositive, {})
+          .State;
+  fails(
+      [&] {
+        (void)restorePackageReview(A, Root, Root.HeadID, Second, {1, 2048});
+      },
+      "package_review_decision_budget_exceeded");
+  fails(
+      [&] {
+        (void)restorePackageReview(A, Root, Root.HeadID, Second, {2, 2047});
+      },
+      "package_review_byte_budget_exceeded");
+  auto Candidate = Second;
+  Candidate.RetainedBytes = 0;
+  const auto Result =
+      restorePackageReview(A, First, First.HeadID, Candidate, {1, 1024});
+  EXPECT_EQ(Result.State.RetainedBytes, 2048u);
+  EXPECT_EQ(Result.AddedBytes, 1024u);
+}
 } // namespace

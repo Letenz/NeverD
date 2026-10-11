@@ -214,7 +214,7 @@ std::string Session::capabilities() {
   for (const auto *Name :
        {"package_assessment_create", "package_assessment_findings",
         "package_review_append", "package_review_decisions",
-        "package_assessment_report"})
+        "package_review_restore", "package_assessment_report"})
     Operations.emplace_back(Name);
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "package_assessments"},
@@ -226,6 +226,8 @@ std::string Session::capabilities() {
       {"max_retained_bytes_per_assessment", MaxPackageAssessmentBytes},
       {"max_review_events_per_session", MaxPackageReviewDecisions},
       {"max_review_bytes_per_session", MaxPackageReviewBytes},
+      {"review_journal_profile", std::string(PackageReviewJournalProfile)},
+      {"review_restore_atomic", true},
       {"max_page_records", 512},
       {"dispositions", llvm::json::Array{"unreviewed", "needs_review",
                                          "accepted_risk", "false_positive"}},
@@ -605,7 +607,12 @@ std::string Session::capabilities() {
       {"profile", std::string(JavaScriptNavigationProfile)},
       {"anchor_profile", std::string(SourceAnchorProfile)},
       {"max_steps", MaxJavaScriptNavigationSteps},
-      {"record_kinds", llvm::json::Array{"functions", "calls", "references"}},
+      {"record_kinds",
+       llvm::json::Array{"functions", "calls", "references", "features"}},
+      {"client_feature_profile", std::string(JavaScriptClientFeatureProfile)},
+      {"max_client_feature_records", MaxJavaScriptClientFeatureRecords},
+      {"max_client_feature_steps", MaxJavaScriptClientFeatureSteps},
+      {"client_feature_attribution", "source_syntax_only"},
       {"runtime_call_graph", false},
       {"resolves_runtime_values", false}});
   Analyses.emplace_back(llvm::json::Object{

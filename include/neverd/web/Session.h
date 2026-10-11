@@ -115,6 +115,10 @@ public:
                                      std::string_view AssessmentID,
                                      std::string_view ReviewHead,
                                      uint64_t Offset, uint64_t Limit) const;
+  std::string restorePackageReview(std::string_view ExpectedRevision,
+                                   std::string_view AssessmentID,
+                                   std::string_view ExpectedHead,
+                                   std::string_view JournalJSON);
   std::string packageAssessmentReport(std::string_view ExpectedRevision,
                                       std::string_view AssessmentID,
                                       std::string_view ReviewHead,
