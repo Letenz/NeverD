@@ -2746,6 +2746,11 @@ their destructor footprints.
 The state target also checks source-call identity, initialized ECX object
 borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
+`ExactLocalAccessesDoNotRescanTheWholeFrame` proves installation and unlink
+after thousands of exact loads from a populated frame under the unchanged
+cumulative work limit. `IndexedFrameAccessesKeepPartialAndUnknownAliases`
+checks unaligned overlapping writes, unknown-address reads, disjoint cells and
+signed-offset endpoints in parent, entry and callback coordinates.
 `CanonicalNoReturnKeepsExceptionalFlowWithoutBorrowing` checks direct and
 indirect canonical no-return calls without a callee memory contract, retaining
 catch dispatch/resumption and rejecting conditional, unmarked, mismatched or

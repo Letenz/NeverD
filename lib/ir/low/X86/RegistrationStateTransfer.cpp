@@ -44,21 +44,39 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     After.Levels.clear();
   };
   for (const LowOp &Op : Block.Ops) {
-    // Ambiguous frame loads inspect every tracked cell. Charge that work,
-    // not just the number of lifted operations, before entering the scan.
     size_t RegisterBytes = Op.Output.Size;
     for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
       RegisterBytes += Op.Inputs[Input].Size;
-    if (!charge(
-            1 + RegisterBytes +
-            ((Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE)
-                 ? After.Frame.cellCount() + 2 * After.RuntimeObject.cellCount()
-                 : 0)))
+    if (!charge(1 + RegisterBytes))
       break;
     Transfer.beginInstruction(Op.Addr);
     RuntimeTransfer.beginInstruction(Op.Addr);
+    if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
+      // Exact parent addresses use an ordered interval lookup. An ambiguous
+      // address may alias every coordinate, and retains the full scan charge.
+      const auto Address = Transfer.read(Op.Inputs[0]);
+      const size_t FrameWork = Address.Offset
+                                   ? After.Frame.cellAccessWork(Op.Output.Size)
+                                   : After.Frame.cellCount() + 1;
+      if (!charge(FrameWork))
+        break;
+      if (CheckRuntimeObjects) {
+        const auto RuntimeAddress = RuntimeTransfer.read(Op.Inputs[0]);
+        const size_t RuntimeWork =
+            RuntimeAddress.Offset
+                ? After.RuntimeObject.cellAccessWork(Op.Output.Size)
+                : After.RuntimeObject.cellCount() + 1;
+        if (!charge(RuntimeWork +
+                    (Address.Offset
+                         ? After.RuntimeObject.cellAccessWork(Op.Output.Size)
+                         : 0)))
+          break;
+      }
+    }
     const FrameValue Value = Transfer.evaluate(Op, After.Installed);
-    FrameValue RuntimeValue = RuntimeTransfer.evaluate(Op, After.Installed);
+    FrameValue RuntimeValue =
+        CheckRuntimeObjects ? RuntimeTransfer.evaluate(Op, After.Installed)
+                            : FrameValue{};
     if (CheckRuntimeObjects &&
         (Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::COND_BR ||
          Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL))
@@ -67,9 +85,9 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           CompleteRuntimeObjects = false;
     if (CheckRuntimeObjects && Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
       const auto Address = Transfer.read(Op.Inputs[0]);
-      RuntimeValue = After.RuntimeObject.load(Address.Offset, Op.Output.Size);
-      if (!Address.Offset)
-        RuntimeValue = {};
+      RuntimeValue = Address.Offset ? After.RuntimeObject.load(Address.Offset,
+                                                               Op.Output.Size)
+                                    : FrameValue{};
     }
     recordCatchReturn(I, After, Op, Transfer, CatchReturn);
     if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN &&
@@ -332,7 +350,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
                      Chain.RealignedFrame->SavedParentFrameOffset, 4))
           Invalidate();
         if (Address.Offset) {
-          if (!charge(After.Frame.cellCount() + 1))
+          if (!charge(After.Frame.cellAccessWork(Width, true)))
             break;
           After.Frame.store(*Address.Offset, Width, Stored);
           if (CheckCalls) {
@@ -352,7 +370,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
         } else if (Address.CallbackAddress) {
           if (!After.Frame.callbackMemoryIsPrivate(*Address.CallbackAddress,
                                                    Width) ||
-              !charge(After.Frame.cellCount() + Width + 1))
+              !charge(After.Frame.cellAccessWork(Width, true) + Width))
             Invalidate();
           else
             After.Frame.storeCallback(Address.CallbackAddress->Offset, Width,
@@ -362,7 +380,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           // the newly allocated frame. Do not guess aliases below it.
           if (*Address.EntryOffset < -12 ||
               int64_t(*Address.EntryOffset) + Width > 4 || After.Installed ||
-              !charge(After.Frame.cellCount() + 1))
+              !charge(After.Frame.cellAccessWork(Width, true)))
             Invalidate();
           else
             After.Frame.storeEntry(*Address.EntryOffset, Width, Stored);

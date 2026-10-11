@@ -77,6 +77,58 @@ TEST(RegistrationState, DeadFrameValuesDoNotAccumulateAcrossJoins) {
   }
 }
 
+TEST(RegistrationState, IndexedFrameAccessesKeepPartialAndUnknownAliases) {
+  using registration_state::FrameState;
+  using registration_state::FrameValue;
+  for (unsigned Space = 0; Space != 3; ++Space) {
+    for (int32_t Base : {INT32_MIN + 16, -4096, 0, INT32_MAX - 32}) {
+      SCOPED_TRACE(Space);
+      SCOPED_TRACE(Base);
+      FrameState State;
+      auto Store = [&](int32_t Offset, uint16_t Width, FrameValue Value) {
+        if (Space == 0)
+          State.store(Offset, Width, Value);
+        else if (Space == 1)
+          State.storeEntry(Offset, Width, Value);
+        else
+          State.storeCallback(Offset, Width, Value);
+      };
+      auto Load = [&](int32_t Offset, uint16_t Width) {
+        return Space == 0   ? State.load(Offset, Width)
+               : Space == 1 ? State.loadEntry(Offset, Width)
+                            : State.loadCallback(Offset, Width);
+      };
+      Store(Base - 8, 4, FrameValue::constant(11));
+      Store(Base, 4, FrameValue::frame(-128));
+      Store(Base + 4, 4, FrameValue::frame(-256));
+      Store(Base + 16, 4, FrameValue::constant(29));
+      // One unaligned scalar store overlaps both pointers but replaces
+      // neither whole cell. Untouched bytes still carry possible aliases.
+      Store(Base + 2, 4, FrameValue::constant(7));
+      EXPECT_TRUE(Load(Base, 1).MayBeFrame);
+      EXPECT_TRUE(Load(Base + 6, 1).MayBeFrame);
+      EXPECT_EQ(Load(Base + 2, 4), FrameValue::constant(7));
+      EXPECT_FALSE(Load(Base, 4).Offset);
+      EXPECT_TRUE(State.load(std::nullopt, 1).MayBeFrame);
+      EXPECT_EQ(Load(Base - 8, 4), FrameValue::constant(11));
+      EXPECT_EQ(Load(Base + 16, 4), FrameValue::constant(29));
+      Store(Base - 1, 10, {});
+      EXPECT_FALSE(Load(Base, 8).MayBeFrame);
+      EXPECT_FALSE(State.load(std::nullopt, 1).MayBeFrame);
+      EXPECT_EQ(Load(Base - 8, 4), FrameValue::constant(11));
+      EXPECT_EQ(Load(Base + 16, 4), FrameValue::constant(29));
+      Store(INT32_MIN, 4, FrameValue::frame(-64));
+      EXPECT_TRUE(Load(INT32_MIN, 1).MayBeFrame);
+      Store(INT32_MIN, 1, {});
+      EXPECT_TRUE(Load(INT32_MIN + 3, 1).MayBeFrame);
+      Store(INT32_MAX - 3, 4, FrameValue::frame(-96));
+      EXPECT_TRUE(Load(INT32_MAX, 1).MayBeFrame);
+      Store(INT32_MAX, 1, {});
+      EXPECT_TRUE(Load(INT32_MAX - 3, 1).MayBeFrame);
+    }
+  }
+}
+
 LowFunc makeCookieFrame(bool GS = false) {
   auto F = makeBranchingFrame();
   auto &EH = *F.ExceptionMetadata;
@@ -1525,6 +1577,59 @@ TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
   EXPECT_EQ(Result.ChainAccesses[2].OpSeq, F.Blocks[3].Ops.back().Seq);
   EXPECT_TRUE(Result.Blocks.back().Levels.empty());
   EXPECT_FALSE(Result.Blocks.back().CanDispatch);
+}
+
+LowFunc makePopulatedFrame(bool Exact) {
+  auto F = makeUnlinkedFrame();
+  F.ExceptionMetadata->CodeRange.End = 0x10000;
+  LowBlock Body;
+  Body.Id = F.Blocks.size();
+  Body.StartAddr = 0x2000;
+  Body.Succs = F.Blocks.front().Succs;
+  F.Blocks.front().Succs = {Body.Id};
+  va_t Address = Body.StartAddr;
+  auto Emit = [&](NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs) {
+    const unsigned First = Body.Ops.size();
+    emitOp(Body, Address, Opcode, Output, Inputs);
+    Body.InstructionBoundaries.push_back({Address++, 1, First, 1});
+  };
+  const auto SP = NdVar::reg(x86reg::RSP, 4);
+  const auto Slot = NdVar::reg(x86reg::RDI, 4);
+  Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(4096, 4)});
+  for (int32_t I = 0; I != 512; ++I) {
+    Emit(NdOp::INT_ADD, Slot,
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32 - I * 4), 4)});
+    Emit(NdOp::STORE, {}, {Slot, NdVar::cst(uint32_t(I), 4)});
+  }
+  // Thousands of exact accesses to a populated frame must leave enough of
+  // the same cumulative budget to prove the subsequent registration unlink.
+  // Each load still reads the current cell, including the last overwrite.
+  for (unsigned I = 0; I != 4096; ++I)
+    Emit(NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
+         {Exact ? Slot : NdVar::reg(x86reg::RCX, 4)});
+  Emit(NdOp::INT_ADD, SP, {SP, NdVar::cst(4096, 4)});
+  Body.EndAddr = Address;
+  F.Blocks.push_back(std::move(Body));
+  return F;
+}
+
+TEST(RegistrationState, ExactLocalAccessesDoNotRescanTheWholeFrame) {
+  const auto Result = analyzeRegistrationStates(makePopulatedFrame(true));
+  EXPECT_TRUE(Result.Complete);
+  EXPECT_TRUE(Result.RegistrationLifetimeComplete);
+  EXPECT_TRUE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.Diagnostics.empty());
+}
+
+TEST(RegistrationState, UnknownLocalAccessesRetainTheWholeFrameWorkLimit) {
+  const auto Result = analyzeRegistrationStates(makePopulatedFrame(false));
+  EXPECT_FALSE(Result.Complete);
+  EXPECT_FALSE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.FrameValues.empty());
+  EXPECT_NE(std::find(Result.Diagnostics.begin(), Result.Diagnostics.end(),
+                      "registration-state propagation budget exhausted"),
+            Result.Diagnostics.end());
 }
 
 TEST(RegistrationState, MissingLifetimeCannotAuthorizeChainReplacement) {

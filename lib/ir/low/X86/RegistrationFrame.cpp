@@ -9,6 +9,9 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/X86Regs.h"
 
+#include <algorithm>
+#include <bit>
+
 namespace neverd::registration_state {
 
 FrameValue join(FrameValue Left, const FrameValue &Right) {
@@ -24,6 +27,13 @@ FrameValue join(FrameValue Left, const FrameValue &Right) {
 }
 
 namespace {
+template <typename Map> auto firstOverlappingCell(Map &Cells, int32_t Offset) {
+  // A cell covers four bytes regardless of the access width. Include cells
+  // beginning before this access, without wrapping at INT32_MIN.
+  return Cells.lower_bound(
+      static_cast<int32_t>(std::max(int64_t(INT32_MIN), int64_t(Offset) - 3)));
+}
+
 bool mergeCells(std::map<int32_t, FrameValue> &Cells,
                 const std::map<int32_t, FrameValue> &Other) {
   bool Changed = false;
@@ -55,7 +65,8 @@ bool mergeCells(std::map<int32_t, FrameValue> &Cells,
 
 void storeCell(std::map<int32_t, FrameValue> &Cells, int32_t Offset,
                uint16_t Width, const FrameValue &Value) {
-  for (auto It = Cells.begin(); It != Cells.end();) {
+  for (auto It = firstOverlappingCell(Cells, Offset);
+       It != Cells.end() && int64_t(It->first) < int64_t(Offset) + Width;) {
     if (int64_t(It->first) < int64_t(Offset) + Width &&
         int64_t(Offset) < int64_t(It->first) + 4) {
       const bool FullyOverwritten =
@@ -85,15 +96,35 @@ FrameValue loadCell(const std::map<int32_t, FrameValue> &Cells,
   if (Offset && Width == 4)
     if (auto It = Cells.find(*Offset); It != Cells.end())
       return It->second;
-  for (const auto &[Cell, Value] : Cells)
+  for (auto It = Offset ? firstOverlappingCell(Cells, *Offset) : Cells.begin();
+       It != Cells.end() &&
+       (!Offset || int64_t(It->first) < int64_t(*Offset) + Width);
+       ++It) {
+    const auto &[Cell, Value] = *It;
     if (Value.MayBeFrame &&
         (!Offset || (int64_t(Cell) < int64_t(*Offset) + Width &&
                      int64_t(*Offset) < int64_t(Cell) + 4)))
       return {{}, {}, false, true};
+  }
   return {};
 }
 
 } // namespace
+
+size_t FrameState::cellAccessWork(uint16_t Width, bool Write) const {
+  // Each coordinate is a map with distinct integer keys, so at most Width+3
+  // four-byte cells overlap. Red-black searches need at most twice the bit
+  // width of their size. A load can search twice (exact and overlapping).
+  const size_t Count =
+      std::max({Cells.size(), EntryCells.size(), CallbackCells.size()});
+  size_t Work =
+      1 + 4 * std::bit_width(Count) + std::min(Count, size_t(Width) + 3);
+  if (Write) {
+    const size_t Inserts = (size_t(Width) + 3) / 4;
+    Work += Inserts * (1 + 2 * std::bit_width(Count + Inserts));
+  }
+  return Work;
+}
 
 bool FrameState::merge(const FrameState &Other) {
   bool Changed = false;

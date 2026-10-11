@@ -96,6 +96,10 @@ struct FrameState {
     return Cells.size() + EntryCells.size() + CallbackCells.size() +
            InitializedCallbackBytes.size();
   }
+  /// Conservative work bound for one exact-address cell access, including
+  /// ordered-map searches, overlapping four-byte cells and possible inserts.
+  /// Unknown addresses still require cellCount() to scan all coordinates.
+  size_t cellAccessWork(uint16_t Width, bool Write = false) const;
 
   bool merge(const FrameState &Other);
   void forgetCellValues();

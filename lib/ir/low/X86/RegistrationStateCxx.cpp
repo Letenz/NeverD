@@ -105,8 +105,7 @@ bool RegistrationStateSolver::recordRuntimeMemory(
     const auto Stored = RuntimeTransfer.read(*Memory.StoredValue);
     const auto PrivateAddress = Transfer.read(*Memory.Address);
     if (PrivateAddress.Offset && !RuntimeAddress.MayBeFrame) {
-      if (!charge(After.RuntimeObject.cellCount() +
-                  (Memory.AccessSize + 3) / 4 + 1))
+      if (!charge(After.RuntimeObject.cellAccessWork(Memory.AccessSize, true)))
         return false;
       After.RuntimeObject.store(*PrivateAddress.Offset, Memory.AccessSize,
                                 Stored);

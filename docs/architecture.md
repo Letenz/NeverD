@@ -251,6 +251,12 @@ destinations after an ordinary no-return call.
 Registration-state transfer also consumes the exact unconditional no-return
 instruction boundary. Missing call-frame effects still refuse memory borrows,
 but cannot recreate that call's ordinary continuation or suppress its handlers.
+Exact registration-frame accesses search the ordered cell map only for
+overlapping four-byte cells. The cumulative work budget charges the bounded
+lookup and possible insertions; it does not charge unrelated local slots for
+every access. Unknown addresses still inspect all possible frame coordinates.
+Partial writes retain pointer taint in untouched bytes, and releasing or
+merging a frame still processes its full state.
 PE32 EH3 local unwinds have a separate runtime contract. Current strong
 `_local_unwind2` imports and immutable IAT veneers identify the protocol; the
 state solver binds its actual registration pointer and target level at the
