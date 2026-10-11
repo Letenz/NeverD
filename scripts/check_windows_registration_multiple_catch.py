@@ -20,6 +20,7 @@ if __package__:
     from .check_windows_registration_cxx_rewrite import code_owner
     from .check_windows_registration_rewrite import PE32
     from .windows_registration_libraries import load_libraries
+    from .windows_registration_image import code_chunks
 else:
     from check_windows_registration_eh import run_image
     from check_windows_registration_realigned import require_test_result
@@ -29,6 +30,7 @@ else:
     from check_windows_registration_cxx_rewrite import code_owner
     from check_windows_registration_rewrite import PE32
     from windows_registration_libraries import load_libraries
+    from windows_registration_image import code_chunks
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_multiple_catch_driver.cpp"
@@ -86,11 +88,11 @@ def observe(path: Path, case: str, route: str, receipt: dict,
     if tuple(values[:8]) != expected_values:
         raise ValueError("catch dispatch, reference effect or registration chain differs")
     owner = "source" if route == "original" else "generated"
-    begin, end = receipt[owner + "_begin"], receipt[owner + "_end"]
+    chunks = code_chunks(image, receipt, owner,
+                         source_section if route == "original" else ".ndtext")
     callers = [value - image.base for value in values[8:]]
-    if any(not begin <= caller < end for caller in callers):
+    if any(not any(begin <= caller < end for begin, end in chunks) for caller in callers):
         raise ValueError("throw caller is outside the exact parent owner")
-    code_owner(image, begin, end, source_section if route == "original" else ".ndtext")
     return {"image": path.name, "sha256": file_digest(path), "route": route,
             "base": image.base, "expected_exit": int(case.endswith("-control")),
             "caller_rvas": callers, "runtime": result}

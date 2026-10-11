@@ -16,7 +16,10 @@ volatile unsigned callback_destructor_trace = 0;
 #endif
 
 extern "C" __declspec(noreturn) void registration_copy_finish(bool Passed) {
-#ifdef RETHROW_SEARCH
+#ifdef SECONDARY_SEARCH
+  const unsigned CopyEvent = 2201;
+  const unsigned Destruction[] = {318, 665, 669, 665};
+#elif defined(RETHROW_SEARCH)
   const unsigned CopyEvent = 2201;
   const unsigned Destruction[] = {318, 669, 665};
 #else
@@ -42,7 +45,9 @@ extern "C" __declspec(noreturn) void registration_copy_finish(bool Passed) {
                                  sizeof(Message) - 1, &Written, nullptr) &&
                        Written == sizeof(Message) - 1;
   ExitProcess(Passed && Printed && Values[0] == EXPECTED_COPIES &&
-                      Values[1] == CopyTrace && Values[2] == 12 &&
+                      Values[1] == CopyTrace &&
+                      Values[2] ==
+                          4 * (sizeof(Destruction) / sizeof(Destruction[0])) &&
                       Values[3] == DestructorTrace
                   ? 0
                   : 1);

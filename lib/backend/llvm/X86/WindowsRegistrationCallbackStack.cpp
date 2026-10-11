@@ -95,6 +95,43 @@ llvm::Error checkPrivateStack(
            Size.getFixedValue() <= uint64_t(-Offset) && Align.value() <= 16 &&
            (int64_t(*Frame.StackPointerOffset) + Offset) % Align.value() == 0;
   };
+  // Callback roots are disconnected before native lowering, so the parent
+  // function's dominator tree cannot prove these copies. Check every ordinary
+  // predecessor within this callback and treat runtime resumes as new roots.
+  auto Dominates = [&](llvm::StoreInst *Store, llvm::LoadInst *Load) {
+    if (Store->getParent() == Load->getParent())
+      return Store->comesBefore(Load);
+    // A checked runtime resume continues the same callback invocation.
+    if (Store->getParent() == &Entry)
+      return true;
+    std::vector<llvm::BasicBlock *> Pending{Load->getParent()};
+    std::set<llvm::BasicBlock *> Seen;
+    bool Found = false;
+    while (!Pending.empty()) {
+      if (!Charge(1))
+        return false;
+      auto *Block = Pending.back();
+      Pending.pop_back();
+      if (!Seen.insert(Block).second)
+        continue;
+      if (Block == Store->getParent()) {
+        Found = true;
+        continue;
+      }
+      if (Block == &Entry || !Body.count(Block) || llvm::pred_empty(Block))
+        return false;
+      for (const auto &Resume : Resumes) {
+        if (!Charge(1) || Block == Resume.Seed->getParent())
+          return false;
+      }
+      for (auto *Pred : llvm::predecessors(Block)) {
+        if (!Charge(1))
+          return false;
+        Pending.push_back(Pred);
+      }
+    }
+    return Found;
+  };
   while (!Work.empty() && !Invalid && !Exhausted) {
     if (!Charge(1))
       break;
@@ -205,11 +242,7 @@ llvm::Error checkPrivateStack(
             continue;
           if (!Load || Load->getType() != Slot->getAllocatedType() ||
               !Body.count(Load->getParent()) || Load->isVolatile() ||
-              Load->isAtomic() ||
-              (Store->getParent() != &Entry &&
-               Store->getParent() != Load->getParent()) ||
-              (Store->getParent() == Load->getParent() &&
-               !Store->comesBefore(Load)))
+              Load->isAtomic() || !Dominates(Store, Load))
             return reject("private callback stack SSA copy has unproved uses");
           Add(Load, Offset);
         }

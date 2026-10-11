@@ -112,11 +112,35 @@ class ReliftEvidenceTests(unittest.TestCase):
                 with self.subTest(field=field), self.assertRaises(ValueError):
                     replay.validate_capture(root, capture)
 
+    def test_relift_preserves_disjoint_callback_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.capture(root, "initializers")
+            profile = runner.get_profile("initializers")
+            name = profile.cases[0]
+            parent = root / name
+            original = runner.PE32((parent / "original.exe").read_bytes())
+            product = runner.PE32((parent / "product.exe").read_bytes())
+            receipt = json.loads((parent / "contract.json").read_text())
+            first = json.loads((root / "first" / name / "contract.json").read_text())
+            first["generated_fragments"] = [[0x2100, 0x2120]]
+            receipt.update(source_fragments=[[0x2100, 0x2120]],
+                           generated_fragments=[[0x3100, 0x3120]])
+            profile.validate_installation(original, product, receipt, first, name)
+            for mutation in ({"source_fragments": []},
+                             {"source_fragments": [[0x2100, 0x2110]]},
+                             {"generated_fragments": [[0x2100, 0x2120]]},
+                             {"generated_fragments": [[0x3100, 0x3120], [0x3100, 0x3120]]},
+                             {"generated_fragments": [[0x3000, 0x3040]]},
+                             {"generated_fragments": [[0x3100, 0x5000]]}):
+                with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                    profile.validate_installation(original, product, receipt | mutation, first, name)
+
     def test_initializer_relift_requires_ordinary_constructor_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root, "initializers")
-            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            self.assertEqual(len(replay.validate_capture(root, capture)), 160)
             for wrong in ("copies", "objects", "destructors", "entry", "catch-cleanup"):
                 with self.subTest(profile=wrong), self.assertRaises(ValueError):
                     replay.validate_capture(root, capture | {"profile": wrong})

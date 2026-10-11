@@ -68,9 +68,12 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
         return -1;
       Object.Head += 11;
       Object.Tail += 3;
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
       if (Object.Head == 18) {
-#ifdef DIRECT_TYPED_THROW
+#ifdef SECONDARY_SEARCH
+        callback_mark();
+        throw ReferenceObject{Object.Head, Object.Tail, Object.Tag};
+#elif defined(DIRECT_TYPED_THROW)
         throw;
 #else
         callback_rethrow();
@@ -80,7 +83,7 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
       callback_caught = Object.Head;
       return Object.Head + Object.Tail - 4;
     }
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
   } catch (ReferenceObject Object) {
     if (Object.Tail != 14 || Object.Tag != 13)
       return -2;
@@ -116,7 +119,7 @@ template <unsigned Padding> __declspec(noinline) int call_with_padding() {
 }
 
 #ifndef EXPECTED_FIRST
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
 #define EXPECTED_FIRST 39
 #else
 #define EXPECTED_FIRST 17
@@ -126,7 +129,7 @@ extern "C" __declspec(noreturn) void mainCRTStartup() {
   bool Passed = true;
   unsigned Values[3] = {}, Caught[3] = {}, Callers[3] = {}, Iterations = 0;
   const unsigned Expected[] = {EXPECTED_FIRST, 28, 39};
-#ifdef RETHROW_SEARCH
+#if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
   const unsigned ExpectedCaught[] = {39, 18, 39};
 #else
   const unsigned ExpectedCaught[] = {7, 18, 39};

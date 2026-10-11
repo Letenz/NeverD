@@ -14,8 +14,8 @@ from scripts.tests import test_windows_registration_objects as fixtures
 
 
 class CopyEvidenceTests(unittest.TestCase):
-    def capture(self, root):
-        capture = fixtures.ObjectEvidenceTests().capture(root)
+    def capture(self, root, **kwargs):
+        capture = fixtures.ObjectEvidenceTests().capture(root, **kwargs)
         capture.update(profile="copies",
                        source_sha256=runner.file_digest(copies.SOURCE),
                        object_types_sha256=runner.file_digest(copies.TYPES),

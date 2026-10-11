@@ -429,8 +429,9 @@ and both reconstruction generations. RTTI does not prove a source constructor:
 unknown aggregate throws retain their exact runtime call, declaration and
 initialization stores instead of inventing `throw Type()`.
 
-The rewritten parent and preserved private throw helpers may call an
-independently checked ordinary object initializer before entering the CRT. Its physical ABI takes the destination in
+The rewritten parent, its catch callbacks and preserved private throw helpers
+may call an independently checked ordinary object initializer before entering
+the CRT. Its physical ABI takes the destination in
 ECX and scalar words in its callee-popped stack area, and returns exactly that
 destination. The caller proves initialized, pointer-free arguments and a
 bounded object disjoint from those arguments and caller storage. Only bytes
@@ -445,9 +446,16 @@ recover ECX and each stack argument from the current SSA values. The checked
 callee cleanup also reaches single-function stack SSA without a whole-image
 callee map. Native lowering preserves the exact returned destination, and the
 installer independently checks argument privacy and seeds only the normal edge
-with constructor must-writes. Constructor calls from catch callbacks, general
-constructor/destructor call graphs, conversions and virtual-base copying remain
-unsupported.
+with constructor must-writes. A catch constructor can initialize a parent-frame
+object using scalar arguments in its own proved private stack. Those stack
+bytes must be initialized, pointer-free and consumed by the callee's exact
+cleanup; the parent object retains its separate lifetime. Cross-block private
+stack copies require a reaching definition on every path, including runtime
+resumes. The secondary-throw fixtures construct a new object from the caught
+object's current fields and observe four copies and sixteen destructions,
+distinguishing both object lifetimes from a rethrow. Construction into callback
+stack objects, general constructor/destructor call graphs, conversions and
+virtual-base copying remain unsupported.
 
 ## IR contract
 

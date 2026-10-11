@@ -3560,8 +3560,13 @@ Ordinary object initialization has a separate x86 LowIR contract in
 cleanup, exact ECX return identity and definitely initialized object bytes.
 `RegistrationInitializerCall.cpp` composes that proof into a preserved private
 throw helper, keeping its outgoing argument area separate from the object and
-caller storage. `RegistrationStateInitializer.cpp` binds direct parent calls
+caller storage. `RegistrationStateInitializer.cpp` binds parent and catch calls
 to initialized scalar arguments and grants must-writes only on normal return.
+A catch's outgoing argument area belongs to its unique live callback invocation;
+callee cleanup cannot release parent object storage. The callback stack owner
+checks cross-block SSA copies against every ordinary predecessor and treats
+runtime resumes as independent roots unless the definition belongs to the
+callback entry that already ran.
 The x86 MedIR call adapter carries that cleanup into stack SSA even when no
 whole-image callee map exists, and ABI recovery retains ECX followed by the
 proved scalar words. Native LLVM calls preserve the exact returned object
@@ -3578,6 +3583,9 @@ The HighC Windows throw adapter also owns whether a throw keeps its runtime
 call. Emission and external-declaration collection share that decision. PE32
 RTTI alone cannot fold an arbitrary call into a constructor or hide object
 initialization stores.
+`HighC/X86/HighCCallSetup.cpp` owns x86 outgoing-stack display cleanup. It
+retains address definitions read outside the hidden setup and their transitive
+inputs, including uses in catch continuations and nested statement bodies.
 
 The PE32 registration solver schedules ordinary blocks in reverse postorder per
 entry component, with stable address ordering for independent roots. Runtime
@@ -3589,10 +3597,13 @@ a candidate makes the reduced graph easier to analyze. The x86 CFG closure in
 callee contracts to ordinary reachability. Dead fallthrough cannot create
 overlapping callback instructions; independent runtime and address-taken roots
 retain their own identities. The loader applies its
-shared decode budget to long straight-line registration initializers. It retains
-confirmed function boundaries and stops at control transfers; padding-like
-immediate bytes cannot truncate a decoded instruction merely because a local
-instruction-count cutoff was reached.
+shared decode budget to registration instruction paths. It retains confirmed
+function boundaries and follows ordinary branches without entering call targets.
+After a control transfer, only a guess inside a decoded instruction can be
+removed; exact entries and conflicting or overlapping decoding remain boundaries.
+Returns, traps and unresolved jumps stop that path. Padding-like immediate bytes
+cannot truncate a decoded instruction merely because a local instruction-count
+cutoff was reached.
 
 ## Verified LowIR concolic branch flips
 

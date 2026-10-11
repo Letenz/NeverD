@@ -262,6 +262,16 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           Op.Inputs[0].ConstVal != Effect->Target)
         return false;
       const auto &Contract = States.CalleeContracts[Effect->CalleeIndex];
+      // Generic call emission can pad a later call to an earlier declaration's
+      // arity. A checked constructor must bind every scalar argument before
+      // that coercion; an invented zero cannot replace a missing source word.
+      if (Contract.isInitializer()) {
+        const auto *SourceCall =
+            Func.findCall(Block.Id, &Op - Block.Ops.data());
+        if (!SourceCall ||
+            SourceCall->Args.size() != 1 + Contract.StackPopBytes / 4)
+          return false;
+      }
       const bool Throw = Contract.isThrow();
       const auto ABI = med_llvm_eh::getCheckedRegistrationCxxCallABI(
           *Img, Contract, *Effect, *Call, Work);

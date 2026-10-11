@@ -118,6 +118,44 @@ class MultipleCatchEvidenceTests(unittest.TestCase):
             with patch.object(runner, "run_image", return_value=runtime(correct)), self.assertRaises(ValueError):
                 runner.observe(path, "ordered-control", "original", contract, [], {}, 1)
 
+    def test_disjoint_callback_callers_keep_exact_chunk_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.capture(root)
+            parent = root / "ordered"
+            receipt = json.loads((parent / "contract.json").read_text())
+            receipt.update(source_fragments=[[0x1100, 0x1120]],
+                           generated_fragments=[[0x2100, 0x2120]])
+            for route, owner in (("original", "source"), ("product", "generated")):
+                for suffix, base in (("", 0x400000), ("-rebased", 0x18000000)):
+                    path = parent / (route + suffix + ".exe")
+                    begin, end = receipt[owner + "_begin"], receipt[owner + "_end"]
+                    fragment = receipt[owner + "_fragments"][0]
+                    def runtime(caller):
+                        values = [17, 28, 39, 7, 18, 39, 1, 12,
+                                  base + begin + 4, base + caller, base + begin + 8]
+                        return {"exit_code": 0, "stdout": "MULTICATCH " +
+                                " ".join(f"{value:08X}" for value in values) + "\n"}
+                    for caller in (fragment[0], fragment[1] - 1):
+                        with patch.object(runner, "run_image", return_value=runtime(caller)):
+                            runner.observe(path, "ordered", route, receipt, [], {}, 1)
+                    for caller in (end, fragment[0] - 1, fragment[1], 0x3004):
+                        with self.subTest(route=route, base=base, caller=caller), \
+                                patch.object(runner, "run_image", return_value=runtime(caller)), \
+                                self.assertRaises(ValueError):
+                            runner.observe(path, "ordered", route, receipt, [], {}, 1)
+                    for fragments in (None, [], [[fragment[0], fragment[0]]],
+                                      [fragment, fragment], [[begin, end]],
+                                      [[True, fragment[1]]], [["bad", fragment[1]]],
+                                      [[fragment[0], 0x5000]], [[0x1000, 0x1040]],
+                                      [[fragment[0] + 8, fragment[1]],
+                                       [fragment[0], fragment[0] + 4]]):
+                        changed = receipt | {owner + "_fragments": fragments}
+                        with self.subTest(route=route, base=base, fragments=fragments), \
+                                patch.object(runner, "run_image", return_value=runtime(fragment[0] + 4)), \
+                                self.assertRaises(ValueError):
+                            runner.observe(path, "ordered", route, changed, [], {}, 1)
+
     def test_cleanup_observation_requires_exact_order_and_control_exit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -48,10 +48,11 @@ bool isExecutableAddress(const BinaryImage &Img, va_t Address);
 /// space, so a corrupt operand cannot fabricate an in-image target.
 std::optional<va_t> addSignedOffset(va_t Base, int64_t Displacement);
 
-/// Disprove a padding-derived boundary using uninterrupted decoded callback
-/// instructions. A control transfer or exhausted budget retains the boundary.
-bool callbackFallsThroughBoundary(const BinaryImage &Img, va_t Entry,
-                                  va_t Boundary, size_t &Work);
+/// Disprove a padding-derived boundary using decoded callback instructions.
+/// After a control transfer, only an instruction-interior guess can be removed.
+/// Independent entries, ambiguous decoding and exhausted budgets retain it.
+bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
+                               va_t Boundary, size_t &Work);
 
 template <typename T>
 std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
@@ -120,12 +121,12 @@ public:
     if (It == Starts.begin())
       return std::nullopt;
     va_t Begin = *std::prev(It);
-    // A padding guess cannot truncate an authenticated entry's straight-line
-    // instructions. Keep guesses after control transfers or undecodable bytes,
-    // as well as every stated symbol, export and other confirmed boundary.
+    // A padding guess cannot truncate an authenticated entry's instructions.
+    // Exact entries after control transfers, ambiguous decoding and every
+    // stated symbol, export and other confirmed boundary remain independent.
     if (AuthenticatedEntry)
       while (It != Starts.end() && Guesses.count(*It) &&
-             callbackFallsThroughBoundary(Img, Address, *It, CallbackWork))
+             disprovesCallbackBoundary(Img, Address, *It, CallbackWork))
         ++It;
     const Segment *Seg = Img.getSegmentFor(Begin);
     if (!Seg || !Seg->isExecutable())

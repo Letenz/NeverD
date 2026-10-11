@@ -274,7 +274,12 @@ TEST(RegistrationInitializer, InputPE32BindsSourceConstruction) {
   }
   EXPECT_EQ(DirectPops,
             DirectThrow ? (std::set<uint32_t>{8, 12}) : std::set<uint32_t>{});
-  unsigned DirectCalls = 0;
+  const unsigned FreshThrows = llvm::count_if(
+      Low.RegistrationStates->CallFrameEffects, [](const auto &Effect) {
+        return Effect.RuntimeThrow && !Effect.RuntimeThrow->isRethrow();
+      });
+  EXPECT_TRUE(!DirectThrow || FreshThrows == 3 || FreshThrows == 4);
+  unsigned DirectCalls = 0, CallbackCalls = 0;
   for (const auto &Block : Low.Blocks)
     for (const auto &Op : Block.Ops) {
       if (Op.Opcode != NdOp::CALL)
@@ -288,6 +293,16 @@ TEST(RegistrationInitializer, InputPE32BindsSourceConstruction) {
       if (!Callee.isInitializer())
         continue;
       ++DirectCalls;
+      const auto State = llvm::find_if(
+          Low.RegistrationStates->Blocks,
+          [&](const auto &Candidate) { return Candidate.BlockId == Block.Id; });
+      ASSERT_NE(State, Low.RegistrationStates->Blocks.end());
+      if (State->CallbackOnly) {
+        ++CallbackCalls;
+        EXPECT_EQ(Callee.StackPopBytes, 12u);
+        ASSERT_EQ(State->CxxCatchStacks.size(), 1u);
+        EXPECT_FALSE(State->CxxCatchStacks.front().empty());
+      }
       EXPECT_EQ(registrationCallStackPop(Low, Block, Op), Callee.StackPopBytes);
       auto Retargeted = Op;
       ++Retargeted.Inputs[0].Offset;
@@ -296,7 +311,8 @@ TEST(RegistrationInitializer, InputPE32BindsSourceConstruction) {
       Retargeted.Inputs[0] = Op.Inputs[0];
       EXPECT_FALSE(registrationCallStackPop(Low, Block, Retargeted));
     }
-  EXPECT_EQ(DirectCalls, DirectThrow ? 2u : 0u);
+  EXPECT_EQ(DirectCalls, DirectThrow ? (FreshThrows == 4 ? 3u : 2u) : 0u);
+  EXPECT_EQ(CallbackCalls, FreshThrows == 4 ? 1u : 0u);
 }
 
 } // namespace

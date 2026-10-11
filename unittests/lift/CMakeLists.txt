@@ -182,6 +182,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCBlocksTests.cpp
   core/ObjCBlockCallHintTests.cpp
   core/HighFrameTemporaryTests.cpp
+  core/HighX86CallSetupTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/LowZeroIdiomTests.cpp
   ../backend/HighSwiftEmitterTests.cpp
@@ -1198,6 +1199,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighEntryStackOffsetsTests.cpp
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
+  core/HighX86CallSetupTests.cpp
   LINK_COMPONENTS
   BackendC
 )
@@ -1330,6 +1332,7 @@ add_neverd_unittest(NeverDWindowsRegistrationFrameTests
   eh/WindowsRegistrationFrameTests.cpp
   eh/WindowsRegistrationFrameLayoutTests.cpp
   eh/WindowsRegistrationCxxFrameTests.cpp
+  eh/RegistrationCallbackStackFlowTests.cpp
 
   LINK_COMPONENTS
   WindowsRegistrationFrame
@@ -1377,6 +1380,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationEntryABITests.cpp
   eh/RegistrationEntryLayoutTests.cpp
   eh/RegistrationRealignedLayoutTests.cpp
+  eh/RegistrationInstructionRangeTests.cpp
   eh/RegistrationRuntimePointerTests.cpp
   eh/RegistrationFrameTaintTests.cpp
   eh/RegistrationInitializerFrameTests.cpp

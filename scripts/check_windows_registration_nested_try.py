@@ -205,7 +205,8 @@ def main() -> int:
                     context["secondary_search"], context["direct_throw"])
                 catch_try = context["catch_try"]
                 cleanup = context["catch_cleanup"]
-                first = (39 if rethrow else 17) + int(
+                first = (profile.expected_values(name)[0] if hasattr(profile, "expected_values")
+                         else 39 if rethrow else 17) + int(
                     control and not cleanup and getattr(profile, "control_first", True))
                 run([compiler, "--target=i686-pc-windows-msvc", "-fms-extensions", "-fexceptions",
                      "-fcxx-exceptions", "-fno-omit-frame-pointer", optimization,

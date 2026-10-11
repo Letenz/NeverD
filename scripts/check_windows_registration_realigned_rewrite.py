@@ -20,12 +20,14 @@ if __package__:
     from .check_windows_registration_cxx_rewrite import code_owner
     from .check_windows_registration_rewrite import PE32
     from .windows_registration_libraries import load_libraries
+    from .windows_registration_image import code_chunks
 else:
     from check_windows_registration_eh import run_image
     from check_windows_registration_realigned import require_test_result
     from check_windows_registration_cxx_rewrite import code_owner
     from check_windows_registration_rewrite import PE32
     from windows_registration_libraries import load_libraries
+    from windows_registration_image import code_chunks
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_realigned_rewrite_driver.cpp"
@@ -96,8 +98,8 @@ def validate_installation(original: PE32, generated: PE32, receipt: dict, case: 
     target = (entry + 5 + struct.unpack_from("<i", generated.data, at + 1)[0]) & 0xffffffff
     if generated.data[at] != 0xe9 or target != receipt["generated_begin"]:
         raise ValueError("realigned trampoline lost its generated owner")
-    code_owner(original, entry, receipt["source_end"], ".text")
-    code_owner(generated, target, receipt["generated_end"], ".ndtext")
+    code_chunks(original, receipt, "source", ".text")
+    code_chunks(generated, receipt, "generated", ".ndtext")
 
 
 def observe(path: Path, case: str, route: str, receipt: dict, launcher: list[str],

@@ -494,6 +494,10 @@ checks with `UseUnalignedPointers`. `HighCIntegerWidths.*`,
 `HighCPointerAddresses.*`, `HighCStoreForwarding.*`, `LLVMCValues.*`, and the
 frame-memory, atomic and segmented-memory suites cover the surrounding paths.
 
+`HighX86CallSetup` compiles and executes recovered outgoing-stack arithmetic
+through straight-line and nested continuation uses, including 32-bit wraparound.
+It also requires unused argument stores and address chains to disappear.
+
 `LLVMCValues.SelectedFunctionKeeps*SynthesizedTableStorage` compiles and executes
 selected lookup-table output at O0/O2 for x86, x64, ARM and AArch64 source
 profiles across ELF, COFF and Mach-O. Execution uses host scalar C for 64-bit
@@ -3355,21 +3359,33 @@ capture in their place. C/C++ syntax checks also cover records with no default
 constructor; RTTI alone must not invent a constructor or remove initialization.
 
 The `initializers` source and relift profiles keep ordinary scalar-argument
-constructors out of line in both the parent and private throw helpers before
-entering the CRT. Sixteen O0/O1 direct/private nested/rethrow source/control
-cases produce 128 images per capture or replay; the complete two-generation
-sequence executes 512 images. The source
+constructors out of line in the parent, its catch callback and private throw
+helpers before entering the CRT. Twenty O0/O1 direct/private nested/rethrow and
+direct-secondary source/control cases produce 160 images per capture or replay;
+the complete two-generation sequence executes 640 images. The source
 profile binds the initializer proof, the constructor-selection wrapper, both
 shared drivers and the actual type declarations. It retains the independent
-four-copy/twelve-destruction oracle and rejects copy-only evidence in place of
-ordinary-constructor evidence. `RegistrationInitializer.*` checks callee stack
-cleanup, exact returned destination, private spills, all-path initialization,
+four-copy/twelve-destruction oracle for nested catches and rethrows. A new
+object constructed from a catch's modified fields requires four copies and
+sixteen destructions with a distinct content/order trace. Copy-only evidence
+cannot replace ordinary-constructor evidence. `RegistrationInitializer.*` checks
+callee stack cleanup, exact returned destination, private spills, all-path initialization,
 source closure and the nearest pointer/argument/caller-storage refusals.
 `RegistrationInitializerState.*` checks exact stack cleanup and return identity
 without borrowing uninitialized arguments. `RegistrationInitializerFrame.*`
 checks disjoint must-writes, exceptional-edge isolation and scalar argument
 privacy. Direct-source mutations also challenge the installed constructor ABI,
-object pointer and optimizer promises.
+object pointer and optimizer promises at every call occurrence, including a
+constructor shared by parent and callback. `RegistrationCallbackInitializer.*`
+checks callback argument privacy, stack cleanup and parent-object initialization
+independently of block order. `RegistrationCallbackStackFlow.*` checks cross-block
+SSA copies, loops, bypassed definitions and runtime resumes without treating the
+parent's ordinary entry as the callback's dominator root.
+Second-generation receipts retain disjoint callback ranges. Replay checks each
+range and rejects gaps, overlap and chunks from the previous generation.
+`RegistrationInstructionRange.*` distinguishes instruction operands containing padding
+bytes from real entries after branches and calls, including loops, unreachable
+bytes, conflicting branch targets and overlapping instruction decodes.
 `RegistrationState.APossibleCalleeWriteCannotLaunderTheObjectPointer` checks
 that both partial and full-width may-writes preserve possible frame-pointer
 provenance until a definite replacement has been proved.
