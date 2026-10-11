@@ -3597,8 +3597,10 @@ arguments. The `reference-members` profile consumes a real out-of-line member
 call on a catch reference before normal completion or rethrow. Its sixteen
 O0/O1 cases and controls produce 128 images per generation and retain source,
 declaration, callback and receiver-proof hashes for Wine and native Windows
-replay. Its input-PE32 test also rejects six changed source receiver contracts
-and three post-emission LLVM pointer edits.
+replay. Its input-PE32 test also rejects six changed source receiver contracts,
+three missing, extra or constant receiver argument projections and three
+post-emission LLVM pointer edits. O1 keeps a live EDX value beside ECX; the
+checked member contract must exclude that scratch value from the call ABI.
 Pure graph tests require an independent
 scalar on every return, reject borrowed pointers and entry-EAX alternatives,
 and retain the private scalar-argument proof when a child returns an argument.

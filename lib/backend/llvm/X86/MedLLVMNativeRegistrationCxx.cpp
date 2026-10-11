@@ -269,9 +269,10 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
               States, *State, Contract, *Effect, Work))
         return false;
       // Generic call emission can pad a later call to an earlier declaration's
-      // arity. A checked constructor must bind every scalar argument before
-      // that coercion; an invented zero cannot replace a missing source word.
-      if (Contract.isInitializer()) {
+      // arity. An object call must bind its receiver and every scalar argument
+      // before that coercion; invented zeros cannot replace source words.
+      if (Contract.isInitializer() || Effect->ECXFrameOffset ||
+          Effect->ECXRuntimeObject) {
         const auto *SourceCall =
             Func.findCall(Block.Id, &Op - Block.Ops.data());
         if (!SourceCall ||

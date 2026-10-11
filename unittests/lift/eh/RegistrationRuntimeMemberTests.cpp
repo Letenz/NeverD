@@ -60,6 +60,14 @@ TEST(RegistrationRuntimeMember, InputPE32BindsReferenceReceiver) {
   auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
   recoverCallAbi(Med, Arch::X86, {}, &*Image);
   inferMedTypes(Med, Arch::X86);
+  const MedCallInfo *SourceCall = nullptr;
+  for (const auto &Block : Med.Blocks)
+    for (size_t I = 0; I != Block.Ops.size(); ++I)
+      if (Block.Ops[I].Addr == Borrow->Address &&
+          Block.Ops[I].OriginSeq == Borrow->OpSeq)
+        SourceCall = Med.findCall(Block.Id, I);
+  ASSERT_TRUE(SourceCall);
+  EXPECT_EQ(SourceCall->Args.size(), 1u);
   llvm::LLVMContext Context;
   auto Module =
       MedLLVMEmitter().emit({Med}, Context, "reference-member", Arch::X86, {},
@@ -72,7 +80,7 @@ TEST(RegistrationRuntimeMember, InputPE32BindsReferenceReceiver) {
   auto Proof =
       validateCOFFRegistrationCxxIR(*Parent, *Low.ExceptionMetadata, *Image);
   ASSERT_FALSE(bool(Proof)) << llvm::toString(std::move(Proof));
-  for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Changed = Med;
     auto &Effect =
@@ -91,6 +99,13 @@ TEST(RegistrationRuntimeMember, InputPE32BindsReferenceReceiver) {
     if (Mutation == 5)
       Changed.RegistrationStates->CalleeContracts[Effect.CalleeIndex]
           .ECXReads = {{0, 1}};
+    auto &Arguments = Changed.CallInfos[SourceCall - Med.CallInfos.data()].Args;
+    if (Mutation == 6)
+      Arguments.clear();
+    if (Mutation == 7)
+      Arguments.push_back(MedVar::makeConst(UINT32_MAX, 4));
+    if (Mutation == 8)
+      Arguments.front() = MedVar::makeConst(0x3000, 4);
     llvm::LLVMContext ChangedContext;
     auto Rejected =
         MedLLVMEmitter().emit({Changed}, ChangedContext, "changed-receiver",
