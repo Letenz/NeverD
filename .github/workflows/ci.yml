@@ -2162,7 +2162,7 @@ jobs:
   windows-eh-focused:
     name: Windows EH (x86 Wine and ARM32 PE contracts)
     needs: windows-eh-cxx-fixtures
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_llvm_artifact_run == '' || needs.windows-eh-cxx-fixtures.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_llvm_artifact_run == '' || needs.windows-eh-cxx-fixtures.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
@@ -2474,7 +2474,7 @@ jobs:
   windows-eh-native-replay:
     name: Windows EH (native PE32 replay)
     needs: windows-eh-focused
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && (inputs.windows_eh_replay_artifact_run != '' || (needs.windows-eh-focused.result == 'success' && inputs.windows_eh_llvm_artifact_run != '')) }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && (inputs.windows_eh_replay_artifact_run != '' || (needs.windows-eh-focused.result == 'success' && inputs.windows_eh_llvm_artifact_run != '')) }}
     runs-on: windows-2025
     timeout-minutes: 25
     permissions:
