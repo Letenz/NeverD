@@ -1,9 +1,9 @@
 //===- NdOpEmulatorWideMemoryTests.cpp - exact wide memory semantics ------===//
 
+#include "gtest/gtest.h"
+
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/loader/BinaryImage.h"
-
-#include "gtest/gtest.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -103,9 +103,9 @@ TEST(NdOpEmulatorWideMemory, WideAccessCannotWrapIntoLowMemory) {
   LoadEmulator.setStrictMode(true);
   LoadEmulator.setRegisterBytes(0x200, std::vector<uint8_t>(16, 0xcc));
   EXPECT_FALSE(LoadEmulator.step(load(High, 0x200, 16)));
-  EXPECT_EQ(LoadEmulator.getRegisterBytes(0x200),
-            std::optional<std::vector<uint8_t>>(
-                std::vector<uint8_t>(16, 0xcc)));
+  EXPECT_EQ(
+      LoadEmulator.getRegisterBytes(0x200),
+      std::optional<std::vector<uint8_t>>(std::vector<uint8_t>(16, 0xcc)));
 
   NdOpEmulator StoreEmulator(Image);
   StoreEmulator.setStrictMode(true);
@@ -119,19 +119,41 @@ TEST(NdOpEmulatorWideMemory, WideAccessCannotWrapIntoLowMemory) {
             UINT64_C(0x2222222222222222));
 }
 
-TEST(NdOpEmulatorWideMemory, SegmentBaseAdditionOverflowFailsClosed) {
+// x64 adds an FS/GS base to the offset modulo 2^64, as a negative TLS offset
+// needs, but the bytes an access then covers must still stay below 2^64.
+TEST(NdOpEmulatorWideMemory, SegmentBaseAdditionWrapsButAccessRangeCannot) {
+  constexpr uint64_t High = std::numeric_limits<uint64_t>::max() - 3;
   BinaryImage Image = imageWithSegment(
-      0, 64, SegmentFlags::Readable | SegmentFlags::Writable, 0x33);
+      High, 4, SegmentFlags::Readable | SegmentFlags::Writable, 0x11);
+  Segment Low;
+  Low.VA = 0;
+  Low.Size = 64;
+  Low.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Low.Data = sequence(64, 0);
+  Image.Segments.push_back(std::move(Low));
   NdOpEmulator Emulator(Image);
   Emulator.setStrictMode(true);
-  ASSERT_TRUE(Emulator.setMemoryAddressSpaceBase(
-      NdMemoryAddressSpace::X86GS,
-      std::numeric_limits<uint64_t>::max() - 3));
+  ASSERT_TRUE(
+      Emulator.setMemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS, High));
 
-  LowOp Load = load(8, 0x200, 8);
-  Load.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
-  EXPECT_FALSE(Emulator.step(Load));
-  EXPECT_FALSE(Emulator.getRegister(0x200).has_value());
+  LowOp Wrapped = load(8, 0x200, 8);
+  Wrapped.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  ASSERT_TRUE(Emulator.step(Wrapped));
+  EXPECT_EQ(Emulator.getRegister(0x200).value_or(0),
+            UINT64_C(0x0b0a090807060504));
+
+  LowOp Straddling = load(0, 0x208, 8);
+  Straddling.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  EXPECT_FALSE(Emulator.step(Straddling));
+  EXPECT_FALSE(Emulator.getRegister(0x208).has_value());
+
+  ASSERT_TRUE(
+      Emulator.setMemoryAddressSpaceBase(NdMemoryAddressSpace::X86GS, 0x40));
+  LowOp Negative = load(UINT64_C(0xfffffffffffffff8), 0x210, 8);
+  Negative.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+  ASSERT_TRUE(Emulator.step(Negative));
+  EXPECT_EQ(Emulator.getRegister(0x210).value_or(0),
+            UINT64_C(0x3f3e3d3c3b3a3938));
 }
 
 } // namespace

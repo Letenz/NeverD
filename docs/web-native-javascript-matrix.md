@@ -49,11 +49,19 @@ operation, not an entire epic. No transcript or desktop artifact was invented.
 | Selected artifact | #718 extraction | #714 JS navigation | #715 package provenance | #716 wrapper handling | #717 passive mapping |
 | --- | --- | --- | --- | --- | --- |
 | Official standalone `linux-x64`, SHA-256 `24972e3b…3370d0de` | **pass**: 2,589 modules, 10,005 preserved regions | **partial**: all 2,345 stored JS units have byte-preserving/reparse-verified recovery; selected lexical navigation, primitive rewrites, reversible renaming and Boolean branch selection; actual record/byte refusals retained; feature-specific understanding remains incomplete | **partial**: official manifest hash comparison; publisher signature and build provenance unverified | **not attempted**: this input is a standalone executable | **not attempted** for end-to-end protocol mapping; no supplied transcript/capture |
-| npm wrapper, SHA-256 `f6c375d5…3bd670b5` | **not attempted**: wrapper has no selected native executable; platform payload is separate below | **partial**: both supplied JS members analyzed; unresolved calls retained | **partial**: original tgz SRI matches captured registry declaration; graph/scripts/platform constraints and eight Node-call patterns; no install propagation, advisory or publisher authentication | **not attempted**: npm delivery is handled by the package track | **not attempted** |
+| npm wrapper, SHA-256 `f6c375d5…3bd670b5` | **not attempted**: wrapper has no selected native executable; platform payload is separate below | **partial**: both supplied JS members analyzed; unresolved calls retained | **partial**: original tgz SRI matches captured registry declaration; graph/scripts/platform constraints and eight Node-call patterns; one admitted lifecycle entry associates six calls, another command refuses and 13 module requests remain unresolved; selected comparison with 2.1.295 described below; no advisory or publisher authentication | **not attempted**: npm delivery is handled by the package track | **not attempted** |
 | npm `linux-x64` payload, SHA-256 `eef5a2e2…1e4fd0e1` | **pass**: native member matches the standalone bytes and Bun inventory | **partial**: helper bytes link to the qualified standalone source; no claim of all package entry behavior | **partial**: original tgz SRI and native-member equality verified; signature/build provenance unverified | **not attempted**: npm delivery is handled by the package track | **not attempted** |
 | Marketplace `linux-x64` VSIX, SHA-256 `31176c4a…99a3d11` | **pass** for selected embedded helper: exact standalone equality and Bun inventory | **not attempted** for extension-specific JS navigation; helper evidence is separate | **partial**: manifest/version and helper equality; publisher signature/build provenance unverified | **pass** for bounded ZIP/member extraction and the selected VSIX manifest/main-file relationship; extension activation unverified | **not attempted** |
 
-The observed byte equality concerns this one platform/release only. An SRI or
+Separately, NeverD compared the hash-pinned **2.1.295** npm wrapper against
+**2.1.296** through its original archive readers and selected source behavior
+owner. Both selected JS members have identical supplied bytes; six per-source
+pattern groups have unchanged recognized counts and retain 16 original call
+anchors. This comparison covers the wrapper sources, not either native
+payload or runtime behavior. The qualification record pins both inputs and the
+actual CLI report; no package script or external analyzer ran.
+
+The standalone-to-container byte equality concerns one platform/release only. An SRI or
 manifest match does not authenticate a publisher or establish benign behavior.
 Missing desktop samples, runtime traces, feature-specific client navigation,
 advisories and other platforms remain visible gaps. These extraction results

@@ -450,8 +450,10 @@ TEST_F(WebSDK, CLIBunExportWorksWithNoExternalTools) {
   const auto Errors = (Root / "stderr").string();
   const llvm::StringRef Args[] = {NEVERD_WEB_TEST_CLI, "web", "bun-export",
                                   Path, Destination};
+  // The blob spool needs an existing temporary directory on every host.
+  const auto Temporary = "TMPDIR=" + Root.string();
   const llvm::StringRef Environment[] = {"PATH=/neverd-no-external-tools",
-                                         "TMPDIR=/private/tmp"};
+                                         Temporary};
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Errors};
   std::string LaunchError;

@@ -65,6 +65,7 @@
 
 namespace neverd {
 
+struct SyscallConvention;
 class MedLLVMEmitterTestPeer;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
@@ -317,6 +318,10 @@ private:
   // AArch64 value-producing INTRINSIC
   llvm::Value *emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                          llvm::IRBuilder<> &Builder);
+  /// A supervisor call given an operating system's register contract.
+  llvm::Value *emitLinuxSyscall(const MedOp &Op,
+                                const SyscallConvention &Convention,
+                                llvm::IRBuilder<> &Builder);
   /// Return the address operand of an intrinsic whose backend owns complete
   /// relocation-aware memory resolution.  Function-wide fragment auditing
   /// uses this same role map so stored values remain escape sinks while the

@@ -100,6 +100,59 @@ NEVERD_API const char *neverd_web_package_integrity_verify_json(
     const char *DeclarationID, size_t DeclarationIDSize, const char *PackageID,
     size_t PackageIDSize);
 
+/// Import one captured OSV record and one captured provenance descriptor.
+/// Descriptor schema_version:1 admits optional source/retrieved_at/as_of
+/// declarations. No fetch, freshness, publisher or exploitability inference.
+NEVERD_API const char *neverd_web_package_advisory_import_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DescriptorArtifactID, size_t DescriptorArtifactIDSize);
+/// RecordKind is affected or severities; Limit is 1..512. Supplied names,
+/// prose, scores and source labels remain private behind original anchors.
+NEVERD_API const char *neverd_web_package_advisory_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AdvisoryID, size_t AdvisoryIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+/// Options schema_version:1, optional advisory_ids array (0..16). Match exact
+/// declared npm identity and admitted version selectors, never installed code
+/// or reachability. Unknown selectors prevent negative coverage claims.
+NEVERD_API const char *neverd_web_package_advisories_match_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+NEVERD_API const char *neverd_web_package_advisories_match_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *MatchesID, size_t MatchesIDSize,
+    uint64_t Offset, uint64_t Limit);
+
+/// Import captured registry-dist, intoto-statement or dsse-intoto metadata.
+/// Descriptor uses the shared offline source/time schema. No signature,
+/// publisher, trust chain, transparency or SLSA level authentication.
+NEVERD_API const char *neverd_web_package_attestation_import_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DescriptorArtifactID, size_t DescriptorArtifactIDSize,
+    const char *InputKind, size_t InputKindSize);
+/// RecordKind is signatures, subjects or digests. Limit is 1..512. Private
+/// names, URIs, key IDs, signature bytes, digests and payloads stay redacted.
+NEVERD_API const char *neverd_web_package_attestation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AttestationID, size_t AttestationIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+/// Match ONE explicit SHA-256/SHA-512 subject digest against a captured
+/// original using the integrity owner. No other subjects or digests are
+/// checked; equality does not bind an inventory or authenticate the signer.
+NEVERD_API const char *neverd_web_package_attestation_digest_match_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *AttestationID, size_t AttestationIDSize, const char *DigestID,
+    size_t DigestIDSize);
+NEVERD_API const char *neverd_web_package_attestation_digest_result_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *MatchID, size_t MatchIDSize);
+
 /// Explicit tar/tgz/zip profile; captured originals only, no recursive
 /// extraction.
 NEVERD_API const char *neverd_web_package_archive_extract_json(
@@ -429,6 +482,35 @@ NEVERD_API const char *neverd_web_package_behavior_analyze_json(
 NEVERD_API const char *neverd_web_package_behavior_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
+/// Compare selected syntax evidence under an existing package diff. Options:
+/// schema_version=1 and optional before_package_behavior_id and
+/// after_package_behavior_id from that diff's exact package analyses.
+NEVERD_API const char *neverd_web_package_behavior_diff_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageDiffID, size_t PackageDiffIDSize,
+    const char *OptionsJSON, size_t OptionsSize);
+/// Page pairs, patterns or occurrences; missing coverage never becomes zero.
+NEVERD_API const char *neverd_web_package_behavior_diff_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *DiffID, size_t DiffIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
+/// Options is {"schema_version":1} with optional package_behavior_id from
+/// this package analysis. Absence selects no sources but retains declarations
+/// and coverage gaps. No shell, runtime resolution or reachability inference.
+NEVERD_API const char *neverd_web_package_install_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// RecordKind is scripts, sources, requests or associations. Limit is 1..512.
+/// Fixed metadata and opaque evidence anchors only; commands stay private.
+NEVERD_API const char *neverd_web_package_install_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *InstallID, size_t InstallIDSize,
     const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
     uint64_t Limit);
 

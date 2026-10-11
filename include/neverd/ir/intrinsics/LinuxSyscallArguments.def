@@ -1,0 +1,23 @@
+//===- LinuxSyscallArguments.def - Linux syscall arities --------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// Linux syscalls whose argument count is verified, per architecture.  A
+/// number missing here keeps every argument register.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_LINUX_SYSCALL_ARGUMENTS(Arch, Number, Count)
+#ifndef NEVERD_LINUX_SYSCALL_ARGUMENTS
+#define NEVERD_LINUX_SYSCALL_ARGUMENTS(Arch, Number, Count)
+#endif
+NEVERD_LINUX_SYSCALL_ARGUMENTS(X64, 60, 1)     // exit(status)
+NEVERD_LINUX_SYSCALL_ARGUMENTS(X64, 231, 1)    // exit_group(status)
+NEVERD_LINUX_SYSCALL_ARGUMENTS(AArch64, 93, 1) // exit(status)
+NEVERD_LINUX_SYSCALL_ARGUMENTS(AArch64, 94, 1) // exit_group(status)
+NEVERD_LINUX_SYSCALL_ARGUMENTS(ARM, 1, 1)      // exit(status)
+NEVERD_LINUX_SYSCALL_ARGUMENTS(ARM, 248, 1)    // exit_group(status)
+#undef NEVERD_LINUX_SYSCALL_ARGUMENTS

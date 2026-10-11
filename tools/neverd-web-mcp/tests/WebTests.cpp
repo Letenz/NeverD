@@ -67,7 +67,7 @@ public:
             "Wrong tool failure diagnostic");
     return Error;
   }
-  Json import(std::size_t Index) {
+  Json import(std::size_t Index, std::size_t ExpectedArtifacts = 1) {
     const auto Preview = get("web_import_preview", {{"input_index", Index}});
     const auto Other =
         Reference.execute("web_import_preview",
@@ -82,7 +82,8 @@ public:
     Revision = Commit.at("revision").get<std::string>();
     same("web_metadata", Json::object());
     const auto Items = same("web_artifacts", {{"revision", Revision}});
-    require(Items.at("items").size() == 1, "Unexpected single-file capture");
+    require(Items.at("items").size() == ExpectedArtifacts,
+            "Unexpected captured artifact count");
     return Items.at("items")[0].at("artifact_id");
   }
 };
@@ -313,6 +314,160 @@ void archives(Harness &H, bool HasParser) {
           {"record_kind", "scripts"}});
 }
 
+void offlineAdvisories() {
+  Fixture F;
+  F.write("a.advisory",
+          R"({"id":"CANARY_GHSA","modified":"2026-10-10T00:00:00Z",
+    "affected":[{"package":{"ecosystem":"npm","name":"CANARY_PACKAGE"},
+      "versions":["1.0.0"]}],"severity":[{"type":"CVSS_V3","score":"CANARY"}]})");
+  F.write("b.descriptor", R"({"schema_version":1,"source":"CANARY_FEED",
+    "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})");
+  F.write("c.package", R"({"name":"CANARY_PACKAGE","version":"1.0.0"})");
+  Harness H({F.Root.string()});
+  H.import(0, 4);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto &Items = Artifacts.at("items");
+  Json Import{{"revision", H.Revision},
+              {"artifact_id", Items[1].at("artifact_id")},
+              {"descriptor_artifact_id", Items[2].at("artifact_id")}};
+  const auto Advisory = H.same("web_package_advisory_import", Import);
+  require(Advisory.at("publisher_authenticated") == false &&
+              Advisory.at("freshness_assessed") == false,
+          "MCP upgraded captured metadata into authentication or freshness");
+  const auto ID = Advisory.at("package_advisory_id");
+  for (const auto *Kind : {"affected", "severities"})
+    H.same("web_package_advisory_records", {{"revision", H.Revision},
+                                            {"package_advisory_id", ID},
+                                            {"record_kind", Kind}});
+  const auto P = H.same("web_packages_analyze",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[3].at("artifact_id")},
+                         {"input_kind", "package-json"}});
+  Json Selection{{"revision", H.Revision},
+                 {"package_analysis_id", P.at("package_analysis_id")}};
+  for (const bool Selected : {false, true}) {
+    if (Selected)
+      Selection["advisory_ids"] = Json::array({ID});
+    const auto M = H.same("web_package_advisories_match", Selection);
+    require(M.at("declared_version_match_count") == (Selected ? 1 : 0) &&
+                M.at("exploitability_verified") == false &&
+                M.at("analysis_status") == "partial",
+            "MCP lost version selection or its explicit evidence boundary");
+    const auto Records = H.same(
+        "web_package_advisories_match_records",
+        {{"revision", H.Revision},
+         {"package_advisory_matches_id", M.at("package_advisory_matches_id")}});
+    require(Records.at("items").size() == (Selected ? 1 : 0),
+            "MCP changed selected advisory match rows");
+    if (Selected)
+      require(Records.at("items")[0].at("match_status") ==
+                  "declared_version_match",
+              "MCP changed the admitted version membership");
+  }
+  Selection["advisory_ids"] = Json::array({ID, ID});
+  H.fail("web_package_advisories_match", Selection,
+         "package_advisory_duplicate_selection");
+  Import["fetch"] = true;
+  invalid([&] { H.get("web_package_advisory_import", Import); });
+  const auto Old = H.Revision;
+  H.import(0, 4);
+  H.fail("web_package_advisory_records",
+         {{"revision", Old},
+          {"package_advisory_id", ID},
+          {"record_kind", "affected"}},
+         "stale_revision");
+  H.fail("web_package_advisory_records",
+         {{"revision", H.Revision},
+          {"package_advisory_id", ID},
+          {"record_kind", "affected"}},
+         "unknown_package_advisory");
+}
+
+void offlineAttestations() {
+  Fixture F;
+  F.write("a.statement", R"({"_type":"https://in-toto.io/Statement/v1",
+    "subject":[{"name":"CANARY","digest":{"sha256":
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}}],
+    "predicateType":"CANARY_PREDICATE"})");
+  F.write("b.descriptor", R"({"schema_version":1,"source":"CANARY"})");
+  F.write("c.original", "abc");
+  F.write("d.registry", R"({"name":"CANARY","version":"1.0.0",
+    "dist":{"signatures":[{"sig":"Zm9v","keyid":"CANARY"}]}})");
+  F.write("e.envelope", R"({"payloadType":"application/vnd.in-toto+json",
+    "payload":"Zh==","signatures":[]})");
+  Harness H({F.Root.string()});
+  H.import(0, 6);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto Items = Artifacts.at("items");
+  Json Import{{"revision", H.Revision},
+              {"artifact_id", Items[1].at("artifact_id")},
+              {"descriptor_artifact_id", Items[2].at("artifact_id")},
+              {"input_kind", "intoto-statement"}};
+  const auto A = H.same("web_package_attestation_import", Import);
+  require(A.at("signature_verification") == "not_performed" &&
+              A.at("publisher_authenticated") == false &&
+              A.at("slsa_level_verified") == false,
+          "MCP authenticated unverified metadata");
+  const auto ID = A.at("package_attestation_id");
+  Json Digests;
+  for (const auto *Kind : {"signatures", "subjects", "digests"}) {
+    const auto Page = H.same("web_package_attestation_records",
+                             {{"revision", H.Revision},
+                              {"package_attestation_id", ID},
+                              {"record_kind", Kind}});
+    if (std::string_view(Kind) == "digests")
+      Digests = Page;
+  }
+  const auto M =
+      H.same("web_package_attestation_digest_match",
+             {{"revision", H.Revision},
+              {"artifact_id", Items[3].at("artifact_id")},
+              {"package_attestation_id", ID},
+              {"digest_id", Digests.at("items")[0].at("digest_id")}});
+  require(
+      M.at("integrity_status") == "match" &&
+          M.at("package_inventory_bound") == false &&
+          M.at("publisher_authenticated") == false,
+      "MCP changed an original digest comparison into package authentication");
+  H.same("web_package_attestation_digest_result",
+         {{"revision", H.Revision},
+          {"package_attestation_digest_match_id",
+           M.at("package_attestation_digest_match_id")}});
+  Import["artifact_id"] = Items[4].at("artifact_id");
+  Import["input_kind"] = "registry-dist";
+  const auto Registry = H.same("web_package_attestation_import", Import);
+  const auto Signatures =
+      H.same("web_package_attestation_records",
+             {{"revision", H.Revision},
+              {"package_attestation_id", Registry.at("package_attestation_id")},
+              {"record_kind", "signatures"}});
+  require(Signatures.at("items")[0].at("encoding_status") ==
+                  "admitted_standard_base64" &&
+              Signatures.at("items")[0].at("signature_verification") ==
+                  "not_performed",
+          "MCP changed registry signature admission");
+  Import["artifact_id"] = Items[5].at("artifact_id");
+  Import["input_kind"] = "dsse-intoto";
+  require(
+      H.same("web_package_attestation_import", Import).at("payload_status") ==
+          "invalid_base64",
+      "MCP accepted nonzero Base64 residual bits");
+  Import["verify"] = true;
+  invalid([&] { H.get("web_package_attestation_import", Import); });
+  const auto Old = H.Revision;
+  H.import(0, 6);
+  H.fail("web_package_attestation_records",
+         {{"revision", Old},
+          {"package_attestation_id", ID},
+          {"record_kind", "subjects"}},
+         "stale_revision");
+  H.fail("web_package_attestation_digest_result",
+         {{"revision", H.Revision},
+          {"package_attestation_digest_match_id",
+           M.at("package_attestation_digest_match_id")}},
+         "unknown_package_attestation_digest_match");
+}
+
 void passiveInputs(Harness &H) {
   auto Artifact = H.import(4);
   const auto Preview = H.same(
@@ -383,6 +538,37 @@ void zipArchive(Harness &H, bool HasParser) {
     require(Aggregate.at("selection_complete") == false &&
                 Aggregate.at("record_count") == 1,
             "MCP changed selected package coverage");
+    const Json InstallArgs{
+        {"revision", H.Revision},
+        {"package_analysis_id", P.at("package_analysis_id")}};
+    const auto Empty = H.same("web_package_install_analyze", InstallArgs);
+    require(Empty.at("source_count") == 0 && Empty.at("script_count") == 3,
+            "MCP requires invented source selection for install declarations");
+    const auto EmptyRows =
+        H.same("web_package_install_records",
+               {{"revision", H.Revision},
+                {"package_install_id", Empty.at("package_install_id")},
+                {"record_kind", "scripts"}});
+    require(EmptyRows.at("items")[0].at("status") ==
+                    "entry_source_unselected" &&
+                EmptyRows.at("items")[1].at("status") ==
+                    "not_captured_or_unavailable" &&
+                EmptyRows.at("items")[2].at("status") ==
+                    "not_captured_or_unavailable",
+            "MCP overstates absent or encrypted file coverage");
+    auto SelectedInstall = InstallArgs;
+    SelectedInstall["package_behavior_id"] =
+        Aggregate.at("package_behavior_id");
+    const auto Trace = H.same("web_package_install_analyze", SelectedInstall);
+    require(Trace.at("association_count") == 1 &&
+                Trace.at("reachability_verified") == false &&
+                Trace.at("lifecycle_activation_verified") == false,
+            "MCP installation association changed its confidence");
+    for (const auto *Kind : {"scripts", "sources", "requests", "associations"})
+      redacted(H.same("web_package_install_records",
+                      {{"revision", H.Revision},
+                       {"package_install_id", Trace.at("package_install_id")},
+                       {"record_kind", Kind}}));
     for (const auto *Kind : {"sources", "records"})
       redacted(
           H.same("web_package_behavior_records",
@@ -390,6 +576,31 @@ void zipArchive(Harness &H, bool HasParser) {
                   {"package_behavior_id", Aggregate.at("package_behavior_id")},
                   {"record_kind", Kind}}));
     auto Bad = Selection;
+    const auto Base = H.same("web_packages_compare",
+                             {{"revision", H.Revision},
+                              {"before_id", P.at("package_analysis_id")},
+                              {"after_id", P.at("package_analysis_id")}});
+    Json Compare{{"revision", H.Revision},
+                 {"package_diff_id", Base.at("package_diff_id")}};
+    const auto Missing = H.same("web_package_behavior_diff_analyze", Compare);
+    require(Missing.at("source_pair_count") == 0 &&
+                Missing.at("before_selection") == "not_supplied",
+            "MCP invented comparison coverage without selected sources");
+    Compare["before_package_behavior_id"] = Aggregate.at("package_behavior_id");
+    Compare["after_package_behavior_id"] = Aggregate.at("package_behavior_id");
+    const auto Diff = H.same("web_package_behavior_diff_analyze", Compare);
+    require(Diff.at("compared_pair_count") == 1 &&
+                Diff.at("occurrence_count") == 2 &&
+                Diff.at("call_correspondence_verified") == false,
+            "MCP lost independent before/after syntax occurrences");
+    for (const auto *Kind : {"pairs", "patterns", "occurrences"})
+      redacted(H.same(
+          "web_package_behavior_diff_records",
+          {{"revision", H.Revision},
+           {"package_behavior_diff_id", Diff.at("package_behavior_diff_id")},
+           {"record_kind", Kind}}));
+    Compare["path"] = "CANARY_PATH";
+    invalid([&] { H.get("web_package_behavior_diff_analyze", Compare); });
     Bad["execute"] = true;
     invalid([&] { H.get("web_package_behavior_analyze", Bad); });
   }
@@ -464,14 +675,15 @@ int main() {
     F.write(
         "map",
         R"({"version":3,"sources":["CANARY.js"],"sourcesContent":["throw 'CANARY';"],"mappings":"AAAA"})");
-    F.write("zip",
-            neverd::web::test::ZipFixture(
-                {{"package.json",
-                  R"({"name":"CANARY","scripts":{"install":"CANARY"}})"},
-                 {"opaque", "CANARY", 0, 1},
-                 {"install.js",
-                  "require('node:child_process').execFile('CANARY',options);"}})
-                .Bytes);
+    F.write(
+        "zip",
+        neverd::web::test::ZipFixture(
+            {{"package.json",
+              R"({"name":"CANARY","scripts":{"install":"node install.js CANARY","postinstall":"node opaque","preinstall":"node CANARY_ABSENT.js"}})"},
+             {"opaque", "CANARY", 0, 1},
+             {"install.js",
+              "require('node:child_process').execFile('CANARY',options);"}})
+            .Bytes);
     const auto &Ops = Backend.at("operations");
     const bool HasParser =
         std::find(Ops.begin(), Ops.end(), "source_analyze") != Ops.end();
@@ -562,11 +774,46 @@ int main() {
                                      {"byte_length", "1"}});
       }
     }
+    offlineAdvisories();
+    offlineAttestations();
     passiveInputs(H);
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&
           Analysis.value("available", false))
         zipArchive(H, HasParser);
+    if (HasParser) {
+      for (bool LockOnly : {false, true}) {
+        F.write(
+            "package",
+            LockOnly
+                ? R"({"lockfileVersion":3,"packages":{"":{"hasInstallScript":true}}})"
+                : R"({"scripts":{"install":"node CANARY_MISSING.js"}})");
+        const auto Artifact = H.import(3);
+        const auto P =
+            H.same("web_packages_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", Artifact},
+                    {"input_kind", LockOnly ? "npm-lock" : "package-json"}});
+        const auto A =
+            H.same("web_package_install_analyze",
+                   {{"revision", H.Revision},
+                    {"package_analysis_id", P.at("package_analysis_id")}});
+        const auto Rows =
+            H.same("web_package_install_records",
+                   {{"revision", H.Revision},
+                    {"package_install_id", A.at("package_install_id")},
+                    {"record_kind", "scripts"}});
+        require(
+            A.at("source_count") == 0 && A.at("association_count") == 0 &&
+                Rows.at("items")[0].at("status") ==
+                    (LockOnly ? "manifest_not_supplied"
+                              : "no_directory_inventory"),
+            "MCP requires invented evidence for manifest-only install traces");
+        if (LockOnly)
+          require(Rows.at("items")[0].at("script_id").is_null(),
+                  "Lock install presence invented a script anchor");
+      }
+    }
     WebTools Isolated(Inputs);
     const auto Error =
         evidence(Isolated.call("neverd_web_metadata", Json::object()), true);

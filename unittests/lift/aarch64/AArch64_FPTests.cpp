@@ -5,7 +5,7 @@ protected:
   void expectPairedClangSyntax(const fs::path &CFile,
                                const std::string &Source) {
     auto syntax = checkHighCClangSyntax(
-        CFile, {"-target", "aarch64-none-elf", "-ffreestanding",
+        CFile, {"-target", "aarch64-linux-gnu", "-ffreestanding",
                 "-march=armv8.6-a+bf16", "-std=gnu11"});
     EXPECT_EQ(syntax.exitCode, 0) << syntax.err << "\n" << Source;
   }
@@ -519,7 +519,7 @@ TEST_F(AArch64_FP, BfmmlaLLVMCUsesACLEAndCompiles) {
   expectPairedClangSyntax(Fragment, Function);
   const auto Assembly = tmpFile("bfmmla_llvmc.s");
   auto Compile =
-      exec("clang", {"-target", "aarch64-none-elf", "-ffreestanding",
+      exec("clang", {"-target", "aarch64-linux-gnu", "-ffreestanding",
                      "-march=armv8.6-a+bf16", "-std=gnu11", "-O2", "-S",
                      Fragment.string(), "-o", Assembly.string()});
   ASSERT_EQ(Compile.exitCode, 0) << Compile.err << Function;
