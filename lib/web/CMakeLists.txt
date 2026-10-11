@@ -17,6 +17,9 @@ add_neverd_component_library(NeverDWeb
   streams/Relations.cpp
   SessionStreams.cpp
   SessionPackages.cpp
+  SessionNodeBehavior.cpp
+  SessionPackageBehavior.cpp
+  packages/behavior/Publication.cpp
   SessionPackageArchive.cpp
   SessionPackageIntegrity.cpp
   HTML.cpp
@@ -57,6 +60,7 @@ add_neverd_component_library(NeverDWeb
   SessionMaps.cpp
   SessionBindings.cpp
   SessionSemantics.cpp
+  SessionRewrite.cpp
   SessionModules.cpp
   SessionBundles.cpp
   SessionView.cpp
@@ -102,8 +106,19 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   include("${CMAKE_SOURCE_DIR}/cmake/NeverDJavaScriptParser.cmake")
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
+    packages/behavior/Rules.cpp
+    packages/behavior/Source.cpp
+    packages/behavior/Package.cpp
     interfaces/SourceInterfaces.cpp
+    interfaces/SourceContext.cpp
+    interfaces/SourceFetch.cpp
+    interfaces/SourceXHR.cpp
     SourceRecovery.cpp
+    rewrite/Plan.cpp
+    rewrite/Primitive.cpp
+    rewrite/Apply.cpp
+    rewrite/Validate.cpp
+    rewrite/Export.cpp
     SourceModel.cpp SourceBindings.cpp SourceEvaluate.cpp SourceEffects.cpp SourceModules.cpp HTMLModules.cpp
     SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
   target_link_libraries(NeverDWeb PRIVATE neverd_js_parser)

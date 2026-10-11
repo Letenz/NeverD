@@ -481,6 +481,17 @@ It only exposes a capability-filtered subset and cannot assert reviewed source
 ranges. No analysis process or language runtime is spawned. See the
 [MCP profile](web-mcp-profile.md) for its concrete limits and ownership.
 Views use owned parser token/comment spans and never claim semantic rewrites.
+`SourceRewrite` is a separate derived-source boundary. `rewrite/Plan` selects
+explicit primitive passes using the existing binding/value/effect owners;
+`Primitive` emits closed values, `Validate` checks SameValue and the complete
+unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`SessionRewrite` retains at most two private results and publishes metadata.
+Its raw local export requires a pass/source/revision-bound receipt;
+`rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
+This transaction does not change Bun export's retained-partial-evidence policy.
+Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
+claim source-reflection or whole-program equivalence. See the
+[primitive rewrite profile](web-source-rewrite-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -498,6 +509,16 @@ evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
 comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
+`packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
+consumes shared bindings/module origins/values, and `Package` owns exact
+inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+the two behavior session adapters own selection, cache and revision boundaries.
+Source ownership, delivery package and declared entry remain distinct.
+`SourceModel::indexSourceDeclarations` supplies the order-independent unique
+binding projection for origins, paths, navigation and bundles; valid class
+outer/inner declarations preserve ambiguity without poisoning other nodes.
+The full binding declaration model stays authoritative. See the
+[Node behavior profile](web-node-behavior-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
@@ -515,7 +536,10 @@ publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
-`interfaces/SourceInterfaces` consumes the shared syntax/binding/value models;
+`interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
+Its private `SourceContext` owns bounded admission, indexes, finite strings and
+record publication; `SourceFetch` and `SourceXHR` own their syntax rules. XHR
+links lexical constructors/receivers without inferring request sessions;
 `interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
@@ -4641,6 +4665,8 @@ DarwinFiles owns common attribute import, name/stat validity and record encoding
 DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.
 
 DarwinFiles also owns the sole static owner/ordinary-query authorizer and its actual pathname SEARCH points. Process construction passes the canonical explicit credential record separately from scalar observation defaults; JSON imports the exact authorization declaration and uses the same admission owner. The immutable query environment closes all other file routes by default, exempts only actual opaque stream descriptions, and closes direct mappingSource access so DarwinMemory cannot bypass the operation domain. Anonymous VM retains its independent owner. Whole-mask group/world outcomes and explicit selected-credential membership share this owner; a missing group remains unknown except for explicit original GroupMembershipUID=KAUTH_UID_NONE or proved real-copy displacement, each with a complete supplied list. DarwinSystem owns canonical admission of the independent membership UID; JSON uses the shared lossless integer decoder, and no resolver context is inferred from scalar IDs. Broader vnode authorization must extend this same evaluator with operation-specific and resulting-state semantics before opening that domain.
+
+DarwinFiles owns immediate poll count admission, descriptor lookup and numeric-FD/filter registration in DarwinPoll.cpp. DarwinServices passes the existing canonical explicit system observations without interpreting limits or credentials. Constructed virtual regular descriptions declare successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; a native vnode kind alone supplies none of these facts. Duplicate filter winners are independent of shared open-description identity. The owner snapshots complete input before projecting ordinary readiness and uses the shared user-memory copy owner for whole output; partial output and unknown providers stop before effects. Both immutable permission-query domains close this route before preflight. Waiting, select and real provider/security lifecycle need explicit extension of this same owner.
 
 When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
 

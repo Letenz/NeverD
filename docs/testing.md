@@ -453,6 +453,20 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
+Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
+`WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
+retained extractor ancestry, foreign namespaces and atomic aggregate refusal.
+`WebNodeBehaviorSDK.*` checks 16-source selection independent of the four-result
+cache, revisions, private-value canaries, truncated entry lists, archive/Bun/SEA
+association and CLI processes with an unusable PATH. Supply the pinned
+`NEVERD_CLAUDE_CODE_21296_ELF` and `NEVERD_CLAUDE_CODE_21296_NPM_DIR` inputs for
+the two optional real source cases. `WebSourceDeclarations.*` and the class
+cases in origins/paths cover the shared declaration projection. Changes to
+that shared boundary require the owning Web directory, worker/MCP parity and
+parser/backend omission checks, followed by restoration of the enabled build.
+See the [Node behavior profile](web-node-behavior-profile.md).
+
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
 and independent metadata/work bounds. `WebDesktopSDK.*` checks distinct profile
@@ -511,6 +525,10 @@ See the [stream profiles](web-stream-profile.md).
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and
 WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+`WebSourceXHR.*` covers direct/const receiver and argument anchors, shadowing,
+aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
+compound-assignment exclusions, missing/forbidden methods and atomic budgets.
+XHR remains excluded from the unchanged fetch/HAR correlation profile.
 `WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
 hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
 cache limits, canary exclusion and direct/framed parity. Run the owning web
@@ -554,6 +572,19 @@ downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
 tests cover malformed prelinked indices, counts, aliases and alignment.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+`WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
+surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
+directive preservation, tagged-template refusal, ASI outer-tree mismatches,
+exact inverse and tampered receipts. Lexer, record and output-growth budgets
+must refuse atomically. Its optional pinned Claude module 1897 case checks 5
+string-recovery and 201 constant-folding substitutions, each retaining 1,496
+refused candidates, with exact original recovery. This does not qualify every
+module for semantic rewriting. `WebRewriteExport` checks candidate/receipt
+failure rollback, foreign files, symlinks and renamed/replaced output paths.
+`WebRewriteSDK` checks private literals, cache/revision and parse-goal bindings,
+immutable captured bytes and receipt-bound CLI export with an unusable PATH.
+Worker/MCP tests compare both passes and record pages against the shared API;
+MCP excludes raw export and arbitrary output paths.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative

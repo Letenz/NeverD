@@ -106,6 +106,17 @@ TEST(WebSourceOrigins,
   EXPECT_TRUE(I.Electron.Boundaries.empty());
 }
 
+TEST(WebSourceOrigins, ClassNameBindingsDoNotInvalidateUnrelatedOrigins) {
+  Inspection I(R"JS(
+    const electron = require('electron');
+    class Named { method() { return Named; } }
+    electron.ipcMain.handle('private-channel', handler);
+  )JS");
+  EXPECT_EQ(I.Origins.Status, "partial") << I.Origins.Reason;
+  ASSERT_EQ(I.Electron.Boundaries.size(), 1u);
+  EXPECT_EQ(I.Electron.Boundaries[0].Kind, "ipc_main_handle");
+}
+
 TEST(WebSourceOrigins, AliasBudgetAndInvalidEvidencePublishNoPartialOrigins) {
   std::string Text = "const base = require('electron');\n";
   // Reverse declaration order forces one bounded dependency traversal.

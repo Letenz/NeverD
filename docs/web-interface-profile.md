@@ -50,13 +50,14 @@ Reimport clears pending and published analyses and comparisons.
 
 ## Source candidates
 
-`direct-fetch-websocket-syntax-v1` consumes the shared parser, lexical binding
+`fetch-websocket-xhr-syntax-v2` consumes the shared parser, lexical binding
 and primitive-value models. It recognizes direct external `fetch(...)` and
 `new WebSocket(...)` syntax. A lexically external name is **not proof of a
 platform intrinsic**: every result remains static inference with unknown
 runtime identity and reachability. Shadowed/written names are excluded;
-possible direct eval refuses the analysis. Member callees, aliases, wrappers,
-XHR and interprocedural request flow are unsupported in this profile.
+possible direct eval refuses the analysis. Aliases, request wrappers and
+interprocedural request flow are unsupported. The v2 identity replaces the v1
+profile identity; operation names and existing fields remain available.
 
 Literal strings, supported primitive concatenation and fully evaluated template
 literals provide private URL candidates. Unresolved template expressions,
@@ -69,14 +70,58 @@ in [Web IDL dictionary conversion](https://webidl.spec.whatwg.org/#es-dictionary
 Only the six methods specified by
 [Fetch normalization](https://fetch.spec.whatwg.org/#concept-method-normalize)
 are uppercased; lowercase `patch` is not promoted to `PATCH`.
-CONNECT/TRACE candidates carry a forbidden-method classification.
+CONNECT/TRACE/TRACK candidates carry a forbidden-method classification,
+including their ASCII case variants, through one shared Fetch/XHR rule.
 
 Records link call, URL, options, method, headers and body syntax nodes to exact
 source byte coordinates. No source text or private endpoint strings are
 published by these APIs. Existing source navigation and explicitly reviewed
-source views supply the separate local inspection path. Response handling,
-parameter schemas, wrapper ownership, serialization/compression/crypto chains
-and semantic behavior remain unimplemented.
+source views supply the separate local inspection path.
+
+### XMLHttpRequest syntax
+
+Following the [XHR interface declarations](https://xhr.spec.whatwg.org/), v2
+adds `xhr_open`, `xhr_set_request_header`, `xhr_send` and `xhr_event_handler`.
+Admitted receivers are a direct `new XMLHttpRequest()` expression or a reference
+to a simple lexical `const` declarator initialized directly by that constructor.
+The constructor name must be external and unwritten. Shadowed constructors,
+conflicting or assigned bindings, destructuring, let/var, aliases, namespaces,
+computed members and dynamic-scope receiver references are excluded.
+
+Each record links its constructor and, where present, its lexical binding.
+That link does not establish a runtime object, initialization before use, native
+method identity, one request session or an execution sequence. A const receiver
+can have replaced methods. Multiple opens, conditional sends and closure uses
+remain separate syntax sites; methods, headers and bodies are not combined.
+
+`open` retains method, URL and async argument nodes. The existing primitive
+evaluator supplies finite method/URL candidates. Missing required arguments
+stay explicit, and a missing method never defaults to GET. Username/password
+arguments expose only `credential_arguments_status`, never values or their
+node IDs. `setRequestHeader` retains name/value node IDs with a fixed header
+classification. Unknown names are `other`; sensitive names are `sensitive`.
+`send` retains a body argument node or `absent_argument`, without guessing the
+body that would be sent.
+
+Known event properties (`onload`, `onreadystatechange`, `onerror`, `onprogress`,
+`onabort`, `ontimeout`, `onloadstart`, `onloadend`) accept only ordinary `=`
+assignments. `addEventListener` accepts the corresponding finite event names.
+Handler nodes identify RHS/argument syntax: direct functions, null values,
+object values and other expressions have distinct classifications. These are
+not proof of callable callbacks, dispatch, a registered listener or response
+handling. Compound/logical event assignments, custom/dynamic events, `this`
+and upload-object inference are excluded. Listener options stay syntax only.
+
+`arguments_status` is specific to XHR and is `not_applicable` on fetch and
+WebSocket records. Any spread in an XHR call sets it to `spread_unresolved`, clears all
+parameter-role nodes, and withholds argument-presence and default claims. The
+call, constructor and receiver link remain navigable. This applies to every
+XHR call, including `send` and `addEventListener`; spread listener options are
+also `spread_unresolved`, never asserted absent.
+
+Response dataflow, parameter schemas, wrapper ownership,
+serialization/compression/crypto chains and semantic behavior remain
+unimplemented.
 
 ## Explicit correlation
 
@@ -97,7 +142,10 @@ discarded. Credential-bearing fetch URLs retain their rejection under the
 become eligible after redaction. WebSocket URLs with fragments, including an
 empty fragment, retain the
 [constructor limitation](https://websockets.spec.whatwg.org/#dom-websocket).
-WebSocket source records never join ordinary HAR HTTP observations.
+WebSocket and XHR source records never join ordinary HAR HTTP observations.
+The correlation profile is unchanged: an XHR `open` syntax site alone cannot
+establish a send or its effective parameters. Capabilities and source summaries
+explicitly report `xhr_correlation: false`.
 
 All matching occurrences remain separate, with pair IDs derived from public
 source/observation evidence IDs. Results preserve static inference and imported
@@ -151,15 +199,20 @@ token. Changed original bytes or a different policy refuse publication.
 
 ## Qualification scope
 
-`WebInterfaces`, `WebSourceInterfaces`, `WebInterfaceSDK` and the C++ worker
+`WebInterfaces`, `WebSourceInterfaces`, `WebSourceXHR`, `WebInterfaceSDK` and the C++ worker
 regression use self-authored inert fixtures. They exercise secret canaries in
 URLs, names, headers, cookies, query, bodies, errors and extensions; preview
 revocation, immutable storage, missing fields, duplicate occurrences,
 shadowing/eval, prototype/method/credential exclusions and fanout refusal.
+XHR cases cover exact constructor/receiver/argument anchors, scope identity,
+forbidden methods, missing/dynamic values, spreads, callback-value distinctions,
+aliases/writes/computed members and atomic budget/model refusal. CLI, worker
+and MCP use the same v2 metadata; private URL, credential, header and callback
+canaries stay withheld.
 CLI and framed worker checks use an unusable external-tool PATH.
 
-This does not complete #717. XHR/request wrappers, response and transformation
-tracing, schema exports, reviewed endpoint displays, C++ MCP transport and
+This does not complete #717. Request wrappers, response and transformation
+tracing, schema exports, reviewed endpoint displays and
 broader host qualification remain required. Separately selected
 [SSE/JSONL/JSON-RPC/MCP-shape/log adapters](web-stream-profile.md) now provide
 passive framing and recorded-context candidates; source-to-stream correlation

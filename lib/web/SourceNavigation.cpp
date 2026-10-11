@@ -52,26 +52,13 @@ SourceNavigation analyzeSourceNavigation(const SourceAnalysis &S,
     std::vector<uint32_t> Parents(Size, NoSourceIndex),
         Enclosing(Size, NoSourceIndex), Functions(Size, NoSourceIndex),
         DeclBindings(Size, NoSourceIndex), Refs(Size, NoSourceIndex);
-    std::vector<bool> Ambiguous(Size);
     if (Available) {
       if (B.Declarations.size() > 2 * MaxJavaScriptNodes ||
           B.References.size() > MaxJavaScriptNodes)
         throw Error("source_navigation_budget_exceeded");
-      for (const auto &D : B.Declarations) {
-        Charge();
-        if (D.Binding >= B.Bindings.size())
-          throw Error("invalid_source_binding_model");
-        if (D.Node == NoSourceIndex)
-          continue;
-        if (D.Node >= Size)
-          throw Error("invalid_source_binding_model");
-        if (B.Bindings[D.Binding].Conflicting)
-          continue;
-        if (DeclBindings[D.Node] != NoSourceIndex &&
-            DeclBindings[D.Node] != D.Binding)
-          Ambiguous[D.Node] = true;
-        DeclBindings[D.Node] = D.Binding;
-      }
+      auto DeclarationIndex = indexSourceDeclarations(S, B);
+      Charge(DeclarationIndex.Steps);
+      DeclBindings = std::move(DeclarationIndex.UniqueBindings);
       for (uint32_t I = 0; I < B.References.size(); ++I) {
         Charge();
         const auto &R = B.References[I];
@@ -83,8 +70,7 @@ SourceNavigation analyzeSourceNavigation(const SourceAnalysis &S,
       }
     }
     auto Binding = [&](uint32_t Node) {
-      return Node == NoSourceIndex || Ambiguous[Node] ? NoSourceIndex
-                                                      : DeclBindings[Node];
+      return Node == NoSourceIndex ? NoSourceIndex : DeclBindings[Node];
     };
     for (uint32_t I = 0; I < Size; ++I) {
       const auto &N = S.Nodes[I];
