@@ -18,6 +18,10 @@ analysis and comparison output belong outside the repository.
 
 ## CRT and catch-continuation repairs
 
+- Single-function source LLVM emission uses the same verified promotion fallback
+  as the SDK and sharded source route. Incomplete native EH contracts remain
+  explicit and still prevent binary rewriting. Cross-format and architecture
+  tests retain the call and contract through both optimization modes.
 - Direct PE32 EH4 publication follows bounded stack allocation, saved registers
   and cookie initialization instead of requiring fixed byte positions. Both
   pushed cookies and explicit disp8/disp32 stores retain their exact header

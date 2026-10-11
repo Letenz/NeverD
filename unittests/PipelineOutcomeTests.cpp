@@ -8,6 +8,7 @@
 #include "PipelineLLVMDetail.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -85,6 +86,11 @@ public:
     PipelineOptions Options;
     Options.LiftMode = true;
     Options.NoOpt = true;
+    return Pipeline().runPatchLiftMode(Image, Context, Options, Result);
+  }
+
+  static bool runLift(const BinaryImage &Image, llvm::LLVMContext &Context,
+                      const PipelineOptions &Options, PipelineResult &Result) {
     return Pipeline().runPatchLiftMode(Image, Context, Options, Result);
   }
 };
@@ -899,6 +905,106 @@ TEST(PipelineOutcome, RealShardedEmissionDefinesEverySourceFunction) {
     EXPECT_EQ(Function.getName(), Functions[Index++].Name);
   }
   EXPECT_EQ(Index, Functions.size());
+}
+
+TEST(PipelineOutcome, SourceEHRefusalsAgreeAcrossSingleAndShardedEmission) {
+  ScopedThreadCount Threads(2);
+  for (const auto &[Architecture, Format] :
+       {std::pair{Arch::X86, BinaryFormat::COFF},
+        std::pair{Arch::X64, BinaryFormat::ELF},
+        std::pair{Arch::X64, BinaryFormat::MachO},
+        std::pair{Arch::AArch64, BinaryFormat::ELF},
+        std::pair{Arch::AArch64, BinaryFormat::MachO}}) {
+    for (unsigned Count : {1u, 8u}) {
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << unsigned(Architecture) << ':' << unsigned(Format) << ':'
+                     << Count << ':' << NoOpt);
+        llvm::LLVMContext Context;
+        BinaryImage Image;
+        Image.Arch = Architecture;
+        Image.Bits =
+            Architecture == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
+        Image.Format = Format;
+        PipelineResult Result;
+        for (unsigned I = 0; I != Count; ++I) {
+          auto Function =
+              sourceFunction(0x1000 + I * 0x100, "source_" + std::to_string(I));
+          MedBlock Block;
+          Block.Id = 0;
+          Block.StartAddr = Function.Entry;
+          Block.EndAddr = Function.Entry + 8;
+          MedOp Call;
+          Call.Opcode = NdOp::CALL;
+          Call.Addr = Function.Entry;
+          Call.addInput(MedVar::makeConst(0x9000, Image.getPointerSize()));
+          Block.Ops.push_back(Call);
+          MedOp Return;
+          Return.Opcode = NdOp::RETURN;
+          Return.Addr = Function.Entry + 4;
+          Block.Ops.push_back(Return);
+          Function.Blocks.push_back(std::move(Block));
+          if (I == 0) {
+            ExceptionFunction EH;
+            EH.CodeRange = {Function.Entry, Function.Entry + 0x40};
+            EH.ParseStatus = ExceptionParseStatus::Complete;
+            if (Architecture == Arch::X86) {
+              EH.Encoding = ExceptionEncoding::X86ScopeTableEH3;
+              EH.Personality = ExceptionPersonality::ExceptHandler3;
+              EH.Registration.emplace();
+              EH.Registration->Scopes.push_back(
+                  {-1, 0, Function.Entry + 0x20, true});
+            } else {
+              EH.Encoding = ExceptionEncoding::DwarfFDE;
+              EH.Personality = ExceptionPersonality::GxxPersonalityV0;
+              EH.Itanium.emplace();
+              EH.Itanium->IsCallSiteAddressForm = true;
+              ItaniumCallSite Site;
+              Site.GuardedRange = {Function.Entry, Function.Entry + 8};
+              Site.LandingPadVA = Function.Entry + 0x20;
+              EH.Itanium->CallSites.push_back(Site);
+            }
+            Function.ExceptionMetadata = std::move(EH);
+          }
+          Result.MedFuncs.push_back(std::move(Function));
+        }
+        const auto OriginalFunctions = Result.MedFuncs;
+        PipelineOptions Options;
+        Options.LiftMode = Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        ASSERT_TRUE(PipelineTestPeer::runLift(Image, Context, Options, Result))
+            << Result.Error;
+        ASSERT_NE(Result.LlvmModule, nullptr);
+        EXPECT_FALSE(Result.LLVMVerifierFailed);
+        EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+        auto Contract = exception_rewrite::validateExceptionRewriteContracts(
+            *Result.LlvmModule);
+        ASSERT_FALSE(bool(Contract));
+        llvm::consumeError(Contract.takeError());
+        auto *Function = Result.LlvmModule->getFunction("source_0");
+        ASSERT_NE(Function, nullptr);
+        size_t Calls = 0;
+        for (const auto &Block : *Function)
+          for (const auto &Instruction : Block)
+            Calls += llvm::isa<llvm::CallInst>(Instruction);
+        EXPECT_EQ(Calls, 1u);
+        EXPECT_NE(Function->getMetadata(exception_rewrite::FunctionAttachment),
+                  nullptr);
+
+        // Source projection cannot bypass the patch optimizer's native-EH
+        // requirement, even if a caller supplies both mode flags.
+        if (Count == 1 && !NoOpt) {
+          PipelineResult Patch;
+          Patch.MedFuncs = OriginalFunctions;
+          Options.PatchMode = true;
+          EXPECT_FALSE(
+              PipelineTestPeer::runLift(Image, Context, Options, Patch));
+          EXPECT_NE(Patch.Error.find("input-invalid"), std::string::npos)
+              << Patch.Error;
+        }
+      }
+    }
+  }
 }
 
 TEST(PipelineOutcome, LiftPreservesTheFailedShardDiagnostic) {

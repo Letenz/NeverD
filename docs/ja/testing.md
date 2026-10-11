@@ -1671,3 +1671,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。
 
 `RegistrationTryLevel.EH4Publication*` と `EH4CookieStoresMustOwnDistinctPrivateBytes` は、ADD/SUB による確保、レジスタ保存、cookie の PUSH、disp8/disp32 の cookie 格納を含む PE32 EH4 の直接フレームを検証します。変更された参照元やオフセット、cookie の重複、保存レジスタやランタイム管理領域への上書きは拒否し、共有 LowIR が値と寿命を独立して検証します。
+
+`PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` は、x86、x64、AArch64 の PE32、ELF、Mach-O で最適化あり・なしのソース投影を検証します。単一関数と分割 LLVM 出力は同じ不完全なネイティブ EH 契約を明示的に保持し、バイナリ書き換えは引き続き拒否します。

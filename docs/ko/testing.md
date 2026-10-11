@@ -1661,3 +1661,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `scripts/check_windows_nonlocal_finally.py`는 MSVC x86/x64 프로그램을 O0/O2 및 GS 활성·비활성 설정으로 컴파일하고 네이티브 실행합니다. 여섯 사례는 일반 호출과 예외 해제 중의 finally, 부모 함수로의 조건부 점프, 해제를 중단하는 return을 구분합니다. 반복 실행은 로컬 보호 영역과 x86 등록 체인을 검사하며, 정리 순서를 변경한 음성 대조군은 원래 기대값에서 거부되어야 합니다. Windows EH fixture 작업은 소스·이미지 해시, 컴파일러 출력, 링크 맵과 실행 관찰을 보존합니다. 해당 MSVC 환경에서 `--arch x86` 또는 `--arch x64`와 `--output`을 지정합니다. 이는 원본 런타임 기준이며 NeverD의 비지역 전이 지원을 입증하지 않습니다.
 
 `RegistrationTryLevel.EH4Publication*`와 `EH4CookieStoresMustOwnDistinctPrivateBytes`는 ADD/SUB 할당, 레지스터 저장, cookie PUSH 및 disp8/disp32 cookie 저장을 사용하는 PE32 EH4 직접 프레임을 검사합니다. 변경된 원본과 오프셋, 겹치는 cookie, 저장된 레지스터나 런타임 관리 영역을 덮어쓰는 접근은 거부하며, 공유 LowIR이 값과 수명을 독립적으로 검증합니다.
+
+`PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission`은 x86, x64, AArch64의 PE32, ELF, Mach-O에서 최적화 여부에 따른 소스 투영을 검사합니다. 단일 함수와 분할 LLVM 출력은 동일한 불완전한 네이티브 EH 계약을 명시적으로 유지하며 바이너리 재작성은 계속 이를 거부합니다.
