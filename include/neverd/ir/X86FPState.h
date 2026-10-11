@@ -9,6 +9,7 @@
 #define NEVERD_IR_X86FPSTATE_H
 
 #include "neverd/ir/X86F16CState.h"
+#include "neverd/ir/X86FPComiState.h"
 #include "neverd/ir/X86FPPackedConvertState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
@@ -124,7 +125,8 @@ constexpr bool isX86FPApprox12Intrinsic(Intrinsic Id) {
 }
 
 constexpr bool isX86FPStateMemoryIntrinsic(Intrinsic Id) {
-  return Id == Intrinsic::X86F16CReadState ||
+  return Id == Intrinsic::X86FPComiMemoryState ||
+         Id == Intrinsic::X86F16CReadState ||
          Id == Intrinsic::X86F16CStoreState ||
          Id == Intrinsic::X86FPRoundMemoryState ||
          Id == Intrinsic::X86FPApprox12MemoryState ||
@@ -159,8 +161,8 @@ constexpr bool isX86ScalarFPStateIntrinsic(Intrinsic Id) {
 }
 
 constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
-  return isX86F16CStateIntrinsic(Id) || isX86ScalarFPStateIntrinsic(Id) ||
-         isX86FPApprox12Intrinsic(Id) ||
+  return isX86FPComiStateIntrinsic(Id) || isX86F16CStateIntrinsic(Id) ||
+         isX86ScalarFPStateIntrinsic(Id) || isX86FPApprox12Intrinsic(Id) ||
          isX86FPScalarConvertStateIntrinsic(Id) ||
          isX86FPPackedConvertStateIntrinsic(Id) ||
          isX86FPArithStateIntrinsic(Id) || Id == Intrinsic::X86FPRoundState ||
@@ -280,6 +282,8 @@ constexpr unsigned x86FPRoundStateElementBytes(unsigned Control) {
 constexpr unsigned x86FPStateMemoryBytes(Intrinsic Id, unsigned OutputSize,
                                          unsigned Control) {
   switch (Id) {
+  case Intrinsic::X86FPComiMemoryState:
+    return x86FPComiElementBytes(Control);
   case Intrinsic::X86F16CReadState:
     return x86F16CSourceBytes(Control);
   case Intrinsic::X86F16CStoreState:
@@ -307,6 +311,19 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
            : Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default) ||
       !Shape.IdIsConst || Shape.IdSize != 2 || Shape.HasAuxiliaryOutputs)
     return false;
+  if (isX86FPComiStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPComiMemoryState;
+    const unsigned Element = x86FPComiElementBytes(Shape.Control);
+    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 5 &&
+           Shape.OutputSize == 8 && Shape.OutputIsWritable &&
+           Shape.OperandsAreScalar && Shape.ControlIsConst &&
+           Shape.ControlSize == 1 && x86FPComiControlIsValid(Shape.Control) &&
+           Shape.StateSize == 4 &&
+           (Memory ? Shape.LeftSize == 8 && Shape.AddressIsScalar &&
+                         Shape.ThirdSize == Element
+                   : Shape.LeftSize == 1 && Shape.RightSize == Element &&
+                         Shape.ThirdSize == Element);
+  }
   if (Id == Intrinsic::X86ReadMXCSR)
     return Shape.NumInputs == 1 && Shape.OutputIsWritable &&
            Shape.OutputSize == 4;
@@ -538,7 +555,10 @@ constexpr unsigned x86FPStateHelperLayout(Intrinsic Id,
   if (isX86FPPackedConvertStateIntrinsic(Id))
     return x86FPRoundStateLayout(x86FPPackedConvertSourceBytes(Shape.Control),
                                  Shape.Control, 0, Shape.MemoryAddressSpace);
-  return isX86FPArithStateIntrinsic(Id)
+  return isX86FPComiStateIntrinsic(Id)
+             ? x86FPRoundStateLayout(x86FPComiElementBytes(Shape.Control),
+                                     Shape.Control, 0, Shape.MemoryAddressSpace)
+         : isX86FPArithStateIntrinsic(Id)
              ? x86FPRoundStateLayout(Shape.OutputSize - 4, Shape.Control, 0,
                                      Shape.MemoryAddressSpace)
          : isX86FPScalarConvertStateIntrinsic(Id)

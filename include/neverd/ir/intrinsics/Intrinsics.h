@@ -347,6 +347,9 @@ enum class Intrinsic : uint16_t {
   X87ReadControl,
   X87WriteControl,
   X87LoadConstant,
+  // Append-only: scalar comparison flags below the outgoing MXCSR.
+  X86FPComiState,
+  X86FPComiMemoryState,
 
   _Count = 16000
 };
@@ -627,6 +630,7 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
+  case Intrinsic::X86FPComiMemoryState:
   case Intrinsic::X86FPScalarConvertMemoryState:
   case Intrinsic::X86F16CReadState:
   case Intrinsic::X86F16CStoreState:
@@ -848,6 +852,9 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     // [id,address,control,MXCSR]; widths are owned by X86FPState.h.
     return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&
            DataSize == 4 && (OutputSize == 8 || OutputSize == 12);
+  case Intrinsic::X86FPComiMemoryState:
+    return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
+           (DataSize == 4 || DataSize == 8) && OutputSize == 8;
   case Intrinsic::X86F16CReadState:
     return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
            DataSize == 1 && (OutputSize == 20 || OutputSize == 36);

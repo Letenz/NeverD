@@ -298,14 +298,15 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
       .ArithmeticLeftIsZero = Op.NumInputs > (Memory ? 3U : 2U) &&
                               Op.Inputs[Memory ? 3 : 2].isConst() &&
                               Op.Inputs[Memory ? 3 : 2].Offset == 0,
-      .StateSize = Half                  ? (Op.NumInputs > (Store ? 5U : 4U)
-                                                ? Op.Inputs[Store ? 5 : 4].Size
+      .StateSize =
+          Half ? (Op.NumInputs > (Store ? 5U : 4U)
+                      ? Op.Inputs[Store ? 5 : 4].Size
+                      : 0U)
+          : Round || Arithmetic || isX86FPComiStateIntrinsic(Id)
+              ? (Op.NumInputs > (Fma ? 5U : 4U) ? Op.Inputs[Fma ? 5 : 4].Size
                                                 : 0U)
-                   : Round || Arithmetic ? (Op.NumInputs > (Fma ? 5U : 4U)
-                                                ? Op.Inputs[Fma ? 5 : 4].Size
-                                                : 0U)
-                   : Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
-                                : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
+          : Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
+                       : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
       .DestinationIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
       .DestinationSelectorSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
       .DestinationBytes = Op.NumInputs > 3 ? Op.Inputs[3].Offset : 0U,
