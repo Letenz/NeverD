@@ -268,6 +268,15 @@ SEH filter and finally entries share the private invocation-stack coordinate
 used by C++ catches. A finally may save registers and allocate locals below
 its runtime return PC; loads require initialized bytes in the current
 allocation, and releasing stack storage invalidates its saved identities.
+SEH state propagation keeps the callback entry and search/unwind mode as an
+activation key. Different callbacks can share decoded tail blocks without
+merging their private stacks. Every activation must restore its own stack and
+parent EBP; shared source-value projections intersect observations from all
+activations, including scalar and unknown observations. Publication unions
+reaching levels only after those independent transfers. An ordinary parent
+entry into callback code still requires a separate invocation-exit contract;
+moving ESP alone does not provide one. All activations share the original
+cumulative work budget.
 Only established parent addresses can modify parent locals, so a callback
 stack pointer cannot escape there or alias a parent slot at the same offset.
 SEH and C++ share the check for a final, decoded, unconditional callback

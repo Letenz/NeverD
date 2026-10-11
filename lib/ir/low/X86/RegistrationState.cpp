@@ -31,9 +31,8 @@ RegistrationStateSolver::RegistrationStateSolver(
       CheckCalls(Callees != nullptr),
       CheckRuntimeObjects(KnownCxx && CheckCalls),
       CheckCleanups(KnownCxx && Cleanups != nullptr),
-      Facts(Function.Blocks.size()), Incoming(Function.Blocks.size()),
-      Queued(Function.Blocks.size()), CompleteCalls(CheckCalls),
-      CompleteCleanups(CheckCleanups),
+      InvalidBlocks(Function.Blocks.size()), States(Function.Blocks.size()),
+      CompleteCalls(CheckCalls), CompleteCleanups(CheckCleanups),
       CompleteCatchObjects(CheckRuntimeObjects),
       CompleteRuntimeObjects(CheckRuntimeObjects) {}
 
@@ -44,10 +43,14 @@ RegistrationStateAnalysis RegistrationStateSolver::run() {
   collectOccurrences();
   seedEntries();
   while (!Work.empty() && !Exhausted) {
-    const size_t I = Work.front();
+    const auto [I, Activation] = Work.front();
     Work.pop_front();
-    Queued[I] = false;
-    if (!transferBlock(I))
+    auto &State = States[I].at(Activation);
+    State.Queued = false;
+    // Transfers can merge back into this node. Keep the input snapshot stable
+    // while ordinary and exceptional successors update their own activations.
+    const Domain Before = State.Incoming;
+    if (!transferBlock(I, Before, State.Facts))
       return std::move(Result);
   }
   return finish();
@@ -153,7 +156,7 @@ bool RegistrationStateSolver::initialize() {
     if (!ValidImmediate || Store.EndVA != Block.EndAddr ||
         Boundary == Block.InstructionBoundaries.end() ||
         !Stores.emplace(Store.StoreVA, Store).second)
-      Facts[I].Invalid = true;
+      InvalidBlocks[I] = true;
   }
   bool HasInstallBoundary = false;
   for (const LowBlock &Block : Function.Blocks)

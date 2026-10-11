@@ -37,15 +37,57 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
   Result.CxxContinuationsComplete = CompleteCxxContinuations;
   for (size_t I = 0; I < Function.Blocks.size(); ++I) {
     const LowBlock &Block = Function.Blocks[I];
-    const Domain &State = Incoming[I];
-    const bool CallbackOnly = State.Callback && !State.Parent;
-    const bool Unknown =
-        State.Reached && (State.Unknown || Facts[I].Invalid ||
-                          (State.Callback && State.Parent) ||
-                          (State.Uninstalled && State.Installed));
-    const std::set<int32_t> &Levels = Unknown ? AllLevels : State.Levels;
-    auto Searches = cxxSearches(I, State);
-    if (Exhausted || !charge(Levels.size() + State.CxxCatchStacks.size() + 1)) {
+    std::set<int32_t> Levels;
+    std::set<RegistrationCxxSearch> Searches;
+    bool Reached = false, Parent = false, Callback = false;
+    bool Unknown = false, CanDispatch = false;
+    int32_t Minimum = INT32_MAX;
+    for (const auto &[Activation, Node] : States[I]) {
+      const Domain &State = Node.Incoming;
+      const BlockFacts &Facts = Node.Facts;
+      const bool Unproven =
+          State.Reached &&
+          (State.Unknown || Facts.Invalid || (State.Callback && State.Parent) ||
+           (State.Uninstalled && State.Installed));
+      const auto &ReachingLevels = Unproven ? AllLevels : State.Levels;
+      auto ContextSearches = cxxSearches(State, Facts.Invalid);
+      if (!charge(ReachingLevels.size() + State.CxxCatchStacks.size() +
+                  ContextSearches.size() + 1))
+        break;
+      Levels.insert(ReachingLevels.begin(), ReachingLevels.end());
+      Searches.insert(ContextSearches.begin(), ContextSearches.end());
+      Reached |= State.Reached;
+      Parent |= State.Parent;
+      Callback |= State.Callback;
+      Unknown |= Unproven;
+      CanDispatch |= State.CanDispatch && State.Installed;
+      Minimum =
+          std::min(Minimum, EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0);
+      if (State.Callback && !State.Parent && Unproven)
+        Result.CallbackStatesComplete = false;
+      if (State.Parent && State.Reached &&
+          (Unproven || (Block.Succs.empty() && Facts.InstalledAtExit &&
+                        !Facts.NoReturnAtExit)))
+        Result.RegistrationLifetimeComplete = false;
+      if (!State.CxxCatchStacks.empty() && State.Reached &&
+          Block.Succs.empty() && !Facts.CxxContinuationAtExit &&
+          !Facts.NoReturnAtExit)
+        Result.CxxContinuationsComplete = false;
+    }
+    // Context separation proves each runtime return independently. It does
+    // not grant a parent/callback bridge at shared ordinary code; that still
+    // needs an explicit invocation-exit contract consumed by the CFG/emitters.
+    if (Parent && Callback) {
+      Unknown = true;
+      Result.CallbackStatesComplete = Result.RegistrationLifetimeComplete =
+          false;
+    }
+    const bool CallbackOnly = Callback && !Parent;
+    if (!CallbackOnly && Unknown)
+      Result.Complete = false;
+    if (Unknown)
+      Levels = AllLevels;
+    if (Exhausted || !charge(Levels.size() + Searches.size() + 1)) {
       Result.Complete = false;
       Result.Blocks.clear();
       Result.Diagnostics.push_back(
@@ -57,21 +99,10 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
                              {Levels.begin(), Levels.end()},
                              Unknown,
                              CallbackOnly,
-                             State.CanDispatch && State.Installed,
-                             EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0,
-                             State.Reached,
-                             std::move(Searches)});
-    if (CallbackOnly && Unknown)
-      Result.CallbackStatesComplete = false;
-    if (!CallbackOnly && Unknown)
-      Result.Complete = false;
-    if (State.Parent && State.Reached &&
-        (Unknown || (Block.Succs.empty() && Facts[I].InstalledAtExit &&
-                     !Facts[I].NoReturnAtExit)))
-      Result.RegistrationLifetimeComplete = false;
-    if (!State.CxxCatchStacks.empty() && State.Reached && Block.Succs.empty() &&
-        !Facts[I].CxxContinuationAtExit && !Facts[I].NoReturnAtExit)
-      Result.CxxContinuationsComplete = false;
+                             CanDispatch,
+                             Minimum == INT32_MAX ? 0 : Minimum,
+                             Reached,
+                             {Searches.begin(), Searches.end()}});
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
   if (!Result.CxxContinuationsComplete) {
@@ -170,8 +201,9 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
       return std::move(Result);
     }
     for (const auto &[Identity, Value] : FrameValues)
-      Result.FrameValues.push_back(
-          {Identity.first, Identity.second, Value.Offset});
+      if (Value.MayBeFrame)
+        Result.FrameValues.push_back(
+            {Identity.first, Identity.second, Value.Offset});
   }
   return std::move(Result);
 }

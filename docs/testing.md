@@ -2787,6 +2787,15 @@ handlers under EH3 and EH4: restored and unbalanced stacks, changed EBP,
 return-pop immediates, conditional returns, trailing effects and missing or
 mismatched instruction identities. The C++ catch-return suite applies the
 same unconditional-return rule before publishing a continuation.
+`SharedSEHCallbackTailsKeepEachInvocationStack` checks distinct EH3/EH4 filter
+and finally entries sharing an epilogue, with reversed discovery order. Each
+invocation owns its initialized spills and restored EBP/ESP. Uninitialized
+storage in one invocation cannot borrow another's facts, and a shared source
+value that is scalar in one invocation cannot claim the other's exact frame
+offset. Return-PC writes, an unbalanced stack, return-pop immediates and an
+independent ordinary entry remain rejected.
+`SEHActivationsShareTheCumulativeWorkBudget` checks that many callback entries
+cannot restart the state budget; exhaustion publishes no block or frame facts.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
 Catch-return tests require the pre-dispatch SavedESP snapshot to survive catch

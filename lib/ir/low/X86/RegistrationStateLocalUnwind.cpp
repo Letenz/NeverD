@@ -136,16 +136,15 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent) {
   return true;
 }
 
-std::optional<FrameValue>
-RegistrationStateSolver::transferLocalUnwind(size_t I, Domain &After,
-                                             const LowOp &Op) {
+std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
+    size_t I, Domain &After, const LowOp &Op, BlockFacts &Facts) {
   if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
       Op.NumInputs != 1 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
       !LocalUnwindTargets.count(
           {Op.Inputs[0].Offset, Op.Opcode == NdOp::INDIR_CALL}))
     return std::nullopt;
   auto Refuse = [&]() -> std::optional<FrameValue> {
-    FailedLocalUnwind = Facts[I].Invalid = After.Unknown = true;
+    FailedLocalUnwind = Facts.Invalid = After.Unknown = true;
     After.Levels.clear();
     return std::nullopt;
   };
@@ -156,10 +155,9 @@ RegistrationStateSolver::transferLocalUnwind(size_t I, Domain &After,
       EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 ||
       Chain.RealignedFrame || Chain.RegistrationOffset != -16 ||
       Chain.TryLevelOffset != -4 || Chain.SeededTryLevel != -1 ||
-      !After.Installed || After.Uninstalled || After.Unknown ||
-      Facts[I].Invalid || !SP.Offset || *SP.Offset > INT32_MAX - 4 ||
-      Op.Seq < 0 || Boundary == Boundaries.end() ||
-      Boundary->second.first != Block.Id ||
+      !After.Installed || After.Uninstalled || After.Unknown || Facts.Invalid ||
+      !SP.Offset || *SP.Offset > INT32_MAX - 4 || Op.Seq < 0 ||
+      Boundary == Boundaries.end() || Boundary->second.first != Block.Id ||
       Boundary->second.second.Control != LowInstructionControl::Call ||
       hasLowInstructionControlFlag(Boundary->second.second.ControlFlags,
                                    LowInstructionControlFlag::Conditional) ||
