@@ -30,6 +30,16 @@ namespace neverd::symbolic {
 
 namespace {
 
+uint64_t lowWordProjectionKey(SymRef Source, uint32_t Width) {
+  return (uint64_t(Width) << 32) | Source.index();
+}
+
+size_t lowWordProjectionSlot(uint64_t Key, size_t Size) {
+  assert(Size && (Size & (Size - 1)) == 0);
+  // Mix both halves of the complete key before selecting a power-of-two slot.
+  return llvm::DenseMapInfo<uint64_t>::getHashValue(Key) & (Size - 1);
+}
+
 // Compare a constant with the largest value of a zero extension. Bound this
 // optional inspection before copying the APInt, and never inspect the source
 // expression: its width alone establishes the unsigned range.
@@ -150,6 +160,45 @@ SymContext::constantWindow(SymRef A, uint32_t Low, uint32_t Width,
 // Structural
 //===----------------------------------------------------------------------===//
 
+SymRef SymContext::findLowWordProjection(SymRef Source, uint32_t Width) const {
+  // A moved-from context can retain the scalar insertion count, but an empty
+  // table never authorizes a lookup. Index zero is a valid completed image.
+  if (LowWordProjections.empty())
+    return {};
+  const uint64_t Key = lowWordProjectionKey(Source, Width);
+  const auto &Entry =
+      LowWordProjections[lowWordProjectionSlot(Key, LowWordProjections.size())];
+  return Entry.Image && Entry.Key == Key ? Entry.Image : SymRef{};
+}
+
+void SymContext::retainLowWordProjection(SymRef Source, uint32_t Width,
+                                         SymRef Image) {
+  assert(Image && Width < width(Source));
+  constexpr size_t Maximum = 4096;
+  if (LowWordProjections.empty() ||
+      (LowWordProjections.size() < Maximum &&
+       LowWordProjectionInsertions >= LowWordProjections.size())) {
+    const size_t Next = LowWordProjections.empty()
+                            ? 32
+                            : std::min(Maximum, 2 * LowWordProjections.size());
+    std::vector<LowWordProjectionEntry> New(Next);
+    for (auto Entry : LowWordProjections)
+      if (Entry.Image)
+        New[lowWordProjectionSlot(Entry.Key, Next)] = Entry;
+    LowWordProjections.swap(New);
+    LowWordProjectionInsertions = 0;
+    // Growth retains at most 2048 old and 4096 new entries at the same time.
+  }
+  const uint64_t Key = lowWordProjectionKey(Source, Width);
+  auto &Entry =
+      LowWordProjections[lowWordProjectionSlot(Key, LowWordProjections.size())];
+  assert((!Entry.Image || Entry.Key != Key || Entry.Image == Image) &&
+         "completed low-word projection changed in an immutable context");
+  if ((!Entry.Image || Entry.Key != Key) && LowWordProjections.size() < Maximum)
+    ++LowWordProjectionInsertions;
+  Entry = {Key, Image};
+}
+
 SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
   assert(Width > 0 && Low + Width <= width(A) && "extract out of range");
 
@@ -179,6 +228,8 @@ SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
     return Op == SymOp::Add || Op == SymOp::Mul || isBitwise(Op);
   };
   if (Low == 0 && Projects(op(A))) {
+    if (SymRef Image = findLowWordProjection(A, Width))
+      return Image;
     // A lifted expression can be deep and can share subexpressions. Project
     // each node once, bottom-up, without recursion through the arithmetic DAG.
     llvm::DenseMap<uint32_t, SymRef> Done;
@@ -192,6 +243,14 @@ SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
         continue;
       }
       const SymOp Op = op(Current);
+      // Only arithmetic/bitwise nodes have the same projection at this walk
+      // position and at its root. In particular, widening nodes do not.
+      if (Projects(Op)) {
+        if (SymRef Image = findLowWordProjection(Current, Width)) {
+          Done[Current.index()] = Image;
+          continue;
+        }
+      }
       const bool Widen = Op == SymOp::ZExt || Op == SymOp::SExt;
       if (Widen && width(operand(Current, 0)) < Width) {
         SymRef Inner = operand(Current, 0);
@@ -242,6 +301,8 @@ SymRef SymContext::mkExtract(SymRef A, uint32_t Low, uint32_t Width) {
         llvm_unreachable("unexpected low-word projection operator");
       }
       Done[Current.index()] = Result;
+      if (Projects(Op))
+        retainLowWordProjection(Current, Width, Result);
     }
     return Done.lookup(A.index());
   }
