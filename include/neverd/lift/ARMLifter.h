@@ -30,6 +30,9 @@ public:
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
 
+  /// The instruction set the lifted code runs in (A32 unless T32).
+  InstructionMode sourceMode() const { return SourceMode; }
+
   //===--------------------------------------------------------------------===//
   // Decode-time instruction classification (called by Decoder/FuncDetector)
   //===--------------------------------------------------------------------===//

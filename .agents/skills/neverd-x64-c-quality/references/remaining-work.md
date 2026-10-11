@@ -13,17 +13,52 @@ analysis and comparison output belong outside the repository.
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
-| The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Cross-block saved-SP tracking now exists; the remaining case needs independently bounded callee writes and runtime-root frame evidence. ABI declarations alone do not preserve saved memory. |
-| The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Model invocation identity and the actual return PC through normal returns and parent resumes. The current registration solver loses that distinction; neither a zero-pop summary nor an unconditional no-return annotation is valid. |
-| Two native out-of-line catch tests match an unused forward declaration as if it were an executed call | Audit declarations separately from emitted function bodies; the historical build reproduces both failures, while the catch body already resumes after the skipped call. |
+| The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Complete decoded callee chains and certified runtime-only continuations retain their frame evidence. This case still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
+| The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Runtime callback entries now retain separate invocation stacks across shared tails. Ordinary finally calls and nonlocal exits still need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. Neither a zero-pop summary nor an unconditional no-return annotation is valid. |
 
 ## CRT and catch-continuation repairs
 
+- Single-function source LLVM emission uses the same verified promotion fallback
+  as the SDK and sharded source route. Incomplete native EH contracts remain
+  explicit and still prevent binary rewriting. Cross-format and architecture
+  tests retain the call and contract through both optimization modes.
+- PE32 source LLVM retains handler identities authenticated by immutable
+  SafeSEH membership, even when a GS wrapper has additional behavior that
+  prevents a forwarding-personality proof. Declaration order and sharding do
+  not change that identity. Native reconstruction still requires its separate
+  language, frame and callback contracts; the MSVC finally fixture matrix
+  checks source LLVM independently of original-runtime observations.
+- Direct PE32 EH4 publication follows bounded stack allocation, saved registers
+  and cookie initialization instead of requiring fixed byte positions. Both
+  pushed cookies and explicit disp8/disp32 stores retain their exact header
+  offsets. Unallocated, overlapping, saved-register and runtime-administration
+  bytes remain rejected; shared LowIR still proves values and lifetime.
+- `scripts/check_windows_nonlocal_finally.py` supplies independently authored
+  MSVC x86/x64 source/runtime baselines for conditional finally exits and
+  returns during normal flow and unwinding. O0/O2 and GS variants retain their
+  linker maps and exact images. Altered cleanup traces are negative controls.
+  These compact inputs reproduce mixed physical returns and parent-stack
+  restoration; successful original execution is not a reconstruction receipt.
 - Same-frame x64 local-unwind arguments use one all-predecessor LowIR proof,
   including stable loops, partial writes, released storage and independent
   roots. Both module ownership and SSA consumers retain exact call identities;
   a whole-function dependency digest rejects stale earlier-block evidence.
-  This does not preserve saved pointers through opaque callees.
+  Complete decoded callee chains can preserve saved cells when every returning
+  path bounds actual writes and retains every active physical return PC.
+  Recursion, depth exhaustion and overlapping CALL pushes refuse the proof;
+  repeated invocations use their current arguments. Transitive callee digests
+  are rechecked by shared SSA. Frame-dataflow work has a separate cumulative
+  budget from address-use receipts; exhaustion does not erase that inventory.
+  Certified runtime-only continuation roots receive their established SP even
+  without an ordinary incoming edge. This does not preserve saved pointers
+  through opaque callees or prove cross-funclet frame borrowing.
+- SEH filters and finally handlers retain separate entry/search-mode states
+  when decoded callback tails are shared. Each must restore its own private
+  stack and parent EBP. Source-value projections intersect all activations,
+  including scalar and unknown observations, under one cumulative budget.
+  Parent/callback bridges still require an explicit invocation-exit contract.
+  Exact registration-frame accesses visit overlapping cells only; ambiguous
+  addresses retain full-frame accounting and partial pointer writes keep taint.
 - The Windows EH analysis matrix requests the structured source view. Explicit
   C has a separate native-callback contract. The matrix reports every case even
   if one input fails; x86 EH4 classification now reaches its actual registration

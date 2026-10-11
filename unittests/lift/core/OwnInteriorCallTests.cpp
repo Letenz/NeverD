@@ -371,4 +371,131 @@ TEST(OwnInteriorCall, OnlyDeclaredSingleFunctionRecordsBoundTheBody) {
         << getExceptionEncodingName(E);
 }
 
+constexpr Platform Darwin64 = {Arch::X64, BinaryFormat::MachO,
+                               ExceptionEncoding::DwarfFDE, Entry};
+
+Lifted liftOwnReturnBody(const Platform &P, llvm::ArrayRef<uint8_t> Body) {
+  std::vector<uint8_t> Code = {0xe8, 0x0b, 0, 0, 0, 0xc3};
+  Code.resize(0x10, 0xcc);
+  Code.insert(Code.end(), Body.begin(), Body.end());
+  return lift(std::move(Code), P);
+}
+
+TEST(OwnInteriorCall, OverwrittenReturnSlotCannotProveAnOrdinaryReturn) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    // mov dword ptr [e/rsp], 0; ret. On x64 this destroys half of the PC.
+    const auto L = liftOwnReturnBody(P, {0xc7, 0x04, 0x24, 0, 0, 0, 0, 0xc3});
+    EXPECT_TRUE(L.Source.empty()) << L.Source;
+    EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, UnknownStoreMayOverwriteTheActiveReturnSlot) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    // mov dword ptr [ecx/rcx], 0; ret. The pointer may name the active PC.
+    const auto L = liftOwnReturnBody(P, {0xc7, 0x01, 0, 0, 0, 0, 0xc3});
+    EXPECT_TRUE(L.Source.empty()) << L.Source;
+    EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, StackAliasesAndAtomicWritesCannotDestroyTheReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    // mov eax/rax, esp/rsp; mov dword [eax/rax], 0; ret.
+    std::vector<uint8_t> Alias;
+    if (P.TheArch == Arch::X64)
+      Alias.push_back(0x48);
+    Alias.insert(Alias.end(), {0x89, 0xe0, 0xc7, 0x00, 0, 0, 0, 0, 0xc3});
+    const auto A = liftOwnReturnBody(P, Alias);
+    EXPECT_TRUE(A.Source.empty()) << A.Source;
+    EXPECT_FALSE(A.UnprovenReturns.empty());
+    // xchg [e/rsp], eax; ret.
+    const auto B = liftOwnReturnBody(P, {0x87, 0x04, 0x24, 0xc3});
+    EXPECT_TRUE(B.Source.empty()) << B.Source;
+    EXPECT_FALSE(B.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, PartialOverlapIsCheckedAfterStackAllocation) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    for (uint8_t Offset : {uint8_t{0}, uint8_t{6}}) {
+      SCOPED_TRACE(int(Offset));
+      // Allocate eight bytes; the store at +6 straddles the PC, while the
+      // one at +0 is wholly in the callee's own allocation.
+      std::vector<uint8_t> Body;
+      if (P.TheArch == Arch::X64)
+        Body.push_back(0x48);
+      Body.insert(Body.end(),
+                  {0x83, 0xec, 8, 0xc7, 0x44, 0x24, Offset, 0, 0, 0, 0});
+      if (P.TheArch == Arch::X64)
+        Body.push_back(0x48);
+      Body.insert(Body.end(), {0x83, 0xc4, 8, 0xc3});
+      const auto L = liftOwnReturnBody(P, Body);
+      EXPECT_EQ(L.UnprovenReturns.empty(), Offset == 0) << L.Source;
+      EXPECT_EQ(L.Source.empty(), Offset != 0) << L.Source;
+    }
+  }
+}
+
+TEST(OwnInteriorCall, OpaqueCalleeDoesNotProveItsCallersReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    // call ecx/rcx; ret. A balanced SP says nothing about the callee's writes.
+    const auto L = liftOwnReturnBody(P, {0xff, 0xd1, 0xc3});
+    EXPECT_TRUE(L.Source.empty()) << L.Source;
+    EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, ClobbersOnTerminatingPathsDoNotInvalidateOtherReturns) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    // test eax,eax; jz ret; mov dword [ecx/rcx],0; ud2; ret.
+    const auto L = liftOwnReturnBody(
+        P, {0x85, 0xc0, 0x74, 8, 0xc7, 0x01, 0, 0, 0, 0, 0x0f, 0x0b, 0xc3});
+    EXPECT_TRUE(L.UnprovenReturns.empty());
+    EXPECT_FALSE(L.Source.empty());
+  }
+}
+
+TEST(OwnInteriorCall, DiscardedReturnSlotsNeedNotRetainTheirValue) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    std::vector<uint8_t> Body = {0xc7, 0x04, 0x24, 0, 0, 0, 0};
+    if (P.TheArch == Arch::X64)
+      Body.push_back(0x48);
+    Body.insert(Body.end(),
+                {0x83, 0xc4, uint8_t(P.TheArch == Arch::X64 ? 8 : 4), 0xb8, 7,
+                 0, 0, 0, 0xc3});
+    const auto L = liftOwnReturnBody(P, Body);
+    ASSERT_TRUE(L.Unsupported.empty());
+    ASSERT_TRUE(L.UnprovenReturns.empty());
+    ASSERT_FALSE(L.Source.empty());
+    if (P.TheArch == Arch::X64)
+      compileAndRun(L.Source + ReturnsSeven);
+  }
+}
+
+TEST(OwnInteriorCall, I386NegativeAddressDisplacementPreservesPrivateWrites) {
+  // lea esp,[esp-8]; mov dword ptr [esp],0; add esp,8; ret. LowIR carries
+  // the signed displacement in a 32-bit constant, then widens the address.
+  const auto L =
+      liftOwnReturnBody(I386, {0x8d, 0x64, 0x24, 0xf8, 0xc7, 0x04, 0x24, 0, 0,
+                               0, 0, 0x83, 0xc4, 8, 0xc3});
+  EXPECT_TRUE(L.Unsupported.empty());
+  EXPECT_TRUE(L.UnprovenReturns.empty());
+  EXPECT_FALSE(L.Source.empty());
+}
+
 } // namespace

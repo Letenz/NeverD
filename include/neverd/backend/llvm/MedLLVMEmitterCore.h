@@ -65,6 +65,7 @@
 
 namespace neverd {
 
+struct SyscallConvention;
 class MedLLVMEmitterTestPeer;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
@@ -118,6 +119,8 @@ private:
     uint64_t RecurrenceNodes = 0;
     uint64_t AliasNodes = 0;
     uint64_t StableOffsetProofs = 0;
+    uint64_t StableOffsetNodes = 0;
+    uint64_t ClosedScalarNodes = 0;
     uint64_t IndexedBaseProofs = 0;
     uint64_t FrameSlotNodes = 0;
     uint64_t FrameSlotCacheHits = 0;
@@ -175,7 +178,9 @@ private:
       const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
   bool emitNativeX86RegistrationCxx(
       const MedFunc &Func, llvm::Function &LLVMFunc,
-      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
+      const std::map<int, llvm::BasicBlock *> &OriginalBlockMap,
+      const std::map<llvm::BasicBlock *, std::pair<int, int>> &PHICopyEdges);
+  llvm::Function *resolveX86RegistrationHandlerReference(va_t Address);
   bool
   emitNativeCxxEH(const MedFunc &Func, llvm::Function &LLVMFunc,
                   const std::map<int, llvm::BasicBlock *> &OriginalBlockMap);
@@ -313,6 +318,10 @@ private:
   // AArch64 value-producing INTRINSIC
   llvm::Value *emitAArch64IntrinsicValue(const MedOp &Op, Intrinsic IC,
                                          llvm::IRBuilder<> &Builder);
+  /// A supervisor call given an operating system's register contract.
+  llvm::Value *emitLinuxSyscall(const MedOp &Op,
+                                const SyscallConvention &Convention,
+                                llvm::IRBuilder<> &Builder);
   /// Return the address operand of an intrinsic whose backend owns complete
   /// relocation-aware memory resolution.  Function-wide fragment auditing
   /// uses this same role map so stored values remain escape sinks while the
@@ -594,7 +603,9 @@ private:
   /// Merging adjacent rodata segments keeps PC-relative references that cross a
   /// section boundary valid in the recompiled object (e.g. a switch-to-string
   /// `.rodata` offset table pointing into `.rodata.str1.1`).  Returns {global,
-  /// run-start VA}, or {nullptr, 0} when SegVA is not an embeddable rodata
+  /// VA of its first byte}: the run's start, or below it when a section in
+  /// the run needs more alignment than the start has, so every address keeps
+  /// its residue.  {nullptr, 0} when SegVA is not an embeddable rodata
   /// segment or the run exceeds the embed cap (caller falls back to the
   /// single-segment path).  For a lone rodata segment the run is that segment,
   /// identical to the prior embed.
@@ -2098,6 +2109,8 @@ private:
   // its own [Addr, segment_end] copy (which duplicated the rodata O(N) times
   // and blew the recompiled .rodata up to tens of KB).
   std::map<uint64_t, llvm::GlobalVariable *> SegmentDataGlobals;
+  // The VA each rodata run's global starts at, when below the run's start.
+  std::map<uint64_t, uint64_t> SegmentDataBases;
   // One mutable (non-const) embedded global per WRITABLE segment base VA (see
   // embedWritableRun): every direct and runtime-indexed access into the .data /
   // .bss segment GEPs into the SAME global so store/load pairs stay aliased.
