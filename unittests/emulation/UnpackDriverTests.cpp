@@ -408,8 +408,12 @@ public:
 class DriverPoolObserver final : public ProcessObserver {
 public:
   explicit DriverPoolObserver(uint64_t EntryRVA) : EntryRVA(EntryRVA) {}
-  std::shared_ptr<const ProcessRuntimeState> Metadata, Contents;
+  std::shared_ptr<const ProcessRuntimeState> Initial, Metadata, Contents;
   llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
+    auto State = P.runtimeState(true);
+    if (!State)
+      return State.takeError();
+    Initial = std::move(*State);
     auto M = P.inputModule();
     return std::vector<ExecutionWatch>{{M->Base + EntryRVA, 1}};
   }
@@ -436,6 +440,14 @@ TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
   ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
   ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
   // The driver session and its memory have already been destroyed here.
+  ASSERT_TRUE(Observer.Initial);
+  ASSERT_EQ(Observer.Initial->Profile,
+            ProcessRuntimeState::Kind::WindowsDriverX64);
+  const auto &Initial =
+      static_cast<const WindowsDriverState &>(*Observer.Initial);
+  EXPECT_TRUE(Initial.Pools.empty());
+  EXPECT_EQ(Initial.additionalDependencyReasons(), std::vector<std::string>{});
+  EXPECT_FALSE(Initial.hasAdditionalDependencies());
   for (const auto &State : {Observer.Metadata, Observer.Contents}) {
     ASSERT_TRUE(State);
     ASSERT_EQ(State->Profile, ProcessRuntimeState::Kind::WindowsDriverX64);

@@ -34,7 +34,7 @@ PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLi
 
 `runtime_state.additional_dependency_reasons` 列出驅動模型觀察到的原因，包括存活的池或 MDL、被修改的載入器物件、核心副作用及入口呼叫上下文變化。預設拒絕與明確快照保留相同原因。空清單不會覆寫 `has_additional_dependencies`，也不證明存在恢復契約。
 
-`ProcessView::runtimeState(include_backing)` 為暫停的驅動程式提供 `WindowsDriverState`。核心擁有者保存每個存活集區的配置 API、精確請求大小、標籤，以及有效的舊式類型或完整的新式 flags。要求內容時獨立複製恰好這些位元組；僅擷取中繼資料時不包含內容。已釋放的集區和借用的載入器／裝置物件不會成為集區記錄。此擷取不提供指標來源或原生初始化器，既有相依性和重定位拒絕條件繼續有效。
+`ProcessView::runtimeState(include_backing)` 為暫停的驅動程式提供 `WindowsDriverState`。核心擁有者保存每個存活集區的配置 API、精確請求大小、標籤，以及有效的舊式類型或完整的新式 flags。要求內容時獨立複製恰好這些位元組；僅擷取中繼資料時不包含內容。已釋放的集區、借用的載入器物件以及裝置物件不會成為集區記錄。此擷取不提供指標來源或原生初始化器，既有相依性和重定位拒絕條件繼續有效。
 
 即使沒有殘留集區或借用物件，核心映像重定位仍是獨立的載入器相依性。目前重建器移除生成內容的重定位，因此預設驅動程式復原會傳回 `unsupported_state`，不會建立或截斷輸出。僅明確指定 `snapshot_only` 才輸出固定基址快照並保留此診斷。原始重定位表不能證明其涵蓋生成的指標。
 

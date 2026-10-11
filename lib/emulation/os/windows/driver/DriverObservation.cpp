@@ -76,10 +76,11 @@ llvm::Error DriverObservation::entered(bool Entry, ProcessStackView NewStack) {
         return V.takeError();
       InitialRegisters.push_back(*V);
     }
+    // The initial stopped observer may query the completed invocation baseline.
+    Started = true;
     auto Next = Observer->started(*this);
     if (!Next)
       return Next.takeError();
-    Started = true;
     return replaceWatches(std::move(*Next));
   }
   auto Next = Observer->invoking(*this);
