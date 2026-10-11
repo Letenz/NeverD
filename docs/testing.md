@@ -809,6 +809,14 @@ See the [stream profiles](web-stream-profile.md).
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and
 WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+The v3 cases add non-computed member-fetch receiver anchors and optional calls
+without wrapper/API attribution or HAR eligibility. Any direct/member-fetch or
+WebSocket spread withholds argument-role nodes and default-method claims. The
+optional cross-platform evidence root also selects the exact NeverD-exported
+Claude macOS ARM64 module 928 by SHA-256 and verifies its unresolved member
+spread at byte 150,734 for 36 bytes. It does not execute the client. Run source,
+SDK and worker/MCP cases, the owning Web regression, JS/backend omission and
+enabled restoration when changing this shared profile.
 `WebSourceXHR.*` covers direct/const receiver and argument anchors, shadowing,
 aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
 compound-assignment exclusions, missing/forbidden methods and atomic budgets.

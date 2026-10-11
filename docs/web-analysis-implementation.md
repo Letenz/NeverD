@@ -2603,3 +2603,57 @@ expected backend-omission skip (10.76 seconds), and nineteen production-worker
 GUI passes with one expected unavailable-only skip (8.54 seconds). Logs:
 `/tmp/neverd-review-journal-upstream-{build,core,sdk,transports}.log` and
 `/tmp/neverd-web-gui-upstream-tests.log`.
+
+## Passive member-fetch syntax and spread boundaries (2026-10-12)
+
+`fetch-websocket-xhr-syntax-v3` retains non-computed member-fetch call and
+receiver anchors without assigning browser API identity, wrapper argument roles
+or HAR eligibility. Direct fetch, WebSocket and member-fetch calls share an
+explicit spread classification: a spread withholds all argument-role nodes,
+private endpoint material, default methods and argument-absence claims. XHR's
+existing conservative spread rule is unchanged. `SourceFetch` owns these syntax
+rules; the session and transports only publish the same fixed metadata. See the
+[interface profile](web-interface-profile.md).
+
+The actual NeverD-exported Claude Code 2.1.296 macOS ARM64 module 928 is selected
+by SHA-256 `a5e52526ae954aa74deb80cf1bb2372d1f4b77e1886bba69d55e30c51efa2cd2`
+and declared module source type. The native CLI, with an unusable external-tool
+PATH, retains one `.fetch(...args)` candidate at UTF-8 byte 150,734 for 36 bytes.
+Its method and argument positions remain unknown; URL/options/header/body node
+roles and private endpoint material remain absent. The old direct-only profile
+returned zero candidates. Neither count proves runtime reachability or an
+absent interface. No client executes and the original sample stays outside Git.
+
+All twenty focused source cases and nine SDK cases pass, including the exact
+Claude module, optional members/calls, computed/member-constructor exclusions,
+spread placement, atomic bounds, explicit uncertainty, unchanged positive
+direct-fetch joins and private-value canaries. The owning Web regression has
+714 passes and one expected missing-ASAR-policy skip across 715 unique cases:
+707 ordinary `Web` cases (44.78 seconds) plus all eight parameterized Claude
+platform cases (18.43 seconds). Worker/MCP/ABI checks have seven passes and one
+expected backend-omission skip (3.70 seconds). Logs:
+`/tmp/neverd-interface-v3-{source-boundary,sdk-boundary,web-regression-final,cross-regression,transports-boundary-final}.log`
+and `/tmp/neverd-interface-v3-claude-0928-final.jsonl`.
+
+With JavaScript omitted, the 136-step rebuild passes: all five compiled
+HAR/CLI SDK cases and seven transport/availability cases pass, with one
+expected backend-omission skip. Source-specific SDK cases are omitted at
+compile time. With the complete Web backend omitted, the nine-step rebuild
+passes; both ABI availability cases run positively, and transport/availability
+has six passes with two expected backend/input skips. Both flags are restored
+to ON; its 320-step parser/backend/tool rebuild passes, followed by all twenty
+source cases, nine SDK cases and seven transport/availability passes with one
+expected unavailable-only skip (21.42 seconds). Logs:
+`/tmp/neverd-interface-v3-nojs-{configure,build,sdk-final,transports}.log`,
+`/tmp/neverd-interface-v3-noweb-{configure,build,transports}.log` and
+`/tmp/neverd-interface-v3-restored-{configure,build,core,sdk,transports}.log`.
+
+LLVM formatting, diff whitespace and source provenance across 7,392 worktree
+files pass. The capability checker still reports the same sixteen pre-existing
+unclaimed native source-patch declarations; no global checker pass is claimed.
+No public C ABI entry point, dependency, target execution or network path is
+added by this increment.
+
+Wrapper implementation/argument flow, response/transformation tracing, dynamic
+URL resolution, source/stream joins and the remaining #714–#718 acceptance gaps
+remain. This increment does not close the five epics.

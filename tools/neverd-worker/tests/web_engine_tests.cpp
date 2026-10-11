@@ -1923,6 +1923,8 @@ int main(int argc, char **argv) {
              "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
              "SECRET_WEB_XHR.send('SECRET_WEB');"
              "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;"
+             "this.fetch('https://SECRET_WEB/a', {method:'POST'});"
+             "fetch(...SECRET_WEB_ARGUMENTS);"
              "const recovered='SECRET_'+'WEB_RECOVERED';const n=1+2;";
       const auto beforeInterfaces = web.revision(),
                  beforeProject = web.projectId();
@@ -1998,8 +2000,9 @@ int main(int argc, char **argv) {
         reply = process.call("web_interfaces_analyze", infer, interfaceRevision,
                              interfaceProject);
         check(reply["payload"] == analysis &&
-                  analysis["interface_count"] == 5 &&
-                  analysis["profile"] == "fetch-websocket-xhr-syntax-v2" &&
+                  analysis["interface_count"] == 7 &&
+                  analysis["fetch_member_correlation"] == false &&
+                  analysis["profile"] == "fetch-websocket-xhr-syntax-v3" &&
                   analysis["xhr_correlation"] == false,
               "Static interfaces differ");
         const Json sourcePage{
@@ -2016,6 +2019,13 @@ int main(int argc, char **argv) {
                   sites["items"][4]["handler_status"] == "value_syntax" &&
                   sites["items"][1]["receiver_binding_id"] ==
                       sites["items"][4]["receiver_binding_id"] &&
+                  sites["items"][5]["kind"] == "fetch_member_call" &&
+                  sites["items"][5]["receiver_node_id"].is_string() &&
+                  sites["items"][5]["method"] == "unknown" &&
+                  sites["items"][6]["arguments_status"] ==
+                      "spread_unresolved" &&
+                  sites["items"][6]["url_node_id"].is_null() &&
+                  sites["items"][6]["method"] == "unknown" &&
                   reply.dump().find("SECRET_WEB") == std::string::npos,
               "XHR syntax evidence differs or exposes values");
         for (const auto *Pass : {"string_recovery", "constant_folding"}) {

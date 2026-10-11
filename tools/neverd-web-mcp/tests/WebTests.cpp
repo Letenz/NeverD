@@ -186,9 +186,10 @@ void sourceAndMaps(Harness &H) {
     invalid([&] { H.get("web_source_rewrite_analyze", RewriteArgs); });
   }
   const auto Interfaces = H.same("web_interfaces_analyze", Args);
-  require(Interfaces.at("interface_count") == 5 &&
+  require(Interfaces.at("interface_count") == 7 &&
               Interfaces.at("xhr_correlation") == false &&
-              Interfaces.at("profile") == "fetch-websocket-xhr-syntax-v2",
+              Interfaces.at("fetch_member_correlation") == false &&
+              Interfaces.at("profile") == "fetch-websocket-xhr-syntax-v3",
           "MCP lost XHR syntax evidence or changed correlation claims");
   const auto Sites =
       H.same("web_interface_records",
@@ -202,6 +203,14 @@ void sourceAndMaps(Harness &H) {
               Items[1].at("receiver_binding_id") ==
                   Items[4].at("receiver_binding_id"),
           "MCP changed XHR source links");
+  require(Items[5].at("kind") == "fetch_member_call" &&
+              Items[5].at("receiver_status") == "member_spelling_syntax_only" &&
+              Items[5].at("receiver_node_id").is_string() &&
+              Items[5].at("method") == "unknown" &&
+              Items[6].at("arguments_status") == "spread_unresolved" &&
+              Items[6].at("url_node_id").is_null() &&
+              Items[6].at("method") == "unknown",
+          "MCP promoted a member spelling or invented spread arguments");
   auto Bindings = Args;
   Bindings["record_kind"] = "bindings";
   H.same("web_source_binding_records", Bindings);
@@ -790,6 +799,8 @@ int main() {
                       "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
                       "CANARY_XHR.send('CANARY');"
                       "CANARY_XHR.onload = CANARY_CALLBACK;"
+                      "this.fetch('https://CANARY/a', {method:'POST'});"
+                      "fetch(...CANARY_ARGUMENTS);"
                       "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
