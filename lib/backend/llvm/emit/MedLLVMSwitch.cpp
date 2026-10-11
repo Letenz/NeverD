@@ -17,6 +17,7 @@
 #include "neverd/Common.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedSwitchNorm.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-switch"
@@ -57,70 +58,20 @@ namespace neverd {
 llvm::Value *MedLLVMEmitter::synthesizeSharedDispatchIndex(
     const MedBlock &Blk, const MedOp &BrOp, const JumpTable &JT,
     llvm::IRBuilder<> &Builder) {
-  if (!CurMedFunc || !CurFunc || Blk.Preds.size() < 2)
+  if (!CurMedFunc || !CurFunc)
     return nullptr;
-  auto SlotKey = reloadSlotKeyOf(Blk, BrOp);
-  if (!SlotKey)
-    return nullptr;
-
-  // Recover every predecessor's index.  Bail (returning null) if any cannot be
-  // resolved.  Predecessors indexing DIFFERENT tables (clang -O0 funnels every
-  // `goto *p` in a function through one dispatch block, so two distinct tables
-  // `t1[i]`/`t2[j]` can share it) would make the common-index merge unsound;
-  // that case is detected and invalidated upstream in the resolver (where table
-  // bases are robustly resolved cross-arch via foldRegConstant), so a
-  // mixed-table dispatch never reaches here with targets.
-  std::vector<std::pair<int, MedVar>> PerPred;
-  unsigned MaxBytes = 0;
-  std::optional<uint64_t> CommonBase;
-  for (int PredId : Blk.Preds) {
-    const MedBlock *Pred = nullptr;
-    for (auto &B : CurMedFunc->Blocks)
-      if (B.Id == PredId) {
-        Pred = &B;
-        break;
-      }
-    if (!Pred)
-      return nullptr;
-    auto Idx = tracePredSwitchIndex(*Pred, *SlotKey);
-    if (Idx) {
-      // A variable-index goto-site: enforce a single shared table.  Bail on a
-      // POSITIVE table-base mismatch (two predecessors resolve to different
-      // data-segment table VAs → different tables → a common-index merge would
-      // mis-route, so trap loudly instead).  When a base cannot be resolved to
-      // a data-segment constant (e.g. an ARM PC-relative literal-pool base),
-      // proceed: the common single-table threaded-dispatch shape must keep
-      // working.
-      if (auto Base = predTableBaseVA(*Pred, *SlotKey)) {
-        if (!CommonBase)
-          CommonBase = Base;
-        else if (*CommonBase != *Base)
-          return nullptr;
-      }
-    } else {
-      // A constant-index goto-site (`goto *tab[k]`, clang -O0 folds it to a
-      // load from a constant slot address): recover the exact entry against
-      // THIS table.  No base check is needed — the constant address resolves to
-      // one table entry, and a constant into a different table maps out of
-      // range (or misaligned) and bails, so it cannot mis-route.
-      Idx = tracePredConstDispatchIndex(*Pred, *SlotKey, JT);
-      if (!Idx)
-        return nullptr;
-    }
-    MaxBytes = std::max<unsigned>(MaxBytes, Idx->Size ? Idx->Size : 4);
-    PerPred.emplace_back(PredId, *Idx);
-  }
-  if (PerPred.size() < 2 || MaxBytes == 0)
+  auto Selectors = sharedDispatchSelectors(dispatchContext(), Blk, BrOp, JT);
+  if (!Selectors)
     return nullptr;
 
   // A common stack slot communicates the per-predecessor index to the dispatch
   // block; each predecessor's store is deferred (inserted before its terminator
   // once all blocks are emitted).
-  auto *Ty = sizeToType(MaxBytes);
+  auto *Ty = sizeToType(Selectors->MaxBytes);
   auto &Entry = CurFunc->getEntryBlock();
   llvm::IRBuilder<> AllocB(&Entry, Entry.begin());
   auto *Slot = AllocB.CreateAlloca(Ty, nullptr, "cgoto_idx");
-  PendingDispatchStores.push_back({Slot, Ty, std::move(PerPred)});
+  PendingDispatchStores.push_back({Slot, Ty, std::move(Selectors->PerPred)});
   return Builder.CreateLoad(Ty, Slot, "cgoto_idx_v");
 }
 

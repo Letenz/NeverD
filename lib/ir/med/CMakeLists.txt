@@ -1,6 +1,7 @@
 add_neverd_component_library(NeverDIRMed
   MedLibraryRecognition.cpp
   MedComLibraryRecognition.cpp
+  MedDispatchSlots.cpp
   X86/RegistrationFrame.cpp
   X86/RegistrationCallback.cpp
   X86/RegistrationCatchContext.cpp
