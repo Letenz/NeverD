@@ -68,10 +68,11 @@ TypeRef multiRegisterReturnType(const std::vector<MedReturnReg> &Fields) {
     Members.push_back(Field.IsFP ? NdType::makeFloat(Field.Size)
                                  : NdType::makeInt(Field.Size, false));
   }
-  // Only a record C spells has a declaration: a mixed integer and floating
-  // layout has no compiler-backed classification yet.
   TypeRef Record = NdType::makeStruct(std::move(Members));
-  return Record && !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+  if (!Record)
+    return {};
+  Record->RegisterReturnRecord = true;
+  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
 }
 
 // Temporary, opt-in observation of the actual source-recovery conversion.

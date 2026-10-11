@@ -354,6 +354,20 @@ std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type) {
   }
   if (Result.empty())
     return {};
+  // A record of return registers takes no source convention's restrictions:
+  // each member is the scalar one register carries, naturally aligned.
+  if (Type->RegisterReturnRecord)
+    return Result.size() <= 4 &&
+                   std::all_of(Result.begin(), Result.end(),
+                               [](const auto &Member) {
+                                 return Member.Type->Kind == NdTypeKind::Float
+                                            ? Member.Type->Size == 4 ||
+                                                  Member.Type->Size == 8
+                                            : Member.Type->Kind ==
+                                                  NdTypeKind::Int;
+                               })
+               ? Result
+               : std::vector<SourceAggregateMember>();
   if (mixedSwiftResult(Type, Result) || swiftBooleanTupleResult(Type, Result))
     return Result;
   const bool Floating = Result.front().Type->Kind == NdTypeKind::Float;

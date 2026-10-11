@@ -4457,44 +4457,45 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                    ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text
                    : PointerInteger("(uintptr_t)" + Text);
     // A struct returned across several registers arrives whole in the
-    // integer the HighIR unpacks its fields from.  An integer of another
-    // width than the record would invent or drop field bytes.
+    // integer the HighIR unpacks its fields from, one register's scalar
+    // after another.  An integer of another width than those fields would
+    // invent or drop field bytes.
     if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
       if (const TypeRef Return = knownCallReturnType(E);
           Return && Return->Kind == NdTypeKind::Struct && !Return->IsEnum) {
         const TypeRef Carrier =
             E.Type ? E.Type : NdType::makeInt(Return->Size, false);
-        if (Return->Size != Carrier->Size)
-          throw std::runtime_error(
-              "HighC cannot carry a " + std::to_string(Return->Size) +
-              "-byte struct return in a " + std::to_string(Carrier->Size) +
-              "-byte integer");
-        if (Carrier->Size == 4 || Carrier->Size == 8 || Carrier->Size == 16)
+        const auto Members = sourceAggregateMembers(Return);
+        uint16_t Packed = 0;
+        for (const auto &Member : Members)
+          Packed += Member.Type->Size;
+        if (Members.empty() || Packed != Carrier->Size)
+          return "((void)" + Text + ", (__builtin_trap(), (" +
+                 typeToC(Carrier) + ")0 /* unknown struct return fields */))";
+        if (Return->Size == Carrier->Size &&
+            (Carrier->Size == 4 || Carrier->Size == 8 || Carrier->Size == 16))
           return typedText(
               E, "__builtin_bit_cast(" + typeToC(Carrier) + ", " + Text + ")",
               Carrier->Size, Carrier->IsSigned);
-        // No integer of the record's size bit casts from it (three floats
-        // are twelve bytes): place each member's bits at its offset.
-        const auto Members = sourceAggregateMembers(Return);
-        if (Members.empty())
-          throw std::runtime_error("HighC cannot unpack a " +
-                                   std::to_string(Return->Size) +
-                                   "-byte struct return");
+        // No integer bit casts from the record (three floats are twelve
+        // bytes, and an int beside a double leaves padding): place each
+        // member's bits where the packed fields put them.
         const std::string Wide = typeToC(Carrier);
-        std::string Packed;
+        std::string Fields;
+        uint16_t Offset = 0;
         for (size_t I = 0; I < Members.size(); ++I) {
           std::string Term =
               "(" + Wide + ")__builtin_bit_cast(" +
               typeToC(NdType::makeInt(Members[I].Type->Size, false)) +
               ", nd_record.field_" + std::to_string(I) + ")";
-          if (Members[I].ByteOffset != 0)
-            Term = "(" + Term + " << " +
-                   std::to_string(Members[I].ByteOffset * 8) + ")";
-          Packed += (I ? " | " : "") + Term;
+          if (Offset != 0)
+            Term = "(" + Term + " << " + std::to_string(Offset * 8) + ")";
+          Fields += (I ? " | " : "") + Term;
+          Offset += Members[I].Type->Size;
         }
         return typedText(E,
                          "({ " + typeToC(Return) + " nd_record = " + Text +
-                             "; " + Packed + "; })",
+                             "; " + Fields + "; })",
                          Carrier->Size, Carrier->IsSigned);
       }
     // A struct the callee returns in more registers than its C declaration
