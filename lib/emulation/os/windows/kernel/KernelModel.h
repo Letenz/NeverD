@@ -28,6 +28,7 @@
 
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/GuestMemory.h"
+#include "neverd/emulation/WindowsDriverState.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -72,6 +73,8 @@ public:
   llvm::Error captureUnpackBaseline();
   void recordUnpackEnvironmentRead();
   llvm::Expected<std::vector<std::string>> unpackDependencies() const;
+  llvm::Expected<WindowsDriverState>
+  captureUnpackRuntime(bool IncludeBacking) const;
   std::map<uint64_t, uint64_t> unpackAllocations() const;
   uint64_t driverObject() const { return DriverObject; }
   uint64_t registryPath() const { return RegistryPath; }
@@ -827,6 +830,8 @@ private:
     uint64_t Size;
     uint32_t Tag;
     bool NonPaged;
+    WindowsDriverState::PoolAPI API;
+    uint64_t TypeOrFlags;
   };
   std::map<uint64_t, PoolAllocation> Allocations;
   std::map<uint64_t, uint64_t> ArenaAllocations;

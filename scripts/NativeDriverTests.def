@@ -10,6 +10,27 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RequiresAnOwnershipBaseline")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RetainsTheExactLegacyAllocationContract")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RetainsModernFlagsAndInitializationSemantics")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.OwnsCurrentBytesAcrossMutationAndRelease")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.ReleasedPoolsLeaveNoReconstructionRecord")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.FailedAllocationAndFreePreserveLifetimeIdentity")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RequiredBackingCannotBecomeAnEmptySnapshot")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.BorrowedAndDeviceObjectsAreNotPoolAllocations")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.OpaqueEffectsAndEntryLifetimeRemainDependencies")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Native/KernelSnapshot.MemoryFaultRetainsCommittedObjectsAndFirstFault/"
     "{backend}_checked")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

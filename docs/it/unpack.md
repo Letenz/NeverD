@@ -34,6 +34,8 @@ Le letture del clock tramite `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` man
 
 `runtime_state.additional_dependency_reasons` elenca i motivi osservati dal modello del driver: pool o MDL attivi, oggetti del caricatore modificati, effetti del kernel e modifiche al contesto della chiamata di ingresso. Il rifiuto predefinito e gli snapshot espliciti conservano gli stessi motivi. Un elenco vuoto non annulla `has_additional_dependencies` e non dimostra un contratto di ripristino.
 
+`ProcessView::runtimeState(include_backing)` fornisce `WindowsDriverState` per i driver arrestati. Il proprietario del kernel conserva per ogni pool vivo l’API di allocazione, la dimensione esatta richiesta, il tag e il tipo precedente effettivo oppure tutti i flag moderni. Il contenuto richiesto è una copia indipendente di quei soli byte; la cattura dei soli metadati non include contenuto. I pool liberati e gli oggetti presi in prestito dal loader o dai dispositivi non diventano record di pool. Questa cattura non fornisce la provenienza dei puntatori né un inizializzatore nativo; restano validi i rifiuti esistenti relativi a dipendenze e rilocazioni.
+
 Le rilocazioni dell’immagine del kernel restano una dipendenza del loader anche senza pool od oggetti presi in prestito ancora presenti. Poiché il writer elimina le rilocazioni del contenuto generato, il recupero predefinito restituisce `unsupported_state` senza creare né troncare l’output. Solo `snapshot_only` esplicito produce l’immagine a indirizzo fisso mantenendo la diagnosi. La tabella originale non dimostra di coprire i puntatori generati.
 
 ```bash

@@ -32,6 +32,8 @@ Clock reads through `KeQueryPerformanceCounter`, `RDTSC`, or `RDTSCP` retain an 
 
 `runtime_state.additional_dependency_reasons` lists the driver model’s observed reasons, including live pools or MDLs, changed loader objects, kernel effects and a changed entry invocation context. Default refusal and explicit snapshots retain the same reasons. An empty list does not override `has_additional_dependencies` or establish a restoration contract.
 
+`ProcessView::runtimeState(include_backing)` exposes `WindowsDriverState` for stopped drivers. The kernel owner retains each live pool's allocation API, exact requested size, tag and effective legacy type or complete modern flags. Requested backing is an independent copy of exactly those bytes; metadata-only capture leaves it absent. Freed pools and borrowed loader/device objects do not become pool records. This capture supplies neither pointer provenance nor a native initializer; existing dependency and relocation refusals still apply.
+
 Kernel image relocations remain a separate loader dependency even when no pool or borrowed object survives. Because the current writer strips relocations for generated content, default driver recovery returns `unsupported_state` without creating or truncating output. Only explicit `snapshot_only` emits the fixed image and retains this diagnostic. An original relocation table is not proof that it covers generated pointers.
 
 ```bash

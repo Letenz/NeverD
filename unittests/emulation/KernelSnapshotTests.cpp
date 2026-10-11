@@ -115,6 +115,10 @@ protected:
     EXPECT_EQ(Fields(*After), Fields(Before));
   }
   void snapshotAfterFault(bool Unsupported) {
+    ok(Model->captureUnpackBaseline());
+    const auto Pool = call(kernel_api::ExAllocatePool2, {0x40, 19, 0x61747354});
+    const std::vector<uint8_t> Bytes(19, 0x37);
+    ok(CPU->write(Pool, Bytes));
     stop(Unsupported);
     ASSERT_TRUE(CPU->fault());
     const auto Fault = *CPU->fault();
@@ -133,6 +137,12 @@ protected:
       EXPECT_EQ(Result.AddDevice, Code + 0x200);
       EXPECT_EQ(Result.MajorFunctions[0], Code + 0x300);
       EXPECT_EQ(Result.MajorFunctions[1], 0u);
+      const auto State = take(Model->captureUnpackRuntime(true));
+      ASSERT_EQ(State.Pools.size(), 1u);
+      EXPECT_EQ(State.Pools[0].Address, Pool);
+      ASSERT_TRUE(State.Pools[0].Bytes);
+      EXPECT_EQ(*State.Pools[0].Bytes, Bytes);
+      EXPECT_TRUE(State.hasAdditionalDependencies());
     }
     EXPECT_EQ(std::pair(Reads, Writes), Accesses);
     auto Read = CPU->readInteger(Model->driverObject(), 8);

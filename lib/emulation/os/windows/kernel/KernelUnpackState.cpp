@@ -122,4 +122,27 @@ KernelModel::unpackDependencies() const {
     Reasons.emplace_back("changed kernel loader objects");
   return Reasons;
 }
+
+llvm::Expected<WindowsDriverState>
+KernelModel::captureUnpackRuntime(bool IncludeBacking) const {
+  auto Reasons = unpackDependencies();
+  if (!Reasons)
+    return Reasons.takeError();
+  WindowsDriverState State;
+  State.Reasons = std::move(*Reasons);
+  for (const auto &[Address, Allocation] : Allocations) {
+    WindowsDriverState::PoolAllocation Pool{
+        Address,        Allocation.Size, Allocation.API, Allocation.TypeOrFlags,
+        Allocation.Tag, std::nullopt};
+    if (IncludeBacking) {
+      // The allocation owner bounds the total retained payload by its arena.
+      // Keep exact live contents, independently of image integer references.
+      Pool.Bytes.emplace(Allocation.Size);
+      if (auto E = Memory.snapshotBacking(Address, *Pool.Bytes))
+        return std::move(E);
+    }
+    State.Pools.push_back(std::move(Pool));
+  }
+  return State;
+}
 } // namespace neverd::emulation

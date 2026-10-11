@@ -34,6 +34,8 @@ PE32+ DLL 输入由 `IMAGE_FILE_DLL` 标识。建模的来宾 EXE 调用 `LoadLi
 
 `runtime_state.additional_dependency_reasons` 列出驱动模型观察到的原因，包括存活的池或 MDL、被修改的加载器对象、内核副作用及入口调用上下文变化。默认拒绝与显式快照保留相同原因。空列表不会覆盖 `has_additional_dependencies`，也不证明存在恢复契约。
 
+`ProcessView::runtimeState(include_backing)` 为暂停的驱动提供 `WindowsDriverState`。内核所有者保存每个存活池的分配 API、精确请求大小、标签，以及有效的旧式类型或完整的新式 flags。请求内容时独立复制恰好这些字节；仅捕获元数据时不包含内容。已释放的池和借用的加载器／设备对象不会成为池记录。该捕获不提供指针来源或原生初始化器，现有依赖和重定位拒绝条件继续有效。
+
 即使没有遗留池或借用对象，内核映像重定位仍是独立的加载器依赖。当前重建器移除生成内容的重定位，因此默认驱动恢复返回 `unsupported_state`，不会创建或截断输出。仅显式 `snapshot_only` 输出固定基址快照并保留该诊断。原始重定位表不能证明其覆盖生成的指针。
 
 ```bash

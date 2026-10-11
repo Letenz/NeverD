@@ -1335,6 +1335,7 @@ add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
 add_neverd_unittest(NeverDKernelSnapshotTests
   NO_PRETTY_VALUES
   KernelSnapshotTests.cpp
+  KernelUnpackStateTests.cpp
   TIMEOUT 30
   LINK_COMPONENTS Emulation)
 target_include_directories(NeverDKernelSnapshotTests PRIVATE
