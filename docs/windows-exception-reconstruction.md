@@ -506,9 +506,22 @@ their original control-flow form and increment the function's unstructured-EH
 count.
 
 The C backend emits MSVC SEH syntax for a reducible single-clause SEH region.
-It emits deterministic C-compatible comments for C++ catches and cleanup
-states because HighC is a C backend and must not claim to produce compilable
-C++ source. Out-of-line native funclets retain their exact addresses.
+An irreducible SEH region retains its native body and an annotation for every
+filter, handler, finally action, state and continuation. Registration annotations
+also retain enclosing levels and the exact width and literal bits of try-level
+stores. A bounded pure filter may supply its return expression using the proven
+parent-frame coordinate; its original native statements remain available.
+Owned filter, handler and continuation entries keep their labels and bodies
+after ordinary branches or returns, even without an explicit machine `goto`.
+The renderer does not invent a catch-all clause for an unstructured region.
+Isolated EH3/EH4 table entries retain their checked parent EBP when state
+propagation exhausts its budget. This proves a frame coordinate for analysis,
+without proving active protection intervals or authorizing reconstruction.
+Side-effecting filters retain their native code instead of acquiring a guessed
+C call ABI. An irreducible C++ region likewise retains its unwind-table view
+instead of acquiring lexical `try`/`catch` protection.
+The C view emits deterministic C-compatible comments for C++ catches and
+cleanup states. Out-of-line native funclets retain their exact addresses.
 
 ## LLVM metadata schema
 

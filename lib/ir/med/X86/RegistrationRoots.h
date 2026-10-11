@@ -25,6 +25,10 @@ public:
   /// Remove ordinary fallthrough only at an exact, checked no-return source
   /// call. Keep exceptional edges and continuation blocks for SSA rooting.
   void disconnectNoReturnFallthroughs(MedFunc &Func) const;
+  /// An isolated, exact EH3/EH4 table entry retains its personality frame
+  /// even when state propagation is incomplete. True denotes a callback's
+  /// private stack; false denotes an except body resuming the parent frame.
+  std::optional<bool> sehEntry(const MedBlock &Block) const;
   bool isCxxHandler(const MedBlock &Block) const;
   std::optional<std::pair<va_t, int32_t>>
   restoredStack(const MedBlock &Block) const;

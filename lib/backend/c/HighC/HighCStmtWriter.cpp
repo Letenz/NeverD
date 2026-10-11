@@ -277,54 +277,6 @@ std::string HighCWriter::sehFilterValueText(const HighExpr &Value) {
   return exprStr(Value);
 }
 
-void HighCWriter::writeCExceptionRegion(const HighStmt &Stmt, int Indent) {
-  // The C projection shows native entry points, not an invented setjmp-based
-  // replacement for the platform unwinder. A funclet keeps its own ABI and
-  // frame. A checked body within the parent remains a runtime-only label;
-  // independent funclets retain their separate definitions.
-  for (size_t I = 0; I < Stmt.EHClauses.size(); ++I) {
-    const HighEHClause &Clause = Stmt.EHClauses[I];
-    const va_t Entry = Clause.Kind == HighEHClauseKind::CxxCleanup
-                           ? Clause.FilterOrActionVA
-                           : Clause.HandlerVA;
-    if (I < Stmt.EHClauseBodies.size() && !Stmt.EHClauseBodies[I].empty() &&
-        !isEmbeddedRegistrationCallback(Stmt, I) &&
-        !isEmbeddedWindowsCallback(Stmt, I) &&
-        (!Entry || (CurrentFunc && Entry == CurrentFunc->Entry) ||
-         !DefinedFunctionsByAddress.count(Entry)))
-      throw std::invalid_argument(
-          "plain C exception view requires the native handler function; "
-          "an embedded handler cannot be assigned a new C ABI");
-  }
-  const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
-  LeaveTargets.clear();
-  llvm::scope_exit Restore([&] { LeaveTargets = OuterLeave; });
-  emitIndent(Indent);
-  OS << "/* C++ unwind-table region [0x" << llvm::utohexstr(Stmt.EHRange.Begin)
-     << ", 0x" << llvm::utohexstr(Stmt.EHRange.End)
-     << "): dispatch is supplied by the image's exception runtime.\n";
-  for (const HighEHClause &Clause : Stmt.EHClauses) {
-    emitIndent(Indent);
-    OS << " * "
-       << (Clause.Kind == HighEHClauseKind::CxxCleanup ? "cleanup" : "handler")
-       << " @ 0x" << llvm::utohexstr(Clause.HandlerVA) << ", action @ 0x"
-       << llvm::utohexstr(Clause.FilterOrActionVA) << ", type descriptor @ 0x"
-       << llvm::utohexstr(Clause.TypeDescriptorVA) << ", state=" << Clause.State
-       << ", catch-object offset=" << Clause.CatchObjectOffset;
-    for (va_t Continuation : Clause.ContinuationVAs)
-      OS << ", continuation @ 0x" << llvm::utohexstr(Continuation);
-    OS << "\n";
-  }
-  emitIndent(Indent);
-  OS << " */\n";
-  emitIndent(Indent);
-  OS << "{\n";
-  writeTryBody(Stmt.Body, Indent + 1);
-  emitIndent(Indent);
-  OS << "}\n";
-  writeEmbeddedNativeCallbacks(Stmt, Indent);
-}
-
 void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   auto Event = SourceRecorder && CurrentFunc
                    ? SourceRecorder->statement(CurrentFunc->Entry, Stmt)
@@ -1179,8 +1131,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     NextTryLeaveTargets.clear();
     const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
     LeaveTargets.clear();
-    auto RestoreLeave =
-        llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
+    llvm::scope_exit RestoreLeave([&] { LeaveTargets = OuterLeave; });
     // C forbids a goto into a __try body, but machine code may branch into
     // the middle of a protected range.  x64 SEH protection is by address,
     // so splitting an __except try at that entry into two consecutive tries
@@ -1189,7 +1140,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     // runs on normal exit too, but an out-of-line one prints an empty body
     // (its normal-exit call is already explicit code), so each piece runs
     // nothing extra.
-    if (Stmt.Body.size() >= 2 && !Stmt.EHClauses.empty() &&
+    if (Stmt.EHIsReducible && Stmt.Body.size() >= 2 &&
+        !Stmt.EHClauses.empty() &&
         std::all_of(Stmt.EHClauses.begin(), Stmt.EHClauses.end(),
                     [](const HighEHClause &Clause) {
                       return Clause.Kind == HighEHClauseKind::SEHExcept ||
@@ -1218,19 +1170,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     }
     if (!Stmt.EHIsReducible || Stmt.EHClauses.size() != 1 ||
         Stmt.EHClauseBodies.size() != 1) {
-      emitIndent(Indent);
-      OS << "__try {\n";
-      writeTryBody(Stmt.Body, Indent + 1);
-      emitIndent(Indent);
-      OS << "} __except (EXCEPTION_EXECUTE_HANDLER) {\n";
-      for (const HighEHClause &Clause : Stmt.EHClauses)
-        writeSEHExceptionCodeCapture(Clause.HandlerVA, Indent + 1);
-      emitIndent(Indent + 1);
-      OS << "/* unstructured SEH region [0x"
-         << llvm::utohexstr(Stmt.EHRange.Begin) << ", 0x"
-         << llvm::utohexstr(Stmt.EHRange.End) << ") */\n";
-      emitIndent(Indent);
-      OS << "}\n";
+      writeUnstructuredSEHRegion(Stmt, Indent);
       break;
     }
     const HighEHClause &Clause = Stmt.EHClauses.front();
@@ -1311,7 +1251,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
   }
 
   case StmtKind::CxxTry: {
-    if (!Opts.StructuredExceptionSyntax) {
+    if (!Opts.StructuredExceptionSyntax || !Stmt.EHIsReducible) {
       writeCExceptionRegion(Stmt, Indent);
       break;
     }
@@ -1319,8 +1259,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
     LeaveTargets.clear();
     NextTryLeaveTargets.clear();
-    auto RestoreLeave =
-        llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
+    llvm::scope_exit RestoreLeave([&] { LeaveTargets = OuterLeave; });
     emitIndent(Indent);
     const bool CleanupOnly =
         !Stmt.EHClauses.empty() &&
@@ -1388,8 +1327,7 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     const std::vector<va_t> OuterLeave = std::move(LeaveTargets);
     LeaveTargets.clear();
     NextTryLeaveTargets.clear();
-    auto RestoreLeave =
-        llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
+    llvm::scope_exit RestoreLeave([&] { LeaveTargets = OuterLeave; });
     emitIndent(Indent);
     OS << "/* Itanium try [0x" << llvm::utohexstr(Stmt.EHRange.Begin) << ", 0x"
        << llvm::utohexstr(Stmt.EHRange.End)

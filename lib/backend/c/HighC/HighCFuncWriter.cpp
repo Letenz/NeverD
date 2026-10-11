@@ -412,6 +412,18 @@ void HighCWriter::runAnalysisPasses(const HighFunc &Func) {
         return Address && Func.ExceptionMetadata &&
                Func.ExceptionMetadata->ownsCode(Address);
       };
+      if (!Stmt.EHIsReducible) {
+        // Native dispatch enters these bodies after ordinary code has left
+        // through a branch or return. Their labels must survive unreachable
+        // statement pruning even though no machine goto names the entry.
+        if (Reachable(Clause.FilterOrActionVA))
+          GotoTargets.insert(Clause.FilterOrActionVA);
+        if (Reachable(Clause.HandlerVA))
+          GotoTargets.insert(Clause.HandlerVA);
+        for (va_t Continuation : Clause.ContinuationVAs)
+          if (Reachable(Continuation))
+            GotoTargets.insert(Continuation);
+      }
       if (Clause.Kind == HighEHClauseKind::SEHExcept &&
           Reachable(Clause.HandlerVA)) {
         // An attached `__except` body is already printed in-place.  A label
@@ -872,72 +884,9 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
   OS << " * highir.structured_regions=" << Func.StructuredExceptionRegions
      << ", fallback_regions=" << Func.UnstructuredExceptionRegions << "\n";
 
-  if (EH.SEH) {
-    for (size_t I = 0; I < EH.SEH->Scopes.size(); ++I) {
-      const SEHScopeRecord &Scope = EH.SEH->Scopes[I];
-      const char *Kind = Scope.Kind == SEHScopeKind::Finally    ? "finally"
-                         : Scope.Kind == SEHScopeKind::CatchAll ? "except-all"
-                                                                : "filter";
-      OS << " * seh.scope[" << I << "]: " << Kind << " [0x"
-         << llvm::utohexstr(Scope.GuardedRange.Begin) << ", 0x"
-         << llvm::utohexstr(Scope.GuardedRange.End) << ")";
-      if (Scope.FilterOrFinallyVA)
-        OS << " filter_or_finally=0x"
-           << llvm::utohexstr(Scope.FilterOrFinallyVA);
-      if (Scope.NormalizedFilterVA)
-        OS << " normalized_filter=0x"
-           << llvm::utohexstr(Scope.NormalizedFilterVA);
-      if (Scope.HandlerVA)
-        OS << " handler=0x" << llvm::utohexstr(Scope.HandlerVA);
-      OS << "\n";
-    }
-  }
-  if (EH.Cxx) {
-    OS << " * cxx.format="
-       << (EH.Cxx->NativeEncoding == CxxExceptionInfo::Encoding::FH4 ? "fh4"
-                                                                     : "fh3")
-       << ", states=" << EH.Cxx->MaxState
-       << ", try_blocks=" << EH.Cxx->TryBlocks.size()
-       << ", ip_states=" << EH.Cxx->IPMap.size() << "\n";
-    for (size_t I = 0; I < EH.Cxx->UnwindMap.size(); ++I) {
-      const CxxUnwindAction &Action = EH.Cxx->UnwindMap[I];
-      OS << " * cxx.unwind[" << I << "]: to_state=" << Action.ToState
-         << ", kind=" << getCxxUnwindActionKindName(Action.Kind);
-      if (Action.ActionVA)
-        OS << ", action=0x" << llvm::utohexstr(Action.ActionVA);
-      if (Action.ObjectOffset)
-        OS << ", object_offset=" << Action.ObjectOffset;
-      OS << "\n";
-    }
-    for (size_t I = 0; I < EH.Cxx->TryBlocks.size(); ++I) {
-      const CxxTryBlock &Try = EH.Cxx->TryBlocks[I];
-      OS << " * cxx.try[" << I << "]: states=" << Try.TryLow << ".."
-         << Try.TryHigh << ", catch_high=" << Try.CatchHigh
-         << ", handlers=" << Try.Handlers.size() << "\n";
-      for (size_t J = 0; J < Try.Handlers.size(); ++J) {
-        const CxxCatchHandler &Catch = Try.Handlers[J];
-        OS << " *   catch[" << J << "]: type=0x"
-           << llvm::utohexstr(Catch.TypeDescriptorVA) << ", handler=0x"
-           << llvm::utohexstr(Catch.HandlerVA) << ", adjectives=0x"
-           << llvm::utohexstr(Catch.Adjectives)
-           << ", object_offset=" << Catch.CatchObjectOffset
-           << ", parent_frame_offset=" << Catch.ParentFrameOffset;
-        if (!Catch.ContinuationVAs.empty()) {
-          OS << ", continuations=";
-          for (size_t K = 0; K < Catch.ContinuationVAs.size(); ++K) {
-            if (K)
-              OS << ",";
-            OS << "0x" << llvm::utohexstr(Catch.ContinuationVAs[K]);
-          }
-        }
-        OS << "\n";
-      }
-    }
-    for (size_t I = 0; I < EH.Cxx->IPMap.size(); ++I)
-      OS << " * cxx.ip_state[" << I << "]: ip=0x"
-         << llvm::utohexstr(EH.Cxx->IPMap[I].IP)
-         << ", state=" << EH.Cxx->IPMap[I].State << "\n";
-  }
+  writeSEHScopeAnnotation(Func);
+  writeRegistrationAnnotation(Func);
+  writeCxxScopeAnnotation(Func);
   if (EH.Itanium) {
     const ItaniumEHInfo &LSDA = *EH.Itanium;
     OS << " * itanium.lsda=0x" << llvm::utohexstr(LSDA.LSDAVA)

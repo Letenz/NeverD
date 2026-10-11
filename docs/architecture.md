@@ -259,7 +259,17 @@ their byte-addressed node stores still consume the previous-head definition.
 The MedIR call owner binds each retained callee ABI to its current occurrence.
 HighIR reads that call's current ECX SSA value and uses the proved argument
 count; a private EBP spill cannot become an extra stack argument.
-Unproved or ambiguous bodies retain handler/continuation annotations.
+Unproved or ambiguous bodies retain handler/continuation annotations. The x86
+SSA root owner also recognizes isolated, exact EH3/EH4 table entries when state
+propagation exhausts its budget. A checked parent EBP remains available for
+analysis; ordinary predecessors, an independent ordinary role, conflicting
+entry roles or a mismatched frame/personality cannot borrow that definition.
+This frame fact does not prove protected state intervals or native rebuilding.
+The x86 HighIR filter owner admits only bounded pure return expressions. Its
+proof is shared by structured clauses and fallback annotations before any
+native filter code moves. Side-effecting filters retain their original body.
+The COFF C renderer emits lexical SEH/C++ protection only for reducible nodes;
+fallback views preserve native dispatch annotations and original statements.
 The fixed LLVM C++ prologue has its own COFF decoder. It authenticates the
 saved-register prefix, allocation, all node fields and six-byte FS publication.
 `RegistrationChainInfo` owns translation from runtime EBP to the source frame;

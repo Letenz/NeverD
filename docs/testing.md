@@ -3349,6 +3349,15 @@ AArch64 executes the C view and checks the C++ view's promoted IR types, because
 its fully variadic and fixed C ABIs differ. The provider uses the exact assembler
 label on Mach-O. The source ellipsis does not grant a native variadic ABI contract.
 
+`WindowsSEHFallback.*` checks complete native clause annotations, narrow state
+stores, pure and side-effecting filters, refusal to discard an unbound handler
+body, native continuations after an ordinary return, and irreducible C++ views.
+`MedSEHHandlerEntry` checks table-owned x86
+frame recovery after state-budget exhaustion, including independent ordinary
+roles, predecessors, mismatched personalities, frame offsets and entry ranges.
+The large original `xcpt4` corpus regression must keep its frame-reading filter
+expression in the native annotation without claiming lexical protection.
+
 `NeverDLiftTest.HostHalfFMAProviderMatchesIndependentIEEEOracle` checks the
 test-only binary16 FMA provider against APFloat for 10,936 edge and randomized
 triples at O0/O2. `AArch64_FP.HalfPrecisionArithmeticExecutesThroughHighC` uses

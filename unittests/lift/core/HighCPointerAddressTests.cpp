@@ -40348,9 +40348,15 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
   const std::string Source = highcOnlyFunction(std::move(*Img), Entry);
   bool ReadsTheLocal = false;
   for (llvm::StringRef Line : llvm::split(Source, '\n'))
-    ReadsTheLocal |= Line.contains("__except (*(") &&
-                     Line.ends_with(" *)(frame_base - 32)) {");
+    ReadsTheLocal |= Line.contains("except: filter @ 0x401683") &&
+                     Line.contains("filter_value=*(") &&
+                     Line.ends_with(" *)(frame_base - 32)");
   EXPECT_TRUE(ReadsTheLocal) << Source;
+  // This 110-scope function exhausts state propagation. Its complete native
+  // table still proves the filter's EBP, but cannot prove lexical protection.
+  EXPECT_NE(Source.find("unstructured SEH region"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("__except ("), std::string::npos) << Source;
   // 0x4029BD is `mov eax, 1; ret`, 0x401683 the frame read.
   EXPECT_EQ(Source.find("sub_4029BD"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("sub_401683"), std::string::npos) << Source;
@@ -40358,8 +40364,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86FilterThunksPrintTheirValue) {
 
 TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   // MSVC x86 `_except_handler3` plants the outlined except body in-function.
-  // HighC must recover `Result = 41` on the same slot as `Result = -100`,
-  // not `goto` the handler VA.
+  // Its filter calls another function. Retain that native entry and recover
+  // `Result = 41` on the same slot as `Result = -100`, without assigning the
+  // frame-dependent filter thunk an ordinary C ABI.
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
   const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
@@ -40387,10 +40394,15 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const std::string Source =
       highcOnlyFunction(std::move(*Img), Entry, /*Portable=*/true);
   ASSERT_FALSE(Source.empty()) << Source << "\n" << Blocks << HighDump;
-  EXPECT_NE(Source.find("__except"), std::string::npos) << Source << "\n"
-                                                        << Blocks << HighDump;
-  EXPECT_EQ(Source.find("goto L_"), std::string::npos) << Source << "\n"
-                                                       << Blocks << HighDump;
+  EXPECT_EQ(Source.find("__except ("), std::string::npos) << Source << "\n"
+                                                          << Blocks << HighDump;
+  EXPECT_NE(Source.find("filter @ 0x40109D, handler @ 0x4010AA"),
+            std::string::npos)
+      << Source;
+  const size_t FilterAt = Source.find("L_40109D:");
+  ASSERT_NE(FilterAt, std::string::npos) << Source;
+  const size_t NativeFilterCall = Source.find("sub_401000(", FilterAt);
+  EXPECT_NE(NativeFilterCall, std::string::npos) << Source;
   const auto Stores = portableStoreCalls(Source);
   const auto Normal = llvm::find_if(Stores, [](const PortableStoreCall &S) {
     return S.Type == "uint32_t" && S.Value == "0xFFFFFF9C";
@@ -40405,8 +40417,9 @@ TEST(HighCPointerAddresses, CorpusFuncLoadX86SehProbeExceptAssignsResult) {
   const std::string JoinedAddress = "(frame_base - 32)";
   EXPECT_EQ(Normal->Address, "(uintptr_t)(" + JoinedAddress + ")") << Source;
   EXPECT_EQ(Handler->Address, Normal->Address) << Source;
-  const size_t ExceptAt = Source.find("} __except (");
+  const size_t ExceptAt = Source.find("L_4010AA:");
   ASSERT_NE(ExceptAt, std::string::npos) << Source;
+  EXPECT_LT(NativeFilterCall, ExceptAt) << Source;
   const std::string HandlerText = Source.substr(ExceptAt);
   EXPECT_LT(Source.find("= 0xFFFFFF9C;"), ExceptAt) << Source;
   EXPECT_GT(Source.find("= 41;"), ExceptAt) << Source;
@@ -42623,7 +42636,12 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
       << HighC;
-  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+  EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64((int64_t)"),
+            std::string::npos)
+      << HighC;
+  EXPECT_NE(
+      HighC.find("neverd_x86_write_mxcsr((int32_t)((unsigned _BitInt(96))"),
+      std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))

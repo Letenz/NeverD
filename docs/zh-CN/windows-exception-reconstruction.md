@@ -334,8 +334,18 @@ HighIR structurer 对区间采取保守策略。它只移动地址完全位于�
 statement slice，并按从内到外处理嵌套区域。交叉区域、partial graph、无地址的歧义
 边界和 out-of-line funclet 保留原控制流，并增加函数的 unstructured-EH 计数。
 
-C backend 为可规约的单 clause SEH 区域发射 MSVC SEH 语法。由于 HighC 是 C backend，
-C++ catch 与 cleanup state 以确定性的 C 兼容注释输出，不会伪称生成可编译 C++。
+C backend 为可规约的单 clause SEH 区域发射 MSVC SEH 语法。
+不可规约的 SEH 区域保留原生语句，并逐条注释 filter、handler、finally action、state
+和 continuation。Registration 注释保留 enclosing level，以及 try-level store 的
+精确宽度与常量位。只有有界纯 filter 能通过已证明的父栈帧坐标给出返回表达式，其
+原生语句仍保留；输出器不会给不可结构化区域虚构 catch-all clause。
+函数拥有的 filter、handler 与 continuation 入口在普通分支或 return 之后仍保留
+标签与代码，即使机器代码没有显式 `goto` 指向它们。
+状态传播耗尽预算时，独立且精确的 EH3/EH4 表入口仍保留已检查的父 EBP。这个事实
+仅用于分析栈帧坐标，不证明活动保护区间，也不授权重建。有副作用的 filter 保留原生
+代码，不能获得猜测的 C 调用 ABI；不可规约的 C++ 区域保留 unwind-table 视图，
+不能获得虚构的词法 `try`/`catch` 保护。
+其 C 视图将 C++ catch 与 cleanup state 写为确定性的 C 兼容注释。
 out-of-line 原生 funclet 保留精确地址。
 
 ## LLVM 元数据模式

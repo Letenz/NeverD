@@ -198,6 +198,9 @@ public:
   void writeFunctionProjection(const HighFunc &Func);
   void runAnalysisPasses(const HighFunc &Func);
   void writeExceptionAnnotation(const HighFunc &Func);
+  void writeSEHScopeAnnotation(const HighFunc &Func, int Indent = 0);
+  void writeCxxScopeAnnotation(const HighFunc &Func, int Indent = 0);
+  void writeRegistrationAnnotation(const HighFunc &Func, int Indent = 0);
   void emitLocalDecls(const HighFunc &Func,
                       const std::set<std::string> &ParamNames);
   void collectNamedFrameSlots(const HighFunc &Func);
@@ -212,6 +215,7 @@ public:
   bool cxxThrowUsesRuntimeCall(const HighExpr &ThrowCall) const;
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
+  void writeUnstructuredSEHRegion(const HighStmt &Stmt, int Indent);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
   bool tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts, size_t I,

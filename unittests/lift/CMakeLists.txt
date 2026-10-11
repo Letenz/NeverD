@@ -250,6 +250,7 @@ add_neverd_unittest(NeverDLiftTests
   eh/COFFFH4EncodingTests.cpp
   eh/COFFExceptionGSTests.cpp
   eh/COFFExceptionIRTests.cpp
+  eh/WindowsSEHFallbackTests.cpp
   eh/COFFExceptionNativeIRTests.cpp
   eh/COFFExceptionSEHTests.cpp
   eh/ELFARMEHABIPatchTests.cpp
@@ -1201,6 +1202,7 @@ add_neverd_unittest(NeverDHighControlFlowTests
   core/HighSourceRangeTests.cpp
   core/HighFrameTemporaryTests.cpp
   core/HighX86CallSetupTests.cpp
+  eh/WindowsSEHFallbackTests.cpp
   LINK_COMPONENTS
   BackendC
 )
