@@ -204,6 +204,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   if (E.Op == NdOp::INT_SUB && E.Operands.size() == 2 &&
       IsZeroLike(E.Operands[1]) && E.Operands[0])
     return exprStr(*E.Operands[0], ParentPrec);
+  // IEEE 754-2019 minimum and maximum propagate a NaN and order -0 below +0:
+  // the type-generic Clang builtins are LLVM's llvm.minimum/llvm.maximum.
+  if ((E.Op == NdOp::FLOAT_MIN || E.Op == NdOp::FLOAT_MAX) &&
+      E.Operands.size() == 2 && E.Operands[0] && E.Operands[1])
+    return std::string(E.Op == NdOp::FLOAT_MIN
+                           ? "__builtin_elementwise_minimum("
+                           : "__builtin_elementwise_maximum(") +
+           exprStr(*E.Operands[0]) + ", " + exprStr(*E.Operands[1]) + ")";
   if ((E.Op == NdOp::FLOAT_MINNUM || E.Op == NdOp::FLOAT_MAXNUM) &&
       E.Operands.size() == 2 && E.Operands[0] && E.Operands[1]) {
     const bool IsFloat = E.Type && E.Type->Size == 4;
