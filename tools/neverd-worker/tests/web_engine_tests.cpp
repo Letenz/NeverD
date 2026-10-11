@@ -13,7 +13,9 @@
 #include "../../../unittests/web/BunFixture.h"
 #include "../../../unittests/web/BunSourceMapFixture.h"
 #include "../../../unittests/web/NativeFixture.h"
+#include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PackageArchiveFixture.h"
+#include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "WebEngine.h"
@@ -1730,6 +1732,125 @@ int main(int argc, char **argv) {
       }
     }
     {
+      if (hasBindings) {
+        const auto Input = fixture.root / "rename.js";
+        std::ofstream(Input) << "function SECRET_WEB_NAME(SECRET_WEB_ARG){"
+                                "const SECRET_WEB_LOCAL=SECRET_WEB_ARG;return "
+                                "SECRET_WEB_LOCAL;}";
+        const auto Before = web.revision(), PreviousProject = web.projectId();
+        const Json Import{{"schema_version", 1}, {"path", Input.string()}};
+        const auto Preview = web.execute("web_import_preview", Import);
+        const auto Commit = web.execute(
+            "web_import_commit", {{"schema_version", 1},
+                                  {"preview_token", Preview["preview_token"]}});
+        reply =
+            process.call("web_import_preview", Import, Before, PreviousProject);
+        reply =
+            process.call("web_import_commit",
+                         {{"schema_version", 1},
+                          {"preview_token", reply["payload"]["preview_token"]}},
+                         Before, PreviousProject);
+        check(reply["payload"] == Commit, "Rename import differs");
+        const auto Revision = web.revision(), Project = web.projectId();
+        const auto Items = web.execute(
+            "web_artifacts", {{"schema_version", 1}, {"revision", Revision}});
+        const Json SourceArgs{{"schema_version", 1},
+                              {"revision", Revision},
+                              {"artifact_id", Items["items"][0]["artifact_id"]},
+                              {"source_type", "script"}};
+        const auto Source = web.execute("web_source_analyze", SourceArgs);
+        reply =
+            process.call("web_source_analyze", SourceArgs, Revision, Project);
+        check(reply["payload"] == Source, "Rename source differs");
+        const Json Args{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"source_id", Source["source_id"]},
+                        {"pass", "scope_renaming"}};
+        const auto Analysis = web.execute("web_source_rewrite_analyze", Args);
+        reply =
+            process.call("web_source_rewrite_analyze", Args, Revision, Project);
+        check(reply["payload"] == Analysis &&
+                  Analysis["profile"] == "javascript-scope-rename-v1" &&
+                  Analysis["analysis_status"] == "verified_local_rewrites" &&
+                  Analysis["accepted_count"] == 4 &&
+                  Analysis["value_verification"] == "not_applicable" &&
+                  Analysis["value_analysis_id"].is_null() &&
+                  Analysis["binding_verification"] ==
+                      "same_scopes_declarations_and_reference_resolution" &&
+                  Analysis["original_name_recovery"] == false,
+              "Worker changed lexical rename evidence");
+        const Json Page{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"rewrite_id", Analysis["rewrite_id"]}};
+        const auto Records = web.execute("web_source_rewrite_records", Page);
+        reply =
+            process.call("web_source_rewrite_records", Page, Revision, Project);
+        check(reply["payload"] == Records && Records["items"].size() == 5 &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos &&
+                  reply.dump().find("neverd_arg_") == std::string::npos &&
+                  reply.dump().find("neverd_local_") == std::string::npos,
+              "Worker rename records differ or expose names");
+      }
+      if (hasBindings) {
+        const auto Input = fixture.root / "branches.js";
+        std::ofstream(Input) << "function SECRET_WEB_NAME(SECRET_WEB_ARG){"
+                                "return true ? SECRET_WEB_ARG.method() : "
+                                "SECRET_WEB_UNUSED;}";
+        const auto Before = web.revision(), PreviousProject = web.projectId();
+        const Json Import{{"schema_version", 1}, {"path", Input.string()}};
+        const auto Preview = web.execute("web_import_preview", Import);
+        const auto Commit = web.execute(
+            "web_import_commit", {{"schema_version", 1},
+                                  {"preview_token", Preview["preview_token"]}});
+        reply =
+            process.call("web_import_preview", Import, Before, PreviousProject);
+        reply =
+            process.call("web_import_commit",
+                         {{"schema_version", 1},
+                          {"preview_token", reply["payload"]["preview_token"]}},
+                         Before, PreviousProject);
+        check(reply["payload"] == Commit, "Branch import differs");
+        const auto Revision = web.revision(), Project = web.projectId();
+        const auto Items = web.execute(
+            "web_artifacts", {{"schema_version", 1}, {"revision", Revision}});
+        const Json SourceArgs{{"schema_version", 1},
+                              {"revision", Revision},
+                              {"artifact_id", Items["items"][0]["artifact_id"]},
+                              {"source_type", "script"}};
+        const auto Source = web.execute("web_source_analyze", SourceArgs);
+        reply =
+            process.call("web_source_analyze", SourceArgs, Revision, Project);
+        check(reply["payload"] == Source, "Branch source differs");
+        const Json Args{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"source_id", Source["source_id"]},
+                        {"pass", "boolean_branches"}};
+        const auto A = web.execute("web_source_rewrite_analyze", Args);
+        reply =
+            process.call("web_source_rewrite_analyze", Args, Revision, Project);
+        check(reply["payload"] == A &&
+                  A["profile"] == "javascript-boolean-branches-v1" &&
+                  A["analysis_status"] == "verified_local_rewrites" &&
+                  A["accepted_count"] == 1 &&
+                  A["value_verification"] ==
+                      "constant_boolean_condition_only" &&
+                  A["binding_verification"] ==
+                      "same_scopes_declarations_and_retained_references" &&
+                  A["retained_expression_effects"] ==
+                      "preserved_not_assumed_absent" &&
+                  A["statements_rewritten"] == false,
+              "Worker changed Boolean branch evidence");
+        const Json Page{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"rewrite_id", A["rewrite_id"]}};
+        const auto Records = web.execute("web_source_rewrite_records", Page);
+        reply =
+            process.call("web_source_rewrite_records", Page, Revision, Project);
+        check(reply["payload"] == Records && Records["items"].size() == 1 &&
+                  Records["items"][0]["selected_operand"] == "consequent" &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker branch records differ or expose source");
+      }
       const auto streamRoot = fixture.root / "streams";
       fs::create_directory(streamRoot);
       std::ofstream(streamRoot / "a.jsonl")
@@ -1834,6 +1955,96 @@ int main(int argc, char **argv) {
       reply = process.call("web_sea_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "SEA accepted target execution");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "nexe_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "nexe";
+      std::ofstream(path, std::ios::binary)
+          << neverd::web::nexe_test::bundle({{"CANARY.js", "var x='CANARY';"}});
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "nexe capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{{"schema_version", 1},
+                      {"revision", revision},
+                      {"artifact_id", items["items"][0]["artifact_id"]},
+                      {"profile", "nexe-4.0.0-rc.7-eof-resources-v1"}};
+      const auto extracted = web.execute("web_nexe_extract", args);
+      reply = process.call("web_nexe_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 1,
+            "nexe extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto records = web.execute("web_nexe_records", page);
+      reply = process.call("web_nexe_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "nexe pages differ or reveal private evidence");
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_nexe_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "nexe accepted execution option");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "pkg_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "pkg";
+      std::ofstream(path, std::ios::binary)
+          << neverd::web::pkg_test::bundle({{"CANARY.js", "var x='CANARY';"}});
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "pkg capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{{"schema_version", 1},
+                      {"revision", revision},
+                      {"artifact_id", items["items"][0]["artifact_id"]},
+                      {"profile", "pkg-5.8.1-uncompressed-vfs-v1"}};
+      const auto extracted = web.execute("web_pkg_extract", args);
+      reply = process.call("web_pkg_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 2,
+            "pkg extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto records = web.execute("web_pkg_records", page);
+      reply = process.call("web_pkg_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "pkg pages differ or reveal private evidence");
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_pkg_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "pkg accepted execution option");
     }
     process.stop();
     std::ifstream errors(fixture.root / "stderr");

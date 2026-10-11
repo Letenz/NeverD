@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "profile": "pkg-5.8.1-uncompressed-vfs-v1",
+  "variant": "bom-and-shebang-preprocessing",
+  "producer_manifest": "manifest.json",
+  "inputs": [
+    {
+      "name": "main.js",
+      "bytes": "\ufeff#!/usr/bin/env node\n'use strict';\nmodule.exports=require('./minified.js');\n",
+      "sha256": "95d9088e01c2d6e5f4be7d35f5acecc986a9d0c5185c31cb005d9d8859633c4d",
+      "expected_stored_bytes": "\n'use strict';\nmodule.exports=require('./minified.js');\n",
+      "expected_stored_sha256": "6c82717398c6489401a3266008c7f452851a0374bfb2a836cb910307ec5a897a",
+      "original_size": 78,
+      "stored_size": 56
+    },
+    {
+      "name": "minified.js",
+      "bytes": "\ufeffmodule.exports=42;\n",
+      "sha256": "cc650a9fb6d092eab83bee757b7240e1e3c063c155428994e13fcfc7e1145f45",
+      "expected_stored_bytes": "module.exports=42;\n",
+      "expected_stored_sha256": "d8ba574f0d3f0f0f6efee8cb42cd4f197a83fc6e4bc8a76a1bc69f409cdf4a57",
+      "original_size": 22,
+      "stored_size": 19
+    },
+    {
+      "name": "asset.txt",
+      "bytes": "NeverD source preprocessing fixture.\n",
+      "sha256": "011d06a50fda935abf4d6082680cf47fb4be0432a16c0553346a22db8cf8a819"
+    },
+    {
+      "name": "package.json",
+      "bytes": "{\"name\":\"neverd-pkg-fixture\",\"version\":\"1.0.0\",\"private\":true,\"license\":\"MIT\",\"main\":\"main.js\",\"bin\":\"main.js\",\"pkg\":{\"assets\":[\"asset.txt\",\"package.json\"]}}\n",
+      "sha256": "ee11bdd9884192e81c1b16836af767e68fbb08a4019cc98cd5ad83f83b907526"
+    }
+  ],
+  "artifact": {
+    "target": "linux-x64",
+    "file": "outputs-stripped/neverd-pkg-stripped-linux-x64",
+    "container_size": 46280799,
+    "container_sha256": "6109fc614eea8d88e74981994add4b16376f4e071accf21cefe3b5b52e28d7bb",
+    "payload_size": 1048,
+    "prelude_size": 74559,
+    "executes_target": false
+  }
+}
