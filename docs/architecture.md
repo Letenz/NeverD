@@ -553,6 +553,13 @@ semantics remain distinct. All adapters consume these same results.
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
+`archives/Zip` separately owns ZIP32 local/central agreement and framing;
+`ZipPayload` owns stored/raw-deflate decoding, exact size and CRC validation.
+`archives/PathIndex` owns the shared portable archive namespace. ZIP reuses the
+archive model and aggregate cache/spool budget; transport and desktop manifest
+consumers do not parse container records. `ArtifactView` composes exact stored
+payload offsets and compressed member frames for nested consumers. See the
+[ZIP profile](web-zip-profile.md).
 `packages/PackageIntegrity` owns shared SRI classification and original-byte
 comparison; `SessionPackageIntegrity` binds selected captured registry/lock
 declarations to selected original artifacts. Archive validation, byte equality,
@@ -611,6 +618,13 @@ does not depend on the JS parser. `ElectronIPC` owns explicit manifest-scoped
 channel comparisons; `SessionElectronIPC` only selects cached evidence and
 publishes bounded source/channel/endpoint pages. No transport infers routing.
 `ElectronSelection` owns shared manifest/source admission for scoped consumers.
+`desktop/Manifest` separately owns bounded manifest/hash/name admission and
+exact captured file comparison for NW.js and VS Code extensions;
+`desktop/NWManifest` and `desktop/VSIXManifest` own their declaration rules.
+`SessionDesktop` owns profile/revision-bound caches and fixed metadata replies.
+Individual opaque-key Bun/SEA assets never acquire a directory namespace.
+The C API, CLI, worker and MCP only select and publish this common evidence.
+See the [desktop manifest profile](web-desktop-manifest-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker
@@ -772,6 +786,14 @@ outer-account exhaustion, symbolic failure or use of pointer-named symbolic
 values or merges excludes the batch. Image metadata is immutable during a
 build, and every new build discards this state.
 These caches do not bypass proposal validation, rollback or fixed-point stages.
+Control-dependence queries acquire the same exact graph and retain at most 64
+completed batches under an independent 1 MiB allowance. The load address and
+ordered branch inventory bind each batch; hits pay its original traversal work
+and a smaller allowance follows the normal incomplete path. Cold traversals
+reuse dense block visitation storage while preserving walk order and logical
+work charges. Value and memory reconstruction split their ordered memo indexes
+by block ID, retaining full keys, stable recursive references and the original
+global entry counts used by evidence accounting.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its

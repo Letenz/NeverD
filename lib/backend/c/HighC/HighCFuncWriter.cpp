@@ -156,6 +156,8 @@ struct X86CIntrinsicFeatures {
   unsigned GfniWidth = 0;
   bool HasVdbpsadbw = false;
   bool NeedsVdbpsadbwVL = false;
+  /// The features X86IntrinsicTargetFeatures.def names.
+  std::set<std::string> Named;
 };
 
 X86CIntrinsicFeatures collectX86CIntrinsicFeatures(const HighFunc &Func) {
@@ -176,6 +178,15 @@ X86CIntrinsicFeatures collectX86CIntrinsicFeatures(const HighFunc &Func) {
       if (Expr.Type && Expr.Type->Size != 64)
         Features.NeedsVdbpsadbwVL = true;
     }
+    switch (Expr.IntrinsicId) {
+#define NEVERD_X86_TARGET_FEATURE(Intrinsic, Feature)                          \
+  case I::Intrinsic:                                                           \
+    Features.Named.insert(Feature);                                            \
+    break;
+#include "neverd/backend/c/render/HighC/X86IntrinsicTargetFeatures.def"
+    default:
+      break;
+    }
     for (const ExprPtr &Operand : Expr.Operands)
       if (Operand)
         Visit(*Operand);
@@ -187,6 +198,39 @@ X86CIntrinsicFeatures collectX86CIntrinsicFeatures(const HighFunc &Func) {
     });
   });
   return Features;
+}
+
+/// The target features the Arm C intrinsics \p Func calls need
+/// (ARMIntrinsicTargetFeatures.def), comma separated.
+std::string armCIntrinsicTargetFeatures(const HighFunc &Func) {
+  std::set<std::string> Features;
+  std::set<const HighExpr *> Seen;
+  std::function<void(const HighExpr &)> Visit = [&](const HighExpr &Expr) {
+    if (!Seen.insert(&Expr).second)
+      return;
+    switch (Expr.IntrinsicId) {
+#define NEVERD_ARM_TARGET_FEATURE(Name, Feature)                               \
+  case Intrinsic::Name:                                                        \
+    Features.insert(Feature);                                                  \
+    break;
+#include "neverd/backend/c/render/HighC/ARMIntrinsicTargetFeatures.def"
+    default:
+      break;
+    }
+    for (const ExprPtr &Operand : Expr.Operands)
+      if (Operand)
+        Visit(*Operand);
+  };
+  walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+    forEachExpr(Stmt, [&](const ExprPtr &Expr) {
+      if (Expr)
+        Visit(*Expr);
+    });
+  });
+  std::string Result;
+  for (const std::string &Feature : Features)
+    Result += (Result.empty() ? "" : ",") + Feature;
+  return Result;
 }
 
 std::string x86CIntrinsicTargetFeatures(const HighFunc &Func) {
@@ -202,6 +246,9 @@ std::string x86CIntrinsicTargetFeatures(const HighFunc &Func) {
     Features.emplace_back("avx512vl");
   if (Required.GfniWidth != 0)
     Features.emplace_back("gfni");
+  for (const std::string &Feature : Required.Named)
+    if (!llvm::is_contained(Features, Feature))
+      Features.push_back(Feature);
 
   std::string Result;
   for (const std::string &Feature : Features) {
@@ -5782,11 +5829,14 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   }
 
   if (EmitFunctionWrapper) {
-    if (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) {
-      const std::string TargetFeatures = x86CIntrinsicTargetFeatures(Func);
-      if (!TargetFeatures.empty())
-        OS << "__attribute__((target(\"" << TargetFeatures << "\")))\n";
-    }
+    const std::string TargetFeatures =
+        Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64
+            ? x86CIntrinsicTargetFeatures(Func)
+        : Opts.TheArch == Arch::ARM || Opts.TheArch == Arch::AArch64
+            ? armCIntrinsicTargetFeatures(Func)
+            : std::string();
+    if (!TargetFeatures.empty())
+      OS << "__attribute__((target(\"" << TargetFeatures << "\")))\n";
 
     if (Func.DoesNotReturn)
       OS << "_Noreturn ";

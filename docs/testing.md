@@ -433,6 +433,27 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
+layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
+and independent metadata/work bounds. `WebDesktopSDK.*` checks distinct profile
+caches, revision replacement, directory/ZIP entries, Bun/SEA asset isolation,
+redaction canaries and actual CLI selection in single-file/directory/ZIP modes.
+The optional pinned VSIX test shares the ZIP environment variable below.
+Run these with and without the JS parser, plus C ABI availability and worker/MCP
+parity. See the [profile](web-desktop-manifest-profile.md).
+
+`WebZip.*` checks native ZIP32 records, independently preserved libarchive
+fixtures, framing/CRC/path/expansion refusals and unavailable-member evidence.
+`WebZipNoDeflate.*` compiles the payload owner without its decoder macro;
+it is not a whole-engine zlib-free build. `WebPackageArchiveSDK.*` also checks
+ZIP consumer coordinates, nested Bun/SEA/HTML origins, atomic failure and CLI
+processes with an unusable PATH. Supply `NEVERD_CLAUDE_CODE_21296_VSIX_LINUX_X64`
+for the hash-pinned Marketplace ZIP body (after HTTP Content-Encoding decoding),
+as documented in the [qualification record](web-claude-code-qualification.md).
+These tests never download, install or execute a supplied extension/helper.
+Shared path/origin changes require the whole owning Web directory and affected
+worker/MCP parity tests. See the [ZIP profile](web-zip-profile.md).
+
 The optional `NEVERD_BUILD_WEB_MCP=ON` target builds a native C++ transport.
 Run `ctest --test-dir build/tools/neverd-web-mcp --output-on-failure` for its
 four C++ suites: protocol, catalog, real-backend evidence parity and actual
@@ -911,6 +932,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverConditionQueryCache.*` checks shared value/control graph ownership,
+ordered control queries, temporary certified edges, roots and storage-owner
+changes, and every small-fixture budget boundary. An independent graph-walk
+oracle covers cyclic, disconnected and multiple-entry control flow, including
+edges leaving the graph, with cold and repeated queries.
 `ResolverValueQueryCache.*` checks actual complete-batch reuse, exact remaining
 budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.

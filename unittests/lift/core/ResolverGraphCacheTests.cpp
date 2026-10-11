@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <set>
 #include <vector>
 
 using namespace neverd;
@@ -271,6 +272,83 @@ struct ResolverGraphCacheTestAccess {
   static void rollbackValue(CFGBuilder &B) {
     B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::cst(7, 8);
   }
+
+  struct ConditionAnswer {
+    std::vector<std::optional<bool>> Values;
+    bool Complete = false;
+    size_t Remaining = 0;
+    bool operator==(const ConditionAnswer &) const = default;
+  };
+
+  static void seedCondition(CFGBuilder &B, const BinaryImage &Image) {
+    seed(B, Image);
+    auto &Guard = B.Insns.at(0x100);
+    Guard.IsBranch = Guard.IsCond = true;
+    Guard.BranchTarget = 0x102;
+    Guard.Ops.clear();
+    LowOp Branch;
+    Branch.Addr = Guard.Addr;
+    Branch.Opcode = NdOp::COND_BR;
+    Branch.addInput(NdVar::cst(0x102, 8));
+    Branch.addInput(NdVar::reg(0, 1));
+    Guard.Ops.push_back(Branch);
+    auto &Exit = B.Insns.at(0x101);
+    Exit.IsRet = true;
+    Exit.Ops.front().Opcode = NdOp::RETURN;
+  }
+
+  static ConditionAnswer conditions(
+      CFGBuilder &B, size_t Budget = 1000000, va_t Load = 0x102,
+      std::vector<va_t> Branches = {0x100},
+      const std::map<va_t, std::vector<va_t>> *CertifiedEdges = nullptr) {
+    ConditionAnswer A;
+    A.Remaining = Budget;
+    CFGBuilder::JumpTableInfo Info;
+    Info.TableLoadAddr = Load;
+    A.Values = B.tableLoadConditionValues(Branches, Info, &A.Complete,
+                                          &A.Remaining, CertifiedEdges);
+    return A;
+  }
+
+  static void reverseCondition(CFGBuilder &B) {
+    auto &Guard = B.Insns.at(0x100);
+    Guard.BranchTarget = 0x101;
+    Guard.Ops.front().Inputs[0] = NdVar::cst(0x101, 8);
+  }
+
+  static va_t nodeAddress(size_t Node) { return 0x100 + 2 * Node; }
+
+  static void seedControlGraph(CFGBuilder &B, const BinaryImage &Image,
+                               const std::vector<std::array<int, 2>> &Edges,
+                               const std::vector<int> &Roots) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = nodeAddress(0);
+    B.JumpTableProofContextComplete = true;
+    for (int Root : Roots)
+      B.PersistentCFGRoots.insert(nodeAddress(Root));
+    for (size_t I = 0; I < Edges.size(); ++I) {
+      CFGBuilder::InsnRecord R{};
+      R.Addr = nodeAddress(I);
+      R.Size = 2;
+      LowOp Op;
+      Op.Addr = R.Addr;
+      if (I + 1 == Edges.size()) {
+        R.IsRet = true;
+        Op.Opcode = NdOp::RETURN;
+        Op.addInput(NdVar::reg(0, 8));
+        R.Ops.push_back(Op);
+      } else {
+        R.IsBranch = R.IsCond = true;
+        R.BranchTarget = nodeAddress(Edges[I][0]);
+        Op.Opcode = NdOp::COND_BR;
+        Op.addInput(NdVar::cst(R.BranchTarget, 8));
+        Op.addInput(NdVar::reg(0, 1));
+        R.Ops.push_back(Op);
+      }
+      B.Insns.emplace(R.Addr, std::move(R));
+      B.BlockStarts.insert(nodeAddress(I));
+    }
+  }
 };
 
 } // namespace neverd::detail
@@ -287,6 +365,185 @@ BinaryImage image() {
 void expectColdAnswer(CFGBuilder &B, const Access::Answer &Warm) {
   Access::clear(B);
   EXPECT_EQ(Access::query(B), Warm);
+}
+
+TEST(ResolverConditionQueryCache, ReusesGraphAndPaysEveryColdBudgetBoundary) {
+  const auto Image = image();
+  CFGBuilder Warm;
+  Access::seedCondition(Warm, Image);
+  const auto First = Access::conditions(Warm);
+  ASSERT_TRUE(First.Complete);
+  ASSERT_EQ(First.Values, (std::vector<std::optional<bool>>{true}));
+  const auto Token = Access::token(Warm);
+  ASSERT_TRUE(Token);
+  EXPECT_EQ(Access::conditions(Warm), First);
+  EXPECT_EQ(Access::token(Warm), Token);
+
+  const size_t Work = 1000000 - First.Remaining;
+  ASSERT_LT(Work, 50000u);
+  for (size_t Budget = 0; Budget <= Work + 1; ++Budget) {
+    SCOPED_TRACE(Budget);
+    CFGBuilder Cold;
+    Access::seedCondition(Cold, Image);
+    EXPECT_EQ(Access::conditions(Warm, Budget),
+              Access::conditions(Cold, Budget));
+  }
+}
+
+TEST(ResolverConditionQueryCache, BindsLoadAndOrderedQueries) {
+  const auto Image = image();
+  CFGBuilder B;
+  Access::seedCondition(B, Image);
+  const std::vector<va_t> Branches{0x100, InvalidVA, 0x102, 0x100};
+  for (va_t Load : {va_t{0x102}, va_t{0x101}, va_t{0x100}, InvalidVA}) {
+    const auto First = Access::conditions(B, 1000000, Load, Branches);
+    EXPECT_EQ(First.Complete, Load != InvalidVA);
+    EXPECT_EQ(Access::conditions(B, 1000000, Load, Branches), First);
+    CFGBuilder Cold;
+    Access::seedCondition(Cold, Image);
+    EXPECT_EQ(Access::conditions(Cold, 1000000, Load, Branches), First);
+    if (Load == 0x101 || Load == 0x102)
+      EXPECT_EQ(First.Values,
+                (std::vector<std::optional<bool>>{
+                    Load == 0x102, std::nullopt, std::nullopt, Load == 0x102}));
+    else
+      EXPECT_EQ(First.Values,
+                std::vector<std::optional<bool>>(Branches.size()));
+  }
+  const std::vector<va_t> Reversed{0x102, 0x100};
+  EXPECT_EQ(Access::conditions(B, 1000000, 0x102, Reversed).Values,
+            (std::vector<std::optional<bool>>{std::nullopt, true}));
+}
+
+TEST(ResolverConditionQueryCache, RevalidatesRootsBackedgesAndBranchOperands) {
+  const auto Image = image();
+  for (auto Mutate :
+       {Access::addBackedge, Access::changeRoot, Access::changeConditionalRoot,
+        Access::reverseCondition}) {
+    CFGBuilder B;
+    Access::seedCondition(B, Image);
+    ASSERT_TRUE(Access::conditions(B).Complete);
+    const auto Before = Access::token(B);
+    Mutate(B);
+    const auto Warm = Access::conditions(B);
+    EXPECT_NE(Access::token(B), Before);
+    Access::clear(B);
+    EXPECT_EQ(Access::conditions(B), Warm);
+    EXPECT_TRUE(Warm.Complete);
+  }
+}
+
+TEST(ResolverConditionQueryCache, OwnsCertifiedEdgesAndRevalidatesStorage) {
+  const auto Image = image();
+  CFGBuilder B;
+  Access::seedCondition(B, Image);
+  std::map<va_t, std::vector<va_t>> Edges{{0x100, {0x102}}};
+  const auto First = Access::conditions(B, 1000000, 0x102, {0x100}, &Edges);
+  ASSERT_TRUE(First.Complete);
+  const auto Original = Access::token(B);
+  ASSERT_TRUE(Original);
+  Edges.at(0x100).front() = 0x103;
+  const auto Changed = Access::conditions(B, 1000000, 0x102, {0x100}, &Edges);
+  EXPECT_NE(Access::token(B), Original);
+  Access::clear(B);
+  EXPECT_EQ(Access::conditions(B, 1000000, 0x102, {0x100}, &Edges), Changed);
+  Edges.at(0x100).front() = 0x102;
+  EXPECT_EQ(Access::conditions(B, 1000000, 0x102, {0x100}, &Edges), First);
+  Edges.clear();
+  for (auto Mutate : {Access::changeOwnerRange, Access::changeOwnerTargets,
+                      Access::explicitOwnerRange}) {
+    CFGBuilder Owner;
+    Access::seedCondition(Owner, Image);
+    Access::addOwner(Owner);
+    ASSERT_TRUE(Access::conditions(Owner).Complete);
+    const auto Before = Access::token(Owner);
+    Mutate(Owner);
+    const auto Warm = Access::conditions(Owner);
+    EXPECT_NE(Access::token(Owner), Before);
+    Access::clear(Owner);
+    EXPECT_EQ(Access::conditions(Owner), Warm);
+  }
+}
+
+TEST(ResolverConditionQueryCache, SharesExactGraphWithValueQueries) {
+  const auto Image = image();
+  CFGBuilder B;
+  Access::seedCondition(B, Image);
+  const auto Condition = Access::conditions(B);
+  ASSERT_TRUE(Condition.Complete);
+  const auto Graph = Access::token(B);
+  ASSERT_TRUE(Graph);
+  const auto Value = Access::query(B);
+  EXPECT_EQ(Access::token(B), Graph);
+  EXPECT_EQ(Access::conditions(B), Condition);
+  EXPECT_EQ(Access::query(B), Value);
+  Access::clear(B);
+  EXPECT_EQ(Access::query(B), Value);
+  EXPECT_EQ(Access::conditions(B), Condition);
+}
+
+TEST(ResolverConditionQueryCache,
+     MatchesIndependentWalkOnCyclicMultiEntryGraphs) {
+  const auto Image = image();
+  // This oracle works on integer edges, independently of the production
+  // snapshot/graph owner and cache. Include loops, irreducible regions,
+  // disconnected nodes and exits outside the graph.
+  uint32_t State = 0x918fa32b;
+  for (unsigned Case = 0; Case < 128; ++Case) {
+    SCOPED_TRACE(Case);
+    std::vector<std::array<int, 2>> Edges(6);
+    for (auto &Edge : Edges)
+      for (int &Target : Edge) {
+        State = State * 1664525u + 1013904223u;
+        Target = (State >> 16) % 7;
+      }
+    // A decoded conditional branch's other edge is the next instruction.
+    for (size_t I = 0; I < Edges.size(); ++I)
+      Edges[I][1] = I + 1;
+    std::vector<int> Roots{0};
+    if (Case % 3 == 0)
+      Roots.push_back(3);
+    auto Reaches = [&](std::vector<int> Work, int Target, int Excluded) {
+      std::set<int> Seen;
+      while (!Work.empty()) {
+        const int Node = Work.back();
+        Work.pop_back();
+        if (Node == Excluded || Node < 0 || Node >= int(Edges.size()) ||
+            !Seen.insert(Node).second)
+          continue;
+        if (Node == Target)
+          return true;
+        if (Node + 1 != int(Edges.size()))
+          Work.insert(Work.end(), Edges[Node].begin(), Edges[Node].end());
+      }
+      return false;
+    };
+    CFGBuilder B;
+    Access::seedControlGraph(B, Image, Edges, Roots);
+    std::vector<va_t> Branches;
+    for (size_t I = 0; I < Edges.size(); ++I)
+      Branches.push_back(Access::nodeAddress(I));
+    for (int Load = 0; Load < int(Edges.size()); ++Load) {
+      SCOPED_TRACE(Load);
+      std::vector<std::optional<bool>> Expected(Edges.size());
+      for (int Guard = 0; Guard + 1 < int(Edges.size()); ++Guard) {
+        if (!Reaches(Roots, Load, -1) || Guard == Load ||
+            Reaches(Roots, Load, Guard))
+          continue;
+        const bool True = Reaches({Edges[Guard][0]}, Load, Guard);
+        const bool False = Reaches({Edges[Guard][1]}, Load, Guard);
+        if (True != False)
+          Expected[Guard] = True;
+      }
+      const auto Answer =
+          Access::conditions(B, 1000000, Access::nodeAddress(Load), Branches);
+      ASSERT_TRUE(Answer.Complete);
+      EXPECT_EQ(Answer.Values, Expected);
+      EXPECT_EQ(
+          Access::conditions(B, 1000000, Access::nodeAddress(Load), Branches),
+          Answer);
+    }
+  }
 }
 
 TEST(ResolverGraphCache, ReusesFrozenGraphAndPaysEveryColdBudgetBoundary) {
