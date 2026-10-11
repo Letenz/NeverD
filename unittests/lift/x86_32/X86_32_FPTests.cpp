@@ -12,28 +12,24 @@ TEST_F(X86_32_FP, AllStagesPass) {
 TEST_F(X86_32_FP, NoUnlifted) { verifyNoUnlifted(testObj()); }
 
 TEST_F(X86_32_FP, AddssLifts) {
-  verifyScalarFPState(testObj(), "test_addss32",
-                      neverd::Intrinsic::X86FPAddState);
+  verifyFPState(testObj(), "test_addss32", neverd::Intrinsic::X86FPAddState);
 }
 
 TEST_F(X86_32_FP, SubssLifts) {
-  verifyScalarFPState(testObj(), "test_subss32",
-                      neverd::Intrinsic::X86FPSubState);
+  verifyFPState(testObj(), "test_subss32", neverd::Intrinsic::X86FPSubState);
 }
 
 TEST_F(X86_32_FP, MulssLifts) {
-  verifyScalarFPState(testObj(), "test_mulss32",
-                      neverd::Intrinsic::X86FPMulState);
+  verifyFPState(testObj(), "test_mulss32", neverd::Intrinsic::X86FPMulState);
 }
 
 TEST_F(X86_32_FP, DivssLifts) {
-  verifyScalarFPState(testObj(), "test_divss32",
-                      neverd::Intrinsic::X86FPDivState);
+  verifyFPState(testObj(), "test_divss32", neverd::Intrinsic::X86FPDivState);
 }
 
 TEST_F(X86_32_FP, Cvtss2siLifts) {
-  verifyScalarFPState(testObj(), "test_cvtss2si32",
-                      neverd::Intrinsic::X86FPCvtToIntState);
+  verifyFPState(testObj(), "test_cvtss2si32",
+                neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_32_FP, Cvtsi2ssLifts) {
@@ -41,13 +37,12 @@ TEST_F(X86_32_FP, Cvtsi2ssLifts) {
 }
 
 TEST_F(X86_32_FP, AddsdLifts) {
-  verifyScalarFPState(testObj(), "test_addsd32",
-                      neverd::Intrinsic::X86FPAddState);
+  verifyFPState(testObj(), "test_addsd32", neverd::Intrinsic::X86FPAddState);
 }
 
 TEST_F(X86_32_FP, Cvttss2siLifts) {
-  verifyScalarFPState(testObj(), "test_cvttss2si32",
-                      neverd::Intrinsic::X86FPTruncToIntState);
+  verifyFPState(testObj(), "test_cvttss2si32",
+                neverd::Intrinsic::X86FPTruncToIntState);
 }
 
 TEST_F(X86_32_FP, NoUnreachableInFunctions) {

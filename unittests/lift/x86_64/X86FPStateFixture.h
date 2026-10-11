@@ -17,9 +17,9 @@
 
 class X86FPStateLiftTest : public NeverDLiftTest {
 protected:
-  void verifyScalarFPState(const fs::path &Binary, const std::string &Function,
-                           neverd::Intrinsic Operation,
-                           std::optional<unsigned> Control = std::nullopt) {
+  void verifyFPState(const fs::path &Binary, const std::string &Function,
+                     neverd::Intrinsic Operation,
+                     std::optional<unsigned> Control = std::nullopt) {
     const auto Result = liftToLowIR(Binary, Function);
     ASSERT_EQ(Result.exitCode, 0) << Result.err;
     const auto FunctionBegin = Result.out.find("func " + Function + " @ ");
@@ -41,10 +41,16 @@ protected:
           Dump.find("INTRINSIC", Begin == std::string::npos ? 0 : Begin);
       ASSERT_LE(Intrinsic, Found) << Dump;
       if (Id == Operation && Control) {
-        const std::string ControlledOperand =
-            Operand + " cst:0x" + llvm::utohexstr(*Control) + ":1";
-        EXPECT_EQ(
-            Dump.compare(Found, ControlledOperand.size(), ControlledOperand), 0)
+        auto Operands = llvm::StringRef(Dump)
+                            .drop_front(Found + Operand.size())
+                            .split('\n')
+                            .first.trim();
+        // The memory form carries the faulting source address before its
+        // control; the register form starts with the control itself.
+        if (Operation == neverd::Intrinsic::X86FPArithMemoryState)
+          Operands = Operands.split(' ').second.trim();
+        EXPECT_EQ(Operands.split(' ').first,
+                  "cst:0x" + llvm::utohexstr(*Control) + ":1")
             << Dump;
       }
       Position = Found + Operand.size();

@@ -28,13 +28,13 @@ TEST_F(X86_64_FPConvert, Unsigned64ConversionPreservesMedIRWidths) {
 }
 
 TEST_F(X86_64_FPConvert, Cvtss2siLifts) {
-  verifyScalarFPState(testObj(), "test_cvtss2si",
-                      neverd::Intrinsic::X86FPCvtToIntState);
+  verifyFPState(testObj(), "test_cvtss2si",
+                neverd::Intrinsic::X86FPCvtToIntState);
 }
 
 TEST_F(X86_64_FPConvert, Cvttss2siLifts) {
-  verifyScalarFPState(testObj(), "test_cvttss2si",
-                      neverd::Intrinsic::X86FPTruncToIntState);
+  verifyFPState(testObj(), "test_cvttss2si",
+                neverd::Intrinsic::X86FPTruncToIntState);
 }
 
 TEST_F(X86_64_FPConvert, Cvtsi2sdLifts) {
@@ -46,40 +46,33 @@ TEST_F(X86_64_FPConvert, Cvtss2sdLifts) {
 }
 
 TEST_F(X86_64_FPConvert, AddssLifts) {
-  verifyScalarFPState(testObj(), "test_addss",
-                      neverd::Intrinsic::X86FPAddState);
+  verifyFPState(testObj(), "test_addss", neverd::Intrinsic::X86FPAddState);
 }
 
 TEST_F(X86_64_FPConvert, SubssLifts) {
-  verifyScalarFPState(testObj(), "test_subss",
-                      neverd::Intrinsic::X86FPSubState);
+  verifyFPState(testObj(), "test_subss", neverd::Intrinsic::X86FPSubState);
 }
 
 TEST_F(X86_64_FPConvert, MulssLifts) {
-  verifyScalarFPState(testObj(), "test_mulss",
-                      neverd::Intrinsic::X86FPMulState);
+  verifyFPState(testObj(), "test_mulss", neverd::Intrinsic::X86FPMulState);
 }
 
 TEST_F(X86_64_FPConvert, DivssLifts) {
-  verifyScalarFPState(testObj(), "test_divss",
-                      neverd::Intrinsic::X86FPDivState);
+  verifyFPState(testObj(), "test_divss", neverd::Intrinsic::X86FPDivState);
 }
 
 TEST_F(X86_64_FPConvert, SqrtssLifts) {
-  verifyScalarFPState(testObj(), "test_sqrtss",
-                      neverd::Intrinsic::X86FPArithState,
-                      unsigned(neverd::X86FPArithKind::SquareRoot) | 16);
+  verifyFPState(testObj(), "test_sqrtss", neverd::Intrinsic::X86FPArithState,
+                unsigned(neverd::X86FPArithKind::SquareRoot) | 16);
 }
 
 TEST_F(X86_64_FPConvert, AddsdLifts) {
-  verifyScalarFPState(testObj(), "test_addsd",
-                      neverd::Intrinsic::X86FPAddState);
+  verifyFPState(testObj(), "test_addsd", neverd::Intrinsic::X86FPAddState);
 }
 
 TEST_F(X86_64_FPConvert, SqrtsdLifts) {
-  verifyScalarFPState(testObj(), "test_sqrtsd",
-                      neverd::Intrinsic::X86FPArithState,
-                      unsigned(neverd::X86FPArithKind::SquareRoot) | 24);
+  verifyFPState(testObj(), "test_sqrtsd", neverd::Intrinsic::X86FPArithState,
+                unsigned(neverd::X86FPArithKind::SquareRoot) | 24);
 }
 
 TEST_F(X86_64_FPConvert, LLVMIRHasFloat) {
