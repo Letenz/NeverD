@@ -1,6 +1,6 @@
 **Languages**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6241c9252ec89317b9c488c7e2b6b8c7bd60329dfdd734df27e1a7a7139b1eff -->
+<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
 
 [← NeverD プロジェクト](project.md)
 
@@ -18,7 +18,8 @@
 | [貢献ガイド](CONTRIBUTING.md) | 開発環境、ビルドプロファイル、ワークフロー、スタイル、PR 要件 |
 | [アーキテクチャ](architecture.md) | IR 経路、コンポーネント境界、strict lifting、サポート深度、変更箇所 |
 | [オフライン Web 解析（英語）](../web-analysis.md) | C++ による成果物・ソース・バインディング・マップの検査、メタデータ方針、SDK と現在の検証範囲 |
-| [Bun 単体実行ファイルのプロファイル（英語）](../web-bun-profile.md) | 固定 ELF 抽出、元の証拠範囲、ソース復号と固定テスト素材の出所 |
+| [JavaScript の基本書き換え（英語）](../web-source-rewrite-profile.md) | 明示的なパス、局所置換の検証、厳密な逆変換、検証記録に結び付いたローカル出力 |
+| [Bun 単体実行ファイルのプロファイル（英語）](../web-bun-profile.md) | 範囲を限定した x64/ARM64 の ELF、単一アーキテクチャ Mach-O、PE 抽出、元の範囲と固定テスト素材の出所 |
 | [ASAR 抽出プロファイル（英語）](../web-asar-profile.md) | 格納済み・外部ファイルの取得対応、整合性状態、メンバーの利用側とネイティブ Unicode 依存関係 |
 | [Electron 証拠プロファイル（英語）](../web-electron-profile.md) | 取得した入口パス、マニフェストとソースの範囲、ウィンドウ・ブリッジの証拠と IPC チャネル候補 |
 | [HTML ソースプロファイル（英語）](../web-html-profile.md) | 有界な C++ スクリプト一覧、取得したローカル参照と元のインラインソース位置 |

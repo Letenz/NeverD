@@ -10,6 +10,7 @@
 #include "COFFRegistrationEHDetail.h"
 
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 
 namespace neverd::coff_loader {
 
@@ -19,6 +20,35 @@ getCheckedX86SafeSEHTablePointer(const BinaryImage &Img) {
       Img.Format != BinaryFormat::COFF)
     return std::nullopt;
   return registration_detail::SafeSEHTable(Img).tablePointer();
+}
+
+bool isCheckedX86SafeSEHHandlerReference(const BinaryImage &Img,
+                                         va_t HandlerVA) {
+  if (Img.Arch != Arch::X86 || Img.Bits != Bitness::Bits32 ||
+      Img.Format != BinaryFormat::COFF || Img.Base > UINT32_MAX || !HandlerVA ||
+      HandlerVA > UINT32_MAX)
+    return false;
+  const registration_detail::SafeSEHTable Table(Img);
+  const auto Pointer = Table.tablePointer();
+  if (!Pointer || !Table.contains(HandlerVA))
+    return false;
+  const auto [Slot, TableVA] = *Pointer;
+  const auto Header = readImmutableImageBytes(Img, Slot - 0x40, 4);
+  if (!Header || readLE<uint32_t>(Header->data()) < 0x48 ||
+      readLE<uint32_t>(Header->data()) > Img.DynInfo.LoadConfigSize)
+    return false;
+  const auto CurrentTable = readImmutableImagePointer(Img, Slot);
+  const auto CountBytes = readImmutableImageBytes(Img, Slot + 4, 4);
+  if (!CurrentTable || *CurrentTable != TableVA || !CountBytes)
+    return false;
+  const uint32_t Count = readLE<uint32_t>(CountBytes->data());
+  if (!Count || Count > registration_detail::MaxRegistrationRecords)
+    return false;
+  // Membership establishes a retained callable entry, not the handler's
+  // language semantics. Keep its code external and preserve the native-EH
+  // proof requirements for any generated replacement.
+  return readImmutableImageBytes(Img, TableVA, Count * 4).has_value() &&
+         readImmutableCodeBytes(Img, HandlerVA, 1).has_value();
 }
 
 std::optional<X86RegistrationPointerRoles>

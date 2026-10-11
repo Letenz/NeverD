@@ -13,7 +13,7 @@ namespace neverd::registration_state {
 
 void RegistrationStateSolver::recordCatchReturn(
     size_t I, const Domain &After, const LowOp &Op,
-    const FrameTransfer &Transfer,
+    const FrameTransfer &Transfer, const BlockFacts &Facts,
     std::optional<RegistrationCxxContinuation> &CatchReturn) {
   if (!KnownCxx || Op.Opcode != NdOp::RETURN || After.CxxCatchStacks.empty())
     return;
@@ -41,7 +41,7 @@ void RegistrationStateSolver::recordCatchReturn(
   const bool Valid =
       callbackCanReturn(After) && After.CxxCatchStacks.size() == 1 &&
       !After.Parent && !After.OtherCallback && !After.Unknown &&
-      !Facts[I].Invalid && After.Installed && !After.Uninstalled &&
+      !Facts.Invalid && After.Installed && !After.Uninstalled &&
       !After.Levels.empty() && callbackReturnInstruction(I, Op) &&
       Op.NumInputs == 1 && Op.Inputs[0].Size == 4 && Target.Constant &&
       !Target.MayBeFrame && EH.ownsCode(*Target.Constant) &&

@@ -1377,6 +1377,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationEntryLayoutTests.cpp
   eh/RegistrationRealignedLayoutTests.cpp
   eh/RegistrationRuntimePointerTests.cpp
+  eh/RegistrationHandlerReferenceTests.cpp
   eh/RegistrationFrameTaintTests.cpp
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp
@@ -3774,6 +3775,11 @@ add_neverd_unittest(NeverDX86FPPackedConvertStateTests
   x86_64/X86_64_FPPackedConvertStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPPackedConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86F16CStateTests
+  x86_64/X86_64_F16CStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86F16CStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp

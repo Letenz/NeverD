@@ -4159,7 +4159,7 @@ TEST(X86WideISAState, F16CConversionsHonorFormatsRoundingAndMxcsr) {
     ASSERT_TRUE(Result.has_value());
     EXPECT_EQ((*Result)[0], 0x01);
     EXPECT_EQ((*Result)[1], 0x00);
-    EXPECT_EQ(Emulator.getMXCSR() & 0x3fU, 0x10U);
+    EXPECT_EQ(Emulator.getMXCSR() & 0x3fU, 0U);
   }
 
   // A signaling NaN is quieted when invalid is masked; when it is unmasked,

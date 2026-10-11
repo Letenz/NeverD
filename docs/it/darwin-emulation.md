@@ -1,6 +1,6 @@
 **Lingue**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: c5503091e713c63aa7b08a8cbd5fab1b5cc3c8d8950bb7da4fe754dbe5787137 -->
+<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
 
 [← Indice della documentazione](README.md)
 
@@ -1124,7 +1124,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all41 other file routes and direct/file-backed mappings closed / typed streams only
+all43 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -1167,9 +1167,9 @@ native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 
 BSD raw poll(230) e poll_nocancel(417) accettano timeout low int32=0. nfds è uint32; oltre OPEN_MAX10240 EINVAL22 precede i puntatori. Numeri positivi richiedono darwin_system.resource_limits resource8 Current esplicito. Oltre Current e FD_SETSIZE1024 si ottiene EINVAL; altrimenti serve UID effettivo originale esplicito, nonzero dà EINVAL, zero consente. L’eccezione root ha solo prove sorgente/modello. DescriptorLimit, kern.maxfilesperproc, valore FD e budget non danno tale osservazione. Zero non tocca l’array; timeout nonzero resta escluso dopo l’ammissione del numero.
 
-Il fornitore regolare virtuale costruito dichiara descrizioni non revocate, registrazione riuscita dei filtri ordinari lettura/scrittura e nessun rifiuto MAC/fornitore. Il tipo vnode nativo non prova registrazione. Con tale premessa IN/RDNORM e OUT/WRBAND sono pronti anche a EOF/open readonly, senza dedurre da byte restanti, flag, O_NONBLOCK o diritti di scrittura. Chiavi FD numerico/lettura e FD/scrittura conservano l’ultima riga separatamente; FD dup distinti restano separati. HUP solo registra lettura senza bit pronto. FD negativo/bit ignorati danno zero, registrazioni chiuse POLLNVAL32 per riga. OOB/vnode attivi, stream/directory/link sono rifiutati prima dell’output. Si acquisisce tutta l’entrata di record8 byte; entrata incompleta/output tutto non scrivibile dà EFAULT14, output parziale è rifiutato senza prefisso. Copia intera conserva fd/events e sostituisce revents. Entrambi i modi statici chiudono Poll prima del controllo, anche zero; elenco condiviso41 percorsi.
+Il fornitore regolare virtuale costruito dichiara descrizioni non revocate, registrazione riuscita dei filtri ordinari lettura/scrittura e nessun rifiuto MAC/fornitore. Il tipo vnode nativo non prova registrazione. Con tale premessa IN/RDNORM e OUT/WRBAND sono pronti anche a EOF/open readonly, senza dedurre da byte restanti, flag, O_NONBLOCK o diritti di scrittura. Chiavi FD numerico/lettura e FD/scrittura conservano l’ultima riga separatamente; FD dup distinti restano separati. HUP solo registra lettura senza bit pronto. FD negativo/bit ignorati danno zero, registrazioni chiuse POLLNVAL32 per riga. OOB/vnode attivi, stream/directory/link sono rifiutati prima dell’output. Si acquisisce tutta l’entrata di record8 byte; entrata incompleta/output tutto non scrivibile dà EFAULT14, output parziale è rifiutato senza prefisso. Copia intera conserva fd/events e sostituisce revents. Entrambi i modi statici chiudono Poll prima del controllo, anche zero; elenco condiviso42 percorsi.
 
-immediate-poll senza SDK copre86 eventi, cinque profili software/tre ARM64 HVF obbligatori, C/CLI/Python e un nuovo riferimento nativo comune, inventario attuale59. La sonda indipendente O0/O1/O2 ARM64 conserva582 controlli letterali ABI/errori e catture del fornitore regolare miste, non costanti universali. Le vecchie prove58 conservano identità; download fallito, primo timeout nativo e termini originali restano preservati. Intel HVF, iOS fisico, revoca/MAC/rifiuto registrazione, select, attese, fornitori asincroni, rete, orologi avanzanti, veri Mach IPC/thread, dyld/TLS e framework completi restano non verificati o incompleti.
+immediate-poll senza SDK conserva86 eventi e l’inventario originale59; immediate-select aggiunge un caso per60 riferimenti nativi comuni della fase select. Le osservazioni indipendenti ARM64 O0/O1/O2 poll582 e select792 conservano separatamente controlli letterali ABI/errore e catture di provider, senza costanti universali. Le prove58/59 mantengono identità, fallimenti e tempi. Intel HVF e iOS fisico restano non verificati; revoca/MAC/rifiuto, attese, modifiche alla maschera dei segnali pselect, asincronia, rete, orologi avanzanti, Mach IPC/thread reali, dyld/TLS e framework completi restano incompleti.
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -1179,10 +1179,44 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all41 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-59 current native-common cases / prior58 source identity preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / waits select revoked-MAC-provider failures networking unfinished
+61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## select immediato per file ordinari
+
+BSD `select`93 e `select_nocancel`407 ammettono solo timeval zero esplicito e conteggio non negativo con segno nei32 bit bassi. I puntatori restano64 bit. Il timeval LP64 di16 byte ha secondi con segno64 a0, microsecondi con segno32 a8 e padding ignorato a12. Validare secondi0..100000000 e microsecondi0..999999 prima di EINVAL22 per conteggio negativo; importazione incompleta: EFAULT14. Puntatore nullo o tempo positivo non sono supportati; conteggio0 non accede agli insiemi. Il massimo FD vivo più1 prova soltanto un limite inferiore di `fd_nfiles`. Chiudere un FD alto restringe la prova senza affermare che diminuisca l’allocazione nativa. NOFILE, budget e tipo vnode non provano capacità né provider.
+
+Maschere little-endian32 arrotondate a parole intere. Copiare tutti gli ingressi, verificare tutti i FD selezionati, poi interpretare i provider. FD assente: EBADF9; stream, directory e descrizioni simboliche selezionati: non supportati. Il provider select ordinario costruito è puro, non rifiuta e restituisce nonzero per lettura, scrittura ed eccezione, separatamente da poll. Contare bit per insieme e numero dup, anche readonly, nonblocking ed EOF, senza cambiare posizione, flag, contenuto o metadati. Azzerare i bit finali delle parole copiate e conservare ogni byte esterno.
+
+Le uscite devono essere disgiunte fra loro e dal timeval16 byte. Verificare tutti i permessi completi prima di scrivere. Qualsiasi uscita parziale, anche prefisso non scrivibile seguito da coda scrivibile, è rifiutata prima di tutte le copie. Prefisso scrivibile lungo0 non prova l’intera zona non scrivibile. Copiare lettura/scrittura/eccezione in ordine: zona interamente non scrivibile dà EFAULT14, le successive scrivibili cambiano e resta il primo errore. Entrambi i modi statici chiudono Select prima del controllo,43 percorsi chiusi. Il workload senza SDK verifica115 eventi e guardie complete su cinque profili software, tre ARM64 HVF richiesti e C/CLI/Python. Attese, maschere dei segnali non nulle di `pselect`, provider asincroni e OS completo restano incompleti.
+
+```text
+select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
+current live FD lower bound / no guessed fd_nfiles allocation or NOFILE capacity
+read write exception / bit count across sets / distinct dup numbers
+all copyins before all descriptor checks / all checks before provider interpretation
+partial outputs and overlaps unsupported before all output / zero prefix is not whole unwritable
+ordered read write exception copyout / first EFAULT14 after later whole writable copies
+792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
+immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
+61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+`pselect394 / pselect_nocancel395` immediato accetta un `user64_timespec16` fornito a zero e un puntatore null alla maschera dei segnali. Entrambi i campi sono signed64: secondi 0..2147483647 e nanosecondi 0..1000000000, limite incluso. L’attesa con un timeout valido non nullo resta non supportata. Importazione e verifica di timespec precedono i quattro byte della maschera, poi conteggio e bitmap. Una maschera illeggibile restituisce EFAULT14; una maschera completa non null non è supportata perché manca il modello di sostituzione e ripristino dei segnali del thread. Il percorso null condivide con select capacità, provider, bitmap, permessi completi e copie ordinate. Segnali, attesa, dyld, framework Apple e verifica iOS fisica restano incompleti.
+
+```text
+pselect394 / pselect_nocancel395 / zero supplied user64_timespec16 / null signal mask
+signed64 seconds0..2147483647 / signed64 nsec0..1000000000 inclusive
+time import validation before mask4 import before signed low32 count
+complete nonnull mask unsupported / no guessed signal state
+shared select bitmap capacity provider output owner
+918 mixed controls and captures / 729 literal controls and 189 provider captures
+```

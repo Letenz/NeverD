@@ -383,6 +383,45 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({
+            "4ccd8a4df593ffcfc8b4001f06b3e8df307a4207",
+            "8a1a303a0924fc4a0b918fd32b59d00b48d09e36",
+        }),
+        line="",
+        reason=(
+            "Reviewed historical qualification artifact paths. The current "
+            "document uses a local-recovery placeholder while retaining the "
+            "relative filenames, source hashes and observations. Exact line "
+            "digests acknowledge only these published commits without "
+            "republishing private prefixes or permitting future occurrences."
+        ),
+        line_sha256=frozenset({
+            "626ab8b1c1b594ca2508f7f8d082bb6691e8daa30a32515ff67859d24afaa17d",
+            "d37d85569c24cd796a4ff011da73c1d686836c3aba580a5234249e169092264b",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({
+            "500c51062c3aba4e2251b8f3c76569f058fd3ef7",
+            "ec58750a8ed49319af857f5cb1aa77670810e39e",
+        }),
+        line="",
+        reason=(
+            "Reviewed replacement of a developer-specific output directory "
+            "with its portable recovery-workspace location. Artifact names, "
+            "measurements and hashes are preserved. Only the exact original "
+            "and deletion commits and line digest are covered; current and "
+            "future private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "c39893ef1f25d39cb6d25ade741abae3b95c601f77f3f228a02321667b4952f0",
+        }),
+    ),
+    HistoryAllowance(
         path="tools/neverd-gui/benchmarks/results/linux-x86_64-20261010-linear-copy-performance.json",
         rule="private-path",
         commits=frozenset({

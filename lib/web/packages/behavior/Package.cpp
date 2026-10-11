@@ -62,7 +62,8 @@ analyzePackageBehavior(const PackageAnalysis &P,
     ID(O.EvidenceID);
     if (O.Kind != "bun_source" && O.Kind != "bun_asset" &&
         O.Kind != "sea_region" && O.Kind != "nexe_member" &&
-        O.Kind != "nexe_bootstrap")
+        O.Kind != "nexe_bootstrap" && O.Kind != "pkg_member" &&
+        O.Kind != "pkg_prelude")
       throw Error("invalid_package_behavior_origin");
     if (!Parents.emplace(O.ArtifactID, &O).second)
       throw Error("ambiguous_package_behavior_origin");

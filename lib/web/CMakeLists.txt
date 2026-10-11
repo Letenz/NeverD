@@ -52,6 +52,10 @@ add_neverd_component_library(NeverDWeb
   nexe/Reader.cpp
   nexe/Index.cpp
   SessionNexe.cpp
+  pkg/Locator.cpp
+  pkg/Index.cpp
+  pkg/Reader.cpp
+  SessionPkg.cpp
   BunSourceMap.cpp
   SessionBun.cpp
   SessionBunExport.cpp
@@ -118,6 +122,10 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/SourceXHR.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
+    rewrite/Rename.cpp
+    rewrite/RenameValidate.cpp
+    rewrite/Branches.cpp
+    rewrite/BranchValidate.cpp
     rewrite/Primitive.cpp
     rewrite/Apply.cpp
     rewrite/Validate.cpp

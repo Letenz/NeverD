@@ -60,14 +60,13 @@ void rewrite::apply(SourceRewrite &A, std::string_view Original) {
 
 std::string undoSourceRewrite(const SourceRewrite &A,
                               std::string_view Candidate) {
+  const auto Profile = sourceRewriteProfile(A.Pass);
   if ((A.Status != "verified_local_rewrites" &&
        A.Status != "no_eligible_rewrites") ||
       A.SourceSize > MaxSourceRewriteBytes ||
-      Candidate.size() > MaxSourceRewriteBytes ||
-      (A.Pass != "string_recovery" && A.Pass != "constant_folding") ||
-      A.ID !=
-          identity("source-rewrite", {A.SourceID, SourceRewriteProfile, A.Pass,
-                                      A.BindingID, A.ValueID, A.EffectID}))
+      Candidate.size() > MaxSourceRewriteBytes || Profile.empty() ||
+      A.ID != identity("source-rewrite", {A.SourceID, Profile, A.Pass,
+                                          A.BindingID, A.ValueID, A.EffectID}))
     throw Error("source_rewrite_invalid_receipt");
   uint64_t Steps = 0;
   rewrite::charge(Steps, Candidate.size());
@@ -78,10 +77,25 @@ std::string undoSourceRewrite(const SourceRewrite &A,
   uint64_t Cursor = 0, SourceCursor = 0;
   for (const auto I : Order) {
     const auto &R = A.Records[I];
-    if (R.ID != identity("source-rewrite-record",
-                         {A.ID, R.NodeID, R.Status, R.Reason}) ||
-        R.SourceStart < SourceCursor || R.SourceStart >= R.SourceEnd ||
-        R.SourceEnd > A.SourceSize ||
+    const bool Rename = A.Pass == "scope_renaming";
+    if (Rename && (R.BindingID.empty() ||
+                   (R.Role != "declaration" && R.Role != "reference")))
+      throw Error("source_rewrite_invalid_receipt");
+    auto RecordID =
+        Rename ? identity("source-rename-record", {A.ID, R.BindingID, R.NodeID,
+                                                   R.Role, R.Status, R.Reason})
+               : identity("source-rewrite-record",
+                          {A.ID, R.NodeID, R.Status, R.Reason});
+    if (A.Pass == "boolean_branches") {
+      if (R.ConditionID.empty() || R.RetainedID.empty() ||
+          R.Condition == NoSourceIndex || R.Retained == NoSourceIndex ||
+          (R.Selection != "consequent" && R.Selection != "alternate" &&
+           R.Selection != "left" && R.Selection != "right"))
+        throw Error("source_rewrite_invalid_receipt");
+      RecordID = rewrite::branchRecordIdentity(A, R);
+    }
+    if (R.ID != RecordID || R.SourceStart < SourceCursor ||
+        R.SourceStart >= R.SourceEnd || R.SourceEnd > A.SourceSize ||
         R.SourceEnd - R.SourceStart != R.Before.size() || R.Start < Cursor ||
         R.Start >= R.End || R.End > Candidate.size() ||
         R.End - R.Start != R.After.size() ||

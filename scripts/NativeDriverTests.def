@@ -6,8 +6,76 @@
 #ifdef NEVERD_NATIVE_DRIVER_OWNER
 NEVERD_NATIVE_DRIVER_OWNER(NeverDNativeDriverTests)
 NEVERD_NATIVE_DRIVER_OWNER(NeverDUnpackDriverTests)
+NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RequiresAnOwnershipBaseline")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RetainsTheExactLegacyAllocationContract")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RetainsModernFlagsAndInitializationSemantics")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.OwnsCurrentBytesAcrossMutationAndRelease")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.ReleasedPoolsLeaveNoReconstructionRecord")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.FailedAllocationAndFreePreserveLifetimeIdentity")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.RequiredBackingCannotBecomeAnEmptySnapshot")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.BorrowedAndDeviceObjectsAreNotPoolAllocations")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.OpaqueEffectsAndEntryLifetimeRemainDependencies")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.StoppedViewOwnsEntryRegistersFramesAndStack/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "UnpackDriver.LaterRestorationDoesNotChangeEarlierContextCaptures/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.LaterInvocationsRetainTheOriginalEntryBaseline/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.MemoryFaultRetainsCommittedObjectsAndFirstFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.UnsupportedInstructionRetainsCommittedObjects/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.CorruptedDeviceIdentityStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.CyclicDeviceListStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.CorruptedDriverExtensionStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.PartialDispatchPointerStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverCPUIDExecution.ReportsDeclaredRegistersAcrossBackends/"
+    "{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverCPUIDExecution.ReportsDeclaredRegistersAcrossBackends/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverCPUIDExecution.UndeclaredQueriesFailBeforePublishingResults/"
+    "{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverCPUIDExecution.UndeclaredQueriesFailBeforePublishingResults/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverCPUIDExecution.InstructionBudgetsBoundCPUIDObservations/"
+    "{backend}_driver")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/DriverCPUIDExecution.InstructionBudgetsBoundCPUIDObservations/"
+    "{backend}_checked")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Native/"
     "DriverImageMemory.WriteTraceSelectionPreservesEffectsFaultsAndBudgets/"
@@ -72,6 +140,13 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver.ObserverFailuresAreAPIErrors/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors/"
+    "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverSchedulingPolicy.RejectsMalformedAndOverflowingScenarios")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

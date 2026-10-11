@@ -14,6 +14,12 @@
 
 namespace neverd::x86_registration {
 
+/// Bind a registration no-return receipt to the current decoded call. This
+/// does not grant a memory-effect or restored-frame projection.
+bool hasNoReturnCallEffect(const LowFunc &Low, const LowBlock &Block,
+                           size_t OpIndex,
+                           const LowInstructionBoundary &Boundary);
+
 /// Classification and source-proved runtime coordinates for SSA live-ins.
 /// Ordinary module entries retain their independent calling convention.
 class RegistrationRoots {

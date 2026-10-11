@@ -1575,6 +1575,19 @@ std::string renderX86TypedIntrinsicCall(
         (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
                       : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
         "(";
+    if (isX86F16CStateIntrinsic(Call.IntrinsicId)) {
+      const bool Store = Call.IntrinsicId == I::X86F16CStoreState;
+      for (unsigned Index : Store ? std::vector<unsigned>{0, 1, 4}
+                                  : std::vector<unsigned>{0, 3}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto Text = ExprFn(*Call.Operands[Index]);
+        Result += isX86FPStateMemoryIntrinsic(Call.IntrinsicId) && Index == 0
+                      ? "(void *)(uintptr_t)(" + Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
     const bool Round = isX86FPRoundStateIntrinsic(Call.IntrinsicId);
     const bool Approx12 = isX86FPApprox12Intrinsic(Call.IntrinsicId);
     const bool Arithmetic = isX86FPArithStateIntrinsic(Call.IntrinsicId);

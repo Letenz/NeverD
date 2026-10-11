@@ -825,9 +825,12 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
   const auto Shape = x86FPStateMedShape(Op);
   if (!x86FPStateShapeIsValid(Id, Shape))
     return std::nullopt;
+  if (Id == Intrinsic::X86F16CStoreState)
+    return std::nullopt;
   const unsigned Bytes =
       x86FPStateMemoryBytes(Id, Shape.OutputSize, Shape.Control);
-  if (Id == Intrinsic::X86FPPackedConvertMemoryState)
+  if (Id == Intrinsic::X86F16CReadState ||
+      Id == Intrinsic::X86FPPackedConvertMemoryState)
     return StackMemoryRead{1, Bytes, false};
   if (Id == Intrinsic::X86FPScalarConvertMemoryState)
     // This denotes an eligible scalar completion source, including raw integer
