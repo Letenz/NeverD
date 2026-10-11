@@ -329,7 +329,7 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
   ASSERT_EQ(Result->Outcome, UnpackOutcome::UnsupportedState)
       << unpackResultJSON(*Result);
   EXPECT_TRUE(Result->Image.empty());
-  EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
+  EXPECT_NE(Result->Diagnostic.find("additional owned OS resources"),
             std::string::npos);
   // Loader fields alone do not cover generated pointers or a fresh caller.
   // A successful model replay cannot certify the kernel loader boundary.
@@ -340,14 +340,18 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
       << unpackResultJSON(*Result);
   EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
             std::string::npos);
+  EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
+            std::string::npos);
   EXPECT_EQ(Result->Profile, profile::ReportProfile);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
   EXPECT_EQ(Result->ProcessStop, "observer");
   ASSERT_FALSE(Result->Transfers.empty());
   EXPECT_TRUE(Result->Transfers.back().ProgramInvocation);
   EXPECT_TRUE(Result->RuntimeState.AdditionalStateInventoryKnown);
-  EXPECT_FALSE(Result->RuntimeState.HasAdditionalDependencies);
-  EXPECT_TRUE(Result->RuntimeState.AdditionalDependencyReasons.empty());
+  EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+  EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto Rebuilt = test::readImage(Result->Image);
   EXPECT_NE(Rebuilt.FileCharacteristics & llvm::COFF::IMAGE_FILE_DLL, 0u);
   EXPECT_EQ(Rebuilt.Entry, Original.Entry);
@@ -438,8 +442,12 @@ TEST_P(UnpackDriver, RecoversAfterReleasingTransientImageMDLs) {
   ASSERT_EQ(Result->Outcome, UnpackOutcome::Snapshot)
       << unpackResultJSON(*Result);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
-  EXPECT_FALSE(Result->RuntimeState.HasAdditionalDependencies);
-  EXPECT_TRUE(Result->RuntimeState.AdditionalDependencyReasons.empty());
+  EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+  // The released MDL no longer contributes a dependency; projecting the
+  // executed prefix onto a fresh DriverEntry caller remains unproved.
+  EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto Output = Scratch / "released-mdl.sys";
   test::writeFile(Output, Result->Image);
   checkLifecycle(Output);
@@ -1076,7 +1084,8 @@ TEST_P(UnpackDriver, EqualEntryValuesDoNotProveFreshCallerBindings) {
       test::writeFile(Input, Bytes);
       auto D = scenario();
       D.Contract = Contract;
-      DriverContextObserver Observer({Program->RVA + Code.size() - 2});
+      DriverContextObserver Observer(
+          {Program->RVA, Program->RVA + Code.size() - 2});
       auto Run = observeDriver(Input, D, Observer);
       ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
       ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
@@ -1087,9 +1096,12 @@ TEST_P(UnpackDriver, EqualEntryValuesDoNotProveFreshCallerBindings) {
       ASSERT_TRUE(Initial.Entry);
       EXPECT_FALSE(Initial.hasAdditionalDependencies());
       ASSERT_EQ(Initial.Entry->InitialRegisters.at(Register)[0], 0u);
-      ASSERT_EQ(Observer.Contents.size(), 1u);
-      const auto &State =
+      ASSERT_EQ(Observer.Contents.size(), 2u);
+      const auto &Before =
           static_cast<const WindowsDriverState &>(*Observer.Contents.front());
+      EXPECT_FALSE(Before.hasAdditionalDependencies());
+      const auto &State =
+          static_cast<const WindowsDriverState &>(*Observer.Contents.back());
       ASSERT_TRUE(State.Entry);
       const auto &Entry = *State.Entry;
       EXPECT_EQ(Entry.Registers.at(Register),
@@ -1261,7 +1273,9 @@ TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
     EXPECT_TRUE(Driver.hasAdditionalDependencies());
     EXPECT_EQ(Driver.additionalDependencyReasons(),
               (std::vector<std::string>{"live kernel pool allocations",
-                                        "retained kernel object allocations"}));
+                                        "retained kernel object allocations",
+                                        "DriverEntry continuation requires "
+                                        "fresh-caller reconstruction"}));
     if (State == Observer.Metadata)
       EXPECT_FALSE(Pool.Bytes);
     else {
