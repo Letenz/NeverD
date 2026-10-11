@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Recover bounded pure filter returns in the checked native parent frame.
+//===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_IR_HIGH_STRUCTURE_X86REGISTRATIONFILTER_H
 #define NEVERD_IR_HIGH_STRUCTURE_X86REGISTRATIONFILTER_H

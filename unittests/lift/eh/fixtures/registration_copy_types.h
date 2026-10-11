@@ -1,4 +1,12 @@
-// Observable nontrivial copy construction with separate source/destination.
+//===- registration_copy_types.h - Observable runtime copy types ----------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Observable nontrivial copy construction with separate source/destination.
+//===----------------------------------------------------------------------===//
+
 #ifndef NEVERD_TEST_REGISTRATION_COPY_TYPES_H
 #define NEVERD_TEST_REGISTRATION_COPY_TYPES_H
 

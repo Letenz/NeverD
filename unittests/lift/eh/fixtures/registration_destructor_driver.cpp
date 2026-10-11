@@ -1,4 +1,13 @@
-// Observe destructor count, order and object contents through real CRT search.
+//===- registration_destructor_driver.cpp - Runtime destruction -----------===//
+//-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Observe destructor count, order and object contents through real CRT search.
+//===----------------------------------------------------------------------===//
+
 extern "C" __declspec(noreturn) void registration_destructor_finish(bool);
 #define NEVERD_REGISTRATION_OBJECT_TYPES "registration_destructor_types.h"
 #define NEVERD_REGISTRATION_OBJECT_FINISH registration_destructor_finish

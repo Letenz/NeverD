@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Authenticate complete object copies and their disjoint source reads.
+//===----------------------------------------------------------------------===//
 
 #include "RegistrationABIPrivate.h"
 

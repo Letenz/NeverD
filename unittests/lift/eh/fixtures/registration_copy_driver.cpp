@@ -1,4 +1,12 @@
-// Check runtime copy construction and destruction with independent oracles.
+//===- registration_copy_driver.cpp - Runtime object copy observations ----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Check runtime copy construction and destruction with independent oracles.
+//===----------------------------------------------------------------------===//
+
 extern "C" __declspec(noreturn) void registration_copy_finish(bool);
 #define NEVERD_REGISTRATION_OBJECT_TYPES "registration_copy_types.h"
 #define NEVERD_REGISTRATION_OBJECT_FINISH registration_copy_finish

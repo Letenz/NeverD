@@ -1,8 +1,11 @@
-//===- half_fma_host.c - Test-only binary16 FMA host provider
+//===- half_fma_host.c - Test binary16 FMA host provider ------------------===//
 //--------------===//
 //
 // NeverD Decompiler
 //
+//===----------------------------------------------------------------------===//
+/// \file
+/// Provide test-only binary16 fused arithmetic with nearest-even rounding.
 //===----------------------------------------------------------------------===//
 // The host execution fixture uses default round-to-nearest, ties-to-even.
 // Older host libraries lack fmaf16. This provider computes the finite result

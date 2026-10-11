@@ -1,4 +1,12 @@
-// Source records with observable destruction of both catch copies and throws.
+//===- registration_destructor_types.h - Observable destruction types -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Source records with observable destruction of both catch copies and throws.
+//===----------------------------------------------------------------------===//
+
 #ifndef NEVERD_TEST_REGISTRATION_DESTRUCTOR_TYPES_H
 #define NEVERD_TEST_REGISTRATION_DESTRUCTOR_TYPES_H
 

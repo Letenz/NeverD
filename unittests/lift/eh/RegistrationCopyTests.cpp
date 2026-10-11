@@ -3,6 +3,9 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+/// \file
+/// Verify the byte, frame and runtime metadata contracts of object copying.
+//===----------------------------------------------------------------------===//
 
 #include "gtest/gtest.h"
 
