@@ -202,11 +202,15 @@ std::string Session::capabilities() {
       {"max_cached", 4},
       {"max_cached_correlations", 4},
       {"intrinsic_verified", false},
+      {"fetch_member_identity", "property_spelling_unverified"},
+      {"fetch_member_correlation", false},
+      {"spread_argument_resolution", "not_analyzed"},
       {"websocket_correlation", false},
       {"xhr_correlation", false},
-      {"candidate_kinds", llvm::json::Array{"fetch", "websocket", "xhr_open",
-                                            "xhr_set_request_header",
-                                            "xhr_send", "xhr_event_handler"}}});
+      {"candidate_kinds",
+       llvm::json::Array{"fetch", "fetch_member_call", "websocket", "xhr_open",
+                         "xhr_set_request_header", "xhr_send",
+                         "xhr_event_handler"}}});
 #endif
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
