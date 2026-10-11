@@ -159,7 +159,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang cmake lld ninja-build
+          sudo apt-get install --yes clang cmake lld ninja-build gcc-multilib
 
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
@@ -2203,7 +2203,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
-            install --yes --no-install-recommends lld wine wine32:i386
+            install --yes --no-install-recommends lld wine wine32:i386 gcc-multilib
       - name: Verify runtime evidence admission
         run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
       - name: Fetch genuine MSVC C++ source inputs
