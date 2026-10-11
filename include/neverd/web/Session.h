@@ -142,6 +142,12 @@ public:
   std::string seaRecords(std::string_view ExpectedRevision,
                          std::string_view ExtractionID, uint64_t Offset,
                          uint64_t Limit) const;
+  std::string extractPkg(std::string_view ExpectedRevision,
+                         std::string_view ArtifactID, std::string_view Profile);
+  std::string pkgRecords(std::string_view ExpectedRevision,
+                         std::string_view ExtractionID,
+                         std::string_view RecordKind, uint64_t Offset,
+                         uint64_t Limit) const;
   std::string extractNexe(std::string_view ExpectedRevision,
                           std::string_view ArtifactID,
                           std::string_view Profile);

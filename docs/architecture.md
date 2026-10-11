@@ -537,13 +537,26 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 explicit primitive passes using the existing binding/value/effect owners;
 `Primitive` emits closed values, `Validate` checks SameValue and the complete
 unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`Rename` selects complete function-local bindings and collision-free names;
+`RenameValidate` reparses and compares all syntax, scope ownership, declarations
+and reference resolution using the same lexical owner. Non-simple parameter
+environments and name-sensitive declarations remain excluded. Pass/profile
+selection has one shared authority; primitive identities and serialized receipts
+remain unchanged. Rename evidence does not borrow primitive SameValue claims.
+`Branches` selects proven Boolean expression operands through the existing
+value/effect owners and excludes declaration/scope/await subtrees. Its validator
+checks an explicit GetValue sequence, exact retained syntax and the surviving
+reference projection against the shared lexical owner. No duplicate resolver
+or general truthiness evaluator is introduced. See the
+[Boolean branch profile](web-boolean-branches-profile.md).
 `SessionRewrite` retains at most two private results and publishes metadata.
 Its raw local export requires a pass/source/revision-bound receipt;
 `rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
 This transaction does not change Bun export's retained-partial-evidence policy.
 Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
 claim source-reflection or whole-program equivalence. See the
-[primitive rewrite profile](web-source-rewrite-profile.md).
+[primitive rewrite profile](web-source-rewrite-profile.md) and
+[lexical rename profile](web-scope-rename-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -563,6 +576,13 @@ admission. `ArtifactView` composes nested coordinates and retains one namespace
 per extraction; typed package ancestry establishes outer delivery only. The
 opaque prefix has no implicit native/signature/runtime validation. See the
 [nexe profile](web-nexe-profile.md).
+`pkg/Locator` independently owns fixed loader declarations, `pkg/Index` owns
+typed VFS/stat admission and private snapshot paths, and `pkg/Reader` owns
+complete partitions and deduplicated store hashing. `SessionPkg` publishes
+only admitted occurrences. Content, opaque V8 caches and private metadata have
+distinct roles; source/cache equivalence and symlink resolution remain unknown.
+`ArtifactView` retains occurrence namespaces and nested coordinates for shared
+consumers. See the [pkg profile](web-pkg-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -570,7 +590,7 @@ comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
 `packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
 consumes shared bindings/module origins/values, and `Package` owns exact
-inventory and retained Bun/SEA/nexe delivery joins. `Publication` emits metadata;
+inventory and retained Bun/SEA/nexe/pkg delivery joins. `Publication` emits metadata;
 the two behavior session adapters own selection, cache and revision boundaries.
 Source ownership, delivery package and declared entry remain distinct.
 `SourceModel::indexSourceDeclarations` supplies the order-independent unique

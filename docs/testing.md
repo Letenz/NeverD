@@ -582,6 +582,20 @@ Worker/MCP suites verify both operations through the shared C API. Check
 parser-off extraction and backend-off ABI/discovery, then restore both options.
 See the [nexe profile](web-nexe-profile.md).
 
+`WebPkg.*` independently builds fixed loader/prelude envelopes and covers LF/
+CRLF framing, snapshot roots, aliases, partial overlaps, opaque caches, private
+metadata, every truncated prefix, compressed-profile refusal and independent
+byte/node/count/work budgets. `WebPkgSDK.*` covers root namespace uniqueness,
+source/cache and symlink uncertainty, metadata-alias privacy through consumers,
+cache/revision atomicity, stored/deflate ZIP source coordinates, package/native
+handoff and CLI operation without external tools. Set `NEVERD_PKG_581_CORPUS`
+to the pinned six-platform corpus root, including the supplemental
+`outputs-stripped` and `stripped-inputs` directories. Tests verify original
+container/input hashes and separately preserved BOM/shebang storage evidence;
+they never build/download/execute samples. Worker/MCP tests own
+direct/framed parity. Check parser-off extraction and backend-off ABI/discovery,
+then restore both options. See the [pkg profile](web-pkg-profile.md).
+
 `WebSEA.*` covers independent Node SEA serialization, x64/ARM64 ELF/Mach-O/PE
 resource location, malformed names/tables, duplicate mappings, cumulative work,
 opaque V8 evidence and exact compiler-generated blobs. `WebSEASDK.*` and
@@ -666,6 +680,28 @@ failure rollback, foreign files, symlinks and renamed/replaced output paths.
 immutable captured bytes and receipt-bound CLI export with an unusable PATH.
 Worker/MCP tests compare both passes and record pages against the shared API;
 MCP excludes raw export and arbitrary output paths.
+`WebSourceRename` checks whole-binding replacement, shadowing/closures, decoded
+identifier collisions, unchanged property keys/labels, name inference, shorthand,
+non-simple parameter environments, writes, global/module names, dynamic scope,
+budgets and inverse tampering. Its optional pinned Claude case uses original
+Bun modules: module 1 retains excluded rest parameters and exports while module
+228 refuses the record ceiling without publishing a partial candidate.
+`WebRenameSDK` checks the distinct lexical profile, private original/generated
+names, shared cache limits, revision-bound receipts and CLI export without an
+external-tool PATH. Worker/MCP check the same profile and record evidence.
+`WebRewriteSDK.PrimitiveV1ReceiptsRemainExactlyCompatible` compares both older
+passes against fixed pre-rename export bytes, IDs, tokens and SHA-256 hashes.
+`WebSourceBranch` supplies independent expected text and retained-tree oracles
+for Boolean `?:`/`&&`/`||`, method/optional/tag calls, indirect eval, typeof/delete,
+selected sequences, chosen effects/exceptions, lexical projection, await and
+scope exclusions, ASI/comments, tampered receipts and byte/record/work/lexer
+ceilings. `WebBranchSDK` checks private operand metadata, distinct evidence,
+shared cache/revision receipts and CLI export with an unusable PATH. Worker/MCP
+compare the same branch result and records. `WebRenameSDK` additionally pins
+the complete pre-branch rename receipt; existing primitive goldens still apply.
+Its optional original Claude test accepts one branch and refuses six in module
+1047, leaves all 1,007 module 1897 candidates unchanged, and checks module 1613's
+source-byte refusal through the same Bun decoder. No target is executed.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative

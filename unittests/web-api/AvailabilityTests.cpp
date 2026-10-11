@@ -76,6 +76,8 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   bool SourceInterfacesAvailable = false;
   EXPECT_EQ(Has("nexe_extract"), ASARAvailable);
   EXPECT_EQ(Has("nexe_records"), ASARAvailable);
+  EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
+  EXPECT_EQ(Has("pkg_records"), ASARAvailable);
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
     if (!Entry || Entry->getString("kind") != "source_interfaces")
@@ -88,6 +90,42 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     EXPECT_EQ(Kinds->size(), 6u);
   }
   EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
+  unsigned RenameProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "javascript_scope_rename")
+      continue;
+    ++RenameProfiles;
+    EXPECT_EQ(Entry->getString("profile"), "javascript-scope-rename-v1");
+    const auto *Passes = Entry->getArray("passes");
+    ASSERT_NE(Passes, nullptr);
+    ASSERT_EQ(Passes->size(), 1U);
+    EXPECT_EQ((*Passes)[0].getAsString(), "scope_renaming");
+    EXPECT_EQ(Entry->getInteger("max_cached"), 2);
+    EXPECT_EQ(Entry->getString("cache_pool"), "source_rewrites");
+    EXPECT_EQ(Entry->getBoolean("original_name_recovery"), false);
+    EXPECT_EQ(Entry->getBoolean("whole_program_equivalence"), false);
+    EXPECT_EQ(Entry->getBoolean("executes_input"), false);
+  }
+  EXPECT_EQ(RenameProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
+  unsigned BranchProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "javascript_boolean_branches")
+      continue;
+    ++BranchProfiles;
+    EXPECT_EQ(Entry->getString("profile"), "javascript-boolean-branches-v1");
+    const auto *Passes = Entry->getArray("passes");
+    ASSERT_NE(Passes, nullptr);
+    ASSERT_EQ(Passes->size(), 1U);
+    EXPECT_EQ((*Passes)[0].getAsString(), "boolean_branches");
+    EXPECT_EQ(Entry->getInteger("max_cached"), 2);
+    EXPECT_EQ(Entry->getString("cache_pool"), "source_rewrites");
+    EXPECT_EQ(Entry->getBoolean("statements_rewritten"), false);
+    EXPECT_EQ(Entry->getBoolean("whole_program_equivalence"), false);
+    EXPECT_EQ(Entry->getBoolean("executes_input"), false);
+  }
+  EXPECT_EQ(BranchProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
   EXPECT_EQ(Has("asar_extract"), ASARAvailable);
   EXPECT_EQ(Has("asar_records"), ASARAvailable);
   EXPECT_TRUE(Has("native_open"));
@@ -132,6 +170,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   for (const auto *Owned :
        {neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
                                                "constant_folding", 16),
+        neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
+                                               "scope_renaming", 14),
+        neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
+                                               "boolean_branches", 16),
         neverd_web_source_rewrite_records_json(Session, "1", 1, "rewrite", 7, 0,
                                                1),
         neverd_web_source_rewrite_export_json(Session, "1", 1, "rewrite", 7,
@@ -184,6 +226,10 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                      0),
         neverd_web_nexe_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                      0, 0, 1),
+        neverd_web_pkg_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                    0),
+        neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
+                                    0, 1),
         neverd_web_stream_preview_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
         neverd_web_stream_commit_json(nullptr, nullptr, 0, nullptr, 0),
@@ -276,6 +322,10 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                                 0, 1),
         neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
                                                nullptr, 0),
+        neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                               "scope_renaming", 14),
+        neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                               "boolean_branches", 16),
         neverd_web_source_rewrite_records_json(nullptr, nullptr, 0, nullptr, 0,
                                                0, 1),
         neverd_web_source_rewrite_export_json(nullptr, nullptr, 0, nullptr, 0,

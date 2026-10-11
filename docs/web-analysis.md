@@ -13,7 +13,7 @@ Use `neverd web har-preview` before hash-bound `har-import` or
 The `neverd web` command and independent C API inspect admitted files without
 executing them. The current implementation provides immutable artifact
 inventory, JavaScript syntax and lexical-binding queries, bounded primitive
-values, conservative effect metadata, explicit primitive rewrite receipts,
+values, conservative effect metadata, explicit primitive and lexical rewrite receipts,
 module evidence, qualified bundle partitions,
 reviewed source views and source-map decoding. Versioned Bun ELF/Mach-O/PE profiles preserve source, asset,
 map and cache ranges and feeds decoded source into the same analysis API.
@@ -47,6 +47,8 @@ neverd web bindings ./bundle.js script
 neverd web semantics ./bundle.js script
 neverd web rewrite ./bundle.js script string_recovery
 neverd web rewrite ./bundle.js script constant_folding
+neverd web rewrite ./bundle.js script scope_renaming
+neverd web rewrite ./bundle.js script boolean_branches
 neverd web modules ./entry.mjs module
 neverd web bundles ./webpack-bundle.js script
 neverd web view ./bundle.js script
@@ -86,12 +88,17 @@ strictly decoded JS, verified readable copies where supported, a manifest and
 an inert HTML index. See [local Bun export](web-bun-profile.md#local-evidence-export).
 
 The separate `rewrite` and `bun-rewrite` commands analyze one explicit
-primitive pass and print metadata only. A `rewrite-export` or
+primitive or lexical rename pass and print metadata only. A `rewrite-export` or
 `bun-rewrite-export` command requires that exact preview receipt and a new
 local directory. It preserves the original, candidate and inverse-range
 receipt; no raw candidate is exposed through worker/MCP. Local substitution
 checks do not establish whole-program or source-reflection equivalence. See
-the [primitive rewrite profile](web-source-rewrite-profile.md).
+the [primitive rewrite profile](web-source-rewrite-profile.md) and
+[lexical rename profile](web-scope-rename-profile.md). Renaming preserves
+complete admitted binding relationships; generated names are not original names.
+The [Boolean branch profile](web-boolean-branches-profile.md) selects proven
+Boolean expression operands with forced GetValue and retained binding checks;
+it preserves chosen effects and does not transform statements.
 
 All new analysis and adapter code is C++. JavaScript parsing embeds a pinned
 Hermes parser/AST subset. There is no JavaScript VM, target evaluation, package
