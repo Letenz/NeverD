@@ -1067,6 +1067,9 @@ public:
   }
   /// The constant a call argument prints as when it is a function's address.
   const HighExpr *functionAddressArgument(const HighExpr &Arg);
+  /// The entry FunctionAddressNames keys address constant \p Const by: its
+  /// value, less the Thumb interworking bit of a certified code address.
+  va_t functionAddressKey(const HighExpr &Const) const;
   struct ImageBacking {
     va_t Base;
     va_t End;

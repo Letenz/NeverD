@@ -60,6 +60,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_PipelineE2ETests.cpp
   arm32/ARM32_PredicatedStackTests.cpp
   arm32/ARM32_ShiftTests.cpp
+  arm32/ARM32_ThumbPCTests.cpp
   x86_32/X86_32_ArithTests.cpp
   x86_32/X86_32_BitOpsTests.cpp
   x86_32/X86_32_CallAbiTests.cpp
@@ -2389,6 +2390,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
   arm32/test_arm_relocation_free_literal.s
+  arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
   arm32/test_arith_arm.c

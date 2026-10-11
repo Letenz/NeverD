@@ -1425,9 +1425,17 @@ const HighExpr *HighCWriter::functionAddressArgument(const HighExpr &Arg) {
   }
   return Cur && Cur->Kind == ExprKind::Const &&
                  isAddressProvenance(Cur->ConstProvenance) &&
-                 FunctionAddressNames.count(Cur->ConstVal)
+                 FunctionAddressNames.count(functionAddressKey(*Cur))
              ? Cur
              : nullptr;
+}
+
+va_t HighCWriter::functionAddressKey(const HighExpr &Const) const {
+  return Const.ConstProvenance == ConstantAddressProvenance::CodeAddress &&
+                 Opts.Image
+             ? normalizeCodeAddress(Const.ConstVal, Opts.Image->Arch,
+                                    Opts.Image->Mode)
+             : Const.ConstVal;
 }
 
 const libc::LibCPrototype *
@@ -4220,7 +4228,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // A function's address prints as the function, whose designator C
     // converts to its address; it keeps the integer type the machine moves.
     if (isAddressProvenance(E.ConstProvenance))
-      if (const auto Function = FunctionAddressNames.find(E.ConstVal);
+      if (const auto Function =
+              FunctionAddressNames.find(functionAddressKey(E));
           Function != FunctionAddressNames.end()) {
         if (PointerArgumentOperands.count(&E))
           return Function->second;

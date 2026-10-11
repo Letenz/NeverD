@@ -2245,7 +2245,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
-      noteFunctionAddress(E.ConstVal, Funcs);
+      noteFunctionAddress(functionAddressKey(E), Funcs);
     // An address into an object, not at its start, that the code keeps as a
     // value is a pointer it walks over the object (`p = &sig[2]; p++`).
     if (E.Kind == ExprKind::Const && !AccessAddresses.count(&E) &&
