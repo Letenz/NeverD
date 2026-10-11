@@ -383,6 +383,19 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({"500c51062c3aba4e2251b8f3c76569f058fd3ef7"}),
+        line="",
+        reason=(
+            "Reviewed historical qualification evidence location. The current "
+            "document retains only directory names. This exact upstream commit "
+            "and line digest preserve its snapshot without allowing current or "
+            "future private paths or changing external policy."
+        ),
+        line_sha256=frozenset({"c39893ef1f25d39cb6d25ade741abae3b95c601f77f3f228a02321667b4952f0"}),
+    ),
+    HistoryAllowance(
         path="tools/neverd-gui/benchmarks/results/linux-x86_64-20261010-linear-copy-performance.json",
         rule="private-path",
         commits=frozenset({
