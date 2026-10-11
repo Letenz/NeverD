@@ -11,6 +11,14 @@ target_compile_definitions(NeverDBytecodeAnalysisTests PRIVATE
 )
 add_dependencies(NeverDBytecodeAnalysisTests neverd-bytecode)
 
+add_test(NAME NeverDBytecodeObservation
+  COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/scripts/tests/test_bytecode_observer.py"
+    "$<TARGET_FILE:neverd-bytecode-observe>")
+set_tests_properties(NeverDBytecodeObservation PROPERTIES
+  LABELS "NeverDBytecodeAnalysisTests;NeverDBytecodeObservation" TIMEOUT 120)
+add_dependencies(NeverDBytecodeAnalysisTests neverd-bytecode-observe)
+
 add_neverd_unittest(NeverDBytecodeCAPITests
   BytecodeCAPITests.cpp
   LINK_LIBS neverd_shared

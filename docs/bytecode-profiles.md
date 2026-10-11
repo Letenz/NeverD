@@ -390,3 +390,89 @@ Profiles are semantic specifications. Successful decoding, C compilation and
 even execution on selected inputs do not prove equivalence to a separate native
 interpreter. Native instruction boundaries and rewrite authorization are never
 created by this path.
+
+## Bounded symbolic observations
+
+`neverd-bytecode-observe` runs decoded LowIR through the shared `SymExec` engine
+and uses `BitVectorSolver` for branch feasibility. It contains no built-in
+instruction dialect, service registry, library inventory, or string table:
+
+```sh
+neverd-bytecode-observe code.bin profile.json functions.json inputs.json observations.json
+neverd-bytecode-observe --annotate-c source.c observations.json annotated.c
+```
+
+The annotation mode adds function comments to ordinary `uint64_t` state-function
+C output. It leaves function bodies unchanged. Reported calls and strings are
+observations under the supplied contracts, not a reconstruction of every path.
+Comments name abstracted calls; consult JSON for budgets, path constraints and
+stop reasons. Time or path exhaustion does not prove a function is understood.
+
+The input object accepts `registers` (`offset`, `bytes`, `value`), `memory`
+(`address`, `path`), optional selected `entries`, and bounded `max_steps`,
+`max_paths`, `max_visits`, `max_milliseconds`. Untouched state remains symbolic. `calls` identifies
+external targets and describes how to observe them:
+
+```json
+{
+  "registers": [{"offset": 0, "bytes": 8, "value": 4096}],
+  "memory": [{"address": 4096, "path": "initial-memory.bin"}],
+  "calls": [{
+    "target": 65536,
+    "name": "host_gateway",
+    "selector_register": 8,
+    "selector_bytes": 4,
+    "selector_names": {"0x12": "example_query"},
+    "argument_count_register": 16,
+    "argument_count_bytes": 4,
+    "argument_registers": [24, 32]
+  }]
+}
+```
+
+An external call stops by default. `continuation: "havoc"` uses the shared
+engine's conservative memory invalidation. `preserve_registers` may explicitly
+retain byte ranges; `result_offset_register` and `result_width_register` identify
+an indirect state result, replaced with a fresh symbolic value. Optional
+`register_writes` apply explicit constant state updates after the call.
+
+`continuation: "register_effects"` requires `memory_effect: "none"`: a complete
+caller-supplied assertion that existing bytecode-visible memory is unchanged.
+It preserves the state except for the declared result and constant writes. The
+result is fresh unless `result_value` supplies an explicit scenario value;
+`result_bytes` defaults to eight, or `result_width_register` selects its width.
+Do not apply this contract to arbitrary APIs, allocation failures, callbacks or
+writes without the corresponding evidence. `selector_cases` can select a full
+call descriptor by the known hexadecimal selector. `dispatch_register` follows
+a declared bytecode function through an explicit indirect gateway; unresolved
+targets stop.
+
+An optional `string` descriptor names `pointer_register` (or
+`pointer_offset_register`), and optional `mode_register`, `encoded_mode`,
+`key_register`. This describes an input protocol's byte-XOR string argument;
+it is not a search over guessed decryption keys. Only bounded, concrete,
+NUL-terminated ASCII values are reported. Ordinary argument pointers and
+register writes are also inspected for concrete strings. When live memory is
+unknown, an address into the original seed may still be reported separately as
+an `initial_image_reference` or `initial_string_reference`; this is a static
+reference and does not assert unchanged runtime contents. Unknown memory is
+never filled from a dictionary or another decompiler.
+
+The driver bounds paths, steps, repeated PCs, solver gates/watch visits and
+expression nodes, and checks a per-function time budget between instructions; large
+expression displays retain a symbolic reference instead of expanding their
+printed tree. Callers running untrusted or large workloads should also impose
+an outer wall-clock limit per function. Solver `unknown` retains a possible
+path and records that its constraints were not proved satisfiable.
+
+With CPU emulation enabled, `neverd-process-probe` is a thin command-line entry
+to the existing process SDK:
+
+```sh
+neverd-process-probe observation.so android-aarch64-api28-v1 options.json runtime.json
+```
+
+See [Android native emulation](android-native-emulation.md) for explicit guest
+memory, library scopes and supported services. A shared object compiled from
+emitted bytecode C still needs an input-ABI adapter for its external gateways.
+Running it does not establish equivalence to an unavailable original runtime.
