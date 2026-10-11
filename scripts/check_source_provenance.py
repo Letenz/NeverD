@@ -295,6 +295,15 @@ class Allowance:
 
 ALLOWED: tuple[Allowance, ...] = (
     Allowance(
+        path="LICENSES/node/LICENSE",
+        rule="provenance-phrase",
+        reason=(
+            "Verbatim Node license attribution identifies SES/Caja and its "
+            "copyright holders; THIRD_PARTY_NOTICES.md records the pinned "
+            "upstream source. The required notice must remain intact."
+        ),
+    ),
+    Allowance(
         path="LICENSES/bun/LICENSE.md",
         rule="provenance-phrase",
         reason=(
