@@ -4,8 +4,9 @@ This table records implemented behavior separately from plans. No completed
 foundation milestone closes issues #714–#718. Qualification below is local
 macOS arm64 Release. The integrated-LLVM full, parser-disabled and
 backend-disabled configurations were built and checked on that host. The
-separate current-dev integration uses prebuilt LLVM 23.0.0 r4 without Zstd;
-its checks and omissions are recorded in the
+separate current-dev integration uses prebuilt LLVM 23.0.0 r4 without Zstd
+and an optional pinned native static Zstandard 1.5.7 SDK; its checks and
+omissions are recorded in the
 [implementation ledger](web-analysis-implementation.md).
 Other hosts require separate evidence.
 
@@ -25,11 +26,14 @@ Other hosts require separate evidence.
 | Bundle partitions | `webpack5-basic-loader-v1` | Fixed basic runtime with object/sparse-array tables; archived upstream example plus inert C++ boundary fixtures; producer version remains unknown, no generic webpack/minifier coverage |
 | Reviewed source display | `javascript-source-view-v1` | Structural default masking, explicit local-review ranges, preview/commit/revocation, UTF-8 chunks and original/projected range mapping; no semantic rewrite or network permission claim |
 | Source navigation | `javascript-source-navigation-v1` | Functions, calls, references, source containment and lexical/initializer links; runtime call targets and feature-specific attribution remain unproven |
+| Client syntax navigation | `javascript-client-syntax-features-v1` | Fixed tool/configuration/permission/MCP/hook spelling and object-shape candidates, callback source links and conditional-test containment; API identity, policy, precedence and runtime targets remain unproven. [Profile](web-client-feature-profile.md) |
 | Storage/view anchors | `source-storage-anchor-v1` | UTF-8/UTF-16 positions, exact original/ASAR/Bun encoding boundaries, whole compressed-frame locators and committed display coverage; JSON encoded-member offsets remain unavailable |
-| Primitive source transforms | `javascript-primitive-rewrite-v1` | Explicit string recovery and other primitive folding; complete lexer, value/effect admission, outer-tree comparison, SameValue and exact inverse; raw local export requires a pass/source/revision-bound receipt. [Profile](web-source-rewrite-profile.md). Scope renaming and statement/control-flow transforms remain pending |
-| Bun standalone | Bun 1.4.2 ELF/Linux, thin Mach-O/macOS and PE/Windows, each x64 and ARM64; prelinked graph extensions | 25 self-authored full compiler outputs qualify the six baseline container layouts; the official Claude Code 2.1.296 ELF additionally qualifies real prelinked/runtime-options data. Other containers' extensions have synthetic coverage; linked-bytecode refused, caches opaque, version unauthenticated. [Exact matrix](web-bun-profile.md) |
+| Primitive source transforms | `javascript-primitive-rewrite-v1` | Explicit string recovery and other primitive folding; complete lexer, value/effect admission, outer-tree comparison, SameValue and exact inverse; raw local export requires a pass/source/revision-bound receipt. [Profile](web-source-rewrite-profile.md) |
+| Lexical source renaming | `javascript-scope-rename-v1` | Admitted local identifier occurrences, whole-tree/binding-graph comparison and exact inverse; no original-name or reflection guarantee. [Profile](web-scope-rename-profile.md) |
+| Boolean branch selection | `javascript-boolean-branches-v1` | Separately selected, justified local Boolean-expression branches; exact receipts/inverse and explicit refusals. General statement/control-flow recovery remains outside the profile. [Profile](web-boolean-branches-profile.md) |
+| Bun standalone | Bun 1.4.2 ELF/Linux, thin Mach-O/macOS and PE/Windows, each x64 and ARM64; prelinked graph extensions | 25 self-authored full compiler outputs qualify the six baseline container layouts; [eight captured Claude Code 2.1.296 npm packages](web-claude-code-cross-platform-qualification.md) additionally qualify real prelinked/runtime-options data and complete shipped-JS recovery on the six targets, including supplied Linux libc variants. Linked-bytecode refused, caches opaque, version unauthenticated. [Exact matrix](web-bun-profile.md) |
 | Explicit Bun local export | `bun-local-evidence-export-v1`, `hermes-602befee-recovery-js-v2` | C++ CLI/C API preserve original/regions, decoded JS and reparse-verified readable copies in a fresh private directory with an inert index; no worker export, original TypeScript recovery or native/cache decompilation. [Real artifact qualification](web-claude-code-qualification.md) |
-| Bun serialized maps | `bun-1.4.2-serialized-source-map-v1` | C++ windows/varints and bounded in-process Zstd; preserved compiler maps and hostile C++ fixtures; retained anchors only, producer-discarded names/unmapped boundaries stay unknown; requires LLVM Zstd |
+| Bun serialized maps | `bun-1.4.2-serialized-source-map-v1` | C++ windows/varints and bounded in-process Zstd; preserved compiler maps and hostile C++ fixtures; retained anchors only, producer-discarded names/unmapped boundaries stay unknown; requires LLVM Zstd or the exact native static SDK 1.5.7. [Dependency profile](web-bun-profile.md#serialized-source-maps) |
 | Explicit native handoff | `immutable-native-handoff-v1` | C++ snapshot/file parity for x64 ELF/PE/thin Mach-O and AArch64 ELF, snapshot lifetime, Bun native assets and a full pinned Bun container; 9 cases passed locally. Universal slices and other host qualification pending; native loading does not qualify an extractor |
 | ASAR | `asar-pickle-json-v1` | Fixed upstream archives and C++ malformed fixtures, explicit packed/unpacked association, integrity, source/map/anchor/native consumers and direct/framed parity qualified locally; ICU 77.1 runtime deployment and other hosts remain unqualified. [Profile](web-asar-profile.md) |
 | Archive name comparison | `icu-77.1-nfc-casefold-portable-v1` | Native NFC/full folding with Unicode 16.0, device/path/collision checks for ASAR and selected unpacked members; original input capture and general export are not yet unified under this policy |
@@ -42,13 +46,18 @@ Other hosts require separate evidence.
 | Captured HTML | `html-utf8-script-candidates-v1` | Script/base inventory, captured local URL candidates and inline raw-byte sources/anchors; DOM and runtime activation remain unverified. [Profile](web-html-profile.md) |
 | HTML inline module files | `html-inline-module-file-candidates-v2` | Literal requests use explicit document/base evidence and exact captured members; early captured maps add scoped/prefix/null rules and private URL candidates; browser activation/history and full closure remain pending |
 | HTML import maps | `import-map-url-evidence-v1`, embedded Ada 4.0.0 | Bounded C++ JSON/URL processing and metadata pages remain available without JS parsing; absolute key origins, later/interleaved maps and order-dependent JSON remain explicit HTML-profile refusals |
-| npm metadata and supplied-directory diff | `node-package-evidence-v1` | npm lock v1/v2/v3, hidden locks, captured manifests, unresolved/conditional placements, exact file hashes and evidence coverage comparisons; [profile](web-package-profile.md). Advisory/provenance, dispositions and reports remain pending |
+| npm metadata and supplied-directory diff | `node-package-evidence-v1` | npm lock v1/v2/v3, hidden locks, captured manifests, unresolved/conditional placements, exact file hashes and evidence coverage comparisons; [profile](web-package-profile.md). Selected evidence composes through the separate [assessment and review profile](web-package-assessment-profile.md) |
+| Captured npm advisory declarations | `npm-osv-1.9.1-v1`, `offline-package-metadata-descriptor-v1` | Native captured OSV/name/version matching with explicit source/time/severity uncertainty and bounded sessions; [profile](web-package-advisory-profile.md), [actual public metadata qualification](web-package-advisory-qualification.md). Feed completeness, freshness, publisher authentication and exploitability remain unverified |
+| Captured signature and provenance metadata | `offline-package-attestation-metadata-v1` | Explicit npm registry/in-toto/DSSE/SLSA subsets and selected SHA-256/SHA-512 original-byte joins. [Profile](web-package-attestation-profile.md). Signature, publisher, trust-chain, transparency and SLSA-level authentication remain unverified |
+| Selected package evidence and analyst review | `offline-package-assessment-v1`, `offline-package-review-journal-v1` | Immutable owner/namespace joins, explicit coverage, head-bound caller assertions, atomic bounded journal restoration and metadata-only Markdown. Qt presents selected manifest/registry evidence and local review files; other GUI selection workflows remain pending. [Assessment](web-package-assessment-profile.md), [journal/GUI](web-package-review-journal.md). No safety, publisher, installed-tree, runtime or reachability verdict |
 | Selected Node source/package behavior | `node-22.15-static-behavior-v1` | Fixed import-rooted process/filesystem/HTTP/native-load/Buffer call patterns, argument anchors and exact inventory/delivery joins. [Profile](web-node-behavior-profile.md). Install propagation, runtime API identity, reachability and verdicts remain unverified |
 | Package archives and original SRI | `ustar-pax-single-gzip-v1`, `npm-original-sri-v1` | Native tar/local-PAX/single-gzip, metadata-only links, shared source/package/Bun/native consumers and explicit registry/lock declaration checks over original bytes. [Profile and limits](web-package-archive-profile.md). Recursive archives, full tar dialects and publisher authentication are unsupported |
 | Passive interface evidence | `har-1.2-metadata-v1`, `fetch-websocket-xhr-syntax-v2`, `absolute-http-method-origin-path-v1` | HAR preview/commit, direct fetch/WebSocket and bounded XHR constructor/receiver/call/event syntax links; explicit fetch-only joins preserve evidence classes. Wrappers, response dataflow, dynamic URL resolution and WebSocket frames remain unsupported. [Profile](web-interface-profile.md) |
 | Passive stream/log records | Six explicitly selected JSONL/SSE/JSON-RPC/MCP-shape/recorded-envelope/log profiles | Bounded native framing, redaction preview/commit and recorded-context candidate joins; missing/ambiguous evidence refuses links. No complete MCP schema/negotiation, source correlation or live capture claim. [Profiles](web-stream-profile.md) |
 | Node SEA | Node 22.15.0 LE64 preparation blob and explicit ELF64/Mach-O64/PE32+ x64/ARM64 resource profiles | Separate C++ reader, stored JS/assets and opaque V8 cache/snapshot, shared consumers; [qualification and limits](web-sea-profile.md). Runtime activation/version and other versions/hosts are unverified |
-| Tauri/Wails/pkg/nexe | Research/profile qualification pending | Detection is insufficient; each named profile must extract known assets |
+| nexe | `nexe-4.0.0-rc.7-eof-resources-v1` | C++ stored-resource and bootstrap extraction, alias-aware hashes, private namespaces and shared consumers; three x64 producer outputs qualified. Opaque native prefix/signatures/runtime and ARM64 producer outputs remain unverified. [Profile](web-nexe-profile.md) |
+| pkg | `pkg-5.8.1-uncompressed-vfs-v1` | Independent C++ loader/prelude/VFS reader, typed stores and private namespaces; six Node 18.5.0 producer outputs cover Linux/macOS/Windows x64/ARM64. Compression, links, V8 semantics and native validation remain unsupported or unverified. [Profile](web-pkg-profile.md) |
+| Tauri/Wails | Research/profile qualification pending | Detection is insufficient; each named profile must extract known assets |
 | C++ worker | `web_` operations in protocol 1.1 | Real framed-process, direct-query parity, web/native revision isolation and private-output checks passed locally |
 | C++ MCP transport | `neverd-offline-web-mcp-v1`, MCP 2025-06-18 stdio | Shared worker/C API adapter, launch-configured input indices and capability-filtered tools; structural views only, no raw export/deep native analysis. [Profile and qualification limits](web-mcp-profile.md) |
 
@@ -110,6 +119,14 @@ closure remain outstanding.
 | Package archive members / depth / cached archives | 10,000 / 64 / 4 |
 | Package archive PAX/name/prefix metadata | 8 MiB |
 | SRI declaration bytes / tokens / cached verifications | 64 KiB / 256 / 16 |
+| Advisory or source/time descriptor JSON / depth / nodes | 1 MiB / 32 / 32,768 |
+| Advisory affected entries / severities / combined version-event selectors | 1,024 / 1,024 / 8,192 |
+| Retained advisory imports / descriptors / charged metadata across imports | 16 / 20 / 8 MiB |
+| Retained attestation imports / subject-digest receipts | 4 / 4; descriptors and 8 MiB metadata ceiling shared with advisories |
+| Retained assessments / findings / composition work | 2 / 8,192 each / 8,000,000 units each |
+| Assessment retained metadata / Markdown page | 16 MiB each / 1 MiB |
+| Shared review events / charged bytes per revision | 256 / 256 KiB across both assessments |
+| Advisory comparison records / matched-entry anchors / work / cached selections | 8,192 / 8,192 / 8,000,000 / 2 |
 | HAR original / observations / field records | 8 MiB / 4,096 / 32,768 |
 | Source interface records / correlation pairs | 4,096 / 32,768 |
 | HAR captures / pending previews / source analyses / correlations | 4 / 1 / 4 / 4 |
@@ -133,6 +150,13 @@ closure remain outstanding.
 | Bun private names total / one name | 1 MiB / 32 KiB |
 | SEA selected input / assets / cached extractions | 256 MiB / 4,096 / 4 |
 | SEA private names total / one name / page records | 1 MiB / 32 KiB / 128 |
+| nexe bootstrap / JSON index / members | 8 MiB / 1 MiB / 4,096 |
+| nexe private metadata per extraction / per session / cached results | 4 MiB / 8 MiB / 4 |
+| nexe reader steps / hash reads / page rows | 2,000,000 / at most twice captured length / 512 |
+| pkg prelude / final JSON / stat document | 8 MiB / 1 MiB / 4 KiB |
+| pkg paths / stores / links / aggregate JSON nodes | 4,096 / 16,384 / 4,096 / 100,000 |
+| pkg private metadata per extraction / per session / cached results | 4 MiB / 8 MiB / 4 |
+| pkg reader steps / scan and hash reads / page rows | 4,000,000 / each at most twice captured length / 512 |
 | Bun section / program headers | 4,096 / 1,024 |
 | Bun serialized map / decoded content total | 8 MiB / 8 MiB |
 | Bun decoded source / Zstd window | 4 MiB / 8 MiB |

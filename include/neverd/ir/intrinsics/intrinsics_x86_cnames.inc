@@ -5,6 +5,9 @@
 C(Intrinsic::X87Fprem, "neverd_x87_fprem");
 C(Intrinsic::X87Fprem1, "neverd_x87_fprem1");
 C(Intrinsic::X87ReadStatus, "neverd_x87_read_status");
+C(Intrinsic::X87ReadControl, "neverd_x87_read_control");
+C(Intrinsic::X87WriteControl, "neverd_x87_write_control");
+C(Intrinsic::X87LoadConstant, "neverd_x87_load_constant");
 C(Intrinsic::X64Syscall, "neverd_x64_syscall");
 C(Intrinsic::X64WindowsSyscall, "neverd_x64_windows_syscall");
 
@@ -243,3 +246,5 @@ C(Intrinsic::WriteCr4, "__writecr4");
 C(Intrinsic::WriteCr8, "__writecr8");
 C(Intrinsic::ReadDr, "__readdr");
 C(Intrinsic::WriteDr, "__writedr");
+C(Intrinsic::X86FPComiState, "neverd_x86_comi_state");
+C(Intrinsic::X86FPComiMemoryState, "neverd_x86_comi_memory_state");

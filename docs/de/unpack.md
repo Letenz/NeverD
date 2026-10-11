@@ -14,7 +14,7 @@ Der Container bestimmt, wie eine Datei validiert und neu aufgebaut wird, der Bef
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | Laufzeitbeobachtung |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | Laufzeitbeobachtung |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 PE32+-DLLs werden anhand von `IMAGE_FILE_DLL` erkannt. Eine modellierte Gast-EXE ruft `LoadLibraryA` und anschließend `FreeLibrary` über den normalen Lebenszyklus von Abhängigkeiten, TLS und `DllMain` auf. Der akzeptierte DLL-Eintritt ist ihr Prozess-Anfügeaufruf; Argumente beliebiger Exporte werden nicht erfunden. Namen, Ordinale, Aliase, Daten und Weiterleitungen bleiben erhalten. Zeiger auf eigene Exporte bleiben intern und erzeugen keine Selbstimporte. Das gilt auch für von Hilfsroutinen zurückgegebene Adressen: Ein internes Ergebnis widerruft frühere Import-Reparaturnachweise für diese Stelle.
 
@@ -26,8 +26,22 @@ Treiber-UNPACK speichert keine einzelnen Schreibereignisse, behält aber Speiche
 
 Die Wiederherstellung prüft Eingangsargumente, Rückkehr- und Schattenrahmen, nichtflüchtige Register, Richtungsflag, Gleitkommasteuerung und Kernelobjektbesitz. Verbleibende Pools, geliehene Kernelzeiger, geänderte Loaderobjekte oder nicht erfasste Kerneleffekte ergeben `unsupported_state`; explizites `snapshot_only` erhält die Diagnose. Für Kernelzustand gibt es kein `restore_runtime`. Imports werden anhand der Kernelexportidentitäten rekonstruiert, ursprüngliche Exporte validiert und die PE-Prüfsumme neu berechnet. Das Ergebnis mit fester Basis belegt weder das Laden im Windows-Kernel noch Signaturgültigkeit oder nicht ausgeführte Pfade.
 
+Mit `backend: "unicorn"` und `execution_contract: "driver-strict"` nutzt die Wiederherstellung von x64-Treibern die Befehlsdekodierung im angehaltenen Zustand und die Beobachtung abgeschlossener RAM-Schreibzugriffe über physische Aliase. Dieser Vertrag verwendet Unicorns Befehlssemantik; `checked-x64-v1` prüft die Zulässigkeit vor der Ausführung.
+
+Temporäre MDLs für loader-eigene Abbildseiten erzeugen keine zusätzliche Wiederherstellungsabhängigkeit mehr, sobald alle Aliase aufgehoben, alle Sperren gelöst und alle Deskriptoren freigegeben sind. Dieser Vertrag erlaubt gecachte Kernelmodus-Aliase ohne angeforderte Adresse. Lebende MDLs, andere Eigentums- oder Mappingarten und Gastzugriffe auf physische PFN-Identitäten bleiben Abhängigkeiten; auch Lesezugriffe modellierter Kopier-, Verschiebe- und Vergleichsdienste zählen.
+
+Uhrabfragen über `KeQueryPerformanceCounter`, `RDTSC` oder `RDTSCP` behalten eine explizite Abhängigkeit der Treiberwiederherstellung. Für erfasste Zähler- und Frequenzwerte besteht kein Vertrag zur Neubindung an eine frische Kernelumgebung. Die Standardwiederherstellung meldet `unsupported_state`; `snapshot_only` behält die Diagnose bei.
+
+`runtime_state.additional_dependency_reasons` nennt die vom Treibermodell beobachteten Gründe, etwa aktive Pools oder MDLs, geänderte Loader-Objekte, Kernel-Effekte und einen geänderten Aufrufkontext am Einstieg. Die standardmäßige Ablehnung und explizite Snapshots behalten dieselben Gründe bei. Eine leere Liste setzt `has_additional_dependencies` nicht außer Kraft und belegt keinen Wiederherstellungsvertrag.
+
+`ProcessView::runtimeState(include_backing)` liefert für angehaltene Treiber einen `WindowsDriverState`. Der Kernel-Eigentümer bewahrt für jeden lebenden Pool die Allokations-API, die exakte angeforderte Größe, das Tag und den wirksamen bisherigen Typ beziehungsweise alle modernen Flags auf. Angeforderte Inhalte werden exakt und unabhängig kopiert; reine Metadaten enthalten keine Bytes. Freigegebene Pools, geliehene Loader-Objekte und Geräteobjekte werden nicht zu Pool-Datensätzen. Die Erfassung liefert weder Zeigerherkunft noch einen nativen Initialisierer; bestehende Ablehnungen wegen Abhängigkeiten und Relokationen gelten weiterhin.
+
+`WindowsDriverState::Entry` bewahrt die ursprünglichen DriverEntry-Register und den Rückkehr-/Shadow-Frame, die angehaltenen Integer-, XMM- und Gleitkomma-Steuerregister sowie den aktiven Stackbereich des Betriebssystems. Bei angefordertem Backing wird der gesamte aktive Stack kopiert. Spätere Dispatch- und Unload-Aufrufe behalten die ursprüngliche Basis und werden ausdrücklich als Aufrufe außerhalb von DriverEntry markiert. Diese konkreten Beobachtungen beweisen weder die Zeigerherkunft noch die Bindung an einen neuen Aufrufer.
+
+Kernelbild-Relokationen bleiben auch ohne erhaltene Pools oder geliehene Objekte eine eigene Loader-Abhängigkeit. Da der Writer Relokationen erzeugter Inhalte derzeit entfernt, liefert die normale Treiberwiederherstellung `unsupported_state`, ohne die Ausgabe anzulegen oder zu kürzen. Nur explizites `snapshot_only` schreibt das Bild mit fester Adresse und behält die Diagnose. Die ursprüngliche Relokationstabelle beweist nicht, dass sie erzeugte Zeiger vollständig abdeckt.
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## Verwendung

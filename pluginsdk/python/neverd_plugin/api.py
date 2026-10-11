@@ -24,6 +24,9 @@ from .abi import (
     NeverDLowIRConcolicRegisterSeedV1,
     NeverDSanitizeOptionsV1,
     NeverDSanitizeResultV1,
+    NeverDSourcePatchMappingV1,
+    NeverDSourcePatchBindingV1,
+    NeverDSourcePatchOptionsV1,
     NeverDSimplifyOptions,
     NeverDSimplifyResult,
     NeverDSynthesizeOptions,
@@ -1685,6 +1688,116 @@ class Session:
             "patch from C",
         )
         return self.patch_result
+
+    @property
+    def source_patch_report(self) -> object:
+        """Installation mappings and compiler details from the last request."""
+        return self._json("neverd_patch_source_report", "source patch report")
+
+    def patch_source(
+        self,
+        source: str | bytes,
+        output_path: os.PathLike[str] | str,
+        *,
+        mappings: Mapping[str, int] | None = None,
+        bindings: Mapping[str, tuple[str, int] | tuple[str, int, int]] | None = None,
+        input_kind: str = "source",
+        compiler: str = "clang",
+        compiler_path: os.PathLike[str] | str | None = None,
+        language: str = "c",
+        artifact: str = "ir",
+        mode: str = "normal",
+        strategy: str = "section",
+        source_name: os.PathLike[str] | str | None = None,
+        compiler_args: Iterable[str] = (),
+        timeout_seconds: int = 30,
+    ) -> object:
+        """Compile and install replacements, returning the verified report.
+
+        Mapping keys are exact replacement symbols; an empty key selects a
+        sole external definition. Empty mappings retain legacy name matching.
+        Bindings map declarations to ``(kind, original_address[, size])``;
+        kinds are ``function``, ``const`` (read-only data), and ``data``
+        (writable data). They share existing storage or call existing code.
+        Explicit compiler selection never falls back to another executable.
+        Profiles unavailable in the loaded engine raise ``NeverDError``.
+        """
+        options = NeverDSourcePatchOptionsV1()
+        options.struct_size = ctypes.sizeof(options)
+        selections = (
+            ("input_kind", input_kind, ("source", "ir", "object")),
+            ("compiler", compiler, ("clang", "neverc", "gcc")),
+            ("language", language, ("c", "c++")),
+            ("artifact", artifact, ("ir", "object")),
+            ("mode", mode, ("normal", "dyncode")),
+            ("strategy", strategy, ("section", "inplace")),
+        )
+        for name, value, choices in selections:
+            if value not in choices:
+                raise ValueError(f"{name} must be one of {', '.join(choices)}")
+            setattr(options, name, choices.index(value))
+        if isinstance(source, str):
+            payload = _utf8_argument("patch source", source, allow_empty=False)
+        elif isinstance(source, bytes) and source:
+            payload = source
+        else:
+            raise ValueError("source must be nonempty str or bytes")
+        if len(payload) > 64 * 1024 * 1024:
+            raise ValueError("patch input exceeds 64 MiB")
+        if input_kind != "object" and b"\0" in payload:
+            raise ValueError("text input contains a NUL byte")
+        buffer = ctypes.create_string_buffer(payload)
+        for name, path in (("compiler_path", compiler_path),
+                           ("source_name", source_name)):
+            if path is not None:
+                setattr(options, name, _utf8_argument(name, os.fspath(path),
+                                                     allow_empty=False))
+        arguments = list(islice(compiler_args, 257))
+        if len(arguments) > 256:
+            raise ValueError("at most 256 compiler arguments are supported")
+        native_args = (ctypes.c_char_p * len(arguments))(
+            *(_utf8_argument("compiler argument", arg, allow_empty=False)
+              for arg in arguments)
+        )
+        options.compiler_args = native_args
+        options.compiler_arg_count = len(arguments)
+        entries = list((mappings or {}).items())
+        if len(entries) > 65536:
+            raise ValueError("too many replacement mappings")
+        native_mappings = (NeverDSourcePatchMappingV1 * len(entries))(
+            *(NeverDSourcePatchMappingV1(
+                _utf8_argument("replacement symbol", symbol, allow_empty=True),
+                _unsigned("original address", address, 64),
+            ) for symbol, address in entries)
+        )
+        options.mappings = native_mappings
+        options.mapping_count = len(entries)
+        references = list((bindings or {}).items())
+        if len(references) > 65536:
+            raise ValueError("too many original reference bindings")
+        native_bindings = (NeverDSourcePatchBindingV1 * len(references))()
+        for index, (symbol, reference) in enumerate(references):
+            if len(reference) not in (2, 3):
+                raise ValueError("bindings require (kind, address[, size])")
+            kind, address = reference[:2]
+            kinds = ("function", "const", "data")
+            if kind not in kinds:
+                raise ValueError("binding kind must be function, const, or data")
+            native_bindings[index] = NeverDSourcePatchBindingV1(
+                _utf8_argument("binding symbol", symbol, allow_empty=False),
+                kinds.index(kind), _unsigned("binding address", address, 64),
+                _unsigned("binding size", reference[2] if len(reference) == 3 else 0, 64),
+            )
+        options.bindings = native_bindings
+        options.binding_count = len(references)
+        options.timeout_seconds = _unsigned("compiler timeout", timeout_seconds, 32)
+        if options.timeout_seconds > 3600:
+            raise ValueError("compiler timeout must not exceed 3600 seconds")
+        self._require_success(self._call(
+            "neverd_patch_source", buffer, len(payload), ctypes.byref(options),
+            _utf8_argument("output path", os.fspath(output_path), allow_empty=False),
+        ), "source patch")
+        return self.source_patch_report
 
     def decompile_all(
         self,

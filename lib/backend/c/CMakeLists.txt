@@ -16,6 +16,8 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCSourceNames.cpp
   HighC/HighCFuncWriter.cpp
   HighC/HighCStmtWriter.cpp
+  HighC/HighCWindowsThrow.cpp
+  HighC/COFF/HighCWindowsCallbacks.cpp
   HighC/X86/HighCRegistration.cpp
   LLVMC/LLVMCEmitter.cpp
   LLVMC/LLVMCExprWriter.cpp
@@ -43,6 +45,7 @@ add_neverd_component_library(NeverDBackendC
   render/LLVMC/LLVMCIntrinsicRender.cpp
   render/LLVMC/LLVMCIntrinsicRenderARM.cpp
   render/LLVMC/LLVMCIntrinsicRenderX86.cpp
+  render/SyscallHelpers.cpp
 
   LINK_COMPONENTS
   IR

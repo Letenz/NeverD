@@ -19,6 +19,7 @@
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
+#include "FreshChoiceProjection.h"
 #include "LowIRLoopInference.h"
 #include "NativeUndefinedIndependence.h"
 #include "OrderedQuery.h"
@@ -493,7 +494,7 @@ class Checker {
   std::map<va_t, int> Addresses;
   std::map<std::pair<int, va_t>, const LowInstructionBoundary *> Boundaries;
   std::map<std::pair<int, va_t>, const LowIRUndefinedInstruction *> Effects;
-  std::unordered_map<uint32_t, SymRef> ZeroLeftChoices;
+  detail::FreshChoiceProjection ZeroLeftChoices{Ctx, Limits.MaxSymbolicNodes};
   uint64_t FrameBytes = 0;
   uint64_t OwnedScheduledPaths = 0;
   uint64_t &ScheduledPaths = OwnedScheduledPaths;
@@ -973,8 +974,9 @@ class Checker {
   }
 
   SymRef ordinary(SymRef Value) {
-    // Map keys are expression indices, not symbolic variable IDs.
-    const auto Answer = Ctx.substitute(Value, ZeroLeftChoices);
+    const auto Answer = ZeroLeftChoices.project(Ctx, Value);
+    if (!Answer)
+      fail(Status::Invalid, "invalid fresh-choice projection");
     nodes();
     return Answer;
   }
@@ -1140,8 +1142,8 @@ class Checker {
                        : Ctx.mkFreshVar(Effect.BitCount, "undefined_left");
     const auto V =
         Refinement ? U : Ctx.mkFreshVar(Effect.BitCount, "undefined_right");
-    if (!Refinement)
-      ZeroLeftChoices.emplace(U.index(), Ctx.mkZero(Effect.BitCount));
+    if (!Refinement && !ZeroLeftChoices.addFreshZero(Ctx, U))
+      fail(Status::Invalid, "invalid fresh-choice projection producer");
     const auto Mask = llvm::APInt::getBitsSet(
         Width, Effect.BitOffset, Effect.BitOffset + Effect.BitCount);
     const auto Apply = [&](SymState &State, SymRef Fresh, SymRef When) {

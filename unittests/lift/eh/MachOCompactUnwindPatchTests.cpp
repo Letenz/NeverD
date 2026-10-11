@@ -3918,6 +3918,54 @@ TEST(MachOCompactUnwindInstall, RejectsOneByteCapacityShortageWithoutMutation) {
   EXPECT_EQ(Binary, Before);
 }
 
+TEST(MachOCompactUnwindStorage, ReservesMappedZeroPaddingBeforeInstallation) {
+  const auto Inputs = makeCompactUnwindInstallInputs();
+  auto Binary =
+      makeInstallableUnwindInfoMachO(Inputs.Original, Inputs.Encoded.size(), 0);
+  auto Located = findMachOCompactUnwindRegion(Binary);
+  ASSERT_TRUE(static_cast<bool>(Located));
+  ASSERT_TRUE(Located->has_value());
+  const uint64_t HeaderOffset = (**Located).SectionHeaderOff;
+  auto *Header =
+      reinterpret_cast<llvm::MachO::section_64 *>(Binary.data() + HeaderOffset);
+  Header->size = Inputs.Original.OriginalBytes.size();
+  const auto Before = Binary;
+  auto Error = reserveMachOCompactUnwindStorage(Binary, Inputs.Encoded.size());
+  ASSERT_FALSE(static_cast<bool>(Error)) << llvm::toString(std::move(Error));
+  EXPECT_EQ(Binary.size(), Before.size());
+  EXPECT_TRUE(std::equal(Binary.begin() + (**Located).SectionFileOff,
+                         Binary.end(),
+                         Before.begin() + (**Located).SectionFileOff));
+  auto Plan = prepareMachOCompactUnwindInstall(
+      Binary, Arch::AArch64, Inputs.Generated, Inputs.Mappings,
+      llvm::endianness::little);
+  ASSERT_TRUE(static_cast<bool>(Plan)) << llvm::toString(Plan.takeError());
+  auto Receipt = applyMachOCompactUnwindInstall(Binary, *Plan);
+  ASSERT_TRUE(static_cast<bool>(Receipt))
+      << llvm::toString(Receipt.takeError());
+  EXPECT_EQ(Receipt->EncodedSize, Inputs.Encoded.size());
+}
+
+TEST(MachOCompactUnwindStorage, RefusesNonzeroPaddingAndMappingBoundaries) {
+  const auto Inputs = makeCompactUnwindInstallInputs();
+  for (bool Nonzero : {false, true}) {
+    auto Binary = makeInstallableUnwindInfoMachO(
+        Inputs.Original, Inputs.Encoded.size(), Nonzero ? 0xa5 : 0);
+    auto Located = findMachOCompactUnwindRegion(Binary);
+    ASSERT_TRUE(static_cast<bool>(Located));
+    ASSERT_TRUE(Located->has_value());
+    auto *Header = reinterpret_cast<llvm::MachO::section_64 *>(
+        Binary.data() + (**Located).SectionHeaderOff);
+    Header->size = Inputs.Original.OriginalBytes.size();
+    const auto Before = Binary;
+    auto Error = reserveMachOCompactUnwindStorage(
+        Binary, Inputs.Encoded.size() + (Nonzero ? 0 : 1));
+    ASSERT_TRUE(static_cast<bool>(Error));
+    llvm::consumeError(std::move(Error));
+    EXPECT_EQ(Binary, Before);
+  }
+}
+
 TEST(MachOCompactUnwindInstall,
      RejectsStaleRegionAndPreimageWithoutFurtherMutation) {
   const CompactUnwindInstallInputs Inputs = makeCompactUnwindInstallInputs();

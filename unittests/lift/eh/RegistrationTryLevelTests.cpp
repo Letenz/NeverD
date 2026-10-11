@@ -18,6 +18,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/RegistrationState.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/FuncDetector.h"
@@ -82,6 +83,7 @@ struct ImageBuilder {
   /// Which runtime the prologue installs.  It decides the seed sentinel and
   /// whether the table carries a cookie header.
   std::string HandlerName = "_except_handler3";
+  uint32_t SecurityCookieRVA = 0;
   /// Entries a heuristic scan guessed before the parse, as the data-pointer
   /// scan guesses each relocated scope-table pointer.
   std::vector<va_t> Guesses;
@@ -116,6 +118,7 @@ struct ImageBuilder {
     Img.Bits = Bitness::Bits32;
     Img.Format = BinaryFormat::COFF;
     Img.Base = kBase;
+    Img.DynInfo.SecurityCookieRVA = SecurityCookieRVA;
 
     // The personality has to live past every function the test defines, so
     // that its symbol bounds the last of them rather than splitting one.
@@ -550,6 +553,145 @@ LowFunc liftEntry(BinaryImage &Img, va_t Entry) {
   return Builder.build(Img, Dec, Entry, "guarded");
 }
 
+struct DirectEH4Fixture {
+  ImageBuilder Builder;
+  size_t CookieLoad = 0;
+  size_t CookieStore = 0;
+  size_t Publication = 0;
+};
+
+/// Independent instruction encodings for both stack-cookie forms. Wide locals
+/// force disp32 cookie stores, while PUSH places the cookie below saved GPRs.
+DirectEH4Fixture makeDirectEH4Fixture(bool Wide, bool Add, bool Push, bool GS) {
+  DirectEH4Fixture F;
+  auto &B = F.Builder;
+  B.HandlerName = "_except_handler4";
+  B.SecurityCookieRVA = kRData + 0x80 - kBase;
+  emitInstall(B.Text, -2, kRData);
+  B.Text.resize(22);
+  const int32_t Allocation = Wide ? 200 : 20;
+  B.Text.push_back(Wide ? 0x81 : 0x83);
+  B.Text.push_back(Add ? 0xc4 : 0xec);
+  if (Wide)
+    emit32(B.Text, Add ? -Allocation : Allocation);
+  else
+    B.Text.push_back(uint8_t(Add ? -Allocation : Allocation));
+  B.Text.insert(B.Text.end(), {0x53, 0x56, 0x57});
+  int32_t SP = -16 - Allocation - 12;
+  int32_t MemorySlot = -16 - Allocation + 8;
+  F.CookieLoad = B.Text.size();
+  B.Text.push_back(0xa1);
+  emit32(B.Text, kRData + 0x80);
+  B.Text.insert(B.Text.end(), {0x31, 0x45, 0xf8, 0x33, 0xc5});
+  F.CookieStore = B.Text.size();
+  auto CookieStore = [&] {
+    const int32_t Slot = Push ? (SP -= 4) : MemorySlot;
+    MemorySlot -= 4;
+    if (Push)
+      B.Text.push_back(0x50);
+    else if (Wide) {
+      B.Text.insert(B.Text.end(), {0x89, 0x85});
+      emit32(B.Text, Slot);
+    } else
+      B.Text.insert(B.Text.end(), {0x89, 0x45, uint8_t(Slot)});
+    return Slot;
+  };
+  const int32_t EHSlot = CookieStore();
+  const int32_t GSSlot = GS ? CookieStore() : -2;
+  B.Text.insert(B.Text.end(), {0x8d, 0x45, 0xf0});
+  F.Publication = B.Text.size();
+  B.Text.insert(B.Text.end(), {0x64, 0xa3, 0, 0, 0, 0});
+  B.Text.insert(B.Text.end(), {0x89, 0x65, 0xe8});
+  emitFrameStore(B.Text, -4, 0);
+  B.Text.push_back(0x90);
+  emitFrameStore(B.Text, -4, -2);
+  B.Text.insert(B.Text.end(),
+                {0x8b, 0x4d, 0xf0, 0x64, 0x89, 0x0d, 0, 0, 0, 0, 0x8d, 0xa5});
+  emit32(B.Text, -16 - Allocation - 12);
+  B.Text.insert(B.Text.end(), {0x5f, 0x5e, 0x5b, 0x8b, 0xe5, 0x5d, 0xc3});
+  const va_t Finally = B.addStub();
+  emit32(B.RData, GSSlot);
+  emit32(B.RData, 0);
+  emit32(B.RData, EHSlot);
+  emit32(B.RData, 0);
+  B.addScope(-2, 0, Finally);
+  B.endScopes();
+  B.RData.resize(0x84);
+  return F;
+}
+
+TEST(RegistrationTryLevel, EH4PublicationFollowsAllocatedCookieStorage) {
+  for (bool Wide : {false, true})
+    for (bool Add : {false, true})
+      for (bool Push : {false, true})
+        for (bool GS : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Wide << Add << Push << GS);
+          auto F = makeDirectEH4Fixture(Wide, Add, Push, GS);
+          auto Image = F.Builder.build({{"guarded", kText}});
+          const auto *Chain = chainAt(Image, kText);
+          ASSERT_NE(Chain, nullptr);
+          ASSERT_EQ(Chain->RegistrationOffset, -16);
+          EXPECT_EQ(Chain->TryLevelOffset, -4);
+          EXPECT_EQ(Chain->ChainInstallVA, kText + F.Publication);
+          const auto Low = liftEntry(Image, kText);
+          ASSERT_TRUE(Low.hasCompleteLiftCoverage());
+          const auto State = analyzeRegistrationStates(Low, kRData + 0x80);
+          EXPECT_TRUE(State.Complete);
+          EXPECT_TRUE(State.CallbackStatesComplete);
+          EXPECT_TRUE(State.RegistrationLifetimeComplete);
+          EXPECT_TRUE(State.SecurityCookiesComplete);
+        }
+}
+
+TEST(RegistrationTryLevel, EH4PublicationRejectsChangedInitialization) {
+  for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto F = makeDirectEH4Fixture(false, true, true, false);
+    auto &B = F.Builder;
+    if (Mutation == 0)
+      B.Text[24] = 20; // releases storage instead of allocating it
+    if (Mutation == 1)
+      B.Text[26] = 0x53; // duplicate saved register
+    if (Mutation == 2)
+      B.Text[F.CookieLoad + 1] ^= 4; // a different cookie source
+    if (Mutation == 3)
+      B.Text[F.CookieLoad + 7] = 0xfc; // overwrites the state, not the table
+    if (Mutation == 4)
+      B.Text[F.CookieLoad + 9] = 0xc4; // XOR with ESP, not EBP
+    if (Mutation == 5)
+      B.Text[F.CookieStore] = 0x51; // a different register is pushed
+    if (Mutation == 6)
+      B.Text[F.Publication - 1] = 0xec; // publishes the wrong node address
+    if (Mutation == 7)
+      B.Text[F.Publication + 2] = 4; // writes FS:[4], not the chain head
+    if (Mutation == 8)
+      llvm::support::endian::write32le(B.RData.data() + 8, uint32_t(-48));
+    if (Mutation == 9)
+      B.SecurityCookieRVA = 0;
+    const auto Image = B.build({{"guarded", kText}});
+    const auto *Chain = chainAt(Image, kText);
+    EXPECT_TRUE(!Chain || !Chain->RegistrationOffset);
+  }
+}
+
+TEST(RegistrationTryLevel, EH4CookieStoresMustOwnDistinctPrivateBytes) {
+  for (int32_t Slot : {-52, -40, -41, -20}) {
+    SCOPED_TRACE(Slot);
+    auto F = makeDirectEH4Fixture(false, true, false, false);
+    F.Builder.Text[F.CookieStore + 2] = uint8_t(Slot);
+    llvm::support::endian::write32le(F.Builder.RData.data() + 8,
+                                     uint32_t(Slot));
+    const auto Image = F.Builder.build({{"guarded", kText}});
+    const auto *Chain = chainAt(Image, kText);
+    EXPECT_TRUE(!Chain || !Chain->RegistrationOffset);
+  }
+  auto F = makeDirectEH4Fixture(false, true, false, true);
+  llvm::support::endian::write32le(F.Builder.RData.data(), uint32_t(-26));
+  const auto Image = F.Builder.build({{"guarded", kText}});
+  const auto *Chain = chainAt(Image, kText);
+  EXPECT_TRUE(!Chain || !Chain->RegistrationOffset);
+}
+
 TEST(RegistrationTryLevel, GuardsOnlyTheBlocksTheTryLevelIsCurrentIn) {
   ImageBuilder B;
   B.addScope(-1, kText + 0x40, kText + 0x50);
@@ -877,7 +1019,7 @@ TEST(RegistrationTryLevel, CxxCallbackRolesSurviveModuleFunctionDiscovery) {
       llvm::support::endian::write32le(Text.data() + 0xe1, uint32_t(-0x45));
       Text[0xe5] = 0xc3;
     }
-    const auto Roles = coff_loader::getCheckedX86CxxCallbackPointerRoles(Img);
+    const auto Roles = coff_loader::getCheckedX86RegistrationPointerRoles(Img);
     ASSERT_TRUE(Roles);
     EXPECT_EQ(Roles->Sources,
               (std::map<va_t, va_t>{{kRData + 0x6c, kText + 0xa0}}));
@@ -1023,7 +1165,8 @@ TEST(RegistrationTryLevel,
   }
 }
 
-TEST(RegistrationTryLevel, CxxPointerRolesRequireTheExactReparsedGraph) {
+TEST(RegistrationTryLevel,
+     RegistrationPointerRolesRequireTheExactReparsedGraph) {
   for (unsigned Mutation = 0; Mutation != 11; ++Mutation) {
     auto Img = makeCxxContinuationImage();
     auto &EH = Img.ExceptionMetadata.Functions.front();

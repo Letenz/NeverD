@@ -2015,6 +2015,78 @@ std::optional<va_t> findCOFFExceptionPersonalityVA(const BinaryImage &Image,
 }
 
 llvm::Expected<COFFExceptionPatchPlan>
+planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
+                    Arch TargetArch) {
+  if (TargetArch != Arch::X64)
+    return patchError("replacement source unwind currently requires PE x64");
+  const auto Headers = locatePEHeaders(const_cast<uint8_t *>(Image.Raw.data()),
+                                       Image.Raw.size());
+  if (!Headers.valid() || !Headers.Is64)
+    return patchError("replacement source requires valid PE32+ headers");
+  const auto *Optional =
+      reinterpret_cast<const llvm::object::pe32plus_header *>(
+          Headers.OptionalHeader);
+  // CRT contributions can advertise instrumentation without enabling CFG.
+  // Preserve these flags; active guard modes need a source compiler contract.
+  constexpr uint32_t InformationalGuardFlags =
+      uint32_t(llvm::COFF::GuardFlags::CF_INSTRUMENTED) |
+      uint32_t(llvm::COFF::GuardFlags::SECURITY_COOKIE_UNUSED);
+  if ((Image.DynInfo.GuardFlags & ~InformationalGuardFlags) != 0 ||
+      (Optional->DLLCharacteristics &
+       llvm::COFF::IMAGE_DLL_CHARACTERISTICS_GUARD_CF))
+    return patchError("input guard instrumentation is unsupported for source "
+                      "replacement");
+  if (Image.ExceptionMetadata.ParseStatus == ExceptionParseStatus::Malformed)
+    return patchError("input exception directory is malformed");
+  if (const auto *Guard = Mod.getModuleFlag("cfguard")) {
+    const auto *Value = llvm::mdconst::dyn_extract<llvm::ConstantInt>(Guard);
+    if (!Value || !Value->isZero())
+      return patchError("source CFG instrumentation requires a guard contract");
+  }
+  if (Mod.getNamedMetadata(windows_eh_md::FunctionTable) ||
+      Mod.getNamedMetadata(exception_rewrite::CxxGroupTableMetadata))
+    return patchError("replacement source cannot claim lifted Windows EH "
+                      "provenance");
+  COFFExceptionPatchPlan Plan;
+  for (const llvm::Function &Function : Mod) {
+    if (Function.getMetadata(windows_eh_md::FunctionAttachment) ||
+        Function.getMetadata(windows_eh_md::NativeAttachment) ||
+        Function.getMetadata(exception_rewrite::FunctionAttachment))
+      return patchError("replacement source cannot claim lifted Windows EH "
+                        "provenance");
+    if (Function.isDeclaration())
+      continue;
+    if (Function.hasPersonalityFn()) {
+      const auto *Personality = llvm::dyn_cast<llvm::Function>(
+          Function.getPersonalityFn()->stripPointerCasts());
+      if (!Personality || Personality->getName() != "__CxxFrameHandler3")
+        return patchError("replacement Windows language handlers require "
+                          "the verified C++ FH3 profile");
+      for (const auto &Block : Function)
+        for (const auto &Instruction : Block)
+          if (llvm::isa<llvm::LandingPadInst>(Instruction))
+            return patchError("Windows C++ FH3 requires LLVM funclet EH IR");
+    }
+    auto Source = rewrite_source::getOriginalVA(Function);
+    if (!Source)
+      return Source.takeError();
+    if (!*Source)
+      continue;
+    if (!Image.hasAuthenticatedFunctionEntryAt(**Source))
+      return patchError("replacement target is not an authenticated entry");
+    if (const auto *EH = Image.ExceptionMetadata.findFunction(**Source)) {
+      if (EH->Kind != RuntimeFunctionKind::Primary ||
+          EH->CodeRange.Begin != **Source ||
+          (EH->Cxx && EH->Cxx->IsCatchFunclet))
+        return patchError("replacement target is not a primary function root");
+    }
+    Plan.ExceptionFunctionEntries.push_back(**Source);
+  }
+  if (Plan.ExceptionFunctionEntries.empty())
+    return patchError("replacement source needs an explicit target");
+  return Plan;
+}
+llvm::Expected<COFFExceptionPatchPlan>
 planCOFFExceptionPatch(const llvm::Module &Mod, const BinaryImage &Image,
                        Arch TargetArch) {
   auto Contracts = exception_rewrite::validateExceptionRewriteContracts(Mod);
