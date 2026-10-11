@@ -99,6 +99,8 @@ struct API {
   WEB_API(neverd_web_source_binding_records_json)
   WEB_API(neverd_web_source_semantics_analyze_json)
   WEB_API(neverd_web_source_semantic_records_json)
+  WEB_API(neverd_web_source_rewrite_analyze_json)
+  WEB_API(neverd_web_source_rewrite_records_json)
   WEB_API(neverd_web_source_modules_analyze_json)
   WEB_API(neverd_web_source_module_records_json)
   WEB_API(neverd_web_source_bundles_analyze_json)
@@ -683,6 +685,31 @@ Json Backend::execute(const std::string &operation, const Json &p) {
                               id.data(), id.size()));
     analysisState_ = "partial";
     return value;
+  }
+  if (operation == "web_source_rewrite_analyze") {
+    fields(p, {"revision", "source_id", "pass"});
+    if (!api().neverd_web_source_rewrite_analyze_json)
+      throw Error("capability_unavailable", "Source rewrites are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto source = required(p, "source_id", 64);
+    const auto pass = required(p, "pass", 32);
+    auto value = result(api().neverd_web_source_rewrite_analyze_json(
+        session_, revision.data(), revision.size(), source.data(),
+        source.size(), pass.data(), pass.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_source_rewrite_records") {
+    fields(p, {"revision", "rewrite_id", "offset", "limit"});
+    if (!api().neverd_web_source_rewrite_records_json)
+      throw Error("capability_unavailable", "Source rewrites are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto rewrite = required(p, "rewrite_id", 64);
+    return result(api().neverd_web_source_rewrite_records_json(
+        session_, revision.data(), revision.size(), rewrite.data(),
+        rewrite.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_source_semantics_analyze") {
     fields(p, {"revision", "source_id"});

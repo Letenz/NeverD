@@ -1,6 +1,6 @@
 **Langues**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6241c9252ec89317b9c488c7e2b6b8c7bd60329dfdd734df27e1a7a7139b1eff -->
+<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
 
 [← Projet NeverD](project.md)
 
@@ -18,7 +18,8 @@ Les guides anglais se trouvent directement dans `docs/`. Les traductions sont re
 | [Contribution](CONTRIBUTING.md) | Environnement, profils de compilation, workflow, style et exigences de PR |
 | [Architecture](architecture.md) | Parcours IR, frontières, lifting strict, profondeur de support et points de modification |
 | [Analyse Web hors ligne (anglais)](../web-analysis.md) | Inspection C++ des artefacts, sources, liaisons et cartes, politique des métadonnées, SDK et validation actuelle |
-| [Profil Bun autonome (anglais)](../web-bun-profile.md) | Extraction ELF fixe, plages de preuves originales, décodage des sources et provenance des fixtures figées |
+| [Réécritures primitives JavaScript (anglais)](../web-source-rewrite-profile.md) | Passes explicites, contrôles de substitution locale, inverse exacte et export local lié à un justificatif |
+| [Profil Bun autonome (anglais)](../web-bun-profile.md) | Extraction délimitée ELF, Mach-O monoarchitecture et PE pour x64/ARM64, plages originales et provenance des fixtures figées |
 | [Profil d’extraction ASAR (anglais)](../web-asar-profile.md) | Association des captures internes et externes, états d’intégrité, consommateurs des membres et dépendance Unicode native |
 | [Profil de preuves Electron (anglais)](../web-electron-profile.md) | Chemins d’entrée capturés, périmètre des manifestes et sources, preuves de fenêtres et ponts, canaux IPC candidats |
 | [Profil source HTML (anglais)](../web-html-profile.md) | Inventaire C++ borné des scripts, références locales capturées et ancres des sources intégrées originales |

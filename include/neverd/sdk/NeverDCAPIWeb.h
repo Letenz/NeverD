@@ -373,6 +373,30 @@ NEVERD_API const char *neverd_web_source_semantic_records_json(
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize,
     uint64_t Offset, uint64_t Limit);
 
+/// Verify local primitive substitutions for an explicit string_recovery or
+/// constant_folding pass. Returns metadata and a raw-local-export receipt;
+/// original/candidate text and individual replacement hashes remain private.
+/// These receipts do not establish whole-program or source-reflection equality.
+NEVERD_API const char *neverd_web_source_rewrite_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *SourceID, size_t SourceIDSize,
+    const char *Pass, size_t PassSize);
+/// Limit is 1..512. Records include fixed reasons and original/candidate
+/// ranges.
+NEVERD_API const char *neverd_web_source_rewrite_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RewriteID, size_t RewriteIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Explicit raw disclosure to a new exclusive local directory. Receipt must
+/// equal the analysis's export_receipt for this pass/source/revision. Writes
+/// original.js, candidate.js and receipt.json; never overwrites captured input.
+/// POSIX only; absent from the shared worker and MCP transport.
+NEVERD_API const char *neverd_web_source_rewrite_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RewriteID, size_t RewriteIDSize,
+    const char *Receipt, size_t ReceiptSize, const char *OutputDirectory,
+    size_t OutputDirectorySize);
+
 /// Inventory static ESM entries and dynamic import/require candidates, then
 /// compare relative specifiers with admitted members under the reported
 /// profile. Derived HTML inline sources retain document/script/base context and

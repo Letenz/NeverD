@@ -43,7 +43,7 @@ their existing scope; no Python support for web APIs is claimed.
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and shared source/Bun/native consumers implemented; two official Claude Code npm packages qualify original digest and payload evidence | Source behavior, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
-| P4D passive interfaces/HAR | Native HAR preview/commit, direct fetch/WebSocket source candidates and explicit method/origin/path comparison implemented | XHR/wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
+| P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader and stored-source/asset consumers implemented; qualification below | Tauri/Wails bridges/assets, pkg/nexe, other SEA layouts and host qualification remain |
@@ -1549,3 +1549,102 @@ bridges, runtime entry/activation analysis, general safe export and other host
 qualification remain separate work. Semantic rewrite receipts, package
 behavior/advisory/reporting, broader passive source mapping and independently
 versioned pkg/nexe readers still prevent completion of the five epics.
+
+## XMLHttpRequest source evidence — 2026-10-11
+
+`fetch-websocket-xhr-syntax-v2` adds bounded direct/const receiver links for
+XHR open, header, send and known event-value syntax. `SourceContext` owns the
+shared admission/index/publication boundary; `SourceFetch` and `SourceXHR`
+own distinct rules, leaving session and transports as serializers. Ordinary
+records retain opaque source IDs and fixed classifications. They do not expose
+URL, credential, arbitrary header, body or callback text. Shared receiver
+bindings do not assert runtime identity or request ordering. The existing HAR
+comparison remains fetch-only. See the [profile](web-interface-profile.md).
+
+Independent plan/implementation consistency review found two default-state
+misclaims: spread listener options were still marked absent, and the new XHR
+argument-role field initially marked legacy spread calls positional. Both were
+corrected with regression assertions. Forbidden Fetch/XHR method classification
+also now includes TRACK and all ASCII case variants in one shared owner.
+
+After those corrections, all 25 focused source/interface/SDK cases passed,
+including the existing hash-pinned Claude Code module 1,897 regression. That
+module still has one dynamic fetch candidate and no admitted XHR pattern; no
+runtime endpoint or traffic was invented. C++ worker Web parity and four MCP
+suites passed, along with enabled C ABI availability (its backend-omission
+case correctly skipped). CLI and framed transport runs used an unusable
+external-tool PATH. Logs are `/tmp/neverd-xhr-{focused-tests,worker,mcp,availability}.log`.
+
+With JavaScript parsing disabled, all five remaining interface SDK cases,
+worker Web and four MCP suites passed. C ABI availability passed and confirmed
+the source-interface profile/operations are absent; the backend-omission-only
+case skipped. Logs are `/tmp/neverd-xhr-nojs-{sdk,worker,mcp,api}.log`.
+
+After restoring the parser, the owning Web suite registered 444 cases: 437
+passed and seven skipped (six require unavailable LLVM Zstd; one only applies
+when the ASAR path policy is omitted). Supplied Bun/SEA/npm/VSIX fixtures were
+enabled, and all 2,345 Claude Code JavaScript modules again passed readable
+recovery/reparse checks. Worker Web and enabled ABI availability passed. Logs
+are `/tmp/neverd-xhr-full-web-tests.log` and
+`/tmp/neverd-xhr-restored-{worker,api}.log`.
+All five restored MCP suites passed, including the supplied Claude Code native
+stdio case; see `/tmp/neverd-xhr-restored-mcp.log`.
+
+This advances #717 without completing it. Request wrappers, response dataflow,
+encoding/compression/crypto tracing, schema exports and reviewed endpoint
+displays remain required.
+
+## Reversible primitive source rewrites — 2026-10-11
+
+`javascript-primitive-rewrite-v1` adds explicit string recovery and other
+primitive folding. The shared frontend, bindings, values and effects remain
+the semantic owners. `rewrite/Plan`, `Primitive`, `Apply` and `Validate` own
+selection, closed emission, exact inverse and complete outside-tree checks;
+`SessionRewrite` publishes bounded metadata and two private cached results.
+`rewrite/Export` separately owns fresh private files and ownership-aware
+rollback. It retains created-file descriptors through the transaction so
+unlink/inode reuse cannot turn a foreign replacement into a cleanup target.
+The C API and CLI expose pass/source/revision-bound local export; worker and
+MCP only expose metadata. See the [profile](web-source-rewrite-profile.md).
+
+Independent plan review required complete lexer evidence, ASI outside-tree
+comparison, pass-bound disclosure receipts and a distinct transactional writer.
+The implementation and C++ tests cover those contracts, private literal
+canaries, UTF-16/signed-zero/BigInt cases, comment preservation, no-effect
+admission, tampered inverse evidence, bounded growth, partial disk write
+failure and preservation of foreign files or replaced output directories.
+The first integration run passed all 18 core/export cases but its four SDK
+cases failed because the fixture omitted the captured root directory when
+counting artifacts. Correcting the fixture's source/CLI indices made all four
+pass; the product import semantics were unchanged.
+
+The actual CLI extracted Claude Code module 1,897 from the pinned original and
+exported both selected passes with an unusable external-tool PATH. String
+recovery accepted 5 substitutions and constant folding accepted 201; both
+retained 1,496 refused candidates and passed exact inverse verification.
+The exported originals also matched the prior raw recovery byte for byte.
+Exact hashes and retained local files are in the
+[qualification record](web-claude-code-qualification.md#reversible-primitive-rewrites--2026-10-11).
+
+The enabled owning Web suite registered 466 cases: 459 passed and seven skipped
+(six need unavailable LLVM Zstd; one only applies with ASAR path policy omitted).
+All supplied Bun/SEA/npm/VSIX corpora were enabled, including readable recovery
+and reparse of every one of the 2,345 Claude Code JavaScript modules. Worker Web,
+all five MCP suites including the real native Claude stdio case, and enabled
+C ABI availability passed. Its backend-omission-only case skipped as expected.
+Logs: `/tmp/neverd-rewrite-full-web-tests.log`,
+`/tmp/neverd-rewrite-sdk-fixed-tests.log`, `/tmp/neverd-rewrite-worker-tests.log`,
+`/tmp/neverd-rewrite-mcp-tests.log`, `/tmp/neverd-rewrite-mcp-claude.log` and
+`/tmp/neverd-rewrite-api-tests.log`.
+
+With JavaScript parsing disabled, C ABI availability checked explicit refusal
+for all three new entry points; worker Web and four MCP suites passed. All
+four rewrite SDK behavior cases explicitly skipped because they require the
+parser. With the entire Web backend disabled, both ABI cases and four MCP
+suites passed; worker Web and the optional Claude MCP case skipped. Logs are
+`/tmp/neverd-rewrite-nojs-{api,worker,mcp,sdk}.log` and
+`/tmp/neverd-rewrite-disabled-{api,worker,mcp}.log`.
+
+These checks establish local primitive substitutions, not whole-program or
+source-reflection equivalence. Scope renaming, branch/control-flow transforms
+and the other epics' pending capabilities still prevent completion of #714–#718.

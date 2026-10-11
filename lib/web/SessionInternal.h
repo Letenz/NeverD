@@ -35,6 +35,7 @@
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
+#include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceView.h"
 #include "neverd/web/Streams.h"
 
@@ -59,6 +60,7 @@ struct Session::Impl {
     SourceEffectAnalysis Effects;
   };
   std::map<std::string, SemanticResults> Semantics;
+  std::map<std::string, SourceRewrite> SourceRewrites;
   struct ModuleResults {
     SourceModuleAnalysis Evidence;
     SourceModuleLinks Links;
