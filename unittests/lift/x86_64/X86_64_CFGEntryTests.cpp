@@ -2654,6 +2654,8 @@ TEST(CFGBuilderCoverage,
       Copy(4, {0x48, 0x83, 0xec, 8});
       Relative(8, 0xe9, Entry + 0xa0);
     }
+    if (Mutation == 24)
+      Relative(0xc0, 0xe9, Entry + 4);
     if (Mutation == 23)
       for (unsigned I = 1; I != 40; ++I)
         Relative(0xc0 + I * 8, 0xe9, Entry + 0xa0);
@@ -2683,8 +2685,17 @@ TEST(CFGBuilderCoverage,
     Scope.GuardedRange = {Entry + 4, Entry + (Mutation == 4 ? 8 : 5)};
     Scope.HandlerVA = Handler;
     EH.SEH->Scopes.push_back(Scope);
+    if (Mutation == 25) {
+      auto FinallyScope = Scope;
+      FinallyScope.Kind = SEHScopeKind::Finally;
+      EH.SEH->Scopes.push_back(FinallyScope);
+    }
     Scope.GuardedRange = {Target, Target + 1};
     Scope.HandlerVA = Entry + 0xc0;
+    if (Mutation == 24) {
+      Scope.Kind = SEHScopeKind::Finally;
+      Scope.GuardedRange = {Entry + 4, Entry + 5};
+    }
     EH.SEH->Scopes.push_back(Scope);
     // Many handlers share one immutable CFG under a small fixed budget.
     if (Mutation == 23) {
@@ -2717,7 +2728,7 @@ TEST(CFGBuilderCoverage,
     }
     return Img;
   };
-  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 26; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Img = Make(Mutation);
     Decoder Dec;
@@ -2766,6 +2777,17 @@ TEST(CFGBuilderCoverage,
                       [&](const auto &E) { return E.TargetVA == Handler; });
     if (Mutation == 21)
       Low.Blocks.front().InstructionBoundaries.clear();
+    if (Mutation == 24 || Mutation == 25) {
+      size_t FrameWork = limits::kMaxSEHEstablisherFrameWork;
+      auto ParentFrame = proveLowSEHEstablisherFrame(
+          Low, Handler, getTargetRegInfo(Arch::X64), false, FrameWork);
+      EXPECT_FALSE(bool(ParentFrame));
+      if (!ParentFrame)
+        llvm::consumeError(ParentFrame.takeError());
+      EXPECT_THROW(
+          LowToMedConverter().convert(Low, Arch::X64, BinaryFormat::COFF),
+          std::exception);
+    }
     if (Mutation == 22) {
       size_t FrameWork = 4096;
       auto ParentFrame = proveLowSEHEstablisherFrame(

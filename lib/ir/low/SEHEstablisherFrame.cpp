@@ -264,6 +264,10 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
       if (!Charge())
         return Fail("frame propagation budget exhausted");
       const SEHScopeRecord &Scope = EH.SEH->Scopes[Index];
+      // Finally callbacks enter on their own invocation stack. Their guarded
+      // parent does not establish the callback SP that ordinary edges carry.
+      if (Scope.Kind == SEHScopeKind::Finally)
+        return Fail("finally callback has a separate invocation frame");
       // A cold fragment can sit below the entry; only the prologue itself
       // is out of bounds.
       auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
