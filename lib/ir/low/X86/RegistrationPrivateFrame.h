@@ -38,6 +38,11 @@ applyPrivateInitializerCall(PrivateFrameState &State,
                             size_t &Work, ImageFrameEffects &Effects,
                             RegistrationThrowCalleeABI &Throw);
 
+std::optional<PrivateInitializerResult>
+applyObjectInitializerCall(PrivateFrameState &State,
+                           const RegistrationInitializerCalleeABI &Callee,
+                           size_t &Work, ImageFrameEffects &Effects);
+
 } // namespace neverd::registration_abi
 
 #endif

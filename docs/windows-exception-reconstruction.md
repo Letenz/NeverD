@@ -453,7 +453,16 @@ cleanup; the parent object retains its separate lifetime. Cross-block private
 stack copies require a reaching definition on every path, including runtime
 resumes. The secondary-throw fixtures construct a new object from the caught
 object's current fields and observe four copies and sixteen destructions,
-distinguishing both object lifetimes from a rethrow. Construction into callback
+distinguishing both object lifetimes from a rethrow. A constructor may delegate
+to another independently checked constructor using initialized scalar words
+and the same ECX object or a bounded subobject. Child must-writes are translated
+to that subobject, and the outer constructor still returns the original object.
+A fresh proof owns the complete acyclic graph, with at most 32 levels and 256
+distinct callees, under the shared work budget. Recursion, indirect calls,
+pointer arguments and child cleanup that consumes caller storage are refused.
+Every child's code and image effects join the preserved closure. Separate
+O0/O1 source/control evidence checks private, parent and catch construction
+through both reconstruction generations. Construction into callback
 stack objects, general constructor/destructor call graphs, conversions and
 virtual-base copying remain unsupported.
 

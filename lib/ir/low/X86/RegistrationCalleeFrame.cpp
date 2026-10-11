@@ -53,7 +53,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                       ThrowProof || Initializer->StackPopBytes > UINT16_MAX ||
                       Initializer->StackPopBytes % 4))
     return false;
-  if (Initializers && !ThrowProof)
+  if (Initializers && !ThrowProof && !Initializer)
     return false;
   const bool InitializesObject = CopyObjectSize || Initializer;
   if (IndependentScalarReturn)
@@ -270,8 +270,9 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       }
       std::optional<int32_t> AfterCallSP;
       std::optional<FrameValue> AfterCallResult;
+      std::optional<FrameValue> AfterCallObject;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-        if (BorrowECX)
+        if (BorrowECX && !Initializer)
           return false;
         const RegistrationInitializerCalleeABI *Init = nullptr;
         if (Initializers)
@@ -283,12 +284,18 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
               !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
               Op.Inputs[0].Offset != Init->Object.Target)
             return false;
-          const auto Call = applyPrivateInitializerCall(State, *Init, Work,
-                                                        Effects, *ThrowProof);
+          const auto Call =
+              Initializer
+                  ? applyObjectInitializerCall(State, *Init, Work, Effects)
+                  : applyPrivateInitializerCall(State, *Init, Work, Effects,
+                                                *ThrowProof);
           if (!Call)
             return false;
           AfterCallSP = Call->StackOffset;
-          AfterCallResult = Call->Object;
+          if (Initializer)
+            AfterCallObject = Call->Object;
+          else
+            AfterCallResult = Call->Object;
         } else if (ThrowProof) {
           const auto SP =
               State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
@@ -352,6 +359,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           break;
         }
         if (!AfterCallSP) {
+          if (Initializer)
+            return false;
           if (!Charge(State.Frame.Cells.size() + State.Initialized.size()))
             return false;
           for (unsigned Register = 0; Register != State.Frame.Registers.size();
@@ -471,6 +480,19 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
         Result.Opcode = NdOp::COPY;
         Result.Output = Op.Output;
         Transfer.write(Result, *AfterCallResult);
+      }
+      if (AfterCallObject) {
+        // The callee's returned pointer belongs to our borrowed object domain,
+        // never to its private frame. Its stack cleanup has no object alias.
+        LowOp Result;
+        Result.Opcode = NdOp::COPY;
+        Result.Output = Op.Output;
+        Transfer.write(Result, {});
+        BorrowTransfer.write(Result, *AfterCallObject);
+        State.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] = {};
+        State.Borrow.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
+            *AfterCallObject;
+        State.Borrow.Registers[x86reg::RSP / x86reg::GeneralRegStride] = {};
       }
     }
     if (Threw)

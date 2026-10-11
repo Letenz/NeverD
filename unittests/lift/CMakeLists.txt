@@ -1347,6 +1347,7 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/RegistrationThrowObjectTests.cpp
   eh/RegistrationCopyTests.cpp
   eh/RegistrationInitializerTests.cpp
+  eh/RegistrationInitializerGraphTests.cpp
   eh/WindowsRegistrationCatchContextTests.cpp
   eh/RegistrationSourceReceiptTestUtils.cpp
   eh/RegistrationCleanupTestUtils.cpp

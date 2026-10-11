@@ -60,6 +60,7 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCopyABI.cpp
   X86/RegistrationInitializerABI.cpp
   X86/RegistrationInitializerCall.cpp
+  X86/RegistrationObjectInitializerCall.cpp
   X86/RegistrationThrowImportABI.cpp
   X86/RegistrationRuntimeThrowInfo.cpp
   X86/RegistrationCalleeFrame.cpp

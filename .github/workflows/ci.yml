@@ -2187,7 +2187,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
             install --yes --no-install-recommends lld wine wine32:i386
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
       - name: Fetch genuine MSVC C++ source inputs
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         uses: actions/download-artifact@v4
@@ -2397,6 +2397,17 @@ jobs:
             --patch-binary build-windows-eh/bin/neverd \
             --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
             --output build-windows-eh/evidence/initializer-rewrite
+      - name: Reconstruct x86 throws through delegating constructors
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          WINEARCH: win32
+        run: |
+          WINEPREFIX="$RUNNER_TEMP/neverd-wine32" \
+          python scripts/check_windows_registration_nested_try.py --profile delegating \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+            --output build-windows-eh/evidence/delegating-rewrite
       - name: Reconstruct x86 C++ entries across Microsoft calling conventions
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2452,6 +2463,17 @@ jobs:
             --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --patch-binary build-windows-eh/bin/neverd \
             --output build-windows-eh/evidence/initializer-relift
+      - name: Re-lift x86 throws through delegating constructors
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          WINEARCH: win32
+        run: |
+          WINEPREFIX="$RUNNER_TEMP/neverd-wine32" \
+          python scripts/check_windows_registration_relift.py --profile delegating \
+            --input-root build-windows-eh/evidence/delegating-rewrite \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --output build-windows-eh/evidence/delegating-relift
       - name: Re-lift and reconstruct generated x86 C++ entries
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2631,6 +2653,10 @@ jobs:
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/initializer-rewrite --output build-windows-eh/native-initializer-replay.json
 
+      - name: Replay identical delegating constructors with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/delegating-rewrite --output build-windows-eh/native-delegating-replay.json
+
       - name: Replay identical entry ABI reconstructions with the Windows CRT
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_entry.py --evidence-root build-windows-eh/evidence/entry-rewrite --output build-windows-eh/native-entry-replay.json
@@ -2658,6 +2684,10 @@ jobs:
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/initializer-relift --output build-windows-eh/native-initializer-relift-replay.json
 
+      - name: Replay both delegating constructor generations with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/delegating-relift --output build-windows-eh/native-delegating-relift-replay.json
+
       - name: Preserve native loader evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -2679,6 +2709,8 @@ jobs:
             build-windows-eh/native-copy-relift-replay.json
             build-windows-eh/native-initializer-replay.json
             build-windows-eh/native-initializer-relift-replay.json
+            build-windows-eh/native-delegating-replay.json
+            build-windows-eh/native-delegating-relift-replay.json
             build-windows-eh/native-entry-replay.json
             build-windows-eh/native-relift-replay.json
             build-windows-eh/native-cleanup-relift-replay.json

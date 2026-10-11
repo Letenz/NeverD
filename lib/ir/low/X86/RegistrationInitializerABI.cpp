@@ -11,21 +11,40 @@
 
 #include "neverd/loader/BinaryImage.h"
 
-namespace neverd {
+#include "llvm/ADT/ScopeExit.h"
+
+namespace neverd::registration_abi {
 
 std::optional<RegistrationInitializerCalleeABI>
-getCheckedX86RegistrationInitializerCalleeABI(const BinaryImage &Image,
-                                              va_t Target,
-                                              size_t *CumulativeWork) {
-  size_t LocalWork = 0;
-  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+checkedInitializerCalleeABI(const BinaryImage &Image, va_t Target, size_t &Work,
+                            InitializerContext &Context) {
+  if (!chargeCalleeWork(Work, 1) || Context.Depth >= kMaxInitializerGraphDepth)
+    return std::nullopt;
+  if (const auto It = Context.Callees.find(Target);
+      It != Context.Callees.end()) {
+    if (It->second) {
+      const auto &ABI = It->second->Object;
+      if (!chargeCalleeWork(
+              Work, ABI.ECXReads.size() + ABI.ECXWrites.size() +
+                        ABI.ImageReads.size() + ABI.ImageWrites.size() +
+                        ABI.CodeRanges.size() + It->second->Initialized.size()))
+        return std::nullopt;
+    }
+    return It->second;
+  }
+  if (Context.Callees.size() >= kMaxInitializerGraphNodes)
+    return std::nullopt;
+  // An in-progress entry has no contract, so direct and mutual recursion fail.
+  auto &Cached = Context.Callees.emplace(Target, std::nullopt).first->second;
+  ++Context.Depth;
+  const llvm::scope_exit Leave([&] { --Context.Depth; });
   const auto Pop = getCheckedX86CalleeStackPop(Image, Target, &Work);
   if (!Pop || *Pop > UINT16_MAX || *Pop % 4)
     return std::nullopt;
   registration_abi::InitializerFrame Frame{*Pop, std::nullopt};
   auto Object = registration_abi::checkedLeafCalleeABI(
-      Image, Target, Work, RegistrationLeafResult::Observed, 0, nullptr,
-      &Frame);
+      Image, Target, Work, RegistrationLeafResult::Observed, 0, nullptr, &Frame,
+      &Context);
   if (!Object || !Frame.Initialized || Frame.Initialized->empty() ||
       !Object->CallerPCWrites.empty())
     return std::nullopt;
@@ -54,7 +73,21 @@ getCheckedX86RegistrationInitializerCalleeABI(const BinaryImage &Image,
     else
       Result.Initialized.push_back({Byte, Byte + 1});
   }
-  return Result;
+  Cached = std::move(Result);
+  return Cached;
 }
 
+} // namespace neverd::registration_abi
+
+namespace neverd {
+std::optional<RegistrationInitializerCalleeABI>
+getCheckedX86RegistrationInitializerCalleeABI(const BinaryImage &Image,
+                                              va_t Target,
+                                              size_t *CumulativeWork) {
+  size_t LocalWork = 0;
+  size_t &Work = CumulativeWork ? *CumulativeWork : LocalWork;
+  registration_abi::InitializerContext Context;
+  return registration_abi::checkedInitializerCalleeABI(Image, Target, Work,
+                                                       Context);
+}
 } // namespace neverd

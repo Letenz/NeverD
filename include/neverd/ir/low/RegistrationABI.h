@@ -85,6 +85,9 @@ getCheckedX86RegistrationCopyCalleeABI(const BinaryImage &Image, va_t Target,
 /// returns that exact object pointer and pops its complete argument area.
 /// Initialized records bytes written on every returning path. Each caller
 /// must independently bind the arguments and object to its live private frame.
+/// Bounded acyclic direct initializer calls compose subobject must-writes and
+/// preserve the root destination. The proof retains all transitive code and
+/// image effects; it does not authorize other calls or pointer arguments.
 struct RegistrationInitializerCalleeABI {
   RegistrationLeafCalleeABI Object;
   std::vector<RegistrationObjectExtent> Initialized;

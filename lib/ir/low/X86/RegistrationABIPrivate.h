@@ -74,6 +74,20 @@ struct InitializerFrame {
 using InitializerCalls =
     std::map<std::pair<va_t, int>, RegistrationInitializerCalleeABI>;
 
+constexpr unsigned kMaxInitializerGraphDepth = 32;
+constexpr size_t kMaxInitializerGraphNodes = 256;
+
+/// A fresh invocation owns this bounded, cycle-rejecting constructor graph.
+/// The cache includes failures and never crosses an image or proof budget.
+struct InitializerContext {
+  std::map<va_t, std::optional<RegistrationInitializerCalleeABI>> Callees;
+  unsigned Depth = 0;
+};
+
+std::optional<RegistrationInitializerCalleeABI>
+checkedInitializerCalleeABI(const BinaryImage &Image, va_t Target, size_t &Work,
+                            InitializerContext &Context);
+
 struct PrivateFrameOptions {
   bool BorrowECX = false;
   RegistrationThrowCalleeABI *ThrowProof = nullptr;
@@ -92,7 +106,8 @@ std::optional<RegistrationLeafCalleeABI> checkedLeafCalleeABI(
     const BinaryImage &Image, va_t Target, size_t &Work,
     RegistrationLeafResult ResultKind, uint32_t CopyObjectSize = 0,
     std::vector<RegistrationObjectExtent> *CopySource = nullptr,
-    InitializerFrame *Initializer = nullptr);
+    InitializerFrame *Initializer = nullptr,
+    InitializerContext *Context = nullptr);
 
 } // namespace neverd::registration_abi
 

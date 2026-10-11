@@ -16,8 +16,15 @@ struct ValueObject {
   int Tail;
   // Copy-only fixtures inline initialization; constructor fixtures keep the
   // call.
+#ifdef NEVERD_REGISTRATION_DELEGATING_CONSTRUCTION
+  __attribute__((noinline)) ValueObject(int H, int T, unsigned)
+      : Head(H), Tail(T) {}
+  NEVERD_REGISTRATION_INITIALIZER ValueObject(int H, int T)
+      : ValueObject(H, T, 0) {}
+#else
   NEVERD_REGISTRATION_INITIALIZER ValueObject(int H, int T)
       : Head(H), Tail(T) {}
+#endif
   __attribute__((noinline)) ValueObject(const ValueObject &Other)
       : Head(Other.Head), Tail(Other.Tail) {
     ++callback_copies;
@@ -35,9 +42,18 @@ struct ReferenceObject {
   unsigned Head;
   unsigned Tail;
   unsigned Tag;
+#ifdef NEVERD_REGISTRATION_DELEGATING_CONSTRUCTION
+  __attribute__((noinline)) ReferenceObject(unsigned H, unsigned T, unsigned G,
+                                            unsigned)
+      : Head(H), Tail(T), Tag(G) {}
+  NEVERD_REGISTRATION_INITIALIZER ReferenceObject(unsigned H, unsigned T,
+                                                  unsigned G)
+      : ReferenceObject(H, T, G, 0) {}
+#else
   NEVERD_REGISTRATION_INITIALIZER ReferenceObject(unsigned H, unsigned T,
                                                   unsigned G)
       : Head(H), Tail(T), Tag(G) {}
+#endif
   __attribute__((noinline)) ReferenceObject(const ReferenceObject &Other)
       : Head(Other.Head), Tail(Other.Tail), Tag(Other.Tag) {
     ++callback_copies;

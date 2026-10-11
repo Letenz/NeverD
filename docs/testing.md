@@ -3390,6 +3390,18 @@ bytes, conflicting branch targets and overlapping instruction decodes.
 that both partial and full-width may-writes preserve possible frame-pointer
 provenance until a definite replacement has been proved.
 
+The separate `delegating` source and relift profiles retain both ordinary
+constructor bodies and require a current-machine transitive construction proof.
+Their twenty O0/O1 source/control cases cover private helpers, direct parent
+calls, catch construction, rethrows and secondary exceptions, producing 160
+executions per capture or replay and 640 across both generations. Native Windows
+replays the identical files. Ordinary initializer evidence cannot replace the
+constructor-graph proof or its source dependencies. `RegistrationInitializerGraph.*`
+checks transitive image/code effects, independent subobjects sharing one callee,
+subobject return identity, partial must-writes, scalar privacy, exact cleanup,
+recursion and exhausted depth/work budgets. The source proof verifies actual
+child calls on ordinary entry paths, independently of other address-taken roots.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.

@@ -3558,6 +3558,13 @@ RTTI remains a type identity, not a recovered member layout.
 Ordinary object initialization has a separate x86 LowIR contract in
 `RegistrationInitializerABI.cpp`. It authenticates scalar stack words, callee
 cleanup, exact ECX return identity and definitely initialized object bytes.
+Each query owns a bounded, cycle-rejecting cache of direct initializer callees;
+cached results and transitive ranges consume the same work budget. There is no
+cross-image proof cache. `RegistrationObjectInitializerCall.cpp` composes each
+child's must-writes relative to the borrowed object or subobject while keeping
+outgoing scalar storage in the private-frame domain. Child return pointers
+retain the object domain, and outer returns must recover the original object.
+This composition grants no generic leaf, copy-callback or indirect-call ABI.
 `RegistrationInitializerCall.cpp` composes that proof into a preserved private
 throw helper, keeping its outgoing argument area separate from the object and
 caller storage. `RegistrationStateInitializer.cpp` binds parent and catch calls
