@@ -932,6 +932,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverConditionQueryCache.*` checks shared value/control graph ownership,
+ordered control queries, temporary certified edges, roots and storage-owner
+changes, and every small-fixture budget boundary. An independent graph-walk
+oracle covers cyclic, disconnected and multiple-entry control flow, including
+edges leaving the graph, with cold and repeated queries.
 `ResolverValueQueryCache.*` checks actual complete-batch reuse, exact remaining
 budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.

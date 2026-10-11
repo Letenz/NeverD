@@ -719,6 +719,14 @@ outer-account exhaustion, symbolic failure or use of pointer-named symbolic
 values or merges excludes the batch. Image metadata is immutable during a
 build, and every new build discards this state.
 These caches do not bypass proposal validation, rollback or fixed-point stages.
+Control-dependence queries acquire the same exact graph and retain at most 64
+completed batches under an independent 1 MiB allowance. The load address and
+ordered branch inventory bind each batch; hits pay its original traversal work
+and a smaller allowance follows the normal incomplete path. Cold traversals
+reuse dense block visitation storage while preserving walk order and logical
+work charges. Value and memory reconstruction split their ordered memo indexes
+by block ID, retaining full keys, stable recursive references and the original
+global entry counts used by evidence accounting.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
