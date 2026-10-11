@@ -4,10 +4,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Hand-written x64 code calls labels inside its own unwind range, often only
-// for the return address the call pushes.  Such a call is lifted as a push and
-// a jump unless the target is proven to be a subroutine that returns to it,
-// and a return that may pop a pushed address refuses the function.
+// Calls to labels inside a function's own unwind range can return normally
+// or abandon their invocation. Each admitted return retains its physical PC
+// ownership; an unproved internal or parent return refuses the function.
 //
 //===----------------------------------------------------------------------===//
 
@@ -15,11 +14,13 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -496,6 +497,269 @@ TEST(OwnInteriorCall, I386NegativeAddressDisplacementPreservesPrivateWrites) {
   EXPECT_TRUE(L.Unsupported.empty());
   EXPECT_TRUE(L.UnprovenReturns.empty());
   EXPECT_FALSE(L.Source.empty());
+}
+
+std::vector<uint8_t> mixedReturnCode(const Platform &P) {
+  std::vector<uint8_t> Code = {0xb8, 11,   0, 0,   0, // mov eax,11
+                               0xe8, 0x16, 0, 0,   0, // call entry+0x20
+                               0x83, 0xc0, 1, 0xc3};  // add eax,1; ret
+  Code.resize(0x20, 0xcc);
+  if (P.TheArch == Arch::X86)
+    Code.insert(Code.end(), {0x83, 0x7c, 0x24, 8, 0}); // cmp [esp+8],0
+  else
+    Code.insert(Code.end(), {0x85, uint8_t(P.Format == BinaryFormat::COFF
+                                               ? 0xc9     // test ecx,ecx
+                                               : 0xff)}); // test edi,edi
+  std::vector<uint8_t> Nonlocal;
+  if (P.TheArch == Arch::X64)
+    Nonlocal.push_back(0x48);
+  Nonlocal.insert(Nonlocal.end(),
+                  {0x83, 0xc4, uint8_t(P.TheArch == Arch::X64 ? 8 : 4), 0xb8, 7,
+                   0, 0, 0, 0xc3});
+  Code.insert(Code.end(), {0x74, uint8_t(Nonlocal.size())});
+  Code.insert(Code.end(), Nonlocal.begin(), Nonlocal.end());
+  Code.push_back(0xc3); // ordinary return consumes this call's PC
+  return Code;
+}
+
+TEST(OwnInteriorCall, MixedExitsResumeOnlyTheMatchingInvocation) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    const auto Code = mixedReturnCode(P);
+    const auto L = lift(Code, P);
+    ASSERT_TRUE(L.Unsupported.empty());
+    ASSERT_TRUE(L.UnprovenReturns.empty());
+    ASSERT_FALSE(L.Source.empty());
+    EXPECT_EQ(L.Source.find("unknown value"), std::string::npos) << L.Source;
+    if (P.TheArch == Arch::X64)
+      compileAndRun(L.Source + R"C(
+int main(void) {
+  return sub_140001000(0) != 12 || sub_140001000(1) != 7 ||
+         sub_140001000(-1) != 7;
+}
+)C");
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(NoOpt);
+      auto Img = makeImage(Code, P);
+      llvm::LLVMContext Ctx;
+      PipelineOptions Opts;
+      Opts.EmitDumpOutput = false;
+      Opts.LiftMode = true;
+      Opts.NoOpt = NoOpt;
+      Opts.OnlyFunctionEntries.insert(P.Entry);
+      auto Result = Pipeline().run(Img, Ctx, Opts);
+      ASSERT_TRUE(Result.LlvmModule);
+      EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+      ASSERT_EQ(Result.FunctionAudits.size(), 1u);
+      EXPECT_TRUE(Result.FunctionAudits.front().HasLLVMDefinition);
+    }
+  }
+}
+
+TEST(OwnInteriorCall, MixedReturnStillRequiresAnUnmodifiedNearReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << int(P.TheArch) << '/'
+                                        << int(P.Format) << '/' << Mutation);
+      auto Code = mixedReturnCode(P);
+      Code.pop_back();
+      if (Mutation == 0)
+        Code.insert(Code.end(), {0xc7, 0x04, 0x24, 0, 0, 0, 0, 0xc3});
+      else if (Mutation == 1)
+        Code.insert(Code.end(), {0xc7, 0x01, 0, 0, 0, 0, 0xc3});
+      else
+        Code.insert(Code.end(), {0xc2, 4, 0});
+      const auto L = lift(std::move(Code), P);
+      EXPECT_TRUE(L.Source.empty()) << L.Source;
+      EXPECT_FALSE(L.UnprovenReturns.empty());
+    }
+  }
+}
+
+TEST(OwnInteriorCall, NonlocalExitMustRetainTheParentsReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+      SCOPED_TRACE(::testing::Message() << int(P.TheArch) << '/'
+                                        << int(P.Format) << '/' << Mutation);
+      auto Code = mixedReturnCode(P);
+      const size_t Body = P.TheArch == Arch::X64 ? 0x24 : 0x27;
+      const unsigned Width = P.TheArch == Arch::X64 ? 8 : 4;
+      if (Mutation == 0)
+        Code[Body + (P.TheArch == Arch::X64 ? 3 : 2)] = 2 * Width;
+      else {
+        // The active internal PC and the parent's physical PC have different
+        // ownership. A nonlocal return must not consume a changed parent PC.
+        const std::vector<uint8_t> Write =
+            Mutation == 2 ? std::vector<uint8_t>{0xc7, 0x01, 0, 0, 0, 0}
+                          : std::vector<uint8_t>{
+                                0xc7, 0x44, 0x24, uint8_t(Width), 0, 0, 0, 0};
+        Code.insert(Code.begin() + Body, Write.begin(), Write.end());
+        Code[Body - 1] += Write.size();
+      }
+      const auto L = lift(std::move(Code), P);
+      EXPECT_TRUE(L.Source.empty()) << L.Source;
+      EXPECT_FALSE(L.UnprovenReturns.empty());
+    }
+  }
+}
+
+TEST(OwnInteriorCall, NonlocalPrivateWritesDoNotAliasTheParentsReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    const bool X64 = P.TheArch == Arch::X64;
+    const unsigned Width = X64 ? 8 : 4;
+    std::vector<uint8_t> Code;
+    if (X64)
+      Code.push_back(0x48);
+    Code.insert(Code.end(), {0x83, 0xec, 16, 0xb8, 11, 0, 0, 0});
+    const unsigned Continuation = Code.size() + 5;
+    Code.insert(Code.end(),
+                {0xe8, uint8_t(0x20 - Continuation), 0, 0, 0, 0x83, 0xc0, 1});
+    if (X64)
+      Code.push_back(0x48);
+    Code.insert(Code.end(), {0x83, 0xc4, 16, 0xc3});
+    Code.resize(0x20, 0xcc);
+    const auto Single = mixedReturnCode(P);
+    std::vector<uint8_t> Body(Single.begin() + 0x20, Single.end());
+    const unsigned Nonlocal = X64 ? 4 : 7;
+    if (!X64)
+      Body[3] += 16; // the incoming parameter is above the parent allocation
+    Body[Nonlocal + (X64 ? 3 : 2)] += 16;
+    const std::vector<uint8_t> Write{0xc7, 0x44, 0x24, uint8_t(Width),
+                                     0,    0,    0,    0};
+    Body[Nonlocal - 1] += Write.size();
+    Body.insert(Body.begin() + Nonlocal, Write.begin(), Write.end());
+    Code.insert(Code.end(), Body.begin(), Body.end());
+    const auto L = lift(std::move(Code), P);
+    ASSERT_TRUE(L.Unsupported.empty());
+    ASSERT_TRUE(L.UnprovenReturns.empty());
+    ASSERT_FALSE(L.Source.empty());
+    if (X64)
+      compileAndRun(L.Source + R"C(
+int main(void) { return sub_140001000(0) != 12 || sub_140001000(1) != 7; }
+)C");
+  }
+}
+
+TEST(OwnInteriorCall, MultipleCallSitesCannotShareOneMixedReturnCertificate) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    // Branch to either of two calls of the same target. Both continuations
+    // are distinct even though their physical stack offsets agree.
+    auto Code = mixedReturnCode(P);
+    const std::vector<uint8_t> Prefix = {0x85, 0xc0, 0x74, 6,    0xe8, 0x17,
+                                         0,    0,    0,    0xc3, 0xe8, 0x11,
+                                         0,    0,    0,    0xc3};
+    std::copy(Prefix.begin(), Prefix.end(), Code.begin());
+    const auto L = lift(std::move(Code), P);
+    EXPECT_TRUE(L.Source.empty()) << L.Source;
+    EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, IndependentAndExceptionalRootsDoNotBorrowAnInvocation) {
+  for (bool Exceptional : {false, true}) {
+    SCOPED_TRACE(Exceptional);
+    auto Code = mixedReturnCode(Win64);
+    const auto Return = Win64.Entry + Code.size() - 1;
+    auto Img = makeImage(std::move(Code), Win64);
+    if (Exceptional) {
+      auto &Own = Img.ExceptionMetadata.Functions.front();
+      Own.SEH.emplace();
+      Own.SEH->Scopes.push_back({{Win64.Entry + 5, Win64.Entry + 10},
+                                 SEHScopeKind::CatchAll,
+                                 1,
+                                 Return,
+                                 Return});
+    }
+    Img.ExceptionMetadata.rebuildIndex();
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    CFGBuilder Builder;
+    const std::set<va_t> Roots{Return};
+    if (!Exceptional)
+      Builder.setCrossFunctionContinuationRoots(&Roots);
+    const auto Low = Builder.build(Img, Dec, Win64.Entry, "mixed");
+    if (!Exceptional)
+      EXPECT_TRUE(Low.OrdinaryModuleAnalysisRoots.count(Return));
+    EXPECT_FALSE(Low.UnprovenReturnAddresses.empty());
+    EXPECT_FALSE(Low.hasCompleteLiftCoverage());
+  }
+}
+
+TEST(OwnInteriorCall, NewlyDecodedContinuationMustRevalidateReturnOwnership) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    auto Code = mixedReturnCode(P);
+    // The normal continuation reaches the same RET with the parent's SP.
+    // That edge is decoded only after proposing the internal return. Its
+    // independent invocation must invalidate the provisional certificate.
+    Code[10] = 0xe9;
+    Code[11] = uint8_t(Code.size() - 1 - 15);
+    Code[12] = Code[13] = Code[14] = 0;
+    const auto L = lift(std::move(Code), P);
+    EXPECT_TRUE(L.Source.empty()) << L.Source;
+    EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, RepeatedSingleSiteInvocationsRetainTheirStackBalance) {
+  std::vector<uint8_t> Code = {
+      0xb8, 11,   0,   0,    0,    // mov eax,11
+      0xb9, 2,    0,   0,    0,    // mov ecx,2
+      0xe8, 0x31, 0,   0,    0,    // call entry+0x40
+      0x83, 0xc0, 1,   0xff, 0xc9, // add eax,1; dec ecx
+      0x75, 0xf4, 0xc3};           // jnz call; ret
+  Code.resize(0x40, 0xcc);
+  const auto Single = mixedReturnCode(SysV64);
+  Code.insert(Code.end(), Single.begin() + 0x20, Single.end());
+  const auto L = lift(std::move(Code), SysV64);
+  ASSERT_TRUE(L.Unsupported.empty());
+  ASSERT_TRUE(L.UnprovenReturns.empty());
+  ASSERT_FALSE(L.Source.empty());
+  compileAndRun(L.Source + R"C(
+int main(void) {
+  return sub_140001000(0) != 13 || sub_140001000(1) != 7;
+}
+)C");
+}
+
+TEST(OwnInteriorCall, OpenIndirectExitCannotCertifyAMixedInvocation) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    auto Code = mixedReturnCode(P);
+    const auto BodyBytes = Code.size() - 0x20;
+    const std::vector<uint8_t> Prefix = {0x85, 0xd2, 0x75, uint8_t(BodyBytes)};
+    Code.insert(Code.begin() + 0x20, Prefix.begin(), Prefix.end());
+    Code.insert(Code.end(), {0xff, 0xe2}); // jmp edx/rdx
+    const auto L = lift(std::move(Code), P);
+    EXPECT_TRUE(L.Source.empty()) << L.Source;
+    EXPECT_FALSE(L.UnprovenReturns.empty());
+  }
+}
+
+TEST(OwnInteriorCall, LanguageRuntimeInvocationsNeedTheirOwnExitContract) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    auto Img = makeImage(mixedReturnCode(SysV64), SysV64);
+    auto &EH = Img.ExceptionMetadata.Functions.front();
+    if (Mutation == 0)
+      EH.Itanium.emplace();
+    else if (Mutation == 1)
+      EH.PersonalityVA = SysV64.Entry + 0x100;
+    else if (Mutation == 2) {
+      EH.Dwarf.emplace();
+      EH.Dwarf->LSDAVA = SysV64.Entry + 0x100;
+    } else
+      EH.ParseStatus = Mutation == 3 ? ExceptionParseStatus::Partial
+                                     : ExceptionParseStatus::Malformed;
+    Img.ExceptionMetadata.rebuildIndex();
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    CFGBuilder Builder;
+    const auto Low = Builder.build(Img, Dec, SysV64.Entry, "mixed");
+    EXPECT_FALSE(Low.UnprovenReturnAddresses.empty());
+    EXPECT_FALSE(Low.hasCompleteLiftCoverage());
+  }
 }
 
 } // namespace

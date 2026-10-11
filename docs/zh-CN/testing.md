@@ -1401,6 +1401,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 将目标判定为普通子程序前，返回地址槽检查会拒绝重叠写入、未知写入、原子写入及效果未证明的被调函数写入。PE、ELF 和 Mach-O 用例覆盖返回地址的部分宽度破坏及 i386 扩宽内存地址。私有栈写入、丢弃的返回地址和终止分支仍可通过验证。
 
+同一内部调用点的混合出口保留两种行为：已证明的裸近 RET 弹出自身未被破坏的返回地址，并续接到精确位置；丢弃该地址的出口保留原有控制流。`MixedExitsResumeOnlyTheMatchingInvocation` 覆盖 PE/ELF/Mach-O x64 和 ELF i386，验证优化及非优化 LLVM，并在启用消毒器时执行 x64 C。配套用例覆盖重复调用，并拒绝多个调用点共享 RET、独立或异常入口、续接块暴露的新前驱、未封闭的间接出口、返回地址破坏、带立即数清栈的返回及语言运行时元数据。每次重建 CFG 都须重新证明调用归属；这不授权共享 SEH 回调返回。 非局部出口还需单独证明父函数返回槽：外层 RET 必须在精确的入口 SP 处读取原始入口返回地址。释放过多栈空间，以及破坏或可能别名该地址的写入均被拒绝；不重叠的私有写入仍可通过。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 和 `QDomNode::isDocument` 的形态检查 x86-64 System V 调用约定。摘要显示会读取某个参数寄存器的直接被调用者会收到调用者的值，包括原样传递的传入 `this`；虚调用会取得支配块载入 `RDI` 的对象；在某条路径上不写 `RAX` 就返回、在其他路径上只传递被调用者结果的方法为 void；在比较链之前写入 `AL` 的字节在每条路径上都是返回值。生成的程序在 `-O0` 和 `-O2` 下带 AddressSanitizer 与未定义行为陷阱运行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 检查 CoreImage 提供方、CIImage 工厂、完整 48 字节逻辑记录及 x2 指针，拒绝缺失或错误的提供方、x86_64 和冲突声明。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 区分原始调用与沿用同一机器地址的结果赋值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒绝 24 类凭据、参数、存储、帧、元数据、导入、重复调用及保存 IR 的修改，包括同时一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 执行未经修改的生成 C，对照独立从编译器观察到的 x2 指针接收函数，检查六个浮点位模式、选择器与接收者身份、单次求值、返回对象、合法副本写入、输入不变性和边界保护。其他主机跳过此物理 ABI 执行测试。

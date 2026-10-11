@@ -1148,14 +1148,25 @@ private:
   /// the instruction does: push the return address and jump.
   void rewriteOwnInteriorCall(const BinaryImage &Img, InsnRecord &Rec,
                               va_t Next);
+  /// Replays a checked near RET as its physical pop and the unique internal
+  /// continuation. The final graph must prove the same invocation again.
+  void rewriteOwnInteriorReturn(const BinaryImage &Img, InsnRecord &Rec);
   /// A direct i386 call to a get-PC thunk, a function whose body is `mov r32,
   /// [esp]; ret`, is lifted as what it does: copy the return address into
   /// that register (CFGBuilderX86GetPc.cpp).
   void rewriteGetPcThunkCall(const BinaryImage &Img, InsnRecord &Rec,
                              va_t Next);
+  struct OwnInteriorReturn {
+    va_t Target;
+    va_t CallSite;
+    va_t Continuation;
+    bool operator==(const OwnInteriorReturn &) const = default;
+  };
   struct OwnInteriorCallVerdict {
     /// Targets a return pops the call's own return address for.
     std::set<va_t> Subroutines;
+    /// Normal exits of a single-site invocation with a separate nonlocal exit.
+    std::map<va_t, OwnInteriorReturn> Returns;
     /// The first return no proof covers, or the target whose returns
     /// disagree.
     std::optional<va_t> Unproven;
@@ -2544,6 +2555,7 @@ private:
   std::map<va_t, std::set<va_t>> OwnInteriorCallSites;
   /// Targets proven to be subroutines, whose calls stay calls.
   std::set<va_t> KeptOwnInteriorCallTargets;
+  std::map<va_t, OwnInteriorReturn> OwnInteriorReturns;
   /// Executable addresses taken via a relocation-free PC-relative `lea` while
   /// exploring this function (same-section function pointers); copied into the
   /// LowFunc so the pipeline merges them into the image's CodeRefTargets (a
