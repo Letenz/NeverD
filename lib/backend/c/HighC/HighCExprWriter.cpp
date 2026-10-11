@@ -4881,7 +4881,7 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
     }
     if (Term->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Term->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        !isImageDataAddress(Term->ConstVal) || !sizedObjectAt(Term->ConstVal))
+        !isImageDataAddress(Term->ConstVal) || !indexedObjectAt(Term->ConstVal))
       continue;
     if (Base)
       return nullptr;
@@ -4903,6 +4903,32 @@ HighCWriter::sizedObjectAt(va_t Addr) const {
     if (Addr - SizedObjects[I - 1].first < SizedObjects[I - 1].second)
       Outermost = SizedObjects[I - 1];
   return Outermost;
+}
+
+std::optional<std::pair<va_t, uint64_t>>
+HighCWriter::indexedObjectAt(va_t Addr) const {
+  if (auto Object = sizedObjectAt(Addr))
+    return Object;
+  const Section *Sec = Opts.Image ? Opts.Image->getSectionFor(Addr) : nullptr;
+  if (!Sec || !Sec->isReadable() || Sec->isExecutable() || !Sec->Size ||
+      Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+    return std::nullopt;
+  va_t Begin = Sec->VA;
+  va_t End = Sec->VA + Sec->Size;
+  const auto After = llvm::upper_bound(
+      SizedObjects, Addr,
+      [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
+  if (After != SizedObjects.end() && After->first < End)
+    End = After->first;
+  if (After != SizedObjects.begin()) {
+    const va_t Reach = SizedObjectReach[After - SizedObjects.begin() - 1];
+    if (Reach > Begin)
+      Begin = Reach;
+  }
+  if (Begin > Addr || End <= Addr ||
+      End - Begin > limits::kMaxSingleGlobalEmbedLen)
+    return std::nullopt;
+  return std::pair{Begin, static_cast<uint64_t>(End - Begin)};
 }
 
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {

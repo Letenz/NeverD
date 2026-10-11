@@ -2220,7 +2220,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // The code reaches all of an object through an address that varies or
   // points into it: the object is declared whole, as bytes.
   auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
-    const auto Object = sizedObjectAt(Addr);
+    const auto Object = indexedObjectAt(Addr);
     if (!Object)
       return;
     noteImageObject(Object->first, Access, Written, Access != nullptr);
