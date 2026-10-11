@@ -765,6 +765,15 @@ std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
                    static_cast<unsigned>(Offset)};
 }
 
+bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
+                                uint16_t Size) {
+  if (const auto Family = gprFamilyOf(A, RegOff))
+    return (Preserved >> *Family) & 1;
+  const auto Family = registerFamilyOf(A, RegOff);
+  return Family && Family->first >= kX64VectorFamilyBase &&
+         ((Preserved >> Family->first) & 1) && Family->second + Size <= 16;
+}
+
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
