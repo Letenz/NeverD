@@ -7,6 +7,7 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -47,6 +48,15 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     Transfer.beginInstruction(Op.Addr);
     RuntimeTransfer.beginInstruction(Op.Addr);
     const auto Memory = lowMemoryOperands(Op);
+    // FWAIT can dispatch a pending x87 exception without changing the normal
+    // path's frame memory. Keep the operation and exceptional dispatch; only
+    // its complete canonical shape can preserve these ordinary frame facts.
+    const bool CanonicalWait =
+        Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
+        Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+        Op.Inputs[0].Offset == uint64_t(Intrinsic::X87Wait) &&
+        Op.Output == NdVar() && Op.MemoryOrdering == NdMemoryOrdering::None &&
+        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
     size_t MemoryWork = 0;
     if (Memory.Address && Op.Opcode == NdOp::LOAD &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
@@ -116,7 +126,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (Exhausted)
       break;
 
-    if (EH4 && Op.Opcode == NdOp::INTRINSIC)
+    if (EH4 && Op.Opcode == NdOp::INTRINSIC && !CanonicalWait)
       CompleteCookies = false;
     if (EH4 && Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
@@ -168,7 +178,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
     }
-    if (Op.Opcode == NdOp::INTRINSIC) {
+    if (Op.Opcode == NdOp::INTRINSIC && !CanonicalWait) {
       CompleteImageReads = false;
       if (CheckCalls) {
         CompleteCalls = false;

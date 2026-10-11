@@ -1559,6 +1559,63 @@ TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
   }
 }
 
+TEST(RegistrationState, OnlyCanonicalWaitPreservesInitializedFrameObjects) {
+  for (unsigned Mode = 0; Mode != 9; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto F = makeCxxObjectCall();
+    LowBlock Effects;
+    emitOp(Effects, 0x1013, NdOp::INTRINSIC, {},
+           {NdVar::cst(uint64_t(Intrinsic::X87Wait), 2)});
+    auto &Wait = Effects.Ops.back();
+    switch (Mode) {
+    case 1:
+      Wait.Inputs[0].Offset = uint64_t(Intrinsic::Syscall);
+      break;
+    case 2:
+      Wait.addInput(NdVar::reg(x86reg::RBP, 4));
+      break;
+    case 3:
+      Wait.Inputs[0].Size = 1;
+      break;
+    case 4:
+      Wait.Output = NdVar::reg(x86reg::RAX, 4);
+      break;
+    case 5:
+      Wait.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 6:
+      Wait.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 7:
+      Wait.Inputs[0] = NdVar::reg(x86reg::RAX, 2);
+      break;
+    case 8:
+      Wait.Inputs[0].Offset |= uint64_t{1} << 16;
+      break;
+    }
+    auto &Body = F.Blocks[1];
+    auto BeforeState =
+        std::find_if(Body.Ops.begin(), Body.Ops.end(),
+                     [](const auto &Op) { return Op.Addr == 0x1016; });
+    ASSERT_NE(BeforeState, Body.Ops.end());
+    Body.Ops.insert(BeforeState, Effects.Ops.begin(), Effects.Ops.end());
+    for (size_t I = 0; I != Body.Ops.size(); ++I)
+      Body.Ops[I].Seq = I;
+    const std::vector Contracts{objectLeafContract()};
+    const auto A = analyzeRegistrationStates(F, 0, 0, &Contracts);
+    EXPECT_EQ(A.Complete, Mode == 0);
+    EXPECT_EQ(A.CallFrameEffectsComplete, Mode == 0);
+    if (Mode == 0) {
+      EXPECT_TRUE(A.RegistrationLifetimeComplete);
+      EXPECT_TRUE(A.CxxContinuationsComplete);
+      ASSERT_EQ(A.CallFrameEffects.size(), 1u);
+      EXPECT_EQ(A.CallFrameEffects[0].FrameReads,
+                (std::vector<RegistrationObjectExtent>{{-24, -20}}));
+    } else
+      EXPECT_TRUE(A.CallFrameEffects.empty());
+  }
+}
+
 TEST(RegistrationState, FreedOrOpaqueFrameBytesCannotAuthorizeObjectReads) {
   for (bool Opaque : {false, true}) {
     auto F = makeCxxObjectCall();
