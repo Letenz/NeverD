@@ -8032,6 +8032,78 @@ static int ordinary_file_synchronization(const char *path) {
   return 0;
 }
 
+/* Original SDK-free ordinary data integrity completion controls. */
+union data_sync_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int data_sync_result(u64 number, u64 fd, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, 0, 0, 0, 0, 0, &error);
+  return value != expected || error != !!expected || secondary ? 260 : 0;
+}
+static int data_sync_status(u64 fd, const union data_sync_stat_guard *initial) {
+  union data_sync_stat_guard observed;
+  for (unsigned i = 0; i != 20; ++i)
+    observed.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(observed.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 261;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 262;
+  return 0;
+}
+static int data_sync_offset(u64 fd, u64 expected) {
+  unsigned error;
+  return call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary
+             ? 263
+             : 0;
+}
+static int ordinary_data_synchronization(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 264;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 264;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 264;
+  union data_sync_stat_guard initial;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(339, a, (u64)(initial.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || initial.words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      initial.words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(initial.bytes + 12, 2) & 0170000) != 0100000)
+    return 265;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 1; ++n) {
+      const u64 high = highs[h], number = high | 187;
+      if (data_sync_result(number, high | a, 0) ||
+          data_sync_result(number, high | d, 0) ||
+          data_sync_result(number, high | b, 0) ||
+          data_sync_result(number, high | 0xffffffffUL, 9) ||
+          data_sync_status(a, &initial) || data_sync_status(b, &initial) ||
+          data_sync_status(d, &initial) || data_sync_offset(d, 2) ||
+          data_sync_offset(b, 0))
+        return 266;
+    }
+  if (data_sync_result(6, a, 0) || data_sync_result(187, a, 9) ||
+      data_sync_result(187, d, 0) || data_sync_result(6, d, 0) ||
+      data_sync_result(187, d, 9) || data_sync_result(187, b, 0) ||
+      data_sync_status(b, &initial) || data_sync_result(6, b, 0))
+    return 267;
+  if (call(4, 1, (u64) "D", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 268;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -8078,6 +8150,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "ordinary-data-synchronization")) {
+    const int status = argc < 3 ? 269 : ordinary_data_synchronization(argv[2]);
+    return status ? status : 41;
+  }
   if (equal(argv[1], "ordinary-file-synchronization")) {
     const int status = argc < 3 ? 209 : ordinary_file_synchronization(argv[2]);
     return status ? status : 40;

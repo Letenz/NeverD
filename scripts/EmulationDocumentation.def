@@ -58,7 +58,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all51 other file routes closed before preflight")
+                           "all52 other file routes closed before preflight")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
@@ -1949,7 +1949,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "no physical durability claim")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "normal XNU entry tests cancellation")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "all51 other logical file routes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all52 other logical file routes")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free68 service records")
 
@@ -1957,14 +1957,40 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "20 guarded full stat observations")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return40")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "80 mandatory workloads per platform")
-
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory240")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory243")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "504 original native literal observations")
 
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "OrdinaryFileSynchronizationKeepsProviderAndCommittedState")
 
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "F_FULLFSYNC51 F_BARRIERFSYNC85")
+
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "fdatasync187 F_FULLFSYNC51 F_BARRIERFSYNC85")
+                           "fdatasync187 / distinct Fdatasync Int purpose")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "data_synchronization / objects")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "explicit immediate successful data integrity completion")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DataSynchronization and Synchronization grants never supply")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "XNU tests cancellation and requests MNT_DWAIT")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free41 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "11 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return41")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "81 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory243")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "252 original native literal observations")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryDataSynchronizationKeepsProviderAndCommittedState")

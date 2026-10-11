@@ -65,6 +65,7 @@ private:
     RenameDirectoryTarget
   };
   enum class Subject { Real, Effective };
+  enum class SynchronizationKind { File, Data };
   enum class AuthorizationPurpose {
     Query,
     ModeSearch,
@@ -176,6 +177,7 @@ private:
     const DarwinFileTime *OwnershipTime = nullptr;
     bool AdvisoryLocks = false;
     bool Synchronization = false;
+    bool DataSynchronization = false;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;
@@ -319,7 +321,8 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
-  synchronize(const ProcessServiceEvent &Event, ProcessResult &Result);
+  synchronize(SynchronizationKind Purpose, const ProcessServiceEvent &Event,
+              ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);

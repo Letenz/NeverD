@@ -223,6 +223,7 @@ NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Flock, 131, Int)
 NEVERD_DARWIN_SERVICE(Fsync, 95, Int)
+NEVERD_DARWIN_SERVICE(Fdatasync, 187, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
@@ -553,6 +554,21 @@ NEVERD_DARWIN_DIAGNOSTIC(
     "Darwin file synchronization requires an ordinary regular vnode")
 NEVERD_DARWIN_DIAGNOSTIC(FileSynchronizationProvider,
                          "Darwin regular-object file integrity completion "
+                         "provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileDataSynchronizationOption,
+                         "Darwin data synchronization grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileDataSynchronizationEnvironment,
+    "Darwin data synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileDataSynchronizationKind,
+    "Darwin data synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileDataSynchronizationTarget,
+    "Darwin data synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileDataSynchronizationProvider,
+                         "Darwin regular-object data integrity completion "
                          "provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")

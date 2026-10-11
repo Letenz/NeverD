@@ -131,7 +131,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
        Options.OwnershipMutations || Options.AdvisoryLocks ||
-       Options.Synchronization))
+       Options.Synchronization || Options.DataSynchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -390,6 +390,11 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     for (const auto &Path : Options.Synchronization->Objects)
       if (auto E =
               AdmitOrdinaryObject(Path, diagnostic::FileSynchronizationOption))
+        return E;
+  if (Options.DataSynchronization)
+    for (const auto &Path : Options.DataSynchronization->Objects)
+      if (auto E = AdmitOrdinaryObject(
+              Path, diagnostic::FileDataSynchronizationOption))
         return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
@@ -668,6 +673,9 @@ void DarwinFiles::initializeNamespace() {
                           Options->AdvisoryLocks->Objects.contains(Path);
     Node->Synchronization = Options->Synchronization &&
                             Options->Synchronization->Objects.contains(Path);
+    Node->DataSynchronization =
+        Options->DataSynchronization &&
+        Options->DataSynchronization->Objects.contains(Path);
     if (Options->OwnershipMutations) {
       const auto Time = Options->OwnershipMutations->Objects.find(Path);
       if (Time != Options->OwnershipMutations->Objects.end())
@@ -2777,7 +2785,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     }
   }
   if (Service == ServiceKind::Fsync)
-    return synchronize(Event, Result);
+    return synchronize(SynchronizationKind::File, Event, Result);
+  if (Service == ServiceKind::Fdatasync)
+    return synchronize(SynchronizationKind::Data, Event, Result);
   if (Service == ServiceKind::Flock)
     return advisoryLock(Event, Result);
   if (Service == ServiceKind::Poll)

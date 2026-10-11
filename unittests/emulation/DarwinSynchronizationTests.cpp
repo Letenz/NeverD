@@ -172,11 +172,12 @@ TEST(DarwinSynchronizationOptions, ReferencesShareTheInputByteBudget) {
   auto E = validateFileOptions(O);
   EXPECT_TRUE(bool(E));
   llvm::consumeError(std::move(E));
-  O.Files["/a"].resize(darwin_file_limits::Bytes - 15);
+  O.Files["/a"].resize(darwin_file_limits::Bytes - 18);
   O.Metadata["/a"].Size = O.Files["/a"].size();
   O.ModeMutations.emplace().Objects["/a"] = {1, 2};
   O.OwnershipMutations.emplace().Objects["/a"] = {3, 4};
   O.AdvisoryLocks.emplace().Objects.insert("/a");
+  O.DataSynchronization.emplace().Objects.insert("/a");
   EXPECT_FALSE(bool(validateFileOptions(O)));
   O.Files["/a"].push_back(0);
   ++O.Metadata["/a"].Size;
@@ -404,6 +405,28 @@ TEST_P(DarwinSynchronizationTest, OtherGrantsCannotSupplyCompletionProvider) {
   EXPECT_EQ(ok(ServiceKind::Flock, {A, 6}), 0u);
   refused(ServiceKind::Fsync, {A}, diagnostic::FileSynchronizationEnvironment);
   EXPECT_EQ(ok(ServiceKind::Flock, {A, 8}), 0u);
+}
+TEST_P(DarwinSynchronizationTest, DataGrantCannotSupplyFileCompletionProvider) {
+  Options->Synchronization.reset();
+  Options->DataSynchronization.emplace().Objects.insert("/data");
+  reset();
+  const auto A = open();
+  const auto Before = status(A);
+  EXPECT_EQ(ok(ServiceKind::Fdatasync, {A}), 0u);
+  refused(ServiceKind::Fsync, {A}, diagnostic::FileSynchronizationEnvironment);
+  EXPECT_EQ(status(A), Before);
+  Options->Synchronization.emplace();
+  reset();
+  const auto B = open();
+  EXPECT_EQ(ok(ServiceKind::Fdatasync, {B}), 0u);
+  refused(ServiceKind::Fsync, {B}, diagnostic::FileSynchronizationProvider);
+  EXPECT_EQ(status(B), Before);
+  Options->Synchronization->Objects.insert("/data");
+  reset();
+  const auto Both = open();
+  EXPECT_EQ(ok(ServiceKind::Fsync, {Both}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fdatasync, {Both}), 0u);
+  EXPECT_EQ(status(Both), Before);
 }
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinSynchronizationTest,
                          testing::Values(uint64_t(4096), uint64_t(16384)));

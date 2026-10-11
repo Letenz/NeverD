@@ -144,3 +144,5 @@ NEVERD_NATIVE_DARWIN_CASE(OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState)
 NEVERD_NATIVE_DARWIN_CASE(OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime)
 NEVERD_NATIVE_DARWIN_CASE(
     OrdinaryFileSynchronizationKeepsProviderAndCommittedState)
+NEVERD_NATIVE_DARWIN_CASE(
+    OrdinaryDataSynchronizationKeepsProviderAndCommittedState)

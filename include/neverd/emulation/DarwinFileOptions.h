@@ -242,6 +242,17 @@ struct DarwinFileSynchronizationOptions {
   std::set<std::string> Objects;
 };
 
+/// Independent immediate successful regular-vnode data integrity completion.
+/// Successful modeled data mutations already committed, with no deferred
+/// provider work or requested cancellation. This neither flushes host storage
+/// nor proves physical durability. File-integrity grants do not supply this
+/// distinct operation; provider failures, cancellation and waits stay unknown.
+struct DarwinFileDataSynchronizationOptions {
+  /// Initial ordinary regular objects, retained through runtime names and
+  /// open zero-name lifetime. Created/reused objects never inherit grants.
+  std::set<std::string> Objects;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -269,6 +280,9 @@ struct DarwinFileOptions {
   /// Independent fsync/fsync_nocancel completion provider; absence is unknown.
   /// Both static query environments reject even an empty declaration.
   std::optional<DarwinFileSynchronizationOptions> Synchronization;
+  /// Independent fdatasync completion provider; omission remains unknown.
+  /// Both static query environments reject even an empty declaration.
+  std::optional<DarwinFileDataSynchronizationOptions> DataSynchronization;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.
