@@ -696,7 +696,7 @@ TEST_F(PatchCOFF_AArch64, ReconstructsBoundedNativeFH3GroupAndRelifts) {
   ASSERT_NE(OriginalPersonality, nullptr);
   const uint8_t OriginalPersonalityOpcode = *OriginalPersonality;
 
-  const auto Decompile = decompileToHighC(PE, "cpp");
+  const auto Decompile = decompileToHighC(PE, "c");
   ASSERT_EQ(Decompile.exitCode, 0) << Decompile.err;
   std::ifstream HighCInput(tmpFile("decompiled_high.c"));
   ASSERT_TRUE(HighCInput.good());
@@ -711,6 +711,15 @@ TEST_F(PatchCOFF_AArch64, ReconstructsBoundedNativeFH3GroupAndRelifts) {
     EXPECT_NE(HighC.find("L_windows_callback_" +
                          llvm::utohexstr(Catch.HandlerVA) + "_"),
               std::string::npos);
+  HighCInput.close();
+  const auto DecompileCpp = decompileToHighC(PE, "cpp");
+  ASSERT_EQ(DecompileCpp.exitCode, 0) << DecompileCpp.err;
+  std::ifstream HighCppInput(tmpFile("decompiled_high.c"));
+  ASSERT_TRUE(HighCppInput.good());
+  const std::string HighCpp((std::istreambuf_iterator<char>(HighCppInput)),
+                            std::istreambuf_iterator<char>());
+  EXPECT_NE(HighCpp.find("catch (int)"), std::string::npos);
+  EXPECT_NE(HighCpp.find("catch (...)"), std::string::npos);
 
   const auto Patch = patchBinary(PE);
   ASSERT_EQ(Patch.exitCode, 0) << Patch.err;
