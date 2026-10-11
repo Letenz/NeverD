@@ -385,6 +385,33 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
         path="docs/web-claude-code-qualification.md",
         rule="private-path",
+        commits=frozenset({"8a1a303a0924fc4a0b918fd32b59d00b48d09e36"}),
+        line="",
+        reason=(
+            "Reviewed upstream scope-renaming evidence location. The current "
+            "document replaces its workstation prefix with a recovery-root "
+            "placeholder while retaining artifact identities and measurements. "
+            "Only this historical commit and exact line digest are accepted; "
+            "current text and external policy remain fully checked."
+        ),
+        line_sha256=frozenset({"626ab8b1c1b594ca2508f7f8d082bb6691e8daa30a32515ff67859d24afaa17d"}),
+    ),
+    HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({"4ccd8a4df593ffcfc8b4001f06b3e8df307a4207"}),
+        line="",
+        reason=(
+            "Reviewed upstream continuation of the same qualification corpus. "
+            "The current document normalizes its workstation prefix without "
+            "changing artifact evidence. This full commit and exact line "
+            "digest allow no current or future occurrence."
+        ),
+        line_sha256=frozenset({"d37d85569c24cd796a4ff011da73c1d686836c3aba580a5234249e169092264b"}),
+    ),
+    HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
         commits=frozenset({"500c51062c3aba4e2251b8f3c76569f058fd3ef7"}),
         line="",
         reason=(
