@@ -53,6 +53,12 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin,
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "EACCES13")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "OwnerQueriesKeepPermissionAndUnknownBoundaries")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "GroupMembershipUID")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "group_membership_uid")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "4294967195")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ordinary-queries-closed-groups")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "darwin_time")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "hostname")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "process_group_id")

@@ -5185,6 +5185,31 @@ static int ordinary_queries(const char *stop_path, unsigned scope) {
   return call(4, 1, (u64) "G", 1, 0, 0, 0, &error) == 1 && !error ? 37 : 227;
 }
 
+static int ordinary_closed_group_queries(void) {
+  int initial = ordinary_queries(0, 0);
+  if (initial != 37)
+    return initial;
+  // Original NONE and complete groups[20,40] make effective GID50 misses
+  // negative. The ordinary baseline already checked every other request mask.
+  if (owner_query_result(2, "/unknown", 2, 16, 13) ||
+      owner_query_result(2, "/unknown", 6, 16, 13))
+    return 228;
+  for (unsigned api = 0; api != 3; ++api) {
+    const unsigned flags = api == 2 ? 16 : 0;
+    if (owner_query_result(api, "/external/missing", 0, flags, 2) ||
+        owner_query_result(api, "/external/leaf", 4, flags, 0) ||
+        owner_query_result(api, "/external/.", 0, flags, 0) ||
+        owner_query_result(api, "/external/..", 0, flags, 0) ||
+        owner_query_result(api, "/blocked/missing", 0, flags, 13) ||
+        owner_query_result(api, "/blocked/.", 0, flags, 13) ||
+        owner_query_result(api, "/external-via/leaf", 4, flags, 0) ||
+        owner_query_result(api, "/external///", 0, flags, 0))
+      return 229;
+  }
+  unsigned error;
+  return call(4, 1, (u64) "N", 1, 0, 0, 0, &error) == 1 && !error ? 37 : 230;
+}
+
 static int file_access(const char *path) {
   unsigned error;
   char parent[1024];
@@ -7213,6 +7238,8 @@ int main(int argc, char **argv, char **envp, char **apple) {
     return call(116, 0, 0, 0, 0, 0, 0, &error) || error || secondary ? 51 : 37;
   if (equal(argv[1], "time") || equal(argv[1], "time-values"))
     return time_calls(equal(argv[1], "time-values"));
+  if (equal(argv[1], "ordinary-queries-closed-groups"))
+    return ordinary_closed_group_queries();
   if (equal(argv[1], "ordinary-queries"))
     return ordinary_queries(0, 0);
   if (equal(argv[1], "ordinary-query-unknown"))

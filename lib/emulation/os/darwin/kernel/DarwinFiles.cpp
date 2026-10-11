@@ -946,15 +946,16 @@ std::optional<bool> DarwinFiles::groupMembership(uint32_t GID,
   if (!C.GroupAccessList || C.GroupAccessList->empty())
     return std::nullopt;
   auto Groups = *C.GroupAccessList;
-  bool Authoritative = false;
+  bool Authoritative = C.GroupMembershipUID == GroupMembershipUIDNone;
   // Independent model of the pinned kauth_cred_copy_real/change_egid contract:
   // changing either identity scans supplementary positions, not index zero.
   // A first match keeps the old primary; displacement disables memberd.
   if (User == Subject::Real &&
       (C.RealUID != C.EffectiveUID || C.RealGID != C.EffectiveGID)) {
     auto Match = std::find(Groups.begin() + 1, Groups.end(), C.RealGID);
-    Authoritative = Match == Groups.end();
-    if (!Authoritative)
+    if (Match == Groups.end())
+      Authoritative = true;
+    else
       *Match = C.EffectiveGID;
     Groups.front() = C.RealGID;
   }
@@ -962,8 +963,8 @@ std::optional<bool> DarwinFiles::groupMembership(uint32_t GID,
     return true;
   if (Authoritative)
     return false;
-  // The original effective context may still use an external membership
-  // resolver. Missing in-credential entries are not negative answers.
+  // Without explicit original NONE or proved real-copy displacement,
+  // an external resolver may still supply membership beyond this list.
   return std::nullopt;
 }
 DarwinFiles::Authorization

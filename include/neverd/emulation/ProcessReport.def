@@ -54,6 +54,8 @@ NEVERD_PROCESS_REPORT_FIELD(CredentialEffectiveUID, "effective_uid")
 NEVERD_PROCESS_REPORT_FIELD(CredentialRealGID, "real_gid")
 NEVERD_PROCESS_REPORT_FIELD(CredentialEffectiveGID, "effective_gid")
 NEVERD_PROCESS_REPORT_FIELD(CredentialGroups, "groups")
+NEVERD_PROCESS_REPORT_FIELD(CredentialGroupMembershipUID,
+                            "group_membership_uid")
 NEVERD_PROCESS_REPORT_FIELD(SystemResourceUsage, "resource_usage")
 NEVERD_PROCESS_REPORT_FIELD(ResourceUsageSelf, "self")
 NEVERD_PROCESS_REPORT_FIELD(ResourceUsageChildren, "children")

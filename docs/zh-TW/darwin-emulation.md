@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
+<!-- i18n-source: 96008a1080031d252edd0ac02e0a87379caeb30be04154b57c7c6d33eae3d8e4 -->
 
 [← 文件索引](README.md)
 
@@ -632,7 +632,7 @@ macOS ARM64 Release 登記/通過/不可用略過/失敗 1371/867/504/0，必需
 
 ## 明確憑據、群組與一致建立屬主
 
-可選 Credentials 含 RealUID/EffectiveUID/RealGID/EffectiveGID 及獨立可選 GroupAccessList。省略時四查詢為1000；明確零/root有效，ID0..INT32_MAX。群組1..16，首項EffectiveGID，保留順序/重複；缺少仍未知，不推斷宿主/EGID。嚴格 darwin_system.credentials 恰需 real_uid/effective_uid/real_gid/effective_gid，可加groups；無損整數與統一驗證器在載入前拒絕欄位/形狀/範圍/數量/首組錯誤，非Darwin仍拒絕。
+可選 Credentials 含 RealUID/EffectiveUID/RealGID/EffectiveGID 及獨立可選 GroupAccessList 與 GroupMembershipUID。省略時四查詢為1000；明確零/root有效，四個純量 ID 與群組項目0..INT32_MAX；GroupMembershipUID 的獨立範圍見後文。群組1..16，首項EffectiveGID，保留順序/重複；缺少仍未知，不推斷宿主/EGID。嚴格 darwin_system.credentials 恰需 real_uid/effective_uid/real_gid/effective_gid，可加獨立可選 groups 與 group_membership_uid；無損整數與統一驗證器在載入前拒絕欄位/形狀/範圍/數量/首組錯誤，非Darwin仍拒絕。
 
 getuid24/geteuid25/getgid47/getegid43/getgroups79 共用系統所有者；新普通檔UID用有效使用者，device/GID繼承直接父目錄。改名、保留FD及舊名重用保持物件；輸入stat不變，root不授權寫入/目錄修改/權限/ACL，setuid/setgid/setgroups與程序/工作階段未實作。
 
@@ -1098,7 +1098,7 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
@@ -1110,7 +1110,7 @@ native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 
 擁有者使用全部請求的擁有者權限位元。非擁有者比較群組與其他使用者對完整請求遮罩的結果：相同結果可直接允許或回傳 EACCES13；不同位元集合也可能同樣拒絕。結果不同時，已知成員選群組，已證實非成員選其他使用者；未知身分在查找或效果前停止 UnsupportedService，不合併不同類別。
 
-credentials.groups 是有序的核心憑據群組清單，第0項為 EffectiveGID，保留重複項；不是 SDK getgroups 的延伸解析器清單。選定主群組及明確的正向成員已知，但缺少項目通常不能證明非成員，省略清單也不能。真實身分在兩對 UID/GID 相同時保留原上下文；否則將第0項換為 RealGID，並把舊 EffectiveGID 換入第一個匹配的補充 RealGID 項。無匹配時移除舊主群組並停用 memberd；只有已證實的轉換及明確完整清單才能證明缺失群組為非成員。UID 不同而 GID 相同仍轉換，重複主群組可保留未知外部成員身分。AT_EACCESS 使用原有效上下文，輸入不變。
+credentials.groups 是有序的核心憑據群組清單，第0項為 EffectiveGID，保留重複項；不是 SDK getgroups 的延伸解析器清單。選定主群組及明確的正向成員已知，但缺少項目通常不能證明非成員，省略清單也不能。真實身分在兩對 UID/GID 相同時保留原上下文；否則將第0項換為 RealGID，並把舊 EffectiveGID 換入第一個匹配的補充 RealGID 項。無匹配時移除舊主群組並停用 memberd；已證實的轉換或明確原始 KAUTH_UID_NONE，加上明確完整清單，才能證明缺失群組為非成員。UID 不同而 GID 相同仍轉換，重複主群組可保留未知外部成員身分。AT_EACCESS 使用原有效上下文，輸入不變。
 
 下例真實查詢因移除 GID20 而拒絕；AT_EACCESS 因已知有效主群組20而成功。目錄 SEARCH 由群組與其他使用者結果一致確定；不授權選定 UID0 或開啟檔案。
 
@@ -1125,13 +1125,42 @@ DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-q
 owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
-missing membership usually unknown / explicit displaced real list proves negatives
+missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
 all40 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
+
+## 明確原始群組成員上下文
+
+可選 `DarwinCredentials::GroupMembershipUID` / `darwin_system.credentials.group_membership_uid` 宣告原始 cr_gmuid，獨立於四個身分 ID 及 groups。允許0..INT32_MAX或恰為 KAUTH_UID_NONE=4294967195（0xffffff9b，UINT32_MAX減100）。沿用無損十進位字串與精確數值整數解碼；錯誤型別、小數、負數及其他越界值在載入前拒絕。哨兵仍不能用於一般 UID/GID 或群組清單。省略代表外部成員上下文未知，其他有效 UID 也不啟用解析器。
+
+選定主群組與清單中的正向成員優先確定。原始 NONE 加明確完整清單才能證明缺失項為非成員；省略清單仍未知。真實憑據轉換即使匹配首個補充群組並保留舊有效主群組，也保留原始 NONE；已證實的移除同樣停用外部解析。輸入不改變 getuid/geteuid/getgid/getegid、原始 getgroups、建立所有權或舊授權模式。同一普通查詢所有者選擇其他使用者權限，先檢查目錄 SEARCH 再查找子項；其他 vnode 操作保持關閉。
+
+下例宣告呼叫者不是 GID50 成員：兩種身分可讀 /data，寫入權限查詢回傳 EACCES13。省略 group_membership_uid 後，群組與其他使用者結果不同的查詢仍不支援。
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":32772,"link_count":1,"uid":700,"gid":50,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20,"groups":[20],"group_membership_uid":4294967195}}}
+```
+
+本機 O0/O1/O2 SDK 執行僅驗證哨兵與四位元組 uid_t，不觀察宿主 cr_gmuid、不停用宿主解析器，也不取代先前270對實際 raw/SDK 非所有者觀察。明確 ordinary-queries-closed-groups 用例檢查173個事件，包含有效非成員拒絕及缺失子項、點、點點和連結的搜尋許可/拒絕，涵蓋五個軟體設定、三個必需 ARM64 HVF 設定與 C/CLI/Python 輸入驗證；不加入58個 native-common 確定性參考。root、ACL/MAC、完整群組解析、通用 vnode 授權、動態憑據、就緒等待/網路、推進時鐘、Mach IPC/執行緒、dyld/TLS 與完整框架仍未完成。原生 Intel HVF 與實體 iOS 未驗證，原時限不變。
+
+```text
+GroupMembershipUID / group_membership_uid / original cr_gmuid
+0..INT32_MAX or KAUTH_UID_NONE=4294967195 / 0xffffff9b / not UINT32_MAX
+positive entries first / original NONE plus complete list proves negatives
+omitted list unknown / first-match real copy preserves original NONE
+ordinary-queries-closed-groups / 173 events / stdout GN
+OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
+SDK constant O0/O1/O2 only / prior actual nonowner pairs270 remain separate
+58 native-common references unchanged / Intel and physical iOS unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU KAUTH_UID_NONE](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/kauth.h), [XNU credential membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c).
