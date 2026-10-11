@@ -6,9 +6,11 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -557,6 +559,62 @@ TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
   }
 }
 
+TEST(X87CallGraphCache,
+     PublishedCodeReferencesRefreshTagsWithoutChangingRawGraphs) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(static_cast<int>(Format));
+      // The successor initially inherits the full slot. Publishing its
+      // address makes it an independent tag-proof entry with unknown state.
+      auto Image =
+          x87ExamineImage(Architecture, Format,
+                          {0xd9, 0xe8, 0xeb, 0, 0xd9, 0xe5, 0xdf, 0xe0, 0xc3});
+      const std::set<va_t> Entries{Image.Entry};
+      const libc::NoReturnTargetIndex Names(Image);
+      const InternalNoReturnIndex NoReturn(Image, &Entries, &Names, nullptr,
+                                           nullptr);
+      auto Cache = createX87CallGraphCache(&NoReturn, &Names);
+      CFGBuilder Warm, Cold;
+      for (auto *Builder : {&Warm, &Cold}) {
+        Builder->setKnownFuncEntries(&Entries);
+        Builder->setNoReturnTargetIndex(&Names);
+        Builder->setNoReturnCalleeProver(&NoReturn);
+      }
+      Warm.setX87CallGraphCache(Cache);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      ASSERT_TRUE(
+          Warm.build(Image, Dec, Image.Entry).hasCompleteInstructionLift());
+      constexpr size_t Budget = limits::kMaxX87CallProofWork;
+      const auto Original = Access::query(Warm, Image, Image.Entry, Budget);
+      ASSERT_EQ(Original.first, std::optional<int>(-1));
+      const size_t Work = Budget - Original.second;
+      ASSERT_LT(Work, 1000u);
+      const size_t Hits = Access::stats(Warm)[0];
+      Image.CodeRefTargets.insert(0x1004);
+      for (size_t Limit = 0; Limit <= Work; ++Limit)
+        EXPECT_EQ(Access::query(Warm, Image, Image.Entry, Limit),
+                  Access::query(Cold, Image, Image.Entry, Limit));
+      EXPECT_GT(Access::stats(Warm)[0], Hits);
+
+      const auto WarmLow = Warm.build(Image, Dec, Image.Entry);
+      const auto ColdLow = Cold.build(Image, Dec, Image.Entry);
+      EXPECT_FALSE(WarmLow.hasCompleteInstructionLift());
+      EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
+                std::vector<va_t>{0x1004});
+      EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
+                ColdLow.UnsupportedInstructionAddresses);
+      std::string WarmDump, ColdDump;
+      llvm::raw_string_ostream WarmOS(WarmDump), ColdOS(ColdDump);
+      Pipeline::dumpLowIR({WarmLow}, WarmOS);
+      Pipeline::dumpLowIR({ColdLow}, ColdOS);
+      EXPECT_EQ(WarmDump, ColdDump);
+    }
+}
+
 TEST(X87CallGraphCache, WarmGraphsReplayEveryProofBudgetExactly) {
   using Access = detail::X87CallGraphCacheTestAccess;
   BinaryImage Image = x87CallLoopImage(Arch::X86, BinaryFormat::ELF);
@@ -897,7 +955,157 @@ public:
   bool mayNeverReturn(va_t) const override { return true; }
   bool neverReturns(va_t, unsigned) const override { return false; }
 };
+
+struct ScopedX87Threads {
+  unsigned Previous = workerThreadOverride().load();
+  ScopedX87Threads() { setWorkerThreadCount(4); }
+  ~ScopedX87Threads() { setWorkerThreadCount(Previous); }
+};
+
+class GatedIndependentX87Prover final : public NoReturnCalleeProver {
+  mutable std::mutex Mutex;
+  mutable std::condition_variable Changed;
+  mutable std::set<va_t> Entered;
+  bool Released = false;
+  bool Throw;
+
+public:
+  explicit GatedIndependentX87Prover(bool Throw) : Throw(Throw) {}
+  bool mayNeverReturn(va_t Target) const override {
+    return Target == 0x6000 || Target == 0x6020;
+  }
+  bool neverReturns(va_t Target, unsigned) const override {
+    std::unique_lock<std::mutex> Lock(Mutex);
+    Entered.insert(Target);
+    Changed.notify_all();
+    Changed.wait(Lock, [&] { return Released; });
+    if (Throw && Target == 0x6000)
+      throw std::runtime_error("independent floating proof failure");
+    return false;
+  }
+  bool waitForBoth() const {
+    std::unique_lock<std::mutex> Lock(Mutex);
+    return Changed.wait_for(Lock, std::chrono::seconds(5),
+                            [&] { return Entered.size() == 2; });
+  }
+  void release() {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    Released = true;
+    Changed.notify_all();
+  }
+};
+
+BinaryImage independentFloatingCalls(Arch Architecture, BinaryFormat Format) {
+  auto Image = x87ExamineImage(Architecture, Format, {});
+  auto &Text = Image.Segments.front();
+  Text.Size = Text.FileSz = 0x5100;
+  Text.Data.assign(Text.Size, 0xcc);
+  Image.Symbols.clear();
+  Image.KnownCodeRanges.clear();
+  auto call = [&](va_t From, va_t To) {
+    const size_t Offset = From - Text.VA;
+    Text.Data[Offset] = 0xe8;
+    const auto Relative = static_cast<uint32_t>(To - From - 5);
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[Offset + 1 + I] = static_cast<uint8_t>(Relative >> (8 * I));
+  };
+  call(0x1000, 0x2000);
+  Text.Data[5] = 0xdd; // discard the first binary80 result
+  Text.Data[6] = 0xd8;
+  call(0x1007, 0x3000);
+  Text.Data[12] = 0xc3;
+  Image.Symbols.push_back(Symbol::makeFunc(0x1000, 13));
+  for (const auto [Entry, Leaf] :
+       {std::pair{0x2000, 0x6000}, std::pair{0x3000, 0x6020}}) {
+    const size_t Offset = Entry - Text.VA;
+    // Real decoded bodies exceed the parallel admission threshold.
+    std::fill_n(Text.Data.begin() + Offset, 0x900, 0x90);
+    call(Entry, Leaf);
+    Text.Data[Offset + 0x8ff] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(Entry, 0x900));
+    Text.Data[Leaf - Text.VA] = 0xd9;
+    Text.Data[Leaf - Text.VA + 1] = 0xe8; // fld1; ret
+    Text.Data[Leaf - Text.VA + 2] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(Leaf, 3));
+  }
+  return Image;
+}
 } // namespace
+
+TEST(X87CallGraphCache, IndependentCallProofsOverlapAndJoinBeforePublication) {
+  ScopedX87Threads Threads;
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Throw : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(Throw);
+        const auto Image = independentFloatingCalls(Architecture, Format);
+        const std::set<va_t> Entries{0x1000, 0x2000, 0x3000, 0x6000, 0x6020};
+        GatedIndependentX87Prover Prover(Throw);
+        auto Cache = createX87CallGraphCache(&Prover, nullptr);
+        auto Build = std::async(std::launch::async, [&] {
+          Decoder Dec;
+          if (!Dec.init(Image))
+            throw std::runtime_error("test decoder failed");
+          CFGBuilder Builder;
+          Builder.setKnownFuncEntries(&Entries);
+          Builder.setNoReturnCalleeProver(&Prover);
+          Builder.setX87CallGraphCache(Cache);
+          Builder.setX87CallProofThreads(4);
+          return Builder.build(Image, Dec, Image.Entry);
+        });
+        const bool Overlapped = Prover.waitForBoth();
+        Prover.release(); // Always unblock and join, including on failure.
+        EXPECT_TRUE(Overlapped);
+        if (Throw) {
+          EXPECT_THROW(Build.get(), std::runtime_error);
+          continue;
+        }
+        const LowFunc Parallel = Build.get();
+        ASSERT_TRUE(Parallel.hasCompleteInstructionLift());
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Image));
+        CFGBuilder SerialBuilder;
+        SerialBuilder.setKnownFuncEntries(&Entries);
+        const LowFunc Serial = SerialBuilder.build(Image, Dec, Image.Entry);
+        std::string ParallelDump, SerialDump;
+        llvm::raw_string_ostream ParallelOS(ParallelDump), SerialOS(SerialDump);
+        Pipeline::dumpLowIR({Parallel}, ParallelOS);
+        Pipeline::dumpLowIR({Serial}, SerialOS);
+        EXPECT_EQ(ParallelDump, SerialDump);
+      }
+}
+
+TEST(X87CallGraphCache, ParallelQuotaDoesNotScheduleUnregisteredCallbacks) {
+  ScopedX87Threads Threads;
+  struct Prover final : NoReturnCalleeProver {
+    std::thread::id Owner = std::this_thread::get_id();
+    mutable std::atomic<unsigned> Calls{0};
+    mutable std::atomic<bool> Moved{false};
+    bool mayNeverReturn(va_t) const override { return true; }
+    bool neverReturns(va_t, unsigned) const override {
+      ++Calls;
+      if (std::this_thread::get_id() != Owner)
+        Moved.store(true);
+      return false;
+    }
+  } Counter;
+  const auto Image = independentFloatingCalls(Arch::X64, BinaryFormat::ELF);
+  const std::set<va_t> Entries{0x1000, 0x2000, 0x3000, 0x6000, 0x6020};
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  CFGBuilder Builder;
+  Builder.setKnownFuncEntries(&Entries);
+  Builder.setNoReturnCalleeProver(&Counter);
+  Builder.setX87CallGraphCache(createX87CallGraphCache());
+  Builder.setX87CallProofThreads(4);
+  EXPECT_TRUE(
+      Builder.build(Image, Dec, Image.Entry).hasCompleteInstructionLift());
+  EXPECT_GT(Counter.Calls.load(), 0u);
+  EXPECT_FALSE(Counter.Moved.load());
+}
 
 TEST(X87CallGraphCache,
      IdenticalConcurrentBuildsHaveOneLeaderAndPrivateBudgets) {

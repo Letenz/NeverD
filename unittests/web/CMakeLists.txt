@@ -48,6 +48,7 @@ target_link_libraries(neverd-web-html-reference-record PRIVATE LLVMSupport)
 add_neverd_unittest(NeverDWebSourceMapTests
   SourceMapTests.cpp
   BunSourceMapTests.cpp
+  BunSourceMapCorpusTests.cpp
   LINK_COMPONENTS Web
 )
 target_include_directories(NeverDWebSourceMapTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")

@@ -32,10 +32,12 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/support/Parallel.h"
 
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <list>
 #include <llvm/Support/SaveAndRestore.h>
 #include <map>
@@ -838,6 +840,76 @@ class X87CallEffectIndex {
 public:
   explicit X87CallEffectIndex(const CFGBuilder &Builder)
       : Settings(Builder), Image(*Builder.CurrentImg) {}
+  void prepareCalls(const LowFunc &F) {
+    const auto &Cache = Settings.SharedX87CallGraphs;
+    if (Settings.X87CallProofThreads <= 1 || workerThreadCount() <= 1 ||
+        !Cache || CurrentX87CacheBuild ||
+        (Settings.NoReturnCallees &&
+         Settings.NoReturnCallees != Cache->NonReentrantProver) ||
+        (Settings.NoReturnTargets &&
+         Settings.NoReturnTargets != Cache->NonReentrantTargets))
+      return;
+    // These are the same queries the normalization walk will make. Collect
+    // them before rebasing any operations; loadedCallSlot stops at every call
+    // and intrinsic, so rebasing earlier ST registers cannot change its slot.
+    std::set<va_t> Seen;
+    std::vector<va_t> Targets;
+    std::vector<uint64_t> Weights;
+    uint64_t Bytes = 0;
+    for (const auto &Block : F.Blocks)
+      for (const auto &Boundary : Block.InstructionBoundaries) {
+        if (!Settings.Insns.count(Boundary.Address) ||
+            hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                         LowInstructionControlFlag::NoReturn))
+          continue;
+        for (size_t O = Boundary.FirstOp;
+             O < Boundary.FirstOp + Boundary.OpCount && O < Block.Ops.size();
+             ++O) {
+          const LowOp &Op = Block.Ops[O];
+          if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+              !Op.NumInputs)
+            continue;
+          const auto Target = Op.Inputs[0].isConst()
+                                  ? std::optional<va_t>(Op.Inputs[0].Offset)
+                                  : loadedCallSlot(F, Block, O, Op.Inputs[0]);
+          if (!Target || Answers.count(*Target) || !Seen.insert(*Target).second)
+            continue;
+          const auto End = Image.getFunctionMetadataEnd(
+              *Target, Settings.ExecutableCodeOwners);
+          const uint64_t Weight =
+              End != InvalidVA && End > *Target
+                  ? std::min<uint64_t>(End - *Target, 1u << 20)
+                  : 0;
+          Bytes += Weight;
+          Targets.push_back(*Target);
+          Weights.push_back(Weight);
+        }
+      }
+    if (Targets.size() < 2 || Bytes < 4096)
+      return;
+    std::vector<std::optional<int>> Values(Targets.size());
+    std::vector<std::exception_ptr> Failures(Targets.size());
+    parallelForEachWeighted(
+        Weights,
+        [&](auto Claim, size_t N) {
+          X87CallEffectIndex Worker(Settings);
+          for (size_t I; (I = Claim()) < N;)
+            try {
+              Values[I] = Worker.effect(Targets[I]);
+            } catch (...) {
+              Failures[I] = std::current_exception();
+            }
+        },
+        2, std::min(Settings.X87CallProofThreads, 4u));
+    // Each query kept its own recursion state and full work allowance. Only
+    // completed answers are published, in the original instruction order,
+    // after every worker joins. A failed query retains its original exception.
+    for (size_t I = 0; I < Targets.size(); ++I) {
+      if (Failures[I])
+        std::rethrow_exception(Failures[I]);
+      Answers.emplace(Targets[I], Values[I]);
+    }
+  }
   std::optional<int> effect(va_t Entry) {
     if (auto It = Answers.find(Entry); It != Answers.end())
       return It->second;
@@ -861,6 +933,44 @@ std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
   return Result;
 }
 
+bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
+                                    va_t Entry, const std::string &Name) {
+  if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
+    return lowFunctionNeverReturns(build(Img, Dec, Entry, Name), Img.Arch);
+  LowFunc Callee;
+  {
+    llvm::SaveAndRestore<bool> RawStack(SkipX87StackFixup, true);
+    Callee = build(Img, Dec, Entry, Name);
+  }
+  // Without a local floating-stack consumer, normalizing a callee's returned
+  // ST(0) changes only its value definition and the unused TOP bookkeeping.
+  // Neither is an input to the terminating-path proof. In particular, asking
+  // whether a GPR-only wrapper returns must not recursively recover every
+  // callee's floating return value. A local stack operation or FXAM can expose
+  // that state to the rest of the CFG; retain its ordinary build unchanged.
+  bool NeedsStack = false;
+  for (const auto &[Address, Rec] : Insns) {
+    if (Rec.FpuReset || Rec.FpuTopIn != Rec.FpuTopOut) {
+      NeedsStack = true;
+      break;
+    }
+    for (const LowOp &Op : Rec.Ops) {
+      NeedsStack |= isStReg(Op.Output);
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        NeedsStack |= isStReg(Op.Inputs[I]);
+      NeedsStack |=
+          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam);
+    }
+    if (NeedsStack)
+      break;
+  }
+  if (NeedsStack)
+    Callee = build(Img, Dec, Entry, Name);
+  return lowFunctionNeverReturns(Callee, Img.Arch);
+}
+
 void CFGBuilder::fixupFpuStack(LowFunc &Func) {
   if (SkipX87StackFixup)
     return;
@@ -870,6 +980,12 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
     return;
   if (Func.Blocks.empty())
     return;
+
+  if (SharedX87CallGraphs && X87CallProofThreads > 1) {
+    if (!X87CallEffects)
+      X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
+    X87CallEffects->prepareCalls(Func);
+  }
 
   const size_t N = Func.Blocks.size();
   std::vector<int> LiftedIn(N, 0), LiftedOut(N, 0), BlockDelta(N, 0);
