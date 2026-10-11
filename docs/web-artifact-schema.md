@@ -81,6 +81,9 @@ Domain labels and field order are defined in
 | Node module-file comparison | Module inventory, origin model, snapshot and separate Node candidate profile |
 | Package installation trace | Install profile, package analysis, exact namespace, optional package-behavior selection ID (empty means no selection) and shared binding/module/origin/Node-link profiles |
 | Selected package behavior diff | Comparison profile, base package diff, optional before/after package-behavior IDs (empty means no selection) and Node behavior profile; source mode and semantic profiles remain transitively bound by selected source behavior IDs |
+| Package assessment | Assessment profile, exact package analysis and namespace, immediate retained archive ID or empty, original snapshot ID or empty, then sorted explicit owner selection IDs |
+| Package finding | Assessment ID, finding ordinal, fixed kind, owner/record IDs, evidence status and binding |
+| Package review root / decision | Root binds assessment profile and ID; each decision binds profile, assessment, parent head, finding, fixed disposition and canonical event index |
 | Install declaration / presence | Trace ID plus original script ID and status, or package ID for lock-only presence |
 | Install request / association | Trace, module-link, original request and fixed selection status; associations bind script trace, behavior record and ordered request trace IDs |
 | Bundle analysis | Source ID, binding analysis ID and structural bundle profile |
@@ -475,6 +478,35 @@ freshness, feed completeness, publisher, installed-content or exploitability
 verification. Existing package snapshots are not rewritten by this consumer.
 See the [profile](web-package-advisory-profile.md) for exact statuses, identity,
 source/time declarations, atomic budgets and reset semantics.
+
+## Selected package assessment and analyst review
+
+`package_assessment_create` composes current `package_analysis_id` and explicitly
+selected integrity, advisory, attestation, behavior, installation and comparison
+results. It returns immutable `package_assessment_id`, `namespace_id`,
+`selection_ids`, `finding_count`, feed descriptor/time metadata and
+`review_root_id`/`review_head_id`. Missing evidence has explicit `not_selected`
+coverage. A foreign registry declaration, wrong package owner or incompatible
+archive relationship refuses composition; digest equality alone never proves
+installed-tree content or publisher identity.
+
+`package_review_append` appends one fixed caller disposition under
+`expected_review_head`. Findings retain their original confidence and status.
+Only the last exact request replays without another event. Other old-head
+requests refuse. `package_assessment_findings`, `package_review_decisions` and
+`package_assessment_report` require the current `review_head` on every page.
+Pages use `offset`, `next_offset` and `page_complete`, capped at 512 records.
+Unreviewed findings show `disposition_source: not_reviewed`; explicit decisions
+show `caller_assertion`, including a decision to return to `unreviewed`.
+
+Findings publish fixed categories, original/declaration/source/node/related
+anchors, nullable original UTF-8 byte spans and selected pattern counts. Digest
+algorithms retain a separate `legacy_sha1` declaration signal. Report pages add
+`report_format: markdown` and bounded `report_markdown`, omitting raw source,
+names, paths, URLs, arguments, signatures and arbitrary notes. Two immutable
+assessments share one 256-event/256-KiB review allowance per revision; reimport
+revokes both. See the [assessment profile](web-package-assessment-profile.md)
+for closed selection fields, relationships, atomic publication and limits.
 
 ## Package archives and original integrity
 

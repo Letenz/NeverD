@@ -831,8 +831,17 @@ TEST(SysVCallContract, AFormatNamesTheArgumentsAFormattedCallPasses) {
   const std::string ShowBody = body(Source, "show");
   ASSERT_FALSE(ShowBody.empty()) << Source;
   EXPECT_NE(ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
-                          "arg3, arg2, (double)arg4)"),
+                          "arg3, arg2, "),
             std::string::npos)
+      << ShowBody;
+  // The last value is f widened to double: a cast, or the CVTSS2SD that
+  // completes its MXCSR state when HighC keeps that state exact.
+  const size_t Widen = ShowBody.find("cvtss2sd");
+  EXPECT_TRUE(
+      ShowBody.find("arg2, (double)arg4)") != std::string::npos ||
+      (Widen != std::string::npos &&
+       ShowBody.substr(Widen, ShowBody.find(';', Widen) - Widen).find("arg4") !=
+           std::string::npos))
       << ShowBody;
   const std::string PassBody = body(Source, "pass");
   ASSERT_FALSE(PassBody.empty()) << Source;

@@ -305,6 +305,38 @@ def check_driver_emulation_abi(errors: list[str]) -> None:
         )
 
 
+def check_source_patch_abi(errors: list[str]) -> None:
+    import ctypes
+
+    from neverd_plugin import abi
+
+    source = SANITIZER_HEADER.read_text(encoding="utf-8")
+    types = {
+        "size_t": ctypes.c_size_t,
+        "uint32_t": ctypes.c_uint32,
+        "neverd_va_t": abi.VirtualAddress,
+        "uint64_t": ctypes.c_uint64,
+        "const char *": ctypes.c_char_p,
+        "const char *const *": ctypes.POINTER(ctypes.c_char_p),
+        "const neverd_source_patch_mapping_v1 *": ctypes.POINTER(
+            abi.NeverDSourcePatchMappingV1
+        ),
+        "const neverd_source_patch_binding_v1 *": ctypes.POINTER(
+            abi.NeverDSourcePatchBindingV1
+        ),
+    }
+    for name, struct in (
+        ("neverd_source_patch_mapping_v1", abi.NeverDSourcePatchMappingV1),
+        ("neverd_source_patch_binding_v1", abi.NeverDSourcePatchBindingV1),
+        ("neverd_source_patch_options_v1", abi.NeverDSourcePatchOptionsV1),
+    ):
+        native = parse_c_struct_layout(source, name)
+        expected = tuple((field, types.get(kind)) for field, kind in native)
+        actual = tuple(struct._fields_)
+        if expected != actual or any(kind is None for _, kind in expected):
+            errors.append(f"{name} field/type mismatch: native={native!r}, Python={actual!r}")
+
+
 def check_plugin_enums(errors: list[str]) -> None:
     from neverd_plugin.abi import EventType, PluginType
 
@@ -898,6 +930,7 @@ def audit_repository(*, include_workflows: bool = True) -> list[str]:
     check_devirtualization_abi(errors)
     check_driver_emulation_abi(errors)
     check_sanitizer_abi(errors)
+    check_source_patch_abi(errors)
     check_concolic_abi(errors)
     check_versions(errors)
     check_documentation(errors)

@@ -23,6 +23,14 @@ add_neverd_component_library(NeverDWeb
   packages/attestations/Digest.cpp
   packages/attestations/Publication.cpp
   SessionPackageAttestations.cpp
+  packages/assessment/Compose.cpp
+  packages/assessment/Integrity.cpp
+  packages/assessment/Metadata.cpp
+  packages/assessment/Behavior.cpp
+  packages/assessment/Disposition.cpp
+  packages/assessment/Publication.cpp
+  packages/assessment/Report.cpp
+  SessionPackageAssessments.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp
@@ -76,6 +84,7 @@ add_neverd_component_library(NeverDWeb
   pkg/Reader.cpp
   SessionPkg.cpp
   BunSourceMap.cpp
+  compression/Zstd.cpp
   SessionBun.cpp
   SessionBunExport.cpp
   InputRoot.cpp
@@ -91,6 +100,7 @@ add_neverd_component_library(NeverDWeb
   SessionBundles.cpp
   SessionView.cpp
   SessionNavigation.cpp
+  features/Publication.cpp
   SessionAnchor.cpp
   SessionNative.cpp
   LLVM_COMPONENTS Support
@@ -100,6 +110,20 @@ find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
   target_link_libraries(NeverDWeb PRIVATE ZLIB::ZLIB)
   target_compile_definitions(NeverDWeb PRIVATE NEVERD_WEB_ZLIB=1)
+endif()
+# LLVM builds with Zstd remain the preferred decoder. A prebuilt LLVM package
+# may omit it; use only the pinned static SDK as an optional in-process fallback.
+# The existing format reader still owns framing and resource admission.
+if(NOT LLVM_ENABLE_ZSTD)
+  find_package(zstd 1.5.7 EXACT CONFIG QUIET)
+  if(zstd_FOUND AND TARGET zstd::libzstd_static)
+    target_link_libraries(NeverDWeb PRIVATE zstd::libzstd_static)
+    set_property(SOURCE compression/Zstd.cpp APPEND PROPERTY
+      COMPILE_DEFINITIONS NEVERD_WEB_ZSTD=1)
+    message(STATUS "Web Zstd: using native static SDK 1.5.7 (LLVM omits Zstd)")
+  else()
+    message(STATUS "Bun source maps unavailable: LLVM Zstd or static Zstd SDK 1.5.7 required")
+  endif()
 endif()
 neverd_add_web_url_parser()
 target_link_libraries(NeverDWeb PRIVATE neverd_web_url)
@@ -117,6 +141,8 @@ if(NEVERD_ENABLE_WEB_ASAR)
 endif()
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/bun/"
         DESTINATION share/neverd/licenses/bun)
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/zstd/"
+        DESTINATION share/neverd/licenses/zstd)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/node/"
         DESTINATION share/neverd/licenses/node)
 install(DIRECTORY "${CMAKE_SOURCE_DIR}/LICENSES/asar/"
@@ -153,7 +179,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     rewrite/Validate.cpp
     rewrite/Export.cpp
     SourceModel.cpp SourceBindings.cpp SourceEvaluate.cpp SourceEffects.cpp SourceModules.cpp HTMLModules.cpp
-    SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
+    SourceBundles.cpp SourceView.cpp SourceNavigation.cpp
+    features/Analysis.cpp features/Recognize.cpp
+    SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)
   target_link_libraries(NeverDWeb PRIVATE neverd_js_parser)
   target_compile_definitions(NeverDWeb PRIVATE NEVERD_ENABLE_WEB_JAVASCRIPT=1)
   if(MSVC)

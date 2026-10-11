@@ -134,19 +134,16 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     return std::nullopt;
   const uint8_t *Base = Seg->Data.data() + Off;
   const size_t Remain = Seg->Data.size() - static_cast<size_t>(Off);
-  // A sized data object that holds the bytes must be the string itself,
-  // padded with zeros at most.  Bytes past the segment's data are zeros.
+  // A sized data object that holds the bytes must be the string itself.  A
+  // literal shorter than its object would leave the bytes past it unread: a
+  // struct of a short number and a null pointer reads as a one-character
+  // wide string.
   auto IsOwnObject = [&](size_t Extent) {
     for (const Symbol &Sym : Img->Symbols) {
       if (Sym.IsFunc || !Sym.Size || Addr < Sym.Addr ||
           Addr - Sym.Addr >= Sym.Size)
         continue;
-      if (Sym.Addr != Addr || Sym.Size < Extent)
-        return false;
-      const size_t End =
-          static_cast<size_t>(std::min<uint64_t>(Sym.Size, Remain));
-      if (End > Extent && !std::all_of(Base + Extent, Base + End,
-                                       [](uint8_t Byte) { return !Byte; }))
+      if (Sym.Addr != Addr || Sym.Size != Extent)
         return false;
     }
     return true;

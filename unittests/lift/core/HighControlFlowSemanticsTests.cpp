@@ -29,9 +29,10 @@ bool sinkJoinDefaultsLate(HighFunc &Func);
 void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
                            const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
+bool inlineSingleDefs(std::vector<HighStmt> &, const VarKeyMap<ExprPtr> &);
 void foldCopyChains(HighFunc &);
 void resolveRegAliases(std::vector<HighStmt> &);
-void simplifyAllExprs(std::vector<HighStmt> &);
+bool simplifyAllExprs(std::vector<HighStmt> &);
 void recoverSwitchStatements(HighFunc &);
 void cleanupGuardBeforeSwitch(HighFunc &);
 void eliminateGotoToLoop(std::vector<HighStmt> &);
@@ -1391,6 +1392,95 @@ TEST(HighControlFlowSemantics, TruncatedWideArithmeticDropsUnreadUpperHalves) {
   Observed.Body = {result(0, Full)};
   simplifyAllExprs(Observed.Body);
   EXPECT_TRUE(HasUndef(Observed.Body[0].RetVal));
+}
+
+TEST(HighControlFlowSemantics, RejectedInliningIsNotProgressButCanBecomeSafe) {
+  HighFunc F;
+  HighStmt Copy = assign(0x1004, 1, 0);
+  Copy.Val =
+      HighExpr::makeBinop(NdOp::INT_MULT, local(0), HighExpr::makeConst(0, 8));
+  F.Body = {assign(0x1000, 0, 4), Copy, assign(0x1008, 0, 9),
+            result(0x100c, local(1))};
+  const VarKey Key = varKey(Copy.Dst->Var);
+  VarKeyMap<ExprPtr> Candidates{{Key, Copy.Val}};
+  const auto Use = F.Body.back().RetVal;
+  EXPECT_FALSE(inlineSingleDefs(F.Body, Candidates));
+  EXPECT_EQ(F.Body.back().RetVal, Use);
+  EXPECT_EQ(execute(F, 0), 0u);
+
+  // The first candidate reads a mutable name. Simplification removes that
+  // dependency, so cleanup must allow the next round to prove the new one.
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  Candidates[Key] = F.Body[1].Val;
+  ASSERT_TRUE(inlineSingleDefs(F.Body, Candidates));
+  ASSERT_EQ(F.Body.back().RetVal->Kind, ExprKind::Const);
+  EXPECT_EQ(F.Body.back().RetVal->ConstVal, 0u);
+  EXPECT_EQ(execute(F, 0), 0u);
+  EXPECT_FALSE(inlineSingleDefs(F.Body, Candidates));
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SimplifierReportsSharedInPlaceOperatorChanges) {
+  auto Shared = HighExpr::makeBinop(NdOp::INT_ADD, local(0),
+                                    HighExpr::makeConst(uint64_t{0} - 3, 8));
+  HighStmt Copy = assign(0x1000, 1, 0);
+  Copy.Val = Shared;
+  HighFunc F;
+  F.Body = {Copy, result(0x1004,
+                         HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(1)))};
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].Val, Shared);
+  EXPECT_EQ(F.Body[1].RetVal->Operands[0], Shared);
+  EXPECT_EQ(Shared->Op, NdOp::INT_SUB);
+  EXPECT_EQ(Shared->Operands[1]->ConstVal, 3u);
+  for (uint64_t Input : {0u, 3u, 100u})
+    EXPECT_EQ(execute(F, Input), (Input - 3) * 2);
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SimplifierReportsChildReplacementAtStableRoot) {
+  const auto Input = local(0);
+  auto Child =
+      HighExpr::makeBinop(NdOp::INT_SUB, Input, HighExpr::makeConst(0, 8));
+  auto Root =
+      HighExpr::makeBinop(NdOp::INT_ADD, Child, HighExpr::makeConst(0x55, 8));
+  HighFunc F;
+  F.Body = {result(0x1000, Root)};
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+  EXPECT_EQ(Root->Operands[0], Input);
+  EXPECT_EQ(execute(F, 0x1234), 0x1289u);
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SimplifierReportsInPlaceOperandChanges) {
+  auto Difference =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(0), HighExpr::makeConst(7, 8));
+  auto Root = HighExpr::makeBinop(NdOp::INT_EQUAL, Difference,
+                                  HighExpr::makeConst(0, 8));
+  HighFunc F;
+  F.Body = {result(0x1000, Root)};
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+  EXPECT_EQ(Root->Op, NdOp::INT_EQUAL);
+  EXPECT_EQ(Root->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Root->Operands[1]->ConstVal, 7u);
+  EXPECT_EQ(execute(F, 7), 1u);
+  EXPECT_EQ(execute(F, 8), 0u);
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics,
+     RefusedOrderedMemorySimplificationIsNotProgress) {
+  auto Load = HighExpr::makeLoad(local(0), NdType::makeInt(8));
+  Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+  auto Root =
+      HighExpr::makeBinop(NdOp::INT_MULT, Load, HighExpr::makeConst(0, 8));
+  HighFunc F;
+  F.Body = {result(0x1000, Root)};
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+  EXPECT_EQ(Root->Operands[0], Load);
 }
 
 TEST(HighControlFlowSemantics, VectorCarrierSlicesKeepOnlyProvenLowBytes) {

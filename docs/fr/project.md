@@ -1,6 +1,6 @@
 **Langues**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c2384f22e6d167b6294f2cbed8eea7aaedcbc86523ba5b73f2e1471cf41434a9 -->
+<!-- i18n-source: a8eff56b06f3078eafd48075ca74a3de8751f14892f389fe874abf3ca4295038 -->
 
 <div align="center">
 
@@ -296,10 +296,12 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
   --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
-neverd patch --from-c repl.c --func 0x401000 -o patched binary
+neverd patch --from-source repl.c --entry replacement --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+Les correctifs source peuvent utiliser Clang, le mode ordinaire de NeverC ou GCC, selon les [profils source/object vérifiés](../source-patching.md). Les objets natifs conservent le code machine du producteur ; la compatibilité du compilateur et du runtime ainsi que la propagation des exceptions sont vérifiées pour chaque profil.
 
 Pour un binaire ARM 32 bits sans métadonnées ARM/Thumb d’une fonction, déclarez le mode d’entrée avant la décompilation :
 

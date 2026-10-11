@@ -143,13 +143,19 @@ formattedCall(const BinaryImage &Img, va_t Target,
 
 void collectFormattedCalls(const BinaryImage &Img, const LowFunc &F,
                            std::map<va_t, FormattedCall> &Calls) {
+  collectFormattedCalls(Img, F.Blocks, Calls);
+}
+
+void collectFormattedCalls(const BinaryImage &Img,
+                           llvm::ArrayRef<LowBlock> Blocks,
+                           std::map<va_t, FormattedCall> &Calls) {
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!Convention || !Convention->FormattedCallArguments)
     return;
   const std::optional<unsigned> VectorCountFamily =
       gprFamilyOf(Img.Arch, x86reg::RAX);
-  for (const LowBlock &Block : F.Blocks) {
+  for (const LowBlock &Block : Blocks) {
     // The constant each integer register family, and each temporary, holds
     // here, and the count AL holds.
     std::map<unsigned, uint64_t> Constants;
