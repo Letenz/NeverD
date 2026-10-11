@@ -1645,3 +1645,5 @@ DarwinFiles importa timespec y la máscara de señales de Pselect en DarwinSelec
 Cada consulta de marco de una función valida una sola vez su CFG inmutable e indexa los bloques protegidos por manejador. El presupuesto descuenta el trabajo realmente recorrido. Los callbacks SEH finally tienen una pila de llamada independiente; una entrada compartida con finally no puede acreditar el SP del marco padre de un cuerpo except.
 
 Los retornos internos ordinarios conservan tanto la dirección de retorno del llamado como la de entrada del padre. La misma prueba de escrituras alcanzables comprueba ambas coordenadas; siguen permitidas las escrituras en almacenamiento local del padre cuya asignación esté probada.
+
+El emisor LLVM reutiliza consultas de posición de pila completadas con el presupuesto predeterminado solo dentro del MedFunc inmutable actual. El requisito del SP de entrada y la identidad completa del valor separan las respuestas. Las consultas con valores vinculados o presupuesto compartido omiten la caché; reconstruir las aristas factibles o emitir un módulo la vacía. Una consulta que atraviesa una reconstrucción no puede publicar su resultado.

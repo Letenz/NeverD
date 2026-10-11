@@ -1685,3 +1685,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame`은 인증된 Windows x64 SEH 처리기와 일반/예외 공유 진입의 로컬 해제 호출을 검사합니다. 반례에는 해제 할당 불일치, 불안정하거나 일부 폭의 SP, 독립 루트, 불완전한 입력, 누락되거나 위조된 예외 간선, 작업 한도 소진, 알 수 없는 스택 메모리, 외부 재배치 및 신뢰할 수 없는 런타임이 포함됩니다. LowIR 호출 증명과 모듈 증명서를 SSA 검증에 전달하며 일반 반환 연속 테스트는 별도 진입 규칙을 유지합니다.
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC`와 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation`은 PE, ELF, Mach-O x64 및 ELF i386에서 부모 반환 주소 손상과 겹치지 않는 부모 지역 쓰기를 검사합니다. 피호출자 반환 주소 보존만으로 일반 호출을 허용할 수 없습니다.
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork`는 x86, x64, ARM, AArch64에서 반복된 긍정 및 부정 질의의 작업량을 제한합니다. 문맥 테스트는 바인딩 값, 진입 SP, 폭 및 예산 0의 거부를 유지하고, 임시 또는 재구축된 실행 가능 그래프와 함수 변경 후 이전 답을 폐기합니다.

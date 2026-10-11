@@ -1641,3 +1641,5 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 檢查經過證明的 Windows x64 SEH 處理器及共用一般/例外入口中的區域展開呼叫。反例涵蓋展開配置不一致、SP 不穩定或寬度不完整、獨立根、不完整輸入、缺少或偽造例外邊、工作量耗盡、未知堆疊記憶體載入、外部目標重定位及不可信執行階段。LowIR 呼叫證明與模組憑據均進入 SSA 驗證；一般傳回接續測試保留各自的入口規則。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上檢查父返回位址損壞和不相交的父區域變數寫入。只保住被呼叫者的返回位址不能授權一般呼叫。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 與 AArch64 上限制重複肯定及否定查詢的工作量。上下文測試保留繫結值、入口 SP、位寬與零預算的拒絕，並在暫時或重建的可行圖及函式切換後捨棄舊答案。

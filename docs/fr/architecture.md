@@ -1653,3 +1653,5 @@ DarwinFiles importe le timespec et le masque de signal de Pselect dans DarwinSel
 Chaque requête de cadre portant sur une fonction valide une seule fois son CFG immuable et indexe les blocs protégés par gestionnaire. Le budget couvre le travail effectivement parcouru. Les rappels SEH finally disposent de leur propre pile d'appel ; un point d'entrée partagé avec finally ne peut donc pas établir le SP du cadre parent d'un corps except.
 
 Les retours internes ordinaires préservent à la fois le PC de retour de l’appelé et celui de l’entrée du parent. La même preuve des écritures accessibles vérifie les deux coordonnées ; les écritures dans le stockage local alloué et prouvé du parent restent autorisées.
+
+L’émetteur LLVM ne réutilise les requêtes de case de pile terminées avec le budget par défaut que dans le MedFunc immuable courant. L’exigence du SP d’entrée et l’identité complète de la valeur séparent les réponses. Les requêtes avec valeurs liées ou budget partagé évitent ce cache ; une reconstruction des arêtes possibles ou une émission de module le vide. Une requête qui traverse une reconstruction ne peut publier son résultat.

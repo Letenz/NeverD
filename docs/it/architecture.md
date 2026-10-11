@@ -1642,3 +1642,5 @@ DarwinFiles importa timespec e la maschera dei segnali di Pselect in DarwinSelec
 Ogni interrogazione del frame di un'intera funzione convalida una sola volta il CFG immutabile e indicizza i blocchi protetti per gestore. Il budget addebita il lavoro effettivamente visitato. Le callback SEH finally hanno uno stack di chiamata separato; un ingresso condiviso con finally non può quindi dimostrare lo SP del frame padre di un corpo except.
 
 I ritorni interni ordinari preservano sia l’indirizzo di ritorno del chiamato sia quello d’ingresso del padre. La stessa prova delle scritture raggiungibili verifica entrambe le coordinate; le scritture nello spazio locale del padre con allocazione provata restano consentite.
+
+L’emettitore LLVM riutilizza le query di slot di stack completate con il budget predefinito solo nel MedFunc immutabile corrente. Il requisito dello SP di ingresso e l’identità completa del valore separano le risposte. Le query con valori vincolati o budget condiviso ignorano la cache; la ricostruzione degli archi fattibili e l’emissione del modulo la svuotano. Una query che attraversa una ricostruzione non può pubblicare il risultato.

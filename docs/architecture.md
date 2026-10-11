@@ -4941,3 +4941,5 @@ DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in Darwi
 Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
+
+The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.

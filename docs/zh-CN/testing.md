@@ -1603,3 +1603,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 检查经过证明的 Windows x64 SEH 处理器以及共享普通/异常入口中的局部展开调用。反例覆盖展开分配不一致、SP 不稳定或宽度不完整、独立根、不完整输入、缺失或伪造异常边、工作量耗尽、未知栈内存加载、外部目标重定位和不可信运行库。LowIR 调用证明与模块凭据均进入 SSA 验证；普通返回续接测试保留各自的入口规则。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上检查父返回地址损坏和不相交的父局部变量写入。仅保住被调用者的返回地址不能授权普通调用。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 和 AArch64 上限制重复肯定及否定查询的工作量。上下文测试保留绑定值、入口 SP、位宽和零预算的拒绝，并在临时或重建的可行图及函数切换后丢弃旧答案。

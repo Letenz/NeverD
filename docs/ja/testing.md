@@ -1695,3 +1695,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` は証明された Windows x64 SEH ハンドラーと通常・例外共有入口からのローカル巻き戻し呼び出しを検証します。反例は巻き戻し割り当ての不一致、不安定または部分幅の SP、独立入口、不完全な入力、欠落・偽造された例外辺、予算不足、不明なスタックメモリ、外部再配置、未認証ランタイムを含みます。LowIR 証明とモジュール証明書を SSA 検証へ渡し、通常の戻り継続テストは独立した入口規則を維持します。
 
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` と `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` は、PE・ELF・Mach-O x64 と ELF i386 で親の戻りアドレス破壊と重ならない親ローカル書き込みを検査します。呼び出し先の戻りアドレス保持だけでは通常呼び出しを許可できません。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` は x86、x64、ARM、AArch64 で肯定・否定照会の反復作業量を制限します。コンテキストのテストは束縛値、入口 SP、幅、予算ゼロの拒否を維持し、暫定・再構築された実行可能グラフや関数の変更後に古い回答を破棄します。
