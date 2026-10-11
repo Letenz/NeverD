@@ -398,8 +398,18 @@ class Observer {
           return false;
     if (*Count && Kind == "memory_copy" &&
         Spec.getBoolean("require_disjoint").value_or(false)) {
-      auto D = value(C, Destination), S = value(C, Source);
-      if (!D || !S || (*D <= *S ? *S - *D < *Count : *D - *S < *Count))
+      // Equal-length intervals overlap precisely when either modular distance
+      // is smaller than their length. This also handles symbolic common bases
+      // without guessing an address or assuming unrelated pointers differ.
+      auto Length = C.mkConst(64, *Count);
+      // A one-byte range needs only pointer inequality; avoid introducing
+      // two wide subtraction circuits for that exact special case.
+      auto Disjoint =
+          *Count == 1 ? C.mkNe(Destination, Source)
+                      : C.mkAnd(C.mkUge(C.mkSub(Destination, Source), Length),
+                                C.mkUge(C.mkSub(Source, Destination), Length));
+      bool Known = true;
+      if (feasible(C, C.mkAnd(P.Predicate, C.mkNot(Disjoint)), Known))
         return false;
     }
     SymCallEffect Effect;
@@ -621,8 +631,13 @@ public:
                                 .starts_with("memory_")) {
                   Event["continuation_contract"] =
                       *Spec->getString("continuation");
+                  bool Applied = applyMemoryEffect(P, *Spec, Op);
+                  if (Applied &&
+                      Spec->getString("continuation") == "memory_copy" &&
+                      Spec->getBoolean("require_disjoint").value_or(false))
+                    Event["disjoint_ranges_proved"] = true;
                   Events.push_back(std::move(Event));
-                  if (!applyMemoryEffect(P, *Spec, Op)) {
+                  if (!Applied) {
                     Stop = "unresolved_memory_effect";
                     break;
                   }

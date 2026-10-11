@@ -482,8 +482,11 @@ For a fully specified memory gateway, `memory_copy`, `memory_fill`, and
 `destination_register` and `size_register` select its pointer and byte count;
 copy/fill also require `source_register` (a source pointer or the fill byte).
 Copy snapshots source bytes before writing, so this model has memmove semantics;
-use `require_disjoint: true` for memcpy to require known non-overlapping
-ranges before continuing. Counts must be concrete and at most 4096 bytes;
+use `require_disjoint: true` for memcpy to require proved non-overlapping
+ranges before continuing. Symbolic addresses may qualify when the shared
+bitvector solver proves non-overlap under the path constraints, including
+offsets from a common unknown base. A satisfiable overlap or solver `unknown`
+stops the path. Counts must be concrete and at most 4096 bytes;
 unresolved ranges stop. The shared
 `SymExec` call-effect interface applies writes and conservative alias handling.
 The state bank is preserved except for the declared result and register writes.

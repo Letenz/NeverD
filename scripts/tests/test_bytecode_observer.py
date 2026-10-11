@@ -191,6 +191,62 @@ class Observation(unittest.TestCase):
         self.assertEqual(call['arguments'][0]['value']['rendering_omitted'],
                          'expression budget')
 
+    def test_copy_disjointness_uses_symbolic_offsets_and_path_constraints(self):
+        # r24 is an unknown base. Store one byte in base+32, then copy it to
+        # base+8. The absolute addresses are unknown, but non-overlap is exact.
+        r = lambda n: operand('reg', n)
+        c = lambda n: operand('const', n)
+        ops = [operation('INT_ADD', [r(24), c(8)], r(0)),
+               operation('INT_ADD', [r(24), c(32)], r(8)),
+               operation('STORE', [r(8), operand('const', 0x6a, 1)]),
+               operation('COPY', [c(1)], r(16)),
+               operation('CALL', [c(0x10001)])]
+        self.language['encodings'] += [
+            {'size': 1, 'match': [{'offset': 0, 'value': 11}], 'operations': ops},
+            {'size': 1, 'match': [{'offset': 0, 'value': 12}], 'operations': [
+                operation('LOAD', [r(0)], operand('reg', 16, 1)),
+                operation('CALL', [c(0x10000)])]}]
+        self.code = bytes([11, 12, 5])
+        self.functions = [{'entry': 0, 'end': 3, 'name': 'relative_copy'}]
+        self.inputs['calls'][0]['argument_registers'] = [16]
+        self.inputs['registers'] = [{'offset': 16, 'bytes': 8, 'value': 0}]
+        self.inputs['calls'].append({'target': 0x10001,
+                                    'continuation': 'memory_copy',
+                                    'destination_register': 0, 'source_register': 8,
+                                    'size_register': 16, 'require_disjoint': True})
+        function = self.run_engine()['functions'][0]
+        self.assertTrue(function['calls'][0]['disjoint_ranges_proved'])
+        self.assertEqual(function['calls'][1]['arguments'][0]['value'], '0x6a')
+        # Unknown unrelated pointers may alias; equal pointers do alias.
+        saved = ops[:2]
+        ops[:2] = [operation('COPY', [r(24)], r(0)),
+                   operation('COPY', [r(8)], r(8))]
+        self.assertEqual(self.run_engine()['functions'][0]['stops'][0]['reason'],
+                         'unresolved_memory_effect')
+        ops[1] = operation('COPY', [r(24)], r(8))
+        self.assertEqual(self.run_engine()['functions'][0]['stops'][0]['reason'],
+                         'unresolved_memory_effect')
+        ops[:2] = saved
+        # Multi-byte ranges: touching is disjoint, overlapping is not.
+        ops[3] = operation('COPY', [c(24)], r(16))
+        self.assertEqual(len(self.run_engine()['functions'][0]['calls']), 2)
+        ops[3] = operation('COPY', [c(25)], r(16))
+        self.assertEqual(self.run_engine()['functions'][0]['stops'][0]['reason'],
+                         'unresolved_memory_effect')
+        # A guard can establish disjointness for otherwise unrelated pointers.
+        ops[:2] = [operation('COPY', [r(24)], r(0)),
+                   operation('COPY', [r(8)], r(8))]
+        ops[3] = operation('COPY', [c(1)], r(16))
+        self.language['encodings'].append({
+            'size': 1, 'match': [{'offset': 0, 'value': 13}], 'operations': [
+                operation('INT_NOTEQUAL', [r(24), r(8)], operand('temp', 0, 1)),
+                operation('COND_BR', [c(2), operand('temp', 0, 1)])]})
+        self.code = bytes([13, 5, 11, 12, 5])
+        self.functions[0]['end'] = 5
+        report = self.run_engine()
+        self.assertEqual(len(report['functions'][0]['calls']), 2)
+        self.assertGreaterEqual(report['solver_queries'], 2)
+
     def test_memory_contracts_use_exact_ranges(self):
         def load(value, register):
             return operation('COPY', [operand('const', value)], operand('reg', register))
