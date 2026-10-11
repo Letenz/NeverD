@@ -3653,7 +3653,10 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
         Ptr = Rhs;
         Off = Lhs;
       }
-      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0) {
+      // An image address added to an index is the table the call reads, not
+      // a slot offset; it prints as the object the output defines there.
+      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0 &&
+          !isExactAddressProvenance(Off->ConstProvenance)) {
         const HighExpr *Vptr = peelIntegerViewOps(Ptr);
         std::string SlotBase;
         if (Vptr && Vptr->Kind == ExprKind::Load && !Vptr->Operands.empty() &&
