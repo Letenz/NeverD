@@ -133,7 +133,11 @@ metadata. It retains source/time/severity uncertainty and original anchors,
 works without the JavaScript parser, and makes no freshness, publisher,
 reachability or safety claim. See the
 [actual public metadata qualification](web-package-advisory-qualification.md).
-Composed review reports and analyst dispositions remain separate work.
+The [assessment and review profile](web-package-assessment-profile.md) composes
+explicitly selected retained evidence, preserves coverage and binding limits,
+and supports fixed analyst assertions with a checked review head. Its bounded
+Markdown report contains metadata and opaque anchors. GUI presentation and
+persistent review storage remain separate work.
 
 The [attestation metadata profile](web-package-attestation-profile.md) reads
 captured npm signature declarations, in-toto statements, DSSE envelopes and

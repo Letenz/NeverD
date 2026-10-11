@@ -23,6 +23,14 @@ add_neverd_component_library(NeverDWeb
   packages/attestations/Digest.cpp
   packages/attestations/Publication.cpp
   SessionPackageAttestations.cpp
+  packages/assessment/Compose.cpp
+  packages/assessment/Integrity.cpp
+  packages/assessment/Metadata.cpp
+  packages/assessment/Behavior.cpp
+  packages/assessment/Disposition.cpp
+  packages/assessment/Publication.cpp
+  packages/assessment/Report.cpp
+  SessionPackageAssessments.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp

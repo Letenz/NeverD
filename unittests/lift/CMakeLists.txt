@@ -1588,9 +1588,16 @@ endif()
 # are the public fail-closed boundary under test.
 add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/DwarfEHFrameTests.cpp
+  eh/ELFExceptionTests.cpp
+  eh/ELFSectionPatchTests.cpp
+  eh/ELFSourceRelocationsTests.cpp
+  eh/ELFSourceSymbolsTests.cpp
   eh/MachOCompactUnwindPatchTests.cpp
   eh/MachOExceptionPatchTests.cpp
   eh/NativeExceptionRewriteContractTests.cpp
+  eh/PatchStorageTests.cpp
+  eh/ReplacementIRTests.cpp
+  eh/SourcePatchBindingsTests.cpp
   eh/RewriteFunctionProvenanceTests.cpp
 
   LINK_COMPONENTS

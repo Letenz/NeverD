@@ -1,6 +1,6 @@
 **语言**: [English](../../README.md) | [简体中文](project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](../ko/project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c2384f22e6d167b6294f2cbed8eea7aaedcbc86523ba5b73f2e1471cf41434a9 -->
+<!-- i18n-source: a8eff56b06f3078eafd48075ca74a3de8751f14892f389fe874abf3ca4295038 -->
 
 <div align="center">
 
@@ -295,10 +295,12 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
   --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
-neverd patch --from-c repl.c --func 0x401000 -o patched binary
+neverd patch --from-source repl.c --entry replacement --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+源码补丁可选择 Clang、NeverC 普通模式或 GCC，参见[已验证的源码/object 配置](../source-patching.md)。native object 保留生成端的机器码；编译器与运行时兼容性、异常传播按配置分别验证。
 
 对于缺少函数 ARM/Thumb 模式元数据的 32 位 ARM 二进制，在反编译前声明入口模式：
 

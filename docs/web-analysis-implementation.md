@@ -42,7 +42,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, and captured registry/in-toto/DSSE/SLSA metadata with explicit subject-digest comparison implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature metadata | Composed assessments, dispositions, readable reports, broader lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
+| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, captured registry/in-toto/DSSE/SLSA metadata, and composed assessments with immutable caller dispositions and bounded Markdown implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature/report metadata | GUI/persistent reviews, broader lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
@@ -2283,3 +2283,86 @@ over 7,310 tracked files and sixteen history commits pass. This increment
 adds no C API symbols; complete-backend omission keeps the earlier qualified
 stubs and is not separately requalified here. Composed package assessments,
 reports and the broader #714–#718 acceptance work remain.
+
+## Selected package assessment and analyst review — 2026-10-12
+
+`offline-package-assessment-v1` composes exact retained inventory/namespace,
+original-integrity, advisory, attestation, source behavior, installation and
+comparison owners. The implementation separates selection/budgets, integrity
+relationships, metadata, behavior, immutable dispositions, JSON publication and
+Markdown under `lib/web/packages/assessment`. Session owns two immutable
+assessments and one shared 256-event/256-KiB review allowance. Five additive C
+APIs and native CLI/worker/MCP consumers use that same owner. Fixed dispositions
+are caller assertions and do not change analyzer confidence or authorize source
+disclosure/execution. Every finding/history/report page pins the current review
+head as well as the revision. See the [profile](web-package-assessment-profile.md).
+
+Cross-process parity exposed conditional `std::string` temporaries behind the
+assessment identity's `string_view` preimage. The preimage now references
+retained owner storage; independent root/archive recipe assertions and
+direct/framed/MCP equality verify the fix. Other cases cover foreign registry
+declarations despite a valid digest, immediate archive ancestry, canonical
+selection order, unsupported advisory coverage, legacy SHA-1, retained metadata
+refusal, nested subject receipt ownership, source/pattern/occurrence anchors,
+610-finding pages, stale heads/revisions, exact last replay, foreign historical
+findings, shared capacity, cache reset and private-field canaries. Fifteen core
+and ten SDK/CLI cases pass. Logs:
+`/tmp/neverd-assessment-{core,sdk,transports}-final.log`.
+
+The real Claude Code 2.1.296 wrapper/registry capture produces 45 findings:
+nine coverage rows, one inventory declaration, one SHA-512 original archive
+match, three unverified registry/signature metadata rows, two selected source
+rows plus eight recognized syntax records, and 21 installation rows including
+13 unresolved requests and six static associations. JSON and Markdown agree on
+assessment/root/head identities; the report charges 48,320 work units and
+98,464 metadata bytes. Both run with an unusable external-tool PATH. The
+separate public OSV sample preserves a positive declared version match for
+lodash 4.17.18 and a selected negative for 4.17.19, without a safe-package claim.
+Exact inputs and report hashes are in the
+[actual qualification](web-package-assessment-qualification.md). Actual samples
+have no automatic dispositions. Signatures, installed dependencies, runtime
+behavior, reachability and feed freshness remain unverified.
+
+Enabled full Web regression passes 684 of 685 cases, including all 2,345 stored
+Claude JS units and the six-target Bun map corpus; the ASAR-policy omission
+case explicitly skips. All 24 worker suites have no failures: 21 pass and three
+missing independent native fixtures skip. All five MCP suites and enabled ABI
+discovery pass. Logs:
+`/tmp/neverd-assessment-web-regression.log`,
+`/tmp/neverd-assessment-worker-regression.log` and
+`/tmp/neverd-assessment-transports-final.log`.
+
+With JavaScript omitted, 15 core and eight SDK cases pass; two source-dependent
+SDK cases explicitly skip. Worker Web, five MCP suites and enabled ABI discovery
+pass. The actual metadata-only Claude report is byte-identical to the enabled
+report. With the complete Web backend omitted, both ABI/stub checks and four
+MCP suites pass; worker Web and actual Claude extraction explicitly skip. Logs:
+`/tmp/neverd-assessment-nojs-{configure,build,core,sdk,transports}.log`,
+`/tmp/neverd-assessment-off-{configure,build,transports}.log` and
+`/tmp/neverd-assessment-claude-nojs.jsonl`.
+
+Both build flags are restored to ON. All 25 focused cases, worker Web, five
+MCP suites and enabled ABI discovery pass after restoration; the full selected
+Claude JSON report is byte-identical. Logs:
+`/tmp/neverd-assessment-restored-{configure,build,core,sdk,transports}.log` and
+`/tmp/neverd-assessment-claude-restored.jsonl`.
+LLVM formatting and the 23-capability manifest pass, including all 115 manifest
+checker tests. Source provenance passes across 7,327 tracked files and sixteen
+history commits. The new archive-ancestry case also honors the optional archive
+path policy: with ASAR omitted, fourteen core cases pass and that one case skips.
+After restoring ASAR, all fifteen core and ten SDK cases, worker Web, five MCP
+suites and enabled ABI discovery pass. The actual Claude report remains
+byte-identical. Logs:
+`/tmp/neverd-assessment-noasar-{configure,build,core}.log` and
+`/tmp/neverd-assessment-asar-restored-{configure,build,core,sdk,transports}.log`.
+After integrating `dev` at `a5f9115d3`, every feature implementation/header/test
+file is byte-identical to the reviewed increment. The 570-step native/interface
+rebuild and twelve-step source-test rebuild pass. All 25 assessment cases,
+fifteen installation cases (including the preserved real wrapper), worker Web,
+five MCP suites and enabled ABI discovery pass. The actual Claude assessment
+is still byte-identical. Source provenance passes across 7,333 tracked files and
+sixteen history commits. Logs:
+`/tmp/neverd-assessment-upstream-{build,source-build,core,sdk,install,transports,provenance}.log`.
+GUI/persistent reviews,
+broader lifecycle/loader/host qualification and the other epic acceptance gaps
+remain; this increment does not close #714–#718.

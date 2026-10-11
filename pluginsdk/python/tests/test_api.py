@@ -629,6 +629,61 @@ class _SanitizeHost:
 
 
 class SessionTests(unittest.TestCase):
+    def test_source_patch_preserves_selection_bytes_and_address_zero(self) -> None:
+        from neverd_plugin import Session
+        from neverd_plugin.abi import NeverDSourcePatchOptionsV1
+
+        host = mock.Mock()
+        host.call.return_value = 1
+        host.owned_string.return_value = '{"success":true,"installed":[{"original_va":0}]}'
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+
+        def verify(name: str, *arguments: object) -> int:
+            self.assertEqual(name, "neverd_patch_source")
+            self.assertEqual(ctypes.string_at(arguments[1], arguments[2]), b"a\0b")
+            options = arguments[3]._obj
+            self.assertEqual(options.struct_size, ctypes.sizeof(NeverDSourcePatchOptionsV1))
+            self.assertEqual(options.input_kind, 2)
+            self.assertEqual(options.compiler, 1)
+            self.assertEqual(options.artifact, 1)
+            self.assertEqual(options.mode, 0)
+            self.assertEqual(options.mapping_count, 1)
+            self.assertEqual(options.mappings[0].symbol, b"replacement")
+            self.assertEqual(options.mappings[0].original_va, 0)
+            self.assertEqual(options.compiler_args[0], b"-DBASE=37")
+            self.assertEqual(options.source_name, b"/space path/source.c")
+            self.assertEqual(options.binding_count, 2)
+            self.assertEqual(options.bindings[0].symbol, b"helper")
+            self.assertEqual(options.bindings[0].kind, 0)
+            self.assertEqual(options.bindings[0].original_va, 0x1000)
+            self.assertEqual(options.bindings[1].kind, 2)
+            self.assertEqual(options.bindings[1].size, 4)
+            return 1
+
+        host.call.side_effect = verify
+        report = session.patch_source(
+            b"a\0b", "/tmp/patch", input_kind="object", artifact="object",
+            compiler="neverc", mappings={"replacement": 0},
+            compiler_args=["-DBASE=37"], source_name="/space path/source.c",
+            bindings={"helper": ("function", 0x1000), "count": ("data", 0x3000, 4)},
+        )
+        self.assertTrue(report["success"])
+
+    def test_source_patch_rejects_invalid_parameters_before_native_call(self) -> None:
+        from neverd_plugin import Session
+
+        host = mock.Mock()
+        session = Session(object(), _native=_FakeNativeBridge(), _host=host)
+        for kwargs in ({"compiler": "unknown"}, {"mappings": {"replacement": -1}},
+                       {"compiler_args": ["-O2"] * 257}, {"timeout_seconds": 3601},
+                       {"bindings": {"value": ("unknown", 0)}},
+                       {"bindings": {"value": ("data", 0, -1)}}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                session.patch_source("int f(){return 1;}", "/tmp/patch", **kwargs)
+        with self.assertRaises(ValueError):
+            session.patch_source(b"a\0b", "/tmp/patch")
+        host.call.assert_not_called()
+
     def test_process_runs_explicit_profile_and_preserves_binary_report(self) -> None:
         from neverd_plugin import NeverDError, Session
 

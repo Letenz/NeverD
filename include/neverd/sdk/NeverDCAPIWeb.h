@@ -153,6 +153,42 @@ NEVERD_API const char *neverd_web_package_attestation_digest_result_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *MatchID, size_t MatchIDSize);
 
+/// Compose retained results. Options are omitted or schema_version:1 with
+/// bounded integrity_ids, advisory_ids, advisory_matches_id, attestation_ids,
+/// attestation_digest_match_ids, package_behavior_id, package_install_id,
+/// package_diff_id and package_behavior_diff_id. No paths, notes or raw data.
+NEVERD_API const char *neverd_web_package_assessment_create_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// Reads pin the current review head; a changed head requires a fresh query.
+/// Pages contain 1..512 metadata rows, with no package names or source text.
+NEVERD_API const char *neverd_web_package_assessment_findings_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+/// Append one caller assertion, not proof or authorization. Disposition is
+/// unreviewed, needs_review, accepted_risk or false_positive. Only an exact
+/// replay of the last accepted request can use its old parent head again.
+NEVERD_API const char *neverd_web_package_review_append_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *FindingID,
+    size_t FindingIDSize, const char *Disposition, size_t DispositionSize);
+NEVERD_API const char *neverd_web_package_review_decisions_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+/// Return a bounded metadata-only Markdown report page in JSON. No file is
+/// written and no source disclosure or execution permission is granted.
+NEVERD_API const char *neverd_web_package_assessment_report_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+
 /// Explicit tar/tgz/zip profile; captured originals only, no recursive
 /// extraction.
 NEVERD_API const char *neverd_web_package_archive_extract_json(
