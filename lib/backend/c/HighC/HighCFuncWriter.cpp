@@ -1374,9 +1374,10 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
           const bool Frame = frameDisplacement(*S.Val).has_value();
           if (Frame)
             HasFrame.insert(Name);
-          if (typedMemberAccess(*S.Val) ||
-              (!Frame && S.Val->Kind == ExprKind::BinOp &&
-               (S.Val->Op == NdOp::INT_ADD || S.Val->Op == NdOp::INT_SUB)))
+          // Any other value the name takes moves it off the slot, not only
+          // address arithmetic: a copy of the pointer a loop advances
+          // (`lo = t89`) is neither a member access nor an addition.
+          if (typedMemberAccess(*S.Val) || !Frame)
             HasOtherAddr.insert(Name);
         }
       }
