@@ -109,7 +109,8 @@ shows it any time. Behind it is the default desktop:
 - the status bar with the background analysis indicator (`AU: idle` or busy
   with progress), the search direction and free disk space.
 
-Every window is a dock: drag tabs to split, stack or float them. Docked windows
+Every window is a dock: drag tabs to split, stack or float them. A tab shows
+its close button while it is current or under the pointer. Docked windows
 are one hairline apart; drag the line to resize its neighbors, or double-click
 it to share their space evenly. A window narrows to about the width of its tab:
 a status line or a row of buttons that no longer fits is cut at the window's
@@ -361,7 +362,10 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
-Shortcuts** lists every command with its key.
+Shortcuts** lists every command with its key. Menus, buttons and labels
+underline their access keys while Alt is held, as on Windows and GNOME, and a
+menu that Alt and its letter opened keeps them until it closes; Alt and the
+letter work either way.
 
 A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 `cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
