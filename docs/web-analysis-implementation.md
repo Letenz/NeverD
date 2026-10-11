@@ -42,7 +42,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, and captured registry/in-toto/DSSE/SLSA metadata with explicit subject-digest comparison implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature metadata | Composed assessments, dispositions, readable reports, broader lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
+| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, captured registry/in-toto/DSSE/SLSA metadata, and composed assessments with immutable caller dispositions and bounded Markdown implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature/report metadata | GUI/persistent reviews, broader lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
@@ -2231,3 +2231,429 @@ LLVM formatting, the 23-capability manifest and source provenance across
 
 Composed assessments, analyst dispositions, readable reports and the broader
 acceptance work remain; this increment does not close #715 or the other epics.
+
+## Optional native Bun map decoder — 2026-10-12
+
+`compression/Zstd` prefers the linked LLVM decoder and optionally uses the
+exact native static Zstandard 1.5.7 SDK when LLVM omits Zstd. It writes into
+the caller's bounded buffer; `BunSourceMap` remains the sole owner of frame,
+window/output/blocks, size and UTF-8 admission. No tool, script or sample is
+executed and no decoder is downloaded. The original BSD notice is staged in
+binary and SDK license directories and the install tree. The
+[profile](web-bun-profile.md#native-static-sdk-qualification--2026-10-12)
+pins all twelve actual CLI report hashes.
+
+The first corpus test found the historical Linux x64 manifest's
+`full_elf_sha256` field, while the other five targets use
+`full_container_sha256`. Selecting each fixture's actual field fixes the
+test without changing recorded hashes. The six-target/twelve-image test now
+passes, checking independently authored original sources and stored anchors.
+All twelve CLI commands pass with an unusable external-tool PATH. Their Linux
+x64 decoded module/map/source pages match the earlier LLVM-backed reports
+exactly. Logs: `/tmp/neverd-zstd-{core-tests,six-platform-tests}.log`.
+
+The 690-step full interface integration rebuild and the subsequent two-step
+corpus-test rebuild pass. Complete Web regression passes 659 of 660 cases,
+including all 2,345 stored Claude Code JS units; only the ASAR-policy omission
+case skips. The six formerly unavailable decoder cases now run and pass.
+All five MCP suites pass; enabled ABI discovery passes with the backend-off
+case explicitly skipped. The full worker directory passes 21 of 24 tests,
+with three absent native name/listing fixtures skipped. Logs:
+`/tmp/neverd-zstd-{enabled-build,reconciled-build,full-web,worker,mcp,api}.log`.
+
+With the SDK explicitly omitted and LLVM Zstd absent, all nine ordinary map
+cases pass and seven decoder/corpus cases skip. All three focused SDK/CLI/anchor
+cases pass, and the actual CLI returns `bun_source_map_zstd_unavailable` with
+an unusable external-tool PATH. Logs:
+`/tmp/neverd-zstd-omitted-{config,build,map-tests,sdk-tests}.log`.
+With the SDK restored and JavaScript parsing disabled, all sixteen map cases
+pass, including the twelve real images, along with the two compiled focused
+SDK cases, worker Web, five MCP suites and enabled ABI discovery. The actual
+Linux x64 asset-map CLI report is byte-identical to its parser-enabled report.
+Logs: `/tmp/neverd-zstd-nojs-{config,build,map-tests,sdk-tests,worker,mcp,api}.log`.
+The native license copies match the original BSD notice byte-for-byte and
+neither the CLI nor SDK shared library requires a Zstd runtime dylib.
+
+Both feature flags are restored to ON with the SDK enabled. All sixteen map
+cases, three focused SDK cases, four selected worker suites, five MCP suites
+and enabled ABI discovery pass after the 168-step restoration build. Logs:
+`/tmp/neverd-zstd-restored-{config,build,map-tests,sdk-tests,worker,mcp,api}.log`.
+LLVM formatting, the 23-capability manifest and the source-provenance check
+over 7,310 tracked files and sixteen history commits pass. This increment
+adds no C API symbols; complete-backend omission keeps the earlier qualified
+stubs and is not separately requalified here. Composed package assessments,
+reports and the broader #714–#718 acceptance work remain.
+
+## Selected package assessment and analyst review — 2026-10-12
+
+`offline-package-assessment-v1` composes exact retained inventory/namespace,
+original-integrity, advisory, attestation, source behavior, installation and
+comparison owners. The implementation separates selection/budgets, integrity
+relationships, metadata, behavior, immutable dispositions, JSON publication and
+Markdown under `lib/web/packages/assessment`. Session owns two immutable
+assessments and one shared 256-event/256-KiB review allowance. Five additive C
+APIs and native CLI/worker/MCP consumers use that same owner. Fixed dispositions
+are caller assertions and do not change analyzer confidence or authorize source
+disclosure/execution. Every finding/history/report page pins the current review
+head as well as the revision. See the [profile](web-package-assessment-profile.md).
+
+Cross-process parity exposed conditional `std::string` temporaries behind the
+assessment identity's `string_view` preimage. The preimage now references
+retained owner storage; independent root/archive recipe assertions and
+direct/framed/MCP equality verify the fix. Other cases cover foreign registry
+declarations despite a valid digest, immediate archive ancestry, canonical
+selection order, unsupported advisory coverage, legacy SHA-1, retained metadata
+refusal, nested subject receipt ownership, source/pattern/occurrence anchors,
+610-finding pages, stale heads/revisions, exact last replay, foreign historical
+findings, shared capacity, cache reset and private-field canaries. Fifteen core
+and ten SDK/CLI cases pass. Logs:
+`/tmp/neverd-assessment-{core,sdk,transports}-final.log`.
+
+The real Claude Code 2.1.296 wrapper/registry capture produces 45 findings:
+nine coverage rows, one inventory declaration, one SHA-512 original archive
+match, three unverified registry/signature metadata rows, two selected source
+rows plus eight recognized syntax records, and 21 installation rows including
+13 unresolved requests and six static associations. JSON and Markdown agree on
+assessment/root/head identities; the report charges 48,320 work units and
+98,464 metadata bytes. Both run with an unusable external-tool PATH. The
+separate public OSV sample preserves a positive declared version match for
+lodash 4.17.18 and a selected negative for 4.17.19, without a safe-package claim.
+Exact inputs and report hashes are in the
+[actual qualification](web-package-assessment-qualification.md). Actual samples
+have no automatic dispositions. Signatures, installed dependencies, runtime
+behavior, reachability and feed freshness remain unverified.
+
+Enabled full Web regression passes 684 of 685 cases, including all 2,345 stored
+Claude JS units and the six-target Bun map corpus; the ASAR-policy omission
+case explicitly skips. All 24 worker suites have no failures: 21 pass and three
+missing independent native fixtures skip. All five MCP suites and enabled ABI
+discovery pass. Logs:
+`/tmp/neverd-assessment-web-regression.log`,
+`/tmp/neverd-assessment-worker-regression.log` and
+`/tmp/neverd-assessment-transports-final.log`.
+
+With JavaScript omitted, 15 core and eight SDK cases pass; two source-dependent
+SDK cases explicitly skip. Worker Web, five MCP suites and enabled ABI discovery
+pass. The actual metadata-only Claude report is byte-identical to the enabled
+report. With the complete Web backend omitted, both ABI/stub checks and four
+MCP suites pass; worker Web and actual Claude extraction explicitly skip. Logs:
+`/tmp/neverd-assessment-nojs-{configure,build,core,sdk,transports}.log`,
+`/tmp/neverd-assessment-off-{configure,build,transports}.log` and
+`/tmp/neverd-assessment-claude-nojs.jsonl`.
+
+Both build flags are restored to ON. All 25 focused cases, worker Web, five
+MCP suites and enabled ABI discovery pass after restoration; the full selected
+Claude JSON report is byte-identical. Logs:
+`/tmp/neverd-assessment-restored-{configure,build,core,sdk,transports}.log` and
+`/tmp/neverd-assessment-claude-restored.jsonl`.
+LLVM formatting and the 23-capability manifest pass, including all 115 manifest
+checker tests. Source provenance passes across 7,327 tracked files and sixteen
+history commits. The new archive-ancestry case also honors the optional archive
+path policy: with ASAR omitted, fourteen core cases pass and that one case skips.
+After restoring ASAR, all fifteen core and ten SDK cases, worker Web, five MCP
+suites and enabled ABI discovery pass. The actual Claude report remains
+byte-identical. Logs:
+`/tmp/neverd-assessment-noasar-{configure,build,core}.log` and
+`/tmp/neverd-assessment-asar-restored-{configure,build,core,sdk,transports}.log`.
+After integrating `dev` at `a5f9115d3`, every feature implementation/header/test
+file is byte-identical to the reviewed increment. The 570-step native/interface
+rebuild and twelve-step source-test rebuild pass. All 25 assessment cases,
+fifteen installation cases (including the preserved real wrapper), worker Web,
+five MCP suites and enabled ABI discovery pass. The actual Claude assessment
+is still byte-identical. Source provenance passes across 7,333 tracked files and
+sixteen history commits. Logs:
+`/tmp/neverd-assessment-upstream-{build,source-build,core,sdk,install,transports,provenance}.log`.
+GUI/persistent reviews,
+broader lifecycle/loader/host qualification and the other epic acceptance gaps
+remain; this increment does not close #714–#718.
+
+## Captured Claude npm platform packages — 2026-10-12
+
+The C++ `archive-bun-export` CLI adapter selects one retained archive member and
+delegates to the existing Bun extraction/export owner. It adds no extractor,
+filesystem writer, C API symbol or automatic package-entry execution. The
+manifest retains the executable's enclosing archive/member/hash and exact
+original or expanded locator. Existing output directories, unavailable members
+and non-Bun members are refused. C++ fixtures cover tar, gzip and stored/deflate
+ZIP, exact original/source bytes, retained origins and metadata canaries with an
+unusable external-tool PATH. All five focused SDK/CLI cases pass.
+
+Eight independently captured Claude Code 2.1.296 npm platform packages qualify
+real prelinked graphs on ELF/Linux, thin Mach-O/macOS and PE/Windows, each x64
+and ARM64, including both supplied Linux libc variants. Every original archive
+matches its separately captured SHA-512 declaration; this is not publisher
+authentication. Eight C++ corpus cases pin archive/member hashes and lengths,
+graph geometry, entry/startup indices and strict source counts/bytes. The
+[qualification](web-claude-code-cross-platform-qualification.md) records their
+exact hashes, capture layout and export manifest hashes. No installer, target
+runtime or input code is executed. Private samples remain outside Git.
+
+All eight actual CLI exports preserve and reread every output file. Decoded,
+parsed and readable counts agree: 18,794 JS units and 358,539,894 decoded UTF-8
+bytes summed per platform, not distinct source files across platforms. There
+are no unavailable sources or source maps. Opaque JSC caches are preserved;
+erased TypeScript, types/names and cache semantics are not recovered. Every
+readable copy passes the same parser-tree comparison. Logs:
+`/tmp/neverd-claude-cross-{build,core,sdk,regression-build}.log`;
+the native/interface build takes 192 steps and the regression/interface resync
+takes 39 steps.
+
+The first local regression exposed duplicate generated CTest discovery entries
+after concurrent root/subdirectory discovery. Its 1,116 records and two ASAR
+policy skips are not additional coverage. The generated indices were preserved
+in `/tmp/neverd-claude-cross-discovery-20261012/` and regenerated serially.
+The resulting 695 unique Web cases have 694 passes and one expected ASAR-policy
+skip (68.24 seconds). The selected ABI, worker and MCP checks have seven passes
+and one expected backend-omission skip (7.15 seconds). Logs:
+`/tmp/neverd-claude-cross-web-regression-unique.log`,
+`/tmp/neverd-claude-cross-unique-discovery.log` and
+`/tmp/neverd-claude-cross-transports.log`.
+
+With JavaScript omitted, all eight corpus cases and three archive CLI cases
+pass after the 129-step build. The actual macOS ARM64 archive still exports
+2,364 exact sources and 45,035,899 decoded bytes, the same original hash and
+archive ancestry, with zero unavailable sources. Parsed/readable counts are
+zero and the readable profile is null. The omission export manifest SHA-256 is
+`4992ccd5f2e3a04285aad6c8224102d4cdbb1701fc41bb228fd1d43b6e00ebc7`.
+Logs: `/tmp/neverd-claude-cross-nojs-{configure,build,core,sdk}.log`.
+JavaScript is restored to ON after the 129-step rebuild. All eight captured
+corpus cases and five focused SDK/CLI cases pass again. Logs:
+`/tmp/neverd-claude-cross-restored-{configure,build,core,sdk}.log`.
+LLVM formatting and source provenance across 7,369 tracked files and sixteen
+history commits pass. The capability checker reports sixteen pre-existing
+unclaimed native source-patch declarations introduced by upstream integration;
+the manifest is unchanged by this increment. That global check is not claimed
+as passing. Logs: `/tmp/neverd-claude-cross-{capabilities,provenance}.log`.
+After integrating `dev` at `89708f43f`, all twelve increment files are
+byte-identical before the additional validation note. The 123-step
+native/SDK/CLI/worker/MCP rebuild passes. Five focused SDK/CLI cases and the
+seven enabled transport/ABI checks pass; the backend-omission ABI case skips as
+expected. Source provenance passes across 7,370 tracked files and sixteen
+history commits. Logs:
+`/tmp/neverd-claude-cross-upstream-{build,sdk,transports,provenance}.log`.
+Linux/Windows host qualification, additional container layouts and the other
+epic acceptance gaps remain; this increment does not close #714–#718.
+
+## Bounded client source syntax navigation — 2026-10-12
+
+`javascript-client-syntax-features-v1` adds paged tool, configuration,
+permission, MCP and hook candidates to the existing navigation operation.
+Generic navigation remains the authoritative owner of containment and lexical
+relationships. Feature admission/indexing, recognition and publication live in
+`lib/web/features/`; `SessionNavigation` composes and caches the two results.
+No C API symbol, evaluator, runtime or external analyzer is added. Every record
+has `source_syntax_only` confidence. Available coverage stays partial, including
+zero-match results; callback links describe source relationships, not runtime
+targets. Model validation, indexing, parent walks and matching share explicit
+work/record limits. Feature exhaustion preserves independent generic navigation.
+See the [profile](web-client-feature-profile.md).
+
+The captured Claude Code 2.1.296 macOS ARM64 package visits all 2,364 decoded
+units and 45,035,899 UTF-8 bytes. The interactive parser admits 2,354 units;
+three byte-limit, three parser-work and four syntax-inventory refusals remain
+explicit. No deadline expires in the recorded receipt. All admitted units finish
+the pattern inventory, producing 416 candidates: three tool, 88 configuration,
+165 permission, 110 MCP and 50 hook records. Forty-three callback source links
+and one permission-test containment link are retained. Those counts do not
+authenticate implementations or establish configuration precedence, effective
+policy, reachability or server behavior. Recovery has separately preserved and
+reparsed all 2,364 units. Two actual CLI selections with an unusable external-tool
+PATH qualify a positive permission-setting candidate and a zero-match result.
+Exact inputs, identities and limits are in the
+[qualification](web-client-feature-qualification.md). Logs:
+`/tmp/neverd-client-features-corpus-receipt.log`,
+`/tmp/neverd-client-features-corpus-receipt.xml` and
+`/tmp/neverd-client-features-claude-{1676,0392}.jsonl`.
+
+Eight new core cases plus five generic navigation cases pass; two SDK cases
+cover private metadata, paging, anchors and stale revisions. Worker/MCP cases
+compare the shared owner, confidence and availability contracts. Fixtures cover
+escaped/static versus computed names, spread, accessors, duplicate fields,
+reassignment, shadowing, dynamic scope, nested function boundaries, unrelated
+event literals, record exhaustion and foreign/unavailable models. The final
+92-step build and explicit four-step transport-test rebuild pass. The full
+705 unique Web cases have 704 passes and one expected ASAR-policy skip
+(90.79 seconds); selected transport/ABI checks have seven passes and one expected
+backend-omission skip (10.60 seconds). Logs:
+`/tmp/neverd-client-features-{build-final,transport-build,core-final,sdk,web-regression,transports}.log`.
+
+With JavaScript omitted, the 135-step build passes. The SDK stub test explicitly
+refuses the new `features` record query; seven transport/ABI checks pass and the
+backend-omission case skips (6.71 seconds). JavaScript is restored to ON after
+the 136-step build. All thirteen focused core cases, two SDK cases and seven
+transport/ABI checks pass again; the backend-omission case skips as expected
+(7.24 seconds). Logs:
+`/tmp/neverd-client-features-nojs-{configure,build,sdk,transports}.log` and
+`/tmp/neverd-client-features-restored-{configure,build,core,sdk,transports}.log`.
+No public ABI is added, and a separate complete-backend-omission rebuild is not
+claimed for this increment. LLVM formatting, diff whitespace and source
+provenance across 7,381 tracked files pass. The existing sixteen unclaimed
+native source-patch declarations still prevent claiming a global capability
+checker pass. Import-rooted attribution, configuration/dataflow, property
+dispatch, GUI/persistent reviews and the other epic acceptance gaps remain;
+this increment does not close #714–#718.
+
+After integrating `dev` at `0d2ae64ea`, all feature implementation and test files
+are byte-identical. The 164-step native/SDK/CLI/worker/MCP rebuild passes, followed
+by all thirteen focused core cases, two SDK cases and seven transport/ABI checks;
+the backend-omission case skips as expected (9.39 seconds). Logs:
+`/tmp/neverd-client-features-upstream-{build,core,sdk,transports}.log`.
+
+## Atomic package review journals and the Qt workbench (2026-10-12)
+
+`offline-package-review-journal-v1` adds persistent fixed analyst assertions
+against an immutable assessment. `packages/assessment/Disposition` remains the
+single owner of chain identities, finding membership, prefixes and shared
+session charges. `SessionPackageReviewRestore` only admits the closed bounded
+JSON schema and serializes the result before replacing state. A late invalid
+decision refuses the entire restore. Existing history must be an exact prefix;
+only the new suffix consumes capacity. Exact current-head replay is free even
+at capacity. The always-exported additive C API and strict worker/MCP operation
+delegate to that same owner. See the [journal profile](web-package-review-journal.md).
+
+The C++ Qt `web` presentation library adds File → Offline package review. It
+uses a private existing NeverD worker for explicit capture, bounded inventory
+pages, tar/tgz/zip member selection, package-json/npm-lock analysis, optional
+captured registry declarations and immutable assessment findings. Evidence,
+confidence and analyst disposition remain separate. Journals contain opaque
+identities and fixed assertions only, with no names, paths, source or notes.
+`QSaveFile` preserves prior files on failed writes; loading previews metadata
+and explicit restoration validates the complete chain in the backend. Escape,
+assessment replacement, window closure and main-workbench quit preserve unsaved
+decisions unless the user explicitly discards them. Stopping the worker leaves
+a consistent local journal available to save. The controller never computes
+review hashes or interprets targets.
+
+Four new core restoration cases and two new SDK cases cover full-chain
+validation, suffix charging, free replay, stale heads, changed evidence,
+prefix refusal, duplicate/unknown fields and late tampering. The focused totals
+are nineteen core and twelve SDK passes. The complete Web regression has 710
+passes and one expected missing-ASAR-policy skip among 711 unique cases
+(103.36 seconds). Worker/MCP/ABI qualification has seven passes and one expected
+backend-omission skip (9.32 seconds). Logs:
+`/tmp/neverd-review-journal-{core-final,sdk-final,web-regression,transports}.log`.
+
+The Qt cases use C++ fixtures and the production worker, including two-page
+inventories, registry/archive ancestry, restart restoration, unchanged history
+on refusal, changed-input rejection and large-font/RTL controls. The actual
+Claude Code 2.1.296 macOS ARM64 archive has SHA-256
+`50fbf594d6526c9aae7d66b8b45a08d89ae6b863e2bc9777bfb277d6521a7458`.
+Its captured root has four artifacts and the extracted tar has four members.
+Selecting member one as package-json with the original/registry/descriptor
+artifacts produces fourteen findings, a SHA-512 `match` and
+`original_contains_declared_root_manifest` binding. Publisher authentication is
+false and no analyst assertion is automatically added. Assessment identity:
+`faaa00ef42df8caaad7e6a9e10750571dbbc0b003843b35cec6a8477e94a4dc2`.
+Private input and the local PNG/receipt remain outside Git; no sample runs.
+
+The final Qt controller and real-button selection checks have nineteen passes
+and one expected backend-omission skip (20.49 seconds). With JavaScript omitted,
+the 137-step rebuild passes: nineteen core cases, ten SDK cases, capabilities
+and nineteen GUI cases pass. Two JS-dependent SDK cases and the unavailable-only
+cases skip explicitly. All six worker/MCP transport cases pass (10.65 seconds).
+With the whole Web backend omitted, its eight-step rebuild passes. Both additive
+ABI availability cases pass, transport/availability has six passes and two
+expected input/backend skips, and GUI has fifteen passes with five dependent
+cases skipped. The unavailable-window case runs positively. Logs:
+`/tmp/neverd-web-gui-{close-guards-tests,nojs-tests,noweb-tests}.log`,
+`/tmp/neverd-review-journal-nojs-{build,core,sdk,availability,transports}.log`
+and `/tmp/neverd-review-journal-noweb-{build,availability,transports}.log`.
+
+Both feature flags are restored to ON. The 139-step enabled rebuild passes,
+followed by all nineteen focused core cases, twelve SDK cases and seven
+transport/availability cases with one expected backend-omission skip
+(7.88 seconds). The final GUI suite has nineteen passes and one expected
+unavailable-only skip (9.75 seconds), including actual-button Claude selection
+and unsaved assertions surviving main-window quit cancellation. Final existing
+widgets/smoke/language checks all pass (6.38 seconds). LLVM formatting and
+diff whitespace checks pass. Logs:
+`/tmp/neverd-review-journal-restored-{configure,build,core,sdk,transports}.log`,
+`/tmp/neverd-web-gui-{restored-tests,main-close-test,final-smoke}.log` and
+`/tmp/neverd-review-journal-{format,provenance-final}.log`.
+
+Existing GUI widgets, smoke and language suites pass. The broader GUI regression
+also reports two font-sensitive unit failures and a function-activation failure
+followed by the controller timeout under Qt 6.11.1/offscreen. An independent
+161-step GUI build from the exact unchanged parent `f650917bb` reproduces both
+unit failures: unavailable Consolas changes the comment grid (3.73438 to
+11.2813), and the input font is not fixed pitch. The unchanged-parent controller
+also reproduces the exact function-activation mismatch (25.89 seconds) for
+`source-primary-following`, with the same actual and expected addresses.
+These failures are not counted as successful regression coverage. Baseline
+source/build/logs remain in
+`/tmp/neverd-js-gui-baseline-f650917` and
+`/tmp/neverd-web-gui-baseline-{configure,build,units,controller}.log`.
+
+Source provenance passes across 7,392 worktree files. The capability checker
+reports the same sixteen pre-existing unclaimed native source-patch declarations;
+the additive Web restore declaration is claimed in both surface lists. A global
+capability-checker pass is not claimed.
+
+This increment advances #715's review workflow. GUI advisory, installation,
+source and comparison selectors, complete translated wording, native host
+accessibility, full dependency resolution and the other #714–#718 acceptance
+gaps remain. A metadata finding is not a safety verdict, analyst authentication,
+publisher trust, runtime proof or recovery of erased source semantics.
+
+Publication integration preserves the concurrent native CFG work from `dev`
+at `ab2341267`. All Web/GUI implementation and test files are byte-identical
+after rebase. Its 156-step native/SDK/tool rebuild passes, followed by nineteen
+core cases, twelve SDK cases, seven transport/availability passes with one
+expected backend-omission skip (10.76 seconds), and nineteen production-worker
+GUI passes with one expected unavailable-only skip (8.54 seconds). Logs:
+`/tmp/neverd-review-journal-upstream-{build,core,sdk,transports}.log` and
+`/tmp/neverd-web-gui-upstream-tests.log`.
+
+## Passive member-fetch syntax and spread boundaries (2026-10-12)
+
+`fetch-websocket-xhr-syntax-v3` retains non-computed member-fetch call and
+receiver anchors without assigning browser API identity, wrapper argument roles
+or HAR eligibility. Direct fetch, WebSocket and member-fetch calls share an
+explicit spread classification: a spread withholds all argument-role nodes,
+private endpoint material, default methods and argument-absence claims. XHR's
+existing conservative spread rule is unchanged. `SourceFetch` owns these syntax
+rules; the session and transports only publish the same fixed metadata. See the
+[interface profile](web-interface-profile.md).
+
+The actual NeverD-exported Claude Code 2.1.296 macOS ARM64 module 928 is selected
+by SHA-256 `a5e52526ae954aa74deb80cf1bb2372d1f4b77e1886bba69d55e30c51efa2cd2`
+and declared module source type. The native CLI, with an unusable external-tool
+PATH, retains one `.fetch(...args)` candidate at UTF-8 byte 150,734 for 36 bytes.
+Its method and argument positions remain unknown; URL/options/header/body node
+roles and private endpoint material remain absent. The old direct-only profile
+returned zero candidates. Neither count proves runtime reachability or an
+absent interface. No client executes and the original sample stays outside Git.
+
+All twenty focused source cases and nine SDK cases pass, including the exact
+Claude module, optional members/calls, computed/member-constructor exclusions,
+spread placement, atomic bounds, explicit uncertainty, unchanged positive
+direct-fetch joins and private-value canaries. The owning Web regression has
+714 passes and one expected missing-ASAR-policy skip across 715 unique cases:
+707 ordinary `Web` cases (44.78 seconds) plus all eight parameterized Claude
+platform cases (18.43 seconds). Worker/MCP/ABI checks have seven passes and one
+expected backend-omission skip (3.70 seconds). Logs:
+`/tmp/neverd-interface-v3-{source-boundary,sdk-boundary,web-regression-final,cross-regression,transports-boundary-final}.log`
+and `/tmp/neverd-interface-v3-claude-0928-final.jsonl`.
+
+With JavaScript omitted, the 136-step rebuild passes: all five compiled
+HAR/CLI SDK cases and seven transport/availability cases pass, with one
+expected backend-omission skip. Source-specific SDK cases are omitted at
+compile time. With the complete Web backend omitted, the nine-step rebuild
+passes; both ABI availability cases run positively, and transport/availability
+has six passes with two expected backend/input skips. Both flags are restored
+to ON; its 320-step parser/backend/tool rebuild passes, followed by all twenty
+source cases, nine SDK cases and seven transport/availability passes with one
+expected unavailable-only skip (21.42 seconds). Logs:
+`/tmp/neverd-interface-v3-nojs-{configure,build,sdk-final,transports}.log`,
+`/tmp/neverd-interface-v3-noweb-{configure,build,transports}.log` and
+`/tmp/neverd-interface-v3-restored-{configure,build,core,sdk,transports}.log`.
+
+LLVM formatting, diff whitespace and source provenance across 7,392 worktree
+files pass. The capability checker still reports the same sixteen pre-existing
+unclaimed native source-patch declarations; no global checker pass is claimed.
+No public C ABI entry point, dependency, target execution or network path is
+added by this increment.
+
+Wrapper implementation/argument flow, response/transformation tracing, dynamic
+URL resolution, source/stream joins and the remaining #714–#718 acceptance gaps
+remain. This increment does not close the five epics.

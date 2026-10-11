@@ -64,8 +64,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
        {"package_advisory_import", "package_advisory_records",
         "package_advisories_match", "package_advisories_match_records",
         "package_attestation_import", "package_attestation_records",
-        "package_attestation_digest_match",
-        "package_attestation_digest_result"})
+        "package_attestation_digest_match", "package_attestation_digest_result",
+        "package_assessment_create", "package_assessment_findings",
+        "package_review_append", "package_review_decisions",
+        "package_review_restore", "package_assessment_report"})
     EXPECT_TRUE(Has(Name));
   for (const auto Op : {"har_preview", "har_commit", "har_records",
                         "stream_preview", "stream_commit", "stream_records"})
@@ -90,11 +92,17 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     if (!Entry || Entry->getString("kind") != "source_interfaces")
       continue;
     SourceInterfacesAvailable = true;
-    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v2");
+    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v3");
     EXPECT_FALSE(Entry->getBoolean("xhr_correlation").value_or(true));
     const auto *Kinds = Entry->getArray("candidate_kinds");
     ASSERT_NE(Kinds, nullptr);
-    EXPECT_EQ(Kinds->size(), 6u);
+    EXPECT_EQ(Kinds->size(), 7u);
+    EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
+      return Kind.getAsString() == "fetch_member_call";
+    }));
+    EXPECT_EQ(Entry->getString("fetch_member_identity"),
+              "property_spelling_unverified");
+    EXPECT_FALSE(Entry->getBoolean("fetch_member_correlation").value_or(true));
   }
   EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
   unsigned RenameProfiles = 0;
@@ -278,6 +286,19 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
             nullptr, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0),
         neverd_web_package_attestation_digest_result_json(nullptr, nullptr, 0,
                                                           nullptr, 0),
+        neverd_web_package_assessment_create_json(nullptr, nullptr, 0, nullptr,
+                                                  0, nullptr, 0),
+        neverd_web_package_assessment_findings_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_package_review_append_json(nullptr, nullptr, 0, nullptr, 0,
+                                              nullptr, 0, nullptr, 0, nullptr,
+                                              0),
+        neverd_web_package_review_decisions_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, 0, 1),
+        neverd_web_package_review_restore_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0, nullptr, 0),
+        neverd_web_package_assessment_report_json(nullptr, nullptr, 0, nullptr,
+                                                  0, nullptr, 0, 0, 1),
         neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, nullptr, 0),
         neverd_web_package_archive_extract_json(nullptr, nullptr, 0, nullptr, 0,

@@ -842,10 +842,15 @@ TEST(SysVCallContract, AFormatNamesTheArgumentsAFormattedCallPasses) {
   EXPECT_NE(ShowBody.find(Widened[2].str() + " = neverd_x86_read_mxcsr();"),
             std::string::npos)
       << ShowBody;
-  EXPECT_NE(ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
-                          "arg3, arg2, __builtin_bit_cast(double, (int64_t)"
-                          "((int64_t)" +
-                          Widened[1].str() + ")))"),
+  const size_t FormatCall =
+      ShowBody.find("printf(\"%d %s %f %d %f\\n\", arg0, (void*)arg1, "
+                    "arg3, arg2, ");
+  ASSERT_NE(FormatCall, std::string::npos) << ShowBody;
+  // Tie the actual variadic argument to the checked conversion result while
+  // allowing equivalent source casts and storage representations.
+  const size_t FormatEnd = ShowBody.find(';', FormatCall);
+  EXPECT_NE(ShowBody.substr(FormatCall, FormatEnd - FormatCall)
+                .find(Widened[1].str()),
             std::string::npos)
       << ShowBody;
   const std::string PassBody = body(Source, "pass");

@@ -27,6 +27,7 @@
 #include "neverd/web/NodeBehavior.h"
 #include "neverd/web/PackageAdvisories.h"
 #include "neverd/web/PackageArchive.h"
+#include "neverd/web/PackageAssessment.h"
 #include "neverd/web/PackageAttestations.h"
 #include "neverd/web/PackageBehaviorDiff.h"
 #include "neverd/web/PackageInstall.h"
@@ -39,6 +40,7 @@
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceBundles.h"
 #include "neverd/web/SourceEffects.h"
+#include "neverd/web/SourceFeatures.h"
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
@@ -61,7 +63,11 @@ struct Session::Impl {
   uint64_t PreviewSequence = 0;
   std::map<std::string, SourceAnalysis> Sources;
   std::map<std::string, SourceBindingAnalysis> Bindings;
-  std::map<std::string, SourceNavigation> Navigation;
+  struct NavigationResults {
+    SourceNavigation Evidence;
+    SourceFeatures Features;
+  };
+  std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {
     SourceValueAnalysis Values;
     SourceEffectAnalysis Effects;
@@ -101,6 +107,9 @@ struct Session::Impl {
   std::map<std::string, PackageAttestationDigestMatch>
       PackageAttestationDigests;
   uint64_t PackageEvidenceBytes = 0;
+  std::map<std::string, PackageAssessment> PackageAssessments;
+  std::map<std::string, PackageReviewState> PackageReviews;
+  uint64_t PackageReviewEvents = 0, PackageReviewBytes = 0;
   std::map<std::string, HARCapture> HARCaptures;
   std::map<std::string, StreamCapture> StreamCaptures;
   std::optional<StreamCapture> PendingStream;

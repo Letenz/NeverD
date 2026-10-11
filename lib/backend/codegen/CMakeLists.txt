@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDCodeGen
   COFF/COFFExceptionPatch.cpp
+  COFF/COFFSourceImage.cpp
   COFF/COFFFH4Encoding.cpp
   COFF/COFFInplace.cpp
   COFF/COFFPatch.cpp
@@ -44,6 +45,9 @@ add_neverd_component_library(NeverDCodeGen
   ELF/ELFInplace.cpp
   ELF/ELFPatch.cpp
   ELF/ELFReloc.cpp
+  ELF/ELFSectionPatch.cpp
+  ELF/ELFSourceRelocations.cpp
+  ELF/ELFSourceSymbols.cpp
   MachO/MachOCompactUnwindPatch.cpp
   MachO/MachOExceptionPatch.cpp
   MachO/MachOInplace.cpp
@@ -52,6 +56,10 @@ add_neverd_component_library(NeverDCodeGen
   MachO/MachOSigner.cpp
   MachO/MachOSignaturePolicy.cpp
   RelocResolver.cpp
+  PatchObject.cpp
+  PatchStorage.cpp
+  SourcePatch.cpp
+  SourcePatchBindings.cpp
   rewrite/BinaryRewriter.cpp
   rewrite/InplaceRewriter.cpp
 

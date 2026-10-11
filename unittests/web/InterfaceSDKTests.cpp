@@ -296,8 +296,8 @@ CANARY_REQUEST.send(...CANARY_ARGUMENTS);
 )";
   open();
   const auto A = source();
-  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v2");
-  EXPECT_EQ(field(A, "receiver_identity"), "lexical_syntax_only");
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v3");
+  EXPECT_EQ(field(A, "receiver_identity"), "lexical_and_member_syntax_only");
   EXPECT_EQ(field(A, "request_ordering"), "not_analyzed");
   EXPECT_FALSE(A.getAsObject()->getBoolean("xhr_correlation").value_or(true));
   const auto ID = field(A, "interface_analysis_id");
@@ -326,6 +326,52 @@ CANARY_REQUEST.send(...CANARY_ARGUMENTS);
   EXPECT_EQ(field(Items[6], "body_status"), "spread_unresolved");
   EXPECT_TRUE(field(Items[6], "body_node_id").empty());
   EXPECT_EQ(compare(ID, admit()).getAsObject()->getInteger("pair_count"), 0);
+}
+
+TEST_F(WebInterfaceSDK, MemberAndSpreadPublicationKeepExplicitUncertainty) {
+  std::ofstream(Root / "b0.js") << R"(
+const CANARY_CLIENT = obtainClient();
+CANARY_CLIENT.fetch('https://CANARY_HOST/CANARY_PATH', {method:'POST',body:'CANARY_BODY'});
+this.fetch(...CANARY_ARGUMENTS);
+fetch(...CANARY_ARGUMENTS);
+new WebSocket(...CANARY_ARGUMENTS);
+fetch('https://CANARY_HOST/CANARY_PATH', {method:'POST'});
+)";
+  open();
+  const auto A = source();
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v3");
+  EXPECT_EQ(field(A, "fetch_member_identity"), "property_spelling_unverified");
+  EXPECT_FALSE(
+      A.getAsObject()->getBoolean("fetch_member_correlation").value_or(true));
+  EXPECT_EQ(field(A, "spread_argument_resolution"), "not_analyzed");
+  const auto ID = field(A, "interface_analysis_id");
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 5u);
+  EXPECT_EQ(field(Items[0], "kind"), "fetch_member_call");
+  EXPECT_FALSE(field(Items[0], "receiver_node_id").empty());
+  EXPECT_FALSE(field(Items[0], "receiver_binding_id").empty());
+  EXPECT_EQ(field(Items[0], "method"), "unknown");
+  EXPECT_EQ(field(Items[0], "url_status"), "wrapper_arguments_not_interpreted");
+  EXPECT_TRUE(field(Items[0], "url_node_id").empty());
+  EXPECT_TRUE(field(Items[0], "options_node_id").empty());
+  EXPECT_TRUE(field(Items[0], "body_node_id").empty());
+  for (size_t I = 1; I < 4; ++I) {
+    EXPECT_EQ(field(Items[I], "arguments_status"), "spread_unresolved");
+    EXPECT_EQ(field(Items[I], "method"), "unknown");
+    for (const auto *Name : {"url_node_id", "options_node_id", "method_node_id",
+                             "headers_node_id", "body_node_id"})
+      EXPECT_TRUE(field(Items[I], Name).empty());
+  }
+  const auto C = compare(ID, admit());
+  EXPECT_EQ(C.getAsObject()->getInteger("pair_count"), 1);
+  const auto CID = field(C, "correlation_id");
+  const auto Pairs = take(neverd_web_interface_correlation_records_json(
+      S, Revision.data(), Revision.size(), CID.data(), CID.size(), 0, 128));
+  const auto &Matched = *Pairs.getAsObject()->getArray("items");
+  ASSERT_EQ(Matched.size(), 1u);
+  EXPECT_EQ(field(Matched[0], "interface_id"), field(Items[4], "interface_id"));
 }
 #endif
 

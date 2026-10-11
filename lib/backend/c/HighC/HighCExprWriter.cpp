@@ -258,11 +258,26 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
   return "0x" + llvm::utohexstr(Val);
 }
 
+llvm::StringRef HighCWriter::plainText(llvm::StringRef Text,
+                                       std::string &Storage) const {
+  return SourceRecorder ? SourceRecorder->plain(Text, Storage) : Text;
+}
+
+std::string HighCWriter::castOperandText(std::string Text) const {
+  std::string Storage;
+  const llvm::StringRef Plain = plainText(Text, Storage);
+  // Parentheses the ordinary text needs enclose its delimiters too.
+  if (c_memory::castOperand(Plain) == Plain)
+    return Text;
+  return "(" + Text + ")";
+}
+
 bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
                                        bool Signed) {
   if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
     return false;
-  const auto It = DeclaredCTypes.find(exprStr(E));
+  std::string Storage;
+  const auto It = DeclaredCTypes.find(plainText(exprStr(E), Storage).str());
   return It != DeclaredCTypes.end() && It->second &&
          It->second->Kind == NdTypeKind::Int && !It->second->IsEnum &&
          It->second->IsSigned == Signed && It->second->Size == Width;
@@ -393,6 +408,8 @@ const HighExpr &HighCWriter::lowBytesSource(const HighExpr &E,
 bool HighCWriter::integerText(const HighExpr &E, llvm::StringRef Text) const {
   if (printedIntegerType(E))
     return true;
+  std::string Storage;
+  Text = plainText(Text, Storage);
   if (E.Kind == ExprKind::Const) {
     llvm::StringRef Digits = Text;
     Digits.consume_front("-");
@@ -425,9 +442,9 @@ std::string HighCWriter::integerView(const HighExpr &E, const TypeRef &To,
     if (auto Carrier = unsignedCarrierText(*Source, ParentPrec)) {
       if (!Signed && Width == Source->Type->Size)
         return *Carrier;
-      return "(" + typeToC(To) + ")" + c_memory::castOperand(*Carrier);
+      return "(" + typeToC(To) + ")" + castOperandText(std::move(*Carrier));
     }
-  return "(" + typeToC(To) + ")" + c_memory::castOperand(Text);
+  return "(" + typeToC(To) + ")" + castOperandText(std::move(Text));
 }
 
 std::optional<std::string>
@@ -438,7 +455,9 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
   const HighExpr &Source = lowBytesSource(E, Width);
   // A literal is spelled as the value it converts to.
   if (Source.Kind == ExprKind::Const && isPlainInteger(Source.Type)) {
-    if (exprStr(Source) != constStr(Source.ConstVal, Source.Type))
+    std::string Storage;
+    if (plainText(exprStr(Source), Storage) !=
+        constStr(Source.ConstVal, Source.Type))
       return std::nullopt;
     const unsigned Bits = Source.Type->Size * 8;
     uint64_t Value = Source.ConstVal;
@@ -1860,14 +1879,18 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
           return "&" + *Member;
         if (auto Slot = namedFrameSlot(*Inner))
           return "&" + *Slot;
-        // The constant is the table and the rest the offset into it.
+        // The constant is the table and the rest the offset into it.  The
+        // offset prints as the operand is, not as what peeling found under
+        // it: `(u64)(u8)i` indexes by the low byte of `i`, not by `i`.
         if (Base->Kind != ExprKind::Const && indexedImageBase(*Inner) == Off)
           if (auto Table = imageBackingAddress(Off->ConstVal)) {
             constexpr int AddPrec = 9;
+            const HighExpr &Index =
+                Off == Rhs ? *Inner->Operands[0] : *Inner->Operands[1];
             std::string S =
                 "(uintptr_t)" + *Table + " + " +
                 integerView(
-                    *Base,
+                    Index,
                     NdType::makeInt(getTargetRegInfo(Opts.TheArch).PointerSize,
                                     false),
                     AddPrec);
@@ -3653,7 +3676,10 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
         Ptr = Rhs;
         Off = Lhs;
       }
-      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0) {
+      // An image address added to an index is the table the call reads, not
+      // a slot offset; it prints as the object the output defines there.
+      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0 &&
+          !isExactAddressProvenance(Off->ConstProvenance)) {
         const HighExpr *Vptr = peelIntegerViewOps(Ptr);
         std::string SlotBase;
         if (Vptr && Vptr->Kind == ExprKind::Load && !Vptr->Operands.empty() &&
@@ -4083,8 +4109,10 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
   UnsignedCarrierTexts.erase(&E);
   std::string Text = exprStrImpl(E, ParentPrec, Destination);
   // A local's name has its declared type.
-  if (!Text.empty() && (llvm::isAlpha(Text.front()) || Text.front() == '_'))
-    if (const auto Declared = DeclaredCTypes.find(Text);
+  std::string Storage;
+  if (const llvm::StringRef Name = plainText(Text, Storage);
+      !Name.empty() && (llvm::isAlpha(Name.front()) || Name.front() == '_'))
+    if (const auto Declared = DeclaredCTypes.find(Name.str());
         Declared != DeclaredCTypes.end() && isPlainInteger(Declared->second))
       PrintedIntegerTypes[&E] = {Declared->second->Size,
                                  Declared->second->IsSigned};
@@ -4223,7 +4251,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (ImageObjects.count(E.ConstVal) ||
         E.ConstProvenance == ConstantAddressProvenance::Address ||
         E.ConstProvenance == ConstantAddressProvenance::DataAddress)
-      if (auto Backing = imageBackingAddress(E.ConstVal)) {
+      if (auto Backing = ownedImageBackingAddress(E)) {
         // An integer the machine computes with stays an integer: `~` or a
         // multiplication takes no pointer.
         if (E.Type && E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum)
@@ -4428,6 +4456,57 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                           E.Type->IsSigned)
                    ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text
                    : PointerInteger("(uintptr_t)" + Text);
+    // A struct returned across several registers arrives whole in the
+    // integer the HighIR unpacks its fields from, one register's scalar
+    // after another.  An integer of another width than those fields would
+    // invent or drop field bytes.
+    if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind == NdTypeKind::Struct && !Return->IsEnum) {
+        const TypeRef Carrier =
+            E.Type ? E.Type : NdType::makeInt(Return->Size, false);
+        const auto Members = sourceAggregateMembers(Return);
+        uint16_t Packed = 0;
+        for (const auto &Member : Members)
+          Packed += Member.Type->Size;
+        if (Members.empty() || Packed != Carrier->Size)
+          return "((void)" + Text + ", (__builtin_trap(), (" +
+                 typeToC(Carrier) + ")0 /* unknown struct return fields */))";
+        if (Return->Size == Carrier->Size &&
+            (Carrier->Size == 4 || Carrier->Size == 8 || Carrier->Size == 16))
+          return typedText(
+              E, "__builtin_bit_cast(" + typeToC(Carrier) + ", " + Text + ")",
+              Carrier->Size, Carrier->IsSigned);
+        // No integer bit casts from the record (three floats are twelve
+        // bytes, and an int beside a double leaves padding): place each
+        // member's bits where the packed fields put them.
+        const std::string Wide = typeToC(Carrier);
+        std::string Fields;
+        uint16_t Offset = 0;
+        for (size_t I = 0; I < Members.size(); ++I) {
+          std::string Term =
+              "(" + Wide + ")__builtin_bit_cast(" +
+              typeToC(NdType::makeInt(Members[I].Type->Size, false)) +
+              ", nd_record.field_" + std::to_string(I) + ")";
+          if (Offset != 0)
+            Term = "(" + Term + " << " + std::to_string(Offset * 8) + ")";
+          Fields += (I ? " | " : "") + Term;
+          Offset += Members[I].Type->Size;
+        }
+        return typedText(E,
+                         "({ " + typeToC(Return) + " nd_record = " + Text +
+                             "; " + Fields + "; })",
+                         Carrier->Size, Carrier->IsSigned);
+      }
+    // A struct the callee returns in more registers than its C declaration
+    // carries has fields the C cannot read: they are unknown, not zeros.
+    if (&E != StatementCall && E.Type && E.Type->Kind == NdTypeKind::Int &&
+        E.Type->Size > 8)
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind != NdTypeKind::Struct &&
+          Return->Size < E.Type->Size)
+        return "((void)" + Text + ", (__builtin_trap(), (" + typeToC(E.Type) +
+               ")0 /* unknown struct return fields */))";
     // A floating result returns in the low lane of a register the HighIR
     // reads as integer bits: the C reads those bits, not the value converted
     // to an integer.  The lane's other bytes are unspecified after a call.
@@ -4985,6 +5064,32 @@ std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
              std::to_string(Backing.Pad + (Addr - Backing.Base)) + "]";
   }
   return std::nullopt;
+}
+
+std::optional<std::string>
+HighCWriter::ownedImageBackingAddress(const HighExpr &Const) const {
+  // A relocation's owner is the section it names.  Inside that section an
+  // address is whatever object lies there; one past its end no object of
+  // the section starts, and the next section's first object is no owner.
+  const va_t Owner = Const.AddressOwnerVA;
+  if (Opts.Image && isExactAddressProvenance(Const.ConstProvenance) &&
+      Owner != InvalidVA && Const.ConstVal != 0)
+    for (const Section &Sec : Opts.Image->Sections) {
+      if (!Sec.isReadable() || Sec.VA != Owner || Sec.Size == 0 ||
+          Sec.Size > InvalidVA - Sec.VA || Const.ConstVal != Sec.VA + Sec.Size)
+        continue;
+      const va_t Last = Const.ConstVal - 1;
+      for (const ImageBacking &Backing : ImageBackings) {
+        if (Last < Backing.Base)
+          break;
+        if (Last < Backing.End)
+          return "&" + Backing.Name + "[" +
+                 std::to_string(Backing.Pad + (Const.ConstVal - Backing.Base)) +
+                 "]";
+      }
+      break;
+    }
+  return imageBackingAddress(Const.ConstVal);
 }
 
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,

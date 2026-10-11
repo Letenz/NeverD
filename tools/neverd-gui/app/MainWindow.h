@@ -20,6 +20,10 @@ class GuiSessionBroker;
 
 namespace neverd::gui {
 
+namespace web {
+class PackageReviewDialog;
+}
+
 class CodeView;
 class DisassemblyView;
 class ExtensionsView;
@@ -192,6 +196,7 @@ private:
   std::optional<Address> initialAddress_;
   bool restoreGraph_ = false;
   QPointer<QDialog> quickStart_;
+  QPointer<web::PackageReviewDialog> packageReview_;
   bool startupQuickStartPending_ = false;
   QLabel *analysisLabel_ = nullptr, *directionLabel_ = nullptr,
          *diskLabel_ = nullptr, *fileLabel_ = nullptr;

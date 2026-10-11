@@ -1,6 +1,7 @@
 # libneverd shared library — core engine for CLI, GUI, and plugins.
 # All NeverD frontends link this single shared library.
 set(NEVERD_SDK_SOURCES
+    SourcePatchCompiler.cpp
     capi/NeverDCAPIWeb.cpp
     capi/NeverDCAPIBytecode.cpp
     capi/NeverDCAPI.cpp
@@ -22,6 +23,7 @@ set(NEVERD_SDK_SOURCES
     capi/NeverDCAPIInfo.cpp
     capi/NeverDCAPIOptimize.cpp
     capi/NeverDCAPIPatch.cpp
+    capi/NeverDCAPISourcePatch.cpp
     capi/NeverDCAPIPersist.cpp
     capi/NeverDCAPIRoundtrip.cpp
     capi/NeverDCAPISafety.cpp
@@ -246,7 +248,7 @@ if(NEVERD_ENABLE_Z3)
 endif()
 
 if(NEVERD_ENABLE_WEB_ANALYSIS)
-  set(_neverd_web_notice_sets bun node asar whatwg ada)
+  set(_neverd_web_notice_sets bun node asar whatwg ada zstd)
   if(NEVERD_ENABLE_WEB_ASAR)
     list(APPEND _neverd_web_notice_sets icu)
   endif()

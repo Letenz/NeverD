@@ -44125,10 +44125,14 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
 /// C must preserve the source x87 result and return \p Expected. Exact 80-bit
 /// storage may use integer bits rather than the host's long-double format.
-void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
+/// An explicit \p Storage additionally checks the requested representation.
+void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
+                     llvm::StringRef Storage = {}) {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  if (!Storage.empty())
+    EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
@@ -44164,7 +44168,9 @@ TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
 TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
   // The extended value fills ten bytes; the qword after it survives, and
   // the stored exponent word reads back.  A store of a whole C object of
-  // 12 or 16 bytes would overwrite the neighbor.
+  // 12 or 16 bytes would overwrite the neighbor.  The value comes straight
+  // from the constant ROM, which executes into raw eighty-bit storage, so
+  // nothing here computes in long double.
   expectX87Result({0x48, 0xc7, 0x44, 0x24, 0xea,
                    0x2a, 0,    0,    0,          // mov qword [rsp-16h], 42
                    0xd9, 0xe8,                   // fld1
@@ -44173,7 +44179,7 @@ TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
                    0x0f, 0xb7, 0x4c, 0x24, 0xe8, // movzx ecx, word [rsp-18h]
                    0x48, 0x01, 0xc8,             // add rax, rcx
                    0xc3},
-                  42 + 0x3FFF);
+                  42 + 0x3FFF, "_BitInt(80)");
 }
 
 TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {

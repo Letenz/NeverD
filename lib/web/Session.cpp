@@ -202,15 +202,50 @@ std::string Session::capabilities() {
       {"max_cached", 4},
       {"max_cached_correlations", 4},
       {"intrinsic_verified", false},
+      {"fetch_member_identity", "property_spelling_unverified"},
+      {"fetch_member_correlation", false},
+      {"spread_argument_resolution", "not_analyzed"},
       {"websocket_correlation", false},
       {"xhr_correlation", false},
-      {"candidate_kinds", llvm::json::Array{"fetch", "websocket", "xhr_open",
-                                            "xhr_set_request_header",
-                                            "xhr_send", "xhr_event_handler"}}});
+      {"candidate_kinds",
+       llvm::json::Array{"fetch", "fetch_member_call", "websocket", "xhr_open",
+                         "xhr_set_request_header", "xhr_send",
+                         "xhr_event_handler"}}});
 #endif
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
   Operations.emplace_back("package_integrity_verify");
+  for (const auto *Name :
+       {"package_assessment_create", "package_assessment_findings",
+        "package_review_append", "package_review_decisions",
+        "package_review_restore", "package_assessment_report"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_assessments"},
+      {"profile", std::string(PackageAssessmentProfile)},
+      {"available", true},
+      {"max_cached", MaxCachedPackageAssessments},
+      {"max_findings", MaxPackageAssessmentFindings},
+      {"max_steps", MaxPackageAssessmentSteps},
+      {"max_retained_bytes_per_assessment", MaxPackageAssessmentBytes},
+      {"max_review_events_per_session", MaxPackageReviewDecisions},
+      {"max_review_bytes_per_session", MaxPackageReviewBytes},
+      {"review_journal_profile", std::string(PackageReviewJournalProfile)},
+      {"review_restore_atomic", true},
+      {"max_page_records", 512},
+      {"dispositions", llvm::json::Array{"unreviewed", "needs_review",
+                                         "accepted_risk", "false_positive"}},
+      {"report_formats", llvm::json::Array{"markdown"}},
+      {"review_head_required", true},
+      {"disposition_source", "caller_assertion"},
+      {"safety_verdict", "not_assessed"},
+      {"signature_verification", "not_performed"},
+      {"installed_tree_verified", false},
+      {"runtime_verified", false},
+      {"reachability_verified", false},
+      {"freshness_verified", false},
+      {"fetches_remote_data", false},
+      {"executes_input", false}});
   for (const auto *Name :
        {"package_attestation_import", "package_attestation_records",
         "package_attestation_digest_match",
@@ -576,7 +611,12 @@ std::string Session::capabilities() {
       {"profile", std::string(JavaScriptNavigationProfile)},
       {"anchor_profile", std::string(SourceAnchorProfile)},
       {"max_steps", MaxJavaScriptNavigationSteps},
-      {"record_kinds", llvm::json::Array{"functions", "calls", "references"}},
+      {"record_kinds",
+       llvm::json::Array{"functions", "calls", "references", "features"}},
+      {"client_feature_profile", std::string(JavaScriptClientFeatureProfile)},
+      {"max_client_feature_records", MaxJavaScriptClientFeatureRecords},
+      {"max_client_feature_steps", MaxJavaScriptClientFeatureSteps},
+      {"client_feature_attribution", "source_syntax_only"},
       {"runtime_call_graph", false},
       {"resolves_runtime_values", false}});
   Analyses.emplace_back(llvm::json::Object{
@@ -769,6 +809,10 @@ std::string Session::commit(std::string_view Token) {
   State->PackageAttestations.clear();
   State->PackageEvidenceDescriptors.clear();
   State->PackageEvidenceBytes = 0;
+  State->PackageAssessments.clear();
+  State->PackageReviews.clear();
+  State->PackageReviewEvents = 0;
+  State->PackageReviewBytes = 0;
   State->HARCaptures.clear();
   State->StreamCaptures.clear();
   State->PendingStream.reset();
@@ -828,6 +872,9 @@ std::string Session::metadata() const {
       {"package_behavior_count", State->PackageBehaviors.size()},
       {"package_behavior_diff_count", State->PackageBehaviorDiffs.size()},
       {"package_install_count", State->PackageInstalls.size()},
+      {"package_assessment_count", State->PackageAssessments.size()},
+      {"package_review_event_count", State->PackageReviewEvents},
+      {"package_review_retained_bytes", State->PackageReviewBytes},
       {"package_advisory_count", State->PackageAdvisories.size()},
       {"package_attestation_count", State->PackageAttestations.size()},
       {"package_attestation_digest_match_count",

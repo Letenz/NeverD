@@ -38,6 +38,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_SVELengthTests.cpp
   aarch64/AArch64_SVEStateTests.cpp
   aarch64/AArch64_SVEStoreTests.cpp
+  aarch64/AArch64_StructReturnTests.cpp
   aarch64/AArch64_WSPTests.cpp
   aarch64/AArch64_MulDivTests.cpp
   aarch64/AArch64DivisionSemanticTests.cpp
@@ -54,6 +55,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_ControlTests.cpp
   arm32/ARM32_ExtendTests.cpp
   arm32/ARM32_IntrinsicsTests.cpp
+  arm32/ARM32_LiteralPoolTests.cpp
   arm32/ARM32_LogicTests.cpp
   arm32/ARM32_MemTests.cpp
   arm32/ARM32_MulDivTests.cpp
@@ -97,6 +99,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CarryOpsTests.cpp
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
+  x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
   x86_64/X86_64_DoubleShiftTests.cpp
@@ -105,12 +108,15 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_FlagsMiscTests.cpp
   x86_64/X86_64_FmaMiscTests.cpp
   x86_64/X86_64_FPConvertTests.cpp
+  x86_64/X86_64_FramePointerWalkTests.cpp
+  x86_64/X86_64_ImageTableTests.cpp
   x86_64/X86_64_IntrinsicsTests.cpp
   x86_64/X86_64_LodsMiscTests.cpp
   x86_64/X86_64_LoopBitTests.cpp
   x86_64/X86_64_MemAtomicTests.cpp
   x86_64/X86_64_MiscTests.cpp
   x86_64/X86_64_MulDivTests.cpp
+  x86_64/X86_64_ObjectImmediateTests.cpp
   x86_64/X86_64_PipelineE2ETests.cpp
   x86_64/X86_64_RclRcrTests.cpp
   x86_64/X86_64_RotateShiftTests.cpp
@@ -121,10 +127,12 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SSEAVXTests.cpp
   x86_64/X86_64_SSEFPTests.cpp
   x86_64/X86_64_SSEMiscTests.cpp
+  x86_64/X86_64_SignedCompareTests.cpp
   x86_64/X86_64_StackMovTests.cpp
   x86_64/X86_64_StackMemorySemanticTests.cpp
   x86_64/X86_64_NativeHostModeTests.cpp
   x86_64/X86_64_StringOpsTests.cpp
+  x86_64/X86_64_StructReturnTests.cpp
   x86_64/X86_64_X87FPUTests.cpp
   x86_64/X86_64_EVEXCompareTests.cpp
   x86_64/X86_64_WideISAStateTests.cpp
@@ -1615,9 +1623,16 @@ endif()
 # are the public fail-closed boundary under test.
 add_neverd_unittest(NeverDNativeExceptionRewriteContractTests
   eh/DwarfEHFrameTests.cpp
+  eh/ELFExceptionTests.cpp
+  eh/ELFSectionPatchTests.cpp
+  eh/ELFSourceRelocationsTests.cpp
+  eh/ELFSourceSymbolsTests.cpp
   eh/MachOCompactUnwindPatchTests.cpp
   eh/MachOExceptionPatchTests.cpp
   eh/NativeExceptionRewriteContractTests.cpp
+  eh/PatchStorageTests.cpp
+  eh/ReplacementIRTests.cpp
+  eh/SourcePatchBindingsTests.cpp
   eh/RewriteFunctionProvenanceTests.cpp
 
   LINK_COMPONENTS

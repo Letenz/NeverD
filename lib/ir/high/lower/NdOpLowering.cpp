@@ -166,6 +166,10 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
       getTargetRegInfo(TargetArch).isX87StackReg(CurOp.Output.RegOff);
   if (CurOp.SourceCallHint || X87Result)
     CallExpr->Type = sourceCallResultType(CurOp);
+  // A call remodeled to return a struct across several registers writes
+  // every field into one packed temporary.
+  else if (CurOp.Output.Kind == MedVar::Temp && CurOp.Output.Size > 8)
+    CallExpr->Type = NdType::makeInt(CurOp.Output.Size, false);
   if (ExpressionObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
     ExpressionObserver(CurOp, CallExpr);
 

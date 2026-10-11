@@ -271,6 +271,48 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "benignness verdict.",
       {decimal("revision"), text("artifact_id"), text("declaration_id"),
        text("package_id", 64, false)});
+  Add("web_package_assessment_create",
+      "Compose explicitly selected retained evidence with coverage and binding "
+      "limits. Missing evidence never implies a safe package.",
+      {decimal("revision"),
+       text("package_analysis_id"),
+       {"integrity_ids", Field::Kind::StringArray, false, 16, 0},
+       {"advisory_ids", Field::Kind::StringArray, false, 16, 0},
+       text("advisory_matches_id", 64, false),
+       {"attestation_ids", Field::Kind::StringArray, false, 4, 0},
+       {"attestation_digest_match_ids", Field::Kind::StringArray, false, 4, 0},
+       text("package_behavior_id", 64, false),
+       text("package_install_id", 64, false),
+       text("package_diff_id", 64, false),
+       text("package_behavior_diff_id", 64, false)});
+  Add("web_package_review_append",
+      "Append a caller assertion to one finding using the expected review "
+      "head. "
+      "This preserves the evidence and does not authorize execution or export.",
+      {decimal("revision"), text("package_assessment_id"),
+       text("expected_review_head"), text("finding_id"),
+       choice("disposition", {"unreviewed", "needs_review", "accepted_risk",
+                              "false_positive"})});
+  Add("web_package_review_restore",
+      "Atomically restore a supplied metadata-only analyst journal against the "
+      "current "
+      "assessment and review head. A complete validated chain extends only its "
+      "exact "
+      "existing prefix; assertions do not authenticate an analyst or upgrade "
+      "evidence.",
+      {decimal("revision"), text("package_assessment_id"),
+       text("expected_review_head"), text("journal_json", 256 * 1024)});
+  for (const auto *Operation :
+       {"web_package_assessment_findings", "web_package_review_decisions",
+        "web_package_assessment_report"})
+    Add(Operation,
+        "Read a metadata-only page at the current review head. The report uses "
+        "fixed Markdown fields and does not publish raw source or private "
+        "names.",
+        {decimal("revision"), text("package_assessment_id"),
+         text("review_head"), number("offset", 2147483647),
+         number("limit", 512, false, 1)},
+        true);
   Selected(
       "web_har_preview", "artifact_id",
       "Preview metadata-only import and redaction of a captured HAR artifact.");

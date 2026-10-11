@@ -28,6 +28,11 @@
 // File.
 NEVERD_ACTION(FileOpen, QT_TRANSLATE_NOOP("Actions", "&Open..."), "", "open",
               QT_TRANSLATE_NOOP("Actions", "Open a binary for analysis"))
+NEVERD_ACTION(
+    FilePackageReview,
+    QT_TRANSLATE_NOOP("Actions", "Offline &package review..."), "", "open",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Inspect local package evidence and analyst reviews"))
 NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
               "refresh",

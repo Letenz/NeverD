@@ -131,6 +131,11 @@ public:
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> imageObjectName(va_t Addr) const;
   std::optional<std::string> imageBackingAddress(va_t Addr) const;
+  /// \p Const as an address in an image backing.  One past the end of the
+  /// section its relocation names, it stays in that section's last backing
+  /// even where the next section's first object starts.
+  std::optional<std::string>
+  ownedImageBackingAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
@@ -500,6 +505,12 @@ public:
                                             const TypeRef &Access = {}) const;
   bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val, TypeRef Type = nullptr);
+  /// \p Text as the ordinary render prints it, held in \p Storage when that
+  /// differs. A spelling chosen from printed text must read this, so the
+  /// source map's delimiters cannot change the source they annotate.
+  llvm::StringRef plainText(llvm::StringRef Text, std::string &Storage) const;
+  /// c_memory::castOperand of \p Text, decided on its ordinary text.
+  std::string castOperandText(std::string Text) const;
   /// \p E prints as a local declared as a \p Width-byte integer of the given
   /// signedness.
   bool declaredLocalInteger(const HighExpr &E, uint16_t Width, bool Signed);
