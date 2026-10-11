@@ -8,6 +8,25 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Source and object replacement boundary
+
+`SourcePatchCompiler` owns compiler identity, target arguments and artifact
+selection. `bindSourcePatch` authenticates explicit IR entry mappings;
+`PatchObject` instead owns native section/symbol/relocation and FDE-range
+evidence. Objects never receive fabricated LLVM MC function-owner identities.
+Both producers share original binding validation, ELF storage/relocation/unwind
+registration and the `publishSourcePatch` transaction. That transaction requires
+an exact receipt for every requested entry, checks the candidate again, and
+publishes exclusively. Lifted/full rewrites keep their separate source-provenance
+and preserve-original/no-op policies. See [source patches](source-patching.md).
+
+`COFFSourceImage` owns installation of compiler-produced PE x64 source output:
+separate code/state/metadata permissions, retained original runtime rows,
+new base relocations, exact compiler function/funclet ranges and bounded FH3
+graphs. It rereads installed bytes and permissions before publication. These
+new-program contracts do not assert equivalence to the original Windows EH
+graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and

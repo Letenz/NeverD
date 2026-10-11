@@ -78,6 +78,14 @@ llvm::Expected<COFFExceptionPatchPlan>
 planCOFFExceptionPatch(const llvm::Module &Mod, const BinaryImage &Image,
                        Arch TargetArch);
 
+/// Admit an explicitly supplied replacement body, independently of the old
+/// function's lifted EH contract. The x64 source profile installs compiler
+/// CFI/FH3 records while preserving all original runtime rows. Its installation
+/// contract is implemented in COFFSourceImage, separately from lifted EH.
+llvm::Expected<COFFExceptionPatchPlan>
+planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
+                    Arch TargetArch);
+
 enum class COFFGeneratedLanguageModel : uint8_t {
   SEH,
   CxxFH3,

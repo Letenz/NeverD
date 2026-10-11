@@ -4992,3 +4992,52 @@ The committed-write observer regressions verify visibility before the next instr
 `RegistrationCallNoReturn` rejects changed instruction extents, targets, operation ranges, conditional calls and foreign architecture/format use. The realigned PE32 probe checks both an independently terminal decoded call and a retained fallthrough requiring a current receipt; invalid memory evidence cannot recreate an already absent ordinary edge.
 
 `SafeSEHReference.*` checks immutable SafeSEH membership, malformed or ambiguous storage, relocations, foreign architectures/formats and declaration order across shards. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` uses `NEVERD_NONLOCAL_FINALLY_INPUTS` to test 32 LLVM combinations of the native MSVC x86/x64 O0/O2 and GS fixtures with source optimization enabled and disabled. It verifies LLVM and resolved call signatures while requiring unsupported x86 native EH reconstruction to remain rejected. The focused Windows EH job downloads the native fixture artifact and runs this matrix; without the input directory the test is explicitly skipped.
+
+## Source and native object replacement tests
+
+`NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,
+atomic publication, original data bindings, native state and C++ exceptions.
+Its object cases use cross Clang plus LLD for malformed-input, relocation and
+byte-preservation checks even on a non-Linux host. Native ELF runtime cases run
+on Linux x64; Mach-O runtime cases run on Darwin ARM64. Set `NEVERD_TEST_NEVERC`
+to an optional NeverC executable to include its compiler cases. GCC C++ runtime
+cases additionally require a matching Linux x64 `g++`.
+Configure `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` with a compatible Clang
+path; the verified source profile uses Clang 22.1.6. This setting is separate
+from the compiler that builds NeverD and from other suites' fixture compilers.
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDNativeExceptionRewriteContractTests NeverDCOFFExceptionPatchTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDNativeExceptionRewriteContractTests|NeverDCOFFExceptionPatchTests)$' \
+  --output-on-failure --parallel 4
+```
+
+Use the corrected LLVM source described in [source patches](source-patching.md)
+for x64 PLT capability validation, with `NEVERD_TEST_REQUIRE_FIXED_LLVM=1`.
+Without this environment variable the regression probes the backend separately
+and requires an exact branch or fail-closed refusal. A refusal with the r3
+prebuilt is a passing safety test, not a passing runtime capability test.
+The ELF IR exception-runtime case is skipped with the known r3 prebuilt unless
+that capability-validation variable is set; native-object cases do not need
+this LLVM correction.
+The exception fixture's original target may throw, so the original compiler
+retains caller catch/cleanup paths. A no-throw original can erase those paths.
+The noexcept case installs a termination handler and checks its exact exit code.
+
+`SourcePatchPE` always cross-checks original/new unwind rows, separate writable
+storage, base-relocation publication, and refusal of active guard profiles or
+forged lifted EH metadata. Its FH3 runtime test additionally uses
+`NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and
+`NEVERD_TEST_WINDOWS_SDK_LIB` for x64 import-library directories. On a non-Windows
+host, `NEVERD_TEST_WINDOWS_RUNNER` must name an executable accepting the PE path
+and its arguments, returning the program exit code. Use a matching OS unwinder
+(the development run uses Wine 11); a CPU-only emulator is insufficient.
+These optional SDK files and runners are test inputs, not build dependencies.
+
+Before reviewing these changes, also build/run `NeverDLiftTests` and
+`NeverDPatchFullTests`, and run the Python SDK checks in
+[CONTRIBUTING.md](../CONTRIBUTING.md). Report platform/toolchain skips separately
+from passed tests. Object identity checks or cross-compilation alone do not
+establish operating-system unwind behavior.

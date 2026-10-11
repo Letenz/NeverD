@@ -34,6 +34,7 @@
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/Errc.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/WithColor.h"
@@ -444,6 +445,59 @@ CodegenResult Codegen::compile(llvm::Module &Mod, Arch TargetArch,
   return Result;
 }
 
+llvm::Error validateReplacementIR(const llvm::Module &Module, Arch TargetArch) {
+  auto Fail = [](const llvm::Twine &Detail) {
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "replacement IR: " + Detail);
+  };
+  std::string Detail;
+  llvm::raw_string_ostream OS(Detail);
+  if (llvm::verifyModule(Module, &OS))
+    return Fail("invalid module: " + Detail);
+  for (const llvm::GlobalVariable &Global : Module.globals())
+    if (Global.hasInitializer() && Global.getName().starts_with(kNdDataPrefix))
+      return Fail("reserved original-data symbol has an initializer: " +
+                  Global.getName());
+  if (const auto *Flag = Module.getModuleFlag("stack-probe-size")) {
+    const auto *Size = llvm::mdconst::dyn_extract<llvm::ConstantInt>(Flag);
+    if (!Size || Size->isZero() || Size->getValue().getActiveBits() > 63)
+      return Fail("invalid module stack-probe-size");
+  }
+  const bool InlineProbeOnly =
+      TargetArch == Arch::AArch64 && !Module.getTargetTriple().isOSWindows();
+  llvm::StringRef ModuleProbe;
+  if (InlineProbeOnly) {
+    if (const auto *Flag = Module.getModuleFlag("probe-stack")) {
+      const auto *Value = llvm::dyn_cast<llvm::MDString>(Flag);
+      if (!Value)
+        return Fail("invalid module probe-stack method");
+      ModuleProbe = Value->getString();
+    }
+  }
+  for (const llvm::Function &Function : Module) {
+    if (Function.isDeclaration())
+      continue;
+    if (Function.hasFnAttribute("stack-probe-size")) {
+      uint64_t Size = 0;
+      if (Function.getFnAttribute("stack-probe-size")
+              .getValueAsString()
+              .getAsInteger(0, Size) ||
+          Size == 0 || Size > INT64_MAX)
+        return Fail("invalid stack-probe-size on " + Function.getName());
+    }
+    const auto Probe =
+        Function.hasFnAttribute("probe-stack")
+            ? Function.getFnAttribute("probe-stack").getValueAsString()
+            : ModuleProbe;
+    if (InlineProbeOnly && !Probe.empty() && Probe != "inline-asm")
+      return Fail(
+          "unsupported AArch64 stack probe '" + Probe + "' on " +
+          Function.getName() +
+          "; use a compatible LLVM IR compiler or native object profile");
+  }
+  return llvm::Error::success();
+}
+
 llvm::mc_rewrite::RewriteResult
 Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
                            const llvm::mc_rewrite::RewriteOptions &Opts,
@@ -452,11 +506,10 @@ Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
                            llvm::StringRef());
 }
 
-llvm::mc_rewrite::RewriteResult
-Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
-                           const llvm::mc_rewrite::RewriteOptions &Opts,
-                           BinaryFormat ObjectFormat,
-                           llvm::StringRef TargetTriple) {
+llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
+    llvm::Module &Mod, Arch TargetArch,
+    const llvm::mc_rewrite::RewriteOptions &Opts, BinaryFormat ObjectFormat,
+    llvm::StringRef TargetTriple, RewriteInputKind InputKind) {
   llvm::mc_rewrite::RewriteResult Result;
   ensureTargets();
 
@@ -486,6 +539,14 @@ Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
     return Result;
   }
   Mod.setTargetTriple(TT);
+
+  if (InputKind == RewriteInputKind::ReplacementIR) {
+    if (auto Error = validateReplacementIR(Mod, TargetArch)) {
+      llvm::WithColor::error() << llvm::toString(std::move(Error)) << "\n";
+      Result.ImageValid = false;
+      return Result;
+    }
+  }
 
   std::string Err;
   auto *TheTarget = llvm::TargetRegistry::lookupTarget(TT, Err);
@@ -616,6 +677,8 @@ Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
   // any COFF target with a >4 KiB frame do. Harmless no-op on ELF/Mach-O, which
   // have no Windows-style frame probe.
   for (auto &F : Mod) {
+    if (InputKind == RewriteInputKind::ReplacementIR)
+      continue;
     if (F.hasFnAttribute("probe-stack"))
       F.removeFnAttr("probe-stack");
     if (F.hasFnAttribute("stack-probe-size"))
@@ -636,8 +699,13 @@ Codegen::compileForRewrite(llvm::Module &Mod, Arch TargetArch,
   for (auto &F : Mod) {
     if (F.isDeclaration())
       continue;
-    if (llvm::verifyFunction(F))
+    if (llvm::verifyFunction(F)) {
+      if (InputKind == RewriteInputKind::ReplacementIR) {
+        Result.ImageValid = false;
+        return Result;
+      }
       F.deleteBody();
+    }
   }
 
   llvm::legacy::PassManager PM;
