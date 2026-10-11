@@ -605,7 +605,12 @@ std::string Session::capabilities() {
       {"profile", std::string(JavaScriptNavigationProfile)},
       {"anchor_profile", std::string(SourceAnchorProfile)},
       {"max_steps", MaxJavaScriptNavigationSteps},
-      {"record_kinds", llvm::json::Array{"functions", "calls", "references"}},
+      {"record_kinds",
+       llvm::json::Array{"functions", "calls", "references", "features"}},
+      {"client_feature_profile", std::string(JavaScriptClientFeatureProfile)},
+      {"max_client_feature_records", MaxJavaScriptClientFeatureRecords},
+      {"max_client_feature_steps", MaxJavaScriptClientFeatureSteps},
+      {"client_feature_attribution", "source_syntax_only"},
       {"runtime_call_graph", false},
       {"resolves_runtime_values", false}});
   Analyses.emplace_back(llvm::json::Object{

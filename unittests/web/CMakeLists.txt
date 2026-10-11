@@ -83,6 +83,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceBundleTests.cpp
     SourceViewTests.cpp
     SourceNavigationTests.cpp
+    SourceFeatureTests.cpp
+    ClientFeatureCorpusTests.cpp
     LINK_COMPONENTS Web
   )
   target_compile_definitions(NeverDWebSourceTests PRIVATE

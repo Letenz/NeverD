@@ -2433,3 +2433,68 @@ history commits. Logs:
 `/tmp/neverd-claude-cross-upstream-{build,sdk,transports,provenance}.log`.
 Linux/Windows host qualification, additional container layouts and the other
 epic acceptance gaps remain; this increment does not close #714–#718.
+
+## Bounded client source syntax navigation — 2026-10-12
+
+`javascript-client-syntax-features-v1` adds paged tool, configuration,
+permission, MCP and hook candidates to the existing navigation operation.
+Generic navigation remains the authoritative owner of containment and lexical
+relationships. Feature admission/indexing, recognition and publication live in
+`lib/web/features/`; `SessionNavigation` composes and caches the two results.
+No C API symbol, evaluator, runtime or external analyzer is added. Every record
+has `source_syntax_only` confidence. Available coverage stays partial, including
+zero-match results; callback links describe source relationships, not runtime
+targets. Model validation, indexing, parent walks and matching share explicit
+work/record limits. Feature exhaustion preserves independent generic navigation.
+See the [profile](web-client-feature-profile.md).
+
+The captured Claude Code 2.1.296 macOS ARM64 package visits all 2,364 decoded
+units and 45,035,899 UTF-8 bytes. The interactive parser admits 2,354 units;
+three byte-limit, three parser-work and four syntax-inventory refusals remain
+explicit. No deadline expires in the recorded receipt. All admitted units finish
+the pattern inventory, producing 416 candidates: three tool, 88 configuration,
+165 permission, 110 MCP and 50 hook records. Forty-three callback source links
+and one permission-test containment link are retained. Those counts do not
+authenticate implementations or establish configuration precedence, effective
+policy, reachability or server behavior. Recovery has separately preserved and
+reparsed all 2,364 units. Two actual CLI selections with an unusable external-tool
+PATH qualify a positive permission-setting candidate and a zero-match result.
+Exact inputs, identities and limits are in the
+[qualification](web-client-feature-qualification.md). Logs:
+`/tmp/neverd-client-features-corpus-receipt.log`,
+`/tmp/neverd-client-features-corpus-receipt.xml` and
+`/tmp/neverd-client-features-claude-{1676,0392}.jsonl`.
+
+Eight new core cases plus five generic navigation cases pass; two SDK cases
+cover private metadata, paging, anchors and stale revisions. Worker/MCP cases
+compare the shared owner, confidence and availability contracts. Fixtures cover
+escaped/static versus computed names, spread, accessors, duplicate fields,
+reassignment, shadowing, dynamic scope, nested function boundaries, unrelated
+event literals, record exhaustion and foreign/unavailable models. The final
+92-step build and explicit four-step transport-test rebuild pass. The full
+705 unique Web cases have 704 passes and one expected ASAR-policy skip
+(90.79 seconds); selected transport/ABI checks have seven passes and one expected
+backend-omission skip (10.60 seconds). Logs:
+`/tmp/neverd-client-features-{build-final,transport-build,core-final,sdk,web-regression,transports}.log`.
+
+With JavaScript omitted, the 135-step build passes. The SDK stub test explicitly
+refuses the new `features` record query; seven transport/ABI checks pass and the
+backend-omission case skips (6.71 seconds). JavaScript is restored to ON after
+the 136-step build. All thirteen focused core cases, two SDK cases and seven
+transport/ABI checks pass again; the backend-omission case skips as expected
+(7.24 seconds). Logs:
+`/tmp/neverd-client-features-nojs-{configure,build,sdk,transports}.log` and
+`/tmp/neverd-client-features-restored-{configure,build,core,sdk,transports}.log`.
+No public ABI is added, and a separate complete-backend-omission rebuild is not
+claimed for this increment. LLVM formatting, diff whitespace and source
+provenance across 7,381 tracked files pass. The existing sixteen unclaimed
+native source-patch declarations still prevent claiming a global capability
+checker pass. Import-rooted attribution, configuration/dataflow, property
+dispatch, GUI/persistent reviews and the other epic acceptance gaps remain;
+this increment does not close #714–#718.
+
+After integrating `dev` at `0d2ae64ea`, all feature implementation and test files
+are byte-identical. The 164-step native/SDK/CLI/worker/MCP rebuild passes, followed
+by all thirteen focused core cases, two SDK cases and seven transport/ABI checks;
+the backend-omission case skips as expected (9.39 seconds). Logs:
+`/tmp/neverd-client-features-upstream-{build,core,sdk,transports}.log`.

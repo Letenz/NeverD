@@ -294,8 +294,12 @@ These are per-session retained-data limits, not whole-process RSS guarantees.
 
 `source_navigation_analyze(revision, source_id)` builds the bounded
 `javascript-source-navigation-v1` index, admitting lexical bindings if needed.
-`source_navigation_records` pages three record kinds: `functions`, `calls` and
-`references`. Each row retains its AST identity and original UTF-8 byte range.
+`source_navigation_records` pages four record kinds: `functions`, `calls`,
+`references` and `features`. Each row retains its AST identity and original
+UTF-8 byte range. Feature candidates have their own
+[`javascript-client-syntax-features-v1` profile](web-client-feature-profile.md),
+closed vocabulary, work/record limits and partial coverage. Their spelling or
+shape evidence does not authenticate APIs or establish effective policy.
 Functions expose source containment, body/name nodes, parameter count and
 declaration/initializer binding links. Calls expose the syntactic callee and
 its lexical reference/binding when available. Direct function expressions have
@@ -307,7 +311,9 @@ Containment describes source syntax, including parameter defaults and deferred
 class fields; it does not describe runtime activation. Initializer links remain
 source evidence after reassignment. `runtime_target: not_proven` and
 `runtime_call_graph: not_analyzed` are explicit. There is no property-call,
-tool-registration or API attribution based only on a name. If binding analysis
+tool-registration or API attribution based only on a name. Feature annotations
+remain explicitly syntactic, with separate coverage and failure status.
+If binding analysis
 is unavailable, syntax records remain available with partial status and absent
 lexical links. A navigation failure publishes no partial index. Queries are
 cached once per source/revision and share the source/node limits.

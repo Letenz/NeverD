@@ -40,6 +40,7 @@
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceBundles.h"
 #include "neverd/web/SourceEffects.h"
+#include "neverd/web/SourceFeatures.h"
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
@@ -62,7 +63,11 @@ struct Session::Impl {
   uint64_t PreviewSequence = 0;
   std::map<std::string, SourceAnalysis> Sources;
   std::map<std::string, SourceBindingAnalysis> Bindings;
-  std::map<std::string, SourceNavigation> Navigation;
+  struct NavigationResults {
+    SourceNavigation Evidence;
+    SourceFeatures Features;
+  };
+  std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {
     SourceValueAnalysis Values;
     SourceEffectAnalysis Effects;
