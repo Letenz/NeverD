@@ -1860,14 +1860,18 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
           return "&" + *Member;
         if (auto Slot = namedFrameSlot(*Inner))
           return "&" + *Slot;
-        // The constant is the table and the rest the offset into it.
+        // The constant is the table and the rest the offset into it.  The
+        // offset prints as the operand is, not as what peeling found under
+        // it: `(u64)(u8)i` indexes by the low byte of `i`, not by `i`.
         if (Base->Kind != ExprKind::Const && indexedImageBase(*Inner) == Off)
           if (auto Table = imageBackingAddress(Off->ConstVal)) {
             constexpr int AddPrec = 9;
+            const HighExpr &Index =
+                Off == Rhs ? *Inner->Operands[0] : *Inner->Operands[1];
             std::string S =
                 "(uintptr_t)" + *Table + " + " +
                 integerView(
-                    *Base,
+                    Index,
                     NdType::makeInt(getTargetRegInfo(Opts.TheArch).PointerSize,
                                     false),
                     AddPrec);

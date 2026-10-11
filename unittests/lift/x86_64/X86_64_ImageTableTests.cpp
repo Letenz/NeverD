@@ -42,3 +42,24 @@ int dispatch(int a) {
 )C",
                        "dispatch", {"dispatch", "table", "h0", "h1", "h2"});
 }
+
+// Clang turns the bit loop into a table lookup per byte.  The first index is
+// the hash's low byte, and each later one a byte XOR whose operand the table
+// yields: neither is the wider value C would compute from what is under the
+// extension.
+TEST_F(X86_64_ImageTable, ATableIndexKeepsItsWidth) {
+  expectRunsLikeSource(R"C(
+int crc8(int a) {
+  unsigned x = (unsigned)a * 2654435761u;
+  unsigned char crc = 0;
+  for (int i = 0; i < 4; i++) {
+    crc ^= (unsigned char)(x >> (i * 8));
+    for (int b = 0; b < 8; b++)
+      crc = (crc & 0x80) ? (unsigned char)((crc << 1) ^ 0x07)
+                         : (unsigned char)(crc << 1);
+  }
+  return crc;
+}
+)C",
+                       "crc8", {"crc8"});
+}
