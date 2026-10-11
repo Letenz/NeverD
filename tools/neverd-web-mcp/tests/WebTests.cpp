@@ -201,6 +201,39 @@ void sourceAndMaps(Harness &H) {
   H.same("web_source_map_segments", MapArgs);
 }
 
+void scopeRename(Harness &H) {
+  const auto Artifact = H.import(0);
+  const auto Source = H.same("web_source_analyze", {{"revision", H.Revision},
+                                                    {"artifact_id", Artifact},
+                                                    {"source_type", "script"}});
+  const Json Args{{"revision", H.Revision},
+                  {"source_id", Source.at("source_id")},
+                  {"pass", "scope_renaming"}};
+  const auto A = H.same("web_source_rewrite_analyze", Args);
+  require(A.at("profile") == "javascript-scope-rename-v1" &&
+              A.at("analysis_status") == "verified_local_rewrites" &&
+              A.at("accepted_count") == 4 &&
+              A.at("value_verification") == "not_applicable" &&
+              A.at("value_analysis_id").is_null() &&
+              A.at("binding_verification") ==
+                  "same_scopes_declarations_and_reference_resolution" &&
+              A.at("original_name_recovery") == false,
+          "MCP changed lexical rename evidence");
+  const auto Page =
+      H.same("web_source_rewrite_records",
+             {{"revision", H.Revision}, {"rewrite_id", A.at("rewrite_id")}});
+  require(Page.at("items").size() == 5, "Rename records missing");
+  for (const auto &R : Page.at("items"))
+    require(R.contains("binding_id") && R.contains("identifier_role") &&
+                !R.contains("before") && !R.contains("after"),
+            "Rename records lost their private evidence boundary");
+  redacted(A);
+  redacted(Page);
+  require(Page.dump().find("neverd_arg_") == std::string::npos &&
+              Page.dump().find("neverd_local_") == std::string::npos,
+          "MCP exposed generated names");
+}
+
 void archives(Harness &H, bool HasParser) {
   auto Artifact = H.import(1);
   const Json Args{{"revision", H.Revision},
@@ -409,9 +442,12 @@ int main() {
     const auto &Ops = Backend.at("operations");
     const bool HasParser =
         std::find(Ops.begin(), Ops.end(), "source_analyze") != Ops.end();
-    if (HasParser)
+    if (HasParser) {
       sourceAndMaps(H);
-    else
+      F.write("source", "function CANARY_NAME(CANARY_ARG){"
+                        "const CANARY_LOCAL=CANARY_ARG;return CANARY_LOCAL;}");
+      scopeRename(H);
+    } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);
     if (std::find(Ops.begin(), Ops.end(), "nexe_extract") != Ops.end()) {

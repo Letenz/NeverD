@@ -1732,6 +1732,65 @@ int main(int argc, char **argv) {
       }
     }
     {
+      if (hasBindings) {
+        const auto Input = fixture.root / "rename.js";
+        std::ofstream(Input) << "function SECRET_WEB_NAME(SECRET_WEB_ARG){"
+                                "const SECRET_WEB_LOCAL=SECRET_WEB_ARG;return "
+                                "SECRET_WEB_LOCAL;}";
+        const auto Before = web.revision(), PreviousProject = web.projectId();
+        const Json Import{{"schema_version", 1}, {"path", Input.string()}};
+        const auto Preview = web.execute("web_import_preview", Import);
+        const auto Commit = web.execute(
+            "web_import_commit", {{"schema_version", 1},
+                                  {"preview_token", Preview["preview_token"]}});
+        reply =
+            process.call("web_import_preview", Import, Before, PreviousProject);
+        reply =
+            process.call("web_import_commit",
+                         {{"schema_version", 1},
+                          {"preview_token", reply["payload"]["preview_token"]}},
+                         Before, PreviousProject);
+        check(reply["payload"] == Commit, "Rename import differs");
+        const auto Revision = web.revision(), Project = web.projectId();
+        const auto Items = web.execute(
+            "web_artifacts", {{"schema_version", 1}, {"revision", Revision}});
+        const Json SourceArgs{{"schema_version", 1},
+                              {"revision", Revision},
+                              {"artifact_id", Items["items"][0]["artifact_id"]},
+                              {"source_type", "script"}};
+        const auto Source = web.execute("web_source_analyze", SourceArgs);
+        reply =
+            process.call("web_source_analyze", SourceArgs, Revision, Project);
+        check(reply["payload"] == Source, "Rename source differs");
+        const Json Args{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"source_id", Source["source_id"]},
+                        {"pass", "scope_renaming"}};
+        const auto Analysis = web.execute("web_source_rewrite_analyze", Args);
+        reply =
+            process.call("web_source_rewrite_analyze", Args, Revision, Project);
+        check(reply["payload"] == Analysis &&
+                  Analysis["profile"] == "javascript-scope-rename-v1" &&
+                  Analysis["analysis_status"] == "verified_local_rewrites" &&
+                  Analysis["accepted_count"] == 4 &&
+                  Analysis["value_verification"] == "not_applicable" &&
+                  Analysis["value_analysis_id"].is_null() &&
+                  Analysis["binding_verification"] ==
+                      "same_scopes_declarations_and_reference_resolution" &&
+                  Analysis["original_name_recovery"] == false,
+              "Worker changed lexical rename evidence");
+        const Json Page{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"rewrite_id", Analysis["rewrite_id"]}};
+        const auto Records = web.execute("web_source_rewrite_records", Page);
+        reply =
+            process.call("web_source_rewrite_records", Page, Revision, Project);
+        check(reply["payload"] == Records && Records["items"].size() == 5 &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos &&
+                  reply.dump().find("neverd_arg_") == std::string::npos &&
+                  reply.dump().find("neverd_local_") == std::string::npos,
+              "Worker rename records differ or expose names");
+      }
       const auto streamRoot = fixture.root / "streams";
       fs::create_directory(streamRoot);
       std::ofstream(streamRoot / "a.jsonl")

@@ -680,6 +680,17 @@ failure rollback, foreign files, symlinks and renamed/replaced output paths.
 immutable captured bytes and receipt-bound CLI export with an unusable PATH.
 Worker/MCP tests compare both passes and record pages against the shared API;
 MCP excludes raw export and arbitrary output paths.
+`WebSourceRename` checks whole-binding replacement, shadowing/closures, decoded
+identifier collisions, unchanged property keys/labels, name inference, shorthand,
+non-simple parameter environments, writes, global/module names, dynamic scope,
+budgets and inverse tampering. Its optional pinned Claude case uses original
+Bun modules: module 1 retains excluded rest parameters and exports while module
+228 refuses the record ceiling without publishing a partial candidate.
+`WebRenameSDK` checks the distinct lexical profile, private original/generated
+names, shared cache limits, revision-bound receipts and CLI export without an
+external-tool PATH. Worker/MCP check the same profile and record evidence.
+`WebRewriteSDK.PrimitiveV1ReceiptsRemainExactlyCompatible` compares both older
+passes against fixed pre-rename export bytes, IDs, tokens and SHA-256 hashes.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative

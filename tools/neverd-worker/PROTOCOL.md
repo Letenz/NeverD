@@ -211,7 +211,7 @@ Heartbeat retains its native fields and adds
 | `web_source_binding_records` | Exact `revision`, `source_id`, `record_kind: scopes/bindings/declarations/references`, optional page fields |
 | `web_source_semantics_analyze` | Exact `revision`, `source_id`; returns bounded primitive/effect analysis status and counts |
 | `web_source_semantic_records` | Exact `revision`, `source_id`, optional page fields; private value kinds/status and immediate/deferred effect categories only |
-| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding`; private candidate and metadata-only local evaluation receipt |
+| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding/scope_renaming`; private candidate and metadata-only profile-specific receipt |
 | `web_source_rewrite_records` | Exact `revision`, `rewrite_id`, optional page fields; fixed reasons and original/candidate ranges, no literal bytes or per-patch hashes |
 | `web_source_modules_analyze` | Exact `revision`, `source_id`; module inventory and admitted-file comparison; derived HTML inline sources retain explicit document/script/base context, without runtime resolution |
 | `web_source_module_records` | Exact `revision`, `source_id`, `record_kind: requests/imports/exports/attributes`, optional page fields; reported link profile/context and nullable URL presence flags, no specifier/name/path values |

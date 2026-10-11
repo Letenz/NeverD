@@ -432,8 +432,9 @@ NEVERD_API const char *neverd_web_package_behavior_records_json(
     const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
     uint64_t Limit);
 
-/// Verify local primitive substitutions for an explicit string_recovery or
-/// constant_folding pass. Returns metadata and a raw-local-export receipt;
+/// Verify local substitutions for an explicit string_recovery,
+/// constant_folding or scope_renaming pass. Returns profile-specific evidence
+/// and a raw-local-export receipt;
 /// original/candidate text and individual replacement hashes remain private.
 /// These receipts do not establish whole-program or source-reflection equality.
 NEVERD_API const char *neverd_web_source_rewrite_analyze_json(

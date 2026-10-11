@@ -44,7 +44,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and selected source behavior/inventory joins implemented; two official Claude Code npm packages qualify original digest and payload evidence | Install-entry propagation, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
-| P5 reversible source projections | Reviewed display, original/projected ranges and explicit primitive rewrites with pass-bound receipts, local semantic checks, exact inverse and refusal tests implemented | Scope renaming, branch/control-flow transforms and broader qualification remain |
+| P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites and bounded whole-binding renaming with distinct profiles, exact inverse and refusal tests | Branch/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader, nexe 4.0.0-rc.7 EOF reader and pkg 5.8.1 uncompressed VFS reader; shared source/asset consumers and producer qualification below | Tauri/Wails bridges/assets and broader host/producer qualification remain; other Node-family layouts stay unsupported |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
@@ -1890,3 +1890,60 @@ The [combined matrix](web-native-javascript-matrix.md) now records independent
 runtime/platform/map/cache contracts and explicit per-sample cross-track
 statuses; it does not promote partial navigation or absent protocol captures
 to completed acceptance.
+
+## Reversible lexical renaming — 2026-10-11
+
+`javascript-scope-rename-v1` adds an explicit `scope_renaming` pass using the
+C++ parser and lexical binding model. Independent planning review excluded all
+bindings owned by functions with non-simple parameters: their implicit
+parameter-to-variable value copies are outside the current lexical graph.
+Other exclusions cover dynamic scope, root bindings, function/class names,
+inferred names, writes, shorthand and unsupported declaration forms. Accepted
+bindings use deterministic collision-free names and complete identifier sets.
+The candidate is reparsed; complete AST, scopes, declarations, bindings,
+references and per-node scope ownership are compared before exact inversion.
+See the [profile](web-scope-rename-profile.md).
+
+Core planning and validation are separate rewrite components. Session, SDK,
+CLI, worker and MCP use the existing shared cache and receipt-bound local
+export. Rename metadata has binding evidence and no primitive-value claim;
+private names stay out of previews. Fixed pre-change primitive receipts prove
+that both older passes retain exact IDs, export tokens, bytes and SHA-256.
+The initial CLI test exposed a reused test-output file retaining trailing
+bytes; explicitly truncating the harness files fixed it without a product
+change. The focused SDK and compatibility tests then passed.
+
+Actual NeverD CLI extraction and rewriting of original Claude Code 2.1.296 Bun
+module 1 accepted 46 identifier occurrences and refused 17 binding declarations.
+The exported original exactly matched the earlier recovered member; the
+1,908-byte candidate reparsed and restored its 1,362-byte original exactly.
+Module 228 instead exceeded the unchanged 4,096-record ceiling and published
+no candidate, partial records or export receipt. Both outcomes are exercised
+from the original hash-pinned binary in the C++ core test. The
+[qualification record](web-claude-code-qualification.md) pins the hashes and
+local output; no target or runtime was executed and no sample source is
+committed.
+
+Enabled Web verification passed 550 of 557 cases with every existing producer
+corpus and the complete 2,345-unit Claude recovery supplied. Seven explicit
+skips cover six unavailable LLVM Zstd map cases and the ASAR-policy omission
+case. All ten worker regressions, all five MCP suites including real Claude,
+and enabled ABI discovery passed. Logs:
+`/tmp/neverd-rename-full-web.log`, `/tmp/neverd-rename-worker-all.log`,
+`/tmp/neverd-rename-mcp.log` and
+`/tmp/neverd-rename-availability-enabled.log`.
+
+With JS parsing disabled, ABI discovery, worker Web and four MCP suites passed;
+the source-dependent Claude MCP test skipped. With the whole Web backend
+disabled, both ABI discovery/stub cases and four MCP suites passed; Web worker
+and Claude MCP cases explicitly skipped. The new pass reports
+`capability_unavailable` through the existing API when its owner is absent.
+Logs: `/tmp/neverd-rename-nojs-{api,worker,mcp}.log` and
+`/tmp/neverd-rename-off-{api,worker,mcp}.log`.
+
+Both Web flags were restored to ON. The owning rebuild and all 31 rewrite
+core/SDK tests, ten worker suites, five MCP suites, ABI discovery and the
+23-capability manifest check passed on `1d9652797`. Logs:
+`/tmp/neverd-rename-restored-{build,web,worker,mcp,api}.log` and
+`/tmp/neverd-rename-capabilities.log`. This increment does not complete general
+control-flow simplification or the remaining four tracks.

@@ -46,7 +46,8 @@ when the embedded parser is disabled. No-input launches omit import preview.
 
 Tools use `neverd_web_` names and schema version 1; `schema_version` defaults to
 1 when omitted. The catalog covers import, metadata, artifacts, source/maps,
-bindings, primitive semantics/rewrite receipts, modules/bundles/navigation, structural views,
+bindings, primitive semantics and primitive/lexical rewrite receipts,
+modules/bundles/navigation, structural views,
 anchors, Bun/SEA/nexe/pkg/ASAR extraction, package/archive/integrity/diff evidence,
 selected Node source/package behavior metadata,
 Electron/HTML, passive HAR/streams/interfaces and native loader metadata.
@@ -63,8 +64,10 @@ loader metadata; `native_analyze` is omitted. HAR/stream tools never replay
 traffic or access the network. Source inference and recorded observations keep
 their separate evidence classes. Tool annotations mark metadata reads as
 read-only; analyses and publication can mutate process-local caches.
-Primitive rewrite tools expose the explicitly selected pass and paged
-evaluation receipts only. Original/replacement text and per-patch literal
+Rewrite tools expose the explicitly selected `string_recovery`,
+`constant_folding` or `scope_renaming` pass and paged profile-specific receipts.
+Lexical graph validation stays distinct from primitive SameValue evidence.
+Original/replacement text and per-patch literal
 hashes stay private; `source_rewrite_export` is local C API/CLI only.
 
 ## Resource bounds and ownership

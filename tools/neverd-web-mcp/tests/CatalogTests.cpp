@@ -86,6 +86,8 @@ void closedArguments() {
   Rewrite.payload(RewriteArgs);
   RewriteArgs["pass"] = "constant_folding";
   Rewrite.payload(RewriteArgs);
+  RewriteArgs["pass"] = "scope_renaming";
+  Rewrite.payload(RewriteArgs);
   RewriteArgs["pass"] = "execute";
   refuses([&] { Rewrite.payload(RewriteArgs); });
   const auto &IPC = C.find("neverd_web_electron_ipc_analyze");

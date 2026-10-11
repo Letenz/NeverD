@@ -122,6 +122,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/SourceXHR.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
+    rewrite/Rename.cpp
+    rewrite/RenameValidate.cpp
     rewrite/Primitive.cpp
     rewrite/Apply.cpp
     rewrite/Validate.cpp

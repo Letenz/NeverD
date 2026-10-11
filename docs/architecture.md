@@ -537,13 +537,20 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 explicit primitive passes using the existing binding/value/effect owners;
 `Primitive` emits closed values, `Validate` checks SameValue and the complete
 unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`Rename` selects complete function-local bindings and collision-free names;
+`RenameValidate` reparses and compares all syntax, scope ownership, declarations
+and reference resolution using the same lexical owner. Non-simple parameter
+environments and name-sensitive declarations remain excluded. Pass/profile
+selection has one shared authority; primitive identities and serialized receipts
+remain unchanged. Rename evidence does not borrow primitive SameValue claims.
 `SessionRewrite` retains at most two private results and publishes metadata.
 Its raw local export requires a pass/source/revision-bound receipt;
 `rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
 This transaction does not change Bun export's retained-partial-evidence policy.
 Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
 claim source-reflection or whole-program equivalence. See the
-[primitive rewrite profile](web-source-rewrite-profile.md).
+[primitive rewrite profile](web-source-rewrite-profile.md) and
+[lexical rename profile](web-scope-rename-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.

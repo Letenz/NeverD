@@ -107,10 +107,11 @@ generated or implied.
 
 ## Required later work
 
-Issue #714 remains open in scope. Scope-aware renaming, justified branch and
-statement transforms, broader control-flow deobfuscation and their independent
-receipts are not provided by these two primitive passes. The other four JS
-epics also retain their separately documented gaps.
+Issue #714 remains open in scope. The separate
+[lexical rename profile](web-scope-rename-profile.md) adds `scope_renaming` while
+preserving these two primitive passes and their receipts exactly. Justified
+branch and statement transforms and broader control-flow deobfuscation remain
+outside these profiles. The other four JS epics retain their documented gaps.
 
 Language references: [SameValue](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-samevalue),
 [directive prologues](https://tc39.es/ecma262/multipage/ecmascript-language-source-code.html#sec-directive-prologues-and-the-use-strict-directive),
