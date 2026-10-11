@@ -124,6 +124,37 @@ protected:
     test::writeFile(Path, Bytes);
     return Path;
   }
+  std::filesystem::path entryContextInput() {
+    auto Bytes = Original.File;
+    const auto *Program = Original.section(".prog");
+    // Save a nonvolatile register, move the stack, retain the two arguments,
+    // and alter an XMM register and the caller's shadow space. Restore the
+    // required incoming state after the first stop; R8 deliberately stays 42.
+    const uint8_t Code[] = {0x55,                         // push rbp
+                            0x48, 0x83, 0xec, 0x20,       // sub rsp,32
+                            0x48, 0x8d, 0x6c, 0x24, 0x20, // lea rbp,[rsp+32]
+                            0x48, 0x89, 0x0c, 0x24,       // mov [rsp],rcx
+                            0x48, 0x89, 0x54, 0x24, 0x08, // mov [rsp+8],rdx
+                            0x49, 0xc7, 0xc0, 0x2a, 0,    0, 0, // mov r8,42
+                            0x66, 0x48, 0x0f, 0x6e, 0xf1,       // movq xmm6,rcx
+                            0x48, 0x89, 0x4c, 0x24, 0x30, // mov [rsp+48],rcx
+                            0x48, 0xc7, 0x44, 0x24, 0x30, 0, 0,
+                            0,    0,                // mov qword [rsp+48],0
+                            0x66, 0x0f, 0xef, 0xf6, // pxor xmm6,xmm6
+                            0x48, 0x83, 0xc4, 0x20, // add rsp,32
+                            0x5d,                   // pop rbp
+                            0x90, 0xc3};            // nop; ret
+    if (!Program || Program->FileSize < sizeof(Code)) {
+      ADD_FAILURE() << "driver context control has no code storage";
+      return {};
+    }
+    std::copy(std::begin(Code), std::end(Code),
+              Bytes.begin() + Program->FileOffset);
+    write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+    const auto Path = Scratch / "entry-context.sys";
+    test::writeFile(Path, Bytes);
+    return Path;
+  }
   DriverOptions scenario() const {
     DriverOptions D;
     D.Backend = GetParam().Kind;
@@ -510,6 +541,198 @@ private:
   uint32_t Last = 0;
   bool Fail;
 };
+
+class DriverContextObserver final : public ProcessObserver {
+public:
+  explicit DriverContextObserver(std::vector<uint64_t> Stops)
+      : Stops(std::move(Stops)) {}
+  std::shared_ptr<const ProcessRuntimeState> Initial;
+  std::vector<std::shared_ptr<const ProcessRuntimeState>> Metadata, Contents;
+  llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
+    auto State = P.runtimeState(true);
+    if (!State)
+      return State.takeError();
+    Initial = std::move(*State);
+    Base = P.inputModule()->Base;
+    return next();
+  }
+  llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  watched(ProcessView &P, uint64_t) override {
+    auto State = P.runtimeState(false);
+    if (!State)
+      return State.takeError();
+    Metadata.push_back(std::move(*State));
+    State = P.runtimeState(true);
+    if (!State)
+      return State.takeError();
+    Contents.push_back(std::move(*State));
+    ++Index;
+    if (Index == Stops.size())
+      return std::nullopt;
+    return next();
+  }
+
+private:
+  std::vector<ExecutionWatch> next() const {
+    return {{Base + Stops.at(Index), 1}};
+  }
+  std::vector<uint64_t> Stops;
+  uint64_t Base = 0;
+  size_t Index = 0;
+};
+
+TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
+  const auto Input = entryContextInput();
+  ASSERT_FALSE(HasFailure());
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    auto D = scenario();
+    D.Contract = Contract;
+    DriverContextObserver Observer({Original.section(".prog")->RVA + 36});
+    auto Run = observeDriver(Input, D, Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    EXPECT_EQ(Run->Instructions, 8u);
+    ASSERT_TRUE(Observer.Initial);
+    const auto &Initial =
+        static_cast<const WindowsDriverState &>(*Observer.Initial);
+    ASSERT_TRUE(Initial.Entry);
+    const auto &Start = *Initial.Entry;
+    EXPECT_EQ(Start.Registers, Start.InitialRegisters);
+    EXPECT_EQ(Start.Frame, Start.InitialFrame);
+    EXPECT_TRUE(Start.DriverEntryActive);
+    EXPECT_FALSE(Initial.hasAdditionalDependencies());
+    const uint64_t SP = Start.Registers.at(CPURegister::X64SP)[0];
+    const uint64_t Driver = Start.Registers.at(CPURegister::X64CX)[0];
+    const uint64_t Path = Start.Registers.at(CPURegister::X64DX)[0];
+    EXPECT_EQ(Start.Registers.size(), 36u);
+    ASSERT_NE(Driver, 0u);
+    ASSERT_NE(Path, 0u);
+    ASSERT_EQ(Observer.Metadata.size(), 1u);
+    ASSERT_EQ(Observer.Contents.size(), 1u);
+    for (const auto &State :
+         {Observer.Metadata.front(), Observer.Contents.front()}) {
+      const auto &Captured = static_cast<const WindowsDriverState &>(*State);
+      ASSERT_TRUE(Captured.Entry);
+      const auto &Entry = *Captured.Entry;
+      EXPECT_EQ(Entry.InitialRegisters, Start.InitialRegisters);
+      EXPECT_EQ(Entry.InitialFrame, Start.InitialFrame);
+      EXPECT_EQ(Entry.Registers.size(), 36u);
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP)[0], SP - 40);
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64BP)[0], SP - 8);
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64R8)[0], 42u);
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64V6),
+                (RegisterValue{Driver, 0}));
+      auto Frame = Start.Frame;
+      llvm::support::endian::write64le(Frame.data() + 8, Driver);
+      EXPECT_EQ(Entry.Frame, Frame);
+      EXPECT_TRUE(Entry.DriverEntryActive);
+      EXPECT_EQ(Captured.Reasons,
+                (std::vector<std::string>{"changed DriverEntry invocation "
+                                          "context"}));
+      if (State == Observer.Metadata.front()) {
+        EXPECT_FALSE(Entry.StackBytes);
+        continue;
+      }
+      ASSERT_TRUE(Entry.StackBytes);
+      ASSERT_EQ(Entry.StackBytes->size(), Entry.StackSize);
+      ASSERT_GE(SP - 40, Entry.StackBase);
+      const uint64_t Offset = SP - 40 - Entry.StackBase;
+      ASSERT_LE(Offset + 80, Entry.StackSize);
+      const auto *Bytes = Entry.StackBytes->data() + Offset;
+      EXPECT_EQ(llvm::support::endian::read64le(Bytes), Driver);
+      EXPECT_EQ(llvm::support::endian::read64le(Bytes + 8), Path);
+      EXPECT_EQ(llvm::support::endian::read64le(Bytes + 32),
+                Start.Registers.at(CPURegister::X64BP)[0]);
+      EXPECT_TRUE(
+          std::equal(Entry.Frame.begin(), Entry.Frame.end(), Bytes + 40));
+      ASSERT_TRUE(Start.StackBytes);
+      EXPECT_NE(*Entry.StackBytes, *Start.StackBytes);
+    }
+  }
+}
+
+TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
+  const auto Input = entryContextInput();
+  ASSERT_FALSE(HasFailure());
+  DriverContextObserver Observer({Original.section(".prog")->RVA + 36,
+                                  Original.section(".prog")->RVA + 54});
+  auto Run = observeDriver(Input, scenario(), Observer);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+  EXPECT_EQ(Run->Instructions, 12u);
+  ASSERT_EQ(Observer.Contents.size(), 2u);
+  const auto &Before =
+      static_cast<const WindowsDriverState &>(*Observer.Contents[0]);
+  const auto &After =
+      static_cast<const WindowsDriverState &>(*Observer.Contents[1]);
+  ASSERT_TRUE(Before.Entry);
+  ASSERT_TRUE(After.Entry);
+  EXPECT_TRUE(Before.hasAdditionalDependencies());
+  EXPECT_FALSE(After.hasAdditionalDependencies());
+  const auto &Entry = *After.Entry;
+  EXPECT_EQ(Entry.InitialRegisters, Before.Entry->InitialRegisters);
+  EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
+            Entry.InitialRegisters.at(CPURegister::X64SP));
+  EXPECT_EQ(Entry.Registers.at(CPURegister::X64BP),
+            Entry.InitialRegisters.at(CPURegister::X64BP));
+  EXPECT_EQ(Entry.Registers.at(CPURegister::X64V6),
+            Entry.InitialRegisters.at(CPURegister::X64V6));
+  EXPECT_EQ(Entry.Frame, Entry.InitialFrame);
+  EXPECT_NE(Before.Entry->Frame, Entry.Frame);
+  EXPECT_EQ(Entry.Registers.at(CPURegister::X64R8)[0], 42u);
+  ASSERT_TRUE(Entry.StackBytes);
+  ASSERT_TRUE(Before.Entry->StackBytes);
+  EXPECT_NE(*Entry.StackBytes, *Before.Entry->StackBytes);
+}
+
+TEST_P(UnpackDriver, LaterInvocationsRetainTheOriginalEntryBaseline) {
+  class InvocationObserver final : public ProcessObserver {
+  public:
+    std::vector<std::shared_ptr<const ProcessRuntimeState>> States;
+    llvm::Expected<std::vector<ExecutionWatch>>
+    started(ProcessView &P) override {
+      auto State = P.runtimeState(false);
+      if (!State)
+        return State.takeError();
+      States.push_back(std::move(*State));
+      return std::vector<ExecutionWatch>{};
+    }
+    llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+    invoking(ProcessView &P) override {
+      auto State = started(P);
+      if (!State)
+        return State.takeError();
+      return std::nullopt;
+    }
+    llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+    watched(ProcessView &, uint64_t) override {
+      return llvm::createStringError("unexpected driver invocation watch");
+    }
+  } Observer;
+  auto Run = observeDriver(NEVERD_UNPACK_DRIVER_FIXTURE, scenario(), Observer);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+  EXPECT_TRUE(Run->UnloadCompleted);
+  ASSERT_EQ(Observer.States.size(), 6u);
+  const auto &First =
+      static_cast<const WindowsDriverState &>(*Observer.States.front());
+  ASSERT_TRUE(First.Entry);
+  for (size_t I = 0; I < Observer.States.size(); ++I) {
+    const auto &State =
+        static_cast<const WindowsDriverState &>(*Observer.States[I]);
+    ASSERT_TRUE(State.Entry);
+    EXPECT_EQ(State.Entry->InitialRegisters, First.Entry->InitialRegisters);
+    EXPECT_EQ(State.Entry->InitialFrame, First.Entry->InitialFrame);
+    EXPECT_EQ(State.Entry->DriverEntryActive, I == 0);
+    EXPECT_FALSE(State.Entry->StackBytes);
+    if (I)
+      EXPECT_NE(std::find(State.Reasons.begin(), State.Reasons.end(),
+                          "changed DriverEntry invocation context"),
+                State.Reasons.end());
+  }
+}
 
 TEST_P(UnpackDriver, CommittedWriteWatchesSuspendBeforeTheNextInstruction) {
   const auto Input = writeWatchInput();
