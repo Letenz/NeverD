@@ -453,6 +453,20 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
+Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
+`WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
+retained extractor ancestry, foreign namespaces and atomic aggregate refusal.
+`WebNodeBehaviorSDK.*` checks 16-source selection independent of the four-result
+cache, revisions, private-value canaries, truncated entry lists, archive/Bun/SEA
+association and CLI processes with an unusable PATH. Supply the pinned
+`NEVERD_CLAUDE_CODE_21296_ELF` and `NEVERD_CLAUDE_CODE_21296_NPM_DIR` inputs for
+the two optional real source cases. `WebSourceDeclarations.*` and the class
+cases in origins/paths cover the shared declaration projection. Changes to
+that shared boundary require the owning Web directory, worker/MCP parity and
+parser/backend omission checks, followed by restoration of the enabled build.
+See the [Node behavior profile](web-node-behavior-profile.md).
+
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
 and independent metadata/work bounds. `WebDesktopSDK.*` checks distinct profile

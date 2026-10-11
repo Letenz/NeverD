@@ -373,6 +373,31 @@ NEVERD_API const char *neverd_web_source_semantic_records_json(
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize,
     uint64_t Offset, uint64_t Limit);
 
+/// Fixed Node API call syntax; never runtime identity, execution or a malware
+/// verdict. Arguments are opaque ordinal/node anchors, not inferred overloads.
+NEVERD_API const char *neverd_web_node_behavior_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
+NEVERD_API const char *neverd_web_node_behavior_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Options is {"schema_version":1,"source_ids":[...]} with 1..16 retained
+/// source IDs. Joins exact package files and stored Bun/SEA delivery ancestry
+/// only; unknown package ownership and unavailable source results remain
+/// explicit.
+NEVERD_API const char *neverd_web_package_behavior_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// RecordKind is sources or records. Limit is 1..512. No raw paths, command
+/// arguments, payload values or per-value hashes are exposed.
+NEVERD_API const char *neverd_web_package_behavior_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
 /// Verify local primitive substitutions for an explicit string_recovery or
 /// constant_folding pass. Returns metadata and a raw-local-export receipt;
 /// original/candidate text and individual replacement hashes remain private.

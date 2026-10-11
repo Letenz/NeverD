@@ -74,6 +74,18 @@ public:
   std::string analyzePackages(std::string_view ExpectedRevision,
                               std::string_view ArtifactID,
                               std::string_view InputKind);
+  std::string analyzeNodeBehavior(std::string_view ExpectedRevision,
+                                  std::string_view SourceID);
+  std::string nodeBehaviorRecords(std::string_view ExpectedRevision,
+                                  std::string_view BehaviorID, uint64_t Offset,
+                                  uint64_t Limit) const;
+  std::string analyzePackageBehavior(std::string_view ExpectedRevision,
+                                     std::string_view PackageAnalysisID,
+                                     std::string_view OptionsJSON);
+  std::string packageBehaviorRecords(std::string_view ExpectedRevision,
+                                     std::string_view BehaviorID,
+                                     std::string_view RecordKind,
+                                     uint64_t Offset, uint64_t Limit) const;
   std::string packageRecords(std::string_view ExpectedRevision,
                              std::string_view AnalysisID,
                              std::string_view RecordKind, uint64_t Offset,

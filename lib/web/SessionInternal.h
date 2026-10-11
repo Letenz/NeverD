@@ -23,6 +23,7 @@
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
 #include "neverd/web/Interfaces.h"
+#include "neverd/web/NodeBehavior.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
@@ -77,6 +78,8 @@ struct Session::Impl {
   std::map<std::string, ElectronIPC> ElectronIPCs;
   std::map<std::string, ElectronEntries> ElectronEntryAnalyses;
   std::map<std::string, PackageAnalysis> PackageAnalyses;
+  std::map<std::string, NodeBehavior> NodeBehaviors;
+  std::map<std::string, PackageBehavior> PackageBehaviors;
   std::map<std::string, PackageDiff> PackageDiffs;
   std::map<std::string, PackageArchive> PackageArchives;
   std::map<std::string, PackageIntegrityResult> PackageIntegrity;

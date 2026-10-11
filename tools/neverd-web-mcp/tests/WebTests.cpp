@@ -272,7 +272,7 @@ void passiveInputs(Harness &H) {
           "Stream facts or evidence class changed");
 }
 
-void zipArchive(Harness &H) {
+void zipArchive(Harness &H, bool HasParser) {
   const auto Artifact = H.import(7);
   const auto A = H.same(
       "web_package_archive_extract",
@@ -290,6 +290,41 @@ void zipArchive(Harness &H) {
   H.same("web_package_records", {{"revision", H.Revision},
                                  {"analysis_id", P.at("package_analysis_id")},
                                  {"record_kind", "scripts"}});
+  if (HasParser) {
+    const auto Source =
+        H.same("web_source_analyze",
+               {{"revision", H.Revision},
+                {"artifact_id", Page.at("items")[2].at("member_id")},
+                {"source_type", "commonjs"}});
+    const Json Args{{"revision", H.Revision},
+                    {"source_id", Source.at("source_id")}};
+    const auto Behavior = H.same("web_node_behavior_analyze", Args);
+    require(Behavior.at("record_count") == 1 &&
+                Behavior.at("runtime_api_verified") == false,
+            "MCP changed Node syntax qualification");
+    const auto Records =
+        H.same("web_node_behavior_records",
+               {{"revision", H.Revision},
+                {"node_behavior_id", Behavior.at("node_behavior_id")}});
+    require(Records.at("items")[0].at("api_class") == "child_process.execFile",
+            "MCP lost the fixed Node API class");
+    const Json Selection{{"revision", H.Revision},
+                         {"package_analysis_id", P.at("package_analysis_id")},
+                         {"source_ids", Json::array({Source.at("source_id")})}};
+    const auto Aggregate = H.same("web_package_behavior_analyze", Selection);
+    require(Aggregate.at("selection_complete") == false &&
+                Aggregate.at("record_count") == 1,
+            "MCP changed selected package coverage");
+    for (const auto *Kind : {"sources", "records"})
+      redacted(
+          H.same("web_package_behavior_records",
+                 {{"revision", H.Revision},
+                  {"package_behavior_id", Aggregate.at("package_behavior_id")},
+                  {"record_kind", Kind}}));
+    auto Bad = Selection;
+    Bad["execute"] = true;
+    invalid([&] { H.get("web_package_behavior_analyze", Bad); });
+  }
   for (const auto *Kind : {"nwjs", "vsix"}) {
     const auto M = H.same("web_desktop_manifest_analyze",
                           {{"revision", H.Revision},
@@ -361,11 +396,14 @@ int main() {
     F.write(
         "map",
         R"({"version":3,"sources":["CANARY.js"],"sourcesContent":["throw 'CANARY';"],"mappings":"AAAA"})");
-    F.write("zip", neverd::web::test::ZipFixture(
-                       {{"package.json",
-                         R"({"name":"CANARY","scripts":{"install":"CANARY"}})"},
-                        {"opaque", "CANARY", 0, 1}})
-                       .Bytes);
+    F.write("zip",
+            neverd::web::test::ZipFixture(
+                {{"package.json",
+                  R"({"name":"CANARY","scripts":{"install":"CANARY"}})"},
+                 {"opaque", "CANARY", 0, 1},
+                 {"install.js",
+                  "require('node:child_process').execFile('CANARY',options);"}})
+                .Bytes);
     const auto &Ops = Backend.at("operations");
     const bool HasParser =
         std::find(Ops.begin(), Ops.end(), "source_analyze") != Ops.end();
@@ -378,7 +416,7 @@ int main() {
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&
           Analysis.value("available", false))
-        zipArchive(H);
+        zipArchive(H, HasParser);
     WebTools Isolated(Inputs);
     const auto Error =
         evidence(Isolated.call("neverd_web_metadata", Json::object()), true);

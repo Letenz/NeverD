@@ -323,6 +323,28 @@ std::string Session::capabilities() {
   Operations.emplace_back("source_semantics_analyze");
   Operations.emplace_back("source_semantic_records");
   Operations.emplace_back("source_rewrite_analyze");
+  Operations.emplace_back("node_behavior_analyze");
+  Operations.emplace_back("node_behavior_records");
+  Operations.emplace_back("package_behavior_analyze");
+  Operations.emplace_back("package_behavior_records");
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "node_source_behavior"},
+                         {"profile", std::string(NodeBehaviorProfile)},
+                         {"max_records", MaxNodeBehaviorRecords},
+                         {"max_argument_anchors", MaxNodeBehaviorArguments},
+                         {"max_steps", MaxNodeBehaviorSteps},
+                         {"max_cached_sources", MaxCachedNodeBehaviors},
+                         {"max_selected_sources", MaxPackageBehaviorSources},
+                         {"max_selected_bytes", MaxPackageBehaviorBytes},
+                         {"max_selected_nodes", MaxPackageBehaviorNodes},
+                         {"max_ancestry_depth", MaxPackageBehaviorAncestry},
+                         {"max_declared_entry_ids", MaxPackageBehaviorEntries},
+                         {"max_package_records", MaxPackageBehaviorRecords},
+                         {"max_package_join_steps", MaxPackageBehaviorSteps},
+                         {"max_cached_packages", MaxCachedPackageBehaviors},
+                         {"runtime_api_verified", false},
+                         {"reachability_verified", false},
+                         {"executes_input", false}});
   Operations.emplace_back("source_rewrite_records");
 #ifndef _WIN32
   Operations.emplace_back("source_rewrite_export");
@@ -567,6 +589,8 @@ std::string Session::commit(std::string_view Token) {
   State->ElectronIPCs.clear();
   State->ElectronEntryAnalyses.clear();
   State->PackageAnalyses.clear();
+  State->NodeBehaviors.clear();
+  State->PackageBehaviors.clear();
   State->PackageArchives.clear();
   State->PackageIntegrity.clear();
   State->HARCaptures.clear();
@@ -622,6 +646,8 @@ std::string Session::metadata() const {
       {"source_map_count", State->Maps.size()},
       {"source_view_count", State->SourceViews.size()},
       {"source_rewrite_count", State->SourceRewrites.size()},
+      {"node_behavior_count", State->NodeBehaviors.size()},
+      {"package_behavior_count", State->PackageBehaviors.size()},
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},

@@ -56,10 +56,13 @@ void capabilitySubset() {
   refuses([&] { Import.payload({{"path", "CANARY_PATH"}}); });
 }
 void closedArguments() {
-  Catalog C(capabilities({"source_view_preview", "source_view_chunk",
-                          "import_commit", "electron_ipc_analyze",
-                          "source_rewrite_analyze", "source_rewrite_records"}),
-            0);
+  Catalog C(
+      capabilities({"source_view_preview", "source_view_chunk", "import_commit",
+                    "electron_ipc_analyze", "source_rewrite_analyze",
+                    "source_rewrite_records", "node_behavior_analyze",
+                    "node_behavior_records", "package_behavior_analyze",
+                    "package_behavior_records"}),
+      0);
   const auto &View = C.find("neverd_web_source_view_preview");
   const Json Valid{{"revision", "1"}, {"source_id", "s"}};
   require(View.payload(Valid).at("revision") == "1", "Valid view refused");
@@ -95,6 +98,22 @@ void closedArguments() {
         Json(std::vector<std::string>(17, "s"))}) {
     Selection["source_ids"] = IDs;
     refuses([&] { IPC.payload(Selection); });
+  }
+  const auto &Behavior = C.find("neverd_web_package_behavior_analyze");
+  Json PackageSelection{{"revision", "1"},
+                        {"package_analysis_id", "p"},
+                        {"source_ids", Json::array({"s"})}};
+  Behavior.payload(PackageSelection);
+  for (const auto &IDs : {Json::array(), Json::array({1}),
+                          Json(std::vector<std::string>(17, "s"))}) {
+    auto Bad = PackageSelection;
+    Bad["source_ids"] = IDs;
+    refuses([&] { Behavior.payload(Bad); });
+  }
+  for (const auto *Field : {"execute", "origin", "path"}) {
+    auto Bad = PackageSelection;
+    Bad[Field] = "CANARY";
+    refuses([&] { Behavior.payload(Bad); });
   }
 }
 void coordinateBounds() {

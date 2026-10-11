@@ -937,6 +937,66 @@ const char *neverd_web_source_semantic_records_json(
 #endif
 }
 
+const char *neverd_web_node_behavior_analyze_json(neverd_web_session_t Session,
+                                                  const char *ExpectedRevision,
+                                                  size_t RevisionSize,
+                                                  const char *SourceID,
+                                                  size_t SourceIDSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.analyzeNodeBehavior(buffer(ExpectedRevision, RevisionSize, 20),
+                                 buffer(SourceID, SourceIDSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_node_behavior_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
+    uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.nodeBehaviorRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                                 buffer(BehaviorID, BehaviorIDSize, 64), Offset,
+                                 Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_package_behavior_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.analyzePackageBehavior(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(PackageAnalysisID, PackageAnalysisIDSize, 64),
+        buffer(OptionsJSON, OptionsSize, 4096));
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_package_behavior_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.packageBehaviorRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                                    buffer(BehaviorID, BehaviorIDSize, 64),
+                                    buffer(RecordKind, RecordKindSize, 16),
+                                    Offset, Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_source_rewrite_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize,
