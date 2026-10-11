@@ -262,6 +262,8 @@ TEST_F(WebPackageInstall, ExactNamespaceAndSelectionIdentitiesAreRequired) {
 
 TEST_F(WebPackageInstall,
        UnavailableArchiveMembersNeverBecomeMissingFileProof) {
+  if (!packageArchiveAvailable())
+    GTEST_SKIP() << "Archive path policy unavailable";
   using namespace neverd::web::test;
   const std::string Manifest = R"({"scripts":{"install":"node entry.js"}})";
   for (const auto &[Format, Bytes] :

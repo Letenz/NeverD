@@ -105,6 +105,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_FlagsMiscTests.cpp
   x86_64/X86_64_FmaMiscTests.cpp
   x86_64/X86_64_FPConvertTests.cpp
+  x86_64/X86_64_ImageTableTests.cpp
   x86_64/X86_64_IntrinsicsTests.cpp
   x86_64/X86_64_LodsMiscTests.cpp
   x86_64/X86_64_LoopBitTests.cpp
@@ -121,6 +122,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SSEAVXTests.cpp
   x86_64/X86_64_SSEFPTests.cpp
   x86_64/X86_64_SSEMiscTests.cpp
+  x86_64/X86_64_SignedCompareTests.cpp
   x86_64/X86_64_StackMovTests.cpp
   x86_64/X86_64_StackMemorySemanticTests.cpp
   x86_64/X86_64_NativeHostModeTests.cpp

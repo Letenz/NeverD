@@ -27,6 +27,9 @@ protected:
   /// Flags for the host build, such as -m32 for C decompiled from a 32-bit
   /// target, whose addresses travel in 32-bit integers.
   std::vector<std::string> HostFlags;
+  /// The optimization level the kernel is built at: -O0 keeps every local in
+  /// a frame slot.
+  std::string KernelOptimization = "-O2";
 
   /// Compile \p Kernel with Clang and \p TargetFlags, decompile it to HighC,
   /// and expect the C of \p Entry, which takes and returns an int, to return
@@ -57,7 +60,7 @@ protected:
     const auto Object = tmpFile("kernel.o");
     std::ofstream(Source) << Kernel;
     std::vector<std::string> Args = TargetFlags;
-    Args.insert(Args.end(), {"-O2", "-fno-stack-protector",
+    Args.insert(Args.end(), {KernelOptimization, "-fno-stack-protector",
                              "-fno-asynchronous-unwind-tables", "-c",
                              Source.string(), "-o", Object.string()});
     const auto Compiled = exec(Compiler, Args);

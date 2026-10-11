@@ -638,6 +638,7 @@ public:
   std::string integerPointerOperandStr(const llvm::Value *Operand);
   std::optional<std::string>
   targetPointerMaskIdentity(const llvm::BinaryOperator &Op);
+  std::optional<std::string> lowBitsMaskCast(const llvm::BinaryOperator &Op);
   std::string castStr(unsigned Opcode, const std::string &Src,
                       llvm::Type *SrcTy, llvm::Type *DstTy);
   std::string cmpStr(llvm::CmpInst::Predicate Pred, const std::string &LHS,
