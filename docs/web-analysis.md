@@ -13,7 +13,8 @@ Use `neverd web har-preview` before hash-bound `har-import` or
 The `neverd web` command and independent C API inspect admitted files without
 executing them. The current implementation provides immutable artifact
 inventory, JavaScript syntax and lexical-binding queries, bounded primitive
-values, conservative effect metadata, module evidence, qualified bundle partitions,
+values, conservative effect metadata, explicit primitive rewrite receipts,
+module evidence, qualified bundle partitions,
 reviewed source views and source-map decoding. Versioned Bun ELF/Mach-O/PE profiles preserve source, asset,
 map and cache ranges and feeds decoded source into the same analysis API.
 The ASAR reader admits packed members and explicitly associated captured
@@ -34,6 +35,9 @@ neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
 neverd web archive ./extension.vsix zip
+neverd web desktop-manifest ./captured-app nwjs 2
+neverd web desktop-manifest ./package.json vsix
+neverd web archive-desktop ./extension.vsix zip 0 3 vsix
 neverd web bun-export ./standalone-elf ./new-recovery-directory
 neverd web inspect ./input-directory
 neverd web source ./bundle.js script
@@ -41,6 +45,8 @@ neverd web source ./entry.mjs module
 neverd web source ./entry.cjs commonjs
 neverd web bindings ./bundle.js script
 neverd web semantics ./bundle.js script
+neverd web rewrite ./bundle.js script string_recovery
+neverd web rewrite ./bundle.js script constant_folding
 neverd web modules ./entry.mjs module
 neverd web bundles ./webpack-bundle.js script
 neverd web view ./bundle.js script
@@ -79,6 +85,14 @@ its console response remains metadata-only. It writes exact captured bytes,
 strictly decoded JS, verified readable copies where supported, a manifest and
 an inert HTML index. See [local Bun export](web-bun-profile.md#local-evidence-export).
 
+The separate `rewrite` and `bun-rewrite` commands analyze one explicit
+primitive pass and print metadata only. A `rewrite-export` or
+`bun-rewrite-export` command requires that exact preview receipt and a new
+local directory. It preserves the original, candidate and inverse-range
+receipt; no raw candidate is exposed through worker/MCP. Local substitution
+checks do not establish whole-program or source-reflection equivalence. See
+the [primitive rewrite profile](web-source-rewrite-profile.md).
+
 All new analysis and adapter code is C++. JavaScript parsing embeds a pinned
 Hermes parser/AST subset. There is no JavaScript VM, target evaluation, package
 installation, plugin loading, subprocess analyzer or automatic network/file
@@ -97,8 +111,14 @@ Source, package, Bun and native consumers share the immutable member selection.
 SHA equality, archive validity and publisher authenticity are separate claims.
 The separate [ZIP32 profile](web-zip-profile.md) admits stored/deflate members
 through the same APIs with explicit `zip` format, retaining member CRC results,
-unavailable reasons and original/expanded ranges. This is container support;
-NW.js and VSIX framework manifests and entry graphs remain separate work.
+unavailable reasons and original/expanded ranges.
+The [desktop manifest profiles](web-desktop-manifest-profile.md) read explicitly
+selected NW.js and VS Code extension declarations and compare exact available
+files within the selected manifest's captured namespace. Directory layouts,
+ZIP origins, absent or unsupported entries and runtime uncertainty remain
+separate. Member and artifact indices must come from the current inventory;
+the command examples do not prescribe their ordering. No profile launches an
+application, extension, runtime or native helper.
 
 Bun extraction is explicitly selected and follows
 [versioned layouts](web-bun-profile.md). Module/region pages preserve original

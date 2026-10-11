@@ -1,5 +1,85 @@
 # Claude Code 2.1.296: offline NeverD qualification
 
+## Selected Node source behavior — 2026-10-11
+
+The native C++ archive/package/source pipeline selected the two JavaScript
+members of the hash-pinned 29,001-byte npm wrapper described below. The actual
+CLI ran with `PATH=/neverd-no-external-tools`:
+
+```console
+neverd web archive-package-behavior claude-code-2.1.296.tgz tgz 0 3 package-json 0:commonjs 1:commonjs
+```
+
+NeverD's tar/gzip reader retained all seven members, member 3 supplied the
+manifest, and members 0 and 1 supplied the two JavaScript sources. Their
+exact artifact IDs joined the same one-package inventory. This command
+does not install the package or execute its lifecycle declarations.
+
+| Member | Bytes | SHA-256 | Recognized calls | Unattributed calls |
+| --- | ---: | --- | ---: | ---: |
+| 0 | 4,997 | `61ad63033d9c8155d5e60a29f45dc4665afa07631c0b108e62cc83bf45ba490e` | 2 | 36 |
+| 1 | 8,375 | `32a7b2429d7447c5aa043e383bcf9a72e0b233dff66336ea4b5b32531da981ad` | 6 | 38 |
+
+The eight call records comprise three `child_process.spawnSync`, two
+`fs.copyFileSync`, and one each of `fs.unlinkSync`, `fs.writeFileSync` and
+`fs.chmodSync`. Every record retains its source/call/request anchors; every
+source row retains its exact package file relation. Both results are partial,
+with no direct declared-entry match and no install-entry propagation claim.
+The aggregate ID is
+`5835c8ecfde88f1ddfce34961c82b380ec29622da60624333dd303acdeeffcbd`;
+the package analysis ID is
+`d2969ea82ad98f56927c1ad20c475183d5519ccfad197f72f9f48e75f1bbc115`.
+Local metadata is preserved in `/tmp/neverd-node-behavior-claude-npm.jsonl`.
+The optional C++ regression uses NeverD's extractor and checks the pinned
+hashes, eight calls and five API classes. No sample source is committed.
+
+The separately selected standalone module 1,897 produced **zero** supported
+Node call patterns and 1,461 unattributed call expressions. Analysis of that
+real source exposed a shared class-declaration indexing bug: the outer and
+inner class name bindings legitimately share an AST node. A minimal failing
+C++ fixture established the cause; the shared unique-binding projection now
+preserves that ambiguity without rejecting unrelated declarations. Origins,
+paths, navigation and bundles use the same projection. The real module now
+returns partial evidence rather than an invalid-binding result. Neither its
+zero matches nor the wrapper's eight matches supplies a safety verdict.
+See the [Node behavior profile](web-node-behavior-profile.md).
+
+## Reversible primitive rewrites — 2026-10-11
+
+The native C++ `bun-rewrite` and receipt-bound `bun-rewrite-export` commands
+selected module 1,897 directly from the hash-pinned standalone ELF below.
+NeverD extracted and decoded the module before analyzing it with the `module`
+parse goal. Both commands ran with `PATH=/neverd-no-external-tools`; neither
+the target nor a JavaScript runtime was executed.
+
+The original module is 156,255 bytes with SHA-256
+`1be18858dfe6863b48e9e0c25e25f9d04b22221935cb1a9e286cbd992d70f722`.
+
+| Explicit pass | Accepted | Refused | Candidate bytes | Candidate SHA-256 |
+| --- | ---: | ---: | ---: | --- |
+| `string_recovery` | 5 | 1,496 | 156,272 | `507d9d6f8f2f763be152c7ceed333e6d16789d2ee086efde82ad1f84dba2a2dc` |
+| `constant_folding` | 201 | 1,496 | 157,167 | `d9c7bd3785557b55a90ac921187b8e658ec06ed9bb2df8248c4b69cdb6faab7a` |
+
+Both candidates passed complete reparse, retained outer-tree comparison,
+primitive SameValue and exact inverse verification. The exported originals
+also matched the previously recovered `m01897.js` byte for byte. The private
+local outputs are under
+`/Users/gmh/code/claude-code-recovery/2.1.296/primitive-rewrites/`, in
+`module-01897-strings` and `module-01897-constants`; each contains
+`original.js`, `candidate.js` and `receipt.json`. No sample content is committed.
+
+Use `neverd web bun-rewrite <binary> 1897 module <pass>` for metadata, then
+`neverd web bun-rewrite-export <binary> 1897 module <pass> <export_receipt> <new-directory>`
+with the returned receipt. Another pass's receipt is rejected. Receipts and
+ordinary record pages contain ranges and fixed reasons, not recovered strings.
+
+These are two independent passes over one selected original module, not a
+combined transformation or qualification of all 2,345 modules for semantic
+rewriting. Refused expressions remain intact unless they contain an
+independently admitted child. Original TypeScript, variable names, source
+reflection and whole-program equivalence are not recovered or certified.
+See the [rewrite profile](web-source-rewrite-profile.md) for the exact boundary.
+
 ## VSIX container and embedded CLI equality — 2026-10-11
 
 The official [Marketplace extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code)
@@ -33,6 +113,31 @@ PATH=/neverd-no-external-tools /absolute/path/to/neverd web archive-bun /path/to
 No VS Code, extension, helper, installer or external extraction program ran.
 Framework manifest analysis is a separate phase from the
 [ZIP container profile](web-zip-profile.md).
+
+The subsequent native C++ VSIX manifest profile selected member index 4,
+the 24,030-byte manifest with SHA-256
+`e3f2ffc5e475f38f29db1568112b7c3a312b6f0fe53fca387d32a004b136101c`.
+Its `main` declaration links to available member artifact
+`b93f9a5471ca812b01e7f03cd7a49fed889712966b77ce8279e4979f6e7f5ff3`
+within the same ZIP; `browser` is absent. Required field shapes are present.
+Compatibility, permissions, activation and helper-version association remain
+explicitly unanalyzed. No manifest strings or contribution/event names appear
+in ordinary output. The original compressed member frame and expanded-byte
+coordinates remain attached to the result.
+
+The C++ SDK case tries all 29 available members through the bounded profile and
+finds exactly one admitted manifest. The actual CLI also passed with an
+unusable external-tool PATH:
+
+```console
+PATH=/neverd-no-external-tools /absolute/path/to/neverd web archive-desktop /path/to/decoded.vsix zip 0 4 vsix
+```
+
+Indices 4 and 15 are observations for this exact pinned archive, not defaults
+for other releases. Logs are `/tmp/neverd-desktop-fixed-tests.log` and
+`/tmp/neverd-desktop-real-cli.log`; see the
+[desktop manifest profile](web-desktop-manifest-profile.md) for the narrower
+file-candidate contract.
 
 ## npm originals and standalone equality — 2026-10-11
 

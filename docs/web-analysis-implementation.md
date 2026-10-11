@@ -41,10 +41,10 @@ their existing scope; no Python support for web APIs is claimed.
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions and independent pkg/nexe adapters remain; Node SEA is qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
-| P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | NW.js/VSIX manifest adapters, external-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and shared source/Bun/native consumers implemented; two official Claude Code npm packages qualify original digest and payload evidence | Source behavior, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
-| P4D passive interfaces/HAR | Native HAR preview/commit, direct fetch/WebSocket source candidates and explicit method/origin/path comparison implemented | XHR/wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
-| P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
+| P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
+| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and selected source behavior/inventory joins implemented; two official Claude Code npm packages qualify original digest and payload evidence | Install-entry propagation, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
+| P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
+| P5 reversible source projections | Reviewed display, original/projected ranges and explicit primitive rewrites with pass-bound receipts, local semantic checks, exact inverse and refusal tests implemented | Scope renaming, branch/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader and stored-source/asset consumers implemented; qualification below | Tauri/Wails bridges/assets, pkg/nexe, other SEA layouts and host qualification remain |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
@@ -1482,3 +1482,237 @@ this ZIP increment; only the ZIP payload owner omission was newly executed.
 No Windows/Linux host, ZIP64, prefixed executable, full framework distribution
 or safe raw export qualification is claimed. NW.js/VSIX manifest adapters are
 the next separate phase; ZIP extraction does not finish #716 or the five epics.
+
+ZIP implementation commit `3c36cad04` was integrated with upstream `dev`
+`8be7675b9` as `613dc8f3b` and pushed. The full rebuild after that merge passed.
+The 28 selected integration cases then recorded 27 passes and one optional
+native-file skip; worker Web parity and all five MCP cases passed. Logs are
+`/tmp/neverd-zip-merge-{tests,worker,mcp}.log`.
+
+## Captured NW.js and VSIX manifest file candidates — 2026-10-11
+
+The independent `nwjs-manifest-file-candidates-v1` and
+`vscode-extension-manifest-file-candidates-v1` profiles add declaration shapes
+and exact captured-file candidates. `desktop/Manifest` owns bounded JSON,
+identity and parent-relative comparison; `NWManifest` and `VSIXManifest` own
+framework fields. `SessionDesktop` publishes bounded, revision-bound results.
+The C API, CLI, worker and MCP delegate to that owner. See the
+[profile](web-desktop-manifest-profile.md) for exact fields and limitations.
+
+Captured plain, `package.nw`, `app.nw` and macOS resource-directory layouts have
+C++ fixtures. ZIP members retain their original/expanded coordinates; Bun/SEA
+assets without a directory namespace cannot borrow unrelated captured files.
+URLs, command-line syntax, runtime fallback, absent declarations, invalid field
+types, directories and missing files remain distinct. All ordinary results
+omit raw paths, manifest strings, event names and contribution keys. Version,
+permissions, activation and helper association are not inferred from names.
+
+The first focused run passed twelve cases, including the pinned real VSIX, and
+failed the CLI harness's line-by-line JSON check. Diagnostic output showed
+bytes from the preceding longer NW.js result surviving at the end of a reused
+redirect file. Unique redirect files for each process fixed the harness; no
+product parser change was needed. All thirteen cases then passed, including
+the six CLI invocations with an unusable external-tool PATH. Four native MCP
+suites and worker Web parity passed. Enabled C ABI availability passed; its
+backend-omission-only case skipped as expected. Independent review also
+corrected the documentation to distinguish declaration `entry_id` from the
+consumer's `artifact_id`.
+
+The real CLI selected manifest member 4 from the pinned Claude Code 2.1.296
+VSIX and linked `main` to the available member in that same archive; `browser`
+is absent. Manifest SHA-256, source identity and frame coordinates are recorded
+in the [qualification](web-claude-code-qualification.md). Logs are
+`/tmp/neverd-desktop-{focused-tests,fixed-tests,worker-tests,mcp-tests,real-cli}.log`.
+
+With JavaScript parsing disabled, all thirteen desktop cases passed, including
+the supplied real VSIX. Worker Web and four MCP suites passed; enabled C ABI
+availability passed with the omission-only case skipped. With the whole Web
+backend disabled, both C ABI availability cases and all four MCP suites passed;
+worker Web correctly skipped. These runs qualify the additive ABI symbol and
+capability-filtered transport without relying on the source parser. Logs are
+`/tmp/neverd-desktop-nojs-{tests,api,worker,mcp}.log` and
+`/tmp/neverd-desktop-disabled-{api,worker,mcp}.log`.
+
+After restoring both Web options to ON, the owning Web suite registered 434
+cases: 427 passed and seven skipped (six require unavailable LLVM Zstd, and
+one only applies when the archive path policy is omitted). Supplied SEA, Bun,
+npm and VSIX corpora were enabled; all 2,345 Claude Code JavaScript modules
+again passed byte-preserving readable recovery and reparse checks. Worker Web
+parity and enabled C ABI availability passed. Logs are
+`/tmp/neverd-desktop-full-web-tests.log` and
+`/tmp/neverd-desktop-restored-{worker,api}.log`.
+All five MCP suites also passed, including the pinned Claude native stdio
+case; its log is `/tmp/neverd-desktop-restored-mcp.log`.
+
+This advances #716. Full distribution detection, Tauri/Wails/CEF assets and
+bridges, runtime entry/activation analysis, general safe export and other host
+qualification remain separate work. Semantic rewrite receipts, package
+behavior/advisory/reporting, broader passive source mapping and independently
+versioned pkg/nexe readers still prevent completion of the five epics.
+
+## XMLHttpRequest source evidence — 2026-10-11
+
+`fetch-websocket-xhr-syntax-v2` adds bounded direct/const receiver links for
+XHR open, header, send and known event-value syntax. `SourceContext` owns the
+shared admission/index/publication boundary; `SourceFetch` and `SourceXHR`
+own distinct rules, leaving session and transports as serializers. Ordinary
+records retain opaque source IDs and fixed classifications. They do not expose
+URL, credential, arbitrary header, body or callback text. Shared receiver
+bindings do not assert runtime identity or request ordering. The existing HAR
+comparison remains fetch-only. See the [profile](web-interface-profile.md).
+
+Independent plan/implementation consistency review found two default-state
+misclaims: spread listener options were still marked absent, and the new XHR
+argument-role field initially marked legacy spread calls positional. Both were
+corrected with regression assertions. Forbidden Fetch/XHR method classification
+also now includes TRACK and all ASCII case variants in one shared owner.
+
+After those corrections, all 25 focused source/interface/SDK cases passed,
+including the existing hash-pinned Claude Code module 1,897 regression. That
+module still has one dynamic fetch candidate and no admitted XHR pattern; no
+runtime endpoint or traffic was invented. C++ worker Web parity and four MCP
+suites passed, along with enabled C ABI availability (its backend-omission
+case correctly skipped). CLI and framed transport runs used an unusable
+external-tool PATH. Logs are `/tmp/neverd-xhr-{focused-tests,worker,mcp,availability}.log`.
+
+With JavaScript parsing disabled, all five remaining interface SDK cases,
+worker Web and four MCP suites passed. C ABI availability passed and confirmed
+the source-interface profile/operations are absent; the backend-omission-only
+case skipped. Logs are `/tmp/neverd-xhr-nojs-{sdk,worker,mcp,api}.log`.
+
+After restoring the parser, the owning Web suite registered 444 cases: 437
+passed and seven skipped (six require unavailable LLVM Zstd; one only applies
+when the ASAR path policy is omitted). Supplied Bun/SEA/npm/VSIX fixtures were
+enabled, and all 2,345 Claude Code JavaScript modules again passed readable
+recovery/reparse checks. Worker Web and enabled ABI availability passed. Logs
+are `/tmp/neverd-xhr-full-web-tests.log` and
+`/tmp/neverd-xhr-restored-{worker,api}.log`.
+All five restored MCP suites passed, including the supplied Claude Code native
+stdio case; see `/tmp/neverd-xhr-restored-mcp.log`.
+
+This advances #717 without completing it. Request wrappers, response dataflow,
+encoding/compression/crypto tracing, schema exports and reviewed endpoint
+displays remain required.
+
+## Reversible primitive source rewrites — 2026-10-11
+
+`javascript-primitive-rewrite-v1` adds explicit string recovery and other
+primitive folding. The shared frontend, bindings, values and effects remain
+the semantic owners. `rewrite/Plan`, `Primitive`, `Apply` and `Validate` own
+selection, closed emission, exact inverse and complete outside-tree checks;
+`SessionRewrite` publishes bounded metadata and two private cached results.
+`rewrite/Export` separately owns fresh private files and ownership-aware
+rollback. It retains created-file descriptors through the transaction so
+unlink/inode reuse cannot turn a foreign replacement into a cleanup target.
+The C API and CLI expose pass/source/revision-bound local export; worker and
+MCP only expose metadata. See the [profile](web-source-rewrite-profile.md).
+
+Independent plan review required complete lexer evidence, ASI outside-tree
+comparison, pass-bound disclosure receipts and a distinct transactional writer.
+The implementation and C++ tests cover those contracts, private literal
+canaries, UTF-16/signed-zero/BigInt cases, comment preservation, no-effect
+admission, tampered inverse evidence, bounded growth, partial disk write
+failure and preservation of foreign files or replaced output directories.
+The first integration run passed all 18 core/export cases but its four SDK
+cases failed because the fixture omitted the captured root directory when
+counting artifacts. Correcting the fixture's source/CLI indices made all four
+pass; the product import semantics were unchanged.
+
+The actual CLI extracted Claude Code module 1,897 from the pinned original and
+exported both selected passes with an unusable external-tool PATH. String
+recovery accepted 5 substitutions and constant folding accepted 201; both
+retained 1,496 refused candidates and passed exact inverse verification.
+The exported originals also matched the prior raw recovery byte for byte.
+Exact hashes and retained local files are in the
+[qualification record](web-claude-code-qualification.md#reversible-primitive-rewrites--2026-10-11).
+
+The enabled owning Web suite registered 466 cases: 459 passed and seven skipped
+(six need unavailable LLVM Zstd; one only applies with ASAR path policy omitted).
+All supplied Bun/SEA/npm/VSIX corpora were enabled, including readable recovery
+and reparse of every one of the 2,345 Claude Code JavaScript modules. Worker Web,
+all five MCP suites including the real native Claude stdio case, and enabled
+C ABI availability passed. Its backend-omission-only case skipped as expected.
+Logs: `/tmp/neverd-rewrite-full-web-tests.log`,
+`/tmp/neverd-rewrite-sdk-fixed-tests.log`, `/tmp/neverd-rewrite-worker-tests.log`,
+`/tmp/neverd-rewrite-mcp-tests.log`, `/tmp/neverd-rewrite-mcp-claude.log` and
+`/tmp/neverd-rewrite-api-tests.log`.
+
+With JavaScript parsing disabled, C ABI availability checked explicit refusal
+for all three new entry points; worker Web and four MCP suites passed. All
+four rewrite SDK behavior cases explicitly skipped because they require the
+parser. With the entire Web backend disabled, both ABI cases and four MCP
+suites passed; worker Web and the optional Claude MCP case skipped. Logs are
+`/tmp/neverd-rewrite-nojs-{api,worker,mcp,sdk}.log` and
+`/tmp/neverd-rewrite-disabled-{api,worker,mcp}.log`.
+
+These checks establish local primitive substitutions, not whole-program or
+source-reflection equivalence. Scope renaming, branch/control-flow transforms
+and the other epics' pending capabilities still prevent completion of #714–#718.
+
+## Selected Node source and package behavior — 2026-10-11
+
+`node-22.15-static-behavior-v1` adds fixed process, filesystem, HTTP, native-load
+and Buffer call syntax classes through C++ core, session, C API, CLI, worker
+and MCP. Shared source bindings, module origins and primitive values own
+semantic admission. Rules preserve exact import/member forms and overload
+uncertainty; ordinary pages contain fixed classes and opaque anchors, not
+commands, paths, URLs or payload values. The independent plan review required
+exact default-import identity, separate promise method tables, ordinal-only
+argument anchors, unknown package ownership and a 16-source aggregate that
+does not depend on the four-result source cache. See the
+[profile](web-node-behavior-profile.md).
+
+The real standalone module 1,897 exposed a valid class name with two binding
+identities on one syntax node. A minimal failing regression confirmed that
+origins and paths incorrectly rejected the whole binding model. The shared
+declaration projection now preserves this ambiguity consistently across
+origins, paths, navigation and bundles. Full declaration occurrences are
+unchanged. Exact ESM import-row evidence advances origins to profile v2.
+The real module now yields a partial result with zero supported Node patterns
+and 1,461 unattributed calls, not a clean or complete result.
+
+NeverD's actual CLI extracted the two JavaScript members of the pinned Claude
+Code npm wrapper, analyzed them as CommonJS and joined both to its manifest
+inventory. It found eight call sites in five fixed API classes. No lifecycle
+script or sample ran; PATH excluded external tools. Exact hashes, counts,
+aggregate identities and limits are in the
+[qualification record](web-claude-code-qualification.md#selected-node-source-behavior--2026-10-11).
+
+The first SDK run caught two test mistakes: a native ELF fixture selected the
+SEA preparation-blob profile, and the repeated CLI test did not truncate its
+redirect files. Correcting the profile and redirects made all five new SDK
+cases pass, including 16-source/4-cache independence, 19 declared entries
+with 16 retained anchors, archive unknown ownership, unavailable sources,+Bun/SEA delivery-only relations, foreign selection and revision revocation.
+The SDK failures did not require changing product extraction semantics.
+
+Enabled qualification on macOS arm64 Release with prebuilt LLVM 23 r4:
+490 registered owning Web cases, 483 passed and seven explicit skips (six
+LLVM Zstd cases unavailable in this build and one ASAR-omission-only case).
+The supplied six-platform Bun corpus, SEA corpus/images, npm/VSIX artifacts
+and all 2,345 real Claude JavaScript recovery/reparse cases were enabled.
+Worker Web, the four general MCP suites, the separate real Claude MCP process
+case and enabled C ABI availability passed. A final review consolidated the
+unchanged aggregate byte/node/ancestry/entry ceilings into the profile owner.
+Logs: `/tmp/neverd-node-behavior-full-web.log`,
+`/tmp/neverd-node-behavior-sdk-fixed-tests.log`,
+`/tmp/neverd-node-behavior-shared-tests.log`,
+`/tmp/neverd-node-behavior-{worker-tests,mcp-tests,mcp-claude,api-tests}.log`.
+
+Parser omission passed explicit unavailability checks for all four new ABI
+functions, worker Web and the four MCP suites; five parser-dependent SDK
+cases skipped explicitly. Backend omission passed both ABI cases and four
+MCP suites; worker Web and the optional Claude MCP case skipped. Logs:
+`/tmp/neverd-node-behavior-nojs-{api,worker,mcp,sdk}.log` and
+`/tmp/neverd-node-behavior-disabled-{api,worker,mcp}.log`.
+
+Both feature options were restored to ON and the owning targets rebuilt.
+All 49 focused source/package/shared-consumer cases (including both real
+artifacts), five Node SDK cases, worker Web, four MCP suites and enabled ABI
+availability passed again. The published ceilings match the shared profile.
+Restoration logs use `/tmp/neverd-node-behavior-restored-*.log`.
+
+This advances #715 source inspection and shared #714 semantics. Install-entry
+propagation, source-behavior comparison, external advisory/provenance imports,
+analyst dispositions, readable reports, other runtime/desktop adapters and
+the rest of the acceptance matrix remain outstanding. The five epics are
+not complete.

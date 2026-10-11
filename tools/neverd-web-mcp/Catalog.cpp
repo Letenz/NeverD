@@ -255,6 +255,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "evidence classes remain separate.",
       {decimal("revision"), text("analysis_id"), text("capture_id")});
   Page("web_interface_correlation_records", "correlation_id", false, 128);
+  Add("web_desktop_manifest_analyze",
+      "Inspect explicitly selected NW.js or VS Code extension manifest "
+      "evidence.",
+      {decimal("revision"), text("artifact_id"),
+       choice("input_kind", {"nwjs", "vsix"})});
   Selected("web_electron_manifest_analyze", "artifact_id",
            "Analyze captured Electron manifest entry metadata.");
   Selected(
@@ -280,6 +285,17 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       {decimal("revision"), text("artifact_id"),
        choice("source_type", {"script", "module", "commonjs"})});
   Page("web_source_nodes", "source_id");
+  Selected("web_node_behavior_analyze", "source_id",
+           "Inspect fixed Node builtin call patterns in selected source; "
+           "syntax evidence does not establish runtime behavior or a verdict.");
+  Page("web_node_behavior_records", "node_behavior_id");
+  Add("web_package_behavior_analyze",
+      "Associate explicitly selected source patterns with exact package "
+      "inventory evidence; preserve unknown ownership and coverage.",
+      {decimal("revision"),
+       text("package_analysis_id"),
+       {"source_ids", Field::Kind::StringArray, true, 16, 1}});
+  Page("web_package_behavior_records", "package_behavior_id", true);
   for (const auto *Operation :
        {"web_source_bindings_analyze", "web_source_semantics_analyze",
         "web_source_modules_analyze", "web_source_bundles_analyze",
@@ -292,6 +308,12 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
         "web_source_bundle_records", "web_source_navigation_records"})
     Page(Operation, "source_id", true);
   Page("web_source_semantic_records", "source_id");
+  Add("web_source_rewrite_analyze",
+      "Verify an explicit local primitive rewrite pass; return metadata only, "
+      "without source execution or whole-program equivalence claims.",
+      {decimal("revision"), text("source_id"),
+       choice("pass", {"string_recovery", "constant_folding"})});
+  Page("web_source_rewrite_records", "rewrite_id");
   Add("web_source_anchor",
       "Resolve a source byte span to original immutable storage and optional "
       "structural view coordinates.",

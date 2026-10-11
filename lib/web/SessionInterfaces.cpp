@@ -116,6 +116,9 @@ llvm::json::Object summary(const SourceInterfaces &A, uint64_t Revision) {
       {"evidence_class", "static_inference"},
       {"intrinsic_verified", false},
       {"reachability", "not_analyzed"},
+      {"receiver_identity", "lexical_syntax_only"},
+      {"request_ordering", "not_analyzed"},
+      {"xhr_correlation", false},
       {"server_completeness", "unknown"},
       {"redaction_policy", std::string(InterfaceRedactionPolicy)}};
 }
@@ -284,6 +287,7 @@ std::string Session::interfaceRecords(std::string_view Revision,
     throw Error("unknown_interface_analysis");
   const auto &A = Found->second;
   const auto &S = State->Sources.at(A.SourceID);
+  const auto &B = State->Bindings.at(A.SourceID);
   const auto End = pageEnd(Offset, Limit, A.Records.size());
   auto Node = [&](uint32_t I) {
     return I == NoSourceIndex ? llvm::json::Value(nullptr)
@@ -304,6 +308,22 @@ std::string Session::interfaceRecords(std::string_view Revision,
         {"method_node_id", Node(C.MethodNode)},
         {"headers_node_id", Node(C.HeadersNode)},
         {"body_node_id", Node(C.BodyNode)},
+        {"constructor_node_id", Node(C.ConstructorNode)},
+        {"receiver_binding_id",
+         C.ReceiverBinding == NoSourceIndex
+             ? llvm::json::Value(nullptr)
+             : llvm::json::Value(B.Bindings.at(C.ReceiverBinding).ID)},
+        {"async_node_id", Node(C.AsyncNode)},
+        {"header_name_node_id", Node(C.HeaderNameNode)},
+        {"header_value_node_id", Node(C.HeaderValueNode)},
+        {"handler_node_id", Node(C.HandlerNode)},
+        {"receiver_status", C.ReceiverStatus},
+        {"arguments_status", C.ArgumentsStatus},
+        {"credential_arguments_status", C.CredentialArgumentsStatus},
+        {"body_status", C.BodyStatus},
+        {"header_kind", C.HeaderKind},
+        {"event_kind", C.EventKind},
+        {"handler_status", C.HandlerStatus},
         {"optional_call", C.Optional},
         {"method", C.Method},
         {"method_status", C.MethodStatus},

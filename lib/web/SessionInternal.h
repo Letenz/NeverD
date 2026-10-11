@@ -17,11 +17,13 @@
 
 #include "neverd/web/Asar.h"
 #include "neverd/web/Bun.h"
+#include "neverd/web/DesktopManifest.h"
 #include "neverd/web/Electron.h"
 #include "neverd/web/ElectronEntries.h"
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
 #include "neverd/web/Interfaces.h"
+#include "neverd/web/NodeBehavior.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
@@ -34,6 +36,7 @@
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
+#include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceView.h"
 #include "neverd/web/Streams.h"
 
@@ -58,6 +61,7 @@ struct Session::Impl {
     SourceEffectAnalysis Effects;
   };
   std::map<std::string, SemanticResults> Semantics;
+  std::map<std::string, SourceRewrite> SourceRewrites;
   struct ModuleResults {
     SourceModuleAnalysis Evidence;
     SourceModuleLinks Links;
@@ -68,10 +72,14 @@ struct Session::Impl {
   std::map<std::string, SEAExtraction> SEAExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
   std::map<std::string, ElectronManifest> ElectronManifests;
+  std::map<std::pair<std::string, std::string>, DesktopManifest>
+      DesktopManifests;
   std::map<std::string, ElectronSource> ElectronSources;
   std::map<std::string, ElectronIPC> ElectronIPCs;
   std::map<std::string, ElectronEntries> ElectronEntryAnalyses;
   std::map<std::string, PackageAnalysis> PackageAnalyses;
+  std::map<std::string, NodeBehavior> NodeBehaviors;
+  std::map<std::string, PackageBehavior> PackageBehaviors;
   std::map<std::string, PackageDiff> PackageDiffs;
   std::map<std::string, PackageArchive> PackageArchives;
   std::map<std::string, PackageIntegrityResult> PackageIntegrity;
@@ -114,10 +122,11 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && AsarExtractions.empty() &&
-                   ElectronManifests.empty() && HTMLDocuments.empty() &&
-                   PackageAnalyses.empty() && PackageArchives.empty() &&
-                   PackageIntegrity.empty() && HARCaptures.empty() &&
-                   InterfaceSources.empty() && StreamCaptures.empty()
+                   ElectronManifests.empty() && DesktopManifests.empty() &&
+                   HTMLDocuments.empty() && PackageAnalyses.empty() &&
+                   PackageArchives.empty() && PackageIntegrity.empty() &&
+                   HARCaptures.empty() && InterfaceSources.empty() &&
+                   StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }

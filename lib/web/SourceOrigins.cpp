@@ -87,7 +87,7 @@ struct Resolver {
     Result->Members.push_back(Name);
     return Result;
   }
-  Origin root(uint32_t Request, std::string Evidence) {
+  Origin root(uint32_t Request, std::string Evidence, uint32_t Import = None) {
     if (Request >= M.Requests.size())
       throw Error("invalid_source_module_model");
     const auto &R = M.Requests[Request];
@@ -97,6 +97,7 @@ struct Resolver {
       throw Error("invalid_source_module_model");
     auto O = std::make_shared<SourceOrigin>();
     O->Request = Request;
+    O->Import = Import;
     O->Evidence = std::move(Evidence);
     return O;
   }
@@ -208,7 +209,9 @@ struct Resolver {
     }
     const auto Size = S.Nodes.size();
     References.assign(Size, None);
-    Declarations.assign(Size, None);
+    auto DeclarationIndex = indexSourceDeclarations(S, B);
+    step(DeclarationIndex.Steps);
+    Declarations = std::move(DeclarationIndex.UniqueBindings);
     Requests.assign(Size, None);
     Visiting.resize(Size);
     A.Nodes.resize(Size);
@@ -231,18 +234,6 @@ struct Resolver {
           (R.Access == "write" || R.Access == "read_write"))
         Written[R.Binding] = true;
     }
-    for (const auto &D : B.Declarations) {
-      step();
-      if (D.Binding >= B.Bindings.size())
-        throw Error("invalid_source_binding_model");
-      if (D.Node == None)
-        continue;
-      if (D.Node >= Size)
-        throw Error("invalid_source_binding_model");
-      if (Declarations[D.Node] != None && Declarations[D.Node] != D.Binding)
-        throw Error("invalid_source_binding_model");
-      Declarations[D.Node] = D.Binding;
-    }
     for (uint32_t I = 0; I < M.Requests.size(); ++I) {
       step();
       const auto &R = M.Requests[I];
@@ -253,13 +244,14 @@ struct Resolver {
         throw Error("invalid_source_module_model");
       Requests[R.Node] = I;
     }
-    for (const auto &Import : M.Imports) {
+    for (uint32_t I = 0; I < M.Imports.size(); ++I) {
+      const auto &Import = M.Imports[I];
       step();
       if (Import.Binding == None)
         continue;
       if (Import.Binding >= B.Bindings.size())
         throw Error("invalid_source_module_model");
-      auto O = root(Import.Request, "esm_import_syntax");
+      auto O = root(Import.Request, "esm_import_syntax", I);
       if (Import.Kind != "namespace") {
         if (Import.ImportedName >= M.Names.size())
           throw Error("invalid_source_module_model");

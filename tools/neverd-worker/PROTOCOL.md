@@ -187,6 +187,7 @@ Heartbeat retains its native fields and adds
 | `web_import_commit` | `preview_token` |
 | `web_metadata` | None |
 | `web_electron_manifest_analyze` | Exact `revision`, captured `artifact_id` (original file or available ASAR member); explicit manifest profile, exact admitted entry candidate, no runtime or framework verification |
+| `web_desktop_manifest_analyze` | Exact `revision`, captured `artifact_id`, and `input_kind` (`nwjs` or `vsix`); bounded manifest declarations and exact parent-directory candidates, without runtime/activation/permission inference. Archive members retain their namespace; individual Bun/SEA assets have no neighbors |
 | `web_electron_source_analyze` | Exact `revision`, analyzed `source_id`; lexical module-origin candidates and source-visible window/IPC/bridge boundaries; requires the JS parser |
 | `web_electron_source_records` | Exact `revision`, `source_id`, optional `offset:0,limit:128`; exact source node/range links and fixed categories, private values omitted |
 | `web_electron_ipc_analyze` | Exact `revision`, analyzed `manifest_artifact_id`, `source_ids` array of 1–16 analyzed sources including the main candidate; explicit captured directory scope, private exact UTF-16 channel comparison, no runtime routing proof |
@@ -198,7 +199,7 @@ Heartbeat retains its native fields and adds
 | `web_html_records` | Exact `revision`, `html_id`, `record_kind:scripts/bases`, optional `offset:0,limit:128`; original ranges and eligible source artifact IDs, private reference values omitted |
 | `web_asar_extract` | Exact `revision`, original `artifact_id`, optional captured `unpacked_directory_id`; no host companion lookup, member integrity/availability explicit |
 | `web_asar_records` | Exact `revision`, `extraction_id`, optional page fields; private names, actual storage identities/ranges, usable `member_id` selections |
-| `web_bun_extract` | Exact `revision`, original `artifact_id`; explicit fixed Bun ELF profile; no execution or producer authentication |
+| `web_bun_extract` | Exact `revision`, original `artifact_id`; explicit qualified Bun ELF/thin Mach-O/PE profiles; no execution or producer authentication |
 | `web_bun_records` | Exact `revision`, `extraction_id`, `record_kind: modules/regions`, optional page fields; original offsets/hashes and private decoded source IDs |
 | `web_source_analyze` | Exact `revision`, `artifact_id`, explicit `source_type` |
 | `web_source_nodes` | Exact `revision`, `source_id`, optional page fields |
@@ -206,6 +207,8 @@ Heartbeat retains its native fields and adds
 | `web_source_binding_records` | Exact `revision`, `source_id`, `record_kind: scopes/bindings/declarations/references`, optional page fields |
 | `web_source_semantics_analyze` | Exact `revision`, `source_id`; returns bounded primitive/effect analysis status and counts |
 | `web_source_semantic_records` | Exact `revision`, `source_id`, optional page fields; private value kinds/status and immediate/deferred effect categories only |
+| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding`; private candidate and metadata-only local evaluation receipt |
+| `web_source_rewrite_records` | Exact `revision`, `rewrite_id`, optional page fields; fixed reasons and original/candidate ranges, no literal bytes or per-patch hashes |
 | `web_source_modules_analyze` | Exact `revision`, `source_id`; module inventory and admitted-file comparison; derived HTML inline sources retain explicit document/script/base context, without runtime resolution |
 | `web_source_module_records` | Exact `revision`, `source_id`, `record_kind: requests/imports/exports/attributes`, optional page fields; reported link profile/context and nullable URL presence flags, no specifier/name/path values |
 | `web_source_bundles_analyze` | Exact `revision`, `source_id`; fixed structural loader/table recovery, without execution or producer authentication |
@@ -241,9 +244,12 @@ operations. Explicit source-view chunks use a structural display policy instead.
 Original regions require `locally_reviewed:true` and exact `reviewed_ranges` in
 the preview's options, followed by commit. This is a local caller assertion,
 not authorization for network/model disclosure. Replacing a source's policy
-revokes its prior view; import commit clears all projections. No export or
-semantic rewrite is implemented by these operations.
-Semantic results explicitly deny rewrite permission. An unavailable effect
+revokes its prior view; import commit clears all projections. View operations
+do not authorize semantic rewrites. The separate primitive rewrite operations
+apply additional complete-lexer, local value/effect, outer-tree and inverse
+checks; they publish metadata only and make no whole-program or source-reflection
+equivalence claim. Raw rewrite export remains local C API/CLI only.
+Ordinary semantic results explicitly deny rewrite permission. An unavailable effect
 record is null rather than an empty list. These additive entry points are
 resolved optionally, so an older web-capable engine still supports its existing
 operations and reports the new ones unavailable.

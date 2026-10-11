@@ -106,7 +106,8 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze";
+    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+                         Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
   }
@@ -127,6 +128,40 @@ void sourceAndMaps(Harness &H) {
         "web_source_navigation_analyze", "web_interfaces_analyze"})
     H.same(Op, Args);
   H.same("web_source_semantic_records", Args);
+  for (const auto *Pass : {"string_recovery", "constant_folding"}) {
+    auto RewriteArgs = Args;
+    RewriteArgs["pass"] = Pass;
+    const auto Rewrite = H.same("web_source_rewrite_analyze", RewriteArgs);
+    require(Rewrite.at("analysis_status") == "verified_local_rewrites" &&
+                Rewrite.at("accepted_count") == 1 &&
+                Rewrite.at("whole_program_equivalence") == false &&
+                Rewrite.at("source_reflection_preserved") == false,
+            "MCP changed rewrite admission or its qualifications");
+    const auto Records = H.same(
+        "web_source_rewrite_records",
+        {{"revision", H.Revision}, {"rewrite_id", Rewrite.at("rewrite_id")}});
+    redacted(Rewrite);
+    redacted(Records);
+    RewriteArgs["path"] = "CANARY";
+    invalid([&] { H.get("web_source_rewrite_analyze", RewriteArgs); });
+  }
+  const auto Interfaces = H.same("web_interfaces_analyze", Args);
+  require(Interfaces.at("interface_count") == 5 &&
+              Interfaces.at("xhr_correlation") == false &&
+              Interfaces.at("profile") == "fetch-websocket-xhr-syntax-v2",
+          "MCP lost XHR syntax evidence or changed correlation claims");
+  const auto Sites =
+      H.same("web_interface_records",
+             {{"revision", H.Revision},
+              {"analysis_id", Interfaces.at("interface_analysis_id")}});
+  const auto &Items = Sites.at("items");
+  require(Items[1].at("kind") == "xhr_open" &&
+              Items[2].at("header_kind") == "sensitive" &&
+              Items[3].at("body_status") == "argument_syntax" &&
+              Items[4].at("handler_status") == "value_syntax" &&
+              Items[1].at("receiver_binding_id") ==
+                  Items[4].at("receiver_binding_id"),
+          "MCP changed XHR source links");
   auto Bindings = Args;
   Bindings["record_kind"] = "bindings";
   H.same("web_source_binding_records", Bindings);
@@ -237,7 +272,7 @@ void passiveInputs(Harness &H) {
           "Stream facts or evidence class changed");
 }
 
-void zipArchive(Harness &H) {
+void zipArchive(Harness &H, bool HasParser) {
   const auto Artifact = H.import(7);
   const auto A = H.same(
       "web_package_archive_extract",
@@ -255,6 +290,50 @@ void zipArchive(Harness &H) {
   H.same("web_package_records", {{"revision", H.Revision},
                                  {"analysis_id", P.at("package_analysis_id")},
                                  {"record_kind", "scripts"}});
+  if (HasParser) {
+    const auto Source =
+        H.same("web_source_analyze",
+               {{"revision", H.Revision},
+                {"artifact_id", Page.at("items")[2].at("member_id")},
+                {"source_type", "commonjs"}});
+    const Json Args{{"revision", H.Revision},
+                    {"source_id", Source.at("source_id")}};
+    const auto Behavior = H.same("web_node_behavior_analyze", Args);
+    require(Behavior.at("record_count") == 1 &&
+                Behavior.at("runtime_api_verified") == false,
+            "MCP changed Node syntax qualification");
+    const auto Records =
+        H.same("web_node_behavior_records",
+               {{"revision", H.Revision},
+                {"node_behavior_id", Behavior.at("node_behavior_id")}});
+    require(Records.at("items")[0].at("api_class") == "child_process.execFile",
+            "MCP lost the fixed Node API class");
+    const Json Selection{{"revision", H.Revision},
+                         {"package_analysis_id", P.at("package_analysis_id")},
+                         {"source_ids", Json::array({Source.at("source_id")})}};
+    const auto Aggregate = H.same("web_package_behavior_analyze", Selection);
+    require(Aggregate.at("selection_complete") == false &&
+                Aggregate.at("record_count") == 1,
+            "MCP changed selected package coverage");
+    for (const auto *Kind : {"sources", "records"})
+      redacted(
+          H.same("web_package_behavior_records",
+                 {{"revision", H.Revision},
+                  {"package_behavior_id", Aggregate.at("package_behavior_id")},
+                  {"record_kind", Kind}}));
+    auto Bad = Selection;
+    Bad["execute"] = true;
+    invalid([&] { H.get("web_package_behavior_analyze", Bad); });
+  }
+  for (const auto *Kind : {"nwjs", "vsix"}) {
+    const auto M = H.same("web_desktop_manifest_analyze",
+                          {{"revision", H.Revision},
+                           {"artifact_id", Page.at("items")[0].at("member_id")},
+                           {"input_kind", Kind}});
+    require(M.at("runtime_entry_verified") == false &&
+                M.at("framework_verified") == false,
+            "MCP changed desktop evidence classification");
+  }
 }
 } // namespace
 
@@ -293,7 +372,13 @@ int main() {
             {{"revision", "1"}, {"handoff_id", "CANARY"}});
     });
     F.write("source", "fetch('https://CANARY/a?token=CANARY'); const "
-                      "privateName = 'CANARY'; while(true) {};");
+                      "privateName = 'CANARY'; while(true) {};"
+                      "const CANARY_XHR = new XMLHttpRequest();"
+                      "CANARY_XHR.open('GET','https://CANARY/a');"
+                      "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
+                      "CANARY_XHR.send('CANARY');"
+                      "CANARY_XHR.onload = CANARY_CALLBACK;"
+                      "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
     F.write(
@@ -311,11 +396,14 @@ int main() {
     F.write(
         "map",
         R"({"version":3,"sources":["CANARY.js"],"sourcesContent":["throw 'CANARY';"],"mappings":"AAAA"})");
-    F.write("zip", neverd::web::test::ZipFixture(
-                       {{"package.json",
-                         R"({"name":"CANARY","scripts":{"install":"CANARY"}})"},
-                        {"opaque", "CANARY", 0, 1}})
-                       .Bytes);
+    F.write("zip",
+            neverd::web::test::ZipFixture(
+                {{"package.json",
+                  R"({"name":"CANARY","scripts":{"install":"CANARY"}})"},
+                 {"opaque", "CANARY", 0, 1},
+                 {"install.js",
+                  "require('node:child_process').execFile('CANARY',options);"}})
+                .Bytes);
     const auto &Ops = Backend.at("operations");
     const bool HasParser =
         std::find(Ops.begin(), Ops.end(), "source_analyze") != Ops.end();
@@ -328,7 +416,7 @@ int main() {
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&
           Analysis.value("available", false))
-        zipArchive(H);
+        zipArchive(H, HasParser);
     WebTools Isolated(Inputs);
     const auto Error =
         evidence(Isolated.call("neverd_web_metadata", Json::object()), true);

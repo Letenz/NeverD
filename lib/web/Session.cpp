@@ -71,6 +71,17 @@ std::string Session::capabilities() {
                          {"max_cached_map_segments", 200000},
                          {"resolves_external_references", false}}};
   Operations.emplace_back("electron_manifest_analyze");
+  Operations.emplace_back("desktop_manifest_analyze");
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "desktop_manifest"},
+      {"profiles", llvm::json::Array{std::string(NWManifestProfile),
+                                     std::string(VSIXManifestProfile)}},
+      {"input_kinds", llvm::json::Array{"nwjs", "vsix"}},
+      {"max_bytes", std::to_string(MaxDesktopManifestBytes)},
+      {"max_entries", 5},
+      {"max_cached", 16},
+      {"framework_verified", false},
+      {"runtime_entry_verified", false}});
   Operations.emplace_back("sea_extract");
   Operations.emplace_back("sea_records");
   llvm::json::Array SEAProfiles;
@@ -141,7 +152,11 @@ std::string Session::capabilities() {
       {"max_cached", 4},
       {"max_cached_correlations", 4},
       {"intrinsic_verified", false},
-      {"websocket_correlation", false}});
+      {"websocket_correlation", false},
+      {"xhr_correlation", false},
+      {"candidate_kinds", llvm::json::Array{"fetch", "websocket", "xhr_open",
+                                            "xhr_set_request_header",
+                                            "xhr_send", "xhr_event_handler"}}});
 #endif
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
@@ -307,6 +322,45 @@ std::string Session::capabilities() {
   Operations.emplace_back("source_binding_records");
   Operations.emplace_back("source_semantics_analyze");
   Operations.emplace_back("source_semantic_records");
+  Operations.emplace_back("source_rewrite_analyze");
+  Operations.emplace_back("node_behavior_analyze");
+  Operations.emplace_back("node_behavior_records");
+  Operations.emplace_back("package_behavior_analyze");
+  Operations.emplace_back("package_behavior_records");
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "node_source_behavior"},
+                         {"profile", std::string(NodeBehaviorProfile)},
+                         {"max_records", MaxNodeBehaviorRecords},
+                         {"max_argument_anchors", MaxNodeBehaviorArguments},
+                         {"max_steps", MaxNodeBehaviorSteps},
+                         {"max_cached_sources", MaxCachedNodeBehaviors},
+                         {"max_selected_sources", MaxPackageBehaviorSources},
+                         {"max_selected_bytes", MaxPackageBehaviorBytes},
+                         {"max_selected_nodes", MaxPackageBehaviorNodes},
+                         {"max_ancestry_depth", MaxPackageBehaviorAncestry},
+                         {"max_declared_entry_ids", MaxPackageBehaviorEntries},
+                         {"max_package_records", MaxPackageBehaviorRecords},
+                         {"max_package_join_steps", MaxPackageBehaviorSteps},
+                         {"max_cached_packages", MaxCachedPackageBehaviors},
+                         {"runtime_api_verified", false},
+                         {"reachability_verified", false},
+                         {"executes_input", false}});
+  Operations.emplace_back("source_rewrite_records");
+#ifndef _WIN32
+  Operations.emplace_back("source_rewrite_export");
+#endif
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "javascript_primitive_rewrite"},
+      {"profile", std::string(SourceRewriteProfile)},
+      {"passes", llvm::json::Array{"string_recovery", "constant_folding"}},
+      {"max_source_bytes", std::to_string(MaxSourceRewriteBytes)},
+      {"max_candidate_bytes", std::to_string(MaxSourceRewriteBytes)},
+      {"max_records", MaxSourceRewriteRecords},
+      {"max_steps", MaxSourceRewriteSteps},
+      {"max_cached", MaxCachedSourceRewrites},
+      {"whole_program_equivalence", false},
+      {"source_reflection_preserved", false},
+      {"executes_input", false}});
   Operations.emplace_back("source_modules_analyze");
   Operations.emplace_back("source_module_records");
   Operations.emplace_back("source_bundles_analyze");
@@ -530,10 +584,13 @@ std::string Session::commit(std::string_view Token) {
   State->SEAExtractions.clear();
   State->AsarExtractions.clear();
   State->ElectronManifests.clear();
+  State->DesktopManifests.clear();
   State->ElectronSources.clear();
   State->ElectronIPCs.clear();
   State->ElectronEntryAnalyses.clear();
   State->PackageAnalyses.clear();
+  State->NodeBehaviors.clear();
+  State->PackageBehaviors.clear();
   State->PackageArchives.clear();
   State->PackageIntegrity.clear();
   State->HARCaptures.clear();
@@ -552,6 +609,7 @@ std::string Session::commit(std::string_view Token) {
   State->Maps.clear();
   State->CachedMapSegments = 0;
   State->SourceViews.clear();
+  State->SourceRewrites.clear();
   State->PendingSourceView.reset();
   State->SourceViewToken.clear();
   State->Revision = Revision;
@@ -581,11 +639,15 @@ std::string Session::metadata() const {
       {"sea_extraction_count", State->SEAExtractions.size()},
       {"asar_extraction_count", State->AsarExtractions.size()},
       {"electron_manifest_count", State->ElectronManifests.size()},
+      {"desktop_manifest_count", State->DesktopManifests.size()},
       {"electron_source_count", State->ElectronSources.size()},
       {"electron_ipc_count", State->ElectronIPCs.size()},
       {"electron_entries_count", State->ElectronEntryAnalyses.size()},
       {"source_map_count", State->Maps.size()},
       {"source_view_count", State->SourceViews.size()},
+      {"source_rewrite_count", State->SourceRewrites.size()},
+      {"node_behavior_count", State->NodeBehaviors.size()},
+      {"package_behavior_count", State->PackageBehaviors.size()},
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},

@@ -462,7 +462,9 @@ struct Resolver {
     SourceDirectory = Slash == SourceFile.npos ? std::u16string()
                                                : SourceFile.substr(0, Slash);
     References.assign(S.Nodes.size(), None);
-    Declarations.assign(S.Nodes.size(), None);
+    auto DeclarationIndex = indexSourceDeclarations(S, B);
+    step(DeclarationIndex.Steps);
+    Declarations = std::move(DeclarationIndex.UniqueBindings);
     Visiting.resize(S.Nodes.size());
     A.Nodes.resize(S.Nodes.size());
     Initializers.assign(B.Bindings.size(), None);
@@ -492,9 +494,6 @@ struct Resolver {
         throw Error("invalid_source_binding_model");
       if (D.Node != None) {
         Declared[D.Binding] = true;
-        if (Declarations[D.Node] != None && Declarations[D.Node] != D.Binding)
-          throw Error("invalid_source_binding_model");
-        Declarations[D.Node] = D.Binding;
       }
     }
     for (uint32_t I = 0; I < S.Nodes.size(); ++I) {

@@ -53,15 +53,8 @@ struct BindingIndex {
   std::vector<uint32_t> Declarations, References;
   std::vector<bool> Written;
   explicit BindingIndex(const SourceAnalysis &S, const SourceBindingAnalysis &B)
-      : Declarations(S.Nodes.size(), None), References(S.Nodes.size(), None),
-        Written(B.Bindings.size(), false) {
-    for (const auto &D : B.Declarations) {
-      if (D.Binding >= B.Bindings.size() ||
-          (D.Node != None && D.Node >= S.Nodes.size()))
-        throw Error("invalid_source_binding_model");
-      if (D.Node != None && Declarations[D.Node] == None)
-        Declarations[D.Node] = D.Binding;
-    }
+      : Declarations(indexSourceDeclarations(S, B).UniqueBindings),
+        References(S.Nodes.size(), None), Written(B.Bindings.size(), false) {
     for (uint32_t I = 0; I < B.References.size(); ++I) {
       const auto &R = B.References[I];
       if (R.Node >= S.Nodes.size() || References[R.Node] != None ||
@@ -463,7 +456,8 @@ public:
     }
     try {
       step(validateSourceModel(Source));
-      step(Bindings.Declarations.size() + Bindings.References.size());
+      step(Source.Nodes.size() + Bindings.Declarations.size() +
+           Bindings.References.size());
       for (uint32_t I = 0; I < Source.Nodes.size(); ++I)
         for (const auto &C : node(I).Children) {
           step();
