@@ -1583,3 +1583,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 检查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的优化与未优化源码投影。单函数和分片 LLVM 发射保留相同的不完整原生 EH 显式契约；二进制重写仍拒绝该契约。
 
 `RegistrationCallNoReturn` 拒绝改变的指令范围、目标、操作范围、条件调用，以及错误架构或格式下的使用。对齐栈 PE32 用例同时检查已独立证明终止的调用和依赖当前证明删除的普通后继边；内存证据失效不能重新生成已不存在的普通边。
+
+`SafeSEHReference.*` 检查不可变 SafeSEH 表成员、畸形或歧义存储、重定位、其他架构与格式，以及分片间的声明顺序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 通过 `NEVERD_NONLOCAL_FINALLY_INPUTS`，测试原生 MSVC x86/x64、O0/O2、GS 开关及源码优化开关的 32 种 LLVM 组合。测试验证 LLVM 和已解析调用签名，并要求未支持的 x86 原生 EH 重建继续被拒绝。Windows EH 专项作业下载原生 fixture artifact 并运行该矩阵；缺少输入目录时测试会明确跳过。

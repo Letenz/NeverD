@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/ExceptionRewriteContract.h"
+#include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -16,6 +17,7 @@
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/BinaryLoading.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/IR/IRBuilder.h"
@@ -28,6 +30,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
@@ -1005,6 +1008,72 @@ TEST(PipelineOutcome, SourceEHRefusalsAgreeAcrossSingleAndShardedEmission) {
       }
     }
   }
+}
+
+TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
+  const char *Root = std::getenv("NEVERD_NONLOCAL_FINALLY_INPUTS");
+  if (!Root)
+    GTEST_SKIP() << "set NEVERD_NONLOCAL_FINALLY_INPUTS to native MSVC images";
+  ScopedThreadCount Threads(2);
+  for (const char *Architecture : {"x86", "x64"})
+    for (const char *Profile : {"Od-no-gs", "Od-gs", "O2-no-gs", "O2-gs"}) {
+      const auto Path =
+          std::filesystem::path(Root) / Architecture / Profile / "original.exe";
+      auto Image = loadBinary(Path.string());
+      ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+      ASSERT_EQ(Image->Format, BinaryFormat::COFF);
+      ASSERT_EQ(Image->Arch,
+                std::string(Architecture) == "x86" ? Arch::X86 : Arch::X64);
+      for (const char *Name :
+           {"nonlocal_finally_goto", "nonlocal_finally_return"}) {
+        const auto *Export = Image->findExport(Name);
+        ASSERT_NE(Export, nullptr) << Path << ':' << Name;
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << Path << ':' << Name << ':' << NoOpt);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.SourceProjection = Options.LiftMode = true;
+          Options.OnlyFunctionEntries.insert(Export->Addr);
+          Options.NoOpt = NoOpt;
+          const auto Result = Pipeline().run(*Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          ASSERT_NE(Result.LlvmModule, nullptr);
+          EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          EXPECT_TRUE(validateResolvedLLVMCallSignatures(*Result.LlvmModule));
+          ASSERT_FALSE(Result.LowFuncs.empty());
+          for (const auto &Function : Result.LowFuncs)
+            EXPECT_TRUE(Function.hasCompleteLiftCoverage()) << Function.Name;
+          if (Image->Arch != Arch::X86)
+            continue;
+          // An external source-handler identity does not supply the missing
+          // ordinary-finally invocation and nonlocal-exit reconstruction.
+          auto Native = exception_rewrite::validateExceptionRewriteContracts(
+              *Result.LlvmModule);
+          EXPECT_FALSE(bool(Native));
+          if (!Native)
+            llvm::consumeError(Native.takeError());
+          if (std::string(Profile) != "Od-gs" &&
+              std::string(Profile) != "O2-gs")
+            continue;
+          const auto *EH = Image->ExceptionMetadata.findFunction(Export->Addr);
+          ASSERT_NE(EH, nullptr);
+          ASSERT_TRUE(EH->Registration);
+          bool HasRetainedHandler = false;
+          for (const auto &Function : *Result.LlvmModule) {
+            auto Identity = rewrite_source::getOriginalVA(Function);
+            ASSERT_TRUE(bool(Identity)) << llvm::toString(Identity.takeError());
+            if (*Identity == EH->Registration->HandlerVA &&
+                !Function.use_empty()) {
+              EXPECT_TRUE(Function.isDeclaration());
+              HasRetainedHandler = true;
+            }
+          }
+          EXPECT_TRUE(HasRetainedHandler);
+        }
+      }
+    }
 }
 
 TEST(PipelineOutcome, LiftPreservesTheFailedShardDiagnostic) {

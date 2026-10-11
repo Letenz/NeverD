@@ -85,11 +85,9 @@ llvm::Constant *MedLLVMEmitter::resolveLiftedCodeAddress(va_t Address) {
   }
   if (auto *Interior = resolveLiftedFunctionInterior(Address))
     return Interior;
-  if (CurMedFunc && CurMedFunc->ExceptionMetadata &&
-      CurMedFunc->ExceptionMetadata->Registration &&
-      CurMedFunc->ExceptionMetadata->Cxx)
-    return resolveX86RegistrationHandlerReference(Address);
-  return nullptr;
+  // A retained handler identity belongs to the image, independently of the
+  // referencing function's EH metadata or inclusion of its original parent.
+  return resolveX86RegistrationHandlerReference(Address);
 }
 
 llvm::Constant *MedLLVMEmitter::resolveLiftedFunctionInterior(va_t Address) {

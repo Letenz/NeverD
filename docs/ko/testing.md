@@ -1665,3 +1665,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission`은 x86, x64, AArch64의 PE32, ELF, Mach-O에서 최적화 여부에 따른 소스 투영을 검사합니다. 단일 함수와 분할 LLVM 출력은 동일한 불완전한 네이티브 EH 계약을 명시적으로 유지하며 바이너리 재작성은 계속 이를 거부합니다.
 
 `RegistrationCallNoReturn`은 변경된 명령 범위, 대상, 연산 범위, 조건부 호출 및 다른 아키텍처나 형식에서의 사용을 거부합니다. 정렬된 스택의 PE32 검사는 독립적으로 종료가 증명된 호출과 현재 증거로 제거해야 하는 일반 후속 간선을 모두 확인합니다. 메모리 효과 증거가 무효여도 이미 없는 일반 간선이 복원되지는 않습니다.
+
+`SafeSEHReference.*`는 불변 SafeSEH 테이블 소속, 잘못되거나 모호한 저장 영역, 재배치, 다른 아키텍처와 형식, 분할 간 선언 순서를 검사합니다. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM`는 `NEVERD_NONLOCAL_FINALLY_INPUTS`로 네이티브 MSVC x86/x64, O0/O2, GS 및 소스 최적화 설정의 LLVM 조합 32개를 검사합니다. LLVM과 해석된 호출 시그니처를 검증하며 지원하지 않는 x86 네이티브 EH 재구성이 계속 거부되어야 합니다. Windows EH 전용 작업은 네이티브 fixture artifact를 내려받아 실행하며 입력 디렉터리가 없으면 테스트를 명시적으로 건너뜁니다.

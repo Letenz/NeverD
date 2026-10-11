@@ -22,6 +22,12 @@ analysis and comparison output belong outside the repository.
   as the SDK and sharded source route. Incomplete native EH contracts remain
   explicit and still prevent binary rewriting. Cross-format and architecture
   tests retain the call and contract through both optimization modes.
+- PE32 source LLVM retains handler identities authenticated by immutable
+  SafeSEH membership, even when a GS wrapper has additional behavior that
+  prevents a forwarding-personality proof. Declaration order and sharding do
+  not change that identity. Native reconstruction still requires its separate
+  language, frame and callback contracts; the MSVC finally fixture matrix
+  checks source LLVM independently of original-runtime observations.
 - Direct PE32 EH4 publication follows bounded stack allocation, saved registers
   and cookie initialization instead of requiring fixed byte positions. Both
   pushed cookies and explicit disp8/disp32 stores retain their exact header
