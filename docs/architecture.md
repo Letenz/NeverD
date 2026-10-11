@@ -1077,6 +1077,12 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Iterative HighIR cleanup treats an inline candidate as progress only after the
+shared stability proof admits it and a use is replaced. Expression simplification
+reports both replacements and in-place changes to shared nodes. With candidates
+present, another cleanup round requires a statement deletion, inlining or
+simplification; rejected candidates alone do not repeat the same analysis. The
+existing stopping point without candidates and iteration limits remain unchanged.
 Med-to-High lowering preserves CFG successors after branch threading, including
 sole successors with no remaining branch operation. When source order differs,
 it emits an explicit transfer after that edge's PHI copies.

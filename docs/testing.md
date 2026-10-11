@@ -1794,6 +1794,13 @@ even when several assignments share an expression. Cyclic expression graphs
 exercise effect propagation in both encounter orders; cleanup must terminate
 without dropping an effect or its inputs.
 
+Cleanup progress regressions distinguish rejected copy candidates from actual
+replacements, including simplification that makes a previously unstable candidate
+safe on the next round. Shared-node operator changes, child replacements and
+in-place operand rewrites must report progress and preserve independent
+interpreter results. Refused ordered-memory rewrites report no progress and
+retain the access.
+
 `CProjectionIdentifiers.*` in `NeverDHighControlFlowTests` checks first-free
 source names after dense and explicit suffix collisions, canonicalization,
 writer copies, moves and resets. Both C emitters share this allocator.
