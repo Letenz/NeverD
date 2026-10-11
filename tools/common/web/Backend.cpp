@@ -1,15 +1,15 @@
-//===- WebEngine.cpp - Offline analysis worker adapter -----------------===//
+//===- Backend.cpp - Shared offline web C API client ----------------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Offline analysis worker adapter.
+/// Shared offline analysis adapter for native C++ transports.
 ///
 //===----------------------------------------------------------------------===//
 
-#include "WebEngine.h"
+#include "Backend.h"
 
 #include <algorithm>
 #include <charconv>
@@ -17,12 +17,19 @@
 #include <limits>
 #include <memory>
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
 #endif
 
-namespace neverd::worker {
+namespace neverd::web_client {
+using transport::Error;
+using transport::parseJson;
+using transport::sizeField;
+using transport::stringField;
 namespace {
 // Optional additive API: a worker linked to an older engine must still run
 // native requests. Resolve only already-loaded engine symbols, never a path.
@@ -55,6 +62,8 @@ struct API {
   WEB_API(neverd_web_artifacts_json)
   WEB_API(neverd_web_bun_extract_json)
   WEB_API(neverd_web_bun_records_json)
+  WEB_API(neverd_web_sea_extract_json)
+  WEB_API(neverd_web_sea_records_json)
   WEB_API(neverd_web_packages_analyze_json)
   WEB_API(neverd_web_package_archive_extract_json)
   WEB_API(neverd_web_package_archive_records_json)
@@ -74,6 +83,7 @@ struct API {
   WEB_API(neverd_web_package_diff_records_json)
   WEB_API(neverd_web_asar_extract_json)
   WEB_API(neverd_web_electron_manifest_analyze_json)
+  WEB_API(neverd_web_desktop_manifest_analyze_json)
   WEB_API(neverd_web_electron_source_analyze_json)
   WEB_API(neverd_web_electron_source_records_json)
   WEB_API(neverd_web_electron_ipc_analyze_json)
@@ -127,8 +137,8 @@ Json result(const char *text) {
       text, neverd_free_string);
   if (!text)
     throw Error("allocation_failed", "Web response allocation failed");
-  const auto length = strnlen(text, MaxFrameBytes + 1);
-  if (length > MaxFrameBytes)
+  const auto length = strnlen(text, transport::MaxJsonBytes + 1);
+  if (length > transport::MaxJsonBytes)
     throw Error("budget_exceeded", "Web response exceeds the transport budget");
   auto value = parseJson({text, length});
   if (!value.is_object() || value.value("schema_version", 0) != 1)
@@ -176,13 +186,13 @@ uint64_t decimal(const Json &payload, const char *key) {
 }
 } // namespace
 
-WebEngine::~WebEngine() {
+Backend::~Backend() {
   neverd_session_destroy(native_);
   if (session_)
     api().neverd_web_session_destroy(session_);
 }
 
-Json WebEngine::capabilities() {
+Json Backend::capabilities() {
   if (!api().complete())
     return {{"schema_version", 1},
             {"status", "error"},
@@ -199,7 +209,7 @@ Json WebEngine::capabilities() {
   }
 }
 
-Json WebEngine::execute(const std::string &operation, const Json &p) {
+Json Backend::execute(const std::string &operation, const Json &p) {
   if (operation == "web_capabilities") {
     fields(p, {});
     return capabilities();
@@ -472,6 +482,20 @@ Json WebEngine::execute(const std::string &operation, const Json &p) {
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
         sizeField(p, "limit", 128, 512)));
   }
+  if (operation == "web_desktop_manifest_analyze") {
+    fields(p, {"revision", "artifact_id", "input_kind"});
+    if (!api().neverd_web_desktop_manifest_analyze_json)
+      throw Error("capability_unavailable",
+                  "Desktop manifest evidence is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto kind = required(p, "input_kind", 32);
+    auto value = result(api().neverd_web_desktop_manifest_analyze_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size()));
+    analysisState_ = "partial";
+    return value;
+  }
   if (operation == "web_electron_manifest_analyze" ||
       operation == "web_electron_source_analyze") {
     const bool Manifest = operation == "web_electron_manifest_analyze";
@@ -592,6 +616,30 @@ Json WebEngine::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
         sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_sea_extract") {
+    fields(p, {"revision", "artifact_id", "profile"});
+    if (!api().neverd_web_sea_extract_json)
+      throw Error("capability_unavailable", "SEA extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto profile = required(p, "profile", 64);
+    auto value = result(api().neverd_web_sea_extract_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        profile.data(), profile.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_sea_records") {
+    fields(p, {"revision", "extraction_id", "offset", "limit"});
+    if (!api().neverd_web_sea_records_json)
+      throw Error("capability_unavailable", "SEA extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "extraction_id", 64);
+    return result(api().neverd_web_sea_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 128)));
   }
   if (operation == "web_bun_extract") {
     fields(p, {"revision", "artifact_id"});
@@ -801,4 +849,4 @@ Json WebEngine::execute(const std::string &operation, const Json &p) {
   return result(query(session_, revision.data(), revision.size(), id.data(),
                       id.size(), offset, limit));
 }
-} // namespace neverd::worker
+} // namespace neverd::web_client

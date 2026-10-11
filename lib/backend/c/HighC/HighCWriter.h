@@ -84,6 +84,10 @@ uint16_t countedBytes(const HighExpr &Operand);
 /// at most 4 bytes (unsigned int), 64 for 8 bytes, and 0 for any other width.
 unsigned countedBits(const HighExpr &Operand);
 
+/// Whether \p E prints as integer arithmetic, whose C type follows from its
+/// operands' by C's conversions rather than from the IR's type.
+bool printsIntegerArithmetic(const HighExpr &E);
+
 /// \p E prints as a C expression whose value is 0 or 1: a comparison, a
 /// logical operation, or a carry or overflow test.  Its zero or sign
 /// extension is that value at any width, with no view of its own byte.
@@ -472,7 +476,7 @@ public:
   static std::string debugSignatureKey(const FunctionSym &FS);
   /// Prefer more TPI params / a typed or sret return when two decorations
   /// collapse to one C identifier. Display-only; does not invent call args.
-  static int debugSymRichness(const FunctionSym &FS);
+  int debugSymRichness(const FunctionSym &FS) const;
   static TypeRef cDisplayType(const TypeRef &Ty);
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
@@ -646,6 +650,9 @@ public:
   /// See printedIntegerType.
   std::unordered_map<const HighExpr *, std::pair<uint16_t, bool>>
       PrintedIntegerTypes;
+  /// Variables printed as forwarded integer arithmetic of no known C type:
+  /// their own types do not decide how the text reads.
+  std::unordered_set<const HighExpr *> UntypedArithmeticTexts;
   /// See signedCarrierResult: the carrier text and its precedence.
   std::unordered_map<const HighExpr *, std::pair<std::string, int>>
       UnsignedCarrierTexts;
@@ -779,6 +786,9 @@ public:
   /// The helper counting a zero's leading zeros as its width, by the bits it
   /// counts in (32 or 64).
   std::map<unsigned, std::string> LeadingZeroHelpers;
+  /// The helper of each x86 saturating lane operation and lane width
+  /// (X86SaturatingLanes.def).
+  std::map<std::pair<Intrinsic, unsigned>, std::string> SaturatingLaneHelpers;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>

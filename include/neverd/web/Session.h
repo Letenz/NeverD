@@ -93,6 +93,9 @@ public:
                           uint64_t Offset, uint64_t Limit) const;
   std::string analyzeElectronManifest(std::string_view ExpectedRevision,
                                       std::string_view ArtifactID);
+  std::string analyzeDesktopManifest(std::string_view ExpectedRevision,
+                                     std::string_view ArtifactID,
+                                     std::string_view Kind);
   std::string analyzeElectronSource(std::string_view ExpectedRevision,
                                     std::string_view SourceID);
   std::string electronSourceRecords(std::string_view ExpectedRevision,
@@ -122,6 +125,11 @@ public:
                           std::string_view SelectionID) const;
   std::string extractBun(std::string_view ExpectedRevision,
                          std::string_view ArtifactID);
+  std::string extractSEA(std::string_view ExpectedRevision,
+                         std::string_view ArtifactID, std::string_view Profile);
+  std::string seaRecords(std::string_view ExpectedRevision,
+                         std::string_view ExtractionID, uint64_t Offset,
+                         uint64_t Limit) const;
   /// Explicit local raw disclosure into a new directory. Fixed output names;
   /// captured names are manifest data only. Never overwrites or executes.
   std::string exportBun(std::string_view ExpectedRevision,

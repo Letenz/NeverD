@@ -831,6 +831,42 @@ renderDivPrecondition(Arch TheArch, const HighExpr &Call,
   return Result;
 }
 
+/// An alignment precondition (RequireAligned): the access faults, here a
+/// trap, when its address is not a multiple of the alignment and, given a
+/// third operand, that predicate holds.  An address relative to FS or GS
+/// needs the segment's base, which C does not have.
+std::string renderAlignmentPrecondition(
+    const HighExpr &Call, std::function<std::string(const HighExpr &)> ExprFn) {
+  const size_t Count = Call.Operands.size();
+  const HighExpr *Address = Count > 0 ? Call.Operands[0].get() : nullptr;
+  const HighExpr *Alignment = Count > 1 ? Call.Operands[1].get() : nullptr;
+  const HighExpr *Active = Count > 2 ? Call.Operands[2].get() : nullptr;
+  if ((Count != 2 && Count != 3) || !Address || !Alignment ||
+      Alignment->Kind != ExprKind::Const || (Count == 3 && !Active))
+    llvm::report_fatal_error("invalid alignment precondition intrinsic");
+  if (Call.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    llvm::report_fatal_error("segmented alignment precondition requires an "
+                             "architectural FS/GS base");
+  const uint64_t Bytes = Alignment->ConstVal;
+  if (Bytes == 0 || (Bytes & (Bytes - 1)) != 0)
+    llvm::report_fatal_error("alignment precondition is not a power of two");
+  // An 8-byte integer masks alike signed or not; a pointer, or anything
+  // narrower, converts first.  An operator binding looser than `&` keeps its
+  // parentheses.
+  std::string Value = ExprFn(*Address);
+  if (!Address->Type || Address->Type->Kind != NdTypeKind::Int ||
+      Address->Type->Size != 8)
+    Value = "(uint64_t)(" + Value + ")";
+  else if (Address->Kind != ExprKind::Var && Address->Kind != ExprKind::Const &&
+           Address->Kind != ExprKind::Cast)
+    Value = "(" + Value + ")";
+  std::string Condition =
+      "(" + Value + " & " + std::to_string(Bytes - 1) + ") != 0";
+  if (Active)
+    Condition = "(" + ExprFn(*Active) + ") && " + Condition;
+  return "if (" + Condition + ")\n    __builtin_trap();\n";
+}
+
 const char *memoryIntrinsicMnemonic(Intrinsic Id) {
   using I = Intrinsic;
   switch (Id) {
@@ -1812,6 +1848,8 @@ std::string renderX86SegmentedIntrinsicStatement(
   if (Call.IntrinsicId == Intrinsic::X86RequireDivPrecondition)
     return renderDivPrecondition(TheArch, Call, std::move(ExprFn),
                                  std::move(SameWidthUnsigned));
+  if (Call.IntrinsicId == Intrinsic::RequireAligned)
+    return renderAlignmentPrecondition(Call, std::move(ExprFn));
   if (auto Rendered =
           renderMemoryIntrinsic(TheArch, Call, ExprFn, MsvcIntrinsics);
       !Rendered.empty())
@@ -1945,6 +1983,81 @@ std::string renderX86AsmStatement(const char *Mnemonic,
     AsmStmt += Ops[I];
   }
   return "__asm { " + AsmStmt + " }";
+}
+
+namespace {
+
+/// One saturating lane operation of X86SaturatingLanes.def.
+struct SaturatingLane {
+  const char *Operation;
+  const char *Operator;
+  bool Signed;
+};
+
+std::optional<SaturatingLane> saturatingLane(Intrinsic Id) {
+  switch (Id) {
+#define NEVERD_X86_SATURATING_LANE(Name, Operation, Operator, Signed)          \
+  case Intrinsic::Name:                                                        \
+    return SaturatingLane{Operation, Operator, Signed};
+#include "neverd/backend/c/render/HighC/X86SaturatingLanes.def"
+  default:
+    return std::nullopt;
+  }
+}
+
+std::string saturatingLaneType(bool Signed, unsigned Bits) {
+  return std::string(Signed ? "int" : "uint") + std::to_string(Bits) + "_t";
+}
+
+} // namespace
+
+std::optional<unsigned> x86SaturatingLaneBits(const HighExpr &Call) {
+  if (Call.Kind != ExprKind::Call || !saturatingLane(Call.IntrinsicId) ||
+      !Call.Type || Call.Operands.size() != 2 || !Call.Operands[0] ||
+      !Call.Operands[1])
+    return std::nullopt;
+  const unsigned Bits = Call.Type->Size * 8;
+  if (Bits != 8 && Bits != 16)
+    return std::nullopt;
+  return Bits;
+}
+
+std::string x86SaturatingLaneHelperName(Intrinsic Id, unsigned Bits) {
+  const auto Lane = saturatingLane(Id);
+  if (!Lane)
+    llvm::report_fatal_error("not an x86 saturating lane operation");
+  return std::string("neverd_") + Lane->Operation + "_" +
+         (Lane->Signed ? "i" : "u") + std::to_string(Bits);
+}
+
+void writeX86SaturatingLaneHelper(llvm::raw_ostream &OS,
+                                  const std::string &Name, Intrinsic Id,
+                                  unsigned Bits) {
+  const auto Lane = saturatingLane(Id);
+  if (!Lane || (Bits != 8 && Bits != 16))
+    llvm::report_fatal_error("invalid x86 saturating lane helper");
+  const std::string Type = saturatingLaneType(Lane->Signed, Bits);
+  const int64_t Max =
+      Lane->Signed ? (int64_t{1} << (Bits - 1)) - 1 : (int64_t{1} << Bits) - 1;
+  const int64_t Min = Lane->Signed ? -(int64_t{1} << (Bits - 1)) : 0;
+  OS << "static inline " << Type << " " << Name << "(" << Type << " a, " << Type
+     << " b) {\n"
+     << "    int32_t r = (int32_t)a " << Lane->Operator << " (int32_t)b;\n"
+     << "    return (" << Type << ")(r < " << Min << " ? " << Min << " : r > "
+     << Max << " ? " << Max << " : r);\n"
+     << "}\n\n";
+}
+
+std::string renderX86SaturatingLane(
+    const HighExpr &Call, const std::string &Helper,
+    const std::function<std::string(const HighExpr &)> &ExprFn) {
+  const auto Lane = saturatingLane(Call.IntrinsicId);
+  const auto Bits = x86SaturatingLaneBits(Call);
+  if (!Lane || !Bits)
+    llvm::report_fatal_error("invalid x86 saturating lane operation");
+  const std::string Type = saturatingLaneType(Lane->Signed, *Bits);
+  return Helper + "((" + Type + ")(" + ExprFn(*Call.Operands[0]) + "), (" +
+         Type + ")(" + ExprFn(*Call.Operands[1]) + "))";
 }
 
 } // namespace neverd
