@@ -265,6 +265,10 @@ After incorporating the later C-output changes through `a5f9115d3`, the final
 build repeated the 475 focused executions with the same 473 passes and two
 Linux-only skips. All five incoming image-table and signed-comparison tests
 also passed. The composed matrix above was run at the earlier checkpoint.
+The subsequent integration through `1a131e7dd` repeated the same focused result
+and both seven-scenario Linux exception runs. Its computed-goto regression
+passed; the ARM32 literal-pool runtime test failed because the macOS linker
+cannot link `armv4t`, another host-profile limitation.
 
 The final CLI's Clang IR and GCC object replacements each passed seven Linux
 C++ exception scenarios in Docker. The GCC input retains stack protection.
