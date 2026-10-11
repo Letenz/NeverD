@@ -114,6 +114,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   // corresponding definition on the HighIR route as well as the LLVM route.
   recoverStructReturnFromCallers(Img, Result);
   propagateStructReturnForwarderShapes(Img, Result);
+  recoverStructReturnFromBody(Img, Result, StructReturnEvidence::Callers);
   materializeKnownStructReturnCallSites(Img, Result);
   bindFloatCallResults(Img, Result);
   settleReturnContracts(Img, Result, Dbg);
