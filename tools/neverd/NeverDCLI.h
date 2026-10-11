@@ -211,13 +211,19 @@ extern llvm::cl::list<std::string> WebArguments;
 int runWeb();
 int runWebRewrite();
 int runWebBehavior();
+int runWebBehaviorDiff();
 int runWebPackages();
 int runWebArchive();
 int runWebDesktop();
 int runWebIntegrity();
+int runWebAdvisories();
+int runWebAttestation();
+int runWebAssessment();
 int runWebInterfaces();
 int runWebStreams();
 int runWebSEA();
+int runWebNexe();
+int runWebPkg();
 
 extern llvm::cl::opt<bool> Devirtualize;
 extern llvm::cl::list<std::string> VMControlRegisters;
@@ -433,6 +439,18 @@ extern llvm::cl::opt<std::string> CgSvg;
 // Patch from external file.
 extern llvm::cl::opt<std::string> PatchFromIR;
 extern llvm::cl::opt<std::string> PatchFromC;
+extern llvm::cl::opt<std::string> PatchFromSource;
+extern llvm::cl::opt<std::string> PatchFromObject;
+extern llvm::cl::opt<std::string> PatchCompiler;
+extern llvm::cl::opt<std::string> PatchCompilerPath;
+extern llvm::cl::opt<std::string> PatchLanguage;
+extern llvm::cl::opt<std::string> PatchArtifact;
+extern llvm::cl::opt<std::string> PatchCompileMode;
+extern llvm::cl::opt<std::string> PatchEntry;
+extern llvm::cl::list<std::string> PatchCompilerArgs;
+extern llvm::cl::list<std::string> PatchBindings;
+extern llvm::cl::opt<unsigned> PatchCompilerTimeout;
+extern llvm::cl::opt<bool> PatchReport;
 extern llvm::cl::opt<std::string> PatchFuncAddr;
 extern OptionalStringList PatchSanitize;
 

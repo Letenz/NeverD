@@ -53,6 +53,9 @@ cl::list<std::string> WebArguments(
     cl::desc(
         "capabilities | inspect <input> | bun|map <file> | "
         "bun-map <file> <module-index> | "
+        "package-assessment <root> <manifest-index> <input-kind> "
+        "[-- selections] | archive-assessment <root> <format> <archive-index> "
+        "<manifest-member-index> <input-kind> [-- selections] | "
         "source|bindings|semantics|modules|bundles|view|navigate <file> "
         "<script|module|commonjs> | anchor <file> <source-type> "
         "<byte-offset> <byte-length> | bun-view|bun-navigate <file> "
@@ -1188,12 +1191,56 @@ cl::opt<std::string>
     PatchFromIR("from-ir", cl::desc("Patch from external LLVM IR file (.ll)"),
                 cl::init(""), cl::sub(PatchCmd));
 
+cl::opt<std::string> PatchFromC("from-c", cl::desc("Patch from C source file"),
+                                cl::init(""), cl::sub(PatchCmd));
+
+cl::opt<std::string> PatchFromSource(
+    "from-source",
+    cl::desc("Patch from C/C++ source using a selected compiler"), cl::init(""),
+    cl::sub(PatchCmd));
 cl::opt<std::string>
-    PatchFromC("from-c", cl::desc("Patch from C source file (requires clang)"),
-               cl::init(""), cl::sub(PatchCmd));
+    PatchFromObject("from-object",
+                    cl::desc("Patch from a native relocatable object"),
+                    cl::init(""), cl::sub(PatchCmd));
+cl::opt<std::string>
+    PatchCompiler("compiler",
+                  cl::desc("Source compiler: clang, neverc, or gcc"),
+                  cl::init("clang"), cl::sub(PatchCmd));
+cl::opt<std::string>
+    PatchCompilerPath("compiler-path",
+                      cl::desc("Executable for the selected source compiler"),
+                      cl::init(""), cl::sub(PatchCmd));
+cl::opt<std::string> PatchLanguage("language",
+                                   cl::desc("Source language: c or c++"),
+                                   cl::init("c"), cl::sub(PatchCmd));
+cl::opt<std::string> PatchArtifact("artifact",
+                                   cl::desc("Compiler output: ir or object"),
+                                   cl::init("ir"), cl::sub(PatchCmd));
+cl::opt<std::string>
+    PatchCompileMode("compile-mode",
+                     cl::desc("Compiler mode: normal or dyncode"),
+                     cl::init("normal"), cl::sub(PatchCmd));
+cl::opt<std::string> PatchEntry("entry",
+                                cl::desc("Exact replacement symbol for --func"),
+                                cl::init(""), cl::sub(PatchCmd));
+cl::list<std::string> PatchBindings(
+    "bind",
+    cl::desc("Original reference: function|const|data:SYMBOL=VA[:SIZE]"),
+    cl::ZeroOrMore, cl::sub(PatchCmd));
+cl::list<std::string>
+    PatchCompilerArgs("compiler-arg",
+                      cl::desc("Source compiler argument (repeatable)"),
+                      cl::ZeroOrMore, cl::sub(PatchCmd));
+cl::opt<unsigned>
+    PatchCompilerTimeout("compiler-timeout",
+                         cl::desc("Compiler timeout in seconds (1-3600)"),
+                         cl::init(30), cl::sub(PatchCmd));
+cl::opt<bool> PatchReport("patch-report",
+                          cl::desc("Print the source patch result as JSON"),
+                          cl::init(false), cl::sub(PatchCmd));
 
 cl::opt<std::string>
-    PatchFuncAddr("func", cl::desc("Function address for --from-c patch (hex)"),
+    PatchFuncAddr("func", cl::desc("Original function address for replacement"),
                   cl::init(""), cl::sub(PatchCmd));
 
 OptionalStringList PatchSanitize(

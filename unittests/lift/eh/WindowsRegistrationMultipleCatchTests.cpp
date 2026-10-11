@@ -14,6 +14,7 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -200,6 +201,20 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
       llvm::find_if(States.CallFrameEffects,
                     [](const auto &Call) { return Call.DoesNotReturn; });
   ASSERT_NE(Throw, States.CallFrameEffects.end());
+  const auto SourceThrow = llvm::find_if(Low.Blocks, [&](const auto &Block) {
+    return Block.StartAddr <= Throw->Address && Throw->Address < Block.EndAddr;
+  });
+  ASSERT_NE(SourceThrow, Low.Blocks.end());
+  const auto Boundary =
+      llvm::find_if(SourceThrow->InstructionBoundaries, [&](const auto &Insn) {
+        return Insn.Address == Throw->Address;
+      });
+  ASSERT_NE(Boundary, SourceThrow->InstructionBoundaries.end());
+  ASSERT_TRUE(isUnconditionalNoReturn(*Boundary));
+  ASSERT_TRUE(SourceThrow->Succs.empty());
+  // The decoded call independently terminates this block. Withdrawing its
+  // memory-effect receipt cannot recreate an ordinary return. The separate
+  // RegistrationCallNoReturn tests cover receipt-dependent edge removal.
   for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Changed = Low;
@@ -217,7 +232,12 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
       return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
     });
     ASSERT_NE(Block, Unproved.Blocks.end());
-    EXPECT_FALSE(Block->Succs.empty());
+    EXPECT_TRUE(Block->Succs.empty());
+    EXPECT_EQ(Block->ExceptionalSuccs.size(), 3u);
+    EXPECT_TRUE(llvm::any_of(Block->Ops, [&](const auto &Op) {
+      return Op.Addr == Throw->Address && Op.OriginSeq == Throw->OpSeq &&
+             Op.Opcode == NdOp::CALL && Op.DoesNotReturn;
+    }));
   }
   unsigned TerminalCalls = 0;
   for (const auto &Block : Med.Blocks)

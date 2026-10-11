@@ -60,6 +60,15 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_TRUE(Has("package_archive_extract"));
   EXPECT_TRUE(Has("package_archive_records"));
   EXPECT_TRUE(Has("package_integrity_verify"));
+  for (const auto *Name :
+       {"package_advisory_import", "package_advisory_records",
+        "package_advisories_match", "package_advisories_match_records",
+        "package_attestation_import", "package_attestation_records",
+        "package_attestation_digest_match", "package_attestation_digest_result",
+        "package_assessment_create", "package_assessment_findings",
+        "package_review_append", "package_review_decisions",
+        "package_assessment_report"})
+    EXPECT_TRUE(Has(Name));
   for (const auto Op : {"har_preview", "har_commit", "har_records",
                         "stream_preview", "stream_commit", "stream_records"})
     EXPECT_TRUE(Has(Op));
@@ -74,6 +83,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
       if (Entry->getString("kind") == "asar_extraction")
         ASARAvailable = Entry->getBoolean("available").value_or(false);
   bool SourceInterfacesAvailable = false;
+  EXPECT_EQ(Has("nexe_extract"), ASARAvailable);
+  EXPECT_EQ(Has("nexe_records"), ASARAvailable);
+  EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
+  EXPECT_EQ(Has("pkg_records"), ASARAvailable);
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
     if (!Entry || Entry->getString("kind") != "source_interfaces")
@@ -86,6 +99,42 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     EXPECT_EQ(Kinds->size(), 6u);
   }
   EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
+  unsigned RenameProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "javascript_scope_rename")
+      continue;
+    ++RenameProfiles;
+    EXPECT_EQ(Entry->getString("profile"), "javascript-scope-rename-v1");
+    const auto *Passes = Entry->getArray("passes");
+    ASSERT_NE(Passes, nullptr);
+    ASSERT_EQ(Passes->size(), 1U);
+    EXPECT_EQ((*Passes)[0].getAsString(), "scope_renaming");
+    EXPECT_EQ(Entry->getInteger("max_cached"), 2);
+    EXPECT_EQ(Entry->getString("cache_pool"), "source_rewrites");
+    EXPECT_EQ(Entry->getBoolean("original_name_recovery"), false);
+    EXPECT_EQ(Entry->getBoolean("whole_program_equivalence"), false);
+    EXPECT_EQ(Entry->getBoolean("executes_input"), false);
+  }
+  EXPECT_EQ(RenameProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
+  unsigned BranchProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "javascript_boolean_branches")
+      continue;
+    ++BranchProfiles;
+    EXPECT_EQ(Entry->getString("profile"), "javascript-boolean-branches-v1");
+    const auto *Passes = Entry->getArray("passes");
+    ASSERT_NE(Passes, nullptr);
+    ASSERT_EQ(Passes->size(), 1U);
+    EXPECT_EQ((*Passes)[0].getAsString(), "boolean_branches");
+    EXPECT_EQ(Entry->getInteger("max_cached"), 2);
+    EXPECT_EQ(Entry->getString("cache_pool"), "source_rewrites");
+    EXPECT_EQ(Entry->getBoolean("statements_rewritten"), false);
+    EXPECT_EQ(Entry->getBoolean("whole_program_equivalence"), false);
+    EXPECT_EQ(Entry->getBoolean("executes_input"), false);
+  }
+  EXPECT_EQ(BranchProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
   EXPECT_EQ(Has("asar_extract"), ASARAvailable);
   EXPECT_EQ(Has("asar_records"), ASARAvailable);
   EXPECT_TRUE(Has("native_open"));
@@ -106,8 +155,11 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("source_semantic_records"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_rewrite_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_rewrite_records"), bool(NEVERD_TEST_WEB_JS));
-  for (const auto Op : {"node_behavior_analyze", "node_behavior_records",
-                        "package_behavior_analyze", "package_behavior_records"})
+  for (const auto Op :
+       {"node_behavior_analyze", "node_behavior_records",
+        "package_behavior_analyze", "package_behavior_records",
+        "package_install_analyze", "package_install_records",
+        "package_behavior_diff_analyze", "package_behavior_diff_records"})
     EXPECT_EQ(Has(Op), bool(NEVERD_TEST_WEB_JS));
 #ifndef _WIN32
   EXPECT_EQ(Has("source_rewrite_export"), bool(NEVERD_TEST_WEB_JS));
@@ -130,6 +182,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   for (const auto *Owned :
        {neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
                                                "constant_folding", 16),
+        neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
+                                               "scope_renaming", 14),
+        neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
+                                               "boolean_branches", 16),
         neverd_web_source_rewrite_records_json(Session, "1", 1, "rewrite", 7, 0,
                                                1),
         neverd_web_source_rewrite_export_json(Session, "1", 1, "rewrite", 7,
@@ -141,6 +197,14 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
                                                  "{}", 2),
         neverd_web_package_behavior_records_json(Session, "1", 1, "behavior", 8,
                                                  "sources", 7, 0, 1),
+        neverd_web_package_install_analyze_json(Session, "1", 1, "package", 7,
+                                                "{}", 2),
+        neverd_web_package_behavior_diff_analyze_json(Session, "1", 1, "diff",
+                                                      4, "{}", 2),
+        neverd_web_package_behavior_diff_records_json(Session, "1", 1, "diff",
+                                                      4, "pairs", 5, 0, 1),
+        neverd_web_package_install_records_json(Session, "1", 1, "install", 7,
+                                                "scripts", 7, 0, 1),
         neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
         neverd_web_interface_records_json(Session, "1", 1, "analysis", 8, 0, 1),
         neverd_web_interfaces_compare_json(Session, "1", 1, "analysis", 8,
@@ -178,6 +242,14 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
         neverd_web_sea_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                     0),
         neverd_web_sea_records_json(nullptr, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_nexe_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                     0),
+        neverd_web_nexe_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                     0, 0, 1),
+        neverd_web_pkg_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                    0),
+        neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
+                                    0, 1),
         neverd_web_stream_preview_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
         neverd_web_stream_commit_json(nullptr, nullptr, 0, nullptr, 0),
@@ -192,6 +264,33 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                            nullptr, 0),
         neverd_web_interface_correlation_records_json(nullptr, nullptr, 0,
                                                       nullptr, 0, 0, 1),
+        neverd_web_package_advisory_import_json(nullptr, nullptr, 0, nullptr, 0,
+                                                nullptr, 0),
+        neverd_web_package_advisory_records_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, 0, 128),
+        neverd_web_package_advisories_match_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0),
+        neverd_web_package_advisories_match_records_json(nullptr, nullptr, 0,
+                                                         nullptr, 0, 0, 128),
+        neverd_web_package_attestation_import_json(nullptr, nullptr, 0, nullptr,
+                                                   0, nullptr, 0, nullptr, 0),
+        neverd_web_package_attestation_records_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, 0, 128),
+        neverd_web_package_attestation_digest_match_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0),
+        neverd_web_package_attestation_digest_result_json(nullptr, nullptr, 0,
+                                                          nullptr, 0),
+        neverd_web_package_assessment_create_json(nullptr, nullptr, 0, nullptr,
+                                                  0, nullptr, 0),
+        neverd_web_package_assessment_findings_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_package_review_append_json(nullptr, nullptr, 0, nullptr, 0,
+                                              nullptr, 0, nullptr, 0, nullptr,
+                                              0),
+        neverd_web_package_review_decisions_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, 0, 1),
+        neverd_web_package_assessment_report_json(nullptr, nullptr, 0, nullptr,
+                                                  0, nullptr, 0, 0, 1),
         neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, nullptr, 0),
         neverd_web_package_archive_extract_json(nullptr, nullptr, 0, nullptr, 0,
@@ -213,6 +312,14 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                                  0, nullptr, 0),
         neverd_web_package_behavior_records_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, 0, 1),
+        neverd_web_package_install_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                                nullptr, 0),
+        neverd_web_package_behavior_diff_analyze_json(nullptr, nullptr, 0,
+                                                      nullptr, 0, nullptr, 0),
+        neverd_web_package_behavior_diff_records_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_package_install_records_json(nullptr, nullptr, 0, nullptr, 0,
+                                                nullptr, 0, 0, 1),
         neverd_web_electron_manifest_analyze_json(nullptr, nullptr, 0, nullptr,
                                                   0),
         neverd_web_electron_source_analyze_json(nullptr, nullptr, 0, nullptr,
@@ -270,6 +377,10 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                                 0, 1),
         neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
                                                nullptr, 0),
+        neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                               "scope_renaming", 14),
+        neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                               "boolean_branches", 16),
         neverd_web_source_rewrite_records_json(nullptr, nullptr, 0, nullptr, 0,
                                                0, 1),
         neverd_web_source_rewrite_export_json(nullptr, nullptr, 0, nullptr, 0,

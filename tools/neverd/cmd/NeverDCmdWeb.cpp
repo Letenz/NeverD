@@ -42,10 +42,23 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() && (WebArguments[0] == "package-assessment" ||
+                                WebArguments[0] == "archive-assessment"))
+    return runWebAssessment();
+  if (!WebArguments.empty() && WebArguments[0] == "package-attestation")
+    return runWebAttestation();
+  if (!WebArguments.empty() && WebArguments[0] == "package-advisories")
+    return runWebAdvisories();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "package-behavior-diff" ||
+       WebArguments[0] == "archive-package-behavior-diff"))
+    return runWebBehaviorDiff();
   if (!WebArguments.empty() && (WebArguments[0] == "node-behavior" ||
                                 WebArguments[0] == "bun-node-behavior" ||
                                 WebArguments[0] == "package-behavior" ||
-                                WebArguments[0] == "archive-package-behavior"))
+                                WebArguments[0] == "archive-package-behavior" ||
+                                WebArguments[0] == "package-install" ||
+                                WebArguments[0] == "archive-package-install"))
     return runWebBehavior();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "rewrite" || WebArguments[0] == "rewrite-export" ||
@@ -57,6 +70,16 @@ int runWeb() {
   if (!WebArguments.empty() &&
       (WebArguments[0] == "sea" || WebArguments[0] == "sea-source"))
     return runWebSEA();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "nexe" || WebArguments[0] == "nexe-source" ||
+       WebArguments[0] == "archive-nexe" ||
+       WebArguments[0] == "archive-nexe-source"))
+    return runWebNexe();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "pkg" || WebArguments[0] == "pkg-source" ||
+       WebArguments[0] == "archive-pkg" ||
+       WebArguments[0] == "archive-pkg-source"))
+    return runWebPkg();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
@@ -273,6 +296,16 @@ int runWeb() {
            "source|bindings|semantics|modules|bundles|view|navigate <file> "
            "<script|module|commonjs> "
            "| sea|sea-source <file-or-root> <profile> [artifact-index] "
+           "| nexe <root> <profile> [artifact-index] "
+           "| nexe-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | archive-nexe[-source] <root> <profile> "
+           "<tar|tgz|zip> <archive-index> <archive-member-index> "
+           "[<member-index> <source-type>] "
+           "| pkg <root> <profile> [artifact-index] "
+           "| pkg-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | archive-pkg[-source] <root> <profile> "
+           "<tar|tgz|zip> <archive-index> <archive-member-index> "
+           "[<member-index> <source-type>] "
            "| map|bun "
            "<file> | bun-export <file> <new-output-directory> | "
            "bun-map <file> <module-index> | "

@@ -72,6 +72,8 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
     case NdOp::FLOAT_SUB:
     case NdOp::FLOAT_MULT:
     case NdOp::FLOAT_DIV:
+    case NdOp::FLOAT_MIN:
+    case NdOp::FLOAT_MAX:
     case NdOp::FLOAT_MINNUM:
     case NdOp::FLOAT_MAXNUM:
     case NdOp::FLOAT_EQUAL:
@@ -179,6 +181,8 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
   case NdOp::FLOAT_SUB:
   case NdOp::FLOAT_MULT:
   case NdOp::FLOAT_DIV:
+  case NdOp::FLOAT_MIN:
+  case NdOp::FLOAT_MAX:
   case NdOp::FLOAT_MINNUM:
   case NdOp::FLOAT_MAXNUM:
   case NdOp::FLOAT_EQUAL:
@@ -189,8 +193,24 @@ ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
       if ((Op.Opcode == NdOp::INT_AND || Op.Opcode == NdOp::INT_OR) &&
           Op.Inputs[0] == Op.Inputs[1])
         return medvarToExpr(Op.Inputs[0]);
-      return HighExpr::makeBinop(Op.Opcode, medvarToExpr(Op.Inputs[0]),
-                                 medvarToExpr(Op.Inputs[1]));
+      ExprPtr Left = medvarToExpr(Op.Inputs[0]);
+      ExprPtr Right = medvarToExpr(Op.Inputs[1]);
+      // `setcc al` after `xor eax, eax` merges its byte into a register
+      // proven zero. Like `x | x`, the merge is its other operand, which then
+      // carries this occurrence: a later fold would discard it.
+      if (Op.Opcode == NdOp::INT_OR || Op.Opcode == NdOp::INT_XOR) {
+        auto Zero = [](const ExprPtr &E) {
+          return E && E->Kind == ExprKind::Const && E->Operands.empty() &&
+                 E->ConstVal == 0 &&
+                 (E->ConstProvenance == ConstantAddressProvenance::Unknown ||
+                  E->ConstProvenance == ConstantAddressProvenance::Scalar);
+        };
+        if (Zero(Left) && Right && Op.Inputs[1].Size == Op.Output.Size)
+          return Right;
+        if (Zero(Right) && Left && Op.Inputs[0].Size == Op.Output.Size)
+          return Left;
+      }
+      return HighExpr::makeBinop(Op.Opcode, std::move(Left), std::move(Right));
     }
     break;
 

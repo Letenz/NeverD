@@ -580,9 +580,22 @@ bool collectLowAddressUses(
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const std::vector<TargetRegisterRange> PreservedRanges =
       TRI.callPreservedRanges(Img.abiFormat());
+  std::map<va_t, const LowFunc *> SEHCallees;
+  if (LocalUnwind)
+    for (const auto &Func : Funcs)
+      if (!SEHCallees.emplace(Func.Entry, &Func).second)
+        return false;
   constexpr size_t kMaxModuleAddressScanOps =
       size_t{limits::kMaxJumpTableEvidenceWork} *
       size_t{limits::kMaxMultiStageRetries};
+  // Address-use receipts and complete-CFG frame dataflow count different
+  // work. Charging every lifted operation to the small address-use budget
+  // would reject a straight-line function before its first continuation and
+  // would also discard unrelated module ownership evidence. Keep a separate,
+  // cumulative cap for frame transfers, joins and dependency hashing.
+  constexpr size_t kMaxSEHFrameWork = kMaxModuleAddressScanOps * 16;
+  size_t SEHFrameWorkRemaining =
+      std::min(TestBudget.value_or(kMaxSEHFrameWork), kMaxSEHFrameWork);
   size_t ScanOps = 0;
   auto failCollect = [](const char *, size_t = 0, va_t = InvalidVA) {
     return false;
@@ -1547,8 +1560,8 @@ bool collectLowAddressUses(
                           SP.isPrivateFrameOnly() &&
                           Frame.FrameOffsets == SP.FrameOffsets) {
                         if (!SEHFrameProof)
-                          SEHFrameProof =
-                              proveLowSEHFrames(Func, TRI, Budget.Remaining);
+                          SEHFrameProof = proveLowSEHFrames(
+                              Func, TRI, SEHFrameWorkRemaining, &SEHCallees);
                         const auto Proof =
                             SEHFrameProof->Calls.find({Op.Addr, Op.Seq});
                         if (Proof != SEHFrameProof->Calls.end() &&
@@ -1556,7 +1569,8 @@ bool collectLowAddressUses(
                           LocalUnwind->SameFrameCallsByFunction[FuncIndex]
                               .push_back({Target, Op.Addr, Op.Seq, CalleeVA,
                                           Proof->second,
-                                          SEHFrameProof->DependencyDigest});
+                                          SEHFrameProof->DependencyDigest,
+                                          SEHFrameProof->CalleeDependencies});
                       }
                     }
                   }
@@ -3412,6 +3426,12 @@ void Pipeline::buildLowIR(
   // Context keys snapshot the changing CFG protection sets; the immutable
   // indexes above outlive every worker and every graph retained here.
   auto X87Graphs = createX87CallGraphCache(&NoReturnCallees, &NoReturnTargets);
+  // A small selected-function batch runs inline. Give its independent call
+  // proofs the otherwise unused worker quota; parallel CFG batches and the
+  // extra-callee frontier keep their existing outer parallelism.
+  const unsigned X87ProofThreads = Total < limits::kMinParallelIRWorkItems
+                                       ? std::min(workerThreadCount(), 4u)
+                                       : 1;
 
   // Decode cost tracks a function's instruction count, which is unknown before
   // the recursive-descent build runs.  Candidates are address-sorted, so the
@@ -3439,6 +3459,7 @@ void Pipeline::buildLowIR(
     LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
     LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
     LocalCFG.setX87CallGraphCache(X87Graphs);
+    LocalCFG.setX87CallProofThreads(X87ProofThreads);
     for (size_t I; (I = Claim()) < N;) {
       AllLow[I] = LocalCFG.build(Img, LocalDec, Candidates[I].first,
                                  Candidates[I].second);
@@ -3495,6 +3516,7 @@ void Pipeline::buildLowIR(
       LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
       LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
       LocalCFG.setX87CallGraphCache(X87Graphs);
+      LocalCFG.setX87CallProofThreads(X87ProofThreads);
       LocalCFG.setProtectedJumpTableRelocationSlots(&ProtectedRelocationSlots);
       LocalCFG.setUnsafeJumpTableBranches(&UnsafeJumpTableBranches);
       LocalCFG.setPreservePotentialJumpTableBranches(
@@ -3781,14 +3803,15 @@ void Pipeline::buildLowIR(
   // code identities.  Keeping publication after both fixed points prevents a
   // provisional producer or withdrawn continuation from becoming stale
   // image-global evidence.
-  bool PublishedCodeRefs = false;
   for (const LowFunc &Function : AllLow)
     for (va_t Ref : Function.CodeRefTargets)
-      PublishedCodeRefs |= Img.CodeRefTargets.insert(Ref).second;
-  // Newly published image facts can change a callee's address provenance.
-  // Extra-callee analysis begins a fresh cache lifetime after such a change.
-  if (PublishedCodeRefs)
-    X87Graphs = createX87CallGraphCache(&NoReturnCallees, &NoReturnTargets);
+      Img.CodeRefTargets.insert(Ref);
+  // CodeRefTargets affects later address propagation and x87 tag entry seeds,
+  // but not the raw machine graphs retained by X87Graphs: their builders skip
+  // floating-stack normalization. Keep those facts for extra-callee analysis.
+  // Every ordinary builder still normalizes its own stack and tags against the
+  // newly published roots; no normalized CFG or caller's effect answer is
+  // shared.
 
   size_t FuncCount = 0;
   for (size_t I = 0; I < Total; ++I) {

@@ -255,10 +255,15 @@ See [the profile and pinned sources](docs/web-bun-profile.md) and
 [fixture provenance](unittests/web/fixtures/bun/README.md).
 Enabled web builds ship the reference notice beside the binaries, in the SDK
 and under `share/neverd/licenses/bun`, including parser-disabled builds.
-Serialized-source decoding uses the existing LLVM Support native Zstd backend,
-with an independent C++ envelope/budget preflight against the
+Serialized-source decoding prefers the existing LLVM Support native Zstd
+backend. If LLVM omits Zstd, the optional exact 1.5.7 static SDK supplies the
+in-process decoder under the preserved [BSD license](LICENSES/zstd/LICENSE).
+The [dependency notice](LICENSES/zstd/README.md) is staged beside the binaries,
+in the SDK and under `share/neverd/licenses/zstd`. Both paths share NeverD's
+independent C++ envelope/budget preflight against the
 [Zstandard format](https://github.com/facebook/zstd/blob/v1.5.7/doc/zstd_compression_format.md).
-It does not incorporate a new Zstd implementation or call an external tool.
+No Zstd implementation source is copied into NeverD, and no external tool is
+called.
 
 ## WHATWG HTML named character references
 

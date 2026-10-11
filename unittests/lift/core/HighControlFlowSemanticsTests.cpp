@@ -29,9 +29,10 @@ bool sinkJoinDefaultsLate(HighFunc &Func);
 void detectAndConvertLoops(HighFunc &, const std::unordered_map<va_t, int> &,
                            const MedFunc &, bool);
 void inlineSingleDefSingleUse(std::vector<HighStmt> &);
+bool inlineSingleDefs(std::vector<HighStmt> &, const VarKeyMap<ExprPtr> &);
 void foldCopyChains(HighFunc &);
 void resolveRegAliases(std::vector<HighStmt> &);
-void simplifyAllExprs(std::vector<HighStmt> &);
+bool simplifyAllExprs(std::vector<HighStmt> &);
 void recoverSwitchStatements(HighFunc &);
 void cleanupGuardBeforeSwitch(HighFunc &);
 void eliminateGotoToLoop(std::vector<HighStmt> &);
@@ -1391,6 +1392,95 @@ TEST(HighControlFlowSemantics, TruncatedWideArithmeticDropsUnreadUpperHalves) {
   Observed.Body = {result(0, Full)};
   simplifyAllExprs(Observed.Body);
   EXPECT_TRUE(HasUndef(Observed.Body[0].RetVal));
+}
+
+TEST(HighControlFlowSemantics, RejectedInliningIsNotProgressButCanBecomeSafe) {
+  HighFunc F;
+  HighStmt Copy = assign(0x1004, 1, 0);
+  Copy.Val =
+      HighExpr::makeBinop(NdOp::INT_MULT, local(0), HighExpr::makeConst(0, 8));
+  F.Body = {assign(0x1000, 0, 4), Copy, assign(0x1008, 0, 9),
+            result(0x100c, local(1))};
+  const VarKey Key = varKey(Copy.Dst->Var);
+  VarKeyMap<ExprPtr> Candidates{{Key, Copy.Val}};
+  const auto Use = F.Body.back().RetVal;
+  EXPECT_FALSE(inlineSingleDefs(F.Body, Candidates));
+  EXPECT_EQ(F.Body.back().RetVal, Use);
+  EXPECT_EQ(execute(F, 0), 0u);
+
+  // The first candidate reads a mutable name. Simplification removes that
+  // dependency, so cleanup must allow the next round to prove the new one.
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  Candidates[Key] = F.Body[1].Val;
+  ASSERT_TRUE(inlineSingleDefs(F.Body, Candidates));
+  ASSERT_EQ(F.Body.back().RetVal->Kind, ExprKind::Const);
+  EXPECT_EQ(F.Body.back().RetVal->ConstVal, 0u);
+  EXPECT_EQ(execute(F, 0), 0u);
+  EXPECT_FALSE(inlineSingleDefs(F.Body, Candidates));
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SimplifierReportsSharedInPlaceOperatorChanges) {
+  auto Shared = HighExpr::makeBinop(NdOp::INT_ADD, local(0),
+                                    HighExpr::makeConst(uint64_t{0} - 3, 8));
+  HighStmt Copy = assign(0x1000, 1, 0);
+  Copy.Val = Shared;
+  HighFunc F;
+  F.Body = {Copy, result(0x1004,
+                         HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(1)))};
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].Val, Shared);
+  EXPECT_EQ(F.Body[1].RetVal->Operands[0], Shared);
+  EXPECT_EQ(Shared->Op, NdOp::INT_SUB);
+  EXPECT_EQ(Shared->Operands[1]->ConstVal, 3u);
+  for (uint64_t Input : {0u, 3u, 100u})
+    EXPECT_EQ(execute(F, Input), (Input - 3) * 2);
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SimplifierReportsChildReplacementAtStableRoot) {
+  const auto Input = local(0);
+  auto Child =
+      HighExpr::makeBinop(NdOp::INT_SUB, Input, HighExpr::makeConst(0, 8));
+  auto Root =
+      HighExpr::makeBinop(NdOp::INT_ADD, Child, HighExpr::makeConst(0x55, 8));
+  HighFunc F;
+  F.Body = {result(0x1000, Root)};
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+  EXPECT_EQ(Root->Operands[0], Input);
+  EXPECT_EQ(execute(F, 0x1234), 0x1289u);
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics, SimplifierReportsInPlaceOperandChanges) {
+  auto Difference =
+      HighExpr::makeBinop(NdOp::INT_SUB, local(0), HighExpr::makeConst(7, 8));
+  auto Root = HighExpr::makeBinop(NdOp::INT_EQUAL, Difference,
+                                  HighExpr::makeConst(0, 8));
+  HighFunc F;
+  F.Body = {result(0x1000, Root)};
+  ASSERT_TRUE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+  EXPECT_EQ(Root->Op, NdOp::INT_EQUAL);
+  EXPECT_EQ(Root->Operands[0]->Kind, ExprKind::Var);
+  EXPECT_EQ(Root->Operands[1]->ConstVal, 7u);
+  EXPECT_EQ(execute(F, 7), 1u);
+  EXPECT_EQ(execute(F, 8), 0u);
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+}
+
+TEST(HighControlFlowSemantics,
+     RefusedOrderedMemorySimplificationIsNotProgress) {
+  auto Load = HighExpr::makeLoad(local(0), NdType::makeInt(8));
+  Load->MemoryOrdering = NdMemoryOrdering::Acquire;
+  auto Root =
+      HighExpr::makeBinop(NdOp::INT_MULT, Load, HighExpr::makeConst(0, 8));
+  HighFunc F;
+  F.Body = {result(0x1000, Root)};
+  EXPECT_FALSE(simplifyAllExprs(F.Body));
+  EXPECT_EQ(F.Body[0].RetVal, Root);
+  EXPECT_EQ(Root->Operands[0], Load);
 }
 
 TEST(HighControlFlowSemantics, VectorCarrierSlicesKeepOnlyProvenLowBytes) {
@@ -5026,6 +5116,142 @@ TEST(HighControlFlowSemantics, LiveValueCyclesAndNestedEffectsSurviveDCE) {
     EXPECT_EQ(F.Body.size(), 6U);
     if (Sink == 1)
       expectUniqueGotoTargets(F);
+  }
+}
+
+TEST(HighControlFlowSemantics,
+     SharedExpressionDAGKeepsOnlyObservableDefinitions) {
+  for (bool Live : {false, true}) {
+    SCOPED_TRACE(Live);
+    HighFunc F;
+    F.Body = {assign(0x1000, 1, 3), assign(0x1004, 2, 5)};
+    ExprPtr Shared = local(1);
+    for (unsigned I = 0; I < 128; ++I)
+      Shared = HighExpr::makeBinop(NdOp::INT_ADD, Shared, local(2));
+    for (unsigned I = 0; I < 256; ++I) {
+      auto S = assign(0x1010 + I * 4, 3 + I, 0);
+      S.Val = Shared;
+      F.Body.push_back(std::move(S));
+    }
+    F.Body.push_back(
+        result(0x2000, Live ? local(258) : HighExpr::makeConst(73, 8)));
+    const auto Expected = Live ? 643U : 73U;
+    EXPECT_EQ(execute(F, 0), Expected);
+    eliminateUnusedValues(F.Body);
+    EXPECT_EQ(execute(F, 0), Expected);
+    EXPECT_EQ(F.Body.size(), Live ? 4U : 1U);
+  }
+}
+
+TEST(HighControlFlowSemantics,
+     SharedExpressionEffectsSurviveInEveryAssignment) {
+  for (unsigned Effect = 0; Effect < 4; ++Effect) {
+    SCOPED_TRACE(Effect);
+    ExprPtr Shared;
+    if (Effect == 0)
+      Shared = HighExpr::makeCall("effect", 0x3000, {local(1)});
+    else {
+      Shared = HighExpr::makeLoad(local(1), NdType::makeInt(8));
+      if (Effect == 1)
+        Shared->MemoryOrdering = NdMemoryOrdering::Acquire;
+      else if (Effect == 2)
+        Shared->MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      else
+        Shared->Kind = ExprKind::Store;
+    }
+    for (unsigned I = 0; I < 32; ++I)
+      Shared =
+          HighExpr::makeBinop(NdOp::INT_ADD, Shared, HighExpr::makeConst(1, 8));
+    HighFunc F;
+    F.Body.push_back(assign(0x1000, 1, 0x4000));
+    for (unsigned I = 0; I < 32; ++I) {
+      auto S = assign(0x1010 + I * 4, 2 + I, 0);
+      S.Val = Shared;
+      F.Body.push_back(std::move(S));
+    }
+    F.Body.push_back(result(0x2000, HighExpr::makeConst(73, 8)));
+    eliminateUnusedValues(F.Body);
+    ASSERT_EQ(F.Body.size(), 34U);
+    for (size_t I = 1; I < 33; ++I)
+      EXPECT_EQ(F.Body[I].Val, Shared);
+  }
+}
+
+TEST(HighControlFlowSemantics, SharedLiveRHSFollowsEveryBranchDefinition) {
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    HighFunc F;
+    F.Body = {assign(0x1000, 1, 7), assign(0x1004, 2, 11)};
+    HighStmt Branch;
+    Branch.Kind = StmtKind::IfElse;
+    Branch.Cond = local(0);
+    auto A = assign(0x1010, 3, 0);
+    A.Val = local(1);
+    auto B = assign(0x1020, 3, 0);
+    B.Val = local(2);
+    if (Reverse)
+      std::swap(A, B);
+    Branch.Body = {A};
+    Branch.ElseBody = {B};
+    F.Body.push_back(Branch);
+    ExprPtr Shared = HighExpr::makeBinop(NdOp::INT_ADD, local(3), local(3));
+    auto Dead = assign(0x1030, 4, 0);
+    Dead.Val = Shared;
+    F.Body.push_back(Dead);
+    F.Body.push_back(result(0x1040, Shared));
+    eliminateUnusedValues(F.Body);
+    ASSERT_EQ(F.Body.size(), 4U);
+    for (uint64_t Input : {0U, 1U})
+      EXPECT_EQ(execute(F, Input), (bool(Input) != Reverse) ? 14U : 22U);
+  }
+}
+
+TEST(HighControlFlowSemantics, ExpressionCyclesPropagateEffectsBeforeDeletion) {
+  for (bool Effect : {false, true}) {
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Effect);
+      SCOPED_TRACE(Reverse);
+      ExprPtr A = HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(0, 8),
+                                      local(1));
+      ExprPtr B =
+          HighExpr::makeBinop(NdOp::INT_ADD, A,
+                              Effect ? HighExpr::makeCall("effect", 0x3000, {})
+                                     : HighExpr::makeConst(1, 8));
+      A->Operands[0] = B;
+      auto First = assign(0x1010, 2, 0);
+      First.Val = Reverse ? B : A;
+      auto Second = assign(0x1020, 3, 0);
+      Second.Val = Reverse ? A : B;
+      HighFunc F;
+      F.Body = {assign(0x1000, 1, 7), First, Second,
+                result(0x1030, HighExpr::makeConst(73, 8))};
+      eliminateUnusedValues(F.Body);
+      EXPECT_EQ(F.Body.size(), Effect ? 4U : 1U);
+      // The synthetic cycle tests traversal, not ownership of cyclic IR.
+      A->Operands.clear();
+      B->Operands.clear();
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, RemovingNestedAssignmentsRechecksTheirParent) {
+  for (unsigned Body = 0; Body < 3; ++Body) {
+    for (bool Effect : {false, true}) {
+      SCOPED_TRACE(Body);
+      SCOPED_TRACE(Effect);
+      auto Parent = assign(0x1010, 2, 0);
+      Parent.Val =
+          Effect ? HighExpr::makeCall("effect", 0x3000, {local(1)}) : local(1);
+      auto *Children = Body == 0   ? &Parent.Body
+                       : Body == 1 ? &Parent.ElseBody
+                                   : &Parent.DefaultBody;
+      Children->push_back(assign(0x1014, 3, 11));
+      HighFunc F;
+      F.Body = {assign(0x1000, 1, 7), Parent,
+                result(0x1020, HighExpr::makeConst(73, 8))};
+      eliminateUnusedValues(F.Body);
+      EXPECT_EQ(F.Body.size(), Effect ? 3U : 1U);
+    }
   }
 }
 

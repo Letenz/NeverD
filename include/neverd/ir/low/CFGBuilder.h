@@ -62,6 +62,7 @@ public:
 namespace detail {
 struct ResolverGraphCacheTestAccess;
 struct X87CallGraphCacheTestAccess;
+struct NoReturnProofTestAccess;
 using JumpTableProofPoint = std::pair<va_t, int>;
 using JumpTableProofLocation = std::pair<int, int>;
 using I386GOTOFFAmbiguityReplayKey = std::tuple<va_t, va_t, int, int, va_t>;
@@ -666,6 +667,7 @@ std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
 class CFGBuilder {
   friend class X87CallEffectIndex;
   friend class X87CallGraphCache;
+  friend class InternalNoReturnIndex;
 
 public:
   /// Build CFG for a single function starting at EntryAddr.
@@ -745,6 +747,12 @@ public:
   /// graph.
   void setX87CallGraphCache(std::shared_ptr<X87CallGraphCache> Cache) {
     SharedX87CallGraphs = std::move(Cache);
+  }
+  /// Allow independent x87 call proofs to use this many worker threads.
+  /// The caller must reserve this quota outside any parallel CFG batch and
+  /// provide thread-safe, registered no-return indexes. Defaults to serial.
+  void setX87CallProofThreads(unsigned Threads) {
+    X87CallProofThreads = Threads;
   }
   /// Provide exception-metadata-proven continuation addresses owned by the
   /// function passed to build().  These are intentionally owner-scoped rather
@@ -1024,6 +1032,7 @@ public:
 private:
   friend struct detail::ResolverGraphCacheTestAccess;
   friend struct detail::X87CallGraphCacheTestAccess;
+  friend struct detail::NoReturnProofTestAccess;
   std::array<size_t, 3> x87CallGraphCacheStatsForTesting() const;
   std::array<size_t, 5> x87CallGraphFlightStatsForTesting() const;
   bool waitForX87CallGraphWaitersForTesting(size_t Count) const;
@@ -1035,6 +1044,19 @@ private:
   // implementation and arena ownership inside the resolver translation unit.
   mutable std::shared_ptr<const ResolverGraphCache> CachedResolverGraph;
   std::array<size_t, 3> resolverValueQueryCacheStatsForTesting() const;
+
+  struct ResolverQueryState;
+  // Local to a read-only resolver invocation. The owner, instruction map,
+  // block starts and storage owners must remain unchanged until destruction.
+  // Roots and effective edge overrides are still compared by value per query.
+  // Never retain this scope across proposal publication, rollback or decoding.
+  struct ResolverQueryScope {
+    const CFGBuilder &Owner;
+    std::shared_ptr<const ResolverQueryState> State;
+    explicit ResolverQueryScope(const CFGBuilder &Owner) : Owner(Owner) {}
+    ResolverQueryScope(const ResolverQueryScope &) = delete;
+    ResolverQueryScope &operator=(const ResolverQueryScope &) = delete;
+  };
 
   struct InsnRecord {
     va_t Addr;
@@ -1102,7 +1124,13 @@ private:
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
   /// cases move.
   void fixupFpuStack(LowFunc &Func);
+  /// Prove termination without computing unused floating return values.
+  /// Local x87 state consumers retain the ordinary normalized CFG build.
+  /// Only the internal no-return index may consume this reduced projection.
+  bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
+                          const std::string &Name);
   bool SkipX87StackFixup = false;
+  unsigned X87CallProofThreads = 1;
   std::shared_ptr<X87CallEffectIndex> X87CallEffects;
   std::shared_ptr<X87CallGraphCache> SharedX87CallGraphs;
 
@@ -2222,7 +2250,8 @@ private:
       std::vector<uint64_t> *QueryUnsignedFeasibleMasks = nullptr,
       uint32_t ResolverDepthLimit = 0,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool UseGroupContext = true) const;
+      bool UseGroupContext = true,
+      ResolverQueryScope *ReadOnlyScope = nullptr) const;
   /// Prove that the actual INDIR_BR input is derived from the strategy's exact
   /// TargetLoad occurrence on every feasible path.  Mere address co-occurrence
   /// in static scans or emulation is not sufficient.

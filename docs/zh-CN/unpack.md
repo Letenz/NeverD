@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | 运行时观察 |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | 运行时观察 |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL 输入由 `IMAGE_FILE_DLL` 标识。建模的来宾 EXE 调用 `LoadLibraryA`、`FreeLibrary`，复用普通依赖、TLS 与 `DllMain` 生命周期。DLL 默认入口是其进程附加调用；不会为任意导出猜测参数。重建保留导出名称、序号、别名、数据及转发器；指向自身导出的指针保持为内部指针，不生成自身导入。辅助例程返回的地址也遵循此规则：内部结果会撤销该位置先前的导入修复证据。
 
@@ -26,8 +26,22 @@ PE32+ DLL 输入由 `IMAGE_FILE_DLL` 标识。建模的来宾 EXE 调用 `LoadLi
 
 恢复同时检查驱动入口参数、返回／影子栈帧、非易失寄存器、方向标志、浮点控制和内核对象所有权。遗留池、借用的内核指针、被修改的加载器对象或未计入的内核副作用返回 `unsupported_state`；显式 `snapshot_only` 保留诊断。内核状态尚无 `restore_runtime` 实现。导入重建使用内核导出身份，校验原始导出表并重新计算 PE 校验和。固定基址产物不代表已通过 Windows 内核加载、签名验证或未执行驱动路径的验收。
 
+使用 `backend: "unicorn"` 和 `execution_contract: "driver-strict"` 时，x64 驱动恢复支持停止态指令解码，以及跨物理别名的已提交 RAM 写入监视。此契约使用 Unicorn 的指令语义；`checked-x64-v1` 提供执行前的指令准入检查。
+
+加载器拥有的镜像页上，临时 MDL 的全部别名解除、全部锁释放且全部描述符释放后，不再额外阻止恢复。此契约允许未指定地址的内核态缓存别名。存活 MDL、其他所有权或映射类型，以及来宾对物理 PFN 身份的读取仍保留恢复依赖；建模的复制、移动和比较服务读取也计入。
+
+通过 `KeQueryPerformanceCounter`、`RDTSC` 或 `RDTSCP` 读取时钟会保留明确的驱动恢复依赖。捕获的计数器和频率值尚无面向新内核环境的重绑定契约。默认恢复返回 `unsupported_state`；`snapshot_only` 保留此诊断。
+
+`runtime_state.additional_dependency_reasons` 列出驱动模型观察到的原因，包括存活的池或 MDL、被修改的加载器对象、内核副作用及入口调用上下文变化。默认拒绝与显式快照保留相同原因。空列表不会覆盖 `has_additional_dependencies`，也不证明存在恢复契约。
+
+`ProcessView::runtimeState(include_backing)` 为暂停的驱动提供 `WindowsDriverState`。内核所有者保存每个存活池的分配 API、精确请求大小、标签，以及有效的旧式类型或完整的新式 flags。请求内容时独立复制恰好这些字节；仅捕获元数据时不包含内容。已释放的池、借用的加载器对象以及设备对象不会成为池记录。该捕获不提供指针来源或原生初始化器，现有依赖和重定位拒绝条件继续有效。
+
+`WindowsDriverState::Entry` 保留最初 DriverEntry 的寄存器基线与返回／shadow frame、停止时的整数／XMM／浮点控制寄存器，以及当前 OS 所有的栈范围。请求 backing 时复制完整活动栈。后续分派和卸载调用仍保留原基线，并明确标记为 DriverEntry 之外的调用。这些具体观测不构成指针来源或新调用者绑定证明。
+
+即使没有遗留池或借用对象，内核映像重定位仍是独立的加载器依赖。当前重建器移除生成内容的重定位，因此默认驱动恢复返回 `unsupported_state`，不会创建或截断输出。仅显式 `snapshot_only` 输出固定基址快照并保留该诊断。原始重定位表不能证明其覆盖生成的指针。
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## 用法

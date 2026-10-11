@@ -42623,7 +42623,13 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
       << HighC;
-  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+  // Both conversions complete MXCSR state, so the rounding path prints as
+  // the state helpers rather than as a bare C cast.
+  const auto ToInteger =
+      HighC.find("neverd_x86_fp_cvt_to_int_state_f64_i64(arg0, ");
+  ASSERT_NE(ToInteger, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64(", ToInteger),
+            std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))
@@ -44102,12 +44108,13 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 }
 
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
-/// C must compute in `long double` and return \p Expected.
-void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
+/// C must hold its x87 values as \p Storage and return \p Expected.
+void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
+                     llvm::StringRef Storage = "long double") {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("long double"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
@@ -44143,7 +44150,9 @@ TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
 TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
   // The extended value fills ten bytes; the qword after it survives, and
   // the stored exponent word reads back.  A store of a whole C object of
-  // 12 or 16 bytes would overwrite the neighbor.
+  // 12 or 16 bytes would overwrite the neighbor.  The value comes straight
+  // from the constant ROM, which executes into raw eighty-bit storage, so
+  // nothing here computes in long double.
   expectX87Result({0x48, 0xc7, 0x44, 0x24, 0xea,
                    0x2a, 0,    0,    0,          // mov qword [rsp-16h], 42
                    0xd9, 0xe8,                   // fld1
@@ -44152,7 +44161,7 @@ TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
                    0x0f, 0xb7, 0x4c, 0x24, 0xe8, // movzx ecx, word [rsp-18h]
                    0x48, 0x01, 0xc8,             // add rax, rcx
                    0xc3},
-                  42 + 0x3FFF);
+                  42 + 0x3FFF, "_BitInt(80)");
 }
 
 TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {

@@ -239,6 +239,21 @@ std::string CSourceRecorder::end(size_t Event) const {
   return Prefix + std::to_string(Event) + "E\x1f";
 }
 
+llvm::StringRef CSourceRecorder::plain(llvm::StringRef Text,
+                                       std::string &Storage) const {
+  size_t At = Text.find(Prefix);
+  if (At == llvm::StringRef::npos)
+    return Text;
+  Storage.clear();
+  for (; At != llvm::StringRef::npos; At = Text.find(Prefix)) {
+    Storage.append(Text.data(), At);
+    // A delimiter is the prefix, an event and its kind, and a unit separator.
+    Text = Text.drop_front(At + Prefix.size()).split('\x1f').second;
+  }
+  Storage.append(Text.data(), Text.size());
+  return Storage;
+}
+
 std::string CSourceRecorder::definition(std::optional<va_t> Entry) {
   if (InstructionsOnly)
     return {};

@@ -12,61 +12,182 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedSwitchNorm.h"
+#include "neverd/loader/BinaryImageModel.h"
 
 #include "llvm/ADT/StringExtras.h"
+
+#include <algorithm>
+#include <optional>
+#include <set>
 
 namespace neverd {
 
 //===----------------------------------------------------------------------===//
-// traceLoadedSwitchIndex — index behind a table load
+// Shared dispatch selectors
 //===----------------------------------------------------------------------===//
 
-/// Trace the INDIR_BR target back to the scaled index of its table load, within
-/// the dispatch block.  The table address is `base + index*scale`, so the index
-/// is the non-constant operand of the INT_MULT/INT_LEFT that scales it; this
-/// skips the table base and returns the genuine (still normalized) switch
-/// index.  Returns false when the target does not flow from a scaled table
-/// load.
-static bool traceLoadedSwitchIndex(const MedBlock &Blk, const MedVar &Target,
-                                   MedVar &Out) {
-  std::map<std::pair<int, int>, const MedOp *> Defs;
-  for (auto &Op : Blk.Ops)
-    if (!Op.Output.isConst() && Op.Output.Size > 0)
-      Defs[{Op.Output.Id, Op.Output.SSAVer}] = &Op;
-  auto defOf = [&](const MedVar &V) -> const MedOp * {
-    if (V.isConst())
-      return nullptr;
-    auto It = Defs.find({V.Id, V.SSAVer});
-    return It == Defs.end() ? nullptr : It->second;
-  };
-
-  std::vector<MedVar> Work{Target};
-  std::set<std::pair<int, int>> Seen;
-  int Steps = 0;
-  while (!Work.empty() && Steps++ < 256) {
-    MedVar V = Work.back();
-    Work.pop_back();
-    if (V.isConst())
-      continue;
-    if (!Seen.insert({V.Id, V.SSAVer}).second)
-      continue;
-    const MedOp *Op = defOf(V);
-    if (!Op)
-      continue;
-    if (Op->Opcode == NdOp::INT_MULT || Op->Opcode == NdOp::INT_LEFT) {
-      for (int I = 0; I < Op->NumInputs; ++I)
-        if (!Op->Inputs[I].isConst()) {
-          Out = Op->Inputs[I];
-          return true;
-        }
-      continue;
-    }
-    for (int I = 0; I < Op->NumInputs; ++I)
-      if (!Op->Inputs[I].isConst())
-        Work.push_back(Op->Inputs[I]);
+MedDispatchContext MedToHighConverter::dispatchContext(const MedFunc &Med) {
+  if (DispatchDefsFor != &Med) {
+    DispatchDefsFor = &Med;
+    DispatchDefs.clear();
+    // The first definition of each value, as the LLVM route indexes them.
+    for (const MedBlock &Block : Med.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (!Op.Output.isConst())
+          DispatchDefs.try_emplace({static_cast<int>(Op.Output.Kind),
+                                    Op.Output.Id, Op.Output.SSAVer},
+                                   &Op);
   }
-  return false;
+  MedDispatchContext Context;
+  Context.Func = &Med;
+  Context.Img = Image;
+  Context.AddressBytes = Image && Image->getPointerSize() != 0
+                             ? static_cast<uint16_t>(Image->getPointerSize())
+                             : getTargetRegInfo(TargetArch).PointerSize;
+  Context.DefOf = [this, &Med](const MedVar &V) -> const MedOp * {
+    if (V.isConst() || Med.SkippedSSA)
+      return nullptr;
+    const auto It =
+        DispatchDefs.find({static_cast<int>(V.Kind), V.Id, V.SSAVer});
+    return It == DispatchDefs.end() ? nullptr : It->second;
+  };
+  Context.SlotKeyOf = [DefOf = Context.DefOf](const MedVar &V) {
+    return medAddressSlotKey(V, DefOf);
+  };
+  // Only a value the GOT-base certificate names is its zero; a reload of one
+  // leaves its table read unfolded, which fails closed.
+  Context.ModelZero = [&Med](const MedVar &V) {
+    return std::any_of(
+        Med.ScalarAddressModels.begin(), Med.ScalarAddressModels.end(),
+        [&](const MedScalarAddressModel &Model) {
+          return Model.Model == RelocatedInstructionScalarModelOccurrence::
+                                    ModelKind::I386ELFGOTBaseZero &&
+                 Model.Value.Kind == V.Kind && Model.Value.Id == V.Id &&
+                 Model.Value.SSAVer == V.SSAVer && Model.Value.Size == V.Size;
+        });
+  };
+  return Context;
+}
+
+/// The selector dispatch block \p Block itself names: the resolver's index
+/// register, the scaled index of the table load its target flows from, or the
+/// constant entry it reads.  lowerSwitchFromJumpTable tries these first.
+static std::optional<MedVar> blockSelector(const MedBlock &Block,
+                                           const MedOp &Br, const JumpTable &JT,
+                                           const MedDispatchContext &Context) {
+  if (JT.IndexRegOff >= 0)
+    for (auto Op = Block.Ops.rbegin(); Op != Block.Ops.rend(); ++Op)
+      for (int I = 0; I < Op->NumInputs; ++I)
+        if (Op->Inputs[I].Kind == MedVar::Reg &&
+            static_cast<int>(Op->Inputs[I].RegOff) == JT.IndexRegOff)
+          return Op->Inputs[I];
+  if (Br.NumInputs < 1)
+    return std::nullopt;
+  if (!JT.HasTargetBase && !JT.PreScaledIndex)
+    if (auto Index = findTableSwitchIndex(Context, Block, Br.Inputs[0]))
+      return Index;
+  return constTableLoadIndex(Context, Br.Inputs[0], Context.DefOf, JT,
+                             /*RequireAuthenticatedLoad=*/false);
+}
+
+void MedToHighConverter::planDispatchSelectors(const MedFunc &Med) {
+  DispatchSelectorVars.clear();
+  DispatchSelectorCopies.clear();
+  std::optional<MedDispatchContext> Context;
+  for (const MedBlock &Block : Med.Blocks) {
+    if (Block.Ops.empty() || Block.Preds.size() < 2)
+      continue;
+    const MedOp &Br = Block.Ops.back();
+    if (Br.Opcode != NdOp::INDIR_BR || Br.NumInputs < 1 ||
+        Br.Inputs[0].isConst() ||
+        Med.UnsafeIndirectBranchAddresses.count(Br.Addr))
+      continue;
+    const JumpTable *JT = nullptr;
+    for (const JumpTable &Table : JumpTables)
+      if (Table.InsnAddr == Br.Addr && !Table.Targets.empty() &&
+          !Table.MutatedUnsafe) {
+        JT = &Table;
+        break;
+      }
+    if (!JT || JT->TwoTableSelect)
+      continue;
+    if (!Context)
+      Context = dispatchContext(Med);
+    if (blockSelector(Block, Br, *JT, *Context))
+      continue;
+
+    std::vector<std::pair<int, MedVar>> PerPred;
+    unsigned Bytes = 0;
+    const auto Plan = Med.SwitchSelectorPlans.find({JT->InsnAddr, Block.Id});
+    if (Plan != Med.SwitchSelectorPlans.end()) {
+      // An exact edge merge: one certified selector per predecessor.
+      const MedSwitchSelectorPlan &Merge = Plan->second;
+      if (Merge.PlanKind != MedSwitchSelectorPlan::Kind::EdgeMerged ||
+          Merge.ResultSize == 0 ||
+          Merge.EdgeSelectors.size() != Block.Preds.size())
+        continue;
+      const std::set<int> Expected(Block.Preds.begin(), Block.Preds.end());
+      std::set<int> Planned;
+      bool Valid = true;
+      for (const auto &[Pred, Selector] : Merge.EdgeSelectors)
+        Valid &= Selector.Size == Merge.ResultSize && !Selector.isConst() &&
+                 Expected.count(Pred) && Planned.insert(Pred).second;
+      if (!Valid || Planned != Expected)
+        continue;
+      PerPred = Merge.EdgeSelectors;
+      Bytes = Merge.ResultSize;
+    } else {
+      // No occurrence names the selector: each -O0 goto site spills the
+      // target its own table read selects to the slot the dispatch reloads.
+      if (!JT->SelectorUseRefs.empty() || JT->CompositeSelectorUseRef ||
+          JT->PreScaledIndex || JT->TwoLevelIndex || JT->HasTargetBase)
+        continue;
+      auto Shared = sharedDispatchSelectors(*Context, Block, Br, *JT);
+      if (!Shared)
+        continue;
+      PerPred = std::move(Shared->PerPred);
+      Bytes = Shared->MaxBytes;
+    }
+    if (Bytes == 0 || Bytes > 8)
+      continue;
+
+    MedVar Selector;
+    Selector.Kind = MedVar::Temp;
+    Selector.Id = NextHighTempId++;
+    Selector.Size = static_cast<uint16_t>(Bytes);
+    const TypeRef SelectorType = NdType::makeInt(Selector.Size, false);
+    for (const auto &[Pred, Value] : PerPred) {
+      // A narrower selector widens with zeros and a wider one keeps its low
+      // bytes, as the LLVM route stores each into the dispatch slot.
+      ExprPtr Widened;
+      if (Value.isConst()) {
+        const uint64_t Mask =
+            Bytes == 8 ? ~uint64_t{0} : (uint64_t{1} << (Bytes * 8)) - 1;
+        Widened = HighExpr::makeConst(Value.ConstVal & Mask, Selector.Size);
+        Widened->Type = SelectorType;
+      } else if (Value.Size == Bytes) {
+        Widened = medvarToExpr(Value);
+      } else if (Value.Size < Bytes) {
+        Widened = HighExpr::makeUnary(NdOp::INT_ZEXT, medvarToExpr(Value));
+        Widened->Type = SelectorType;
+      } else {
+        Widened = HighExpr::makeBinop(NdOp::SUBBYTES, medvarToExpr(Value),
+                                      HighExpr::makeConst(0, 4));
+        Widened->Type = SelectorType;
+      }
+      HighStmt Copy;
+      Copy.Kind = StmtKind::Assign;
+      const MedBlock &From = Med.Blocks[Pred];
+      Copy.Addr = From.Ops.empty() ? From.StartAddr : From.Ops.back().Addr;
+      Copy.Dst = HighExpr::makeVar(Selector, SelectorType);
+      Copy.Val = std::move(Widened);
+      DispatchSelectorCopies[{Pred, Block.Id}].push_back(std::move(Copy));
+    }
+    DispatchSelectorVars.emplace(std::make_pair(JT->InsnAddr, Block.Id),
+                                 Selector);
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -93,11 +214,19 @@ bool MedToHighConverter::lowerSwitchFromJumpTable(HighFunc &Func,
   uint16_t SelectorSize = 0;
 
   auto PlanIt = Med.SwitchSelectorPlans.find({JT.InsnAddr, CurBlock.Id});
-  if (PlanIt != Med.SwitchSelectorPlans.end() &&
-      PlanIt->second.PlanKind == MedSwitchSelectorPlan::Kind::Direct &&
-      PlanIt->second.Selector.Size != 0 &&
-      PlanIt->second.Selector.Size == PlanIt->second.ResultSize &&
-      !PlanIt->second.Selector.isConst()) {
+  const auto Planned = DispatchSelectorVars.find({JT.InsnAddr, CurBlock.Id});
+  if (Planned != DispatchSelectorVars.end()) {
+    // planDispatchSelectors gave a shared dispatch one selector, which each
+    // predecessor sets on its edge.
+    SwitchVar = HighExpr::makeVar(Planned->second,
+                                  NdType::makeInt(Planned->second.Size, false));
+    SelectorSize = Planned->second.Size;
+    SelectorResolved = true;
+  } else if (PlanIt != Med.SwitchSelectorPlans.end() &&
+             PlanIt->second.PlanKind == MedSwitchSelectorPlan::Kind::Direct &&
+             PlanIt->second.Selector.Size != 0 &&
+             PlanIt->second.Selector.Size == PlanIt->second.ResultSize &&
+             !PlanIt->second.Selector.isConst()) {
     SwitchMedVar = PlanIt->second.Selector;
     HaveMedVar = true;
     SelectorResolved = true;
@@ -163,16 +292,54 @@ bool MedToHighConverter::lowerSwitchFromJumpTable(HighFunc &Func,
   // reliable dispatch value for a plain relative/absolute table whose scaling
   // lives in the dispatch block while its `add`/`cmp` normalization sits in a
   // predecessor guard block — where the in-block heuristics below find nothing.
-  if (!SelectorResolved && !JT.HasTargetBase && !JT.PreScaledIndex &&
-      !CurBlock.Ops.empty()) {
-    const MedOp &Br = CurBlock.Ops.back();
-    if (Br.Opcode == NdOp::INDIR_BR && Br.NumInputs >= 1 &&
-        traceLoadedSwitchIndex(CurBlock, Br.Inputs[0], SwitchMedVar)) {
+  const MedOp *Br = !CurBlock.Ops.empty() &&
+                            CurBlock.Ops.back().Opcode == NdOp::INDIR_BR &&
+                            CurBlock.Ops.back().NumInputs >= 1
+                        ? &CurBlock.Ops.back()
+                        : nullptr;
+  std::optional<MedDispatchContext> Context;
+  if (!SelectorResolved && Br)
+    Context = dispatchContext(Med);
+  if (!SelectorResolved && Br && !JT.HasTargetBase && !JT.PreScaledIndex)
+    if (auto Index = findTableSwitchIndex(*Context, CurBlock, Br->Inputs[0])) {
+      SwitchMedVar = *Index;
       HaveMedVar = true;
       SelectorResolved = true;
       PeelOK = true;
     }
-  }
+
+  // -O0 dispatch with one goto site: the dispatch block only reloads the
+  // target that site spilled, so the index lives in the predecessor, which
+  // dominates the branch.
+  if (!SelectorResolved && Br && CurBlock.Preds.size() == 1 &&
+      CurBlock.Preds.front() >= 0 &&
+      CurBlock.Preds.front() < static_cast<int>(Med.Blocks.size()))
+    if (auto Slot = dispatchReloadSlot(*Context, CurBlock, *Br))
+      if (auto Index = predecessorSwitchIndex(
+              *Context, Med.Blocks[CurBlock.Preds.front()], *Slot)) {
+        SwitchMedVar = *Index;
+        HaveMedVar = true;
+        SelectorResolved = true;
+        PeelOK = true;
+      }
+
+  // A goto through one constant table entry (`jmp *tab+k`) dispatches on that
+  // entry's case value.
+  if (!SelectorResolved && Br)
+    if (auto Index =
+            constTableLoadIndex(*Context, Br->Inputs[0], Context->DefOf, JT,
+                                /*RequireAuthenticatedLoad=*/false)) {
+      SwitchMedVar = *Index;
+      HaveMedVar = true;
+      SelectorResolved = true;
+    }
+
+  // A shared dispatch reloads what several goto sites spilled; no value in
+  // it or in one predecessor is the selector.  Without a planned one, leave
+  // the transfer unresolved rather than guess one below.
+  if (!SelectorResolved && Br && CurBlock.Preds.size() >= 2 &&
+      dispatchReloadSlot(*Context, CurBlock, *Br))
+    return false;
 
   for (int J = static_cast<int>(CurBlock.Ops.size()) - 1;
        !SelectorResolved && J >= 0; --J) {

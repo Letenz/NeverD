@@ -172,6 +172,7 @@ struct Session {
   std::vector<FuncInfo> Functions;
 
   PatchResult LastPatch;
+  std::string LastSourcePatchReport;
 
   /// Internal JSON-boundary seams used to prove that no C++ exception crosses
   /// extern C. Empty in production.
