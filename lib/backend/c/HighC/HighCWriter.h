@@ -500,6 +500,12 @@ public:
                                             const TypeRef &Access = {}) const;
   bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val, TypeRef Type = nullptr);
+  /// \p Text as the ordinary render prints it, held in \p Storage when that
+  /// differs. A spelling chosen from printed text must read this, so the
+  /// source map's delimiters cannot change the source they annotate.
+  llvm::StringRef plainText(llvm::StringRef Text, std::string &Storage) const;
+  /// c_memory::castOperand of \p Text, decided on its ordinary text.
+  std::string castOperandText(std::string Text) const;
   /// \p E prints as a local declared as a \p Width-byte integer of the given
   /// signedness.
   bool declaredLocalInteger(const HighExpr &E, uint16_t Width, bool Signed);
