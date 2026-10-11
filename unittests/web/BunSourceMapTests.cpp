@@ -27,7 +27,7 @@ protected:
   std::filesystem::path Root;
   void SetUp() override {
     if (!bunSourceMapAvailable())
-      GTEST_SKIP() << "LLVM Zstd decoding is unavailable";
+      GTEST_SKIP() << "Native Zstd decoding is unavailable";
     llvm::SmallString<128> Directory;
     ASSERT_FALSE(
         llvm::sys::fs::createUniqueDirectory("neverd-bun-map", Directory));

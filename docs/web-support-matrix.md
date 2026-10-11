@@ -4,8 +4,9 @@ This table records implemented behavior separately from plans. No completed
 foundation milestone closes issues #714–#718. Qualification below is local
 macOS arm64 Release. The integrated-LLVM full, parser-disabled and
 backend-disabled configurations were built and checked on that host. The
-separate current-dev integration uses prebuilt LLVM 23.0.0 r4 without Zstd;
-its checks and omissions are recorded in the
+separate current-dev integration uses prebuilt LLVM 23.0.0 r4 without Zstd
+and an optional pinned native static Zstandard 1.5.7 SDK; its checks and
+omissions are recorded in the
 [implementation ledger](web-analysis-implementation.md).
 Other hosts require separate evidence.
 
@@ -29,7 +30,7 @@ Other hosts require separate evidence.
 | Primitive source transforms | `javascript-primitive-rewrite-v1` | Explicit string recovery and other primitive folding; complete lexer, value/effect admission, outer-tree comparison, SameValue and exact inverse; raw local export requires a pass/source/revision-bound receipt. [Profile](web-source-rewrite-profile.md). Scope renaming and statement/control-flow transforms remain pending |
 | Bun standalone | Bun 1.4.2 ELF/Linux, thin Mach-O/macOS and PE/Windows, each x64 and ARM64; prelinked graph extensions | 25 self-authored full compiler outputs qualify the six baseline container layouts; the official Claude Code 2.1.296 ELF additionally qualifies real prelinked/runtime-options data. Other containers' extensions have synthetic coverage; linked-bytecode refused, caches opaque, version unauthenticated. [Exact matrix](web-bun-profile.md) |
 | Explicit Bun local export | `bun-local-evidence-export-v1`, `hermes-602befee-recovery-js-v2` | C++ CLI/C API preserve original/regions, decoded JS and reparse-verified readable copies in a fresh private directory with an inert index; no worker export, original TypeScript recovery or native/cache decompilation. [Real artifact qualification](web-claude-code-qualification.md) |
-| Bun serialized maps | `bun-1.4.2-serialized-source-map-v1` | C++ windows/varints and bounded in-process Zstd; preserved compiler maps and hostile C++ fixtures; retained anchors only, producer-discarded names/unmapped boundaries stay unknown; requires LLVM Zstd |
+| Bun serialized maps | `bun-1.4.2-serialized-source-map-v1` | C++ windows/varints and bounded in-process Zstd; preserved compiler maps and hostile C++ fixtures; retained anchors only, producer-discarded names/unmapped boundaries stay unknown; requires LLVM Zstd or the exact native static SDK 1.5.7. [Dependency profile](web-bun-profile.md#serialized-source-maps) |
 | Explicit native handoff | `immutable-native-handoff-v1` | C++ snapshot/file parity for x64 ELF/PE/thin Mach-O and AArch64 ELF, snapshot lifetime, Bun native assets and a full pinned Bun container; 9 cases passed locally. Universal slices and other host qualification pending; native loading does not qualify an extractor |
 | ASAR | `asar-pickle-json-v1` | Fixed upstream archives and C++ malformed fixtures, explicit packed/unpacked association, integrity, source/map/anchor/native consumers and direct/framed parity qualified locally; ICU 77.1 runtime deployment and other hosts remain unqualified. [Profile](web-asar-profile.md) |
 | Archive name comparison | `icu-77.1-nfc-casefold-portable-v1` | Native NFC/full folding with Unicode 16.0, device/path/collision checks for ASAR and selected unpacked members; original input capture and general export are not yet unified under this policy |
