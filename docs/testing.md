@@ -511,6 +511,10 @@ See the [stream profiles](web-stream-profile.md).
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and
 WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+`WebSourceXHR.*` covers direct/const receiver and argument anchors, shadowing,
+aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
+compound-assignment exclusions, missing/forbidden methods and atomic budgets.
+XHR remains excluded from the unchanged fetch/HAR correlation profile.
 `WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
 hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
 cache limits, canary exclusion and direct/framed parity. Run the owning web

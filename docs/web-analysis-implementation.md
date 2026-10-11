@@ -43,7 +43,7 @@ their existing scope; no Python support for web APIs is claimed.
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and shared source/Bun/native consumers implemented; two official Claude Code npm packages qualify original digest and payload evidence | Source behavior, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
-| P4D passive interfaces/HAR | Native HAR preview/commit, direct fetch/WebSocket source candidates and explicit method/origin/path comparison implemented | XHR/wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
+| P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display projection and original/projected ranges implemented; semantic transforms pending | Per-pass receipts, local semantic preconditions, undo and refusal tests |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader and stored-source/asset consumers implemented; qualification below | Tauri/Wails bridges/assets, pkg/nexe, other SEA layouts and host qualification remain |
@@ -1549,3 +1549,47 @@ bridges, runtime entry/activation analysis, general safe export and other host
 qualification remain separate work. Semantic rewrite receipts, package
 behavior/advisory/reporting, broader passive source mapping and independently
 versioned pkg/nexe readers still prevent completion of the five epics.
+
+## XMLHttpRequest source evidence — 2026-10-11
+
+`fetch-websocket-xhr-syntax-v2` adds bounded direct/const receiver links for
+XHR open, header, send and known event-value syntax. `SourceContext` owns the
+shared admission/index/publication boundary; `SourceFetch` and `SourceXHR`
+own distinct rules, leaving session and transports as serializers. Ordinary
+records retain opaque source IDs and fixed classifications. They do not expose
+URL, credential, arbitrary header, body or callback text. Shared receiver
+bindings do not assert runtime identity or request ordering. The existing HAR
+comparison remains fetch-only. See the [profile](web-interface-profile.md).
+
+Independent plan/implementation consistency review found two default-state
+misclaims: spread listener options were still marked absent, and the new XHR
+argument-role field initially marked legacy spread calls positional. Both were
+corrected with regression assertions. Forbidden Fetch/XHR method classification
+also now includes TRACK and all ASCII case variants in one shared owner.
+
+After those corrections, all 25 focused source/interface/SDK cases passed,
+including the existing hash-pinned Claude Code module 1,897 regression. That
+module still has one dynamic fetch candidate and no admitted XHR pattern; no
+runtime endpoint or traffic was invented. C++ worker Web parity and four MCP
+suites passed, along with enabled C ABI availability (its backend-omission
+case correctly skipped). CLI and framed transport runs used an unusable
+external-tool PATH. Logs are `/tmp/neverd-xhr-{focused-tests,worker,mcp,availability}.log`.
+
+With JavaScript parsing disabled, all five remaining interface SDK cases,
+worker Web and four MCP suites passed. C ABI availability passed and confirmed
+the source-interface profile/operations are absent; the backend-omission-only
+case skipped. Logs are `/tmp/neverd-xhr-nojs-{sdk,worker,mcp,api}.log`.
+
+After restoring the parser, the owning Web suite registered 444 cases: 437
+passed and seven skipped (six require unavailable LLVM Zstd; one only applies
+when the ASAR path policy is omitted). Supplied Bun/SEA/npm/VSIX fixtures were
+enabled, and all 2,345 Claude Code JavaScript modules again passed readable
+recovery/reparse checks. Worker Web and enabled ABI availability passed. Logs
+are `/tmp/neverd-xhr-full-web-tests.log` and
+`/tmp/neverd-xhr-restored-{worker,api}.log`.
+All five restored MCP suites passed, including the supplied Claude Code native
+stdio case; see `/tmp/neverd-xhr-restored-mcp.log`.
+
+This advances #717 without completing it. Request wrappers, response dataflow,
+encoding/compression/crypto tracing, schema exports and reviewed endpoint
+displays remain required.

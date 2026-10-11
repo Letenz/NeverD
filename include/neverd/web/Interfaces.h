@@ -21,7 +21,7 @@ namespace neverd::web {
 
 inline constexpr std::string_view HARProfile = "har-1.2-metadata-v1";
 inline constexpr std::string_view SourceInterfaceProfile =
-    "direct-fetch-websocket-syntax-v1";
+    "fetch-websocket-xhr-syntax-v2";
 inline constexpr std::string_view InterfaceCorrelationProfile =
     "absolute-http-method-origin-path-v1";
 inline constexpr std::string_view InterfaceRedactionPolicy =
@@ -53,6 +53,9 @@ InterfaceEndpoint inspectInterfaceEndpoint(std::string_view URL);
 /// Returns a fixed recognized method or "other". Fetch normalizes only the
 /// six methods defined by its method-normalization algorithm.
 std::string interfaceMethod(std::string_view Method, bool Fetch = false);
+/// Fetch and XHR forbid CONNECT, TRACE and TRACK with ASCII-insensitive
+/// matching.
+bool interfaceForbiddenMethod(std::string_view Method);
 /// Returns a fixed allowlisted name, "sensitive", or "other"; never echoes a
 /// caller-supplied field name.
 std::string interfaceHeaderKind(std::string_view Name);
@@ -96,8 +99,16 @@ struct SourceInterface {
   uint32_t Node = NoSourceIndex, URLNode = NoSourceIndex;
   uint32_t OptionsNode = NoSourceIndex, MethodNode = NoSourceIndex;
   uint32_t HeadersNode = NoSourceIndex, BodyNode = NoSourceIndex;
+  uint32_t ConstructorNode = NoSourceIndex, ReceiverBinding = NoSourceIndex;
+  uint32_t AsyncNode = NoSourceIndex, HeaderNameNode = NoSourceIndex;
+  uint32_t HeaderValueNode = NoSourceIndex, HandlerNode = NoSourceIndex;
   std::string Method = "unknown", MethodStatus = "unknown";
   std::string URLStatus = "absent", OptionsStatus = "absent";
+  std::string ReceiverStatus = "not_applicable";
+  std::string ArgumentsStatus = "not_applicable";
+  std::string CredentialArgumentsStatus = "not_applicable";
+  std::string BodyStatus = "not_applicable", HeaderKind = "not_applicable";
+  std::string EventKind = "not_applicable", HandlerStatus = "not_applicable";
   uint64_t TemplateHoles = 0;
   bool Optional = false;
   InterfaceEndpoint Endpoint;

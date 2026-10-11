@@ -152,7 +152,11 @@ std::string Session::capabilities() {
       {"max_cached", 4},
       {"max_cached_correlations", 4},
       {"intrinsic_verified", false},
-      {"websocket_correlation", false}});
+      {"websocket_correlation", false},
+      {"xhr_correlation", false},
+      {"candidate_kinds", llvm::json::Array{"fetch", "websocket", "xhr_open",
+                                            "xhr_set_request_header",
+                                            "xhr_send", "xhr_event_handler"}}});
 #endif
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");

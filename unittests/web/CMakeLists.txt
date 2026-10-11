@@ -49,6 +49,7 @@ target_compile_definitions(NeverDWebSourceMapTests PRIVATE
 if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   add_neverd_unittest(NeverDWebSourceTests
     SourceInterfaceTests.cpp
+    SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp
     ElectronEntryTests.cpp

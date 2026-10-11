@@ -103,6 +103,9 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
     interfaces/SourceInterfaces.cpp
+    interfaces/SourceContext.cpp
+    interfaces/SourceFetch.cpp
+    interfaces/SourceXHR.cpp
     SourceRecovery.cpp
     SourceModel.cpp SourceBindings.cpp SourceEvaluate.cpp SourceEffects.cpp SourceModules.cpp HTMLModules.cpp
     SourceBundles.cpp SourceView.cpp SourceNavigation.cpp SourceOrigins.cpp SourcePaths.cpp ElectronSource.cpp ElectronSelection.cpp ElectronIPC.cpp ElectronEntries.cpp PrimitiveNumbers.cpp)

@@ -73,6 +73,19 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     if (const auto *Entry = A.getAsObject())
       if (Entry->getString("kind") == "asar_extraction")
         ASARAvailable = Entry->getBoolean("available").value_or(false);
+  bool SourceInterfacesAvailable = false;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "source_interfaces")
+      continue;
+    SourceInterfacesAvailable = true;
+    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v2");
+    EXPECT_FALSE(Entry->getBoolean("xhr_correlation").value_or(true));
+    const auto *Kinds = Entry->getArray("candidate_kinds");
+    ASSERT_NE(Kinds, nullptr);
+    EXPECT_EQ(Kinds->size(), 6u);
+  }
+  EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("asar_extract"), ASARAvailable);
   EXPECT_EQ(Has("asar_records"), ASARAvailable);
   EXPECT_TRUE(Has("native_open"));

@@ -500,7 +500,10 @@ publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
-`interfaces/SourceInterfaces` consumes the shared syntax/binding/value models;
+`interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
+Its private `SourceContext` owns bounded admission, indexes, finite strings and
+record publication; `SourceFetch` and `SourceXHR` own their syntax rules. XHR
+links lexical constructors/receivers without inferring request sessions;
 `interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
