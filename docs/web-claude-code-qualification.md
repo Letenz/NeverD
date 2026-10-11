@@ -63,8 +63,7 @@ The original module is 156,255 bytes with SHA-256
 Both candidates passed complete reparse, retained outer-tree comparison,
 primitive SameValue and exact inverse verification. The exported originals
 also matched the previously recovered `m01897.js` byte for byte. The private
-local outputs are under
-`/Users/gmh/code/claude-code-recovery/2.1.296/primitive-rewrites/`, in
+local outputs are in the recovery workspace’s `primitive-rewrites/` directory, in
 `module-01897-strings` and `module-01897-constants`; each contains
 `original.js`, `candidate.js` and `receipt.json`. No sample content is committed.
 
