@@ -95,6 +95,35 @@ protected:
     test::writeFile(Path, Bytes);
     return Path;
   }
+  std::filesystem::path writeWatchInput() {
+    auto Bytes = Original.File;
+    const auto *Program = Original.section(".prog");
+    const auto *Data = Original.section(".pack");
+    if (!Program || !Data || Program->FileSize < 52 || Data->FileSize < 8) {
+      ADD_FAILURE() << "driver write-watch control has no storage";
+      return {};
+    }
+    std::fill_n(Bytes.begin() + Data->FileOffset, 8, 0);
+    // Five independently encoded mov dword ptr [rip+disp32], imm32 stores.
+    // Only the first cell is watched. The second witnesses whether the CPU
+    // ran past each committed watched store before notifying the observer.
+    const std::pair<uint32_t, uint32_t> Stores[] = {
+        {4, 0}, {0, 1}, {4, 0x11}, {0, 2}, {4, 0x22}};
+    for (size_t I = 0; I < std::size(Stores); ++I) {
+      auto *Code = Bytes.data() + Program->FileOffset + I * 10;
+      Code[0] = 0xc7;
+      Code[1] = 0x05;
+      write32le(Code + 2,
+                Data->RVA + Stores[I].first - (Program->RVA + I * 10 + 10));
+      write32le(Code + 6, Stores[I].second);
+    }
+    Bytes[Program->FileOffset + 50] = 0x90; // Watched before execution.
+    Bytes[Program->FileOffset + 51] = 0xc3;
+    write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+    const auto Path = Scratch / "write-watch.sys";
+    test::writeFile(Path, Bytes);
+    return Path;
+  }
   DriverOptions scenario() const {
     DriverOptions D;
     D.Backend = GetParam().Kind;
@@ -433,6 +462,98 @@ public:
 private:
   uint64_t EntryRVA;
 };
+
+class DriverWriteObserver final : public ProcessObserver {
+public:
+  DriverWriteObserver(uint64_t DataRVA, uint64_t StopRVA, bool Fail)
+      : DataRVA(DataRVA), StopRVA(StopRVA), Fail(Fail) {}
+  std::vector<std::pair<uint32_t, uint32_t>> Changes;
+  std::pair<uint32_t, uint32_t> Final{};
+  llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
+    Base = P.inputModule()->Base;
+    return std::vector<ExecutionWatch>{{Base + StopRVA, 1}};
+  }
+  std::vector<MemoryWriteWatch> writeWatches() const override {
+    return {{Base + DataRVA, 4}};
+  }
+  llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  resuming(ProcessView &P) override {
+    auto Value = read(P);
+    if (!Value)
+      return Value.takeError();
+    if (Value->first != Last) {
+      Last = Value->first;
+      Changes.push_back(*Value);
+      if (Fail)
+        return llvm::createStringError(
+            "driver committed-write observer failure");
+    }
+    return std::nullopt;
+  }
+  llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  watched(ProcessView &P, uint64_t) override {
+    auto Value = read(P);
+    if (!Value)
+      return Value.takeError();
+    Final = *Value;
+    return std::nullopt;
+  }
+
+private:
+  llvm::Expected<std::pair<uint32_t, uint32_t>> read(ProcessView &P) {
+    std::array<uint8_t, 8> Bytes;
+    if (auto E = P.read(Base + DataRVA, Bytes))
+      return std::move(E);
+    return std::pair(read32le(Bytes.data()), read32le(Bytes.data() + 4));
+  }
+  uint64_t DataRVA, StopRVA, Base = 0;
+  uint32_t Last = 0;
+  bool Fail;
+};
+
+TEST_P(UnpackDriver, CommittedWriteWatchesSuspendBeforeTheNextInstruction) {
+  const auto Input = writeWatchInput();
+  ASSERT_FALSE(HasFailure());
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    auto D = scenario();
+    D.Contract = Contract;
+    D.TraceMemoryWrites = false;
+    D.EventLimit = 1;
+    DriverWriteObserver Observer(Original.section(".pack")->RVA,
+                                 Original.section(".prog")->RVA + 50, false);
+    auto Run = observeDriver(Input, D, Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    EXPECT_EQ(Observer.Changes,
+              (std::vector<std::pair<uint32_t, uint32_t>>{{1, 0}, {2, 0x11}}));
+    EXPECT_EQ(Observer.Final, (std::pair<uint32_t, uint32_t>{2, 0x22}));
+    EXPECT_EQ(Run->Instructions, 5u);
+    EXPECT_TRUE(Run->Writes.empty());
+  }
+}
+
+TEST_P(UnpackDriver, CommittedWriteObserverFailuresRemainAPIErrors) {
+  const auto Input = writeWatchInput();
+  ASSERT_FALSE(HasFailure());
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    auto D = scenario();
+    D.Contract = Contract;
+    D.TraceMemoryWrites = false;
+    DriverWriteObserver Observer(Original.section(".pack")->RVA,
+                                 Original.section(".prog")->RVA + 50, true);
+    auto Run = observeDriver(Input, D, Observer);
+    ASSERT_FALSE(bool(Run));
+    EXPECT_NE(llvm::toString(Run.takeError())
+                  .find("committed-write observer failure"),
+              std::string::npos);
+    EXPECT_EQ(Observer.Changes,
+              (std::vector<std::pair<uint32_t, uint32_t>>{{1, 0}}));
+  }
+}
 
 TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
   DriverPoolObserver Observer(Original.Entry);

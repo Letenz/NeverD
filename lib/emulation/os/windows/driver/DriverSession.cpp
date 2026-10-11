@@ -394,7 +394,12 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     if (auto E = Kernel.validateGuestAccess(Address, Size, false))
       Stop(DriverStopReason::ModelError, llvm::toString(std::move(E)));
   };
-  Hooks.MemoryWritten = [&]() { PendingMemoryWrite = true; };
+  Hooks.MemoryWritten = [&]() {
+    // Publish the committed store before admitting the next instruction.
+    // The observer may refresh execution watches or reject the next resume.
+    PendingMemoryWrite = true;
+    CPU.stop();
+  };
   Hooks.Write = [&](uint64_t Address, uint32_t Size, uint64_t Value) {
     if (Stopped)
       return;

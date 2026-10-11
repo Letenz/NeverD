@@ -131,6 +131,13 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver.ObserverFailuresAreAPIErrors/{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/"
+    "UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverSchedulingPolicy.RejectsMalformedAndOverflowingScenarios")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "DriverSchedulingPolicy.ReportsExplicitPolicyAndPreservesDefaultShape")
