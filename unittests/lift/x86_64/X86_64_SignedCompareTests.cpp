@@ -45,3 +45,30 @@ int minmax(int a) {
 )C",
                        "minmax", {"minmax"});
 }
+
+// At -O0 every local lives in a frame slot, declared in one signedness and
+// compared in either: `found < 0` tests the int the slot holds.
+TEST_F(X86_64_SignedCompare, AFrameSlotComparesAsTheValueItHolds) {
+  KernelOptimization = "-O0";
+  expectRunsLikeSource(R"C(
+int search(int a) {
+  unsigned h = (unsigned)a, acc = 0;
+  for (int rep = 0; rep < 48; rep++) {
+    h = h * 1103515245u + 12345u;
+    unsigned tgt = h & 0x3fu;
+    int found = -1;
+    for (int i = 0; i < 8 && found < 0; i++)
+      for (int j = 0; j < 8; j++) {
+        unsigned cell = ((unsigned)(i * 8 + j) * 2654435761u) & 0x3fu;
+        if (cell == tgt) {
+          found = i * 8 + j;
+          break;
+        }
+      }
+    acc = acc * 131u + (unsigned)(found + 1);
+  }
+  return (int)acc;
+}
+)C",
+                       "search", {"search"});
+}
