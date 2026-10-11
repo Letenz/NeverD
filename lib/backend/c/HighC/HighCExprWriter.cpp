@@ -258,11 +258,26 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
   return "0x" + llvm::utohexstr(Val);
 }
 
+llvm::StringRef HighCWriter::plainText(llvm::StringRef Text,
+                                       std::string &Storage) const {
+  return SourceRecorder ? SourceRecorder->plain(Text, Storage) : Text;
+}
+
+std::string HighCWriter::castOperandText(std::string Text) const {
+  std::string Storage;
+  const llvm::StringRef Plain = plainText(Text, Storage);
+  // Parentheses the ordinary text needs enclose its delimiters too.
+  if (c_memory::castOperand(Plain) == Plain)
+    return Text;
+  return "(" + Text + ")";
+}
+
 bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
                                        bool Signed) {
   if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
     return false;
-  const auto It = DeclaredCTypes.find(exprStr(E));
+  std::string Storage;
+  const auto It = DeclaredCTypes.find(plainText(exprStr(E), Storage).str());
   return It != DeclaredCTypes.end() && It->second &&
          It->second->Kind == NdTypeKind::Int && !It->second->IsEnum &&
          It->second->IsSigned == Signed && It->second->Size == Width;
@@ -393,6 +408,8 @@ const HighExpr &HighCWriter::lowBytesSource(const HighExpr &E,
 bool HighCWriter::integerText(const HighExpr &E, llvm::StringRef Text) const {
   if (printedIntegerType(E))
     return true;
+  std::string Storage;
+  Text = plainText(Text, Storage);
   if (E.Kind == ExprKind::Const) {
     llvm::StringRef Digits = Text;
     Digits.consume_front("-");
@@ -425,9 +442,9 @@ std::string HighCWriter::integerView(const HighExpr &E, const TypeRef &To,
     if (auto Carrier = unsignedCarrierText(*Source, ParentPrec)) {
       if (!Signed && Width == Source->Type->Size)
         return *Carrier;
-      return "(" + typeToC(To) + ")" + c_memory::castOperand(*Carrier);
+      return "(" + typeToC(To) + ")" + castOperandText(std::move(*Carrier));
     }
-  return "(" + typeToC(To) + ")" + c_memory::castOperand(Text);
+  return "(" + typeToC(To) + ")" + castOperandText(std::move(Text));
 }
 
 std::optional<std::string>
@@ -438,7 +455,9 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
   const HighExpr &Source = lowBytesSource(E, Width);
   // A literal is spelled as the value it converts to.
   if (Source.Kind == ExprKind::Const && isPlainInteger(Source.Type)) {
-    if (exprStr(Source) != constStr(Source.ConstVal, Source.Type))
+    std::string Storage;
+    if (plainText(exprStr(Source), Storage) !=
+        constStr(Source.ConstVal, Source.Type))
       return std::nullopt;
     const unsigned Bits = Source.Type->Size * 8;
     uint64_t Value = Source.ConstVal;
@@ -4090,8 +4109,10 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
   UnsignedCarrierTexts.erase(&E);
   std::string Text = exprStrImpl(E, ParentPrec, Destination);
   // A local's name has its declared type.
-  if (!Text.empty() && (llvm::isAlpha(Text.front()) || Text.front() == '_'))
-    if (const auto Declared = DeclaredCTypes.find(Text);
+  std::string Storage;
+  if (const llvm::StringRef Name = plainText(Text, Storage);
+      !Name.empty() && (llvm::isAlpha(Name.front()) || Name.front() == '_'))
+    if (const auto Declared = DeclaredCTypes.find(Name.str());
         Declared != DeclaredCTypes.end() && isPlainInteger(Declared->second))
       PrintedIntegerTypes[&E] = {Declared->second->Size,
                                  Declared->second->IsSigned};
