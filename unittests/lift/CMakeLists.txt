@@ -3761,6 +3761,16 @@ add_neverd_unittest(NeverDX86FPConversionAccuracyTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPConversionAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPScalarConvertStateTests
+  x86_64/X86_64_FPScalarConvertStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPScalarConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPPackedConvertStateTests
+  x86_64/X86_64_FPPackedConvertStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPPackedConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -3783,6 +3793,12 @@ add_neverd_unittest(NeverDX86FPArithStateAccuracyTests
   x86_64/X86_64_FPArithStateAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPArithStateAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86FPFmaStateAccuracyTests
+  x86_64/X86_64_FPFmaStateAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPFmaStateAccuracyTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86RdSspAccuracyTests

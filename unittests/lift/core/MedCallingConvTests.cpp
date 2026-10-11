@@ -275,7 +275,8 @@ TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
          {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
       for (auto Id :
            {Intrinsic::X86FPArithMemoryState, Intrinsic::X86FPRoundMemoryState,
-            Intrinsic::X86FPApprox12MemoryState})
+            Intrinsic::X86FPApprox12MemoryState,
+            Intrinsic::X86FPFmaMemoryState})
         for (unsigned Bytes : {4u, 8u}) {
           if (Id == Intrinsic::X86FPApprox12MemoryState && Bytes == 8)
             continue;
@@ -303,13 +304,20 @@ TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
               Architecture);
           Read.addInput(MedVar::makeConst(unsigned(Id), 2));
           Read.addInput(Address);
-          const unsigned Control = Id == Intrinsic::X86FPArithMemoryState
-                                       ? 16 | (Bytes == 8 ? 8 : 0)
-                                   : Id == Intrinsic::X86FPRoundMemoryState
-                                       ? 4 | (Bytes == 8 ? 2 : 0)
-                                       : 2;
-          Read.addInput(MedVar::makeConst(Control, 1));
-          if (Id == Intrinsic::X86FPArithMemoryState)
+          const bool Fma = Id == Intrinsic::X86FPFmaMemoryState;
+          const unsigned Control =
+              Fma ? makeX86FPFmaStateControl(1, Bytes == 8, true, true, false,
+                                             false)
+              : Id == Intrinsic::X86FPArithMemoryState
+                  ? 16 | (Bytes == 8 ? 8 : 0)
+              : Id == Intrinsic::X86FPRoundMemoryState
+                  ? 4 | (Bytes == 8 ? 2 : 0)
+                  : 2;
+          Read.addInput(MedVar::makeConst(Control, Fma ? 2 : 1));
+          if (Fma) {
+            Read.addInput(MedVar::makeConst(0, Bytes));
+            Read.addInput(MedVar::makeConst(0, Bytes));
+          } else if (Id == Intrinsic::X86FPArithMemoryState)
             Read.addInput(MedVar::makeConst(0, Bytes));
           else if (Id == Intrinsic::X86FPRoundMemoryState)
             Read.addInput(MedVar::makeConst(4, 1));
@@ -325,7 +333,8 @@ TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
           ASSERT_FALSE(F.Params.empty());
           EXPECT_TRUE(F.MutableStackParamHomes.empty());
           const auto &ValueRead = F.Blocks[0].Ops.back();
-          const auto Expected = Id == Intrinsic::X86FPArithMemoryState
+          const auto Expected = Fma ? Intrinsic::X86FPFmaState
+                                : Id == Intrinsic::X86FPArithMemoryState
                                     ? Intrinsic::X86FPArithState
                                 : Id == Intrinsic::X86FPRoundMemoryState
                                     ? Intrinsic::X86FPRoundState
@@ -335,9 +344,11 @@ TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
               Expected, x86FPStateMedShape(ValueRead, Architecture)));
           EXPECT_EQ(ValueRead.Output, Read.Output);
           if (Id != Intrinsic::X86FPApprox12MemoryState)
-            EXPECT_EQ(ValueRead.Inputs[4], Read.Inputs[4]);
+            EXPECT_EQ(ValueRead.Inputs[Fma ? 5 : 4], Read.Inputs[Fma ? 5 : 4]);
           const auto &Source =
-              ValueRead.Inputs[Id == Intrinsic::X86FPArithMemoryState ? 3 : 2];
+              ValueRead.Inputs[Fma                                      ? 4
+                               : Id == Intrinsic::X86FPArithMemoryState ? 3
+                                                                        : 2];
           EXPECT_EQ(Source.Size, Bytes);
           if (Architecture == Arch::X86 && Bytes == 8) {
             ASSERT_EQ(F.Blocks[0].Ops.size(), 4u);
@@ -353,6 +364,96 @@ TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
                                      : int(Layout.Registers.size()));
           }
         }
+}
+
+TEST(MedCallingConvFPStack,
+     ScalarConversionUsesSourceExtentAndPreservesControl) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 16; ++Control) {
+      if (!x86FPScalarConvertControlIsValid(Control))
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      constexpr auto Architecture = Arch::X64;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Architecture);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Architecture);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86FPScalarConvertDestinationBytes(Control) + 4,
+                         Architecture);
+      Read.addInput(MedVar::makeConst(
+          unsigned(Intrinsic::X86FPScalarConvertMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0x9fa5, 4));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Architecture, Format);
+      ASSERT_FALSE(F.Params.empty());
+      EXPECT_TRUE(F.MutableStackParamHomes.empty());
+      const auto &ValueRead = F.Blocks[0].Ops.back();
+      EXPECT_EQ(ValueRead.Inputs[0].ConstVal,
+                unsigned(Intrinsic::X86FPScalarConvertState));
+      EXPECT_TRUE(
+          x86FPStateShapeIsValid(Intrinsic::X86FPScalarConvertState,
+                                 x86FPStateMedShape(ValueRead, Architecture)));
+      EXPECT_EQ(ValueRead.Output, Read.Output);
+      EXPECT_EQ(ValueRead.Inputs[2], Read.Inputs[2]);
+      EXPECT_EQ(ValueRead.Inputs[3], Read.Inputs[3]);
+      EXPECT_EQ(ValueRead.Inputs[1].Size,
+                x86FPScalarConvertSourceBytes(Control));
+      EXPECT_EQ(ValueRead.Inputs[1].Kind, MedVar::Param);
+      EXPECT_EQ(ValueRead.Inputs[1].Id, int(Layout.Registers.size()));
+    }
+}
+
+TEST(MedCallingConvFPStack,
+     PackedConversionRetainsEverySourceHomeAndMemoryContract) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 32; ++Control) {
+      if (!x86FPPackedConvertControlIsValid(Control))
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86FPPackedConvertDestinationBytes(Control) + 4,
+                         Arch::X64);
+      Read.addInput(MedVar::makeConst(
+          unsigned(Intrinsic::X86FPPackedConvertMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0x1f80, 4));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      EXPECT_EQ(F.Blocks[0].Ops.back().Inputs[0].ConstVal,
+                Read.Inputs[0].ConstVal);
+      const unsigned Slots = x86FPPackedConvertSourceBytes(Control) / 8;
+      ASSERT_EQ(F.MutableStackParamHomes.size(), Slots);
+      for (unsigned Slot = 0; Slot < Slots; ++Slot) {
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].first,
+                  int(Layout.Registers.size() + Slot));
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].second,
+                  Layout.EntryStackBase + int64_t(Slot * 8));
+      }
+    }
 }
 
 TEST(MedCallingConvFPStack, MemoryOwnershipAndMalformedReadsAreConservative) {

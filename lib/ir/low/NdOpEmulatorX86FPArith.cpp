@@ -332,7 +332,8 @@ NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
   return Loaded;
 }
 
-bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
+bool NdOpEmulator::executeX86FPArith(const LowOp &Op,
+                                     bool AlternateAddSubtract) {
   if (!MXCSRKnown)
     return false;
   if (Op.NumInputs != 6 ||
@@ -348,7 +349,9 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
   const uint16_t Control = static_cast<uint16_t>(readOperand(Op.Inputs[1]));
   if (!isValidX86FPArithControl(Control))
     return false;
-  const auto Kind = static_cast<X86FPArithKind>(Control & 7U);
+  const auto OperationKind = static_cast<X86FPArithKind>(Control & 7U);
+  if (AlternateAddSubtract && OperationKind != X86FPArithKind::Add)
+    return false;
   const bool IsF64 = (Control & (UINT16_C(1) << 3)) != 0;
   const bool Scalar = (Control & (UINT16_C(1) << 4)) != 0;
   const bool SuppressExceptions = (Control & (UINT16_C(1) << 5)) != 0;
@@ -387,6 +390,9 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
   uint32_t PreRaised = 0;
 
   for (unsigned Lane = 0; Lane < LaneCount; ++Lane) {
+    const auto Kind = AlternateAddSubtract && !(Lane & 1)
+                          ? X86FPArithKind::Subtract
+                          : OperationKind;
     if (((ActiveMask >> Lane) & 1) == 0)
       continue;
     const size_t Offset = static_cast<size_t>(Lane) * ElementSize;
@@ -440,10 +446,22 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
     } else if ((ADenormal || BDenormal || CDenormal) &&
                !(Kind == X86FPArithKind::Divide && !isInfinity(A, Format) &&
                  !isZero(A, Format) && isZero(B, Format))) {
-      // A finite nonzero dividend divided by zero raises #Z, including a
-      // denormal dividend. Do not add #D for that lane; other active lanes
-      // still contribute their independent denormal-input exception.
-      PreRaised |= 1U << 1;
+      const bool LaneSubtract = AlternatingAddend
+                                    ? (((Lane & 1U) == 0) == SubtractEven)
+                                    : SubtractAddend;
+      const uint64_t ArithmeticA = NegateProduct ? A ^ Format.Sign : A;
+      const uint64_t ArithmeticC = LaneSubtract ? C ^ Format.Sign : C;
+      const bool InvalidFma =
+          IsFma && ((isZero(A, Format) && isInfinity(B, Format)) ||
+                    (isInfinity(A, Format) && isZero(B, Format)) ||
+                    ((isInfinity(A, Format) || isInfinity(B, Format)) &&
+                     isInfinity(ArithmeticC, Format) &&
+                     ((ArithmeticA ^ B ^ ArithmeticC) & Format.Sign) != 0));
+      // An invalid FMA suppresses denormal evidence from that same lane,
+      // including a denormal addend in 0*infinity. Other lanes still contribute
+      // their independent #D, as they do for a finite dividend divided by 0.
+      if (!InvalidFma)
+        PreRaised |= 1U << 1;
     }
 
     if (Kind == X86FPArithKind::Add || Kind == X86FPArithKind::Subtract) {
@@ -519,6 +537,9 @@ bool NdOpEmulator::executeX86FPArith(const LowOp &Op) {
 
   uint32_t PostRaised = 0;
   for (unsigned Lane = 0; Lane < LaneCount; ++Lane) {
+    const auto Kind = AlternateAddSubtract && !(Lane & 1)
+                          ? X86FPArithKind::Subtract
+                          : OperationKind;
     if (!NeedsArithmetic[Lane])
       continue;
     uint32_t Raised = 0;
@@ -646,6 +667,105 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
       ++Skips.ApproximatedOps;
     return true;
   }
+  if (isX86FPPackedConvertStateIntrinsic(Id)) {
+    const unsigned Control = Op.Inputs[2].Offset;
+    const unsigned Bytes = x86FPPackedConvertDestinationBytes(Control);
+    const unsigned SourceBytes = x86FPPackedConvertSourceBytes(Control);
+    const auto State = readOperand(Op.Inputs[3]);
+    if (State & ~UINT64_C(0xffff))
+      return false;
+    const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
+    if (Memory) {
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      setMXCSR(static_cast<uint32_t>(State));
+    }
+    auto Source =
+        Memory
+            ? loadX86FPStateMemory(Op, SourceBytes,
+                                   x86FPPackedConvertMemoryAlignment(Control))
+            : std::optional<std::vector<uint8_t>>(
+                  readOperandBytes(Op.Inputs[1]));
+    if (!Source || Source->size() != SourceBytes)
+      return false;
+    Source->resize(std::max(16u, SourceBytes), 0);
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(static_cast<uint32_t>(State));
+    Evaluation.writeOutputBytes(NdVar::tmp(1, Source->size()), *Source);
+    LowOp Convert;
+    Convert.Opcode = NdOp::INTRINSIC;
+    Convert.Output = NdVar::tmp(0, Bytes);
+    Convert.addInput(NdVar::cst(unsigned(Intrinsic::X86FPConvert), 2));
+    Convert.addInput(
+        NdVar::cst(x86FPPackedConvertEvaluationControl(Control), 2));
+    Convert.addInput(NdVar::tmp(1, Source->size()));
+    Convert.addInput(NdVar::cst(0xff, 1));
+    const bool Complete = Evaluation.executeX86FPConvert(Convert);
+    setMXCSR(Evaluation.getMXCSR());
+    if (!Complete)
+      return false;
+    auto Result = Evaluation.readOperandBytes(Convert.Output);
+    Result.resize(Bytes + 4);
+    for (unsigned Index = 0; Index < 4; ++Index)
+      Result[Bytes + Index] = uint8_t(MXCSR >> (Index * 8));
+    writeOutputBytes(Op.Output, Result);
+    return true;
+  }
+  if (isX86FPScalarConvertStateIntrinsic(Id)) {
+    const unsigned Control = Op.Inputs[2].Offset;
+    const unsigned SourceBytes = x86FPScalarConvertSourceBytes(Control);
+    const unsigned DestinationBytes =
+        x86FPScalarConvertDestinationBytes(Control);
+    const auto State = readOperand(Op.Inputs[3]);
+    if ((State & ~UINT64_C(0xffff)) != 0)
+      return false;
+    if (Id == Intrinsic::X86FPScalarConvertMemoryState) {
+      // Missing architectural context is a refusal, not a predicted fault.
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      // The native completion scope installs the incoming CSR before reading.
+      setMXCSR(static_cast<uint32_t>(State));
+    }
+    auto Source = Id == Intrinsic::X86FPScalarConvertMemoryState
+                      ? loadX86FPStateMemory(Op, SourceBytes, 1)
+                      : std::optional<std::vector<uint8_t>>(
+                            readOperandBytes(Op.Inputs[1]));
+    if (!Source || Source->size() != SourceBytes)
+      return false;
+    Source->resize(16, 0);
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(static_cast<uint32_t>(State));
+    Evaluation.writeOutputBytes(NdVar::tmp(1, 16), *Source);
+    LowOp Scalar;
+    Scalar.Opcode = NdOp::INTRINSIC;
+    Scalar.Output = NdVar::tmp(0, 16);
+    Scalar.addInput(NdVar::cst(unsigned(Intrinsic::X86FPConvert), 2));
+    Scalar.addInput(NdVar::cst(
+        makeX86FPConvertControl(x86FPScalarConvertIsInteger(Control)
+                                    ? X86FPConvertKind::SignedIntegerToFloat
+                                    : X86FPConvertKind::FloatToFloat,
+                                SourceBytes == 8, DestinationBytes == 8, false,
+                                false, X86FPRounding::MXCSR, 1),
+        2));
+    Scalar.addInput(NdVar::tmp(1, 16));
+    Scalar.addInput(NdVar::cst(1, 1));
+    const bool Complete = Evaluation.executeX86FPConvert(Scalar);
+    setMXCSR(Evaluation.getMXCSR());
+    if (!Complete)
+      return false;
+    auto Result = Evaluation.readOperandBytes(Scalar.Output);
+    Result.resize(DestinationBytes + 4);
+    for (unsigned Index = 0; Index < 4; ++Index)
+      Result[DestinationBytes + Index] = uint8_t(MXCSR >> (Index * 8));
+    writeOutputBytes(Op.Output, Result);
+    return true;
+  }
   if (isX86FPConversionStateIntrinsic(Id)) {
     const unsigned SourceBytes = Op.Inputs[1].Size;
     const unsigned DestinationBytes =
@@ -686,12 +806,13 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     return true;
   }
   if (isX86FPArithStateIntrinsic(Id)) {
-    const bool Memory = Id == Intrinsic::X86FPArithMemoryState;
+    const bool Fma = isX86FPFmaStateIntrinsic(Id);
+    const bool Memory = isX86FPStateMemoryIntrinsic(Id);
     const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;
     const unsigned Bytes = Op.Output.Size - 4;
     const bool Scalar = x86FPArithStateIsScalar(Control);
     const bool Unary = x86FPArithStateIsUnary(Control);
-    const auto State = readOperand(Op.Inputs[4]);
+    const auto State = readOperand(Op.Inputs[Fma ? 5 : 4]);
     if ((State & ~UINT64_C(0xffff)) != 0)
       return false;
     std::vector<uint8_t> Left = readOperandBytes(Op.Inputs[Memory ? 3 : 2]);
@@ -709,7 +830,37 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
         return false;
       Right = *Source;
     } else
-      Right = readOperandBytes(Op.Inputs[3]);
+      Right = readOperandBytes(Op.Inputs[Fma ? 4 : 3]);
+    std::vector<uint8_t> Addend(Bytes, 0);
+    if (Fma) {
+      const auto Source1 = readOperandBytes(Op.Inputs[Memory ? 4 : 3]);
+      const unsigned Order = (Control >> 8) & 3;
+      if (Order == 0) {
+        Addend = Source1;
+      } else if (Order == 1) {
+        Addend = Right;
+        Right = Left;
+        Left = Source1;
+      } else {
+        Addend = Left;
+        Left = Source1;
+      }
+    }
+    if (x86FPArithStateIsHorizontal(Control)) {
+      const unsigned Element = x86FPArithStateElementBytes(Control);
+      const unsigned Pairs = 8 / Element;
+      const auto SourceLeft = Left, SourceRight = Right;
+      for (unsigned Block = 0; Block < Bytes; Block += 16)
+        for (unsigned Pair = 0; Pair < 2 * Pairs; ++Pair) {
+          const auto &Source = Pair < Pairs ? SourceLeft : SourceRight;
+          const unsigned Input = Block + (Pair % Pairs) * 2 * Element;
+          const unsigned Output = Block + Pair * Element;
+          // Preserve physical low-then-high operand priority for NaN payloads.
+          std::copy_n(Source.begin() + Input, Element, Left.begin() + Output);
+          std::copy_n(Source.begin() + Input + Element, Element,
+                      Right.begin() + Output);
+        }
+    }
     // Adapt roles and control explicitly: the existing SQRT evaluator reads
     // A, while this instruction-level contract consistently owns RHS access.
     // New bit5 is VEX memory topology, never the old evaluator's SAE bit.
@@ -718,11 +869,13 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     const unsigned VectorBytes = std::max(Bytes, 16U);
     Left.resize(VectorBytes, 0);
     Right.resize(VectorBytes, 0);
+    Addend.resize(VectorBytes, 0);
     NdOpEmulator Evaluation(Img);
     Evaluation.setStrictMode(true);
     Evaluation.setMXCSR(static_cast<uint32_t>(State));
     Evaluation.writeOutputBytes(NdVar::tmp(1, VectorBytes), Left);
     Evaluation.writeOutputBytes(NdVar::tmp(2, VectorBytes), Right);
+    Evaluation.writeOutputBytes(NdVar::tmp(3, VectorBytes), Addend);
     LowOp Arithmetic;
     Arithmetic.Opcode = NdOp::INTRINSIC;
     Arithmetic.Output = NdVar::tmp(0, VectorBytes);
@@ -730,15 +883,18 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     Arithmetic.addInput(NdVar::cst(
         makeX86FPArithControl(static_cast<X86FPArithKind>(Control & 7),
                               (Control & 8) != 0, Scalar, false,
-                              X86FPRounding::MXCSR),
+                              X86FPRounding::MXCSR, Fma && (Control & 64),
+                              Fma && (Control & 128), Fma && (Control & 1024),
+                              Fma && (Control & 2048)),
         2));
     Arithmetic.addInput(NdVar::tmp(1, VectorBytes));
     Arithmetic.addInput(NdVar::tmp(2, VectorBytes));
-    Arithmetic.addInput(NdVar::cst(0, VectorBytes));
+    Arithmetic.addInput(NdVar::tmp(3, VectorBytes));
     const unsigned Lanes =
         Scalar ? 1 : Bytes / x86FPArithStateElementBytes(Control);
     Arithmetic.addInput(NdVar::cst((UINT64_C(1) << Lanes) - 1, 1));
-    const bool Complete = Evaluation.executeX86FPArith(Arithmetic);
+    const bool Complete = Evaluation.executeX86FPArith(
+        Arithmetic, x86FPArithStateIsAlternating(Control));
     setMXCSR(Evaluation.getMXCSR());
     if (!Complete)
       return false;

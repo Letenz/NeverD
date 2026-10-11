@@ -81,6 +81,10 @@ struct API {
   WEB_API(neverd_web_package_records_json)
   WEB_API(neverd_web_packages_compare_json)
   WEB_API(neverd_web_package_diff_records_json)
+  WEB_API(neverd_web_node_behavior_analyze_json)
+  WEB_API(neverd_web_node_behavior_records_json)
+  WEB_API(neverd_web_package_behavior_analyze_json)
+  WEB_API(neverd_web_package_behavior_records_json)
   WEB_API(neverd_web_asar_extract_json)
   WEB_API(neverd_web_electron_manifest_analyze_json)
   WEB_API(neverd_web_desktop_manifest_analyze_json)
@@ -99,6 +103,8 @@ struct API {
   WEB_API(neverd_web_source_binding_records_json)
   WEB_API(neverd_web_source_semantics_analyze_json)
   WEB_API(neverd_web_source_semantic_records_json)
+  WEB_API(neverd_web_source_rewrite_analyze_json)
+  WEB_API(neverd_web_source_rewrite_records_json)
   WEB_API(neverd_web_source_modules_analyze_json)
   WEB_API(neverd_web_source_module_records_json)
   WEB_API(neverd_web_source_bundles_analyze_json)
@@ -525,15 +531,22 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_electron_ipc_analyze" ||
-      operation == "web_electron_entries_analyze") {
-    fields(p, {"revision", "manifest_artifact_id", "source_ids"});
-    const auto analyze = operation == "web_electron_ipc_analyze"
+      operation == "web_electron_entries_analyze" ||
+      operation == "web_package_behavior_analyze") {
+    const bool package = operation == "web_package_behavior_analyze";
+    const auto idField =
+        package ? "package_analysis_id" : "manifest_artifact_id";
+    fields(p, {"revision", idField, "source_ids"});
+    const auto analyze = package
+                             ? api().neverd_web_package_behavior_analyze_json
+                         : operation == "web_electron_ipc_analyze"
                              ? api().neverd_web_electron_ipc_analyze_json
                              : api().neverd_web_electron_entries_analyze_json;
     if (!analyze)
-      throw Error("capability_unavailable", "Electron evidence is unavailable");
+      throw Error("capability_unavailable",
+                  "Selected source evidence is unavailable");
     const auto revision = required(p, "revision", 20);
-    const auto id = required(p, "manifest_artifact_id", 64);
+    const auto id = required(p, idField, 64);
     const auto selected = p.find("source_ids");
     if (selected == p.end() || !selected->is_array() || selected->empty() ||
         selected->size() > 16)
@@ -552,14 +565,21 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return value;
   }
   if (operation == "web_electron_ipc_records" ||
-      operation == "web_electron_entry_records") {
+      operation == "web_electron_entry_records" ||
+      operation == "web_package_behavior_records") {
     const bool ipc = operation == "web_electron_ipc_records";
-    const auto idField = ipc ? "electron_ipc_id" : "electron_entries_id";
+    const bool package = operation == "web_package_behavior_records";
+    const auto idField = package ? "package_behavior_id"
+                         : ipc   ? "electron_ipc_id"
+                                 : "electron_entries_id";
     fields(p, {"revision", idField, "record_kind", "offset", "limit"});
-    const auto records = ipc ? api().neverd_web_electron_ipc_records_json
-                             : api().neverd_web_electron_entry_records_json;
+    const auto records = package
+                             ? api().neverd_web_package_behavior_records_json
+                         : ipc ? api().neverd_web_electron_ipc_records_json
+                               : api().neverd_web_electron_entry_records_json;
     if (!records)
-      throw Error("capability_unavailable", "Electron evidence is unavailable");
+      throw Error("capability_unavailable",
+                  "Selected source evidence is unavailable");
     const auto revision = required(p, "revision", 20);
     const auto id = required(p, idField, 64);
     const auto kind = required(p, "record_kind", 16);
@@ -683,6 +703,56 @@ Json Backend::execute(const std::string &operation, const Json &p) {
                               id.data(), id.size()));
     analysisState_ = "partial";
     return value;
+  }
+  if (operation == "web_node_behavior_analyze") {
+    fields(p, {"revision", "source_id"});
+    if (!api().neverd_web_node_behavior_analyze_json)
+      throw Error("capability_unavailable",
+                  "Node behavior evidence is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto source = required(p, "source_id", 64);
+    auto value = result(api().neverd_web_node_behavior_analyze_json(
+        session_, revision.data(), revision.size(), source.data(),
+        source.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_node_behavior_records") {
+    fields(p, {"revision", "node_behavior_id", "offset", "limit"});
+    if (!api().neverd_web_node_behavior_records_json)
+      throw Error("capability_unavailable",
+                  "Node behavior evidence is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "node_behavior_id", 64);
+    return result(api().neverd_web_node_behavior_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_source_rewrite_analyze") {
+    fields(p, {"revision", "source_id", "pass"});
+    if (!api().neverd_web_source_rewrite_analyze_json)
+      throw Error("capability_unavailable", "Source rewrites are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto source = required(p, "source_id", 64);
+    const auto pass = required(p, "pass", 32);
+    auto value = result(api().neverd_web_source_rewrite_analyze_json(
+        session_, revision.data(), revision.size(), source.data(),
+        source.size(), pass.data(), pass.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_source_rewrite_records") {
+    fields(p, {"revision", "rewrite_id", "offset", "limit"});
+    if (!api().neverd_web_source_rewrite_records_json)
+      throw Error("capability_unavailable", "Source rewrites are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto rewrite = required(p, "rewrite_id", 64);
+    return result(api().neverd_web_source_rewrite_records_json(
+        session_, revision.data(), revision.size(), rewrite.data(),
+        rewrite.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_source_semantics_analyze") {
     fields(p, {"revision", "source_id"});

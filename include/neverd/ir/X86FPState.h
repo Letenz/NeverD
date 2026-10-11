@@ -8,15 +8,53 @@
 #ifndef NEVERD_IR_X86FPSTATE_H
 #define NEVERD_IR_X86FPSTATE_H
 
+#include "neverd/ir/X86FPPackedConvertState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <string>
 
 namespace neverd {
 
+constexpr bool isX86FPScalarConvertStateIntrinsic(Intrinsic Id) {
+  return Id == Intrinsic::X86FPScalarConvertState ||
+         Id == Intrinsic::X86FPScalarConvertMemoryState;
+}
+// bit0: signed integer source; bit1: source64; bit2: destination64; bit3: VEX.
+constexpr bool x86FPScalarConvertIsInteger(unsigned Control) {
+  return (Control & 1) != 0;
+}
+constexpr unsigned x86FPScalarConvertSourceBytes(unsigned Control) {
+  return (Control & 2) ? 8 : 4;
+}
+constexpr unsigned x86FPScalarConvertDestinationBytes(unsigned Control) {
+  return (Control & 4) ? 8 : 4;
+}
+constexpr bool x86FPScalarConvertControlIsValid(uint64_t Control) {
+  return (Control & ~UINT64_C(15)) == 0 &&
+         (x86FPScalarConvertIsInteger(Control) ||
+          x86FPScalarConvertSourceBytes(Control) !=
+              x86FPScalarConvertDestinationBytes(Control));
+}
+inline std::string x86FPScalarConvertMnemonic(unsigned Control) {
+  return std::string((Control & 8) ? "v" : "") +
+         (x86FPScalarConvertIsInteger(Control) ? "cvtsi2"
+          : (Control & 2)                      ? "cvtsd2"
+                                               : "cvtss2") +
+         ((Control & 4) ? "sd" : "ss");
+}
+inline std::string x86FPScalarConvertAsmMnemonic(unsigned Control) {
+  return x86FPScalarConvertMnemonic(Control) +
+         (x86FPScalarConvertIsInteger(Control) ? ((Control & 2) ? "q" : "l")
+                                               : "");
+}
+
+constexpr bool isX86FPFmaStateIntrinsic(Intrinsic Id) {
+  return Id == Intrinsic::X86FPFmaState || Id == Intrinsic::X86FPFmaMemoryState;
+}
+
 constexpr bool isX86FPArithStateIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPArithState ||
-         Id == Intrinsic::X86FPArithMemoryState;
+         Id == Intrinsic::X86FPArithMemoryState || isX86FPFmaStateIntrinsic(Id);
 }
 
 constexpr bool x86FPArithStateIsScalar(unsigned Control) {
@@ -28,6 +66,56 @@ constexpr unsigned x86FPArithStateElementBytes(unsigned Control) {
 constexpr bool x86FPArithStateIsUnary(unsigned Control) {
   return (Control & 7) == unsigned(X86FPArithKind::SquareRoot);
 }
+constexpr bool x86FPArithStateIsHorizontal(unsigned Control) {
+  return (Control & 7) != unsigned(X86FPArithKind::FusedMultiplyAdd) &&
+         (Control & 64) != 0;
+}
+constexpr bool x86FPArithStateIsAlternating(unsigned Control) {
+  return (Control & 7) != unsigned(X86FPArithKind::FusedMultiplyAdd) &&
+         (Control & 128) != 0;
+}
+
+/// FMA3 controls retain order132/213/231 in bits9:8, product/addend signs
+/// in bits6/7 and alternating addends in bits10/11. VEX has no SAE/ER.
+constexpr unsigned makeX86FPFmaStateControl(unsigned Order, bool Double,
+                                            bool Scalar, bool Memory,
+                                            bool Negate, bool Subtract,
+                                            bool Alternating = false,
+                                            bool SubtractEven = false) {
+  return unsigned(X86FPArithKind::FusedMultiplyAdd) | (Double ? 8 : 0) |
+         (Scalar ? 16 : 0) | (Memory && !Scalar ? 32 : 0) | (Negate ? 64 : 0) |
+         (Subtract ? 128 : 0) | (Order << 8) | (Alternating ? 1024 : 0) |
+         (SubtractEven ? 2048 : 0);
+}
+constexpr bool x86FPFmaStateControlIsValid(uint64_t Control, bool Memory) {
+  const bool Alternating = (Control & 1024) != 0;
+  return (Control & ~UINT64_C(4095)) == 0 &&
+         (Control & 7) == unsigned(X86FPArithKind::FusedMultiplyAdd) &&
+         ((Control >> 8) & 3) < 3 &&
+         ((Control & 32) != 0) == (Memory && !(Control & 16)) &&
+         (!(Control & 2048) || Alternating) &&
+         (!Alternating || !(Control & (16 | 64 | 128)));
+}
+constexpr unsigned x86FPArithStateControl(unsigned Layout) {
+  return (Layout >> 8) & 0xffff;
+}
+
+/// Bits6/7 select horizontal pairs or alternating subtraction/addition.
+/// Both complete as one packed instruction, including exception priority.
+constexpr bool x86FPArithStateControlIsValid(uint64_t Control, bool Memory) {
+  const unsigned Kind = Control & 7;
+  const bool Horizontal = x86FPArithStateIsHorizontal(Control);
+  const bool Alternating = x86FPArithStateIsAlternating(Control);
+  const bool Scalar = x86FPArithStateIsScalar(Control);
+  return (Control & ~(Memory ? UINT64_C(255) : UINT64_C(223))) == 0 &&
+         Kind != unsigned(X86FPArithKind::FusedMultiplyAdd) &&
+         (!Scalar || !(Control & 32)) &&
+         (!(Horizontal || Alternating) || !Scalar) &&
+         !(Horizontal && Alternating) &&
+         (!Horizontal || Kind == unsigned(X86FPArithKind::Add) ||
+          Kind == unsigned(X86FPArithKind::Subtract)) &&
+         (!Alternating || Kind == unsigned(X86FPArithKind::Add));
+}
 
 constexpr bool isX86FPApprox12Intrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPApprox12State ||
@@ -37,7 +125,10 @@ constexpr bool isX86FPApprox12Intrinsic(Intrinsic Id) {
 constexpr bool isX86FPStateMemoryIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPRoundMemoryState ||
          Id == Intrinsic::X86FPApprox12MemoryState ||
-         Id == Intrinsic::X86FPArithMemoryState;
+         Id == Intrinsic::X86FPScalarConvertMemoryState ||
+         Id == Intrinsic::X86FPPackedConvertMemoryState ||
+         Id == Intrinsic::X86FPArithMemoryState ||
+         Id == Intrinsic::X86FPFmaMemoryState;
 }
 
 /// APPROX12 has no CSR operand: even unknown MXCSR remains unchanged.
@@ -66,6 +157,8 @@ constexpr bool isX86ScalarFPStateIntrinsic(Intrinsic Id) {
 
 constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
   return isX86ScalarFPStateIntrinsic(Id) || isX86FPApprox12Intrinsic(Id) ||
+         isX86FPScalarConvertStateIntrinsic(Id) ||
+         isX86FPPackedConvertStateIntrinsic(Id) ||
          isX86FPArithStateIntrinsic(Id) || Id == Intrinsic::X86FPRoundState ||
          Id == Intrinsic::X86FPRoundMemoryState ||
          Id == Intrinsic::X86FPCvtToIntState ||
@@ -145,6 +238,7 @@ struct X86FPStateShape {
   unsigned LeftSize = 0;
   unsigned RightSize = 0;
   unsigned ThirdSize = 0;
+  unsigned FourthSize = 0;
   bool ArithmeticLeftIsZero = false;
   unsigned StateSize = 0;
   bool HasAuxiliaryOutputs = false;
@@ -207,15 +301,18 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
                    : Shape.RightSize == Shape.OutputSize);
   }
   if (isX86FPArithStateIntrinsic(Id)) {
-    const bool Memory = Id == Intrinsic::X86FPArithMemoryState;
+    const bool Fma = isX86FPFmaStateIntrinsic(Id);
+    const bool Memory = isX86FPStateMemoryIntrinsic(Id);
     const bool Scalar = x86FPArithStateIsScalar(Shape.Control);
     const unsigned Bytes = Shape.OutputSize >= 4 ? Shape.OutputSize - 4 : 0;
     const bool VexPackedMemory = (Shape.Control & 32) != 0;
-    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 5 &&
-           Shape.OutputIsWritable && Shape.OperandsAreScalar &&
-           Shape.ControlIsConst && Shape.ControlSize == 1 &&
-           (Shape.Control & ~(Memory ? UINT64_C(63) : UINT64_C(31))) == 0 &&
-           (Shape.Control & 7) != unsigned(X86FPArithKind::FusedMultiplyAdd) &&
+    return Shape.IdValue == unsigned(Id) &&
+           Shape.NumInputs == (Fma ? 6U : 5U) && Shape.OutputIsWritable &&
+           Shape.OperandsAreScalar && Shape.ControlIsConst &&
+           Shape.ControlSize == (Fma ? 2U : 1U) &&
+           (Fma ? x86FPFmaStateControlIsValid(Shape.Control, Memory)
+                : x86FPArithStateControlIsValid(Shape.Control, Memory)) &&
+           (!Fma || Shape.FourthSize == Bytes) &&
            (!Scalar || !VexPackedMemory) && Shape.StateSize == 4 &&
            (Scalar ? Bytes == x86FPArithStateElementBytes(Shape.Control)
                    : Bytes == 16 ||
@@ -225,6 +322,35 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
                    : Shape.RightSize == Bytes && Shape.ThirdSize == Bytes) &&
            (!x86FPArithStateIsUnary(Shape.Control) ||
             Shape.ArithmeticLeftIsZero);
+  }
+  if (isX86FPPackedConvertStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
+    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 4 &&
+           Shape.OutputIsWritable && Shape.OperandsAreScalar &&
+           Shape.ControlIsConst && Shape.ControlSize == 1 &&
+           x86FPPackedConvertControlIsValid(Shape.Control) &&
+           Shape.StateSize == 4 &&
+           Shape.OutputSize ==
+               x86FPPackedConvertDestinationBytes(Shape.Control) + 4 &&
+           (Memory ? Shape.AddressIsScalar && Shape.LeftSize == 8
+                   : Shape.LeftSize ==
+                         x86FPPackedConvertSourceBytes(Shape.Control));
+  }
+  if (isX86FPScalarConvertStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPScalarConvertMemoryState;
+    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 4 &&
+           Shape.OutputIsWritable && Shape.OperandsAreScalar &&
+           Shape.ControlIsConst && Shape.ControlSize == 1 &&
+           x86FPScalarConvertControlIsValid(Shape.Control) &&
+           !(Shape.TargetArch == Arch::X86 &&
+             x86FPScalarConvertIsInteger(Shape.Control) &&
+             (Shape.Control & 2)) &&
+           Shape.StateSize == 4 &&
+           Shape.OutputSize ==
+               x86FPScalarConvertDestinationBytes(Shape.Control) + 4 &&
+           (Memory ? Shape.AddressIsScalar && Shape.LeftSize == 8
+                   : Shape.LeftSize ==
+                         x86FPScalarConvertSourceBytes(Shape.Control));
   }
   if (Id == Intrinsic::X86FPRoundState) {
     const bool Scalar = x86FPRoundStateIsScalar(Shape.Control);
@@ -289,6 +415,10 @@ constexpr unsigned x86FPRoundStateControl(unsigned Layout) {
   return (Layout >> 8) & 0xff;
 }
 constexpr const char *x86FPArithStateOperation(unsigned Control) {
+  if (x86FPArithStateIsHorizontal(Control))
+    return (Control & 7) == unsigned(X86FPArithKind::Add) ? "hadd" : "hsub";
+  if (x86FPArithStateIsAlternating(Control))
+    return "addsub";
   switch (static_cast<X86FPArithKind>(Control & 7)) {
   case X86FPArithKind::Add:
     return "add";
@@ -309,7 +439,19 @@ constexpr const char *x86FPArithStateOperation(unsigned Control) {
   }
 }
 inline std::string x86FPArithStateMnemonic(unsigned Layout) {
-  const unsigned Control = x86FPRoundStateControl(Layout);
+  const unsigned Control = x86FPArithStateControl(Layout);
+  if ((Control & 7) == unsigned(X86FPArithKind::FusedMultiplyAdd)) {
+    const char *Operation =
+        (Control & 1024) ? ((Control & 2048) ? "fmaddsub" : "fmsubadd")
+        : (Control & 64) ? ((Control & 128) ? "fnmsub" : "fnmadd")
+                         : ((Control & 128) ? "fmsub" : "fmadd");
+    const char *Order = ((Control >> 8) & 3) == 0   ? "132"
+                        : ((Control >> 8) & 3) == 1 ? "213"
+                                                    : "231";
+    return std::string("v") + Operation + Order +
+           ((Control & 16) ? ((Control & 8) ? "sd" : "ss")
+                           : ((Control & 8) ? "pd" : "ps"));
+  }
   const bool Vex = x86FPStateSourceBytes(Layout) == 32 || (Control & 32);
   return std::string(Vex ? "v" : "") + x86FPArithStateOperation(Control) +
          (x86FPArithStateIsScalar(Control) ? ((Control & 8) ? "sd" : "ss")
@@ -330,14 +472,25 @@ constexpr const char *x86FPRoundStateMnemonic(unsigned Layout) {
   return x86FPRoundStateElementBytes(Control) == 8 ? "roundpd" : "roundps";
 }
 constexpr unsigned x86FPStateDestinationBytes(Intrinsic Id, unsigned Layout) {
-  return isX86FPConversionStateIntrinsic(Id) ? Layout >> 8
-                                             : x86FPStateSourceBytes(Layout);
+  if (isX86FPPackedConvertStateIntrinsic(Id))
+    return x86FPPackedConvertDestinationBytes((Layout >> 8) & 0xff);
+  return isX86FPScalarConvertStateIntrinsic(Id)
+             ? x86FPScalarConvertDestinationBytes((Layout >> 8) & 0xff)
+         : isX86FPConversionStateIntrinsic(Id) ? Layout >> 8
+                                               : x86FPStateSourceBytes(Layout);
 }
 constexpr unsigned x86FPStateHelperLayout(Intrinsic Id,
                                           const X86FPStateShape &Shape) {
+  if (isX86FPPackedConvertStateIntrinsic(Id))
+    return x86FPRoundStateLayout(x86FPPackedConvertSourceBytes(Shape.Control),
+                                 Shape.Control, 0, Shape.MemoryAddressSpace);
   return isX86FPArithStateIntrinsic(Id)
              ? x86FPRoundStateLayout(Shape.OutputSize - 4, Shape.Control, 0,
                                      Shape.MemoryAddressSpace)
+         : isX86FPScalarConvertStateIntrinsic(Id)
+             ? x86FPRoundStateLayout(
+                   x86FPScalarConvertSourceBytes(Shape.Control), Shape.Control,
+                   0, Shape.MemoryAddressSpace)
          : isX86FPApprox12Intrinsic(Id)
              ? x86FPRoundStateLayout(Shape.OutputSize, Shape.Control, 0,
                                      Shape.MemoryAddressSpace)
@@ -361,7 +514,8 @@ constexpr unsigned x86FPStateNumericalSliceSize(Intrinsic Id,
                                                 uint64_t Offset,
                                                 unsigned Bytes) {
   const unsigned ScalarBytes =
-      isX86FPArithStateIntrinsic(Id) ? Shape.OutputSize - 4
+      isX86FPArithStateIntrinsic(Id) || isX86FPScalarConvertStateIntrinsic(Id)
+          ? Shape.OutputSize - 4
       : isX86FPApprox12Intrinsic(Id) ? Shape.OutputSize
       : Id == Intrinsic::X86FPRoundMemoryState
           ? (Shape.OutputSize >= 4 ? Shape.OutputSize - 4 : 0)
@@ -369,6 +523,7 @@ constexpr unsigned x86FPStateNumericalSliceSize(Intrinsic Id,
                                          : Shape.LeftSize;
   const bool Scalar =
       isX86ScalarFPStateIntrinsic(Id) ||
+      isX86FPScalarConvertStateIntrinsic(Id) ||
       (isX86FPArithStateIntrinsic(Id) &&
        x86FPArithStateIsScalar(Shape.Control)) ||
       (isX86FPApprox12Intrinsic(Id) && x86FPApprox12IsScalar(Shape.Control)) ||

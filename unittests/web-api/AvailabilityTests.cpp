@@ -73,6 +73,19 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     if (const auto *Entry = A.getAsObject())
       if (Entry->getString("kind") == "asar_extraction")
         ASARAvailable = Entry->getBoolean("available").value_or(false);
+  bool SourceInterfacesAvailable = false;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "source_interfaces")
+      continue;
+    SourceInterfacesAvailable = true;
+    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v2");
+    EXPECT_FALSE(Entry->getBoolean("xhr_correlation").value_or(true));
+    const auto *Kinds = Entry->getArray("candidate_kinds");
+    ASSERT_NE(Kinds, nullptr);
+    EXPECT_EQ(Kinds->size(), 6u);
+  }
+  EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("asar_extract"), ASARAvailable);
   EXPECT_EQ(Has("asar_records"), ASARAvailable);
   EXPECT_TRUE(Has("native_open"));
@@ -91,6 +104,16 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("source_binding_records"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_semantics_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_semantic_records"), bool(NEVERD_TEST_WEB_JS));
+  EXPECT_EQ(Has("source_rewrite_analyze"), bool(NEVERD_TEST_WEB_JS));
+  EXPECT_EQ(Has("source_rewrite_records"), bool(NEVERD_TEST_WEB_JS));
+  for (const auto Op : {"node_behavior_analyze", "node_behavior_records",
+                        "package_behavior_analyze", "package_behavior_records"})
+    EXPECT_EQ(Has(Op), bool(NEVERD_TEST_WEB_JS));
+#ifndef _WIN32
+  EXPECT_EQ(Has("source_rewrite_export"), bool(NEVERD_TEST_WEB_JS));
+#else
+  EXPECT_FALSE(Has("source_rewrite_export"));
+#endif
   EXPECT_EQ(Has("source_modules_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_module_records"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_bundles_analyze"), bool(NEVERD_TEST_WEB_JS));
@@ -105,7 +128,20 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   ASSERT_NE(Session, nullptr);
 #if !NEVERD_TEST_WEB_JS
   for (const auto *Owned :
-       {neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
+       {neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
+                                               "constant_folding", 16),
+        neverd_web_source_rewrite_records_json(Session, "1", 1, "rewrite", 7, 0,
+                                               1),
+        neverd_web_source_rewrite_export_json(Session, "1", 1, "rewrite", 7,
+                                              "receipt", 7, "output", 6),
+        neverd_web_node_behavior_analyze_json(Session, "1", 1, "source", 6),
+        neverd_web_node_behavior_records_json(Session, "1", 1, "behavior", 8, 0,
+                                              1),
+        neverd_web_package_behavior_analyze_json(Session, "1", 1, "package", 7,
+                                                 "{}", 2),
+        neverd_web_package_behavior_records_json(Session, "1", 1, "behavior", 8,
+                                                 "sources", 7, 0, 1),
+        neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
         neverd_web_interface_records_json(Session, "1", 1, "analysis", 8, 0, 1),
         neverd_web_interfaces_compare_json(Session, "1", 1, "analysis", 8,
                                            "capture", 7),
@@ -170,6 +206,13 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                          nullptr, 0),
         neverd_web_package_diff_records_json(nullptr, nullptr, 0, nullptr, 0, 0,
                                              1),
+        neverd_web_node_behavior_analyze_json(nullptr, nullptr, 0, nullptr, 0),
+        neverd_web_node_behavior_records_json(nullptr, nullptr, 0, nullptr, 0,
+                                              0, 1),
+        neverd_web_package_behavior_analyze_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0),
+        neverd_web_package_behavior_records_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, 0, 1),
         neverd_web_electron_manifest_analyze_json(nullptr, nullptr, 0, nullptr,
                                                   0),
         neverd_web_electron_source_analyze_json(nullptr, nullptr, 0, nullptr,
@@ -225,6 +268,12 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                                  0),
         neverd_web_source_semantic_records_json(nullptr, nullptr, 0, nullptr, 0,
                                                 0, 1),
+        neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0),
+        neverd_web_source_rewrite_records_json(nullptr, nullptr, 0, nullptr, 0,
+                                               0, 1),
+        neverd_web_source_rewrite_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                              nullptr, 0, nullptr, 0),
         neverd_web_source_modules_analyze_json(nullptr, nullptr, 0, nullptr, 0),
         neverd_web_source_bundles_analyze_json(nullptr, nullptr, 0, nullptr, 0),
         neverd_web_source_bundle_records_json(nullptr, nullptr, 0, nullptr, 0,

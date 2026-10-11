@@ -62,6 +62,18 @@ struct Model {
   }
 };
 
+TEST(WebSourcePaths, ClassDeclarationsPreserveUnrelatedCapturedPathCandidates) {
+  const Model M("source", "app/bin/main.js", R"JS(
+    const path = require('node:path');
+    class Named { self() { return Named; } }
+    sink(path.join(__dirname, 'view.js'));
+  )JS",
+                "commonjs");
+  const auto P = M.value("path.join(__dirname, 'view.js')");
+  EXPECT_EQ(P.Kind, CapturedPathKind::Path);
+  EXPECT_EQ(P.Text, u"app/bin/view.js");
+}
+
 TEST(WebSourcePaths, CommonJSRootsAliasesTemplatesAndAppBaseRemainDistinct) {
   const Model M("source", "app/bin/main.js", R"JS(
     const path = require('node:path'); const {app} = require('electron');

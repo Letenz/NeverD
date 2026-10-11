@@ -533,6 +533,17 @@ It only exposes a capability-filtered subset and cannot assert reviewed source
 ranges. No analysis process or language runtime is spawned. See the
 [MCP profile](web-mcp-profile.md) for its concrete limits and ownership.
 Views use owned parser token/comment spans and never claim semantic rewrites.
+`SourceRewrite` is a separate derived-source boundary. `rewrite/Plan` selects
+explicit primitive passes using the existing binding/value/effect owners;
+`Primitive` emits closed values, `Validate` checks SameValue and the complete
+unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`SessionRewrite` retains at most two private results and publishes metadata.
+Its raw local export requires a pass/source/revision-bound receipt;
+`rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
+This transaction does not change Bun export's retained-partial-evidence policy.
+Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
+claim source-reflection or whole-program equivalence. See the
+[primitive rewrite profile](web-source-rewrite-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -550,6 +561,16 @@ evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
 comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
+`packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
+consumes shared bindings/module origins/values, and `Package` owns exact
+inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+the two behavior session adapters own selection, cache and revision boundaries.
+Source ownership, delivery package and declared entry remain distinct.
+`SourceModel::indexSourceDeclarations` supplies the order-independent unique
+binding projection for origins, paths, navigation and bundles; valid class
+outer/inner declarations preserve ambiguity without poisoning other nodes.
+The full binding declaration model stays authoritative. See the
+[Node behavior profile](web-node-behavior-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
@@ -567,7 +588,10 @@ publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
-`interfaces/SourceInterfaces` consumes the shared syntax/binding/value models;
+`interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
+Its private `SourceContext` owns bounded admission, indexes, finite strings and
+record publication; `SourceFetch` and `SourceXHR` own their syntax rules. XHR
+links lexical constructors/receivers without inferring request sessions;
 `interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
@@ -1762,6 +1786,17 @@ rounding on hosts that otherwise use excess precision. Compiler options that
 explicitly override source pragmas, such as Clang's `-ffp-contract=fast`, are
 outside this contract.
 
+LLVMC binds final parameter identifiers before its analyses can cache rendered
+views. Signature emission reuses those identities, including colliding debug
+names and MSVC hidden result/`this` arguments. CPU query arrays use that same
+function-local name owner and are declared at function scope, so extracts in
+later blocks cannot refer to a different query or an expired C scope.
+`LLVMCIntrinsicAnalysis` authenticates the exact MedLLVM CPUID/XGETBV assembly,
+register constraints, i32 inputs/results and direct register-extract uses.
+Malformed contracts and unrepresented aggregate ABIs are refused explicitly.
+The C renderer retains volatile assembly and the original memory barrier for
+each query, including unused outputs and CPUID's ECX subleaf.
+
 `ir/FloatConversion.h` owns the result policy for scalar float-to-integer
 operations: saturation for the non-x86 path and x86 indefinite results for
 invalid conversions. HighC and the LLVM lowering select that same policy;
@@ -1784,12 +1819,18 @@ evidence. Its configured reset environment remains the concrete starting
 profile. Generic external FLOAT operations and remaining x87 control/TOP/tag
 semantics retain their separate contracts.
 
-Legacy/VEX ADD/SUB/MUL/DIV/SQRT/MIN/MAX scalar and packed forms extend this
+Legacy/VEX ADD/SUB/MUL/DIV/SQRT/MIN/MAX scalar and packed forms, plus packed
+HADD/HSUB and ADDSUB, extend this
 completion scope with `X86FPArithState` and `X86FPArithMemoryState`. One
 aggregate carries the complete raw numerical result and outgoing MXCSR;
 packed lanes complete together, retaining instruction-wide exception priority.
 SQRT consumes only its RHS and requires an exact zero dummy LHS. Control bit
-5 identifies VEX packed memory and does not enable SAE. Memory accesses remain
+5 identifies VEX packed memory and does not enable SAE. Bits 6/7 select
+horizontal pair reduction or alternating subtraction/addition; these controls
+exclude scalar and incompatible arithmetic kinds. Horizontal pairs retain
+physical low-then-high NaN source priority within each 128-bit block. Alternating
+lanes share the common evaluator's two-stage exception completion rather than
+committing separate scalar operations. Memory accesses remain
 inside the incoming/outgoing CSR scope, preserving legacy packed alignment
 faults and complete source reads even when the numerical result is discarded.
 The lifter owns scalar source merging and VEX upper zeroing. Low/Med/High
@@ -1797,10 +1838,55 @@ shape validators and LLVM/C assembly authentication consume the same contract;
 only exact scalar numerical slices acquire floating type provenance. LLVM and
 readable C execute the actual instruction, and concrete execution reuses the
 common packed evaluator and authenticated memory access owner. Existing scalar
-ADD/SUB/MUL/DIV register contracts remain valid. Horizontal arithmetic, FMA,
+ADD/SUB/MUL/DIV register contracts remain valid. FMA4,
 EVEX/SAE, enabled alignment checking and unavailable CPU-feature faults retain
 their separate contracts. Swift explicitly refuses this new completion surface
 until it has an equivalent lowering.
+
+VEX FMA3 uses append-only `X86FPFmaState` and `X86FPFmaMemoryState` contracts.
+Their six LowIR inputs retain the physical destination, vvvv and r/m sources
+and incoming MXCSR. A two-byte control retains132/213/231 order, source signs,
+scalar/packed width and alternating addends. These sources are never commuted
+or negated through ordinary FLOAT nodes: native LLVM and both C projections
+execute the original operation. Concrete evaluation maps physical sources to
+the common single-rounding FMA evaluator, including same-lane invalid priority
+over denormal evidence. Memory access completes inside that instruction's CSR
+scope. Scalar output merges the old destination's upper 128 bits; VEX zeroes
+the remaining upper vector. Immutable scalar stack sources reuse the matching
+six-input value contract, preserving both other numerical inputs and CSR.
+
+Legacy/VEX CVTSI2SS/SD and CVTSS2SD/CVTSD2SS use
+`X86FPScalarConvertState` and `X86FPScalarConvertMemoryState`. One aggregate
+contains the destination's raw scalar bytes followed by MXCSR. Its control
+byte owns signed-integer versus precision conversion, source/destination width
+and VEX identity; it admits neither SAE nor embedded rounding. Memory access
+uses the source width, inside the state completion scope, including Default/FS/GS.
+The lifter authenticates raw bytes against operand metadata before emitting
+effects and owns legacy/VEX lane merging. Only the exact numerical slice gains
+floating type provenance. LLVM and both readable C routes retain the actual
+conversion instruction even for discarded results. The concrete adapter reuses
+the shared SIMD converter: input exceptions precede newly raised result
+exceptions, and unsuccessful completion leaves numerical output untouched.
+IEEE bit arithmetic supplements APFloat's narrowing status for directed finite
+overflow and SSE tininess before denormalization; FTZ remains per active lane.
+Unsigned, EVEX, F16C and x87 conversions retain their separate contracts.
+Swift refuses this completion surface until it has an equivalent lowering.
+
+SSE/VEX CVTDQ2PS/PD, CVTPS2PD/CVTPD2PS and CVT(T)PS/PD2DQ share
+`X86FPPackedConvertState` and `X86FPPackedConvertMemoryState`. The packed control
+owner selects numerical kind, VEX identity and vector length; rounded and
+truncated integer conversions remain distinct. Logical source bytes, source
+register width and padded destination bytes are separate facts: m64/low64
+widening uses an initialized physical XMM carrier, while VEX memory narrowing
+retains the encoded 128/256-bit source width in assembly. One completion owns
+all active lanes, outgoing MXCSR and the complete source access. Native LLVM
+and both C routes execute the original operation; concrete evaluation reuses
+the common SIMD converter. Only legacy m128 forms require 16-byte alignment;
+widening m64 and VEX sources remain unaligned. No packed slice establishes a
+scalar FP return. Incoming stack homes retain the packed memory contract and
+every source byte, independently of output width. Unsupported masks, broadcasts,
+SAE, embedded rounding and altered decoded metadata are refused. This does not
+extend MMX, unsigned, EVEX, F16C or x87 completion.
 
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
@@ -1818,7 +1904,9 @@ segment bases. Unknown context refuses; known memory faults retain incoming
 CSR and publish no numerical result. This does not extend EVEX/SAE coverage.
 
 Stack-argument recovery consumes the authenticated source address and byte
-extent of arithmetic, ROUND and APPROX12 memory contracts. A proven immutable
+extent of arithmetic, scalar conversion, ROUND and APPROX12 memory contracts.
+Scalar conversion uses source bytes independently of destination width.
+A proven immutable
 scalar incoming argument can supply the corresponding value contract without
 changing numerical/MXCSR completion. A two-slot i386 scalar uses explicit byte
 composition. Packed, straddling, written or escaped sources keep their original
@@ -4685,6 +4773,8 @@ DarwinFiles owns common attribute import, name/stat validity and record encoding
 DarwinFiles owns retained attribute state, initial-object mutation grants, shared name import and complete-stat validity. DarwinExtendedAttributes stages value/list changes before one commit. Fixed initial reservations and runtime attribute excess use the same storage/count owner as content and namespace mutations; unlinked objects and mapping leases retain their dynamic charge until final release. JSON only imports explicit grants. Directory attribute mutation invalidates full metadata independently of membership, snapshots and enumeration versions.
 
 DarwinFiles also owns the sole static owner/ordinary-query authorizer and its actual pathname SEARCH points. Process construction passes the canonical explicit credential record separately from scalar observation defaults; JSON imports the exact authorization declaration and uses the same admission owner. The immutable query environment closes all other file routes by default, exempts only actual opaque stream descriptions, and closes direct mappingSource access so DarwinMemory cannot bypass the operation domain. Anonymous VM retains its independent owner. Whole-mask group/world outcomes and explicit selected-credential membership share this owner; a missing group remains unknown except for explicit original GroupMembershipUID=KAUTH_UID_NONE or proved real-copy displacement, each with a complete supplied list. DarwinSystem owns canonical admission of the independent membership UID; JSON uses the shared lossless integer decoder, and no resolver context is inferred from scalar IDs. Broader vnode authorization must extend this same evaluator with operation-specific and resulting-state semantics before opening that domain.
+
+DarwinFiles owns immediate poll count admission, descriptor lookup and numeric-FD/filter registration in DarwinPoll.cpp. DarwinServices passes the existing canonical explicit system observations without interpreting limits or credentials. Constructed virtual regular descriptions declare successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; a native vnode kind alone supplies none of these facts. Duplicate filter winners are independent of shared open-description identity. The owner snapshots complete input before projecting ordinary readiness and uses the shared user-memory copy owner for whole output; partial output and unknown providers stop before effects. Both immutable permission-query domains close this route before preflight. Waiting, select and real provider/security lifecycle need explicit extension of this same owner.
 
 When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
 

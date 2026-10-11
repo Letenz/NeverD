@@ -54,6 +54,13 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "EACCES13")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "OwnerQueriesKeepPermissionAndUnknownBoundaries")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "GroupMembershipUID")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "all41 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "59 current native-common cases")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "group_membership_uid")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "4294967195")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "ordinary-queries-closed-groups")
@@ -659,8 +666,8 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
                            "5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 "
-                           "wait sets + 11 driver UNPACK + 6 clock reads "
-                           "+ 4 image memory checks = 5451")
+                           "wait sets + 12 driver UNPACK + 6 clock reads "
+                           "+ 4 image memory checks = 5452")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1451,6 +1458,13 @@ NEVERD_EMULATION_DOC_TOKEN(DeferredLoading, "module!export")
 NEVERD_EMULATION_DOC_TOKEN(DeferredLoading, "observeProcess")
 NEVERD_EMULATION_DOC_TOKEN(DeferredLoading, "ProcessObserver")
 NEVERD_EMULATION_DOC_TOKEN(DeferredLoading, "unpack.md")
+
+NEVERD_EMULATION_DOC_PATH(ProcessorAffinity, "docs/driver-emulation.md")
+NEVERD_EMULATION_DOC_PATH(ProcessorAffinity,
+                          "docs/{locale}/driver-emulation.md")
+NEVERD_EMULATION_DOC_TOKEN(ProcessorAffinity, "KeQueryActiveProcessors")
+NEVERD_EMULATION_DOC_TOKEN(ProcessorAffinity, "KeSetSystemAffinityThread")
+NEVERD_EMULATION_DOC_TOKEN(ProcessorAffinity, "KeRevertToUserAffinityThread")
 
 NEVERD_EMULATION_DOC_PATH(ThreadPriority, "docs/driver-scheduling.md")
 NEVERD_EMULATION_DOC_PATH(ThreadPriority, "docs/{locale}/driver-scheduling.md")
