@@ -298,9 +298,8 @@ ALLOWED: tuple[Allowance, ...] = (
         path="LICENSES/node/LICENSE",
         rule="provenance-phrase",
         reason=(
-            "Verbatim Node license attribution identifies SES/Caja and its "
-            "copyright holders; THIRD_PARTY_NOTICES.md records the pinned "
-            "upstream source. The required notice must remain intact."
+            "The upstream Node license names SES/Caja, Google and Agoric "
+            "in its required freeze_intrinsics.js attribution."
         ),
     ),
     Allowance(
@@ -309,6 +308,15 @@ ALLOWED: tuple[Allowance, ...] = (
         reason=(
             "Verbatim upstream license credits link to the original project; "
             "the required notice is not a NeverD implementation claim."
+        ),
+    ),
+    Allowance(
+        path="LICENSES/node/LICENSE",
+        rule="provenance-phrase",
+        reason=(
+            "The verbatim Node.js license identifies SES/Caja and its copyright "
+            "holder; this required upstream attribution is not a NeverD "
+            "implementation claim."
         ),
     ),
     Allowance(

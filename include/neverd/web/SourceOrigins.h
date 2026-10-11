@@ -17,7 +17,7 @@
 
 namespace neverd::web {
 inline constexpr std::string_view JavaScriptOriginProfile =
-    "javascript-module-origin-candidates-v1";
+    "javascript-module-origin-candidates-v2";
 inline constexpr uint64_t MaxSourceOriginSteps = 2000000;
 inline constexpr uint64_t MaxSourceOriginUnits = 1048576;
 
@@ -25,6 +25,9 @@ inline constexpr uint64_t MaxSourceOriginUnits = 1048576;
 /// Names stay private; consumers publish their own fixed operation categories.
 struct SourceOrigin {
   uint32_t Request = NoSourceIndex;
+  // Exact ESM import occurrence, retained across aliases/member projections.
+  // Distinguishes a default import from a CJS or namespace .default member.
+  uint32_t Import = NoSourceIndex;
   uint32_t Construction = NoSourceIndex;
   std::vector<std::u16string> Members;
   std::string Evidence;

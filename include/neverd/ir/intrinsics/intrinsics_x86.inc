@@ -363,3 +363,8 @@ Int3 = 1000, // int3  -> @llvm.debugtrap
     // physical slot's tag and lowers this to integer operations; an unknown tag
     // is an unsupported machine-state boundary, never an assumed nonempty slot.
     X87Fxam,
+
+    // Append-only: VEX FMA3 numerical/MXCSR completion. Physical destination,
+    // vvvv source and r/m source retain their original order. Memory owns r/m
+    // access; both contracts carry explicit incoming and outgoing MXCSR.
+    X86FPFmaState, X86FPFmaMemoryState,
