@@ -1764,6 +1764,26 @@ int main(int argc, char **argv) {
     check(history["items"].size() == 1 &&
               history["items"][0]["assertion_source"] == "caller",
           "Worker changed immutable analyst history");
+    const Json journal{
+        {"schema_version", 1},
+        {"profile", "offline-package-review-journal-v1"},
+        {"package_assessment_id", reviewed["package_assessment_id"]},
+        {"review_root_id", reviewed["review_root_id"]},
+        {"review_head_id", reviewed["review_head_id"]},
+        {"decisions", history["items"]}};
+    Json restore{{"schema_version", 1},
+                 {"revision", packageRevision},
+                 {"package_assessment_id", reviewed["package_assessment_id"]},
+                 {"expected_review_head", reviewed["review_head_id"]},
+                 {"journal_json", journal.dump()}};
+    const auto restored = assessmentCall("web_package_review_restore", restore);
+    check(restored["replayed"] == true && restored["restored_events"] == 0,
+          "Worker charged an identical review journal twice");
+    restore["notes"] = "SECRET_WEB";
+    reply = process.call("web_package_review_restore", restore, packageRevision,
+                         packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted an arbitrary review note");
     assessmentCall("web_package_assessment_report", assessmentPage);
     assessmentSelection["raw"] = true;
     reply = process.call("web_package_assessment_create", assessmentSelection,

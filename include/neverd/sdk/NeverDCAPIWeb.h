@@ -181,6 +181,15 @@ NEVERD_API const char *neverd_web_package_review_decisions_json(
     size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
     const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
     uint64_t Limit);
+/// Restore a bounded offline-package-review-journal-v1 chain atomically.
+/// The current history must be an exact prefix; unchanged replay is free.
+/// Every identity, finding, parent, ordinal and disposition is checked by the
+/// backend. Journals are caller assertions, never authenticated analyst proof.
+NEVERD_API const char *neverd_web_package_review_restore_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *JournalJSON,
+    size_t JournalSize);
 /// Return a bounded metadata-only Markdown report page in JSON. No file is
 /// written and no source disclosure or execution permission is granted.
 NEVERD_API const char *neverd_web_package_assessment_report_json(

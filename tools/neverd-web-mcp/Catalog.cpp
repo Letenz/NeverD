@@ -293,6 +293,15 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
        text("expected_review_head"), text("finding_id"),
        choice("disposition", {"unreviewed", "needs_review", "accepted_risk",
                               "false_positive"})});
+  Add("web_package_review_restore",
+      "Atomically restore a supplied metadata-only analyst journal against the "
+      "current "
+      "assessment and review head. A complete validated chain extends only its "
+      "exact "
+      "existing prefix; assertions do not authenticate an analyst or upgrade "
+      "evidence.",
+      {decimal("revision"), text("package_assessment_id"),
+       text("expected_review_head"), text("journal_json", 256 * 1024)});
   for (const auto *Operation :
        {"web_package_assessment_findings", "web_package_review_decisions",
         "web_package_assessment_report"})

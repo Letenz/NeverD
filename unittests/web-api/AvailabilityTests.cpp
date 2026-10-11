@@ -67,7 +67,7 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
         "package_attestation_digest_match", "package_attestation_digest_result",
         "package_assessment_create", "package_assessment_findings",
         "package_review_append", "package_review_decisions",
-        "package_assessment_report"})
+        "package_review_restore", "package_assessment_report"})
     EXPECT_TRUE(Has(Name));
   for (const auto Op : {"har_preview", "har_commit", "har_records",
                         "stream_preview", "stream_commit", "stream_records"})
@@ -289,6 +289,8 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                               0),
         neverd_web_package_review_decisions_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, 0, 1),
+        neverd_web_package_review_restore_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0, nullptr, 0),
         neverd_web_package_assessment_report_json(nullptr, nullptr, 0, nullptr,
                                                   0, nullptr, 0, 0, 1),
         neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,

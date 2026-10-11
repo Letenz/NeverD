@@ -31,6 +31,7 @@ add_neverd_component_library(NeverDWeb
   packages/assessment/Publication.cpp
   packages/assessment/Report.cpp
   SessionPackageAssessments.cpp
+  SessionPackageReviewRestore.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp

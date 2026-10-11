@@ -24,6 +24,7 @@
 #include "Theme.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
+#include "web/PackageReviewDialog.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -958,6 +959,14 @@ void MainWindow::connectActions() {
     connect(actions_.action(id), &QAction::triggered, this, slot);
   };
   on(ActionId::FileOpen, [this] { openDialog(); });
+  on(ActionId::FilePackageReview, [this] {
+    if (!packageReview_)
+      packageReview_ =
+          new web::PackageReviewDialog(session_.workerPath(), this);
+    packageReview_->show();
+    packageReview_->raise();
+    packageReview_->activateWindow();
+  });
   on(ActionId::FileReload, [this] { reloadInput(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
@@ -1276,6 +1285,7 @@ void MainWindow::updateActions() {
                         name.startsWith(QStringLiteral("Windows")) ||
                         name.startsWith(QStringLiteral("Help")) ||
                         name == QLatin1String("FileOpen") ||
+                        name == QLatin1String("FilePackageReview") ||
                         name == QLatin1String("FileExit") ||
                         name == QLatin1String("FileQuickStart") ||
                         name.startsWith(QStringLiteral("ViewZoom")) ||
@@ -2433,6 +2443,10 @@ void MainWindow::retranslateUi() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+  if (packageReview_ && !packageReview_->close()) {
+    event->ignore();
+    return;
+  }
   if (!quitting_ && !session_.requestQuit()) {
     event->ignore();
     return;

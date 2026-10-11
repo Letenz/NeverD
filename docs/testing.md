@@ -654,12 +654,32 @@ metadata refusal, subject receipt ownership, exact behavior/comparison owners,
 source byte anchors, 610-finding paging, head-bound reports, immutable caller
 assertions, stale heads and revisions, last-request replay, shared 256-event
 capacity, atomic refusal, reset and CLI JSON/Markdown without an external PATH.
-Worker and MCP compare all five operations to the shared API and reject arbitrary
+Worker and MCP compare assessment/review operations to the shared API and reject arbitrary
 notes, safety scores and raw-export fields. Run the owning Web directory and
 worker/MCP/ABI checks, then the focused suites with JS omitted and all additive
 C stubs with Web omitted. Restore both build flags and rerun affected checks.
 The [assessment profile](web-package-assessment-profile.md) documents explicit
 selection, evidence relationships, report fields and shared limits.
+
+The additive journal cases also check entire-chain validation, exact-prefix
+restoration, zero-charge current-head replay, shared suffix capacity, late
+tampering, duplicate/unknown JSON fields and reconstruction after capture reset.
+`WebAvailability.*` includes the always-exported restore symbol and discovery.
+Use the full Web regression and worker/MCP/ABI checks for this shared mutation
+boundary, then JS/backend omission and enabled restoration.
+
+With Qt and `NEVERD_WORKER_WEB_ENGINE_TESTS=ON`, `NeverDGuiWebReview` uses only
+C++ fixtures and the production worker. It covers canonical journal persistence,
+failed-write preservation, duplicate/byte/record refusal, fixed confidence versus
+assertion columns, multi-page inventories, tar/registry ancestry, worker restart,
+atomic late-chain refusal, changed-input rejection and RTL/large-font controls.
+The optional `NEVERD_CLAUDE_CODE_21296_CROSS_DIR` selects the already pinned macOS
+ARM64 Claude platform package; `NEVERD_GUI_WEB_RECEIPT` explicitly writes its
+metadata receipt and a local widget PNG for visual review. No sample is executed
+or committed. Backend omission skips dependent positive cases and qualifies an
+explicit unavailable window; journals/models still work. Run the existing GUI
+unit/controller/language and smoke suites when modifying workbench commands.
+See the [journal/desktop profile](web-package-review-journal.md).
 
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
