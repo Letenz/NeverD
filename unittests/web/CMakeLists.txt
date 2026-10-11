@@ -17,6 +17,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   ImportMapTests.cpp
   BlobStoreTests.cpp
   BunTests.cpp
+  ClaudeDistributionTests.cpp
   SEATests.cpp
   NexeTests.cpp
   PkgTests.cpp

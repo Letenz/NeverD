@@ -53,6 +53,8 @@ cl::list<std::string> WebArguments(
     cl::desc(
         "capabilities | inspect <input> | bun|map <file> | "
         "bun-map <file> <module-index> | "
+        "archive-bun-export <root> <tar|tgz|zip> <artifact-index> "
+        "<member-index> <new-output-directory> | "
         "package-assessment <root> <manifest-index> <input-kind> "
         "[-- selections] | archive-assessment <root> <format> <archive-index> "
         "<manifest-member-index> <input-kind> [-- selections] | "

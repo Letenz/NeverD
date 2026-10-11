@@ -2366,3 +2366,70 @@ sixteen history commits. Logs:
 GUI/persistent reviews,
 broader lifecycle/loader/host qualification and the other epic acceptance gaps
 remain; this increment does not close #714–#718.
+
+## Captured Claude npm platform packages — 2026-10-12
+
+The C++ `archive-bun-export` CLI adapter selects one retained archive member and
+delegates to the existing Bun extraction/export owner. It adds no extractor,
+filesystem writer, C API symbol or automatic package-entry execution. The
+manifest retains the executable's enclosing archive/member/hash and exact
+original or expanded locator. Existing output directories, unavailable members
+and non-Bun members are refused. C++ fixtures cover tar, gzip and stored/deflate
+ZIP, exact original/source bytes, retained origins and metadata canaries with an
+unusable external-tool PATH. All five focused SDK/CLI cases pass.
+
+Eight independently captured Claude Code 2.1.296 npm platform packages qualify
+real prelinked graphs on ELF/Linux, thin Mach-O/macOS and PE/Windows, each x64
+and ARM64, including both supplied Linux libc variants. Every original archive
+matches its separately captured SHA-512 declaration; this is not publisher
+authentication. Eight C++ corpus cases pin archive/member hashes and lengths,
+graph geometry, entry/startup indices and strict source counts/bytes. The
+[qualification](web-claude-code-cross-platform-qualification.md) records their
+exact hashes, capture layout and export manifest hashes. No installer, target
+runtime or input code is executed. Private samples remain outside Git.
+
+All eight actual CLI exports preserve and reread every output file. Decoded,
+parsed and readable counts agree: 18,794 JS units and 358,539,894 decoded UTF-8
+bytes summed per platform, not distinct source files across platforms. There
+are no unavailable sources or source maps. Opaque JSC caches are preserved;
+erased TypeScript, types/names and cache semantics are not recovered. Every
+readable copy passes the same parser-tree comparison. Logs:
+`/tmp/neverd-claude-cross-{build,core,sdk,regression-build}.log`;
+the native/interface build takes 192 steps and the regression/interface resync
+takes 39 steps.
+
+The first local regression exposed duplicate generated CTest discovery entries
+after concurrent root/subdirectory discovery. Its 1,116 records and two ASAR
+policy skips are not additional coverage. The generated indices were preserved
+in `/tmp/neverd-claude-cross-discovery-20261012/` and regenerated serially.
+The resulting 695 unique Web cases have 694 passes and one expected ASAR-policy
+skip (68.24 seconds). The selected ABI, worker and MCP checks have seven passes
+and one expected backend-omission skip (7.15 seconds). Logs:
+`/tmp/neverd-claude-cross-web-regression-unique.log`,
+`/tmp/neverd-claude-cross-unique-discovery.log` and
+`/tmp/neverd-claude-cross-transports.log`.
+
+With JavaScript omitted, all eight corpus cases and three archive CLI cases
+pass after the 129-step build. The actual macOS ARM64 archive still exports
+2,364 exact sources and 45,035,899 decoded bytes, the same original hash and
+archive ancestry, with zero unavailable sources. Parsed/readable counts are
+zero and the readable profile is null. The omission export manifest SHA-256 is
+`4992ccd5f2e3a04285aad6c8224102d4cdbb1701fc41bb228fd1d43b6e00ebc7`.
+Logs: `/tmp/neverd-claude-cross-nojs-{configure,build,core,sdk}.log`.
+JavaScript is restored to ON after the 129-step rebuild. All eight captured
+corpus cases and five focused SDK/CLI cases pass again. Logs:
+`/tmp/neverd-claude-cross-restored-{configure,build,core,sdk}.log`.
+LLVM formatting and source provenance across 7,369 tracked files and sixteen
+history commits pass. The capability checker reports sixteen pre-existing
+unclaimed native source-patch declarations introduced by upstream integration;
+the manifest is unchanged by this increment. That global check is not claimed
+as passing. Logs: `/tmp/neverd-claude-cross-{capabilities,provenance}.log`.
+After integrating `dev` at `89708f43f`, all twelve increment files are
+byte-identical before the additional validation note. The 123-step
+native/SDK/CLI/worker/MCP rebuild passes. Five focused SDK/CLI cases and the
+seven enabled transport/ABI checks pass; the backend-omission ABI case skips as
+expected. Source provenance passes across 7,370 tracked files and sixteen
+history commits. Logs:
+`/tmp/neverd-claude-cross-upstream-{build,sdk,transports,provenance}.log`.
+Linux/Windows host qualification, additional container layouts and the other
+epic acceptance gaps remain; this increment does not close #714–#718.

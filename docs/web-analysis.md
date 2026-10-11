@@ -34,6 +34,7 @@ neverd web capabilities
 neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
+neverd web archive-bun-export ./platform-package.tgz tgz 0 0 ./new-recovery-directory
 neverd web archive ./extension.vsix zip
 neverd web package-install ./package.json 0 package-json
 neverd web package-advisories ./metadata-capture 3 package-json 1:2

@@ -24,8 +24,10 @@ All six support inventory, JS/assets extraction and raw map/cache preservation.
 Map decoding requires the separate native Zstd capability; bytecode decoding is
 unsupported. The shared graph reader also recognizes the prelinked/runtime
 extensions under corresponding `bun-71d0d439-prelinked-<target>-v1` profiles.
-Real extension qualification remains the Linux x64 Claude artifact; cross-target
-extension cases are synthetic. Metadata reports container format, target OS and
+The [eight captured Claude npm platform packages](web-claude-code-cross-platform-qualification.md)
+qualify real extension graphs, original-byte integrity and all shipped JS on
+the six targets, including both supplied Linux libc variants. The hostile
+extension cases remain synthetic. Metadata reports container format, target OS and
 architecture separately from the analyzer's host. Universal Mach-O, 32-bit and
 big-endian containers, ARM64e, FreeBSD/Android-specific contracts and stripped
 ELF section tables are not qualified by this matrix. These are compatible
@@ -132,6 +134,17 @@ with the normal C API length arguments. `SessionBunExport` consumes the already
 captured original and validated extraction; CLI code does not extract bytes.
 This is explicit local raw disclosure, including names and any embedded secrets,
 and grants no network-upload permission. The worker has no export operation.
+
+`neverd web archive-bun-export ROOT FORMAT ARTIFACT_INDEX MEMBER_INDEX NEW_DIRECTORY`
+selects one available member of an explicitly admitted `tar`, `tgz` or `zip`
+archive and uses the same extraction/export APIs. Obtain both indices from the
+current inventories. It preserves the selected executable as `original.bin`
+and retains its archive/member identities, enclosing archive hash and original
+or expanded locators in `original_origin`. The enclosing archive remains in the
+capture; this command does not copy it into the output directory. Compressed
+byte offsets remain unavailable rather than being interpolated. Unsupported or
+unavailable members cannot create an export directory. No archive path becomes
+an output filename and no package entry or installer is invoked.
 
 The C++ POSIX writer creates a private directory and uses generated ordinal
 filenames with exclusive no-follow writes. Existing destinations, including
