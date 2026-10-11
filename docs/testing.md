@@ -615,6 +615,21 @@ the test verifies two separately retained signature declarations, never their
 cryptographic validity. Worker/MCP compare the same metadata and digest receipts
 and reject key/verification fields. Use the same omission/restoration matrix.
 
+`WebPackageAssessment.*`, `WebPackageReview.*` and
+`WebPackageAssessmentSDK.*` check foreign registry declarations, immediate
+archive ancestry, independently computed assessment identities, canonical
+selection order, unknown advisory coverage, legacy digest strength, retained
+metadata refusal, subject receipt ownership, exact behavior/comparison owners,
+source byte anchors, 610-finding paging, head-bound reports, immutable caller
+assertions, stale heads and revisions, last-request replay, shared 256-event
+capacity, atomic refusal, reset and CLI JSON/Markdown without an external PATH.
+Worker and MCP compare all five operations to the shared API and reject arbitrary
+notes, safety scores and raw-export fields. Run the owning Web directory and
+worker/MCP/ABI checks, then the focused suites with JS omitted and all additive
+C stubs with Web omitted. Restore both build flags and rerun affected checks.
+The [assessment profile](web-package-assessment-profile.md) documents explicit
+selection, evidence relationships, report fields and shared limits.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded

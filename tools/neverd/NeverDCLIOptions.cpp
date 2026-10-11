@@ -53,6 +53,9 @@ cl::list<std::string> WebArguments(
     cl::desc(
         "capabilities | inspect <input> | bun|map <file> | "
         "bun-map <file> <module-index> | "
+        "package-assessment <root> <manifest-index> <input-kind> "
+        "[-- selections] | archive-assessment <root> <format> <archive-index> "
+        "<manifest-member-index> <input-kind> [-- selections] | "
         "source|bindings|semantics|modules|bundles|view|navigate <file> "
         "<script|module|commonjs> | anchor <file> <source-type> "
         "<byte-offset> <byte-length> | bun-view|bun-navigate <file> "

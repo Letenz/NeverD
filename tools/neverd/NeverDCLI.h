@@ -218,6 +218,7 @@ int runWebDesktop();
 int runWebIntegrity();
 int runWebAdvisories();
 int runWebAttestation();
+int runWebAssessment();
 int runWebInterfaces();
 int runWebStreams();
 int runWebSEA();

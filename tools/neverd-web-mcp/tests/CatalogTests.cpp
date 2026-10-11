@@ -77,8 +77,47 @@ void closedArguments() {
                           "package_attestation_import",
                           "package_attestation_records",
                           "package_attestation_digest_match",
-                          "package_attestation_digest_result"}),
+                          "package_attestation_digest_result",
+                          "package_assessment_create",
+                          "package_assessment_findings",
+                          "package_review_append",
+                          "package_review_decisions",
+                          "package_assessment_report"}),
             0);
+  const auto &Assessment = C.find("neverd_web_package_assessment_create");
+  Json AssessmentArgs{{"revision", "1"},
+                      {"package_analysis_id", "p"},
+                      {"integrity_ids", Json::array({std::string(64, 'a')})}};
+  Assessment.payload(AssessmentArgs);
+  for (const auto *Field : {"notes", "raw", "path", "execute", "score"}) {
+    auto Extra = AssessmentArgs;
+    Extra[Field] = "CANARY";
+    refuses([&] { Assessment.payload(Extra); });
+  }
+  AssessmentArgs["attestation_ids"] =
+      std::vector<std::string>(5, std::string(64, 'a'));
+  refuses([&] { Assessment.payload(AssessmentArgs); });
+  const auto &Review = C.find("neverd_web_package_review_append");
+  Json ReviewArgs{{"revision", "1"},
+                  {"package_assessment_id", "a"},
+                  {"expected_review_head", "h"},
+                  {"finding_id", "f"},
+                  {"disposition", "needs_review"}};
+  Review.payload(ReviewArgs);
+  ReviewArgs["disposition"] = "safe";
+  refuses([&] { Review.payload(ReviewArgs); });
+  for (const auto *Operation : {"neverd_web_package_assessment_findings",
+                                "neverd_web_package_review_decisions",
+                                "neverd_web_package_assessment_report"}) {
+    const auto &Page = C.find(Operation);
+    Json Args{{"revision", "1"},
+              {"package_assessment_id", "a"},
+              {"review_head", "h"},
+              {"limit", 512}};
+    Page.payload(Args);
+    Args.erase("review_head");
+    refuses([&] { Page.payload(Args); });
+  }
   const auto &View = C.find("neverd_web_source_view_preview");
   const auto &Attestation = C.find("neverd_web_package_attestation_import");
   const Json AttestationArgs{{"revision", "1"},
