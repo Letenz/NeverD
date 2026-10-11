@@ -45,9 +45,10 @@ protected:
                             .drop_front(Found + Operand.size())
                             .split('\n')
                             .first.trim();
-        // The memory form carries the faulting source address before its
-        // control; the register form starts with the control itself.
-        if (Operation == neverd::Intrinsic::X86FPArithMemoryState)
+        // Memory arithmetic and scalar conversions carry a source/address
+        // before their control operand.
+        if (Operation == neverd::Intrinsic::X86FPArithMemoryState ||
+            neverd::isX86FPScalarConvertStateIntrinsic(Operation))
           Operands = Operands.split(' ').second.trim();
         EXPECT_EQ(Operands.split(' ').first,
                   "cst:0x" + llvm::utohexstr(*Control) + ":1")
