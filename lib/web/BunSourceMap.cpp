@@ -14,10 +14,10 @@
 // reader.
 #include "BunSourceMap.h"
 
+#include "compression/Zstd.h"
+
 #include "neverd/web/Error.h"
 
-#include "llvm/Support/Compression.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
@@ -69,7 +69,7 @@ public:
   }
 };
 
-// Preflight only the Zstandard envelope; LLVM's native decoder remains the
+// Preflight only the Zstandard envelope; the native decoder remains the
 // authority for compressed blocks and checksums. A known content size, bounded
 // window and exactly one dictionary-free ordinary frame are required before
 // allocating output. No skippable/concatenated frames or trailing bytes.
@@ -117,15 +117,11 @@ uint64_t frameSize(std::string_view Bytes, uint64_t Budget) {
 
 std::string decompress(std::string_view Bytes, uint64_t Size) {
   std::string Result(Size, '\0');
-  size_t Written = Size;
-  const llvm::ArrayRef<uint8_t> Input(
-      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size());
-  if (auto E = llvm::compression::zstd::decompress(
-          Input, reinterpret_cast<uint8_t *>(Result.data()), Written)) {
-    llvm::consumeError(std::move(E));
+  const auto Written = compression::decompressZstd(
+      Bytes, std::span<char>(Result.data(), Result.size()));
+  if (!Written)
     throw Error("bun_map_invalid_zstd_data");
-  }
-  if (Written != Size)
+  if (*Written != Size)
     throw Error("bun_map_zstd_size_mismatch");
   if (!llvm::json::isUTF8(Result))
     throw Error("bun_map_invalid_source_unicode");
@@ -269,7 +265,7 @@ struct Pointer {
 };
 } // namespace
 
-bool bunSourceMapAvailable() { return llvm::compression::zstd::isAvailable(); }
+bool bunSourceMapAvailable() { return compression::zstdAvailable(); }
 
 SourceMap decodeBunSourceMap(const BunExtraction &E, const BunModule &M) {
   if (!bunSourceMapAvailable())

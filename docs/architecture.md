@@ -582,6 +582,11 @@ validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
 Adding a target container does not change source semantics or imply native
 machine-code/bytecode decompilation.
+`BunSourceMap` owns serialized-map framing, coordinates, Zstd envelope preflight
+and decoded-content budgets. `compression/Zstd` only selects an in-process
+decoder and writes into bounded caller-owned output: LLVM Support first, then
+an optional static Zstandard 1.5.7 SDK when LLVM omits Zstd. Failed output is
+discarded by the format owner; adapters never choose a codec or invoke a tool.
 `sea/Container` and the format readers independently locate explicit Node SEA
 resources; `sea/Blob` owns their serialization, region partition and private-key
 budgets. `SessionSEA` publishes revision-bound metadata and exposes only stored

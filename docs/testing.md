@@ -864,8 +864,10 @@ Latin-1, UTF-16 surrogate pairs, client UTF-8, CRLF and excluded terminators.
 `NeverDWebSourceMapTests` checks map deltas, index offsets and UTF-16 coordinates,
 plus Bun serialized-map windows, rare/duplicate anchors, preserved compiler
 source hashes, complete truncation boundaries and bounded Zstd frames. Bun map
-cases explicitly skip when LLVM lacks native Zstd support; SDK capability and
-unavailable-path checks remain active. No external decoder is used.
+cases explicitly skip when both LLVM Zstd and the exact native static SDK
+1.5.7 are absent; SDK capability and unavailable-path checks remain active.
+With Zstd-free LLVM, `-DCMAKE_DISABLE_FIND_PACKAGE_zstd=ON` tests that omission.
+No external decoder is used.
 `NeverDWebSDKTests` exercises C ABI ownership, revisions, private source/binding/semantic/map
 evidence and the CLI with an unusable external-tool `PATH`, including large
 originals refused by the smaller source/map limits before materialization.
@@ -885,6 +887,15 @@ ELF/Mach-O/PE compiler images for the additional ARM64/x64 targets; absent full
 images are a skip. Preserved graph tests use synthetic wrappers and cannot
 replace this qualification. All reads, negative mutations and golden member
 checks are C++, and the generated targets are never run.
+
+`WebBunSourceMapCorpus.OptionalSixPlatformImagesRecoverIndependentOriginalSources`
+requires both `NEVERD_BUN_142_CORPUS` and `NEVERD_BUN_142_CROSS_CORPUS` plus the
+native decoder. It checks twelve full Linux ELF, thin macOS Mach-O and Windows
+PE x64/ARM64 asset/cache images against their recorded original container hashes,
+recovers the independently authored original source hashes, validates generated
+and original coordinate boundaries, and retains exact stored-frame anchors.
+Absence of either corpus or the decoder is an explicit skip. This fixture
+does not qualify other producer versions or bytecode recovery.
 
 `NeverDWebNativeTests` compares file and immutable-buffer loading of synthetic
 ELF/PE/thin Mach-O, verifies direct native bytes and static decompilation after
