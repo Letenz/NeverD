@@ -1601,3 +1601,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `SafeSEHReference.*` 检查不可变 SafeSEH 表成员、畸形或歧义存储、重定位、其他架构与格式，以及分片间的声明顺序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 通过 `NEVERD_NONLOCAL_FINALLY_INPUTS`，测试原生 MSVC x86/x64、O0/O2、GS 开关及源码优化开关的 32 种 LLVM 组合。测试验证 LLVM 和已解析调用签名，并要求未支持的 x86 原生 EH 重建继续被拒绝。Windows EH 专项作业下载原生 fixture artifact 并运行该矩阵；缺少输入目录时测试会明确跳过。
 
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` 检查经过证明的 Windows x64 SEH 处理器以及共享普通/异常入口中的局部展开调用。反例覆盖展开分配不一致、SP 不稳定或宽度不完整、独立根、不完整输入、缺失或伪造异常边、工作量耗尽、未知栈内存加载、外部目标重定位和不可信运行库。LowIR 调用证明与模块凭据均进入 SSA 验证；普通返回续接测试保留各自的入口规则。
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上检查父返回地址损坏和不相交的父局部变量写入。仅保住被调用者的返回地址不能授权普通调用。

@@ -762,4 +762,60 @@ TEST(OwnInteriorCall, LanguageRuntimeInvocationsNeedTheirOwnExitContract) {
   }
 }
 
+TEST(OwnInteriorCall, OrdinaryInternalReturnsRetainTheParentsReturnPC) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    std::vector<uint8_t> Code{0xe8, 0x1b, 0, 0, 0, 0xc3}; // call entry+32; ret
+    Code.resize(0x20, 0xcc);
+    // The callee's own PC remains intact, but this write changes the parent's
+    // physical return address. A normal subroutine classification is unsafe.
+    Code.insert(Code.end(),
+                {0xc7, 0x44, 0x24, uint8_t(P.TheArch == Arch::X86 ? 4 : 8), 0,
+                 0, 0, 0, 0xc3});
+    auto Img = makeImage(std::move(Code), P);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    CFGBuilder Builder;
+    const auto Low = Builder.build(Img, Dec, P.Entry, "parent_pc");
+    EXPECT_FALSE(Low.UnprovenReturnAddresses.empty());
+    EXPECT_FALSE(Low.hasCompleteLiftCoverage());
+  }
+}
+
+TEST(OwnInteriorCall, OrdinaryInternalWritesCanUseTheParentsPrivateAllocation) {
+  for (const auto &P : {Win64, SysV64, Darwin64, I386}) {
+    SCOPED_TRACE(::testing::Message()
+                 << int(P.TheArch) << '/' << int(P.Format));
+    std::vector<uint8_t> Code;
+    if (P.TheArch == Arch::X64)
+      Code.push_back(0x48);
+    Code.insert(Code.end(),
+                {0x83, 0xec, 16, 0xe8,
+                 uint8_t(P.TheArch == Arch::X86 ? 0x18 : 0x17), 0, 0, 0});
+    if (P.TheArch == Arch::X64)
+      Code.push_back(0x48);
+    Code.insert(Code.end(), {0x83, 0xc4, 16, 0xc3});
+    Code.resize(0x20, 0xcc);
+    // The same displacement now names allocated parent storage. Refusing
+    // every write above the callee's PC would lose this valid ordinary call.
+    Code.insert(Code.end(),
+                {0xc7, 0x44, 0x24, uint8_t(P.TheArch == Arch::X86 ? 4 : 8), 7,
+                 0, 0, 0, 0xc3});
+    auto Img = makeImage(std::move(Code), P);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Img));
+    CFGBuilder Builder;
+    const auto Low = Builder.build(Img, Dec, P.Entry, "parent_private");
+    EXPECT_TRUE(Low.UnprovenReturnAddresses.empty());
+    EXPECT_TRUE(Low.hasCompleteLiftCoverage());
+    EXPECT_TRUE(llvm::any_of(Low.Blocks, [&](const LowBlock &Block) {
+      return llvm::any_of(Block.Ops, [&](const LowOp &Op) {
+        return Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
+               Op.Inputs[0].isConst() && Op.Inputs[0].Offset == P.Entry + 0x20;
+      });
+    }));
+  }
+}
+
 } // namespace

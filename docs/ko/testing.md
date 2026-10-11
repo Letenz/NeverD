@@ -1683,3 +1683,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `SafeSEHReference.*`는 불변 SafeSEH 테이블 소속, 잘못되거나 모호한 저장 영역, 재배치, 다른 아키텍처와 형식, 분할 간 선언 순서를 검사합니다. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM`는 `NEVERD_NONLOCAL_FINALLY_INPUTS`로 네이티브 MSVC x86/x64, O0/O2, GS 및 소스 최적화 설정의 LLVM 조합 32개를 검사합니다. LLVM과 해석된 호출 시그니처를 검증하며 지원하지 않는 x86 네이티브 EH 재구성이 계속 거부되어야 합니다. Windows EH 전용 작업은 네이티브 fixture artifact를 내려받아 실행하며 입력 디렉터리가 없으면 테스트를 명시적으로 건너뜁니다.
 
 `LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame`은 인증된 Windows x64 SEH 처리기와 일반/예외 공유 진입의 로컬 해제 호출을 검사합니다. 반례에는 해제 할당 불일치, 불안정하거나 일부 폭의 SP, 독립 루트, 불완전한 입력, 누락되거나 위조된 예외 간선, 작업 한도 소진, 알 수 없는 스택 메모리, 외부 재배치 및 신뢰할 수 없는 런타임이 포함됩니다. LowIR 호출 증명과 모듈 증명서를 SSA 검증에 전달하며 일반 반환 연속 테스트는 별도 진입 규칙을 유지합니다.
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC`와 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation`은 PE, ELF, Mach-O x64 및 ELF i386에서 부모 반환 주소 손상과 겹치지 않는 부모 지역 쓰기를 검사합니다. 피호출자 반환 주소 보존만으로 일반 호출을 허용할 수 없습니다.

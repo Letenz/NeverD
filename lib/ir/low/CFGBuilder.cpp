@@ -651,6 +651,8 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
       if (!Reached[B])
         continue;
       StackOffsetState S = FromSlot[B] ? *FromSlot[B] : StackOffsetState{};
+      StackOffsetState Parent =
+          FromEntry[B] ? *FromEntry[B] : StackOffsetState{};
       for (const LowOp &Op : Func.Blocks[B].Ops) {
         const bool Replayed = Op.Seq == 0 && ReplayedReturns.count(Op.Addr);
         if (Op.Opcode == NdOp::RETURN || Replayed) {
@@ -671,8 +673,13 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
             break;
           continue;
         }
-        MayWriteSlot[B] = MayWriteSlot[B] || mayWriteOwnReturnSlot(M, Op, S);
+        // Returning through an intact internal PC does not prove the
+        // enclosing invocation's PC survived. Both coordinate systems must
+        // exclude every write reaching an ordinary internal return.
+        MayWriteSlot[B] = MayWriteSlot[B] || mayWriteOwnReturnSlot(M, Op, S) ||
+                          mayWriteOwnReturnSlot(M, Op, Parent);
         transferStackOffsets(M, Op, S);
+        transferStackOffsets(M, Op, Parent);
       }
     }
     // A clobber matters only when it can flow to an ordinary return.
