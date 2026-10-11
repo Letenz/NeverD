@@ -500,6 +500,139 @@ class ProcessIntegrationTests(unittest.TestCase):
         self.assertIsNone(result["android"]["native_calls"][-1]["result"])
         self.assertIn("no explicit linux_time input", result["diagnostic"])
 
+    def test_darwin_immediate_select_preserves_bitmaps_errors_and_provider_premises(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        profiles = (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"),
+                    ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"),
+                    ("ios-simulator-x86_64", "ios-simulator-macho64-v1"))
+        values = (0, 3, 6, 3, 6, 9, 9, 12, 22, 14, 22, 22, 14, 14, 9)
+        for file, profile in profiles:
+            path = str(Path(fixtures) / file)
+            cls = 0x02000000 if file.endswith("x86_64") else 0
+            options = {"backend": "unicorn", "instruction_quantum": 1024, "timeout_microseconds": 5000000,
+                       "arguments": ["guest", "immediate-select", "/data"],
+                       "darwin_files": {"files": [{"path": "/data", "bytes_hex": "616200ff6566"}]}}
+            original = json.dumps(options, sort_keys=True)
+            for repeat in range(2):
+                with self.subTest(file=file, repeat=repeat):
+                    result = session.emulate_process(path, profile, json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                    self.assertEqual(result["exit_status"], 37)
+                    self.assertEqual(result["stdout_hex"], "73")
+                    self.assertEqual(result["stderr_hex"], "")
+                    calls = result["services"]
+                    self.assertEqual(len(calls), 115)
+                    for api, number in enumerate((93, 407)):
+                        for h, high in enumerate((0, 0x1234567800000000, 0xffffffff00000000)):
+                            for i, value in enumerate(values):
+                                call = calls[9 + (api * 3 + h) * 15 + i]
+                                self.assertEqual(call["number"], format(high | cls | number, "x"))
+                                self.assertEqual(call["result"], format(value, "x"))
+                                self.assertEqual(call["error"], i >= 8)
+                    for index, value in ((99, 6), (100, 4), (106, 3), (107, 0), (108, 6)):
+                        self.assertEqual(calls[index]["result"], format(value, "x"))
+                        self.assertFalse(calls[index]["error"])
+                    self.assertEqual(json.dumps(options, sort_keys=True), original)
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            for mode, number, diagnostic in (
+                ("immediate-select-wait", 93, "Darwin select waiting is not implemented"),
+                ("immediate-select-capacity", 407, "Darwin select descriptor table capacity is not modeled"),
+            ):
+                request = json.loads(original)
+                request["arguments"][1] = mode
+                result = session.emulate_process(path, profile, json.dumps(request))
+                self.assertEqual(result["stop_reason"], "unsupported_service")
+                self.assertEqual(result["stdout_hex"], "21")
+                self.assertEqual(result["diagnostic"], diagnostic)
+                self.assertEqual(len(result["services"]), 2)
+                self.assertEqual(result["services"][-1]["number"], format(cls | number, "x"))
+                self.assertIsNone(result["services"][-1]["result"])
+                self.assertNotIn("error", result["services"][-1])
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+
+    def test_darwin_immediate_pselect_preserves_timespec_masks_and_shared_bitmaps(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        profiles = (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"),
+                    ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"),
+                    ("ios-simulator-x86_64", "ios-simulator-macho64-v1"))
+        values = (0, 3, 6, 3, 6, 9, 9, 12, 22, 14, 22, 22, 22, 22, 22, 14, 14, 14, 9)
+        for file, profile in profiles:
+            path = str(Path(fixtures) / file)
+            cls = 0x02000000 if file.endswith("x86_64") else 0
+            options = {"backend": "unicorn", "instruction_quantum": 1024, "timeout_microseconds": 5000000,
+                       "arguments": ["guest", "immediate-pselect", "/data"],
+                       "darwin_files": {"files": [{"path": "/data", "bytes_hex": "616200ff6566"}]}}
+            original = json.dumps(options, sort_keys=True)
+            for repeat in range(2):
+                with self.subTest(file=file, repeat=repeat):
+                    result = session.emulate_process(path, profile, json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                    self.assertEqual(result["exit_status"], 37)
+                    self.assertEqual(result["stdout_hex"], "71")
+                    self.assertEqual(result["stderr_hex"], "")
+                    calls = result["services"]
+                    self.assertEqual(len(calls), 139)
+                    for api, number in enumerate((394, 395)):
+                        for h, high in enumerate((0, 0x1234567800000000, 0xffffffff00000000)):
+                            for i, value in enumerate(values):
+                                call = calls[9 + (api * 3 + h) * 19 + i]
+                                self.assertEqual(call["number"], format(high | cls | number, "x"))
+                                self.assertEqual(call["result"], format(value, "x"))
+                                self.assertEqual(call["error"], i >= 8)
+                    for index, value in ((123, 6), (124, 4), (130, 3), (131, 0), (132, 6)):
+                        self.assertEqual(calls[index]["result"], format(value, "x"))
+                        self.assertFalse(calls[index]["error"])
+                    self.assertEqual(json.dumps(options, sort_keys=True), original)
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            for mode, number, diagnostic in (
+                ("immediate-pselect-wait", 394, "Darwin pselect waiting is not implemented"),
+                ("immediate-pselect-capacity", 395, "Darwin select descriptor table capacity is not modeled"),
+                ("immediate-pselect-mask", 394, "Darwin pselect signal-mask state is not implemented"),
+            ):
+                request = json.loads(original)
+                request["arguments"][1] = mode
+                result = session.emulate_process(path, profile, json.dumps(request))
+                self.assertEqual(result["stop_reason"], "unsupported_service")
+                self.assertEqual(result["stdout_hex"], "21")
+                self.assertEqual(result["diagnostic"], diagnostic)
+                self.assertEqual(len(result["services"]), 2)
+                self.assertEqual(result["services"][-1]["number"], format(cls | number, "x"))
+                self.assertIsNone(result["services"][-1]["result"])
+                self.assertNotIn("error", result["services"][-1])
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
+
     def test_darwin_immediate_poll_preserves_filters_errors_and_resource_knowledge(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

@@ -3925,6 +3925,30 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         OS << "(void)" << Expression << ";\n";
       return true;
     }
+    if (isX86F16CStateIntrinsic(Id)) {
+      const bool Store = Id == Intrinsic::X86F16CStoreState,
+                 Read = Id == Intrinsic::X86F16CReadState;
+      std::string Expression = Helper->second + "(";
+      if (Store || Read)
+        Expression += "(void*)(uintptr_t)(" +
+                      integerPointerOperandStr(Call.getArgOperand(0)) + "), ";
+      if (!Read)
+        Expression +=
+            "(" + x86FPStateRawCType(x86FPStateSourceBytes(Bytes)) +
+            ")__builtin_bit_cast(" +
+            x86FPStateRawCType(std::max(16u, x86FPStateSourceBytes(Bytes))) +
+            ", " + valueStr(Call.getArgOperand(Store ? 1 : 0)) + "), ";
+      Expression +=
+          "(void*)" + valueStr(Call.getArgOperand(Store ? 2 : 1)) + ")";
+      if (Store)
+        OS << Expression << ";\n";
+      else if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
     if (isX86FPPackedConvertStateIntrinsic(Id)) {
       const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
       const std::string Source =

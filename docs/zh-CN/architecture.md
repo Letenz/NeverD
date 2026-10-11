@@ -1492,3 +1492,5 @@ DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；Da
 `support/X86Addressing.h` 统一拥有提升器和受检执行器对普通 SIB 无索引标记的位宽判定：`EIZ` 仅在 32 位地址下表示无索引，`RIZ` 仅在 64 位地址下表示无索引；二者均不能充当基址寄存器或 VSIB 向量索引。REX.X 选择的 R12/R12D 仍是真实的缩放索引。`X64Address` 回归在两种特权级比较原始处理器执行、访存观察、取消与内存故障，`X86NoIndexAddress` 则保留严格提升与畸形别名检查。
 
 普通 RAM 的 `XCHG` 支持未对齐的 8/16/32/64 位操作数，包含显式 LOCK 前缀与隐式加锁两种形式。共享 RAM 事务保留入口有效地址、串行发布结果，并丢弃取消或故障时的写入；处理器执行原始交换指令。`X64Address` 覆盖地址与寄存器重叠、部分寄存器写入、缓存行与页面跨界、观察回调及缺页故障。MMIO 交换仍要求提供者契约和自然对齐，其他 LOCK 指令族沿用现有准入规则。
+
+DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码，并拒绝未建模的信号状态操作。Select 与 Pselect 共享 immediateSelect，统一处理位图、容量下界、提供方和按序复制；timeval 与 timespec 保留各自的字段宽度和边界。完整的非空掩码需要后续的信号状态模型。

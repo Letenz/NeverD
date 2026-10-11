@@ -262,6 +262,11 @@ NdOpEmulator::resolveMemoryAddress(const LowOp &Op, uint64_t Offset) const {
     return std::nullopt;
   if (Img.Arch == Arch::X86)
     return (It->second + Offset) & UINT64_C(0xffffffff);
+  if (Img.Arch == Arch::X64)
+    // FS/GS base addition is modulo 2^64. In particular a negative raw
+    // offset may wrap to a valid low canonical linear address. Access owners
+    // still validate the complete resolved range and mapped permissions.
+    return It->second + Offset;
   if (Offset > UINT64_MAX - It->second)
     return std::nullopt;
   return It->second + Offset;
@@ -488,6 +493,8 @@ bool NdOpEmulator::step(const LowOp &Op) {
       switch (Id) {
       case Intrinsic::X86FPRoundMemoryState:
       case Intrinsic::X86FPScalarConvertMemoryState:
+      case Intrinsic::X86F16CReadState:
+      case Intrinsic::X86F16CStoreState:
       case Intrinsic::X86FPPackedConvertMemoryState:
       case Intrinsic::X86FPApprox12MemoryState:
       case Intrinsic::X86FPArithMemoryState:
