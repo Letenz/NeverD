@@ -48,6 +48,9 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver.StoppedViewOwnsEntryRegistersFramesAndStack/"
     "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.EqualEntryValuesDoNotProveFreshCallerBindings/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/"
     "UnpackDriver.LaterRestorationDoesNotChangeEarlierContextCaptures/"
     "{backend_title}")

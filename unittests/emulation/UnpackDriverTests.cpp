@@ -1053,6 +1053,58 @@ TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
   }
 }
 
+TEST_P(UnpackDriver, EqualEntryValuesDoNotProveFreshCallerBindings) {
+  const auto *Program = Original.section(".prog");
+  ASSERT_NE(Program, nullptr);
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    for (unsigned Mode : {0u, 1u}) {
+      SCOPED_TRACE(Mode);
+      // Each XOR leaves the model's incoming zero value unchanged. A fresh
+      // caller can supply another value, and skipping the AX write also loses
+      // the computed DriverEntry status. Numeric equality is not a binding.
+      const auto Register = Mode ? CPURegister::X64R13 : CPURegister::X64AX;
+      const std::vector<uint8_t> Code =
+          Mode ? std::vector<uint8_t>{0x45, 0x31, 0xed, 0x90, 0xc3}
+               : std::vector<uint8_t>{0x31, 0xc0, 0x90, 0xc3};
+      ASSERT_GE(Program->FileSize, Code.size());
+      auto Bytes = Original.File;
+      std::copy(Code.begin(), Code.end(), Bytes.begin() + Program->FileOffset);
+      write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+      const auto Input = Scratch / "equal-entry.sys";
+      test::writeFile(Input, Bytes);
+      auto D = scenario();
+      D.Contract = Contract;
+      DriverContextObserver Observer({Program->RVA + Code.size() - 2});
+      auto Run = observeDriver(Input, D, Observer);
+      ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+      ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+      EXPECT_EQ(Run->Instructions, 1u);
+      ASSERT_TRUE(Observer.Initial);
+      const auto &Initial =
+          static_cast<const WindowsDriverState &>(*Observer.Initial);
+      ASSERT_TRUE(Initial.Entry);
+      EXPECT_FALSE(Initial.hasAdditionalDependencies());
+      ASSERT_EQ(Initial.Entry->InitialRegisters.at(Register)[0], 0u);
+      ASSERT_EQ(Observer.Contents.size(), 1u);
+      const auto &State =
+          static_cast<const WindowsDriverState &>(*Observer.Contents.front());
+      ASSERT_TRUE(State.Entry);
+      const auto &Entry = *State.Entry;
+      EXPECT_EQ(Entry.Registers.at(Register),
+                Entry.InitialRegisters.at(Register));
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
+                Entry.InitialRegisters.at(CPURegister::X64SP));
+      EXPECT_EQ(Entry.Frame, Entry.InitialFrame);
+      EXPECT_TRUE(State.hasAdditionalDependencies());
+      EXPECT_EQ(State.Reasons,
+                (std::vector<std::string>{"DriverEntry continuation requires "
+                                          "fresh-caller reconstruction"}));
+    }
+  }
+}
+
 TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   const auto Input = entryContextInput();
   ASSERT_FALSE(HasFailure());
@@ -1070,7 +1122,10 @@ TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   ASSERT_TRUE(Before.Entry);
   ASSERT_TRUE(After.Entry);
   EXPECT_TRUE(Before.hasAdditionalDependencies());
-  EXPECT_FALSE(After.hasAdditionalDependencies());
+  EXPECT_TRUE(After.hasAdditionalDependencies());
+  EXPECT_EQ(After.Reasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto &Entry = *After.Entry;
   EXPECT_EQ(Entry.InitialRegisters, Before.Entry->InitialRegisters);
   EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
