@@ -131,6 +131,11 @@ public:
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> imageObjectName(va_t Addr) const;
   std::optional<std::string> imageBackingAddress(va_t Addr) const;
+  /// \p Const as an address in an image backing.  One past the end of the
+  /// section its relocation names, it stays in that section's last backing
+  /// even where the next section's first object starts.
+  std::optional<std::string>
+  ownedImageBackingAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);

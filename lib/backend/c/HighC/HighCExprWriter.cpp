@@ -1860,14 +1860,18 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
           return "&" + *Member;
         if (auto Slot = namedFrameSlot(*Inner))
           return "&" + *Slot;
-        // The constant is the table and the rest the offset into it.
+        // The constant is the table and the rest the offset into it.  The
+        // offset prints as the operand is, not as what peeling found under
+        // it: `(u64)(u8)i` indexes by the low byte of `i`, not by `i`.
         if (Base->Kind != ExprKind::Const && indexedImageBase(*Inner) == Off)
           if (auto Table = imageBackingAddress(Off->ConstVal)) {
             constexpr int AddPrec = 9;
+            const HighExpr &Index =
+                Off == Rhs ? *Inner->Operands[0] : *Inner->Operands[1];
             std::string S =
                 "(uintptr_t)" + *Table + " + " +
                 integerView(
-                    *Base,
+                    Index,
                     NdType::makeInt(getTargetRegInfo(Opts.TheArch).PointerSize,
                                     false),
                     AddPrec);
@@ -3653,7 +3657,10 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
         Ptr = Rhs;
         Off = Lhs;
       }
-      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0) {
+      // An image address added to an index is the table the call reads, not
+      // a slot offset; it prints as the object the output defines there.
+      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0 &&
+          !isExactAddressProvenance(Off->ConstProvenance)) {
         const HighExpr *Vptr = peelIntegerViewOps(Ptr);
         std::string SlotBase;
         if (Vptr && Vptr->Kind == ExprKind::Load && !Vptr->Operands.empty() &&
@@ -4223,7 +4230,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (ImageObjects.count(E.ConstVal) ||
         E.ConstProvenance == ConstantAddressProvenance::Address ||
         E.ConstProvenance == ConstantAddressProvenance::DataAddress)
-      if (auto Backing = imageBackingAddress(E.ConstVal)) {
+      if (auto Backing = ownedImageBackingAddress(E)) {
         // An integer the machine computes with stays an integer: `~` or a
         // multiplication takes no pointer.
         if (E.Type && E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum)
@@ -4985,6 +4992,32 @@ std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
              std::to_string(Backing.Pad + (Addr - Backing.Base)) + "]";
   }
   return std::nullopt;
+}
+
+std::optional<std::string>
+HighCWriter::ownedImageBackingAddress(const HighExpr &Const) const {
+  // A relocation's owner is the section it names.  Inside that section an
+  // address is whatever object lies there; one past its end no object of
+  // the section starts, and the next section's first object is no owner.
+  const va_t Owner = Const.AddressOwnerVA;
+  if (Opts.Image && isExactAddressProvenance(Const.ConstProvenance) &&
+      Owner != InvalidVA && Const.ConstVal != 0)
+    for (const Section &Sec : Opts.Image->Sections) {
+      if (!Sec.isReadable() || Sec.VA != Owner || Sec.Size == 0 ||
+          Sec.Size > InvalidVA - Sec.VA || Const.ConstVal != Sec.VA + Sec.Size)
+        continue;
+      const va_t Last = Const.ConstVal - 1;
+      for (const ImageBacking &Backing : ImageBackings) {
+        if (Last < Backing.Base)
+          break;
+        if (Last < Backing.End)
+          return "&" + Backing.Name + "[" +
+                 std::to_string(Backing.Pad + (Const.ConstVal - Backing.Base)) +
+                 "]";
+      }
+      break;
+    }
+  return imageBackingAddress(Const.ConstVal);
 }
 
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,

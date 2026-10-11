@@ -3836,8 +3836,10 @@ TEST(SourceABI, UnsupportedArithmeticNeverManufacturesAZeroResult) {
       Arithmetic.Output.Id = 30;
       Arithmetic.Output.Size = Mutation == 2 ? 2 : 8;
       Arithmetic.Output.SSAVer = 1;
-      Arithmetic.addInput(MedVar::makeConst(1, 8));
-      Arithmetic.addInput(MedVar::makeConst(2, Mutation == 3 ? 4 : 8));
+      // A minimum of 16-byte operands has no C float type to compute in.
+      const uint16_t Width = Mutation == 0 ? 16 : 8;
+      Arithmetic.addInput(MedVar::makeConst(1, Width));
+      Arithmetic.addInput(MedVar::makeConst(2, Mutation == 3 ? 4 : Width));
       if (Mutation >= 2)
         Arithmetic.addInput(MedVar::makeConst(3, 8));
       MedOp Return;

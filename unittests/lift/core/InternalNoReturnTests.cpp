@@ -5,6 +5,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
+#include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/ProloguePatterns.h"
 
@@ -15,6 +16,15 @@
 #include <vector>
 
 using namespace neverd;
+
+namespace neverd::detail {
+struct NoReturnProofTestAccess {
+  static bool prove(CFGBuilder &Builder, const BinaryImage &Image, Decoder &Dec,
+                    va_t Entry) {
+    return Builder.buildNoReturnProof(Image, Dec, Entry, "proof");
+  }
+};
+} // namespace neverd::detail
 
 namespace {
 
@@ -84,6 +94,184 @@ std::vector<uint8_t> callerThen(std::vector<uint8_t> Callee) {
   Code.insert(Code.end(), Callee.begin(), Callee.end());
   Code.resize(0x40, 0xcc);
   return Code;
+}
+
+// The root calls a forwarding wrapper whose leaf returns an initialized
+// binary80 value. Counting queries about that leaf distinguishes the root's
+// terminating-path proof from recursive floating-return recovery.
+struct ReturningCallCounter final : NoReturnCalleeProver {
+  mutable unsigned LeafQueries = 0;
+  bool mayNeverReturn(va_t) const override { return true; }
+  bool neverReturns(va_t Target, unsigned) const override {
+    LeafQueries += Target == Base + 0x40;
+    return false;
+  }
+};
+
+BinaryImage floatingForwarder(Arch Architecture, BinaryFormat Format,
+                              const std::vector<uint8_t> &Local, bool Trap) {
+  std::vector<uint8_t> Code(0x60, 0xcc);
+  putCall(Code, Base, Base + 0x20);
+  std::copy(Local.begin(), Local.end(), Code.begin() + 5);
+  const size_t End = 5 + Local.size();
+  if (Trap) {
+    Code[End] = 0xcd;
+    Code[End + 1] = 0x29; // fast fail
+  } else {
+    Code[End] = 0xc3;
+  }
+  putCall(Code, Base + 0x20, Base + 0x40);
+  Code[0x25] = 0xc3;
+  Code[0x40] = 0xd9; // fld1; ret
+  Code[0x41] = 0xe8;
+  Code[0x42] = 0xc3;
+  auto Image = imageWith(Code, {{Base, "root"},
+                                {Base + 0x20, "forwarder"},
+                                {Base + 0x40, "floating_leaf"}});
+  Image.Arch = Architecture;
+  Image.Bits = Architecture == Arch::X86 ? Bitness::Bits32 : Bitness::Bits64;
+  Image.Format = Format;
+  return Image;
+}
+
+TEST(InternalNoReturn, TerminationDoesNotDemandUnusedFloatingReturns) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Trap : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(Trap);
+        const auto Image = floatingForwarder(Architecture, Format, {}, Trap);
+        const std::set<va_t> Entries{Base, Base + 0x20, Base + 0x40};
+        ReturningCallCounter Counter;
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Image));
+        CFGBuilder Builder;
+        Builder.setKnownFuncEntries(&Entries);
+        Builder.setNoReturnCalleeProver(&Counter);
+        EXPECT_EQ(
+            detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base),
+            Trap);
+        EXPECT_EQ(Counter.LeafQueries, 0u);
+
+        // Reusing the same builder for a normal projection restores full
+        // floating-return recovery, including a wrapper with no local x87.
+        const LowFunc Full = Builder.build(Image, Dec, Base, "full");
+        ASSERT_TRUE(Full.hasCompleteLiftCoverage());
+        EXPECT_EQ(lowFunctionNeverReturns(Full, Architecture), Trap);
+        EXPECT_GT(Counter.LeafQueries, 0u);
+        bool SawCall = false, SawReturn = false;
+        for (const auto &Block : Full.Blocks)
+          for (const LowOp &Op : Block.Ops) {
+            if (Op.Opcode == NdOp::CALL && Op.Addr == Base) {
+              SawCall = true;
+              EXPECT_EQ(Op.Output.Size, x86reg::FPURegSize);
+              EXPECT_TRUE(Op.Output.isReg());
+              EXPECT_GE(Op.Output.Offset, x86reg::ST0);
+              EXPECT_LE(Op.Output.Offset, x86reg::ST7);
+            }
+            if (Op.Opcode == NdOp::RETURN) {
+              SawReturn = true;
+              EXPECT_EQ(Op.NumInputs, 1u);
+              EXPECT_EQ(Op.Inputs[0].Size, x86reg::FPURegSize);
+            }
+          }
+        EXPECT_TRUE(SawCall);
+        EXPECT_EQ(SawReturn, !Trap);
+      }
+}
+
+TEST(InternalNoReturn, LocalFloatingStateKeepsTheFullProof) {
+  const std::vector<std::vector<uint8_t>> Locals{
+      {0xd9, 0xe8, 0xdd, 0xd8}, // fld1; fstp st(0)
+      {0xd9, 0xe5},             // fxam: exposes stack tags to status bits
+      {0xd9, 0xf7},             // fincstp: rotates without reading ST(i)
+      {0xdb, 0xe3}};            // fninit: resets TOP and tags
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (const auto &Local : Locals)
+      for (bool Trap : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(Local[1]);
+        SCOPED_TRACE(Trap);
+        const auto Image =
+            floatingForwarder(Architecture, BinaryFormat::ELF, Local, Trap);
+        const std::set<va_t> Entries{Base, Base + 0x20, Base + 0x40};
+        ReturningCallCounter Counter;
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Image));
+        CFGBuilder Builder;
+        Builder.setKnownFuncEntries(&Entries);
+        Builder.setNoReturnCalleeProver(&Counter);
+        EXPECT_EQ(
+            detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base),
+            Trap);
+        EXPECT_GT(Counter.LeafQueries, 0u);
+        const LowFunc Full = Builder.build(Image, Dec, Base, "full");
+        EXPECT_EQ(lowFunctionNeverReturns(Full, Architecture), Trap);
+      }
+}
+
+TEST(InternalNoReturn, TerminationProjectionPreservesExceptionHandlers) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (unsigned Handler = 0; Handler != 3; ++Handler) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(Handler);
+      auto Image = floatingForwarder(Architecture, BinaryFormat::ELF, {}, true);
+      auto &Code = Image.Segments.front().Data;
+      Code[0x10] = Handler == 1 ? 0xcd : 0xc3;
+      Code[0x11] = 0x29;
+      ExceptionFunction EH;
+      EH.CodeRange = {Base, Base + 0x20};
+      EH.Encoding = ExceptionEncoding::DwarfFDE;
+      EH.Personality = ExceptionPersonality::GxxPersonalityV0;
+      EH.Itanium.emplace();
+      ItaniumCallSite Site;
+      Site.GuardedRange = {Base, Base + 5};
+      Site.LandingPadVA = Handler == 2 ? Base + 0x100 : Base + 0x10;
+      EH.Itanium->CallSites.push_back(Site);
+      Image.ExceptionMetadata.Functions.push_back(std::move(EH));
+      Image.ExceptionMetadata.rebuildIndex();
+      const std::set<va_t> Entries{Base, Base + 0x20, Base + 0x40};
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      CFGBuilder Builder;
+      Builder.setKnownFuncEntries(&Entries);
+      EXPECT_EQ(
+          detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base),
+          Handler == 1);
+      const LowFunc Full = Builder.build(Image, Dec, Base, "full");
+      EXPECT_EQ(lowFunctionNeverReturns(Full, Architecture), Handler == 1);
+    }
+}
+
+TEST(InternalNoReturn, UnprovenFloatingTagsStayUnsupportedInOrdinaryIR) {
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(static_cast<int>(Format));
+      auto Image =
+          floatingForwarder(Architecture, Format, {0xeb, 0, 0xd9, 0xe5}, true);
+      // An independent entry at FXAM cannot inherit the call's known full
+      // slot. A termination proof must not make that value usable in LowIR.
+      Image.CodeRefTargets.insert(Base + 7);
+      const std::set<va_t> Entries{Base, Base + 0x20, Base + 0x40};
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      CFGBuilder Builder;
+      Builder.setKnownFuncEntries(&Entries);
+      const bool Proof =
+          detail::NoReturnProofTestAccess::prove(Builder, Image, Dec, Base);
+      const LowFunc Full = Builder.build(Image, Dec, Base, "full");
+      EXPECT_FALSE(Full.hasCompleteInstructionLift());
+      EXPECT_EQ(Full.UnsupportedInstructionAddresses,
+                std::vector<va_t>{Base + 7});
+      EXPECT_EQ(Proof, lowFunctionNeverReturns(Full, Architecture));
+      const InternalNoReturnIndex Index(Image, &Entries, nullptr, nullptr,
+                                        nullptr);
+      EXPECT_EQ(Index.neverReturns(Base, 0), Proof);
+    }
 }
 
 TEST(InternalNoReturn, NoReturnInstructionStillFollowsExceptionalPaths) {

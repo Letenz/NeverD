@@ -2231,3 +2231,55 @@ LLVM formatting, the 23-capability manifest and source provenance across
 
 Composed assessments, analyst dispositions, readable reports and the broader
 acceptance work remain; this increment does not close #715 or the other epics.
+
+## Optional native Bun map decoder — 2026-10-12
+
+`compression/Zstd` prefers the linked LLVM decoder and optionally uses the
+exact native static Zstandard 1.5.7 SDK when LLVM omits Zstd. It writes into
+the caller's bounded buffer; `BunSourceMap` remains the sole owner of frame,
+window/output/blocks, size and UTF-8 admission. No tool, script or sample is
+executed and no decoder is downloaded. The original BSD notice is staged in
+binary and SDK license directories and the install tree. The
+[profile](web-bun-profile.md#native-static-sdk-qualification--2026-10-12)
+pins all twelve actual CLI report hashes.
+
+The first corpus test found the historical Linux x64 manifest's
+`full_elf_sha256` field, while the other five targets use
+`full_container_sha256`. Selecting each fixture's actual field fixes the
+test without changing recorded hashes. The six-target/twelve-image test now
+passes, checking independently authored original sources and stored anchors.
+All twelve CLI commands pass with an unusable external-tool PATH. Their Linux
+x64 decoded module/map/source pages match the earlier LLVM-backed reports
+exactly. Logs: `/tmp/neverd-zstd-{core-tests,six-platform-tests}.log`.
+
+The 690-step full interface integration rebuild and the subsequent two-step
+corpus-test rebuild pass. Complete Web regression passes 659 of 660 cases,
+including all 2,345 stored Claude Code JS units; only the ASAR-policy omission
+case skips. The six formerly unavailable decoder cases now run and pass.
+All five MCP suites pass; enabled ABI discovery passes with the backend-off
+case explicitly skipped. The full worker directory passes 21 of 24 tests,
+with three absent native name/listing fixtures skipped. Logs:
+`/tmp/neverd-zstd-{enabled-build,reconciled-build,full-web,worker,mcp,api}.log`.
+
+With the SDK explicitly omitted and LLVM Zstd absent, all nine ordinary map
+cases pass and seven decoder/corpus cases skip. All three focused SDK/CLI/anchor
+cases pass, and the actual CLI returns `bun_source_map_zstd_unavailable` with
+an unusable external-tool PATH. Logs:
+`/tmp/neverd-zstd-omitted-{config,build,map-tests,sdk-tests}.log`.
+With the SDK restored and JavaScript parsing disabled, all sixteen map cases
+pass, including the twelve real images, along with the two compiled focused
+SDK cases, worker Web, five MCP suites and enabled ABI discovery. The actual
+Linux x64 asset-map CLI report is byte-identical to its parser-enabled report.
+Logs: `/tmp/neverd-zstd-nojs-{config,build,map-tests,sdk-tests,worker,mcp,api}.log`.
+The native license copies match the original BSD notice byte-for-byte and
+neither the CLI nor SDK shared library requires a Zstd runtime dylib.
+
+Both feature flags are restored to ON with the SDK enabled. All sixteen map
+cases, three focused SDK cases, four selected worker suites, five MCP suites
+and enabled ABI discovery pass after the 168-step restoration build. Logs:
+`/tmp/neverd-zstd-restored-{config,build,map-tests,sdk-tests,worker,mcp,api}.log`.
+LLVM formatting, the 23-capability manifest and the source-provenance check
+over 7,310 tracked files and sixteen history commits pass. This increment
+adds no C API symbols; complete-backend omission keeps the earlier qualified
+stubs and is not separately requalified here. Composed package assessments,
+reports and the broader #714–#718 acceptance work remain.
