@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 5ca35b61a4758fedf3ed3aa633f3224317a326813f3b1745a184187792b3c6ab -->
+<!-- i18n-source: 4cd8f855ba12d5ec2c8af03f86d73abb4bba4f755b356ad440668f4255f66dd8 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1181,9 +1181,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all46 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all49 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-62 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+63 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -1206,7 +1206,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-62 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+63 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -1229,7 +1229,7 @@ chmod15、fchmod124、fchmodat467 は mode_mutations の初期通常ファイル
 
 唯一の認可層は完全な現在 stat と要求を比較し、明示された非 root の実効資格情報を使います。非所有者の異なるモード要求は EPERM、同じモードは所有権だけでは拒否できません。ただし成功には常に物体固有の provider grant が必要です。パスは実際の現在ディレクトリごとに SEARCH を検査し、拒否の EACCES は欠落名より先です。未知のグループ・資格情報・記録は未対応です。読み取り専用 FD はパス SEARCH が不要です。成功は通常権限と ctime だけを変更し、バイト、その他の記録、カーソル、属性、保存量、VM 寿命を保ちます。grant は dup、ハードリンク、rename、保持された unlink 物体に追従し、新規物体や再利用名に継承されず、無効な記録を復元しません。
 
-不正な低32フラグの EINVAL はポインタ/FD より先で、独立した入力エラーと絶対パスの dirfd 無視は共通順序を保ちます。NOFOLLOW は終端リンクを保持し ANY は前段の展開を禁じます。ディレクトリ、リンク、特殊モード、選択 root は未対応です。54の原生呼び出しイベントと31の保護 statを検査します。mainの戻り値37は原始exitイベントを追加しません。所有者の450観測は非所有者の原生証拠ではありません。62/77一覧、ARM64一致231件は実行成功が必要です。Intel原生、実機iOS、一般権限、完全なOS/フレームワークは未完です。
+不正な低32フラグの EINVAL はポインタ/FD より先で、独立した入力エラーと絶対パスの dirfd 無視は共通順序を保ちます。NOFOLLOW は終端リンクを保持し ANY は前段の展開を禁じます。ディレクトリ、リンク、特殊モード、選択 root は未対応です。54の原生呼び出しイベントと31の保護 statを検査します。mainの戻り値37は原始exitイベントを追加しません。所有者の450観測は非所有者の原生証拠ではありません。63/78一覧、ARM64一致234件は実行成功が必要です。Intel原生、実機iOS、一般権限、完全なOS/フレームワークは未完です。
 
 ```text
 chmod15 / fchmod124 / fchmodat467 / low32 mode & ALLPERMS07777
@@ -1247,12 +1247,44 @@ empty declaration supplies environment without object provider grants
 missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
 SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
 OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
-62 current native-common cases / 77 mandatory workloads per platform
-ARM64 matching native mandatory231 / native Intel and physical iOS unverified
+63 current native-common cases / 78 mandatory workloads per platform
+ARM64 matching native mandatory234 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all46 other file routes closed before preflight / static query declarations incompatible
+all49 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
 [XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).
+
+## 明示的な通常ファイルの所有権変更
+
+ownership_mutations は初期通常ファイルごとの provider と固定仮想 ctime を宣言します。空の objects は環境だけを宣言し、省略は未知です。mode_mutations とは独立で、静的クエリ環境とは併用できません。現在の完全な属性と明示的な非 root 実効資格情報を使い、第三者 UID の拒否、対象グループの既知の所属、TAKE_OWNERSHIP、所有者の WRITE_SECURITY の順に判定します。未知の所属は未対応です。低32 UINT32_MAX は非アクティブです。両方が非アクティブでも provider が必要ですが ctime を含む記録は不変です。アクティブな ID は同じ値でも宣言 ctime を設定します。実際の現在ディレクトリの SEARCH を確認し、fchownat は NOFOLLOW0x20 のみを受け付け、ANY0x800 は EINVAL です。共有物体は grant を保持し、新規物体や再利用名は継承せず、無効な記録は復元しません。他のデータ、名前空間、属性、保存量と VM lease は独立です。以下は境界と検証要件です。所有者の原生観測は非所有者の証拠ではなく、Intel 原生、実機 iOS と完全な OS/フレームワークは未完です。
+
+```text
+chown16 / fchown123 / fchownat468 / low32 UID GID / UINT32_MAX inactive
+ownership_mutations / objects / path / time / independent provider authority
+explicit effective nonroot credentials / actual current directory SEARCH
+changed third-party UID EPERM1 before target-group lookup
+changed GID: known membership required / unknown membership unsupported
+TAKE_OWNERSHIP == CHANGE_OWNER / no ordinary POSIX fallback
+changed UID to caller EPERM1 / group-only WRITE_SECURITY requires current owner
+same IDs: no change-derived security rights / provider still required
+both IDs inactive: provider still required / entire record and ctime unchanged
+any active ID: fixed virtual ctime even for numerically same IDs
+AT_SYMLINK_NOFOLLOW0x20 only / ANY0x800 EINVAL22 before path or FD
+initial regular object grants / dup hardlink rename held unlink retain identity
+creation and name reuse do not inherit grants / invalidated records never restored
+mode data namespace xattr storage and VM mapping leases keep independent contracts
+SDK-free77 service records / 77 authored raw calls / 41 guarded stat records
+separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
+63 current native-common cases / 78 mandatory workloads per platform
+ARM64 matching native mandatory234 / actual successful execution required
+720 owner observations / 702 literal controls and 18 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all49 other file routes closed before preflight / static query declarations incompatible
+no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU ownership routes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ownership actions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [XNU vnode_setattr provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/kpi_vfs.c).

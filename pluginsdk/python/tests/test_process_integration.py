@@ -644,6 +644,84 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_ordinary_ownership_keep_strict_object_authority(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+
+        def metadata(mode: int, inode: int, size: int) -> dict:
+            return {"device": 7, "inode": inode, "mode": mode,
+                    "link_count": 1 if size else 2, "uid": 501, "gid": 31 if size else 20,
+                    "size": size, "block_size": 512, "blocks": 1 if size else 0,
+                    "flags": 0, "generation": 9,
+                    "access_time": {"seconds": 1, "nanoseconds": 2},
+                    "modification_time": {"seconds": 3, "nanoseconds": 4},
+                    "change_time": {"seconds": 5, "nanoseconds": 6},
+                    "birth_time": {"seconds": 7, "nanoseconds": 8}}
+
+        profiles = (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"),
+                    ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"),
+                    ("ios-simulator-x86_64", "ios-simulator-macho64-v1"))
+        for file, profile in profiles:
+            path = str(Path(fixtures) / file)
+            cls = 0x2000000 if file.endswith("x86_64") else 0
+            options = {"backend": "unicorn", "instruction_quantum": 1024, "timeout_microseconds": 5000000,
+                       "arguments": ["guest", "ordinary-ownership-mutations", "/data"],
+                       "darwin_system": {"credentials": {"real_uid": 700, "effective_uid": 501,
+                                                         "real_gid": 31, "effective_gid": 20}},
+                       "darwin_files": {"files": [{"path": "/data", "bytes_hex": "616200ff6566",
+                                                   "metadata": metadata(0o100600, 2, 6)}],
+                                        "directories": [{"path": "/", "metadata": metadata(0o40700, 1, 0)}],
+                                        "working_directory": "/",
+                                        "ownership_mutations": {"objects": [{"path": "/data",
+                                                                      "time": {"seconds": 81, "nanoseconds": 82}}]}}}
+            original = json.dumps(options, sort_keys=True)
+            for repeat in range(2):
+                with self.subTest(file=file, repeat=repeat):
+                    result = session.emulate_process(path, profile, json.dumps(options))
+                    self.assertEqual(result["stop_reason"], "exited", result["diagnostic"])
+                    self.assertEqual(result["exit_status"], 38)
+                    self.assertEqual(result["stdout_hex"], "4f")
+                    self.assertEqual(result["stderr_hex"], "")
+                    calls = result["services"]
+                    self.assertEqual(len(calls), 77)
+                    for api, number in enumerate((16, 123, 468)):
+                        for h, high in enumerate((0, 0x1234567800000000, 0xffffffff00000000)):
+                            call = calls[6 + (api * 3 + h) * 6]
+                            self.assertEqual(call["number"], format(high | cls | number, "x"))
+                            self.assertEqual(call["result"], "0")
+                            self.assertFalse(call["error"])
+                    for i, value in enumerate((14, 9, 22, 22, 9)):
+                        self.assertEqual(calls[60 + i]["result"], format(value, "x"))
+                        self.assertTrue(calls[60 + i]["error"])
+                    self.assertEqual(json.dumps(options, sort_keys=True), original)
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            request = json.loads(original)
+            request["darwin_files"]["ownership_mutations"]["objects"] = []
+            result = session.emulate_process(path, profile, json.dumps(request))
+            self.assertEqual(result["stop_reason"], "unsupported_service")
+            self.assertEqual(result["diagnostic"], "Darwin regular-object ownership provider is not configured")
+            self.assertEqual(len(result["services"]), 7)
+            self.assertIsNone(result["services"][-1]["result"])
+            self.assertNotIn("error", result["services"][-1])
+            request["darwin_files"]["ownership_mutations"]["extra"] = True
+            with self.assertRaises(NeverDError):
+                session.emulate_process(path, profile, json.dumps(request))
+            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_immediate_pselect_preserves_timespec_masks_and_shared_bitmaps(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

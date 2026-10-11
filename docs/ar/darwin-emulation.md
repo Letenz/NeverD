@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 5ca35b61a4758fedf3ed3aa633f3224317a326813f3b1745a184187792b3c6ab -->
+<!-- i18n-source: 4cd8f855ba12d5ec2c8af03f86d73abb4bba4f755b356ad440668f4255f66dd8 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1179,9 +1179,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all46 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all49 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-62 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+63 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -1204,7 +1204,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-62 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+63 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -1245,12 +1245,44 @@ empty declaration supplies environment without object provider grants
 missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
 SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
 OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
-62 current native-common cases / 77 mandatory workloads per platform
-ARM64 matching native mandatory231 / native Intel and physical iOS unverified
+63 current native-common cases / 78 mandatory workloads per platform
+ARM64 matching native mandatory234 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all46 other file routes closed before preflight / static query declarations incompatible
+all49 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
 [XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).
+
+## تغييرات ملكية عادية معلنة صراحة
+
+يعلن ownership_mutations عن provider مستقل وctime افتراضي ثابت لكل ملف عادي أولي. يعلن objects الفارغ البيئة فقط ويبقى الإغفال مجهولاً. الأوضاع مستقلة والاستعلامات الثابتة غير متوافقة. يستخدم مؤلف التفويض الوحيد السمات الحالية الكاملة وهوية فعالة صريحة غير root: رفض UID لطرف ثالث ثم عضوية معروفة في المجموعة المطلوبة ثم TAKE_OWNERSHIP دون بديل POSIX ثم WRITE_SECURITY للمالك الحالي. العضوية المجهولة غير مدعومة. يعني low32 UINT32_MAX أن ID غير فعال. يحتاج كلا ID غير الفعالين إلى provider مع حفظ السجل وctime كاملاً؛ يحدد كل ID فعال ctime المعلن حتى عند تساوي القيم. يتحقق SEARCH من الأدلة الحالية التي تعبرها العملية فعلاً. يقبل fchownat فقط NOFOLLOW0x20 ويعطي ANY0x800 الخطأ EINVAL. تحتفظ الكائنات المشتركة بالمنح ولا ترثها الكائنات الجديدة والأسماء المعاد استخدامها ولا تستعاد السجلات الملغاة. تبقى البيانات والأسماء والسمات والتخزين وVM lease مستقلة. تحدد الحقائق التالية الحدود والتحقق المطلوب. لا تثبت مشاهدات المالك الأصلية سلوك غير المالك؛ يبقى Intel الأصلي وiOS الفعلي والنظام والأطر الكاملة غير مكتملة.
+
+```text
+chown16 / fchown123 / fchownat468 / low32 UID GID / UINT32_MAX inactive
+ownership_mutations / objects / path / time / independent provider authority
+explicit effective nonroot credentials / actual current directory SEARCH
+changed third-party UID EPERM1 before target-group lookup
+changed GID: known membership required / unknown membership unsupported
+TAKE_OWNERSHIP == CHANGE_OWNER / no ordinary POSIX fallback
+changed UID to caller EPERM1 / group-only WRITE_SECURITY requires current owner
+same IDs: no change-derived security rights / provider still required
+both IDs inactive: provider still required / entire record and ctime unchanged
+any active ID: fixed virtual ctime even for numerically same IDs
+AT_SYMLINK_NOFOLLOW0x20 only / ANY0x800 EINVAL22 before path or FD
+initial regular object grants / dup hardlink rename held unlink retain identity
+creation and name reuse do not inherit grants / invalidated records never restored
+mode data namespace xattr storage and VM mapping leases keep independent contracts
+SDK-free77 service records / 77 authored raw calls / 41 guarded stat records
+separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
+63 current native-common cases / 78 mandatory workloads per platform
+ARM64 matching native mandatory234 / actual successful execution required
+720 owner observations / 702 literal controls and 18 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all49 other file routes closed before preflight / static query declarations incompatible
+no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU ownership routes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ownership actions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [XNU vnode_setattr provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/kpi_vfs.c).

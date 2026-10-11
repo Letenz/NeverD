@@ -349,6 +349,30 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return invalid(Name);
         Remaining -= Path->size() + 1;
       }
+    } else if (Name == field::FileOwnershipMutations) {
+      const auto *Environment = V.getAsObject();
+      const auto *Objects =
+          Environment ? Environment->getArray(field::FileOwnershipObjects)
+                      : nullptr;
+      if (!Environment || Environment->size() != 1 || !Objects ||
+          Objects->size() > darwin_file_limits::Files)
+        return invalid(Name);
+      auto &Owners = Out.OwnershipMutations.emplace();
+      for (const auto &Value : *Objects) {
+        const auto *Object = Value.getAsObject();
+        const auto Path =
+            Object ? Object->getString(field::Path) : std::nullopt;
+        if (!Object || Object->size() != 2 || !Path ||
+            Path->size() >= Remaining)
+          return invalid(Name);
+        auto Time = fileTime(Object->get(field::FileOwnershipTime),
+                             field::FileOwnershipTime);
+        if (!Time)
+          return Time.takeError();
+        if (!Owners.Objects.emplace(Path->str(), *Time).second)
+          return invalid(Name);
+        Remaining -= Path->size() + 1;
+      }
     } else if (Name == field::DescriptorLimit) {
       auto N = V.getAsUINT64();
       if (!N || *N > UINT32_MAX)

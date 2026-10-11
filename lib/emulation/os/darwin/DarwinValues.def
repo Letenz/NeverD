@@ -196,6 +196,9 @@ NEVERD_DARWIN_SERVICE(GetEUID, 25, UInt)
 NEVERD_DARWIN_SERVICE(GetPPID, 39, Int)
 NEVERD_DARWIN_SERVICE(Access, 33, Int)
 NEVERD_DARWIN_SERVICE(FaccessAt, 466, Int)
+NEVERD_DARWIN_SERVICE(Chown, 16, Int)
+NEVERD_DARWIN_SERVICE(Fchown, 123, Int)
+NEVERD_DARWIN_SERVICE(FchownAt, 468, Int)
 NEVERD_DARWIN_SERVICE(Chmod, 15, Int)
 NEVERD_DARWIN_SERVICE(Fchmod, 124, Int)
 NEVERD_DARWIN_SERVICE(FchmodAt, 467, Int)
@@ -492,6 +495,24 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FileModeTarget, "Darwin mode mutation requires an ordinary regular vnode")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileModeProvider, "Darwin regular-object mode provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipOption,
+    "Darwin ownership grants require complete ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipEnvironment,
+    "Darwin ordinary ownership environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipSecurityAttributes,
+    "Darwin ordinary ownership security attributes are unknown")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipRequest,
+    "Darwin ownership authorization request is inconsistent")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipTarget,
+    "Darwin ownership mutation requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileOwnershipProvider,
+    "Darwin regular-object ownership provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")
 NEVERD_DARWIN_DIAGNOSTIC(

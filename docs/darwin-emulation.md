@@ -2043,9 +2043,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all46 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all49 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-62 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+63 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -2068,7 +2068,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-62 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+63 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -2095,7 +2095,7 @@ The sole authorizer derives WRITE_SECURITY from the ALLPERMS-filtered request an
 
 Low32 flags admit NOFOLLOW0x20 and ANY0x800; other flags yield EINVAL before pointer/FD import. Independently known bad-pointer, empty-path and descriptor errors remain EFAULT14, ENOENT2 and EBADF9 before unknown authority, respecting the shared prefix/import order and absolute-path dirfd bypass. A nonempty missing name requires every actual SEARCH decision first. Default lookup follows final links; NOFOLLOW retains them and ANY forbids earlier expansion. Directory, symbolic, special-mode and selected-root mutations remain unsupported; no provider result is invented for them.
 
-The SDK-free workload has54 authored raw calls,54 recorded service events and31 guarded full stat records. Its main returns37 through the authenticated return gate, which does not append a raw exit service event. Literal private tests cover both page sizes, owner/nonowner same/different modes, absent/empty declarations, stale metadata, current SEARCH, group knowledge and retained mapping lifetime. The current common/mandatory inventories are62/77; all matching mandatory ARM64 HVF/native identities require actual successful execution, and counts or skips alone do not qualify. The original ARM64 O0/O1/O2 owner probes retain450 observations (414 literal controls,36 link-provider captures), actual native ctime and their original source identity. Nonowner authorization is pinned XNU/source and model evidence; those owner captures do not qualify it natively. Intel native HVF, physical iOS, broader vnode/DAC enforcement, ownership/fsync/flock/signals/sockets/kqueue, dyld and Apple frameworks remain incomplete or unverified.
+The SDK-free workload has54 authored raw calls,54 recorded service events and31 guarded full stat records. Its main returns37 through the authenticated return gate, which does not append a raw exit service event. Literal private tests cover both page sizes, owner/nonowner same/different modes, absent/empty declarations, stale metadata, current SEARCH, group knowledge and retained mapping lifetime. The current common/mandatory inventories are63/78; all matching mandatory ARM64 HVF/native identities require actual successful execution, and counts or skips alone do not qualify. The original ARM64 O0/O1/O2 owner probes retain450 observations (414 literal controls,36 link-provider captures), actual native ctime and their original source identity. Nonowner authorization is pinned XNU/source and model evidence; those owner captures do not qualify it natively. Intel native HVF, physical iOS, broader vnode/DAC enforcement, broader ownership/fsync/flock/signals/sockets/kqueue, dyld and Apple frameworks remain incomplete or unverified.
 
 ```text
 chmod15 / fchmod124 / fchmodat467 / low32 mode & ALLPERMS07777
@@ -2113,12 +2113,52 @@ empty declaration supplies environment without object provider grants
 missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
 SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
 OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
-62 current native-common cases / 77 mandatory workloads per platform
-ARM64 matching native mandatory231 / native Intel and physical iOS unverified
+63 current native-common cases / 78 mandatory workloads per platform
+ARM64 matching native mandatory234 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all46 other file routes closed before preflight / static query declarations incompatible
+all49 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
 [XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).
+
+## Explicit ordinary regular-file ownership
+
+Raw BSD chown16, fchown123 and fchownat468 use DarwinFileOptions::OwnershipMutations or strict darwin_files.ownership_mutations. The objects array contains {path,time} grants for initial regular objects with complete ordinary metadata, flags=0, no special mode bits, link_count=1 and no initial inode alias. Signed64 seconds and nanoseconds in [0,1e9) use the existing lossless time owner; each path+NUL shares the catalogue byte budget. An empty declaration supplies the ordinary environment without provider grants; omission leaves the environment unknown. Mode and ownership declarations may coexist with independent grants and times. Both immutable query environments reject either declaration, including when empty.
+
+The sole authorizer uses canonical explicit nonroot effective credentials and current complete security attributes. Changed active UID to a third party yields EPERM before group lookup. Changed active GID requires known membership; explicit primary/in-credential membership is positive, while an absent list entry is negative only under the established authoritative premises such as original GroupMembershipUID=KAUTH_UID_NONE. Unknown membership stays unsupported. A changed UID to the caller still requests TAKE_OWNERSHIP, aliased to CHANGE_OWNER, which has no ordinary POSIX fallback in this declared no-ACL environment, so it yields EPERM. A group-only change requests WRITE_SECURITY and passes for the current owner even at mode0000; a known nonowner gets EPERM. Requested UID0 differs from selecting a root caller: an unchanged UID0 requests no such right, while changing to third-party UID0 is denied. Selected root callers, special modes, flags and incomplete attributes remain unsupported.
+
+Low32 UINT32_MAX means inactive for each ID. Numerically unchanged IDs request no change-derived security rights, so nonownership alone cannot deny them; provider authority remains independently required. Both inactive IDs still reach the pinned VNOP_SETATTR boundary. A granted virtual provider declares success with no object effects, including unchanged ctime, for this request. Any active ID, even equal to its current value, assigns the separately supplied fixed virtual ctime. One object commit changes only active UID/GID and ctime; every other metadata byte, mode/type, bytes, offsets, xattrs, storage and VM mapping lifetime stays intact. Grants follow Contents through dup, independent opens, runtime hardlinks, rename and held unlink; creation, reused names and inode coincidences do not inherit grants. Existing data/namespace/xattr policies remain independent and invalidated records cannot be restored.
+
+Path routes authorize actual current directory SEARCH before missing names, dots or link expansion. Known denial is EACCES13; unknown credentials, metadata or membership stop unsupported. FD routes use retained objects and readonly opens without pathname SEARCH. fchownat accepts only low32 NOFOLLOW0x20; ANY0x800 and other bits yield EINVAL22 before pointer/FD import. Independent EFAULT14, ENOENT2 and EBADF9 preflight preserves shared import order and absolute-path dirfd bypass. Default follows final links; NOFOLLOW retains them, and final links/directories remain unsupported targets. No ACL, MAC, extra kauth listener, entitlement/privilege bypass, revocation, swap/namedstream, native file/directory lease, AppleDouble/extended-security fallback, notification/cache/FSEvents or other setattr lifecycle is inferred. The VM mapping lease remains independent; this does not add general DAC enforcement to other routes.
+
+The original SDK-free workload has77 raw service records,41 guarded full stat observations and separate main return38. It exercises five software and three matching mandatory ARM64 HVF profiles, plus strict C/CLI/Python paths and empty-provider boundaries. Current common/mandatory inventories are63/78 and all234 matching ARM64 native identities require actual successful execution; discovery, matching counts and skips do not qualify execution. Original macOS ARM64 O0/O1/O2 owner captures retain720 observations:702 literal controls and18 final-link provider captures. The native workload preserves actual ctime instead of asserting a universal value. Nonowner authorization remains source/model evidence; these owner-operated probes do not establish native nonowner behavior. Native Intel HVF, physical iOS, broader ownership, fsync/flock/signals/sockets/kqueue, dyld, Mach IPC and Apple frameworks remain incomplete or unverified.
+
+```text
+chown16 / fchown123 / fchownat468 / low32 UID GID / UINT32_MAX inactive
+ownership_mutations / objects / path / time / independent provider authority
+explicit effective nonroot credentials / actual current directory SEARCH
+changed third-party UID EPERM1 before target-group lookup
+changed GID: known membership required / unknown membership unsupported
+TAKE_OWNERSHIP == CHANGE_OWNER / no ordinary POSIX fallback
+changed UID to caller EPERM1 / group-only WRITE_SECURITY requires current owner
+same IDs: no change-derived security rights / provider still required
+both IDs inactive: provider still required / entire record and ctime unchanged
+any active ID: fixed virtual ctime even for numerically same IDs
+AT_SYMLINK_NOFOLLOW0x20 only / ANY0x800 EINVAL22 before path or FD
+initial regular object grants / dup hardlink rename held unlink retain identity
+creation and name reuse do not inherit grants / invalidated records never restored
+mode data namespace xattr storage and VM mapping leases keep independent contracts
+SDK-free77 service records / 77 authored raw calls / 41 guarded stat records
+separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
+63 current native-common cases / 78 mandatory workloads per platform
+ARM64 matching native mandatory234 / actual successful execution required
+720 owner observations / 702 literal controls and 18 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all49 other file routes closed before preflight / static query declarations incompatible
+no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU ownership routes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ownership actions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [XNU vnode_setattr provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/kpi_vfs.c).

@@ -129,7 +129,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.RemovableDirectories.empty() ||
        !Options.MovableDirectories.empty() ||
        !Options.ExchangeableDirectories.empty() ||
-       !Options.SwapRenameDirectories.empty() || Options.ModeMutations))
+       !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
+       Options.OwnershipMutations))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -352,16 +353,27 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return false;
   };
-  if (Options.ModeMutations)
-    for (const auto &[Path, Time] : Options.ModeMutations->Objects) {
+  const auto AdmitOrdinaryGrants = [&](const auto &Objects,
+                                       const char *Reason) -> llvm::Error {
+    for (const auto &[Path, Time] : Objects) {
       const auto M = Options.Metadata.find(Path);
       if (!Options.Files.contains(Path) || M == Options.Metadata.end() ||
           M->second.Flags || (M->second.Mode & 07000) ||
           M->second.LinkCount != 1 || HasAlias(Path) || !validTime(Time))
-        return failure(diagnostic::FileModeOption);
+        return failure(Reason);
       if (auto E = PathInput(Path, false))
         return E;
     }
+    return llvm::Error::success();
+  };
+  if (Options.ModeMutations)
+    if (auto E = AdmitOrdinaryGrants(Options.ModeMutations->Objects,
+                                     diagnostic::FileModeOption))
+      return E;
+  if (Options.OwnershipMutations)
+    if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations->Objects,
+                                     diagnostic::FileOwnershipOption))
+      return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
     const auto M = Options.Metadata.find(Path);
@@ -634,6 +646,11 @@ void DarwinFiles::initializeNamespace() {
       const auto Time = Options->ModeMutations->Objects.find(Path);
       if (Time != Options->ModeMutations->Objects.end())
         Node->ModeTime = &Time->second;
+    }
+    if (Options->OwnershipMutations) {
+      const auto Time = Options->OwnershipMutations->Objects.find(Path);
+      if (Time != Options->OwnershipMutations->Objects.end())
+        Node->OwnershipTime = &Time->second;
     }
     Nodes.emplace(Path, std::make_shared<FileEntry>(std::move(Node)));
   }
@@ -984,19 +1001,28 @@ std::optional<bool> DarwinFiles::groupMembership(uint32_t GID,
 }
 DarwinFiles::Authorization
 DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Request,
-                       Subject User, AuthorizationPurpose Purpose) const {
-  const bool Mode = Purpose != AuthorizationPurpose::Query;
-  if (Mode) {
-    if (!Options || !Options->ModeMutations)
-      return diagnostic::FileModeEnvironment;
+                       Subject User, AuthorizationPurpose Purpose,
+                       std::optional<OwnershipRequest> Ownership) const {
+  const bool Mode = Purpose == AuthorizationPurpose::ModeSearch ||
+                    Purpose == AuthorizationPurpose::ModeChange;
+  const bool Owner = Purpose == AuthorizationPurpose::OwnershipSearch ||
+                     Purpose == AuthorizationPurpose::OwnershipChange;
+  if ((Purpose == AuthorizationPurpose::OwnershipChange) != bool(Ownership))
+    return diagnostic::FileOwnershipRequest;
+  if (Mode || Owner) {
+    if (!Options || (Mode && !Options->ModeMutations) ||
+        (Owner && !Options->OwnershipMutations))
+      return Owner ? diagnostic::FileOwnershipEnvironment
+                   : diagnostic::FileModeEnvironment;
     User = Subject::Effective;
     if (!Metadata || Metadata->Flags || (Metadata->Mode & 07000))
-      return diagnostic::FileModeSecurityAttributes;
+      return Owner ? diagnostic::FileOwnershipSecurityAttributes
+                   : diagnostic::FileModeSecurityAttributes;
     if (Purpose == AuthorizationPurpose::ModeChange && (Request & 07000))
       return diagnostic::FileModePermissions;
   }
   const bool Ordinary =
-      Mode ||
+      Mode || Owner ||
       Options->Authorization == DarwinFileAuthorization::StaticOrdinaryQueries;
   if (!Credentials)
     return Ordinary ? diagnostic::FileOrdinaryAuthorizationCredentials
@@ -1015,6 +1041,28 @@ DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Request,
   if (Purpose == AuthorizationPurpose::ModeChange) {
     if ((Metadata->Mode & FilePermissionMask) != Request &&
         UID != Metadata->UID)
+      return uint32_t(OperationNotPermitted);
+    return std::monostate{};
+  }
+  if (Purpose == AuthorizationPurpose::OwnershipChange) {
+    const bool UserChange =
+        Ownership->UID != UINT32_MAX && Ownership->UID != Metadata->UID;
+    const bool GroupChange =
+        Ownership->GID != UINT32_MAX && Ownership->GID != Metadata->GID;
+    // vnode_authattr checks third-party UID first, then target membership.
+    if (UserChange && Ownership->UID != UID)
+      return uint32_t(OperationNotPermitted);
+    if (GroupChange) {
+      const auto Member = groupMembership(Ownership->GID, Subject::Effective);
+      if (!Member)
+        return diagnostic::FileOrdinaryAuthorizationGroups;
+      if (!*Member)
+        return uint32_t(OperationNotPermitted);
+    }
+    // TAKE_OWNERSHIP == CHANGE_OWNER has no ordinary POSIX fallback. Group-only
+    // changes need WRITE_SECURITY, implicitly supplied only to the current
+    // owner.
+    if (UserChange || (GroupChange && UID != Metadata->UID))
       return uint32_t(OperationNotPermitted);
     return std::monostate{};
   }
@@ -1042,8 +1090,11 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
     uint64_t Address, uint32_t DirectoryFD, LookupMode Mode, LinkPolicy Links,
     bool CheckDirectoryPrefix, Subject User, LookupAuthorization Scope) {
   const bool ModeAuthorization = Scope == LookupAuthorization::Mode;
-  const bool AuthorizedLookup = queryEnvironment() || ModeAuthorization;
-  if (!Options && !ModeAuthorization)
+  const bool OwnershipAuthorization = Scope == LookupAuthorization::Ownership;
+  const bool MutationAuthorization =
+      ModeAuthorization || OwnershipAuthorization;
+  const bool AuthorizedLookup = queryEnvironment() || MutationAuthorization;
+  if (!Options && !MutationAuthorization)
     return diagnostic::FileInputs;
   if (Options)
     initializeNamespace();
@@ -1062,7 +1113,9 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
   std::string Path = std::move(std::get<std::string>(*Imported));
   if (!Options)
     return Path.empty() ? Lookup(uint32_t(NoEntry))
-                        : Lookup(diagnostic::FileModeEnvironment);
+                        : Lookup(OwnershipAuthorization
+                                     ? diagnostic::FileOwnershipEnvironment
+                                     : diagnostic::FileModeEnvironment);
   const bool Absolute = llvm::StringRef(Path).starts_with('/');
   auto Directory = directoryNode("/");
   if (!Absolute) {
@@ -1113,7 +1166,7 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
       // asking the filesystem for a child, including a missing one.
       if (AuthorizedLookup && (Part != ".." || Directory->Parent)) {
         const DarwinFileMetadata *Metadata = Directory->Metadata;
-        if (ModeAuthorization) {
+        if (MutationAuthorization) {
           Description Parent{Kind::Directory, {}, 0, Metadata, Directory->Path};
           Parent.Directory = Directory;
           auto Current = statusMetadata(Parent);
@@ -1121,10 +1174,11 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
             return *Reason;
           Metadata = std::get<const DarwinFileMetadata *>(Current);
         }
-        auto Authorization =
-            authorize(Metadata, 1, User,
-                      ModeAuthorization ? AuthorizationPurpose::ModeSearch
-                                        : AuthorizationPurpose::Query);
+        auto Authorization = authorize(
+            Metadata, 1, User,
+            OwnershipAuthorization ? AuthorizationPurpose::OwnershipSearch
+            : ModeAuthorization    ? AuthorizationPurpose::ModeSearch
+                                   : AuthorizationPurpose::Query);
         if (auto *Error = std::get_if<uint32_t>(&Authorization))
           return *Error;
         if (auto *Reason = std::get_if<const char *>(&Authorization))
@@ -2707,6 +2761,9 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return select(Event, Result);
   if (Service == ServiceKind::Pselect)
     return pselect(Event, Result);
+  if (Service == ServiceKind::Chown || Service == ServiceKind::Fchown ||
+      Service == ServiceKind::FchownAt)
+    return changeOwnership(Service, Event, Result);
   if (Service == ServiceKind::Chmod || Service == ServiceKind::Fchmod ||
       Service == ServiceKind::FchmodAt)
     return changeMode(Service, Event, Result);

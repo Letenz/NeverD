@@ -7744,6 +7744,133 @@ static int ordinary_mode_mutations(const char *path) {
   return 0;
 }
 
+/* Original SDK-free ordinary ownership controls. Native ctime remains a
+ * captured provider result; both-inactive calls compare the complete record. */
+union ownership_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int ownership_result(u64 number, u64 object, u64 a1, u64 a2, u64 a3,
+                            u64 a4, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, a1, a2, a3, a4, 0, &error);
+  if (value != expected || error != !!expected)
+    return 230;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? a2 : 0))
+#endif
+    return 231;
+  return 0;
+}
+static int ownership_status(u64 number, u64 object,
+                            union ownership_stat_guard *record, u64 uid,
+                            u64 gid,
+                            const union ownership_stat_guard *initial) {
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (ownership_result(number, object, (u64)(record->bytes + 8), 0, 0, 0, 0))
+    return 232;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL)
+    return 233;
+  const u64 mode = little_integer(record->bytes + 12, 2);
+  if ((mode & 0170000) != 0100000 || (mode & 07000) ||
+      (uid != -1UL && little_integer(record->bytes + 24, 4) != uid) ||
+      (gid != -1UL && little_integer(record->bytes + 28, 4) != gid) ||
+      little_integer(record->bytes + 80, 8) >= 1000000000UL)
+    return 234;
+  if (initial)
+    for (unsigned i = 1; i != 19; ++i) {
+      if (i == 3 || i == 9 || i == 10) /* UID/GID and ctime */
+        continue;
+      if (record->words[i] != initial->words[i])
+        return 235;
+    }
+  return 0;
+}
+static int ownership_equal(const union ownership_stat_guard *a,
+                           const union ownership_stat_guard *b) {
+  for (unsigned i = 0; i != 20; ++i)
+    if (a->words[i] != b->words[i])
+      return 236;
+  return 0;
+}
+static int ordinary_ownership_mutations(const char *path) {
+  unsigned error;
+  const u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || !uid || uid > 0xfffffffeUL)
+    return 237;
+  const u64 gid = call(43, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || gid > 0xfffffffeUL)
+    return 238;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 239;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd ||
+      call(199, fd, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 240;
+  union ownership_stat_guard initial, a, b, c;
+  if (ownership_status(339, copy, &initial, -1UL, -1UL, 0) ||
+      little_integer(initial.bytes + 24, 4) != uid)
+    return 241;
+  const u64 numbers[] = {16, 123, 468};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 requested_uid = high[h] | (h == 1 ? 0xffffffffUL : uid);
+      const u64 requested_gid = high[h] | (h == 2 ? 0xffffffffUL : gid);
+      const u64 number = high[h] | numbers[api];
+      const u64 object = api == 0 ? (u64)path : high[h] | fd;
+      if (ownership_result(number, object, api == 2 ? (u64)path : requested_uid,
+                           api == 2 ? requested_uid : requested_gid,
+                           api == 2 ? requested_gid : 0, high[h], 0))
+        return 242;
+      if (ownership_status(339, fd, &a, uid, gid, &initial) ||
+          ownership_status(338, (u64)path, &b, uid, gid, &initial) ||
+          ownership_status(339, copy, &c, uid, gid, &initial) ||
+          ownership_equal(&a, &b) || ownership_equal(&a, &c))
+        return 243;
+      const u64 inactive = high[h] | 0xffffffffUL;
+      if (ownership_result(number, object, api == 2 ? (u64)path : inactive,
+                           inactive, api == 2 ? inactive : 0, high[h], 0) ||
+          ownership_status(339, copy, &a, uid, gid, &initial) ||
+          ownership_equal(&a, &c))
+        return 244;
+    }
+  union ownership_stat_guard before_failures;
+  for (unsigned i = 0; i != 20; ++i)
+    before_failures.words[i] = c.words[i];
+  if (ownership_result(16, -1UL, uid, gid, 0, 0, 14) ||
+      ownership_result(123, -1UL, uid, gid, 0, 0, 9) ||
+      ownership_result(468, -1UL, -1UL, uid, gid, 0x4000, 22) ||
+      ownership_result(468, -1UL, -1UL, uid, gid, 0x800, 22) ||
+      ownership_result(468, -1UL, (u64) "data", uid, gid, 0, 9) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      ownership_equal(&a, &before_failures))
+    return 245;
+  const u64 third_party = uid == 1 ? 2 : 1;
+  if (ownership_result(123, copy, third_party, 0xffffffffUL, 0, 0, 1) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      ownership_equal(&a, &before_failures))
+    return 246;
+  if (ownership_result(468, -1UL, (u64)path, uid, gid, 0, 0) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 2 || error || secondary ||
+      ownership_result(6, fd, 0, 0, 0, 0, 0) ||
+      ownership_result(123, fd, uid, gid, 0, 0, 9) ||
+      ownership_result(123, copy, uid, gid, 0, 0, 0) ||
+      ownership_status(339, copy, &a, uid, gid, &initial) ||
+      ownership_result(6, copy, 0, 0, 0, 0, 0))
+    return 247;
+  const char mark = 'O';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 248;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -7790,6 +7917,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "ordinary-ownership-mutations")) {
+    int result = ordinary_ownership_mutations(argc > 2 ? argv[2] : "/data");
+    return result ? result : 38;
+  }
   if (equal(argv[1], "ordinary-mode-mutations")) {
     const int status = argc < 3 ? 209 : ordinary_mode_mutations(argv[2]);
     return status ? status : 37;

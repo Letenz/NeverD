@@ -7,6 +7,7 @@
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinModeTestData.h"
+#include "DarwinOwnershipTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
@@ -3524,6 +3525,120 @@ TEST_F(ProcessPublic, DarwinOrdinaryModesPreserveStrictAuthorityAcrossCAndCLI) {
     (*Input.getAsObject()->getObject(
         field::DarwinFiles))[field::FileModeMutations] =
         llvm::cantFail(llvm::json::parse(Modes));
+    const auto Options = llvm::formatv("{0}", Input).str();
+    EXPECT_TRUE(takeString(neverd_emulate_process_json(Session, Path.c_str(),
+                                                       IOSSimulatorMachO64,
+                                                       Options.c_str()))
+                    .empty());
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+#endif
+}
+
+TEST_F(ProcessPublic,
+       DarwinOrdinaryOwnershipPreserveStrictAuthorityAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    const uint64_t Class =
+        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+    for (bool Granted : {true, false}) {
+      llvm::json::Value Input = llvm::json::Object{
+          {"backend", "unicorn"},
+          {"instruction_quantum", 1024},
+          {"timeout_microseconds", 5000000},
+          {"arguments",
+           llvm::json::Array{"guest", "ordinary-ownership-mutations", "/data"}},
+          {"darwin_files", llvm::cantFail(llvm::json::parse(
+                               emulation::darwin_test::OwnershipFilesJSON))},
+          {"darwin_system",
+           llvm::cantFail(llvm::json::parse(
+               emulation::darwin_test::OwnershipCredentialsJSON))}};
+      if (!Granted)
+        (*Input.getAsObject()
+              ->getObject(field::DarwinFiles)
+              ->getObject(
+                  field::FileOwnershipMutations))[field::FileOwnershipObjects] =
+            llvm::json::Array{};
+      const auto Options = llvm::formatv("{0}", Input).str();
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+      const auto *Object = Report->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getString(field::Stop),
+                Granted ? "exited" : "unsupported_service");
+      EXPECT_EQ(Object->getString(field::Stdout), Granted ? "4f" : "");
+      EXPECT_EQ(Object->getString(field::Stderr), "");
+      const auto *Calls = Object->getArray(field::Services);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(), Granted ? 77u : 7u);
+      if (Granted) {
+        EXPECT_EQ(Object->getInteger(field::ExitStatus), 38);
+        constexpr uint64_t High[] = {0, 0x1234567800000000ULL,
+                                     0xffffffff00000000ULL};
+        constexpr uint64_t Numbers[] = {16, 123, 468};
+        for (unsigned API = 0; API != 3; ++API)
+          for (unsigned H = 0; H != 3; ++H) {
+            const auto *E = (*Calls)[6 + (API * 3 + H) * 6].getAsObject();
+            ASSERT_NE(E, nullptr);
+            EXPECT_EQ(E->getString(field::Number),
+                      llvm::utohexstr(Class | High[H] | Numbers[API], true));
+            EXPECT_EQ(E->getString(field::Result), "0");
+            EXPECT_EQ(E->getBoolean(field::Error), false);
+          }
+        constexpr uint64_t Tail[] = {14, 9, 22, 22, 9};
+        for (unsigned I = 0; I != 5; ++I) {
+          const auto *E = (*Calls)[60 + I].getAsObject();
+          ASSERT_NE(E, nullptr);
+          EXPECT_EQ(E->getString(field::Result),
+                    llvm::utohexstr(Tail[I], true));
+          EXPECT_EQ(E->getBoolean(field::Error), true);
+        }
+      } else {
+        EXPECT_EQ(Object->getString(field::Diagnostic),
+                  "Darwin regular-object ownership provider is not configured");
+        const auto *E = Calls->back().getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | 16, true));
+        EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
+        EXPECT_EQ(E->get(field::Error), nullptr);
+      }
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                Granted ? process_cli::GuestFailure : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+    }
+  }
+  for (
+      const char *Owners :
+      {R"({"objects":[],"extra":true})", R"({"objects":"unknown"})",
+       R"({"objects":[{"path":"/data","time":{"seconds":71,"nanoseconds":72},"extra":0}]})",
+       R"({"objects":[{"path":"/data","time":{"seconds":1.5,"nanoseconds":72}}]})",
+       R"({"objects":[{"path":"/data","time":{"seconds":71,"nanoseconds":1000000000}}]})",
+       R"({"objects":[{"path":"/data","time":{"seconds":71,"nanoseconds":72}},{"path":"/data","time":{"seconds":71,"nanoseconds":72}}]})"}) {
+    auto Input = llvm::cantFail(
+        llvm::json::parse(std::string(R"({"darwin_files":)") +
+                          emulation::darwin_test::OwnershipFilesJSON + "}"));
+    (*Input.getAsObject()->getObject(
+        field::DarwinFiles))[field::FileOwnershipMutations] =
+        llvm::cantFail(llvm::json::parse(Owners));
     const auto Options = llvm::formatv("{0}", Input).str();
     EXPECT_TRUE(takeString(neverd_emulate_process_json(Session, Path.c_str(),
                                                        IOSSimulatorMachO64,

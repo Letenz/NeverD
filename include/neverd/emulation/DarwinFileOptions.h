@@ -204,6 +204,20 @@ struct DarwinModeMutationOptions {
   std::map<std::string, DarwinFileTime> Objects;
 };
 
+/// Operation-specific ordinary ownership environment: writable nonopaque mount
+/// with ownership enabled and supported current ordinary security attributes;
+/// no ACL, MAC, extra listener, bypass, revocation, swap/named streams, native
+/// leases, AppleDouble/fallback, FSEvents/notifications/cache or other setattr
+/// lifecycle effects. Data, namespace and VM contracts remain independent.
+struct DarwinOwnershipMutationOptions {
+  /// Initial regular-object provider grants. Active UID/GID requests supply
+  /// fixed resulting ctime, including equal IDs. Both UINT32_MAX IDs declare
+  /// successful provider execution with no effects, including unchanged ctime.
+  /// Empty declares only the environment. Shared objects retain authority;
+  /// creation/name reuse do not inherit it or restore invalidated metadata.
+  std::map<std::string, DarwinFileTime> Objects;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -221,6 +235,10 @@ struct DarwinFileOptions {
   /// Independent chmod/fchmod/fchmodat authority. Absence is unknown;
   /// incompatible with either immutable query environment, even when empty.
   std::optional<DarwinModeMutationOptions> ModeMutations;
+  /// Independent chown/fchown/fchownat authority; absence is unknown. May
+  /// coexist with mode authority, but either immutable query environment
+  /// rejects it.
+  std::optional<DarwinOwnershipMutationOptions> OwnershipMutations;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

@@ -6,6 +6,7 @@
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinModeTestData.h"
+#include "DarwinOwnershipTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
 #include "DarwinTimeTestData.h"
@@ -2799,6 +2800,81 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
             "Darwin regular-object mode provider is not configured");
   ASSERT_EQ(Unknown->Services.size(), 5u);
   EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess, OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::ownershipOptions();
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t Numbers[] = {16, 123, 468};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-ownership-mutations");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 38);
+    EXPECT_EQ(R->ReturnValue, 38u);
+    EXPECT_EQ(R->StandardOutput, "O");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 77u);
+    constexpr uint64_t PrefixNumbers[] = {25, 43, 5, 41, 199, 339};
+    constexpr uint64_t PrefixResults[] = {501, 20, 3, 4, 2, 0};
+    for (unsigned I = 0; I != 6; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixResults[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned API = 0; API != 3; ++API)
+      for (unsigned H = 0; H != 3; ++H) {
+        const unsigned Start = 6 + (API * 3 + H) * 6;
+        for (unsigned Mutation : {0u, 4u}) {
+          const auto &E = R->Services[Start + Mutation];
+          EXPECT_EQ(E.Number, Class | High[H] | Numbers[API]);
+          EXPECT_EQ(E.Result, 0u);
+          EXPECT_EQ(E.Error, false);
+          EXPECT_EQ(E.Arguments[API == 2 ? 2 : 1],
+                    High[H] | (Mutation == 4 || H == 1 ? UINT32_MAX : 501));
+          EXPECT_EQ(E.Arguments[API == 2 ? 3 : 2],
+                    High[H] | (Mutation == 4 || H == 2 ? UINT32_MAX : 20));
+        }
+        for (unsigned I : {1u, 2u, 3u, 5u}) {
+          EXPECT_EQ(R->Services[Start + I].Number,
+                    Class | (I == 2 ? 338 : 339));
+          EXPECT_EQ(R->Services[Start + I].Result, 0u);
+          EXPECT_EQ(R->Services[Start + I].Error, false);
+        }
+      }
+    constexpr uint64_t TailNumbers[] = {16,  123, 468, 468, 468, 339,
+                                        123, 339, 468, 339, 199, 6,
+                                        123, 123, 339, 6,   4};
+    constexpr uint64_t TailResults[] = {14, 9, 22, 22, 9, 0, 1, 0, 0,
+                                        0,  2, 0,  9,  0, 0, 0, 1};
+    for (unsigned I = 0; I != 17; ++I) {
+      EXPECT_EQ(R->Services[60 + I].Number, Class | TailNumbers[I]);
+      EXPECT_EQ(R->Services[60 + I].Result, TailResults[I]);
+      EXPECT_EQ(R->Services[60 + I].Error, I < 5 || I == 6 || I == 12);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").UID, 501u);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").GID, 31u);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").ChangeTime.Seconds, 5);
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+  }
+  Options.DarwinFiles->OwnershipMutations->Objects.clear();
+  auto Unknown = run("ordinary-ownership-mutations");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic,
+            "Darwin regular-object ownership provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 7u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 16);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
 }

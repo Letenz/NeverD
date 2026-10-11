@@ -58,8 +58,8 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all46 other file routes closed before preflight")
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "62 current native-common cases")
+                           "all49 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "63 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "current live FD lower bound")
@@ -1882,9 +1882,31 @@ NEVERD_EMULATION_DOC_TOKEN(
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "invalidated records never restored")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "77 mandatory workloads per platform")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "78 mandatory workloads per platform")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free54 service records")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "nonowner authorization is source/model evidence")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "chown16 / fchown123 / fchownat468")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "ownership_mutations / objects / path / time")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "TAKE_OWNERSHIP == CHANGE_OWNER")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "both IDs inactive: provider still required")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "any active ID: fixed virtual ctime")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "AT_SYMLINK_NOFOLLOW0x20 only")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free77 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "78 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "720 owner observations")

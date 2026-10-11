@@ -65,8 +65,18 @@ private:
     RenameDirectoryTarget
   };
   enum class Subject { Real, Effective };
-  enum class AuthorizationPurpose { Query, ModeSearch, ModeChange };
-  enum class LookupAuthorization { Query, Mode };
+  enum class AuthorizationPurpose {
+    Query,
+    ModeSearch,
+    ModeChange,
+    OwnershipSearch,
+    OwnershipChange
+  };
+  struct OwnershipRequest {
+    uint32_t UID;
+    uint32_t GID;
+  };
+  enum class LookupAuthorization { Query, Mode, Ownership };
   using Authorization = std::variant<std::monostate, uint32_t, const char *>;
   // Retaining a terminal link and refusing required expansion are separate
   // namei policies. AT_SYMLINK_NOFOLLOW_ANY uses both; ordinary open uses only
@@ -163,6 +173,7 @@ private:
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
     const DarwinFileTime *ModeTime = nullptr;
+    const DarwinFileTime *OwnershipTime = nullptr;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;
@@ -287,7 +298,8 @@ private:
   std::optional<bool> groupMembership(uint32_t GID, Subject User) const;
   Authorization
   authorize(const DarwinFileMetadata *Metadata, uint32_t Request, Subject User,
-            AuthorizationPurpose Purpose = AuthorizationPurpose::Query) const;
+            AuthorizationPurpose Purpose = AuthorizationPurpose::Query,
+            std::optional<OwnershipRequest> Ownership = std::nullopt) const;
   llvm::Expected<Lookup>
   resolvePath(uint64_t Address, uint32_t DirectoryFD,
               LookupMode Mode = LookupMode::Existing,
@@ -297,6 +309,9 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   changeMode(ServiceKind Service, const ProcessServiceEvent &Event,
              ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  changeOwnership(ServiceKind Service, const ProcessServiceEvent &Event,
+                  ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);
