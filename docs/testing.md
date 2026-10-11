@@ -322,6 +322,50 @@ cmake --build build-release --target NeverDX86FPRoundAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPRoundAccuracyTests$' --output-on-failure
 ```
 
+`NeverDX86FPScalarConvertStateTests` compares 24 original legacy/VEX
+CVTSI2SS/SD and CVTSS2SD/CVTSD2SS register/memory forms with SDK Codegen and
+HighC/LLVMC, at default/NoOpt and C O0/O2. Full YMM/MXCSR observations cover
+integer boundaries, precision narrowing, NaNs, all rounding/DAZ/FTZ modes and
+sticky flags. Discarded results retain state completion and complete faulting
+reads; native exception contexts verify untouched output and flag priority.
+Additional probes cover unaligned sources, source/destination/merge aliases,
+GS addressing, typed scalar precision returns and declared stack source ABI.
+The concrete suite compares
+raw bits and MXCSR with native instructions, and separately checks exception
+atomicity, active masks, SAE status suppression and independent FTZ lanes in
+the shared conversion evaluator. Low/Med/High shapes, LLVM assembly ownership
+and changed decode metadata have negative controls. `MedCallingConvFPStack`
+checks source extents and preserved controls/state across x64 ELF/Mach-O/COFF.
+Native tests require x64; full YMM probes also require OS-enabled AVX.
+These tests do not certify native x86-32, AVX-512/EVEX, F16C, MMX, x87,
+enabled alignment checking or unavailable-feature faults.
+
+```sh
+cmake --build build-release --target NeverDX86FPScalarConvertStateTests
+ctest --test-dir build-release -L '^NeverDX86FPScalarConvertStateTests$' --output-on-failure
+```
+
+`NeverDX86FPPackedConvertStateTests` checks 48 SSE/VEX register/memory/width
+forms of CVTDQ2PS/PD, CVTPS2PD/CVTPD2PS and CVT(T)PS/PD2DQ against original
+x64 bytes. Codegen and HighC/LLVMC run at default/NoOpt and C O0/O2, observing
+full YMM bits and MXCSR across rounding, DAZ/FTZ, sticky flags, NaNs and directed
+boundaries. Narrowing padding, low64 widening carriers, aliases, GS and source
+extents are independent controls. Fault probes cover unmasked exceptions,
+cross-lane priority, legacy alignment before numerical evaluation and discarded
+complete-source protected-page reads. The concrete evaluator compares padded
+results and state with native packed instructions; Low/Med/High and owned asm
+reject malformed roles, source/state address spaces and unsupported effects.
+`MedCallingConvFPStack` checks source-width home initialization without replacing
+packed memory completion with scalar parameter reads. Native YMM observers
+require OS-enabled AVX on x64. This suite does not certify native x86-32,
+AVX-512/EVEX, MMX, unsigned conversions, F16C, x87, enabled #AC or unavailable
+CPU-feature faults.
+
+```sh
+cmake --build build-release --target NeverDX86FPPackedConvertStateTests
+ctest --test-dir build-release -L '^NeverDX86FPPackedConvertStateTests$' --output-on-failure
+```
+
 `NeverDX86FPRoundAccuracyTests` compares original legacy/VEX scalar and packed
 ROUND bytes with actual SDK Codegen and HighC/LLVMC at default/NoOpt and O0/O2.
 Directed controls cover all immediate rounding selectors, ignored high bits,
@@ -360,6 +404,13 @@ destination/RHS aliasing, unaligned scalar/VEX memory, unmasked exceptions,
 instruction-wide exception priority, legacy alignment and protected cross-page
 sources. Discarded numerical results must retain state changes and faults.
 Scalar C return probes separately verify floating type, raw bits and state.
+Another 36 forms cover HADD/HSUB and ADDSUB single/double precision, legacy 128
+and VEX 128/256 register/memory sources. A native SSE3 raw-bit oracle compares
+248,832 concrete masked-completion observations across all rounding modes,
+DAZ/FTZ and seeded status, including both source orders and distinct NaN payloads.
+Generated-code probes additionally retain discarded results, unmasked invalid
+priority, legacy misalignment and full protected sources. VEX 256 native probes
+exercise the production feature scan as well as SIMD register allocation.
 Declared scalar stack-argument probes compare original execution and readable C
 through default/NoOpt and O0/O2, including complete raw results and MXCSR. They
 exercise the fifth Win64 or ninth SysV floating argument. `MedCallingConvFPStack`
@@ -369,8 +420,21 @@ packed/straddling home initialization and malformed or segmented refusals.
 Low/Med/High and owned assembly tests reject malformed roles, controls, state
 pointers, effects and addressing contracts. Native execution requires x64 and
 OS-enabled AVX; descriptor checks also cover x86-32 without claiming native
-x86-32 execution. These tests do not certify horizontal arithmetic, FMA,
+x86-32 execution. These tests do not certify FMA,
 EVEX/SAE, x87, enabled #AC or unavailable-feature faults.
+
+`NeverDX86FPFmaStateAccuracyTests` compares 192 VEX FMA3 forms: 132/213/231,
+single/double, scalar 128 and packed 128/256, register/memory, four product/addend
+sign combinations and both packed alternating forms. Original bytes are
+compared with Codegen default/NoOpt and standalone HighC/LLVMC default/NoOpt at
+O0/O2. Every comparison retains full YMM output, memory and MXCSR. The concrete
+matrix independently executes 5,971,968 native comparisons across rounding,
+DAZ/FTZ, seeded status and raw zero/denormal/infinity/NaN values. Child processes
+check unmasked invalid/overflow, instruction-wide priority, unchanged output
+and discarded protected-source accesses. Malformed controls and owned-assembly
+contracts must fail clearly. Typed source stack probes separately cover the
+fifth Win64 or ninth SysV floating argument. Native execution requires an x64
+host with OS-enabled FMA3. FMA4, EVEX/SAE and unavailable features are excluded.
 
 ## x86 invalid encodings and instruction boundaries
 
@@ -391,6 +455,31 @@ operations; this suite does not select a processor's UD0 policy.
 ```sh
 cmake --build build-release --target NeverDX86EncodingAccuracyTests
 ctest --test-dir build-release -L '^NeverDX86EncodingAccuracyTests$' \
+  --output-on-failure
+```
+
+## LLVMC parameter names and CPU queries
+
+`NeverDLLVMCIntrinsicSemanticTests` compiles and executes cached parameter views,
+colliding debug names, narrow arguments and MSVC hidden result/`this` controls
+at O0/O2. CPU array tests retain repeated queries, parameter/local collisions,
+partial register extracts and cross-block uses. CPUID includes nonzero subleafs;
+native XGETBV requires an x64 host with OSXSAVE. Changed assembly, constraints,
+types and unrepresented aggregate uses must fail before array projection.
+
+On Windows x64, a single-step exception observer compares original
+`CPUID(0,0); INT3; CPUID(7,1)` bytes with emitted C at O0/O2. It observes query
+inputs, the query count at the breakpoint, event order and the returned value;
+matching only the final return is insufficient. Other hosts skip this Windows
+event observer explicitly. Windows standalone C checks select Clang's
+compiler-rt so the existing i128 floating conversion controls also execute.
+
+```bash
+cmake --build build-release --target NeverDLLVMCIntrinsicSemanticTests \
+  NeverDLLVMCValueTests NeverDLLVMCFrameMemoryTests NeverDLLVMCPhiTests \
+  NeverDLLVMCVectorTests NeverDLLVMCVoidAnalysisTests
+ctest --test-dir build-release \
+  -L '^NeverDLLVMC(IntrinsicSemantic|Value|FrameMemory|Phi|Vector|VoidAnalysis)Tests$' \
   --output-on-failure
 ```
 
@@ -432,6 +521,20 @@ ctest --test-dir build-release \
 ```
 
 ## Offline web analysis
+
+`WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
+Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
+`WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
+retained extractor ancestry, foreign namespaces and atomic aggregate refusal.
+`WebNodeBehaviorSDK.*` checks 16-source selection independent of the four-result
+cache, revisions, private-value canaries, truncated entry lists, archive/Bun/SEA
+association and CLI processes with an unusable PATH. Supply the pinned
+`NEVERD_CLAUDE_CODE_21296_ELF` and `NEVERD_CLAUDE_CODE_21296_NPM_DIR` inputs for
+the two optional real source cases. `WebSourceDeclarations.*` and the class
+cases in origins/paths cover the shared declaration projection. Changes to
+that shared boundary require the owning Web directory, worker/MCP parity and
+parser/backend omission checks, followed by restoration of the enabled build.
+See the [Node behavior profile](web-node-behavior-profile.md).
 
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
@@ -491,6 +594,10 @@ See the [stream profiles](web-stream-profile.md).
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and
 WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+`WebSourceXHR.*` covers direct/const receiver and argument anchors, shadowing,
+aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
+compound-assignment exclusions, missing/forbidden methods and atomic budgets.
+XHR remains excluded from the unchanged fetch/HAR correlation profile.
 `WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
 hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
 cache limits, canary exclusion and direct/framed parity. Run the owning web
@@ -534,6 +641,19 @@ downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
 tests cover malformed prelinked indices, counts, aliases and alignment.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+`WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
+surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
+directive preservation, tagged-template refusal, ASI outer-tree mismatches,
+exact inverse and tampered receipts. Lexer, record and output-growth budgets
+must refuse atomically. Its optional pinned Claude module 1897 case checks 5
+string-recovery and 201 constant-folding substitutions, each retaining 1,496
+refused candidates, with exact original recovery. This does not qualify every
+module for semantic rewriting. `WebRewriteExport` checks candidate/receipt
+failure rollback, foreign files, symlinks and renamed/replaced output paths.
+`WebRewriteSDK` checks private literals, cache/revision and parse-goal bindings,
+immutable captured bytes and receipt-bound CLI export with an unusable PATH.
+Worker/MCP tests compare both passes and record pages against the shared API;
+MCP excludes raw export and arbitrary output paths.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative
@@ -932,6 +1052,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverConditionQueryCache.*` checks shared value/control graph ownership,
+ordered control queries, temporary certified edges, roots and storage-owner
+changes, and every small-fixture budget boundary. An independent graph-walk
+oracle covers cyclic, disconnected and multiple-entry control flow, including
+edges leaving the graph, with cold and repeated queries.
 `ResolverValueQueryCache.*` checks actual complete-batch reuse, exact remaining
 budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.
@@ -2800,7 +2925,7 @@ build/bin/NeverDRegistrationEHTests
 build/bin/NeverDNoReturnTests
 build/bin/NeverDWindowsRegistrationFrameTests
 build/bin/NeverDWindowsRegistrationNativeTests \
-  --gtest_filter='-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*'
+  --gtest_filter='-WindowsRegistrationNative.InputPE32PreservesItsCheckedSourceContract:WindowsRegistrationCxxSource.*:RegistrationEntryABI.InputPE32*:RegistrationRelift.InputPE32*'
 for registration_case in filter nested-finally continue-search continue-execution normal-finally cdecl-parameter cdecl-parameter-write eh4-filter; do
   python scripts/check_windows_registration_rewrite.py \
     --test-binary build/bin/NeverDWindowsRegistrationNativeTests \
@@ -2972,21 +3097,105 @@ IR, installation, decompilation and PE identities before replaying the same
 files on Windows. Its Python admission suite rejects incomplete, stale or
 substituted evidence.
 
+`check_windows_registration_entry.py` uses the native registration test binary
+and captured CRT libraries for cdecl, stdcall, thiscall and fastcall parents at
+O0/O1. Word and narrow integer profiles include high unsigned-byte bits and
+negative signed shorts, so sign and zero extension are observable. Four changing
+arguments, four caller stack layouts and three catch paths plus a normal return
+exercise register/stack ordering, caller-visible results,
+ESP balance and FS-chain restoration. Its 256 executions cover source and
+wrong-result controls, the checked installation, both CLI modes and two bases.
+The C++ proof rejects altered source RET boundaries, incomplete continuations,
+changed calling conventions and missing or misplaced fastcall `inreg` attributes;
+it also decodes the generated parent RET cleanup count. Both C and C++ output
+must retain two tries, three callback bodies and their exact resume labels and
+pass syntax checks. `replay_windows_registration_entry.py` authenticates every
+source, proof, receipt, object, IR, output and executable before repeating the
+same 256 images with the Windows CRT. Python tests reject missing cases, skipped
+proofs, stale identities and substitutions of the ABI, runtime or rebased image.
+
+`check_windows_registration_relift.py` consumes the authenticated entry capture
+and treats each first-generation product as fresh PE32 input. Its native test
+reproves the frame, callback states, incoming ABI and LLVM privacy contract before
+a second rewrite; both CLI modes must reproduce the API transaction byte for byte.
+The 32 cases produce 256 executions across four routes and two image bases, with
+16 calls each. Caller PCs must move into the second generated owner, and ESP,
+FS:[0], argument writes and results must still match. The independent
+`replay_windows_registration_relift.py` validates both complete capture identities,
+source/IR/receipt hashes, both trampolines, native CRT and exact rebased bytes
+before replaying those 256 images on Wine or Windows. Mutation tests reject missing
+cases, changed identities, stale proofs, wrong ABI and forged caller ownership.
+The re-lift proof also validates every LowIR instruction boundary. A focused
+private-throw regression places a dead branch inside a runtime callback's
+instruction, checks that authenticated nonreturning calls cut that path, and
+retains the independent callback root. Unknown imports and returning callees
+must preserve their ordinary fallthrough.
+`NeverDMedLLVMDeadSlotsTests` checks transitive unused PHI scratch, live return
+values, escaping pointers, volatile reads, atomic/volatile stores and source
+observations. The narrow O1 entry re-lift also catches an unused ECX PHI that
+previously became an uninitialized native frame read on catch return. The
+source-frame initialization validator must still reject that old generated code.
+`RegistrationFrameStores` and `RegistrationFrameTaint` test bounded LLVM spill
+proofs, joins, backedges, partial writes and exhausted budgets. Loader tests keep
+independent SafeSEH/code references and real function boundaries while excluding
+padding bytes inside proved instructions. `COFFTrampolineRegion` tests unique
+raw/virtual entry storage and instruction-mode widths on x86, x64, Thumb and ARM64.
+
 `check_windows_registration_nested_try.py` compiles independent Clang `-O0`
 and `-O1` parents and links the captured CRT libraries. Inner reference catches
 and outer value/catch-all clauses exercise all three continuations under four
 caller stack layouts, including a new throw inside the inner catch. The
-64-image source/control matrix covers both CLI patch
-modes and forced rebasing. The C++ test rejects changed prologue saves,
+288-image source/control matrix covers ordinary searches, secondary throws,
+true helper and direct rethrows, and a try with or without local cleanups inside
+a live reference catch through
+both CLI patch modes and forced rebasing.
+The C++ test rejects changed prologue saves,
 personality argument reads, search edges, handler order, continuation ownership,
 and emitted try/unwind state rows. Secondary-search mutations also reject
 searching the exited inner try or losing the active catch token. HighIR must
-contain both nested tries and all three callback bodies; C output receives a
-syntax check. `windows_registration_runtime.py` captures the selected MSVC
+contain every try and callback body; C and C++ output receive syntax checks.
+The catch-internal profile has three tries and four catches. Its inner catch
+updates the still-live outer reference, then resumes the suspended outer stack.
+`WindowsRegistrationCatchContext` rejects changed catch ancestry, missing
+suspended owners, and verifier-clean edits to resume values, source identities,
+offsets and required memory properties. State tests separately distinguish
+outer/inner object sizes, ended lifetimes and unbalanced private stacks.
+The cleanup variant independently records two destructors in reverse construction
+order (`53`). Clang O0 uses two unwind actions; O1 combines two calls into one
+action. The wrong-order control expects `35` and must fail while retaining the
+actual `53` trace. Each caller layout checks all three choices and resets the
+trace. Thirteen verifier-clean edits reject missing, reordered, redirected or
+misattributed calls, changed optimizer promises, skipped actions and forged
+callback chunks. ABI tests bind every relay instruction and reject changed
+frame adjustments, calls, returns, fixups and work exhaustion. State tests check
+every borrow in a combined action and partial writes overlapping live references.
+Replay binds the cleanup proof and shared receipt writer to their current digests.
+`windows_registration_runtime.py` captures the selected MSVC
 x86 redistributable DLL alongside the link libraries. Each image runs with
 that exact app-local runtime, with a native-only Wine override, and replay
 authenticates its provider and digest. A missing or changed runtime fails;
 Wine's built-in catch-guard behavior cannot silently replace the Windows CRT.
+Rethrow cases modify an unsigned object in the inner reference catch and require
+the outer reference catch to observe that same modified value. ABI tests reject
+partially null arguments, borrowed or unknown pointers and changed runtime
+imports. State tests require a live catch and reject invented new-object fields,
+missing initialization and callback arguments that overlap the runtime return PC.
+Direct-call tests change each current MedIR argument and verifier-clean LLVM
+arguments, parameter attributes, calling convention, target and noreturn
+properties. HighC requires
+both null runtime arguments before rendering a bare `throw;`.
+Direct scalar profiles additionally throw int, unsigned and float through the
+same runtime entry, including a fresh throw from a catch and a mixed typed-throw /
+rethrow function. A separate returning marker retains an actual generated caller
+PC witness. Source-state tests reject missing/partial initialization, pointers in
+scalar bytes, changed table arguments, duplicate candidates, oversized object
+reads and callback return-PC overlap. The native proof rechecks each actual
+object argument against its original parent or callback coordinate, including
+byte initialization and the exact relocated ThrowInfo address.
+Callback-boundary mutations distinguish decoded straight-line instructions from
+stated entries, exports, returns, traps and jumps. A padding-byte guess inside an
+instruction cannot truncate a table-owned callback, while a real terminating
+instruction preserves the next function boundary.
 `RegistrationCxxUnwind` tests nested, disjoint, three-level and cleanup search
 graphs. `replay_windows_registration_nested_try.py` authenticates the source,
 rejection tests, compiler objects, IR, decompilation and installed PE bytes
@@ -3017,13 +3226,35 @@ On Windows, replay with `scripts/replay_windows_registration_cxx.py
 Both profiles require `value=7`, cleanup `trace=213`, four iterations, restored
 FS chain, and `caught=7` by value or `caught=18` by reference. The observed caller PC
 must lie in the indexed generated parent rather than an original helper or
-another part of the generated section. Schema2 requires all six routes at both
+another part of the generated section. Schema3 requires nine routes at both
 bases: original, manual, public COFF patcher, called-helper/import-name collision,
-CLI section and CLI inplace. All five generated routes must reproduce the entire
-checked manual transaction byte for byte, including preserved helpers, before
-runtime observation can count. Native replay validates every hash and the same
-complete route matrix. Schema1 replay remains explicitly manual-only for older
-evidence and cannot count as public/CLI runtime verification.
+CLI section and CLI inplace, followed by a second public transaction and its two
+CLI modes. The second generation reproves generated ESI cleanup relays, their
+saved entry EBP, two ordered destructor calls and complete callback state. It
+binds both trampoline destinations, the full callback owner and the new SafeSEH
+handler. Each CLI route must reproduce its generation's complete transaction
+byte for byte. The source and re-lift test digests, both LLVM inputs and the
+captured Microsoft x86 CRT are bound to replay. Both ordinary and SavedESP
+writeback profiles require all 18 executions per value/reference case.
+Schema2 replay remains first-generation public/CLI evidence; schema1 remains
+manual-only. Neither older format establishes cleanup re-lifting.
+
+The shared re-lift runner also accepts `--profile catch-cleanup` and a complete,
+authenticated nested-try capture. Clang O0/O1 plus wrong-result controls require
+32 executions and 32 independent replays, including ordered local destruction
+inside an active reference catch. O0 preserves pointer bits in a register's high
+bytes while replacing its low byte with a scalar condition. The independent
+LLVM frame proof tracks demanded bits through masks and unaliased spills;
+truncating retained pointer bits, overlapping writes, aliases and poison flags
+remain rejected. `RegistrationFrameBitsTests.cpp` covers those boundaries.
+
+`RegistrationRealignedCleanupABITests.cpp` checks short and wide displacements,
+ordered multiple calls, restored EBP, preserved leaf ESI, immutable code,
+relocations, coordinate overflow and work limits. Cached relay proofs are tested
+against matching and mismatching parents in both lookup orders. The independent
+caller ABI check and LLVM emitter also bind each relay to its current parent.
+Plain C table-owned callbacks retain checked native labels; normal-flow execution
+must skip those bodies on x64 and AArch64.
 
 The runtime runner builds actual SEH3, no-GS EH4 and initialized-GS EH4 source
 images, including explicit source exit checks, lifts their protected
@@ -3074,6 +3305,25 @@ Caller stack padding varies on repeated calls, and the recorded throw caller
 must belong to the selected parent according to its export and linker map.
 `check_windows_registration_cxx.py` labels original-program and generated-frame
 ABI evidence separately; neither establishes source C++ reconstruction.
+
+The nested PE32 runner also accepts `--profile objects`. It builds 8-byte and
+12-byte trivial exception records with Clang O0/O1, private/direct throws,
+reference updates and rethrows into value catches. The 16 source/control cases
+cover 128 images across both patch modes and forced bases. The extra object
+proof and exact fixture type declarations are hashed into capture admission;
+C++ syntax checks use those declarations rather than inventing record layouts.
+`replay_windows_registration_nested_try.py` selects the authenticated profile
+and replays identical files with the Microsoft CRT. `RegistrationPHICopy` checks
+emission ownership and independently rejects nonprivate scalar copy edges.
+
+The object profile also feeds `check_windows_registration_relift.py --profile
+objects`. All sixteen original/control cases are loaded again from their first
+installed PE32 bytes, reconstructed a second time, installed through both CLI
+modes, and executed at both bases (128 runs). Native Windows replays the same
+files with `replay_windows_registration_relift.py`; source proofs, both image
+generations, Microsoft CRT identity, field effects and throw caller ranges are
+mandatory evidence. Second-generation direct throws run the normal call ABI
+recovery pass before native LLVM emission.
 
 ### Language exception models
 

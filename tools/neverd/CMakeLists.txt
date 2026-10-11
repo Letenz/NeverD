@@ -99,6 +99,8 @@ add_neverd_tool(neverd
   cmd/NeverDCmdConcolic.cpp
   cmd/NeverDCmdMobile.cpp
   cmd/NeverDCmdWeb.cpp
+  cmd/NeverDCmdWebRewrite.cpp
+  cmd/NeverDCmdWebBehavior.cpp
   cmd/NeverDCmdWebPackages.cpp
   cmd/NeverDCmdWebArchive.cpp
   cmd/NeverDCmdWebDesktop.cpp

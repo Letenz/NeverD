@@ -281,6 +281,52 @@ TEST_F(WebInterfaceSDK, SourceAndCorrelationCachesAreBounded) {
       compare(Sources[0], Captures[0]).getAsObject()->getInteger("pair_count"),
       1);
 }
+
+TEST_F(WebInterfaceSDK, XHRMetadataRetainsSyntaxLinksAndWithholdsAllValues) {
+  std::ofstream(Root / "b0.js") << R"(
+const CANARY_REQUEST = new XMLHttpRequest();
+CANARY_REQUEST.open('POST','https://CANARY_HOST/CANARY_PATH',false,
+                    'CANARY_USER','CANARY_PASSWORD');
+CANARY_REQUEST.setRequestHeader('Authorization','CANARY_AUTH');
+CANARY_REQUEST.setRequestHeader('CANARY_HEADER','CANARY_VALUE');
+CANARY_REQUEST.send('CANARY_BODY');
+CANARY_REQUEST.onload = () => CANARY_HANDLER(CANARY_REQUEST.responseText);
+CANARY_REQUEST.addEventListener('error', CANARY_CALLBACK);
+CANARY_REQUEST.send(...CANARY_ARGUMENTS);
+)";
+  open();
+  const auto A = source();
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v2");
+  EXPECT_EQ(field(A, "receiver_identity"), "lexical_syntax_only");
+  EXPECT_EQ(field(A, "request_ordering"), "not_analyzed");
+  EXPECT_FALSE(A.getAsObject()->getBoolean("xhr_correlation").value_or(true));
+  const auto ID = field(A, "interface_analysis_id");
+  ASSERT_EQ(A.getAsObject()->getInteger("interface_count"), 7);
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 7u);
+  const auto Binding = field(Items[0], "receiver_binding_id");
+  const auto Constructor = field(Items[0], "constructor_node_id");
+  EXPECT_FALSE(Binding.empty());
+  EXPECT_FALSE(Constructor.empty());
+  for (const auto &I : Items) {
+    EXPECT_EQ(field(I, "receiver_binding_id"), Binding);
+    EXPECT_EQ(field(I, "constructor_node_id"), Constructor);
+    EXPECT_FALSE(field(I, "node_id").empty());
+  }
+  EXPECT_EQ(field(Items[0], "credential_arguments_status"), "present");
+  EXPECT_FALSE(field(Items[0], "async_node_id").empty());
+  EXPECT_EQ(field(Items[1], "header_kind"), "sensitive");
+  EXPECT_EQ(field(Items[2], "header_kind"), "other");
+  EXPECT_FALSE(field(Items[1], "header_value_node_id").empty());
+  EXPECT_FALSE(field(Items[3], "body_node_id").empty());
+  EXPECT_EQ(field(Items[4], "handler_status"), "function_syntax");
+  EXPECT_EQ(field(Items[5], "handler_status"), "value_syntax");
+  EXPECT_EQ(field(Items[6], "body_status"), "spread_unresolved");
+  EXPECT_TRUE(field(Items[6], "body_node_id").empty());
+  EXPECT_EQ(compare(ID, admit()).getAsObject()->getInteger("pair_count"), 0);
+}
 #endif
 
 #ifdef NEVERD_WEB_TEST_CLI
@@ -291,6 +337,9 @@ TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
   std::string Output, Errors;
   auto Run = [&](std::vector<std::string> Arguments) {
+    // ExecuteAndWait redirects may preserve an earlier, longer file tail.
+    std::ofstream(Out, std::ios::trunc).close();
+    std::ofstream(Err, std::ios::trunc).close();
     llvm::SmallVector<llvm::StringRef> Args{NEVERD_WEB_TEST_CLI, "web"};
     for (const auto &A : Arguments)
       Args.push_back(A);
@@ -313,9 +362,17 @@ TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   ASSERT_EQ(Run({"har-import", Path, "1", Policy, Hash}), 0);
   EXPECT_NE(Output.find("observation_id"), std::string::npos);
 #if NEVERD_TEST_WEB_JAVASCRIPT
+  std::ofstream(Root / "b0.js", std::ios::app)
+      << "const CANARY_XHR=new XMLHttpRequest();"
+         "CANARY_XHR.open('POST','https://CANARY_HOST/CANARY_PATH');"
+         "CANARY_XHR.send('CANARY_BODY');"
+         "CANARY_XHR.onload=CANARY_CALLBACK;";
   EXPECT_EQ(Run({"interfaces", Path, "module", "6"}), 0);
   EXPECT_NE(Output.find("\"evidence_class\":\"static_inference\""),
             std::string::npos);
+  EXPECT_NE(Output.find("\"kind\":\"xhr_open\""), std::string::npos);
+  EXPECT_NE(Output.find("\"kind\":\"xhr_send\""), std::string::npos);
+  EXPECT_NE(Output.find("\"kind\":\"xhr_event_handler\""), std::string::npos);
   EXPECT_EQ(
       Run({"interface-correlate", Path, "module", "6", "1", Policy, Hash}), 0);
   EXPECT_NE(Output.find("\"pair_count\":1"), std::string::npos);

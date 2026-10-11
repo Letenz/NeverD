@@ -47,12 +47,14 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
                Has("llvm.nearbyint") || Has("sse42.crc32") || Has("roundss") ||
                Has("roundsd") || Has("roundps") || Has("roundpd"),
        SSE42 = Has("sse42") || Has("sse42.crc32");
-  bool SSE3 = Has("sse3") || SSSE3 || SSE41 || SSE42 || AES;
+  bool SSE3 = Has("sse3") || Has("hadd") || Has("hsub") || Has("addsub") ||
+              SSSE3 || SSE41 || SSE42 || AES;
   SSSE3 = SSSE3 || SSE41 || SSE42;
   // llvm.fma lowers to a hardware VEX FMA (vfmadd*) only with +fma; without it
   // the backend falls back to an `fmaf`/`fma` libcall, which the bare-metal
   // round-trip cannot resolve.  FMA3 is VEX-encoded, so it also implies +avx.
-  bool FMA = Has("llvm.fma");
+  bool FMA = Has("llvm.fma") || Has("vfmadd") || Has("vfmsub") ||
+             Has("vfnmadd") || Has("vfnmsub");
   // Half-precision (_Float16): without +f16c the backend softens the
   // half<->float conversions (LLVM promotes half arithmetic through float) to
   // __extendhfsf2 / __truncsfhf2 library calls the rewrite image cannot
@@ -61,10 +63,11 @@ detectTargetFeaturesX86(const std::set<std::string> &Names) {
   // (no native fp16 ALU) suffices.
   bool Half = Has(kUsesHalfMarker);
   bool AVX2 = Has("avx2"), AVX = Has("avx") || AVX2 || Has("avx512") ||
-                                 Has("vround") || Has("vrcp") ||
+                                 Has("vround") || Has("vcvt") || Has("vrcp") ||
                                  Has("vrsqrt") || Has("vadd") || Has("vsub") ||
                                  Has("vmul") || Has("vdiv") || Has("vsqrt") ||
-                                 Has("vmin") || Has("vmax") || FMA || Half;
+                                 Has("vmin") || Has("vmax") || Has("vhadd") ||
+                                 Has("vhsub") || FMA || Half;
 
   std::string F = "+sse,+sse2,+cx16";
   if (SSE3)

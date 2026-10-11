@@ -72,8 +72,11 @@ their own [archive/integrity profile](web-package-archive-profile.md). Graph
 pages retain declarations; a separate verification binds the selected package
 declaration to a captured original. Publisher signatures, provenance, advisory
 freshness, reachability, benignness and exploitability remain unverified.
-Source behavior findings, external evidence imports, analyst
-dispositions, readable reports and the C++ MCP surface remain pending.
+Explicit import-rooted source patterns and package delivery relationships have
+their own [Node behavior profile](web-node-behavior-profile.md). They do not
+establish install-script propagation or runtime effects. External evidence
+imports, analyst dispositions and readable reports remain pending. The native
+[C++ MCP surface](web-mcp-profile.md) shares the C API's metadata policies.
 
 ## Surfaces and limits
 

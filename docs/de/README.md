@@ -1,6 +1,6 @@
 **Sprachen**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6241c9252ec89317b9c488c7e2b6b8c7bd60329dfdd734df27e1a7a7139b1eff -->
+<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
 
 [← NeverD-Projekt](project.md)
 
@@ -18,7 +18,8 @@ Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`,
 | [Mitwirken](CONTRIBUTING.md) | Entwicklungsumgebung, Build-Profile, Ablauf, Stil und PR-Anforderungen |
 | [Architektur](architecture.md) | IR-Pfade, Komponentengrenzen, striktes Lifting, Supporttiefe und Änderungsorte |
 | [Offline-Webanalyse (Englisch)](../web-analysis.md) | C++-Prüfung von Artefakten, Quellen, Bindungen und Maps, Metadatenrichtlinie, SDK und aktueller Prüfumfang |
-| [Profil für eigenständige Bun-Programme (Englisch)](../web-bun-profile.md) | Feste ELF-Extraktion, ursprüngliche Evidenzbereiche, Quelldecodierung und Herkunft festgelegter Testdateien |
+| [Primitive JavaScript-Umschreibungen (Englisch)](../web-source-rewrite-profile.md) | Explizite Durchläufe, lokale Substitutionsprüfungen, exakte Umkehrung und an Nachweise gebundener lokaler Export |
+| [Profil für eigenständige Bun-Programme (Englisch)](../web-bun-profile.md) | Geprüfte ELF-, dünne Mach-O- und PE-Extraktion für x64/ARM64, ursprüngliche Bereiche und Herkunft festgelegter Testdateien |
 | [ASAR-Extraktionsprofil (Englisch)](../web-asar-profile.md) | Zuordnung interner und externer Erfassungen, Integritätszustände, Nutzer der Archiveinträge und native Unicode-Abhängigkeit |
 | [Electron-Evidenzprofil (Englisch)](../web-electron-profile.md) | Erfasste Einstiegspfade, Manifest- und Quellumfang, Fenster- und Bridge-Evidenz sowie mögliche IPC-Kanäle |
 | [HTML-Quellprofil (Englisch)](../web-html-profile.md) | Begrenztes C++-Skriptinventar, erfasste lokale Referenzen und ursprüngliche Inline-Quellanker |

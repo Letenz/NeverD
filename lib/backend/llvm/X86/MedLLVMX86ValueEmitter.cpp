@@ -614,6 +614,86 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
       Mark(Builder.CreateCall(Asm, {State}));
       return IC == I::X86ReadMXCSR ? Builder.CreateLoad(I32, State) : nullptr;
     }
+    if (isX86FPPackedConvertStateIntrinsic(IC)) {
+      const unsigned Control = Shape.Control;
+      const unsigned SourceBytes = x86FPPackedConvertSourceBytes(Control);
+      const unsigned Bytes = x86FPPackedConvertDestinationBytes(Control);
+      const bool Memory = IC == I::X86FPPackedConvertMemoryState;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPPackedConvertResultType(*Ctx, Control);
+      llvm::Value *Source;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Source = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else {
+        // The logical m64/low64 source still occupies one physical XMM carrier.
+        // Sub-XMM vectors can legalize into separate scalar asm operands.
+        auto *Carrier = Builder.CreateZExtOrTrunc(
+            Raw(1, SourceBytes),
+            llvm::Type::getIntNTy(*Ctx, std::max(16u, SourceBytes) * 8));
+        Source = Builder.CreateBitCast(
+            Carrier, x86FPPackedConvertSourceType(*Ctx, Control));
+      }
+      Builder.CreateStore(Raw(3, 4), State);
+      auto *Fn = llvm::FunctionType::get(Type, {Source->getType(), Ptr}, false);
+      auto *Asm =
+          llvm::InlineAsm::get(Fn, x86FPPackedConvertAsm(Layout, Memory),
+                               x86FPPackedConvertConstraints(Memory), true);
+      auto *Result = Builder.CreateCall(Asm, {Source, State}, "packed_convert");
+      Mark(Result);
+      auto *Bits =
+          Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+    }
+    if (isX86FPScalarConvertStateIntrinsic(IC)) {
+      const unsigned Control = Shape.Control;
+      const unsigned SourceBytes = x86FPScalarConvertSourceBytes(Control);
+      const unsigned DestinationBytes =
+          x86FPScalarConvertDestinationBytes(Control);
+      const bool Memory = IC == I::X86FPScalarConvertMemoryState;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPScalarConvertResultType(*Ctx, Control);
+      llvm::Value *Source;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Source = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else
+        Source = Builder.CreateBitCast(
+            Raw(1, SourceBytes), x86FPScalarConvertSourceType(*Ctx, Control));
+      Builder.CreateStore(Raw(3, 4), State);
+      auto *Fn =
+          llvm::FunctionType::get(Type, {Type, Source->getType(), Ptr}, false);
+      auto *Asm = llvm::InlineAsm::get(
+          Fn, x86FPScalarConvertAsm(Layout, Memory),
+          x86FPScalarConvertConstraints(Control, Memory), true);
+      auto *Result = Builder.CreateCall(
+          Asm, {llvm::ConstantFP::get(Type, 0.0), Source, State}, "fp_convert");
+      Mark(Result);
+      auto *Bits = Builder.CreateBitCast(
+          Result, llvm::Type::getIntNTy(*Ctx, DestinationBytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy),
+                            DestinationBytes * 8));
+    }
     if (isX86FPConversionStateIntrinsic(IC)) {
       const unsigned SourceBytes = Op.Inputs[1].Size;
       const unsigned DestinationBytes =
@@ -674,9 +754,10 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     }
     if (isX86FPArithStateIntrinsic(IC)) {
       const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
-      const unsigned Control = x86FPRoundStateControl(Layout);
+      const unsigned Control = x86FPArithStateControl(Layout);
       const unsigned Bytes = x86FPStateSourceBytes(Layout);
-      const bool Memory = IC == I::X86FPArithMemoryState;
+      const bool Memory = isX86FPStateMemoryIntrinsic(IC);
+      const bool Fma = isX86FPFmaStateIntrinsic(IC);
       const bool Unary = x86FPArithStateIsUnary(Control);
       auto *Type = x86FPArithStateLLVMType(*Ctx, Layout);
       llvm::Value *RHS;
@@ -690,7 +771,7 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
             Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
                                                       Op.MemoryAddressSpace)));
       } else
-        RHS = Builder.CreateBitCast(Raw(3, Bytes), Type);
+        RHS = Builder.CreateBitCast(Raw(Fma ? 4 : 3, Bytes), Type);
       llvm::SmallVector<llvm::Value *, 3> Args;
       llvm::SmallVector<llvm::Type *, 3> Types;
       if (!Unary) {
@@ -698,7 +779,11 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
         Args.push_back(LHS);
         Types.push_back(Type);
       }
-      Builder.CreateStore(Raw(4, 4), State);
+      if (Fma) {
+        Args.push_back(Builder.CreateBitCast(Raw(Memory ? 4 : 3, Bytes), Type));
+        Types.push_back(Type);
+      }
+      Builder.CreateStore(Raw(Fma ? 5 : 4, 4), State);
       Args.append({RHS, State});
       Types.append({RHS->getType(), Ptr});
       auto *Fn = llvm::FunctionType::get(Type, Types, false);

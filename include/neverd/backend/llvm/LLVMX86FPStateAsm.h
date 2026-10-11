@@ -10,10 +10,12 @@
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/X86FPState.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 
@@ -32,7 +34,7 @@ inline constexpr char X86FPApprox12MemoryConstraints[] = "=&x,r,~{memory}";
 
 inline llvm::Type *x86FPArithStateLLVMType(llvm::LLVMContext &Context,
                                            unsigned Layout) {
-  const unsigned Control = x86FPRoundStateControl(Layout);
+  const unsigned Control = x86FPArithStateControl(Layout);
   const unsigned Element = x86FPArithStateElementBytes(Control);
   auto *Scalar = Element == 4 ? llvm::Type::getFloatTy(Context)
                               : llvm::Type::getDoubleTy(Context);
@@ -43,20 +45,27 @@ inline llvm::Type *x86FPArithStateLLVMType(llvm::LLVMContext &Context,
 }
 
 inline const char *x86FPArithStateConstraints(unsigned Layout, bool Memory) {
-  const bool Unary = x86FPArithStateIsUnary(x86FPRoundStateControl(Layout));
+  const unsigned Control = x86FPArithStateControl(Layout);
+  if ((Control & 7) == unsigned(X86FPArithKind::FusedMultiplyAdd))
+    return Memory ? "=&x,0,x,r,r,~{memory}" : "=&x,0,x,x,r,~{memory}";
+  const bool Unary = x86FPArithStateIsUnary(Control);
   return Unary ? (Memory ? X86FPStateRoundMemoryConstraints
                          : X86FPStateRoundConstraints)
                : (Memory ? "=&x,0,r,r,~{memory}" : X86FPStateBinaryConstraints);
 }
 
 inline std::string x86FPArithStateAsm(unsigned Layout, bool Memory) {
-  const unsigned Control = x86FPRoundStateControl(Layout);
+  const unsigned Control = x86FPArithStateControl(Layout);
   const bool Unary = x86FPArithStateIsUnary(Control);
   const bool Vex = x86FPStateSourceBytes(Layout) == 32 || (Control & 32);
   const auto Space = x86FPRoundStateAddressSpace(Layout);
   const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
                         : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
                                                                : "";
+  if ((Control & 7) == unsigned(X86FPArithKind::FusedMultiplyAdd))
+    return "ldmxcsr ($4)\n\t" + x86FPArithStateMnemonic(Layout) + " " +
+           (Memory ? std::string(Segment) + "($3)" : "$3") +
+           ",$2,$0\n\tstmxcsr ($4)";
   const std::string RHS = "$" + std::to_string(Unary ? 1 : 2);
   const std::string State = "$" + std::to_string(Unary ? 2 : 3);
   return "ldmxcsr (" + State + ")\n\t" + x86FPArithStateMnemonic(Layout) + " " +
@@ -121,6 +130,70 @@ inline std::string x86FPStateBinaryAsm(Intrinsic Id, unsigned ScalarSize) {
          (ScalarSize == 4 ? "ss" : "sd") + " $2,$0\n\tstmxcsr ($3)";
 }
 
+inline llvm::Type *x86FPScalarConvertResultType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  return (Control & 4) ? llvm::Type::getDoubleTy(C) : llvm::Type::getFloatTy(C);
+}
+inline llvm::Type *x86FPScalarConvertSourceType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  if (x86FPScalarConvertIsInteger(Control))
+    return llvm::Type::getIntNTy(C, x86FPScalarConvertSourceBytes(Control) * 8);
+  return (Control & 2) ? llvm::Type::getDoubleTy(C) : llvm::Type::getFloatTy(C);
+}
+inline const char *x86FPScalarConvertConstraints(unsigned Control,
+                                                 bool Memory) {
+  return Memory || x86FPScalarConvertIsInteger(Control) ? "=&x,0,r,r,~{memory}"
+                                                        : "=&x,0,x,r,~{memory}";
+}
+inline std::string x86FPScalarConvertAsm(unsigned Layout, bool Memory) {
+  const unsigned Control = (Layout >> 8) & 0xff;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  return "ldmxcsr ($3)\n\t" + x86FPScalarConvertAsmMnemonic(Control) + " " +
+         (Memory ? std::string(Segment) + "($2)" : "$2") +
+         ((Control & 8) ? ",$1" : "") + ",$0\n\tstmxcsr ($3)";
+}
+
+inline llvm::Type *x86FPPackedConvertResultType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  const unsigned Kind = Control & 7;
+  llvm::Type *Element =
+      Kind >= 4 ? llvm::Type::getInt32Ty(C)
+      : x86FPPackedConvertDestinationElementBytes(Control) == 8
+          ? llvm::Type::getDoubleTy(C)
+          : llvm::Type::getFloatTy(C);
+  return llvm::FixedVectorType::get(
+      Element,
+      x86FPPackedConvertDestinationBytes(Control) /
+          (Kind >= 4 ? 4 : x86FPPackedConvertDestinationElementBytes(Control)));
+}
+inline llvm::Type *x86FPPackedConvertSourceType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  const unsigned Kind = Control & 7;
+  llvm::Type *Element = Kind < 2 ? llvm::Type::getInt32Ty(C)
+                        : x86FPPackedConvertSourceElementBytes(Control) == 8
+                            ? llvm::Type::getDoubleTy(C)
+                            : llvm::Type::getFloatTy(C);
+  return llvm::FixedVectorType::get(
+      Element, std::max(16u, x86FPPackedConvertSourceBytes(Control)) /
+                   x86FPPackedConvertSourceElementBytes(Control));
+}
+inline const char *x86FPPackedConvertConstraints(bool Memory) {
+  return Memory ? "=&x,r,r,~{memory}" : "=&x,x,r,~{memory}";
+}
+inline std::string x86FPPackedConvertAsm(unsigned Layout, bool Memory) {
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  return "ldmxcsr ($2)\n\t" +
+         x86FPPackedConvertAsmMnemonic((Layout >> 8) & 0xff, Memory) + " " +
+         (Memory ? std::string(Segment) + "($1)" : "$1") +
+         ",$0\n\tstmxcsr ($2)";
+}
+
 /// Only owned, fully typed assembly contracts may acquire FP state source
 /// helpers. A mnemonic alone cannot prove the operand roles or completion.
 inline std::optional<std::pair<Intrinsic, unsigned>>
@@ -135,6 +208,68 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     return Value->getType()->isPointerTy() &&
            Value->getType()->getPointerAddressSpace() == 0;
   };
+  if (Call.arg_size() == 2 && PointerIsDefault(Call.getArgOperand(1)))
+    for (unsigned Control = 0; Control < 32; ++Control) {
+      if (!x86FPPackedConvertControlIsValid(Control) ||
+          Call.getType() !=
+              x86FPPackedConvertResultType(Call.getContext(), Control))
+        continue;
+      for (bool Memory : {false, true})
+        for (auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          if (!Memory && Space != NdMemoryAddressSpace::Default)
+            continue;
+          const auto Layout = x86FPRoundStateLayout(
+              x86FPPackedConvertSourceBytes(Control), Control, 0, Space);
+          const auto *Source = Call.getArgOperand(0)->getType();
+          if ((Memory ? Source->isPointerTy() &&
+                            Source->getPointerAddressSpace() ==
+                                llvmX86MemoryAddressSpace(Space)
+                      : Source == x86FPPackedConvertSourceType(
+                                      Call.getContext(), Control)) &&
+              Asm->getConstraintString() ==
+                  x86FPPackedConvertConstraints(Memory) &&
+              Asm->getAsmString() == x86FPPackedConvertAsm(Layout, Memory))
+            return std::pair{Memory ? Intrinsic::X86FPPackedConvertMemoryState
+                                    : Intrinsic::X86FPPackedConvertState,
+                             Layout};
+        }
+    }
+  if (Call.arg_size() == 3)
+    for (unsigned Control = 0; Control < 16; ++Control) {
+      if (!x86FPScalarConvertControlIsValid(Control))
+        continue;
+      auto *Type = x86FPScalarConvertResultType(Call.getContext(), Control);
+      auto *SourceType =
+          x86FPScalarConvertSourceType(Call.getContext(), Control);
+      const auto *Seed =
+          llvm::dyn_cast<llvm::ConstantFP>(Call.getArgOperand(0));
+      if (Call.getType() != Type || !Seed || Seed->getType() != Type ||
+          !Seed->getValueAPF().isZero() || Seed->getValueAPF().isNegative() ||
+          !PointerIsDefault(Call.getArgOperand(2)))
+        continue;
+      for (bool Memory : {false, true})
+        for (auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          if (!Memory && Space != NdMemoryAddressSpace::Default)
+            continue;
+          const unsigned Layout = x86FPRoundStateLayout(
+              x86FPScalarConvertSourceBytes(Control), Control, 0, Space);
+          const auto *Input = Call.getArgOperand(1)->getType();
+          if ((Memory ? Input->isPointerTy() &&
+                            Input->getPointerAddressSpace() ==
+                                llvmX86MemoryAddressSpace(Space)
+                      : Input == SourceType) &&
+              Asm->getConstraintString() ==
+                  x86FPScalarConvertConstraints(Control, Memory) &&
+              Asm->getAsmString() == x86FPScalarConvertAsm(Layout, Memory))
+            return std::pair{Memory ? Intrinsic::X86FPScalarConvertMemoryState
+                                    : Intrinsic::X86FPScalarConvertState,
+                             Layout};
+        }
+    }
   if (Call.getType()->isVoidTy() && Call.arg_size() == 1 &&
       PointerIsDefault(Call.getArgOperand(0)) &&
       Asm->getConstraintString() == X86FPStateTransferConstraints) {
@@ -175,11 +310,53 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
           }
         }
   for (bool Memory : {false, true})
-    for (unsigned Control = 0; Control < (Memory ? 64U : 32U); ++Control)
+    for (unsigned Order = 0; Order < 3; ++Order)
+      for (bool Double : {false, true})
+        for (bool Scalar : {false, true})
+          for (unsigned Operation = 0; Operation < 6; ++Operation)
+            for (unsigned Bytes : {4U, 8U, 16U, 32U}) {
+              if (Scalar ? Bytes != (Double ? 8U : 4U) || Operation >= 4
+                         : Bytes < 16)
+                continue;
+              const unsigned Control =
+                  makeX86FPFmaStateControl(Order, Double, Scalar, Memory,
+                                           Operation < 4 && (Operation & 2),
+                                           Operation < 4 && (Operation & 1),
+                                           Operation >= 4, Operation == 4);
+              for (auto Space :
+                   {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+                    NdMemoryAddressSpace::X86GS}) {
+                if (!Memory && Space != NdMemoryAddressSpace::Default)
+                  continue;
+                const unsigned Layout =
+                    x86FPRoundStateLayout(Bytes, Control, 0, Space);
+                const auto *Type =
+                    x86FPArithStateLLVMType(Call.getContext(), Layout);
+                if (Call.arg_size() == 4 && Call.getType() == Type &&
+                    Call.getArgOperand(0)->getType() == Type &&
+                    Call.getArgOperand(1)->getType() == Type &&
+                    (Memory ? Call.getArgOperand(2)->getType()->isPointerTy() &&
+                                  Call.getArgOperand(2)
+                                          ->getType()
+                                          ->getPointerAddressSpace() ==
+                                      llvmX86MemoryAddressSpace(Space)
+                            : Call.getArgOperand(2)->getType() == Type) &&
+                    PointerIsDefault(Call.getArgOperand(3)) &&
+                    Asm->getConstraintString() ==
+                        x86FPArithStateConstraints(Layout, Memory) &&
+                    Asm->getAsmString() == x86FPArithStateAsm(Layout, Memory))
+                  return std::pair{Memory ? Intrinsic::X86FPFmaMemoryState
+                                          : Intrinsic::X86FPFmaState,
+                                   Layout};
+              }
+            }
+  for (bool Memory : {false, true})
+    for (unsigned Control = 0; Control < 256; ++Control)
       for (unsigned Bytes : {4U, 8U, 16U, 32U}) {
         const bool Unary = x86FPArithStateIsUnary(Control);
         const bool Scalar = x86FPArithStateIsScalar(Control);
-        if (!x86FPArithStateOperation(Control) ||
+        if (!x86FPArithStateControlIsValid(Control, Memory) ||
+            !x86FPArithStateOperation(Control) ||
             (Scalar
                  ? Bytes != x86FPArithStateElementBytes(Control) ||
                        (Control & 32)
