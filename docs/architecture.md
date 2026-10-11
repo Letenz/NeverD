@@ -53,8 +53,8 @@ clears the worker's prepared-entry marker before another view can reuse it.
 Consecutive restricted x64 analyses may share a session-owned
 `PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
 relocation-root and executable-owner indexes borrowed by the bounded raw x87
-graph and call-register body caches. Each selection still builds its output
-IR, replays the ordinary proof obligations and recomputes caller-dependent
+graph and machine-body caches. Each selection owns independent output IR,
+replays the ordinary proof obligations and recomputes caller-dependent
 register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
 No-return proof and lazy-name memo entries are cleared between runs, so they
@@ -1459,6 +1459,18 @@ and reused bodies. Format-derived call reads are still collected at ordered
 publication, so overlapping call sites cannot inherit a different contract
 because a worker completed earlier.
 
+Initial default x64 construction can also reconstruct a complete `LowFunc`
+from this inventory when the full metadata payload was retained. Machine
+blocks have one cache owner. The separate function payload preserves coverage,
+roots, jump-table storage and selector certificates, relocation provenance,
+temporaries and code references. The loader-owned exception record is borrowed
+from the immutable image and copied into each result; it is not duplicated in
+the retained payload. Requested names are rebound at the consumer. Missing or
+oversized metadata and registration-state ownership require an ordinary build.
+Protected-table and cross-function continuation rebuilds always use their
+explicit policies. A `CallRegisterBody` projection alone remains insufficient
+for output reconstruction.
+
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
@@ -1928,12 +1940,15 @@ environment restores, tag changes, unknown intrinsics and exceptional edges
 supply no summary. Loader-authenticated imports use the existing ABI tables;
 an internal function's spelling supplies no effect.
 
-Call-register body retention is a separate opt-in inventory of at most 128
+Machine-body retention is a separate opt-in inventory of at most 128
 entries and 32 MiB, including its frozen construction context, block/vector
-capacities and dependency receipts. Active readers may keep evicted immutable
-entries alive; the allowance bounds retained cache payload rather than total
-RSS. Image bytes and metadata must remain unchanged for the operation, with
-the same exception for additive `CodeRefTargets` publication as raw graphs.
+capacities, nested function metadata and dependency receipts. Active readers
+may keep evicted immutable entries alive; the allowance bounds retained cache
+payload rather than total RSS. Completed block vectors release construction
+slack before retention, with actual capacities checked again against the same
+allowance. Image bytes and metadata must remain unchanged
+for the operation, with the same exception for additive `CodeRefTargets`
+publication as raw graphs.
 Only complete, nontruncated x64 bodies with registered callback owners qualify.
 Every skipped normalization stage, including speculative CFGs and build
 retries, records local stack use and exact direct/loaded-slot call targets.

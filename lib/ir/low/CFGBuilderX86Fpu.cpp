@@ -35,6 +35,8 @@
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/ScopeExit.h"
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -225,6 +227,12 @@ class X87CallGraphCache {
     CallRegisterBody Body;
     std::vector<va_t> Calls;
     std::vector<std::pair<va_t, bool>> NoReturnAnswers;
+    // Blocks live only in Body. This owns every remaining LowFunc field except
+    // the exception record, whose authoritative owner is the unchanged image.
+    // Neither partial object can be emitted: cachedDefaultFunction joins them
+    // into an independent complete LowFunc after validating the witness.
+    std::unique_ptr<LowFunc> Function;
+    const ExceptionFunction *Exception = nullptr;
   };
   struct SummaryEntry {
     va_t Address;
@@ -283,15 +291,78 @@ private:
         return std::nullopt;
     return Bytes;
   }
-  void retainSummary(const CFGBuilder &B, va_t Address, const LowFunc &F,
+  static std::optional<size_t> functionMetadataBytes(const LowFunc &F) {
+    // Registration states have independent callback/proof ownership. Leave
+    // those functions on the ordinary construction path.
+    if (F.RegistrationStates)
+      return std::nullopt;
+    size_t Bytes = sizeof(LowFunc) + 8 * sizeof(void *);
+    auto Allocation = [&](size_t Count, size_t Width) {
+      if (!Count)
+        return true;
+      constexpr size_t Overhead = 8 * sizeof(void *);
+      if (Bytes > MaxSummaryBytes - Overhead)
+        return false;
+      Bytes += Overhead;
+      if (Count > (MaxSummaryBytes - Bytes) / Width)
+        return false;
+      Bytes += Count * Width;
+      return true;
+    };
+    auto Vector = [&](const auto &Values) {
+      return Allocation(Values.capacity(), sizeof(Values.front()));
+    };
+    auto String = [&](const std::string &Value) {
+      return Value.capacity() < MaxSummaryBytes &&
+             Allocation(Value.capacity() + 1, sizeof(char));
+    };
+    auto Set = [&](const std::set<va_t> &Values) {
+      return Allocation(Values.size(), sizeof(va_t) + 8 * sizeof(void *));
+    };
+    // Blocks are charged by summaryBytes. ExceptionMetadata is not retained:
+    // its exact source record is borrowed from the frozen image. Account all
+    // other dynamic LowFunc fields, including nested table/provenance payloads.
+    if (!String(F.Name) || !String(F.DebugName) || !String(F.SourceFile) ||
+        !Vector(F.JumpTables) || !Vector(F.FunctionTemporaries) ||
+        !Set(F.ModuleAnalysisRoots) || !Set(F.OrdinaryModuleAnalysisRoots) ||
+        !Vector(F.CxxContinuationExits) || !Vector(F.CxxContinuationEntries) ||
+        !Vector(F.SEHLocalUnwindContinuations) ||
+        !Vector(F.RelocatedInstructionAddressOccurrences) ||
+        !Vector(F.I386GetPcOccurrences) ||
+        !Vector(F.RelocatedInstructionScalarModelOccurrences) ||
+        !Set(F.EverPublishedJumpTableBranchAddresses) ||
+        !Set(F.UnsafeIndirectBranchAddresses) ||
+        !Vector(F.DecodeFailureAddresses) ||
+        !Vector(F.UnsupportedInstructionAddresses) ||
+        !Vector(F.UnprovenReturnAddresses) ||
+        !Vector(F.TruncatedPathAddresses) || !Vector(F.CodeRefTargets))
+      return std::nullopt;
+    for (const JumpTable &Table : F.JumpTables)
+      if (!Vector(Table.StorageRanges) ||
+          !Vector(Table.SuppressibleRelocationSlots) ||
+          !Vector(Table.AuthenticatedTableLoads) ||
+          !Vector(Table.SelectorUseRefs) || !Vector(Table.Targets) ||
+          !Vector(Table.SlotIndices) || !Vector(Table.CaseLabels))
+        return std::nullopt;
+    for (const auto &Exit : F.CxxContinuationExits)
+      if (!Vector(Exit.Targets))
+        return std::nullopt;
+    for (const auto &Unwind : F.SEHLocalUnwindContinuations)
+      if (!String(Unwind.OperationDigest) || !Vector(Unwind.CalleeDependencies))
+        return std::nullopt;
+    for (const auto &Occurrence : F.RelocatedInstructionAddressOccurrences)
+      if (!Vector(Occurrence.ArithmeticProof))
+        return std::nullopt;
+    return Bytes;
+  }
+  void retainSummary(const CFGBuilder &B, va_t Address, LowFunc &F,
                      const CFGBuilder::CallRegisterBodyWitness &Witness) {
     if (!canRetainSummary(B) || !Witness.Complete ||
         !F.hasCompleteLiftCoverage() || F.Blocks.empty() ||
         F.Blocks.front().StartAddr != Address)
       return;
-    // Admission precedes copying any body. This projection owns only flat
-    // machine blocks; nested function/EH/source metadata cannot escape into
-    // an unaccounted LowFunc retained by the cache.
+    // Called only after the raw graph projection has finished reading F. Move
+    // its blocks into one owner instead of copying them for every consumer.
     if (!summaryBytes(F.Blocks, F.Blocks.capacity(), Witness.Calls.size(),
                       Witness.NoReturnAnswers.size()))
       return;
@@ -303,18 +374,58 @@ private:
           !accountAllocation(EstimatedContext, Values->size(), sizeof(va_t)))
         return;
     try {
+      // The completed builder no longer needs geometric growth capacity.
+      // Keeping that slack would evict live bodies much sooner than the old
+      // copied projection. Compact only after bounded admission, then charge
+      // actual capacities again: shrink_to_fit is a nonbinding request.
+      for (auto &Block : F.Blocks) {
+        Block.Ops.shrink_to_fit();
+        Block.InstructionBoundaries.shrink_to_fit();
+        Block.Succs.shrink_to_fit();
+        Block.Preds.shrink_to_fit();
+        Block.ExceptionalSuccs.shrink_to_fit();
+        Block.ExceptionalPreds.shrink_to_fit();
+      }
+      F.Blocks.shrink_to_fit();
+      const auto BodyBytes =
+          summaryBytes(F.Blocks, F.Blocks.capacity(), Witness.Calls.size(),
+                       Witness.NoReturnAnswers.size());
+      if (!BodyBytes || *BodyBytes > MaxSummaryBytes - EstimatedContext)
+        return;
+      auto MetadataBytes = functionMetadataBytes(F);
+      if (F.ExceptionMetadata.has_value() != (Witness.Exception != nullptr) ||
+          (MetadataBytes &&
+           *MetadataBytes > MaxSummaryBytes - EstimatedContext - *BodyBytes))
+        MetadataBytes.reset();
       auto Facts = std::make_shared<SummaryFacts>();
-      Facts->Body.Blocks = F.Blocks;
       Facts->Body.Complete = true;
       Facts->Body.UnsafeIndirectBranches =
           !F.UnsafeIndirectBranchAddresses.empty();
+      if (MetadataBytes) {
+        Facts->Function = std::make_unique<LowFunc>(std::move(F));
+        Facts->Body.Blocks = std::move(Facts->Function->Blocks);
+        Facts->Exception = Witness.Exception;
+        Facts->Function->ExceptionMetadata.reset();
+      } else {
+        Facts->Body.Blocks = std::move(F.Blocks);
+      }
       Facts->Calls.assign(Witness.Calls.begin(), Witness.Calls.end());
       Facts->NoReturnAnswers = Witness.NoReturnAnswers;
-      const auto Bytes = summaryBytes(
+      auto Bytes = summaryBytes(
           Facts->Body.Blocks, Facts->Body.Blocks.capacity(),
           Facts->Calls.capacity(), Facts->NoReturnAnswers.capacity());
       if (!Bytes || *Bytes > MaxSummaryBytes - EstimatedContext)
         return;
+      if (Facts->Function) {
+        MetadataBytes = functionMetadataBytes(*Facts->Function);
+        if (!MetadataBytes ||
+            *MetadataBytes > MaxSummaryBytes - EstimatedContext - *Bytes) {
+          Facts->Function.reset();
+          Facts->Exception = nullptr;
+        } else {
+          *Bytes += *MetadataBytes;
+        }
+      }
       std::lock_guard<std::mutex> Lock(Mutex);
       if (!SummaryInputs || !matches(*SummaryInputs, B)) {
         Context Next = freezeContext(B);
@@ -358,6 +469,13 @@ private:
       }
     return {};
   }
+  std::shared_ptr<const SummaryFacts> validatedSummary(
+      const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+      va_t Entry, const std::set<va_t> *Entries,
+      const libc::NoReturnTargetIndex *NoReturnTargets,
+      const NoReturnCalleeProver *NoReturnCallees,
+      const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+      const ExecutableCodeOwnerIndex *CodeOwners, bool RequireFunction);
   static bool account(size_t &Bytes, size_t Count, size_t Width) {
     if (Bytes > MaxBytes || Count > (MaxBytes - Bytes) / Width)
       return false;
@@ -818,9 +936,12 @@ class X87CallEffectIndex {
                                         Settings.NoReturnCalleeDepth + 1);
       }
     }
-    const LowFunc F = Builder.build(Image, Dec, Entry);
-    if (RetainBody)
-      Settings.SharedX87CallGraphs->retainSummary(Settings, Entry, F, Witness);
+    LowFunc F = Builder.build(Image, Dec, Entry);
+    const llvm::scope_exit Retain([&] {
+      if (RetainBody)
+        Settings.SharedX87CallGraphs->retainSummary(Settings, Entry, F,
+                                                    Witness);
+    });
     if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
         F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
       return G;
@@ -1103,14 +1224,15 @@ public:
   }
 };
 
-std::shared_ptr<const CallRegisterBody> CFGBuilder::cachedCallRegisterBody(
+std::shared_ptr<const X87CallGraphCache::SummaryFacts>
+X87CallGraphCache::validatedSummary(
     const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
     va_t Entry, const std::set<va_t> *Entries,
     const libc::NoReturnTargetIndex *NoReturnTargets,
     const NoReturnCalleeProver *NoReturnCallees,
     const detail::AbsoluteRelocationRootIndex *RelocationRoots,
-    const ExecutableCodeOwnerIndex *CodeOwners) {
-  if (!Cache || Img.Arch != Arch::X64 || ReplayingCallRegisterBody)
+    const ExecutableCodeOwnerIndex *CodeOwners, bool RequireFunction) {
+  if (Img.Arch != Arch::X64 || ReplayingCallRegisterBody)
     return {};
   CFGBuilder Request;
   Request.CurrentImg = &Img;
@@ -1120,8 +1242,8 @@ std::shared_ptr<const CallRegisterBody> CFGBuilder::cachedCallRegisterBody(
   Request.setAbsoluteRelocationRootIndex(RelocationRoots);
   Request.setExecutableCodeOwnerIndex(CodeOwners);
   Request.setX87CallGraphCache(Cache);
-  const auto Facts = Cache->summary(Request, Entry);
-  if (!Facts)
+  const auto Facts = summary(Request, Entry);
+  if (!Facts || (RequireFunction && !Facts->Function))
     return {};
   // A registered callback can synchronously request a summary itself. Leave
   // nested requests to their ordinary build instead of replaying recursively.
@@ -1140,7 +1262,46 @@ std::shared_ptr<const CallRegisterBody> CFGBuilder::cachedCallRegisterBody(
   for (va_t Target : Facts->Calls)
     if (Effects.effect(Target) == std::optional<int>(-1))
       return {};
-  return {Facts, &Facts->Body};
+  return Facts;
+}
+
+std::shared_ptr<const CallRegisterBody> CFGBuilder::cachedCallRegisterBody(
+    const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+    va_t Entry, const std::set<va_t> *Entries,
+    const libc::NoReturnTargetIndex *NoReturnTargets,
+    const NoReturnCalleeProver *NoReturnCallees,
+    const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+    const ExecutableCodeOwnerIndex *CodeOwners) {
+  if (!Cache)
+    return {};
+  const auto Facts = Cache->validatedSummary(
+      Cache, Img, Entry, Entries, NoReturnTargets, NoReturnCallees,
+      RelocationRoots, CodeOwners, /*RequireFunction=*/false);
+  return Facts ? std::shared_ptr<const CallRegisterBody>(Facts, &Facts->Body)
+               : nullptr;
+}
+
+std::optional<LowFunc> CFGBuilder::cachedDefaultFunction(
+    const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+    va_t Entry, const std::string &Name, const std::set<va_t> *Entries,
+    const libc::NoReturnTargetIndex *NoReturnTargets,
+    const NoReturnCalleeProver *NoReturnCallees,
+    const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+    const ExecutableCodeOwnerIndex *CodeOwners) {
+  if (!Cache)
+    return std::nullopt;
+  const auto Facts = Cache->validatedSummary(
+      Cache, Img, Entry, Entries, NoReturnTargets, NoReturnCallees,
+      RelocationRoots, CodeOwners, /*RequireFunction=*/true);
+  if (!Facts)
+    return std::nullopt;
+  LowFunc Result = *Facts->Function;
+  Result.Blocks = Facts->Body.Blocks;
+  if (Facts->Exception)
+    Result.ExceptionMetadata = *Facts->Exception;
+  Result.Name =
+      Name.empty() ? (kAutoFuncPrefix + llvm::utohexstr(Entry)).str() : Name;
+  return Result;
 }
 
 std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
