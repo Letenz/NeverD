@@ -16,6 +16,7 @@
 
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X87Constant.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-intrinsic"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -95,7 +96,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
 
-  if (IC == I::CetRdSsp || isX86FPStateIntrinsic(IC)) {
+  if (IC == I::CetRdSsp || isX86FPStateIntrinsic(IC) ||
+      isX87ConstantControlIntrinsic(IC)) {
     if (TargetArch != Arch::X86 && TargetArch != Arch::X64)
       llvm::report_fatal_error("x86 FP state requires an x86 target");
     return emitX86IntrinsicValue(Op, IC, Builder);

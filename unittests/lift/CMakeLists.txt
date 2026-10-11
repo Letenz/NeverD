@@ -3778,6 +3778,12 @@ add_neverd_unittest(NeverDX86F16CStateTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86F16CStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86X87ConstantTests
+  x86_64/X86_64_X87ConstantTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87ConstantTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)

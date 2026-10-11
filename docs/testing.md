@@ -168,6 +168,21 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86X87ConstantTests` compares all seven x87 constant-load encodings
+with native Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Each form
+checks the ten raw binary80 bytes, complete destination guards and the outgoing
+control word for every RC, defined PC and exception-mask combination. Separate
+incoming and internally loaded controls detect lost FLDCW commits. The concrete
+matrix uses independent original-byte instructions, including masked sticky
+precision; malformed shapes, unknown control and pending waiting boundaries
+refuse without publishing a result. Owned assembly retains exact selectors,
+pointer types, side effects and clobbers. C uses raw eighty-bit storage even
+where the host long double is only binary64. This is numerical/control-word
+coverage, not complete source TOP, tags, condition codes, exception delivery or
+pending-exception versus source-memory-fault ordering. Native checks require
+x64 and Clang; x86-32 has contract checks only.
+
+
 `X87CallStack` tests call/consume loops and forwarding chains on x86/x64 in
 ELF, COFF and Mach-O. Negative cases cover inconsistent returns, recursion,
 depth exhaustion, uninitialized/popped slots, resets, tag invalidation and

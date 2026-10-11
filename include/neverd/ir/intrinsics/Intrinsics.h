@@ -342,6 +342,12 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/intrinsics_x86.inc"
 #include "neverd/ir/intrinsics/intrinsics_x86_fp_state.inc"
 
+  // Append after the existing x86 FP family to preserve every published ID.
+  // LoadConstant retains its ROM selector and explicit incoming control word.
+  X87ReadControl,
+  X87WriteControl,
+  X87LoadConstant,
+
   _Count = 16000
 };
 

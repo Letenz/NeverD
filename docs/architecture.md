@@ -1840,6 +1840,18 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
+`ir/X87Constant.h` owns binary80 constant-ROM values and the bounded explicit
+control-word contracts. `X87ReadControl` imports the actual word at each read;
+`X87WriteControl` commits it, and `X87LoadConstant` retains its selector and
+incoming word. Native LLVM and both C routes execute the original constant
+instruction into raw eighty-bit storage, so Windows binary64 long double
+cannot narrow it. Concrete values round directly from the ROM according to RC,
+independently of PC. Waiting concrete boundaries refuse unknown or pending
+state. These value contracts share the existing CFG stack projection; they do
+not establish complete source TOP/tag/condition-code or fault-order semantics.
+Reserved control fields remain outside concrete admission. Swift refuses this
+completion surface until it has an equivalent lowering.
+
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
 containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
