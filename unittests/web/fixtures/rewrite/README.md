@@ -19,5 +19,11 @@ Adding new pass evidence must not silently alter existing primitive receipts.
 `scope-renaming-v1-receipt.json` was captured from published `8a1a303a0`, before
 adding Boolean branch selection, using the exact self-authored `WebRenameSDK`
 single-file fixture named `input.js`, script goal and revision 1. Its SHA-256
-is `434de5241d88899e51247722e0595106718cdecb3b99821fab1c1253b199eabc`.
+was `434de5241d88899e51247722e0595106718cdecb3b99821fab1c1253b199eabc`.
+That `rewrite_steps` value counted comparator calls, which differ between C++
+libraries (1352 with macOS libc++, 1386 with Linux libstdc++). Ordered searches
+and sorts now charge deterministic comparison bounds, so the receipt was
+re-exported from the same fixture: 1446 steps, SHA-256
+`d2c8b50fdec7fa921b1d771bb8726d6aaa8945e24174b56a9a8752a324311e1b`, and every
+other byte unchanged. The primitive receipts above were unaffected.
 It likewise has no final newline; the SDK compares the complete raw export.

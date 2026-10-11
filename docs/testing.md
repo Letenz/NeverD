@@ -168,6 +168,24 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86ComiStateTests` compares the sixteen legacy/VEX COMISS/UCOMISS and
+COMISD/UCOMISD register/memory forms with Codegen, HighC and LLVMC at
+default/NoOpt and C O0/O2. Observers retain all defined arithmetic flags,
+MXCSR, both complete source YMM values and output guards. Signed zeros,
+subnormals, infinities and quiet/signaling NaNs exercise all RC/DAZ/FTZ/sticky
+combinations. The concrete matrix additionally checks invalid/denormal mask
+controls; normally completing states execute on hardware, while faulting
+controls use masked native exception classification and separate fault children.
+Native children retain exact outgoing exception status and uncommitted output.
+Protected page ends distinguish complete scalar reads from partial faults;
+Windows private GS sources retain the actual base. Contract checks cover raw
+physical XMM roles, metadata mutations, Low/Med/High shapes, owned assembly,
+memory permissions, canonical addresses and unknown state. The accompanying
+`MedCallingConvFPStack` test covers immutable scalar homes in ELF/Mach-O/COFF.
+These native observers require x64/Clang/AVX; fault contexts use Windows/Linux,
+and the native GS observer requires Windows x64. They do not certify x86-32
+native, EVEX COMI/SAE, enabled alignment checking or CPU-feature faults.
+
 `NeverDX86X87ConstantTests` compares all seven x87 constant-load encodings
 with native Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Each form
 checks the ten raw binary80 bytes, complete destination guards and the outgoing
@@ -204,11 +222,26 @@ actual warm hits, identical cold/warm budget consumption and a fresh successful
 proof when the same address belongs to a different valid image. Truncated
 instruction streams remain unretained.
 
+Publishing an additional code reference may retain the pipeline's raw x87
+graphs, but cannot retain an earlier tag proof. A shared-cache test publishes a
+new entry before FXAM: every raw-query budget still matches a cold query, while
+ordinary warm and cold builds both reject the newly unknown tag state.
+`InternalNoReturn` checks that termination-only builds avoid querying unused
+floating-return callees, restore binary80 call/return definitions on builder
+reuse, and preserve the full path for local x87 operations, resets and FXAM.
+Returning, terminating and unresolved exception handlers retain their original
+no-return verdicts on x86 and x64.
+
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
 inputs, independent proof budgets, exception and incomplete-lift wakeups,
 different contexts, and reentrant callbacks across threads and caches. These
 overlaps are coordinated by conditions rather than assumed from timing.
+Independent call-proof tests hold two distinct callee builds at their real
+no-return callbacks, require both to enter before release, and compare complete
+LowIR with a serial build on x86/x64 in ELF, COFF and Mach-O. Injected failures
+must return only after all workers join. An unregistered callback stays on its
+original thread even when the caller supplies a parallel quota.
 
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
@@ -571,6 +604,17 @@ Run the complete owning Web directory and worker/MCP suites after changes to
 the session boundary; verify advisory core/SDK/transport checks with JS omitted
 and all C stubs with the backend omitted, then restore both flags to ON.
 
+`WebAttestationEncoding.*`, `WebPackageAttestations.*` and
+`WebPackageAttestationSDK.*` cover independent Base64 vectors, exact DSSE bytes,
+registry conflicts, SLSA chronology, unsupported digests, known SHA-256/SHA-512
+byte comparisons, private publication, import/result ceilings, shared descriptor
+accounting, canonical digest pages, reset and CLI operation with unusable PATH.
+`NEVERD_CLAUDE_CODE_21295_REGISTRY` selects the previously captured metadata
+SHA-256 `5b08bcfe0bd28ab796d40388a360e8f5b5d5db672376106887972e0715109578`;
+the test verifies two separately retained signature declarations, never their
+cryptographic validity. Worker/MCP compare the same metadata and digest receipts
+and reject key/verification fields. Use the same omission/restoration matrix.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
@@ -835,8 +879,10 @@ Latin-1, UTF-16 surrogate pairs, client UTF-8, CRLF and excluded terminators.
 `NeverDWebSourceMapTests` checks map deltas, index offsets and UTF-16 coordinates,
 plus Bun serialized-map windows, rare/duplicate anchors, preserved compiler
 source hashes, complete truncation boundaries and bounded Zstd frames. Bun map
-cases explicitly skip when LLVM lacks native Zstd support; SDK capability and
-unavailable-path checks remain active. No external decoder is used.
+cases explicitly skip when both LLVM Zstd and the exact native static SDK
+1.5.7 are absent; SDK capability and unavailable-path checks remain active.
+With Zstd-free LLVM, `-DCMAKE_DISABLE_FIND_PACKAGE_zstd=ON` tests that omission.
+No external decoder is used.
 `NeverDWebSDKTests` exercises C ABI ownership, revisions, private source/binding/semantic/map
 evidence and the CLI with an unusable external-tool `PATH`, including large
 originals refused by the smaller source/map limits before materialization.
@@ -856,6 +902,15 @@ ELF/Mach-O/PE compiler images for the additional ARM64/x64 targets; absent full
 images are a skip. Preserved graph tests use synthetic wrappers and cannot
 replace this qualification. All reads, negative mutations and golden member
 checks are C++, and the generated targets are never run.
+
+`WebBunSourceMapCorpus.OptionalSixPlatformImagesRecoverIndependentOriginalSources`
+requires both `NEVERD_BUN_142_CORPUS` and `NEVERD_BUN_142_CROSS_CORPUS` plus the
+native decoder. It checks twelve full Linux ELF, thin macOS Mach-O and Windows
+PE x64/ARM64 asset/cache images against their recorded original container hashes,
+recovers the independently authored original source hashes, validates generated
+and original coordinate boundaries, and retains exact stored-frame anchors.
+Absence of either corpus or the decoder is an explicit skip. This fixture
+does not qualify other producer versions or bytecode recovery.
 
 `NeverDWebNativeTests` compares file and immutable-buffer loading of synthetic
 ELF/PE/thin Mach-O, verifies direct native bytes and static decompilation after
@@ -1760,6 +1815,13 @@ Calls, stores, ordered memory and non-default address spaces remain observable
 even when several assignments share an expression. Cyclic expression graphs
 exercise effect propagation in both encounter orders; cleanup must terminate
 without dropping an effect or its inputs.
+
+Cleanup progress regressions distinguish rejected copy candidates from actual
+replacements, including simplification that makes a previously unstable candidate
+safe on the next round. Shared-node operator changes, child replacements and
+in-place operand rewrites must report progress and preserve independent
+interpreter results. Refused ordered-memory rewrites report no progress and
+retain the access.
 
 `CProjectionIdentifiers.*` in `NeverDHighControlFlowTests` checks first-free
 source names after dense and explicit suffix collisions, canonicalization,

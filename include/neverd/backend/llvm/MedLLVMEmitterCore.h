@@ -40,6 +40,7 @@
 #define NEVERD_BACKEND_LLVM_MEDLLVMEMITTERCORE_H
 #include "neverd/backend/llvm/MedLLVMEmitterState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/loader/BinaryImage.h"
@@ -457,6 +458,10 @@ private:
   /// physical-register rescan is permitted here.
   llvm::Value *synthesizeTwoTableSelector(const JumpTable &JT, int BlockId,
                                           llvm::IRBuilder<> &Builder);
+
+  /// The function, image and definition lookups the shared dispatch selector
+  /// recovery (MedDispatchSlots.h) reads.
+  MedDispatchContext dispatchContext() const;
 
   /// Trace an INDIR_BR target var back to the scaled index of its table load,
   /// forwarding through a stack spill of the target (a peeled first switch

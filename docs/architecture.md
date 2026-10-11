@@ -281,6 +281,12 @@ The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional
 destinations after an ordinary no-return call.
+The internal no-return index requests a termination-only x86 CFG projection.
+It omits floating-return recovery when the body has no local ST use, TOP change,
+reset or FXAM. Such return values cannot affect this projection's control flow.
+A local consumer instead rebuilds through ordinary floating-stack normalization;
+the reduced body is never published as LowIR or passed to register summaries.
+The builder restores ordinary behavior before returning, including on exceptions.
 Registration-state transfer also consumes the exact unconditional no-return
 instruction boundary. Missing call-frame effects still refuse memory borrows,
 but cannot recreate that call's ordinary continuation or suppress its handlers.
@@ -582,6 +588,11 @@ validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
 Adding a target container does not change source semantics or imply native
 machine-code/bytecode decompilation.
+`BunSourceMap` owns serialized-map framing, coordinates, Zstd envelope preflight
+and decoded-content budgets. `compression/Zstd` only selects an in-process
+decoder and writes into bounded caller-owned output: LLVM Support first, then
+an optional static Zstandard 1.5.7 SDK when LLVM omits Zstd. Failed output is
+discarded by the format owner; adapters never choose a codec or invoke a tool.
 `sea/Container` and the format readers independently locate explicit Node SEA
 resources; `sea/Blob` owns their serialization, region partition and private-key
 budgets. `SessionSEA` publishes revision-bound metadata and exposes only stored
@@ -662,6 +673,14 @@ These metadata owners do not depend on the JS parser and do not alter existing
 inventory or integrity results. All consumers use the same owners; no transport
 fetches a feed or interprets a negative row as package safety. See the
 [advisory profile](web-package-advisory-profile.md).
+`packages/attestations` separates registry, DSSE/statement, SLSA metadata,
+bounded encoding, explicit subject-digest selection and publication.
+`Digest` delegates original-byte comparisons to `PackageIntegrity`;
+`packages/evidence/Publication` owns shared descriptor/time output.
+`SessionPackageAttestations` shares descriptor and retained-byte ceilings with
+advisory imports and keeps four independent original-byte receipts. No metadata
+reader fetches a key or treats subject equality as signature authentication or
+package-inventory binding. See the [attestation profile](web-package-attestation-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
@@ -1071,6 +1090,12 @@ value is dead in every feasible context. Calls, loads, and stores keep their
 observable behavior; source labels survive removal. Adjacent byte slices of
 the same local are simplified in HighIR before this analysis, preserving their
 result type. This identity does not merge independent loads or calls.
+Iterative HighIR cleanup treats an inline candidate as progress only after the
+shared stability proof admits it and a use is replaced. Expression simplification
+reports both replacements and in-place changes to shared nodes. With candidates
+present, another cleanup round requires a statement deletion, inlining or
+simplification; rejected candidates alone do not repeat the same analysis. The
+existing stopping point without candidates and iteration limits remain unchanged.
 Med-to-High lowering preserves CFG successors after branch threading, including
 sole successors with no remaining branch operation. When source order differs,
 it emits an explicit transfer after that edge's PHI copies.
@@ -1806,10 +1831,24 @@ graphs or empty projection-refusal markers across its independent CFG builders,
 under an 8 MiB retained-payload allowance including the construction context.
 This bounds the shared cache, not active builders or their private graph
 references.
+When a selected-function batch runs inline, the pipeline can assign its unused
+worker quota to independent x87 call proofs. At least two targets and 4 KiB of
+known callee extent admit at most four workers. This is a scheduling hint, not a
+proof bound: each query retains its own complete allowance and recursion state.
+The builder collects the normalization walk's exact call/loaded-slot targets
+before rewriting any operations, joins every worker, then publishes answers or
+rethrows failures in instruction order. Parallel CFG batches and extra-callee
+frontiers keep serial inner proofs. Registered callback owners and an explicit
+caller quota are required; arbitrary callbacks and nested graph builds keep
+their original calling thread.
 Exact function-boundary and jump-table protection sets, no-return proof depth
-and index identities bind each graph to its construction context. Image facts
-remain unchanged while a cache is shared; publishing new code references starts
-a fresh cache before additional callees are analyzed. Cache locks cover lookup
+and index identities bind each graph to its construction context. Image bytes,
+ownership and relocation metadata remain unchanged while a cache is shared.
+The pipeline's final additive `CodeRefTargets` publication may retain these raw
+graphs with its existing memoized no-return indexes: raw graph builders skip
+stack/tag normalization and do not consume that inventory. Every ordinary CFG
+still computes its tag-entry seeds against the new references; normalized CFGs
+and caller-dependent effect answers are never retained. Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated
@@ -1931,6 +1970,19 @@ invalid conversions. HighC and the LLVM lowering select that same policy;
 both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
+
+`ir/X86FPComiState.h` owns legacy/VEX COMI and UCOMI flag/MXCSR completion.
+One raw aggregate carries LAHF's defined status byte below outgoing MXCSR;
+it never acquires scalar floating provenance. Source reads and actual compare
+instructions remain inside the native completion scope. Low/Med/High validation,
+LLVM and both C routes retain operand roles, signaling mode and memory spaces.
+Scalar stack-home recovery retains both numerical inputs and the same CSR when
+it replaces an immutable memory source. `ir/X86FPComparison.h` owns each active
+lane's NaN, denormal, DAZ and relation classification for both COMI and existing
+EVEX predicates. Concrete unmasked exceptions publish state but no flag result;
+failed reads publish neither. EVEX COMI/SAE, enabled alignment checking and
+unavailable-feature faults remain outside this completion surface. Swift
+refuses it until it has an equivalent lowering.
 
 `ir/X87Constant.h` owns binary80 constant-ROM values and the bounded explicit
 control-word contracts. `X87ReadControl` imports the actual word at each read;

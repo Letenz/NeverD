@@ -77,6 +77,14 @@ JavaScript parsing omitted. Missing or unsupported evidence remains explicit;
 the tools never fetch a feed, validate a publisher or infer exploitability.
 See the [advisory profile](web-package-advisory-profile.md).
 
+The four package attestation tools import explicit captured registry/in-toto/
+DSSE metadata, page its signature/subject/digest declarations, compare one
+selected digest with original bytes and retrieve that receipt. They remain
+available without JavaScript parsing. No tool accepts a key path, fetch URL,
+verification flag or raw-payload switch. Signature verification and package
+inventory binding remain unverified; see the
+[attestation profile](web-package-attestation-profile.md).
+
 MCP does not expose source review options or raw export. Structural source
 views replace private identifiers/literals/comments according to the shared
 view policy. A preview token remains a backend publication token, not proof

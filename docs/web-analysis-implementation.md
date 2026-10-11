@@ -42,7 +42,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI, selected source behavior/inventory joins, literal lifecycle entry/request chains and selected behavior comparison implemented; official Claude Code packages qualify original digest, payload and two-version wrapper evidence | Broader lifecycle/loader profiles, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
+| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, and captured registry/in-toto/DSSE/SLSA metadata with explicit subject-digest comparison implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature metadata | Composed assessments, dispositions, readable reports, broader lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
@@ -2167,3 +2167,119 @@ explicitly skipped. After restoring both options, all 24 advisory cases, ten
 worker suites, five MCP suites and enabled ABI discovery passed. Logs:
 `/tmp/neverd-advisory-{off,restored}-{config,build,api,worker,mcp}.log` and
 `/tmp/neverd-advisory-restored-focused.log`.
+
+## Captured signature and provenance metadata
+
+The `offline-package-attestation-metadata-v1` increment adds explicitly
+selected npm registry, in-toto Statement v1, DSSE and SLSA provenance v1
+metadata subsets. Native bounded Base64 admission preserves exact decoded
+DSSE bytes; signature declarations retain independent array positions even
+when key IDs repeat. Unknown statement/predicate types, absent declarations,
+invalid encodings and contradictory timestamps remain distinct states.
+Names, key IDs, signature bytes and URIs stay private. No keys are fetched and
+no signature, publisher, trust chain, transparency log or SLSA level is
+authenticated. The [profile](web-package-attestation-profile.md) records the
+precise boundary.
+
+One explicitly selected in-toto SHA-256/SHA-512 declaration can be compared
+against one captured original through the existing package integrity owner.
+Canonical subject/digest ordinals and identity recipes prevent a foreign or
+forged selection from becoming evidence. The receipt binds original and
+declaration artifact/hash anchors; it does not bind an installed package or
+authenticate another subject. The reader/publisher live under
+`packages/attestations`; `packages/evidence/Publication` now owns the shared
+descriptor/time output. Session, four C APIs, CLI, worker and MCP consume these
+owners. Imports, parsed metadata and explicit comparisons have independent
+limits and atomic refusal; descriptors and the 8 MiB retention ceiling are
+shared with captured advisories.
+
+The first focused run exposed test expectations that disagreed with existing
+SRI and source-cache field names. Those expectations now use their owning
+contracts. The CLI test also placed temporary storage in its input root,
+correctly triggering `input_changed` when the spool was created and unlinked.
+Its temporary directory now stays outside the capture, with child output
+included in failure diagnostics. All 45 advisory/attestation core and SDK
+cases pass, including shared metadata exhaustion, exact replay, malformed
+inputs, paging, stale revisions and an unusable external-tool PATH. Logs:
+`/tmp/neverd-attestation-{core-tests,focused-tests,sdk-diagnosis-tests,repaired-tests}.log`.
+
+The actual CLI reads preserved official Claude Code 2.1.295 and 2.1.296 npm
+registry captures. Each retains two unverified signatures and original hashes;
+unknown capture timestamps remain absent. The
+[qualification](web-package-attestation-qualification.md) pins inputs and
+reports. The earlier advisory report remains byte-identical after the shared
+publisher change. Complete enabled Web regression passes 652 of 659 cases,
+including all 2,345 stored Claude Code JS units; six unavailable LLVM Zstd map
+cases and the ASAR-policy omission case explicitly skip. Ten worker suites,
+five MCP suites and enabled ABI discovery pass. Logs:
+`/tmp/neverd-attestation-{full-web,worker,mcp,api}.log`.
+
+With JavaScript disabled, all 45 focused cases, worker Web, all five MCP
+suites and enabled ABI discovery pass; the real 2.1.296 report is byte-identical.
+With the complete backend disabled, both ABI/stub cases and four MCP suites
+pass; worker Web and actual Claude extraction explicitly skip. Both options
+are restored to ON. The restored 45 unique focused cases, ten worker suites,
+five MCP suites and enabled ABI discovery pass. Concurrent CTest discovery
+initially duplicated generated SDK registrations; regenerating that local
+index and rerunning the focused suite confirms the count without counting
+replays as additional coverage. Logs:
+`/tmp/neverd-attestation-{nojs,off,restored}-{config,build,worker,mcp,api}.log`,
+`/tmp/neverd-attestation-nojs-focused.log` and
+`/tmp/neverd-attestation-restored-focused-unique.log`.
+LLVM formatting, the 23-capability manifest and source provenance across
+7,301 tracked files and 16 history commits pass.
+
+Composed assessments, analyst dispositions, readable reports and the broader
+acceptance work remain; this increment does not close #715 or the other epics.
+
+## Optional native Bun map decoder — 2026-10-12
+
+`compression/Zstd` prefers the linked LLVM decoder and optionally uses the
+exact native static Zstandard 1.5.7 SDK when LLVM omits Zstd. It writes into
+the caller's bounded buffer; `BunSourceMap` remains the sole owner of frame,
+window/output/blocks, size and UTF-8 admission. No tool, script or sample is
+executed and no decoder is downloaded. The original BSD notice is staged in
+binary and SDK license directories and the install tree. The
+[profile](web-bun-profile.md#native-static-sdk-qualification--2026-10-12)
+pins all twelve actual CLI report hashes.
+
+The first corpus test found the historical Linux x64 manifest's
+`full_elf_sha256` field, while the other five targets use
+`full_container_sha256`. Selecting each fixture's actual field fixes the
+test without changing recorded hashes. The six-target/twelve-image test now
+passes, checking independently authored original sources and stored anchors.
+All twelve CLI commands pass with an unusable external-tool PATH. Their Linux
+x64 decoded module/map/source pages match the earlier LLVM-backed reports
+exactly. Logs: `/tmp/neverd-zstd-{core-tests,six-platform-tests}.log`.
+
+The 690-step full interface integration rebuild and the subsequent two-step
+corpus-test rebuild pass. Complete Web regression passes 659 of 660 cases,
+including all 2,345 stored Claude Code JS units; only the ASAR-policy omission
+case skips. The six formerly unavailable decoder cases now run and pass.
+All five MCP suites pass; enabled ABI discovery passes with the backend-off
+case explicitly skipped. The full worker directory passes 21 of 24 tests,
+with three absent native name/listing fixtures skipped. Logs:
+`/tmp/neverd-zstd-{enabled-build,reconciled-build,full-web,worker,mcp,api}.log`.
+
+With the SDK explicitly omitted and LLVM Zstd absent, all nine ordinary map
+cases pass and seven decoder/corpus cases skip. All three focused SDK/CLI/anchor
+cases pass, and the actual CLI returns `bun_source_map_zstd_unavailable` with
+an unusable external-tool PATH. Logs:
+`/tmp/neverd-zstd-omitted-{config,build,map-tests,sdk-tests}.log`.
+With the SDK restored and JavaScript parsing disabled, all sixteen map cases
+pass, including the twelve real images, along with the two compiled focused
+SDK cases, worker Web, five MCP suites and enabled ABI discovery. The actual
+Linux x64 asset-map CLI report is byte-identical to its parser-enabled report.
+Logs: `/tmp/neverd-zstd-nojs-{config,build,map-tests,sdk-tests,worker,mcp,api}.log`.
+The native license copies match the original BSD notice byte-for-byte and
+neither the CLI nor SDK shared library requires a Zstd runtime dylib.
+
+Both feature flags are restored to ON with the SDK enabled. All sixteen map
+cases, three focused SDK cases, four selected worker suites, five MCP suites
+and enabled ABI discovery pass after the 168-step restoration build. Logs:
+`/tmp/neverd-zstd-restored-{config,build,map-tests,sdk-tests,worker,mcp,api}.log`.
+LLVM formatting, the 23-capability manifest and the source-provenance check
+over 7,310 tracked files and sixteen history commits pass. This increment
+adds no C API symbols; complete-backend omission keeps the earlier qualified
+stubs and is not separately requalified here. Composed package assessments,
+reports and the broader #714–#718 acceptance work remain.

@@ -51,9 +51,8 @@ bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
     Builder.setAbsoluteRelocationRootIndex(Roots);
     Builder.setExecutableCodeOwnerIndex(CodeOwners);
     Builder.setNoReturnCalleeProver(this, Depth + 1);
-    const LowFunc Callee =
-        Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target));
-    Proved = lowFunctionNeverReturns(Callee, Img.Arch);
+    Proved = Builder.buildNoReturnProof(Img, Dec, Target,
+                                        Img.getFunctionNameAt(Target));
   }
   std::lock_guard<std::mutex> Lock(Mutex);
   return Proofs.emplace(Key, Proved).first->second;

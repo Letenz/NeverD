@@ -126,6 +126,33 @@ NEVERD_API const char *neverd_web_package_advisories_match_records_json(
     size_t RevisionSize, const char *MatchesID, size_t MatchesIDSize,
     uint64_t Offset, uint64_t Limit);
 
+/// Import captured registry-dist, intoto-statement or dsse-intoto metadata.
+/// Descriptor uses the shared offline source/time schema. No signature,
+/// publisher, trust chain, transparency or SLSA level authentication.
+NEVERD_API const char *neverd_web_package_attestation_import_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DescriptorArtifactID, size_t DescriptorArtifactIDSize,
+    const char *InputKind, size_t InputKindSize);
+/// RecordKind is signatures, subjects or digests. Limit is 1..512. Private
+/// names, URIs, key IDs, signature bytes, digests and payloads stay redacted.
+NEVERD_API const char *neverd_web_package_attestation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AttestationID, size_t AttestationIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+/// Match ONE explicit SHA-256/SHA-512 subject digest against a captured
+/// original using the integrity owner. No other subjects or digests are
+/// checked; equality does not bind an inventory or authenticate the signer.
+NEVERD_API const char *neverd_web_package_attestation_digest_match_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *AttestationID, size_t AttestationIDSize, const char *DigestID,
+    size_t DigestIDSize);
+NEVERD_API const char *neverd_web_package_attestation_digest_result_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *MatchID, size_t MatchIDSize);
+
 /// Explicit tar/tgz/zip profile; captured originals only, no recursive
 /// extraction.
 NEVERD_API const char *neverd_web_package_archive_extract_json(

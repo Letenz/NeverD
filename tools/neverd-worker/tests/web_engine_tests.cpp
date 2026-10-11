@@ -1307,6 +1307,11 @@ int main(int argc, char **argv) {
           "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})";
     std::ofstream(packageRoot / "zzzc.package")
         << R"({"name":"SECRET_WEB","version":"1.0.0"})";
+    std::ofstream(packageRoot / "zzzd.statement")
+        << R"({"_type":"https://in-toto.io/Statement/v1",
+          "subject":[{"name":"SECRET_WEB","digest":{"sha256":
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}}],
+          "predicateType":"SECRET_WEB"})";
     const Json packagePreview{{"schema_version", 1},
                               {"path", packageRoot.string()}};
     preview = web.execute("web_import_preview", packagePreview);
@@ -1612,6 +1617,67 @@ int main(int argc, char **argv) {
                          packageRevision, packageProject);
     check(reply["error"]["code"] == "invalid_request",
           "Worker accepted remote metadata fetching");
+    const Json attestationImport{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][11]["artifact_id"]},
+        {"descriptor_artifact_id", packageArtifacts["items"][9]["artifact_id"]},
+        {"input_kind", "intoto-statement"}};
+    const auto attestation =
+        web.execute("web_package_attestation_import", attestationImport);
+    reply = process.call("web_package_attestation_import", attestationImport,
+                         packageRevision, packageProject);
+    check(reply["payload"] == attestation &&
+              attestation["signature_verification"] == "not_performed" &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker changed private attestation metadata");
+    Json digestRows;
+    for (const auto *kind : {"signatures", "subjects", "digests"}) {
+      const Json args{
+          {"schema_version", 1},
+          {"revision", packageRevision},
+          {"package_attestation_id", attestation["package_attestation_id"]},
+          {"record_kind", kind}};
+      const auto direct = web.execute("web_package_attestation_records", args);
+      reply = process.call("web_package_attestation_records", args,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed attestation original records");
+      if (std::string_view(kind) == "digests")
+        digestRows = direct;
+    }
+    const Json digestArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][6]["artifact_id"]},
+        {"package_attestation_id", attestation["package_attestation_id"]},
+        {"digest_id", digestRows["items"][0]["digest_id"]}};
+    const auto digestResult =
+        web.execute("web_package_attestation_digest_match", digestArgs);
+    reply = process.call("web_package_attestation_digest_match", digestArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] == digestResult &&
+              digestResult["integrity_status"] == "match" &&
+              digestResult["publisher_authenticated"] == false &&
+              digestResult["package_inventory_bound"] == false,
+          "Worker upgraded byte equality to authentication");
+    const Json resultArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_attestation_digest_match_id",
+         digestResult["package_attestation_digest_match_id"]}};
+    reply = process.call("web_package_attestation_digest_result", resultArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] ==
+              web.execute("web_package_attestation_digest_result", resultArgs),
+          "Worker lost retained digest result");
+    auto invalidAttestation = attestationImport;
+    invalidAttestation["key_path"] = "SECRET_WEB";
+    reply = process.call("web_package_attestation_import", invalidAttestation,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted a key path");
     for (const auto &a : caps["analysis"])
       if (a["kind"] == "package_archive") {
         hasArchive = a["available"];

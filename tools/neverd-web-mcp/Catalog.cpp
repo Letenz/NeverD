@@ -251,6 +251,21 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
        text("package_analysis_id"),
        {"advisory_ids", Field::Kind::StringArray, false, 16, 0}});
   Page("web_package_advisories_match_records", "package_advisory_matches_id");
+  Add("web_package_attestation_import",
+      "Read selected captured registry, in-toto or DSSE metadata without "
+      "fetching keys or authenticating the signature or publisher.",
+      {decimal("revision"), text("artifact_id"), text("descriptor_artifact_id"),
+       text("input_kind", 24)});
+  Page("web_package_attestation_records", "package_attestation_id", true);
+  Add("web_package_attestation_digest_match",
+      "Compare one selected subject digest to original bytes. Equality does "
+      "not authenticate the statement or bind a package inventory.",
+      {decimal("revision"), text("artifact_id"), text("package_attestation_id"),
+       text("digest_id")});
+  Add("web_package_attestation_digest_result",
+      "Read an existing original-byte digest comparison and its evidence "
+      "anchors.",
+      {decimal("revision"), text("package_attestation_digest_match_id")});
   Add("web_package_integrity_verify",
       "Compare captured bytes to selected integrity declarations; not a "
       "benignness verdict.",

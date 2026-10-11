@@ -54,6 +54,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_ControlTests.cpp
   arm32/ARM32_ExtendTests.cpp
   arm32/ARM32_IntrinsicsTests.cpp
+  arm32/ARM32_LiteralPoolTests.cpp
   arm32/ARM32_LogicTests.cpp
   arm32/ARM32_MemTests.cpp
   arm32/ARM32_MulDivTests.cpp
@@ -97,6 +98,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_CarryOpsTests.cpp
   x86_64/X86_64_CmpxchgTests.cpp
   x86_64/X86_64_CFGEntryTests.cpp
+  x86_64/X86_64_ComputedGotoTests.cpp
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
   x86_64/X86_64_DoubleShiftTests.cpp
@@ -105,6 +107,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_FlagsMiscTests.cpp
   x86_64/X86_64_FmaMiscTests.cpp
   x86_64/X86_64_FPConvertTests.cpp
+  x86_64/X86_64_ImageTableTests.cpp
   x86_64/X86_64_IntrinsicsTests.cpp
   x86_64/X86_64_LodsMiscTests.cpp
   x86_64/X86_64_LoopBitTests.cpp
@@ -121,6 +124,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SSEAVXTests.cpp
   x86_64/X86_64_SSEFPTests.cpp
   x86_64/X86_64_SSEMiscTests.cpp
+  x86_64/X86_64_SignedCompareTests.cpp
   x86_64/X86_64_StackMovTests.cpp
   x86_64/X86_64_StackMemorySemanticTests.cpp
   x86_64/X86_64_NativeHostModeTests.cpp
@@ -3789,6 +3793,12 @@ add_neverd_unittest(NeverDX86X87ConstantTests
   x86_64/X86_64_X87ConstantTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConstantTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86ComiStateTests
+  x86_64/X86_64_ComiStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86ComiStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp
