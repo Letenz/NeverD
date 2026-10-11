@@ -78,7 +78,7 @@ void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
 /// registers spilled in the block a test of AL alone branches around are the
 /// save area's too: a caller passes the vector arguments AL counts.
 std::set<std::pair<size_t, size_t>>
-findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
+findRegisterSaveAreaSpills(const BinaryImage &Img, CallRegisterBodyView F,
                            const std::map<int, size_t> &IndexOfId) {
   std::set<std::pair<size_t, size_t>> Spills;
   if (Img.Arch != Arch::X64 || Img.abiFormat() == BinaryFormat::COFF ||
@@ -447,7 +447,7 @@ StackValue stackValueOf(const StackState &S, const NdVar &V) {
 /// K * SlotBytes, directly or through a tail call made at the entry stack
 /// pointer.  Anything that could read those slots out of sight makes the
 /// bound unknown.
-void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
+void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  LocalRegisterEffect &Effect) {
@@ -769,9 +769,16 @@ LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
                     const std::map<va_t, GPRReadWidths> *FixedCallReads) {
+  return localRegisterEffect(Img, CallRegisterBodyView(F), NoReturnTargets,
+                             FixedCallReads);
+}
+
+LocalRegisterEffect
+localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
+                    const libc::NoReturnTargetIndex *NoReturnTargets,
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
   LocalRegisterEffect Effect;
-  if (!F.hasCompleteLiftCoverage() ||
-      !F.UnsafeIndirectBranchAddresses.empty() || F.Blocks.empty()) {
+  if (!F.Complete || F.UnsafeIndirectBranches || F.Blocks.empty()) {
     Effect.Unknown = true;
     Effect.Incomplete = true;
     Effect.UnknownStackReads = true;
