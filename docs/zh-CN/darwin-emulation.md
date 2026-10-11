@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: bcff11667836dc88f8fa84f83888f2c0cb0f1ef6491b2c7f731314415833bac6 -->
+<!-- i18n-source: 6ee18d5112a5a593055cea48960f584eae81cb0d01a3414d739e76c7b660c35c -->
 
 [← 文档索引](README.md)
 
@@ -1285,7 +1285,7 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all50 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all51 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
 64 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
@@ -1355,7 +1355,7 @@ OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
 ARM64 matching native mandatory237 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all50 other file routes closed before preflight / static query declarations incompatible
+all51 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
@@ -1386,7 +1386,7 @@ separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
 ARM64 matching native mandatory237 / actual successful execution required
 720 owner observations / 702 literal controls and 18 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all50 other file routes closed before preflight / static query declarations incompatible
+all51 other file routes closed before preflight / static query declarations incompatible
 no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1417,7 +1417,7 @@ runtime hardlink rename held zero-name unlink keep object grant
 created or reused names do not inherit provider grants / path registry not lock authority
 bytes cursors descriptor flags stat records xattrs and allocation unchanged by flock
 mode ownership data namespace policies independent / invalidated records never restored
-all50 other file routes closed before preflight / either static query rejects even empty declaration
+all51 other file routes closed before preflight / either static query rejects even empty declaration
 SDK-free77 service records / 13 guarded full stat observations / separate main return39
 OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime
 64 current native-common cases / 79 mandatory workloads per platform
@@ -1428,3 +1428,41 @@ no external or interprocess peers / no POSIX OFD range locks / no fork or descri
 no MAC listener revocation provider error native-lease or blocking-wait lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
+
+
+## 显式普通文件完整性同步完成
+
+fsync95 与 fsync_nocancel408 在现有无取消请求的单线程配置中共用 Fsync/Int 所有者。DarwinFileOptions::Synchronization 或严格的 darwin_files.synchronization={"objects":["/data"]} 声明立即成功的普通文件完整性同步提供方：已经成功的模型修改已提交，没有待完成工作或取消请求。返回零只确认该显式提供方完成，不会刷新宿主存储，也不证明物理持久化。XNU 的普通入口先检查取消，nocancel 入口没有这一步；一般取消、提供方错误、租约和异步等待仍未知。
+
+```text
+fsync95 / fsync_nocancel408 / Fsync Int owner / low32 FD / raw high carriers retained
+synchronization / objects / explicit immediate successful file integrity completion
+successful modeled mutations already committed / no deferred provider work or requested cancellation
+zero acknowledges declared provider / no host storage flush / no physical durability claim
+normal XNU entry tests cancellation / nocancel entry does not / full cancellation unsupported
+complete ordinary initial regular objects / flags0 / link_count1 / no initial inode alias
+unique strings / at most256 objects / canonical path+NUL shares catalogue byte budget
+missing environment unknown / empty objects no completion grant
+FD lookup first / absent or closed descriptor EBADF9 even without environment
+opaque streams unsupported kind / directory and symlink descriptions need independent providers
+readonly regular description accepted only with explicit object completion grant
+Contents owns grant / dup fcntl dup2 select current description and object
+runtime hardlink rename held zero-name unlink retain original grant
+created and reused names do not inherit completion grants
+VM mapping and retained Contents cannot make closed descriptors valid
+bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
+unknown metadata and xattrs remain unknown / no observation restoration
+all51 other logical file routes closed before preflight / both static queries reject empty declaration
+one alias shares owner / no extra query route for fsync_nocancel
+SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
+OrdinaryFileSynchronizationKeepsProviderAndCommittedState
+65 current native-common cases / 80 mandatory workloads per platform
+ARM64 matching native mandatory240 / actual successful execution required
+504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
+176-byte guarded native stat and cursors unchanged / actual native times
+fdatasync187 F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```
+
+[XNU fsync paths](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU descriptor lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU syscall declarations](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master).

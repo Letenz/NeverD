@@ -58,7 +58,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all50 other file routes closed before preflight")
+                           "all51 other file routes closed before preflight")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
@@ -1932,3 +1932,39 @@ NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "720 literal native lock observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "fsync95 / fsync_nocancel408")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "synchronization / objects")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "explicit immediate successful file integrity completion")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "no deferred provider work or requested cancellation")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "no host storage flush")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "no physical durability claim")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "normal XNU entry tests cancellation")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all51 other logical file routes")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free68 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "20 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return40")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "80 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory240")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "504 original native literal observations")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryFileSynchronizationKeepsProviderAndCommittedState")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "fdatasync187 F_FULLFSYNC51 F_BARRIERFSYNC85")

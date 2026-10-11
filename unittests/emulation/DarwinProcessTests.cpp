@@ -8,6 +8,7 @@
 #include "DarwinFileTestData.h"
 #include "DarwinModeTestData.h"
 #include "DarwinOwnershipTestData.h"
+#include "DarwinSynchronizationTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
 #include "DarwinTimeTestData.h"
@@ -2801,6 +2802,84 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
             "Darwin regular-object mode provider is not configured");
   ASSERT_EQ(Unknown->Services.size(), 5u);
   EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       OrdinaryFileSynchronizationKeepsProviderAndCommittedState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::synchronizationOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t FDs[] = {3, 5, 4, 0xffffffffULL}, Values[] = {0, 0, 0, 9};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-file-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 40);
+    EXPECT_EQ(R->ReturnValue, 40u);
+    EXPECT_EQ(R->StandardOutput, "S");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 68u);
+    constexpr uint64_t PrefixNumbers[] = {5, 5, 41, 199, 339},
+                       PrefixValues[] = {3, 4, 5, 2, 0};
+    for (unsigned I = 0; I != 5; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixValues[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned H = 0; H != 3; ++H)
+      for (unsigned N = 0; N != 2; ++N) {
+        const unsigned Start = 5 + H * 18 + N * 9;
+        for (unsigned I = 0; I != 4; ++I) {
+          const auto &E = R->Services[Start + I];
+          EXPECT_EQ(E.Number, Class | High[H] | (N ? 408 : 95));
+          EXPECT_EQ(E.Result, Values[I]);
+          EXPECT_EQ(E.Error, I == 3);
+          EXPECT_EQ(E.Arguments[0], High[H] | FDs[I]);
+          for (unsigned J = 1; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], 0u);
+        }
+        for (unsigned I = 0; I != 3; ++I) {
+          const auto &E = R->Services[Start + 4 + I];
+          EXPECT_EQ(E.Number, Class | 339);
+          EXPECT_EQ(E.Result, 0u);
+          EXPECT_EQ(E.Error, false);
+        }
+        for (unsigned I = 0; I != 2; ++I) {
+          const auto &E = R->Services[Start + 7 + I];
+          EXPECT_EQ(E.Number, Class | 199);
+          EXPECT_EQ(E.Result, I ? 0u : 2u);
+          EXPECT_EQ(E.Error, false);
+        }
+      }
+    constexpr uint64_t TailNumbers[] = {6, 95, 95, 6, 408, 408, 339, 6, 4},
+                       TailValues[] = {0, 9, 0, 0, 9, 0, 0, 0, 1};
+    for (unsigned I = 0; I != 9; ++I) {
+      const auto &E = R->Services[59 + I];
+      EXPECT_EQ(E.Number, Class | TailNumbers[I]);
+      EXPECT_EQ(E.Result, TailValues[I]);
+      EXPECT_EQ(E.Error, I == 1 || I == 4);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").ChangeTime.Seconds, 5);
+    EXPECT_EQ(Options.DarwinFiles->Synchronization->Objects,
+              (std::set<std::string>{"/data"}));
+  }
+  Options.DarwinFiles->Synchronization->Objects.clear();
+  auto Unknown = run("ordinary-file-synchronization");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic, "Darwin regular-object file integrity "
+                                 "completion provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 6u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 95);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
 }

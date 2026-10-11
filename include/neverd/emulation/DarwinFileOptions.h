@@ -230,6 +230,18 @@ struct DarwinAdvisoryLockOptions {
   std::set<std::string> Objects;
 };
 
+/// Explicit immediate successful regular-vnode file integrity completion.
+/// Successful model mutations have already committed their modeled state;
+/// no deferred provider work or cancellation is requested. This acknowledges
+/// completion within that declared provider, without changing model state.
+/// It does not flush host storage or establish physical durability. Provider
+/// errors, cancellation, revocation, leases and asynchronous waits are unknown.
+struct DarwinFileSynchronizationOptions {
+  /// Initial ordinary regular objects. Grants follow their Contents through
+  /// runtime links/rename/held unlink; created or reused names stay unknown.
+  std::set<std::string> Objects;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -254,6 +266,9 @@ struct DarwinFileOptions {
   /// Independent flock authority; absence is unknown. Either static query
   /// environment rejects this declaration, including an empty object list.
   std::optional<DarwinAdvisoryLockOptions> AdvisoryLocks;
+  /// Independent fsync/fsync_nocancel completion provider; absence is unknown.
+  /// Both static query environments reject even an empty declaration.
+  std::optional<DarwinFileSynchronizationOptions> Synchronization;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

@@ -130,7 +130,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.MovableDirectories.empty() ||
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
-       Options.OwnershipMutations || Options.AdvisoryLocks))
+       Options.OwnershipMutations || Options.AdvisoryLocks ||
+       Options.Synchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -384,6 +385,11 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     for (const auto &Path : Options.AdvisoryLocks->Objects)
       if (auto E =
               AdmitOrdinaryObject(Path, diagnostic::FileAdvisoryLockOption))
+        return E;
+  if (Options.Synchronization)
+    for (const auto &Path : Options.Synchronization->Objects)
+      if (auto E =
+              AdmitOrdinaryObject(Path, diagnostic::FileSynchronizationOption))
         return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
@@ -660,6 +666,8 @@ void DarwinFiles::initializeNamespace() {
     }
     Node->AdvisoryLocks = Options->AdvisoryLocks &&
                           Options->AdvisoryLocks->Objects.contains(Path);
+    Node->Synchronization = Options->Synchronization &&
+                            Options->Synchronization->Objects.contains(Path);
     if (Options->OwnershipMutations) {
       const auto Time = Options->OwnershipMutations->Objects.find(Path);
       if (Time != Options->OwnershipMutations->Objects.end())
@@ -2768,6 +2776,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return unsupported(Result, authorizationScope());
     }
   }
+  if (Service == ServiceKind::Fsync)
+    return synchronize(Event, Result);
   if (Service == ServiceKind::Flock)
     return advisoryLock(Event, Result);
   if (Service == ServiceKind::Poll)

@@ -175,6 +175,7 @@ private:
     const DarwinFileTime *ModeTime = nullptr;
     const DarwinFileTime *OwnershipTime = nullptr;
     bool AdvisoryLocks = false;
+    bool Synchronization = false;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;
@@ -317,6 +318,8 @@ private:
                   ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  synchronize(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);

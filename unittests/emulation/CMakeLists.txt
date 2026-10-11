@@ -235,6 +235,7 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinModeTests.cpp
   DarwinOwnershipTests.cpp
   DarwinAdvisoryLockTests.cpp
+  DarwinSynchronizationTests.cpp
   DarwinPollTests.cpp
   DarwinSelectTests.cpp
   DarwinPselectTests.cpp

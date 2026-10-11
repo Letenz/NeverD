@@ -1106,7 +1106,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
     auto CaseInput = Input;
     if (llvm::StringRef(Test.Mode) == "ordinary-mode-mutations" ||
         llvm::StringRef(Test.Mode) == "ordinary-ownership-mutations" ||
-        llvm::StringRef(Test.Mode) == "ordinary-advisory-locks") {
+        llvm::StringRef(Test.Mode) == "ordinary-advisory-locks" ||
+        llvm::StringRef(Test.Mode) == "ordinary-file-synchronization") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
       CaseInput = (Catalogue / "data").string();

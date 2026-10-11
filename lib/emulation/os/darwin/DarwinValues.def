@@ -222,6 +222,7 @@ NEVERD_DARWIN_SERVICE(GetPriority, 100, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Flock, 131, Int)
+NEVERD_DARWIN_SERVICE(Fsync, 95, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
@@ -280,6 +281,7 @@ NEVERD_DARWIN_SERVICE_ALIAS(Write, 397)
 NEVERD_DARWIN_SERVICE_ALIAS(Open, 398)
 NEVERD_DARWIN_SERVICE_ALIAS(Close, 399)
 NEVERD_DARWIN_SERVICE_ALIAS(Fcntl, 406)
+NEVERD_DARWIN_SERVICE_ALIAS(Fsync, 408)
 NEVERD_DARWIN_SERVICE_ALIAS(Readv, 411)
 NEVERD_DARWIN_SERVICE_ALIAS(Writev, 412)
 NEVERD_DARWIN_SERVICE_ALIAS(Preadv, 542)
@@ -537,6 +539,21 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     FileAdvisoryLockWait,
     "Darwin contended blocking advisory lock wait is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(FileSynchronizationOption,
+                         "Darwin file synchronization grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSynchronizationEnvironment,
+    "Darwin file synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSynchronizationKind,
+    "Darwin file synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileSynchronizationTarget,
+    "Darwin file synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileSynchronizationProvider,
+                         "Darwin regular-object file integrity completion "
+                         "provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")
 NEVERD_DARWIN_DIAGNOSTIC(
