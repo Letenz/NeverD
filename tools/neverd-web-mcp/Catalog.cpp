@@ -214,6 +214,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Native prefix and producer identity remain unverified.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_nexe_records", "extraction_id", true);
+  Add("web_pkg_extract",
+      "Read an explicit uncompressed pkg VFS profile without execution. "
+      "Native identity and source/cache equivalence remain unverified.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_pkg_records", "extraction_id", true);
   Add("web_asar_extract",
       "Extract admitted ASAR members with an optional captured unpacked "
       "directory.",

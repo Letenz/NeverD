@@ -169,7 +169,8 @@ void discoveryPages() {
                           "source_view_chunk",  "native_open",
                           "native_metadata",    "sea_extract",
                           "sea_records",        "nexe_extract",
-                          "nexe_records"}),
+                          "nexe_records",       "pkg_extract",
+                          "pkg_records"}),
             0);
   Json Params = Json::object();
   Json Names = Json::array();

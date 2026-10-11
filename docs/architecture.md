@@ -563,6 +563,13 @@ admission. `ArtifactView` composes nested coordinates and retains one namespace
 per extraction; typed package ancestry establishes outer delivery only. The
 opaque prefix has no implicit native/signature/runtime validation. See the
 [nexe profile](web-nexe-profile.md).
+`pkg/Locator` independently owns fixed loader declarations, `pkg/Index` owns
+typed VFS/stat admission and private snapshot paths, and `pkg/Reader` owns
+complete partitions and deduplicated store hashing. `SessionPkg` publishes
+only admitted occurrences. Content, opaque V8 caches and private metadata have
+distinct roles; source/cache equivalence and symlink resolution remain unknown.
+`ArtifactView` retains occurrence namespaces and nested coordinates for shared
+consumers. See the [pkg profile](web-pkg-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -570,7 +577,7 @@ comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
 `packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
 consumes shared bindings/module origins/values, and `Package` owns exact
-inventory and retained Bun/SEA/nexe delivery joins. `Publication` emits metadata;
+inventory and retained Bun/SEA/nexe/pkg delivery joins. `Publication` emits metadata;
 the two behavior session adapters own selection, cache and revision boundaries.
 Source ownership, delivery package and declared entry remain distinct.
 `SourceModel::indexSourceDeclarations` supplies the order-independent unique

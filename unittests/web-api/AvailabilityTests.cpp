@@ -76,6 +76,8 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   bool SourceInterfacesAvailable = false;
   EXPECT_EQ(Has("nexe_extract"), ASARAvailable);
   EXPECT_EQ(Has("nexe_records"), ASARAvailable);
+  EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
+  EXPECT_EQ(Has("pkg_records"), ASARAvailable);
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
     if (!Entry || Entry->getString("kind") != "source_interfaces")
@@ -184,6 +186,10 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                      0),
         neverd_web_nexe_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                      0, 0, 1),
+        neverd_web_pkg_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                    0),
+        neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
+                                    0, 1),
         neverd_web_stream_preview_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
         neverd_web_stream_commit_json(nullptr, nullptr, 0, nullptr, 0),

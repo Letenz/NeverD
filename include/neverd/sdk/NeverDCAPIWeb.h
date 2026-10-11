@@ -317,6 +317,23 @@ neverd_web_nexe_records_json(neverd_web_session_t Session,
                              const char *RecordKind, size_t RecordKindSize,
                              uint64_t Offset, uint64_t Limit);
 
+/// Read a pkg VFS under an explicit listed profile without executing its
+/// loader/prelude or interpreting V8 caches. Native validation is separate.
+NEVERD_API const char *
+neverd_web_pkg_extract_json(neverd_web_session_t Session,
+                            const char *ExpectedRevision, size_t RevisionSize,
+                            const char *ArtifactID, size_t ArtifactIDSize,
+                            const char *Profile, size_t ProfileSize);
+/// RecordKind is regions/members/links; Limit is 1..512. Only non-private
+/// stored content and the prelude expose selections. Paths, links and per-store
+/// metadata hashes stay private; source/cache equivalence remains unchecked.
+NEVERD_API const char *
+neverd_web_pkg_records_json(neverd_web_session_t Session,
+                            const char *ExpectedRevision, size_t RevisionSize,
+                            const char *ExtractionID, size_t ExtractionIDSize,
+                            const char *RecordKind, size_t RecordKindSize,
+                            uint64_t Offset, uint64_t Limit);
+
 /// Extract the explicitly qualified Bun container layout from admitted bytes.
 /// No execution or external tools; version/producer authentication is not
 /// implied. Source maps and JSC caches retain their original byte ranges.

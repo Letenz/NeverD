@@ -202,6 +202,8 @@ Heartbeat retains its native fields and adds
 | `web_bun_extract` | Exact `revision`, original `artifact_id`; explicit qualified Bun ELF/thin Mach-O/PE profiles; no execution or producer authentication |
 | `web_nexe_extract` | Exact `revision`, original or available member `artifact_id`, and explicit `profile`; bounded resource envelope, unverified opaque native prefix/signatures/runtime |
 | `web_nexe_records` | Exact `revision`, `extraction_id`, `record_kind:regions/members`, optional `offset:0,limit:128` (max 512); private paths/payloads omitted, explicit selection IDs for shared consumers |
+| `web_pkg_extract` | Exact `revision`, original or available member `artifact_id`, explicit `profile`; typed uncompressed VFS stores, opaque caches and unverified native/runtime evidence |
+| `web_pkg_records` | Exact `revision`, `extraction_id`, `record_kind:regions/members/links`, optional `offset:0,limit:128` (max 512); private paths/metadata digests omitted, only stored content/prelude selections available |
 | `web_bun_records` | Exact `revision`, `extraction_id`, `record_kind: modules/regions`, optional page fields; original offsets/hashes and private decoded source IDs |
 | `web_source_analyze` | Exact `revision`, `artifact_id`, explicit `source_type` |
 | `web_source_nodes` | Exact `revision`, `source_id`, optional page fields |

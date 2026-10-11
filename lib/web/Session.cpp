@@ -106,6 +106,34 @@ std::string Session::capabilities() {
         {"native_prefix_validation", "not_checked"},
         {"runtime_activation", "not_checked"}});
   }
+  if (pkgAvailable()) {
+    Operations.emplace_back("pkg_extract");
+    Operations.emplace_back("pkg_records");
+    Analyses.emplace_back(llvm::json::Object{
+        {"kind", "pkg_extraction"},
+        {"profile", std::string(PkgProfile)},
+        {"max_input_bytes", std::to_string(MaxPkgInputBytes)},
+        {"max_prelude_bytes", std::to_string(MaxPkgPreludeBytes)},
+        {"max_index_bytes", std::to_string(MaxPkgIndexBytes)},
+        {"max_paths", MaxPkgPaths},
+        {"max_stores", MaxPkgStores},
+        {"max_links", MaxPkgLinks},
+        {"max_json_nodes", MaxPkgJSONNodes},
+        {"max_stat_bytes", std::to_string(MaxPkgStatBytes)},
+        {"max_json_depth", MaxPkgJSONDepth},
+        {"max_private_bytes", std::to_string(MaxPkgPrivateBytes)},
+        {"max_cached_private_bytes", std::to_string(MaxCachedPkgPrivateBytes)},
+        {"max_reader_steps", std::to_string(MaxPkgSteps)},
+        {"max_cached_extractions", MaxCachedPkgExtractions},
+        {"max_page_records", MaxPkgPageRecords},
+        {"member_path_policy", std::string(ArchivePathProfile)},
+        {"executes_input", false},
+        {"authenticates_producer_version", false},
+        {"signature_status", "not_checked"},
+        {"native_prefix_validation", "not_checked"},
+        {"runtime_activation", "not_checked"},
+        {"v8_decoding", "opaque"}});
+  }
   llvm::json::Array SEAProfiles;
   for (const auto &P : seaProfiles())
     SEAProfiles.emplace_back(P);
@@ -605,6 +633,7 @@ std::string Session::commit(std::string_view Token) {
   State->BunExtractions.clear();
   State->SEAExtractions.clear();
   State->NexeExtractions.clear();
+  State->PkgExtractions.clear();
   State->AsarExtractions.clear();
   State->ElectronManifests.clear();
   State->DesktopManifests.clear();
@@ -661,6 +690,7 @@ std::string Session::metadata() const {
       {"bun_extraction_count", State->BunExtractions.size()},
       {"sea_extraction_count", State->SEAExtractions.size()},
       {"nexe_extraction_count", State->NexeExtractions.size()},
+      {"pkg_extraction_count", State->PkgExtractions.size()},
       {"asar_extraction_count", State->AsarExtractions.size()},
       {"electron_manifest_count", State->ElectronManifests.size()},
       {"desktop_manifest_count", State->DesktopManifests.size()},

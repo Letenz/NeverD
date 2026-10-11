@@ -11,6 +11,7 @@
 
 #include "../../../unittests/web/BunFixture.h"
 #include "../../../unittests/web/NexeFixture.h"
+#include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
@@ -439,6 +440,44 @@ int main() {
       auto Invalid = Args;
       Invalid["execute"] = true;
       invalid([&] { H.get("web_nexe_extract", Invalid); });
+      if (HasParser) {
+        const auto Source =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "commonjs"}});
+        H.same("web_source_anchor", {{"revision", H.Revision},
+                                     {"source_id", Source.at("source_id")},
+                                     {"byte_offset", "6"},
+                                     {"byte_length", "1"}});
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "pkg_extract") != Ops.end()) {
+      F.write("sea",
+              neverd::web::pkg_test::bundle(
+                  {{"CANARY.js", "const x='CANARY';"}, {"data", "CANARY"}}));
+      const auto A = H.import(1);
+      const Json Args{{"revision", H.Revision},
+                      {"artifact_id", A},
+                      {"profile", "pkg-5.8.1-uncompressed-vfs-v1"}};
+      const auto E = H.same("web_pkg_extract", Args);
+      require(E.at("member_count") == 4 &&
+                  E.at("signature_status") == "not_checked",
+              "pkg evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto M = H.same("web_pkg_records", Page);
+      require(M.at("next_offset") == 1, "pkg pages lost continuation");
+      H.fail("web_pkg_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "unknown"}},
+             "invalid_record_kind");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_pkg_extract", Invalid); });
       if (HasParser) {
         const auto Source =
             H.same("web_source_analyze",

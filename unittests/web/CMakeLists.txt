@@ -15,6 +15,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   BunTests.cpp
   SEATests.cpp
   NexeTests.cpp
+  PkgTests.cpp
   JsonReaderTests.cpp
   LINK_COMPONENTS Web
 )
@@ -98,6 +99,7 @@ if(TARGET neverd_shared)
     StreamSDKTests.cpp
     SEASDKTests.cpp
     NexeSDKTests.cpp
+    PkgSDKTests.cpp
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     DesktopSDKTests.cpp

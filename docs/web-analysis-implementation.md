@@ -39,14 +39,14 @@ their existing scope; no Python support for web APIs is claimed.
 | P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified | Broader host qualification and redaction/export remain; Windows pending |
 | P2 SDK/CLI/worker | Thirty-four SDK/CLI tests passed, including navigation/storage/view anchors and direct Bun navigation/view/anchor commands; C++ worker adapter/framed-process and all nine worker regressions passed | Broader host, cancellation/resource and distribution qualification remain |
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
-| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions and independent pkg adapters remain; Node SEA/nexe are qualified separately in P7 and JSC caches stay opaque |
+| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and selected source behavior/inventory joins implemented; two official Claude Code npm packages qualify original digest and payload evidence | Install-entry propagation, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display, original/projected ranges and explicit primitive rewrites with pass-bound receipts, local semantic checks, exact inverse and refusal tests implemented | Scope renaming, branch/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
-| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader and nexe 4.0.0-rc.7 EOF resource reader, with stored-source/asset consumers; qualification below | Tauri/Wails bridges/assets, pkg, other SEA/nexe layouts and host/producer qualification remain |
+| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader, nexe 4.0.0-rc.7 EOF reader and pkg 5.8.1 uncompressed VFS reader; shared source/asset consumers and producer qualification below | Tauri/Wails bridges/assets and broader host/producer qualification remain; other Node-family layouts stay unsupported |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
 | P9 full acceptance audit | Pending | Issue-by-issue fixture and cross-platform evidence, documented gaps |
 
@@ -1794,3 +1794,99 @@ all 30 nexe/core/SDK/native cases passed with producer fixtures supplied, as did
 worker Web, all five MCP suites including real Claude, and enabled ABI
 availability. The backend-omission-only ABI case skipped. The capability checker
 passed. Logs: `/tmp/neverd-nexe-latest-integration-{build,web,api,worker,mcp}.log`.
+
+## Independent pkg virtual filesystem extraction — 2026-10-11
+
+`pkg-5.8.1-uncompressed-vfs-v1` adds independent C++ locator, index and partition
+owners. The bounded streaming locator accepts fixed-width LF/CRLF declarations;
+the fixed prelude wrapper frames strict JSON VFS, entry and link declarations.
+Compression, ambiguous locators, malformed ranges, unknown store types and
+portable path conflicts refuse. Prefix, payload, prelude and trailer preserve
+every byte; exact store aliases share hashing and stat parsing work. Source,
+opaque V8 cache, directory-list and stat records have separate selection rules.
+See the [profile](web-pkg-profile.md).
+
+Independent plan review required metadata digest redaction, unresolved
+source/cache equivalence, ancestor-link uncertainty, exactly one namespace root
+and qualification against packaged outputs rather than unchanged native bases.
+Consumer review additionally excludes content aliases of metadata from source
+and package selection, including private metadata digests through region pages.
+Stat sizes remain separate declarations: producer BOM/shebang stripping changes
+stored source lengths without changing the original stat size. Cache-only entry
+declarations report cache presence
+without inventing source. Session, SDK, CLI, worker and MCP consume one core
+model. The existing nexe and new pkg selections share checked nested storage
+coordinate construction; package ancestry retains delivery-only semantics.
+
+Six controlled pkg 5.8.1 outputs use the pinned pkg-fetch 3.4.2 Node 18.5.0
+bases for Linux, macOS and Windows, each x64 and ARM64. Their inputs, base and
+container hashes, npm producer identity and retained dependency lock are in the
+[manifest](../unittests/web/fixtures/pkg/manifest.json). Four independent inputs
+were packaged with bytecode/native building disabled. The C++ core matched all
+six containers and every stored input byte/hash. Windows CRLF/snapshot paths
+and macOS appended signing bytes are covered without claiming native identity,
+signature validation or runtime activation. No target was executed. Producer
+setup remains a separate development activity, never a test/analyzer dependency.
+
+A supplemental producer output independently qualifies BOM/shebang processing:
+original source lengths are 78/22 and stored lengths are 56/19. The C++ fixture
+pins the complete container and checks separate original/stored byte and hash
+oracles. See its [manifest](../unittests/web/fixtures/pkg/stripped-manifest.json).
+All six canonical outputs also passed actual extraction and source CLI commands
+with an unusable external-tool PATH. No target or embedded runtime was invoked.
+
+Enabled verification on the nexe integration base passed 534 of 541 Web cases,
+including 30 pkg cases, all supplied native producer corpora, npm/VSIX evidence
+and the complete 2,345-unit Claude Code source recovery. Seven expected skips
+were six unavailable LLVM Zstd map cases and the inapplicable ASAR-policy
+omission case. The shared worker protocol/Web/transport checks passed, as did
+seven additional worker regressions and all five MCP suites including real
+Claude Code. The capability inventory passed after correcting the canonical
+order of the two new public names. ABI capability discovery passed; its
+backend-omission-only case was inapplicable. Logs are
+`/tmp/neverd-pkg-full-web.log`, `/tmp/neverd-pkg-worker.log`,
+`/tmp/neverd-pkg-worker-shared.log`, `/tmp/neverd-pkg-mcp.log`,
+`/tmp/neverd-pkg-abi.log` and `/tmp/neverd-pkg-capabilities.log`.
+
+With JavaScript parsing disabled, 45 of 51 pkg/nexe cases passed; six source-only
+cases explicitly skipped. Core extraction still checked all supplied producer
+images and the preprocessing variant. ABI discovery, actual Web worker and four
+MCP suites passed; the source-dependent MCP Claude case explicitly skipped.
+See `/tmp/neverd-pkg-nojs-{web,api,worker,mcp}.log`. With the entire backend
+disabled, both C ABI tests passed, including all public stubs; four MCP suites
+passed and the backend-dependent Web worker/Claude cases explicitly skipped.
+See `/tmp/neverd-pkg-off-{api,worker,mcp}.log`.
+These bounded profiles do not complete the remaining #714–#718 work.
+
+The increment was rebased onto remote `dev` at `0f1accd2f`, preserving its
+native graph/C projection updates. Both Web flags were restored to ON; the
+235-step integrated rebuild completed. All 541 Web cases repeated with the
+same 534 passes/seven explicit skips, including complete Claude Code recovery.
+ABI discovery and ten worker suites passed. Logs:
+`/tmp/neverd-pkg-restored-build.log` and
+`/tmp/neverd-pkg-restored-{web,api,worker}.log`.
+
+The first concurrent MCP run had four passes and one 15-second initialization
+response timeout in the Claude case, before any sample-analysis tool call.
+Other newly linked SDK/worker processes also had slow startup in that run;
+the exact startup cause is not established. The unchanged isolated Claude case
+passed in 3.55 seconds. A subsequent five-suite MCP run overlapped complete
+Claude source recovery and the full Bun/pkg producer corpora: all eight selected
+checks passed, with the MCP Claude case taking 3.61 seconds. The response limit
+was not increased and no product change was made to mask the failure. Preserve
+this intermittent startup limitation rather than treating retries as a fix.
+Logs: `/tmp/neverd-pkg-restored-mcp.log`,
+`/tmp/neverd-pkg-restored-mcp-claude-isolated.log`,
+`/tmp/neverd-pkg-restored-mcp-repeat.log` and
+`/tmp/neverd-pkg-restored-overlap-repeat.log`.
+
+The later integration with remote `dev` at `3fbb86447` rebuilt the affected
+native/SDK/transport targets and owning core tests. All 60 pkg/nexe/native
+cases passed with producer corpora supplied, as did worker Web, all five MCP
+suites including real Claude, ABI discovery and the 23-capability manifest
+check. The backend-omission-only ABI case skipped as expected. Logs:
+`/tmp/neverd-pkg-final-sync-{build,core-build,web,worker,mcp,api,capabilities}.log`.
+The [combined matrix](web-native-javascript-matrix.md) now records independent
+runtime/platform/map/cache contracts and explicit per-sample cross-track
+statuses; it does not promote partial navigation or absent protocol captures
+to completed acceptance.

@@ -582,6 +582,20 @@ Worker/MCP suites verify both operations through the shared C API. Check
 parser-off extraction and backend-off ABI/discovery, then restore both options.
 See the [nexe profile](web-nexe-profile.md).
 
+`WebPkg.*` independently builds fixed loader/prelude envelopes and covers LF/
+CRLF framing, snapshot roots, aliases, partial overlaps, opaque caches, private
+metadata, every truncated prefix, compressed-profile refusal and independent
+byte/node/count/work budgets. `WebPkgSDK.*` covers root namespace uniqueness,
+source/cache and symlink uncertainty, metadata-alias privacy through consumers,
+cache/revision atomicity, stored/deflate ZIP source coordinates, package/native
+handoff and CLI operation without external tools. Set `NEVERD_PKG_581_CORPUS`
+to the pinned six-platform corpus root, including the supplemental
+`outputs-stripped` and `stripped-inputs` directories. Tests verify original
+container/input hashes and separately preserved BOM/shebang storage evidence;
+they never build/download/execute samples. Worker/MCP tests own
+direct/framed parity. Check parser-off extraction and backend-off ABI/discovery,
+then restore both options. See the [pkg profile](web-pkg-profile.md).
+
 `WebSEA.*` covers independent Node SEA serialization, x64/ARM64 ELF/Mach-O/PE
 resource location, malformed names/tables, duplicate mappings, cumulative work,
 opaque V8 evidence and exact compiler-generated blobs. `WebSEASDK.*` and
