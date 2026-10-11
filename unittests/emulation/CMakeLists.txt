@@ -243,6 +243,9 @@ add_neverd_unittest(NeverDDarwinProcessTests
   NO_PRETTY_VALUES
   LINK_COMPONENTS EmulationProcess)
 target_include_directories(NeverDDarwinProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/lib/emulation)
+if(MSVC)
+  target_compile_options(NeverDDarwinProcessTests PRIVATE /bigobj)
+endif()
 include(DarwinFixtures.cmake)
 add_neverd_unittest(NeverDAndroidNativeTests
   AndroidNativeTests.cpp
