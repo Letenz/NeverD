@@ -52,6 +52,7 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,
     size_t &Work, bool ResultUnused) {
   if (Contract.Target != Effect.Target ||
+      (Effect.ECXFrameOffset && Effect.ECXRuntimeObject) ||
       Contract.StackPopBytes != Effect.StackPopBytes ||
       (!Contract.isInitializer() && Effect.StackPopBytes) ||
       Contract.DoesNotReturn != Effect.DoesNotReturn)
@@ -62,7 +63,8 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
   auto *I32 = llvm::Type::getInt32Ty(Context);
   RegistrationCxxCallABI ABI;
   if (Contract.isThrow()) {
-    if (!Effect.DoesNotReturn || Effect.ECXFrameOffset || !Call.use_empty())
+    if (!Effect.DoesNotReturn || Effect.ECXFrameOffset ||
+        Effect.ECXRuntimeObject || !Call.use_empty())
       return std::nullopt;
     if (Contract.isRuntimeThrow()) {
       if (!getCheckedX86RegistrationThrowImportABI(Image, Effect.Target,
@@ -112,7 +114,7 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
         Image, Effect.Target, &Work);
     if (!Proof || Proof->Object.StackPopBytes != Effect.StackPopBytes ||
         Proof->Initialized != Contract.ECXInitialized || Effect.DoesNotReturn ||
-        !Effect.ECXFrameOffset ||
+        !Effect.ECXFrameOffset || Effect.ECXRuntimeObject ||
         Call.arg_size() != 1 + Effect.StackPopBytes / 4 ||
         (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
       return std::nullopt;
@@ -134,7 +136,8 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
   } else {
     const auto Proof = getCheckedX86RegistrationObjectCalleeABI(
         Image, Effect.Target, &Work, RegistrationLeafResult::Discarded);
-    if (!Proof ||
+    if (!Proof || Proof->ECXReads != Contract.ECXReads ||
+        Proof->ECXWrites != Contract.ECXWrites ||
         Proof->HasIndependentScalarReturn !=
             Contract.HasIndependentScalarReturn ||
         (!Proof->HasIndependentScalarReturn && !ResultUnused) ||
@@ -142,8 +145,20 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
         (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
       return std::nullopt;
     ABI.BorrowsECX = !Proof->ECXReads.empty() || !Proof->ECXWrites.empty();
-    if (ABI.BorrowsECX != Effect.ECXFrameOffset.has_value())
+    if (ABI.BorrowsECX != (Effect.ECXFrameOffset.has_value() ||
+                           Effect.ECXRuntimeObject.has_value()))
       return std::nullopt;
+    if (Effect.ECXRuntimeObject) {
+      if (Call.arg_size() != 1)
+        return std::nullopt;
+      const auto *Object = Call.getArgOperand(0);
+      if (llvm::isa<llvm::Constant>(Object) ||
+          (!Object->getType()->isIntegerTy(32) &&
+           !Object->getType()->isIntegerTy(64) &&
+           (!Object->getType()->isPointerTy() ||
+            Object->getType()->getPointerAddressSpace())))
+        return std::nullopt;
+    }
     ABI.DiscardResult = !Proof->HasIndependentScalarReturn;
     auto *Return = ABI.DiscardResult ? Void : I32;
     ABI.Type = ABI.BorrowsECX ? llvm::FunctionType::get(Return, {Ptr}, false)

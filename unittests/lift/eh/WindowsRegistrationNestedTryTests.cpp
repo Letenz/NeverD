@@ -117,8 +117,10 @@ void reconstructNestedSearch(bool Secondary, bool Rethrow = false,
   LowToMedConverter Converter;
   Converter.setBinaryImage(&*Image);
   auto Med = Converter.convert(Low, Arch::X86, BinaryFormat::COFF);
-  if (InlineRethrow || DirectThrow)
-    recoverCallAbi(Med, Arch::X86, {}, &*Image);
+  // Ordinary catch members need the same physical receiver recovery as the
+  // production pipeline, even when the throw itself remains in a private
+  // helper.
+  recoverCallAbi(Med, Arch::X86, {}, &*Image);
   inferMedTypes(Med, Arch::X86);
   for (const auto &State : States.Blocks)
     if (State.Reached)

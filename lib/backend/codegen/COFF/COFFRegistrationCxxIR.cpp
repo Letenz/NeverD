@@ -372,8 +372,9 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
                       ? Result.Catches[Result.SourceCatchOwners.at(BlockId)].Pad
                       : nullptr) ||
         !Result.Calls
-             .emplace(Call, CxxIRCall{Contract, Effect.ECXFrameOffset, false,
-                                      Effect.RuntimeThrow})
+             .emplace(Call,
+                      CxxIRCall{Contract, Effect.ECXFrameOffset, false,
+                                Effect.RuntimeThrow, Effect.ECXRuntimeObject})
              .second)
       return rejectIR("C++ call changed its runtime funclet context");
     SourceCallEffects.emplace(Call, &Effect);
@@ -384,7 +385,10 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
   for (const auto &[Call, Receipt] : Result.Calls) {
     const auto *Callee = Call->getCalledFunction();
     const bool Throw = Receipt.Contract.isThrow();
-    const bool Borrow = Receipt.ObjectFrameOffset.has_value();
+    if (Receipt.ObjectFrameOffset && Receipt.RuntimeObject)
+      return rejectIR("C++ member call has conflicting object coordinates");
+    const bool Borrow = Receipt.ObjectFrameOffset.has_value() ||
+                        Receipt.RuntimeObject.has_value();
     const bool RuntimeThrow = Receipt.Contract.isRuntimeThrow();
     const bool Initializer = Receipt.Contract.isInitializer();
     bool DiscardResult = false;

@@ -118,6 +118,9 @@ private:
   std::optional<int32_t> parentStackOffset(const Domain &State) const;
   void preserveCxxFrameCells(Domain &Root, const Domain &Source);
   bool initializeContracts();
+  bool bindRuntimeObjectBorrow(const Domain &State,
+                               const RegistrationCalleeFrameContract &Callee,
+                               RegistrationCallFrameEffect &Effect);
   std::optional<RegistrationRuntimeThrow>
   runtimeThrowArguments(const Domain &State,
                         const RegistrationCalleeFrameContract &Callee,

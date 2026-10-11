@@ -36,7 +36,7 @@ Analysis support does not imply native reconstruction support.
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
 | x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
 | x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated direct-frame subset below, including initialized EH/GS cookies |
-| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, unadjusted object or unbound catch subset below, including bounded copy constructors, destructors and ordinary object initialization |
+| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, unadjusted object or unbound catch subset below, including bounded copy constructors, destructors, ordinary object initialization and live reference member calls |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -430,6 +430,17 @@ inlining; other volatile results remain unknown. Source analysis grants no
 object identity or initialized bytes, and both native consumers repeat the
 current scalar-return proof. The separate scalar-result destructor corpus checks
 those values through the same lifetime order and content oracle.
+An ordinary member call may also borrow a live reference catch's scalar
+exception allocation through ECX. Its receipt retains the owning try/catch and
+object-relative offset, separately from parent-frame borrows. The checked
+callee's reads and writes must stay inside that allocation and cannot escape
+the pointer. LLVM retains the actual source receiver and checks every reaching
+catch lifetime; independent COFF installation replays the original source and
+checks the edited pointer's allocation, offset, bounds and active funclet
+ancestry. Runtime-object writes grant no parent-frame initialization. The
+reference-member corpus consumes the returned value before normal completion
+or rethrow and retains the same destruction order/content oracle across both
+rewrite generations.
 An ordinary call without an independent result can be
 lowered as void only when current SSA proves that copies, extensions and PHIs
 carry no observed result, and its LLVM uses end exclusively in exact

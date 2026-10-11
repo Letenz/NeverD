@@ -23,6 +23,8 @@ namespace neverd {
 struct BinaryImage;
 struct RegistrationCalleeFrameContract;
 struct RegistrationCallFrameEffect;
+struct RegistrationBlockState;
+struct RegistrationStateAnalysis;
 namespace med_llvm_eh {
 struct RegistrationCxxCallABI {
   llvm::FunctionType *Type = nullptr;
@@ -33,6 +35,11 @@ struct RegistrationCxxCallABI {
   bool DiscardResult = false;
   uint64_t ThrowInfoVA = 0;
 };
+bool hasLiveRegistrationCxxRuntimeReceiver(
+    const RegistrationStateAnalysis &States,
+    const RegistrationBlockState &Block,
+    const RegistrationCalleeFrameContract &Contract,
+    const RegistrationCallFrameEffect &Effect, size_t &Work);
 std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const BinaryImage &Image, const RegistrationCalleeFrameContract &Contract,
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,

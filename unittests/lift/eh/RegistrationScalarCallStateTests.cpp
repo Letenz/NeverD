@@ -1,5 +1,4 @@
-//===- RegistrationScalarCallStateTests.cpp - PE32 scalar returns
-//----------===//
+//===- RegistrationScalarCallStateTests.cpp - Scalar results -------------===//
 //
 // NeverD Decompiler
 //

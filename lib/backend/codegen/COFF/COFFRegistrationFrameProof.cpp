@@ -629,6 +629,13 @@ llvm::Error validateFramePrivacy(
               if (Borrow != Cxx->Borrows.end()) {
                 const auto &Checked = Borrow->second;
                 const auto *Root = Checked.Root ? Checked.Root : LogicalFrame;
+                const auto Runtime = RuntimeObjects.find(Root);
+                if (Runtime != RuntimeObjects.end() &&
+                    (!Runtime->second->Reference || Checked.Initializer ||
+                     Checked.ThrowInfoVA || !Checked.Initialized.empty() ||
+                     Checked.ScalarStackWords || !Catch ||
+                     !isActiveCxxCatch(Runtime->second->Catch, Catch->Catch)))
+                  return Reject("callee borrows an inactive runtime object");
                 const bool Throw = Checked.ThrowInfoVA != 0;
                 const auto Where =
                     Call->arg_size() ==
@@ -693,7 +700,8 @@ llvm::Error validateFramePrivacy(
                                       "scalar object borrow");
                     }
                     const auto *Home =
-                        Effects == &Borrow->second.Writes
+                        Effects == &Borrow->second.Writes &&
+                                Access.Root == LogicalFrame
                             ? activeCxxReferenceHome(
                                   Cxx, Catch, Access.Offset,
                                   uint64_t(int64_t(Effect.End) - Effect.Begin))
@@ -851,6 +859,8 @@ llvm::Error validateFramePrivacy(
           if (Borrow != Cxx->Borrows.end()) {
             const auto &Checked = Borrow->second;
             const auto *Root = Checked.Root ? Checked.Root : LogicalFrame;
+            if (RuntimeObjects.count(Root))
+              continue;
             if (Checked.Initializer)
               for (const auto &Write : Checked.Initialized) {
                 if (++Work > limits::kMaxRegistrationEHStateWork)

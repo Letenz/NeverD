@@ -86,7 +86,11 @@ std::optional<RegistrationCallABI> registrationCallABI(const MedFunc &Func,
       Callee.DoesNotReturn != Effect->DoesNotReturn)
     return std::nullopt;
   const bool Borrow = !Callee.ECXReads.empty() || !Callee.ECXWrites.empty();
-  if (Borrow != Effect->ECXFrameOffset.has_value() ||
+  if ((Effect->ECXFrameOffset && Effect->ECXRuntimeObject) ||
+      (Effect->ECXRuntimeObject &&
+       Callee.CalleeKind != RegistrationCalleeFrameContract::Kind::Leaf) ||
+      Borrow != (Effect->ECXFrameOffset.has_value() ||
+                 Effect->ECXRuntimeObject.has_value()) ||
       (Callee.isThrow() ? !Callee.DoesNotReturn || Borrow
                         : (Callee.CalleeKind !=
                                RegistrationCalleeFrameContract::Kind::Leaf &&

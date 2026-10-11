@@ -265,6 +265,9 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
           Op.Inputs[0].ConstVal != Effect->Target)
         return false;
       const auto &Contract = States.CalleeContracts[Effect->CalleeIndex];
+      if (!med_llvm_eh::hasLiveRegistrationCxxRuntimeReceiver(
+              States, *State, Contract, *Effect, Work))
+        return false;
       // Generic call emission can pad a later call to an earlier declaration's
       // arity. A checked constructor must bind every scalar argument before
       // that coercion; an invented zero cannot replace a missing source word.
@@ -641,7 +644,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       } else
         Args.assign(2, llvm::ConstantPointerNull::get(Ptr));
     }
-    if (Plan.ABI.Initializer) {
+    if (Plan.ABI.Initializer || Plan.Effect->ECXRuntimeObject) {
       auto *Object = Old->getArgOperand(0);
       Args.push_back(Object->getType()->isPointerTy()
                          ? Object

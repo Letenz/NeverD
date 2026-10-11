@@ -68,6 +68,11 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
         return -1;
       Object.Head += 11;
       Object.Tail += 3;
+#ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER
+      const unsigned Event = Object.destructionEvent();
+      if (Event != 665u)
+        return -4;
+#endif
 #if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
       if (Object.Head == 18) {
 #ifdef SECONDARY_SEARCH
@@ -81,7 +86,13 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
       }
 #endif
       callback_caught = Object.Head;
+#ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER
+      return Object.Head + Object.Tail - 4 +
+             int(Event -
+                 (0x200u + Object.Head * 7u + Object.Tail + Object.Tag));
+#else
       return Object.Head + Object.Tail - 4;
+#endif
     }
 #if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
   } catch (ReferenceObject Object) {

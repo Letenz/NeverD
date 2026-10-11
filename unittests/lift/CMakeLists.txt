@@ -1309,6 +1309,7 @@ add_neverd_unittest(NeverDNoReturnTests
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
   eh/RegistrationScalarCallStateTests.cpp
+  eh/RegistrationRuntimeMemberStateTests.cpp
   eh/RegistrationInitializerStateTests.cpp
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
@@ -1358,6 +1359,7 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/RegistrationInitializerTests.cpp
   eh/RegistrationInitializerGraphTests.cpp
   eh/RegistrationObjectGraphTests.cpp
+  eh/RegistrationRuntimeMemberTests.cpp
   eh/WindowsRegistrationCatchContextTests.cpp
   eh/RegistrationSourceReceiptTestUtils.cpp
   eh/RegistrationCleanupTestUtils.cpp
@@ -1396,6 +1398,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationHandlerReferenceTests.cpp
   eh/RegistrationFrameTaintTests.cpp
   eh/RegistrationInitializerFrameTests.cpp
+  eh/RegistrationRuntimeMemberFrameTests.cpp
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp
   eh/RegistrationPHICopyTests.cpp

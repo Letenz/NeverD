@@ -71,6 +71,12 @@ def get_profile(name="entry"):
         else:
             from windows_registration_destructor_results_relift import profile
         return profile()
+    if name == "reference-members":
+        if __package__:
+            from .windows_registration_reference_members_relift import profile
+        else:
+            from windows_registration_reference_members_relift import profile
+        return profile()
     if name == "copies":
         if __package__:
             from .windows_registration_copies_relift import profile
@@ -100,7 +106,7 @@ def get_profile(name="entry"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("entry", "catch-cleanup", "objects", "destructors", "destructor-graphs", "destructor-results", "copies", "initializers", "delegating"), default="entry")
+    parser.add_argument("--profile", choices=("entry", "catch-cleanup", "objects", "destructors", "destructor-graphs", "destructor-results", "reference-members", "copies", "initializers", "delegating"), default="entry")
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)

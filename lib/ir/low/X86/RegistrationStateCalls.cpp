@@ -58,8 +58,9 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
     if (BorrowsObject)
       Effect.ECXFrameOffset =
           After.Frame.Registers[x86reg::RCX / x86reg::GeneralRegStride].Offset;
-    Valid &= !BorrowsObject || Effect.ECXFrameOffset.has_value();
-    if (Valid && BorrowsObject) {
+    if (BorrowsObject && !Effect.ECXFrameOffset)
+      Valid &= bindRuntimeObjectBorrow(After, Contract, Effect);
+    if (Valid && Effect.ECXFrameOffset) {
       Valid &= projectFrameObject(After, *Effect.ECXFrameOffset, SP,
                                   Contract.ECXReads, Effect.FrameReads,
                                   !Contract.isInitializer());

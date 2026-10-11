@@ -11,6 +11,8 @@
 
 #include "neverd/ir/low/RegistrationABI.h"
 
+#include "llvm/IR/Instructions.h"
+
 namespace neverd::coff_registration {
 llvm::Error bindCxxRuntimeThrow(const CxxIRControlProof &Proof,
                                 const llvm::CallBase &Call,
@@ -48,10 +50,10 @@ llvm::Error bindCxxRuntimeThrow(const CxxIRControlProof &Proof,
           return rejectIR("direct throw has no unique callback stack");
         Borrow.Root = Catch.Stack;
       }
+    const auto *Stack = llvm::dyn_cast_or_null<llvm::AllocaInst>(Borrow.Root);
     const auto Bytes =
-        Borrow.Root
-            ? Borrow.Root->getAllocationSize(Call.getModule()->getDataLayout())
-            : std::nullopt;
+        Stack ? Stack->getAllocationSize(Call.getModule()->getDataLayout())
+              : std::nullopt;
     if (!Bytes || Bytes->isScalable())
       return rejectIR("direct throw lost its callback object extent");
     Borrow.Offset = int64_t(Bytes->getFixedValue()) + Throw.ObjectOffset;

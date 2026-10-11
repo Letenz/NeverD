@@ -58,6 +58,10 @@ llvm::Error validateCOFFRegistrationCxxIR(const llvm::Function &Function,
       Immutable.push_back({Segment.VA, Segment.VA + Segment.Size});
   }
   for (const auto &[Call, Checked] : Proof->Calls) {
+    if (Checked.RuntimeObject)
+      if (auto Error = coff_registration::bindCxxRuntimeObjectBorrow(
+              *Proof, *Call, Checked, Contract))
+        return Error;
     if (Checked.ObjectFrameOffset) {
       auto [It, Inserted] = Contract.Borrows.emplace(
           Call,

@@ -26,6 +26,7 @@ class CatchPadInst;
 class Function;
 class Instruction;
 class StoreInst;
+class Value;
 } // namespace llvm
 
 namespace neverd {
@@ -38,9 +39,9 @@ struct RegistrationFrameBorrow {
   int64_t Offset = 0;
   std::vector<RegistrationObjectExtent> Reads;
   std::vector<RegistrationObjectExtent> Writes;
-  /// Null selects the parent's logical frame. A callback borrow names its
-  /// independently authenticated private stack allocation.
-  const llvm::AllocaInst *Root = nullptr;
+  /// Null selects the parent's logical frame. An alloca selects a checked
+  /// callback stack; a catchpad selects its live reference exception object.
+  const llvm::Value *Root = nullptr;
   /// Nonzero selects the two-pointer stdcall CRT ABI and exact table identity.
   va_t ThrowInfoVA = 0;
   /// Ordinary construction reads only values it initialized during the call.

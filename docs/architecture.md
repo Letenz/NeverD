@@ -430,6 +430,14 @@ private frame spills preserve that identity without treating it as an image or
 parent-frame pointer. Exact typed access receipts require the active catch
 context, bounded scalar reads/writes and complete source occurrences. Partial
 spills, pointer escape and use after catch return discard runtime authority.
+`RegistrationStateObjectCall` binds ordinary ECX member receivers in that
+runtime domain, retaining try/catch identity and object-relative bounds without
+publishing parent-frame effects. `MedLLVMRegistrationCxxObjectCall` checks the
+receiver's live source contexts before retaining the actual LLVM argument.
+`COFFRegistrationCxxObjectCall` binds freshly replayed source effects to the
+checked reference catchpad. The shared LLVM frame-privacy owner then locates
+the edited argument, checks its active catch ancestry and bounds, and keeps CRT
+object initialization separate from private-frame must-writes.
 `COFFRegistrationEHRange` recovers contiguous and disjoint table-owned callback
 chunks without claiming intervening cleanup relays. Canonical metadata schema
 11 and semantic-token schema 2 bind all code ranges. Cleanup relays retain their
