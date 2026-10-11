@@ -90,3 +90,4 @@ SIDEEFFECT(Intrinsic::A64_AtomicSmax);
 SIDEEFFECT(Intrinsic::A64_AtomicSmin);
 SIDEEFFECT(Intrinsic::A64_AtomicUmax);
 SIDEEFFECT(Intrinsic::A64_AtomicUmin);
+SIDEEFFECT(Intrinsic::A64LinuxSyscall);

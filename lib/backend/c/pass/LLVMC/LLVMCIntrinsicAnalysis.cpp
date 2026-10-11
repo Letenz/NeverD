@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/backend/c/pass/LLVMC/LLVMCPasses.h"
+#include "neverd/backend/llvm/LLVMSyscallAsm.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
@@ -55,6 +56,27 @@ bool isWindowsX64SyscallInlineAsm(const llvm::CallInst &Call) {
     if (!Arg->getType()->isIntegerTy(64))
       return false;
   return true;
+}
+
+const SyscallConvention *modeledSyscallInlineAsm(Arch TheArch,
+                                                 const llvm::CallInst &Call) {
+  const auto *IA = llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
+  if (!IA)
+    return nullptr;
+  for (const SyscallConvention *Convention : syscallConventions()) {
+    const unsigned Bits = Convention->RegisterSize * 8;
+    if (Convention->TheArch != TheArch ||
+        IA->getAsmString() != syscallAsmString(*Convention) ||
+        IA->getConstraintString() != syscallAsmConstraints(*Convention) ||
+        !Call.getType()->isIntegerTy(Bits) ||
+        Call.arg_size() != 1u + Convention->ArgumentCount)
+      continue;
+    for (const llvm::Use &Arg : Call.args())
+      if (!Arg->getType()->isIntegerTy(Bits))
+        return nullptr;
+    return Convention;
+  }
+  return nullptr;
 }
 
 unsigned x86CPUQueryResultWords(const llvm::CallInst &Call) {
