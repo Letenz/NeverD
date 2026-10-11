@@ -85,6 +85,20 @@ public:
   std::string packageArchiveRecords(std::string_view ExpectedRevision,
                                     std::string_view ArchiveID, uint64_t Offset,
                                     uint64_t Limit) const;
+  std::string importPackageAttestation(std::string_view ExpectedRevision,
+                                       std::string_view ArtifactID,
+                                       std::string_view DescriptorArtifactID,
+                                       std::string_view InputKind);
+  std::string packageAttestationRecords(std::string_view ExpectedRevision,
+                                        std::string_view AttestationID,
+                                        std::string_view RecordKind,
+                                        uint64_t Offset, uint64_t Limit) const;
+  std::string matchPackageAttestationDigest(std::string_view ExpectedRevision,
+                                            std::string_view ArtifactID,
+                                            std::string_view AttestationID,
+                                            std::string_view DigestID);
+  std::string packageAttestationDigestResult(std::string_view ExpectedRevision,
+                                             std::string_view MatchID) const;
   std::string analyzePackages(std::string_view ExpectedRevision,
                               std::string_view ArtifactID,
                               std::string_view InputKind);

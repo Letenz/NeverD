@@ -212,6 +212,36 @@ std::string Session::capabilities() {
   Operations.emplace_back("package_archive_records");
   Operations.emplace_back("package_integrity_verify");
   for (const auto *Name :
+       {"package_attestation_import", "package_attestation_records",
+        "package_attestation_digest_match",
+        "package_attestation_digest_result"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_attestations"},
+      {"profile", std::string(PackageAttestationProfile)},
+      {"descriptor_profile", std::string(PackageEvidenceProfile)},
+      {"available", true},
+      {"input_kinds",
+       llvm::json::Array{"registry-dist", "intoto-statement", "dsse-intoto"}},
+      {"max_input_bytes", MaxPackageEvidenceInputBytes},
+      {"max_retained_metadata_bytes", MaxPackageEvidenceRetainedBytes},
+      {"max_descriptors", MaxPackageEvidenceDescriptors},
+      {"max_imports", MaxPackageAttestationImports},
+      {"max_subjects", MaxPackageAttestationSubjects},
+      {"max_digests", MaxPackageAttestationDigests},
+      {"max_signatures", MaxPackageAttestationSignatures},
+      {"max_payload_bytes", MaxPackageAttestationPayloadBytes},
+      {"max_signature_bytes", MaxPackageAttestationSignatureBytes},
+      {"max_cached_digest_matches", MaxPackageAttestationDigestMatches},
+      {"max_steps", MaxPackageEvidenceSteps},
+      {"digest_algorithms", llvm::json::Array{"sha256", "sha512"}},
+      {"signature_verification", "not_performed"},
+      {"publisher_authenticated", false},
+      {"trust_chain_verified", false},
+      {"transparency_verified", false},
+      {"slsa_level_verified", false},
+      {"fetches_remote_data", false}});
+  for (const auto *Name :
        {"package_advisory_import", "package_advisory_records",
         "package_advisories_match", "package_advisories_match_records"})
     Operations.emplace_back(Name);
@@ -735,6 +765,8 @@ std::string Session::commit(std::string_view Token) {
   State->PackageIntegrity.clear();
   State->PackageAdvisoryMatchResults.clear();
   State->PackageAdvisories.clear();
+  State->PackageAttestationDigests.clear();
+  State->PackageAttestations.clear();
   State->PackageEvidenceDescriptors.clear();
   State->PackageEvidenceBytes = 0;
   State->HARCaptures.clear();
@@ -797,6 +829,9 @@ std::string Session::metadata() const {
       {"package_behavior_diff_count", State->PackageBehaviorDiffs.size()},
       {"package_install_count", State->PackageInstalls.size()},
       {"package_advisory_count", State->PackageAdvisories.size()},
+      {"package_attestation_count", State->PackageAttestations.size()},
+      {"package_attestation_digest_match_count",
+       State->PackageAttestationDigests.size()},
       {"package_advisory_matches_count",
        State->PackageAdvisoryMatchResults.size()},
       {"package_evidence_descriptor_count",

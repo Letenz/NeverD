@@ -62,7 +62,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_TRUE(Has("package_integrity_verify"));
   for (const auto *Name :
        {"package_advisory_import", "package_advisory_records",
-        "package_advisories_match", "package_advisories_match_records"})
+        "package_advisories_match", "package_advisories_match_records",
+        "package_attestation_import", "package_attestation_records",
+        "package_attestation_digest_match",
+        "package_attestation_digest_result"})
     EXPECT_TRUE(Has(Name));
   for (const auto Op : {"har_preview", "har_commit", "har_records",
                         "stream_preview", "stream_commit", "stream_records"})
@@ -267,6 +270,14 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                                  0, nullptr, 0),
         neverd_web_package_advisories_match_records_json(nullptr, nullptr, 0,
                                                          nullptr, 0, 0, 128),
+        neverd_web_package_attestation_import_json(nullptr, nullptr, 0, nullptr,
+                                                   0, nullptr, 0, nullptr, 0),
+        neverd_web_package_attestation_records_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, 0, 128),
+        neverd_web_package_attestation_digest_match_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0),
+        neverd_web_package_attestation_digest_result_json(nullptr, nullptr, 0,
+                                                          nullptr, 0),
         neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, nullptr, 0),
         neverd_web_package_archive_extract_json(nullptr, nullptr, 0, nullptr, 0,

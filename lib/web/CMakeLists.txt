@@ -9,11 +9,20 @@ add_neverd_component_library(NeverDWeb
   packages/PackageIntegrity.cpp
   packages/SHA512.cpp
   packages/evidence/Descriptor.cpp
+  packages/evidence/Publication.cpp
   packages/advisories/SemVer.cpp
   packages/advisories/Reader.cpp
   packages/advisories/Match.cpp
   packages/advisories/Publication.cpp
   SessionPackageAdvisories.cpp
+  packages/attestations/Encoding.cpp
+  packages/attestations/Reader.cpp
+  packages/attestations/Registry.cpp
+  packages/attestations/Statement.cpp
+  packages/attestations/Provenance.cpp
+  packages/attestations/Digest.cpp
+  packages/attestations/Publication.cpp
+  SessionPackageAttestations.cpp
   interfaces/Endpoint.cpp
   interfaces/HAR.cpp
   interfaces/Correlation.cpp
