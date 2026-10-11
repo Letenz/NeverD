@@ -200,9 +200,22 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
       llvm::find_if(States.CallFrameEffects,
                     [](const auto &Call) { return Call.DoesNotReturn; });
   ASSERT_NE(Throw, States.CallFrameEffects.end());
-  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Changed = Low;
+    // The source CFG already closed this throw. Supply an ordinary edge so
+    // this mutation still checks MedIR's exact call-effect binding.
+    auto Source = llvm::find_if(Changed.Blocks, [&](const auto &B) {
+      return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
+    });
+    auto Resume = llvm::find_if(Changed.Blocks, [&](const auto &B) {
+      return B.StartAddr == States.CxxContinuations[0].TargetVA;
+    });
+    ASSERT_NE(Source, Changed.Blocks.end());
+    ASSERT_NE(Resume, Changed.Blocks.end());
+    ASSERT_TRUE(Source->Succs.empty());
+    Source->Succs.push_back(Resume->Id);
+    Resume->Preds.push_back(Source->Id);
     auto &Proof = *Changed.RegistrationStates;
     auto &Call =
         Proof.CallFrameEffects[Throw - States.CallFrameEffects.begin()];
@@ -217,7 +230,7 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
       return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
     });
     ASSERT_NE(Block, Unproved.Blocks.end());
-    EXPECT_FALSE(Block->Succs.empty());
+    EXPECT_EQ(Block->Succs.empty(), Mutation == 3);
   }
   unsigned TerminalCalls = 0;
   for (const auto &Block : Med.Blocks)

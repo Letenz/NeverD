@@ -307,9 +307,25 @@ TEST(WindowsRegistrationRealigned, InputPE32RecoversTheCallbackContract) {
   EXPECT_TRUE(llvm::any_of(ThrowBlock->ExceptionalSuccs, [](const auto &Edge) {
     return Edge.Kind == ExceptionalEdgeKind::CxxCatch;
   }));
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Unproved = F;
+    if (Mutation < 5 || Mutation == 8) {
+      // LowIR already removes authenticated throw fallthroughs. Restore an
+      // ordinary predecessor to test MedIR's independent decision to remove
+      // it; mutating call effects alone cannot recreate a discarded edge.
+      auto Source = llvm::find_if(Unproved.Blocks, [&](const auto &B) {
+        return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
+      });
+      auto Resume = llvm::find_if(Unproved.Blocks, [&](const auto &B) {
+        return B.StartAddr == State.CxxContinuations[0].TargetVA;
+      });
+      ASSERT_NE(Source, Unproved.Blocks.end());
+      ASSERT_NE(Resume, Unproved.Blocks.end());
+      ASSERT_TRUE(Source->Succs.empty());
+      Source->Succs.push_back(Resume->Id);
+      Resume->Preds.push_back(Source->Id);
+    }
     auto &Proof = *Unproved.RegistrationStates;
     auto &Call = Proof.CallFrameEffects[Throw - State.CallFrameEffects.begin()];
     if (Mutation == 0)
@@ -331,11 +347,13 @@ TEST(WindowsRegistrationRealigned, InputPE32RecoversTheCallbackContract) {
       Unproved.RegistrationStates.reset();
     const auto Other =
         LowToMedConverter().convert(Unproved, Arch::X86, BinaryFormat::COFF);
+    bool RestoredFrame = false;
     for (const auto &Block : Other.Blocks)
       if (Block.StartAddr == State.CxxContinuations[0].TargetVA)
         for (const auto &Op : Block.Ops)
-          EXPECT_NE(Op.RegistrationRoot,
-                    MedOp::RegistrationRootKind::RealignedFramePointer);
+          RestoredFrame |= Op.RegistrationRoot ==
+                           MedOp::RegistrationRootKind::RealignedFramePointer;
+    EXPECT_EQ(RestoredFrame, Mutation == 8);
   }
   const auto High = MedToHighConverter().convert(Med, Arch::X86);
   EXPECT_TRUE(registrationCallbackRegion(Med, Catch));
