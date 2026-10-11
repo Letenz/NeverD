@@ -3936,6 +3936,52 @@ HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
   return std::nullopt;
 }
 
+bool HighCWriter::reachesFrameThroughIndex(const HighExpr &E) const {
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  // A choice between whole addresses (`csel x8, x9, x10, ne`, or a run-time
+  // mask `(p & m) | (&slot & ~m)`) reaches whichever it picks.  C takes a
+  // named slot's address for it; only a choice of other frame bytes is an
+  // index.
+  const auto ChoosesFrameBytes = [&](const ExprPtr &Operand) {
+    return Operand && certifiedFrameStorageDisplacement(*Operand) &&
+           !namedFrameSlot(*Operand);
+  };
+  if (E.Op == NdOp::SELECT)
+    return E.Operands.size() == 3 && (ChoosesFrameBytes(E.Operands[1]) ||
+                                      ChoosesFrameBytes(E.Operands[2]));
+  // A frame address plus a run-time index (`&buf[i]`), or one with the index
+  // inserted into its bits (AArch64 `bfi x10, x9, #2, #2` over `mov x10, sp`
+  // is `(sp & ~12) | i << 2`).
+  if ((E.Op != NdOp::INT_ADD && E.Op != NdOp::INT_SUB &&
+       E.Op != NdOp::INT_AND && E.Op != NdOp::INT_OR &&
+       E.Op != NdOp::INT_XOR) ||
+      E.Operands.size() != 2 || !E.Operands[0] || !E.Operands[1] ||
+      certifiedFrameStorageDisplacement(E))
+    return false;
+  if (E.Op == NdOp::INT_AND) {
+    bool ConstantMask = false;
+    for (const ExprPtr &Operand : E.Operands)
+      if (const HighExpr *Mask = unwrapIntegerView(Operand.get());
+          Mask && Mask->Kind == ExprKind::Const && E.Type && E.Type->Size) {
+        ConstantMask = true;
+        // A mask clearing only low bits aligns the address (`and rsp,
+        // -32`); it selects no frame bytes by a run-time value.
+        const uint64_t Width = E.Type->Size >= 8
+                                   ? UINT64_MAX
+                                   : (UINT64_C(1) << (8 * E.Type->Size)) - 1;
+        const uint64_t Cleared = ~Mask->ConstVal & Width;
+        if ((Cleared & (Cleared + 1)) == 0)
+          return false;
+      }
+    if (!ConstantMask)
+      return ChoosesFrameBytes(E.Operands[0]) ||
+             ChoosesFrameBytes(E.Operands[1]);
+  }
+  return certifiedFrameStorageDisplacement(*E.Operands[0]) ||
+         certifiedFrameStorageDisplacement(*E.Operands[1]);
+}
+
 std::optional<std::string>
 HighCWriter::namedFrameSlot(const HighExpr &E, const TypeRef &Access) const {
   const auto Disp = frameDisplacement(E);

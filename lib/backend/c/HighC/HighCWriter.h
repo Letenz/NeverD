@@ -481,6 +481,9 @@ public:
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
+  /// Whether \p E combines a certified frame address with a run-time value,
+  /// so it reaches whichever frame bytes that value selects.
+  bool reachesFrameThroughIndex(const HighExpr &E) const;
   /// The C lvalue for the frame slot at \p E.  When \p Access is narrower
   /// than the slot, the access goes through the slot's address so it
   /// changes only those bytes.
@@ -848,6 +851,10 @@ public:
     TypeRef CallType;
     bool AddressTaken = false;
     bool UsedAsMemory = false;
+    /// A run-time choice (`(p & m) | (&slot & ~m)`, `csel` between slots)
+    /// picks this slot's address for accesses of the slot's width: it stays a
+    /// named local whose address the choice takes, and its writes are kept.
+    bool Chosen = false;
     /// For a slot that shares bytes with others: the name of the storage that
     /// holds them all, this slot's byte offset in it, and its access through
     /// it, `(*(T *)((char *)&outer + k))`.
