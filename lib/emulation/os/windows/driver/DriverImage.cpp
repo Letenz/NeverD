@@ -25,6 +25,7 @@
 #include "llvm/Object/COFF.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
 
 #include <algorithm>
 #include <cstring>
@@ -999,6 +1000,7 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
   Image.Guard = std::move(*Guard);
   Image.Imports = std::move(*Imports);
   Image.Exceptions = std::move(Loaded->ExceptionMetadata);
+  Image.FileHash = llvm::SHA256::hash(Loaded->Raw);
   for (auto &Import : Image.Imports)
     Import.Slot = ActualBase + (Import.Slot - Base);
   DriverImageRegion Headers;

@@ -1260,7 +1260,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 19 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5494`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 21 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5496`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1691,3 +1691,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `SafeSEHReference.*` は不変の SafeSEH テーブルへの所属、不正または曖昧な格納領域、再配置、他のアーキテクチャと形式、分割間の宣言順序を検査します。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` は `NEVERD_NONLOCAL_FINALLY_INPUTS` を使い、ネイティブ MSVC の x86/x64、O0/O2、GS とソース最適化の有無を組み合わせた 32 通りの LLVM 出力を検証します。LLVM と解決済み呼び出しシグネチャを検証し、未対応の x86 ネイティブ EH 再構築は拒否されることも確認します。Windows EH 専用ジョブはネイティブ fixture artifact を取得して実行し、入力ディレクトリがなければテストは明示的にスキップされます。
 
 `RAMReservationTests.cpp` は公開された書き込み証明について、同値・ABA 書き込み、保持範囲、アドレス再利用、共有マッピング、ロールバック、キャンセル、障害前に確定した書き込み、不透明な実行を検証します。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` は優先・下方・カーネルのロードアドレスで所有された事実を検証し、バイトの復元では出所の証明が戻らないことを確認します。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` は有効な CFG の修正と無効時のフォールバック保持を区別します。
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` は PE 出力、独立 DIR64 リーダー、モデル再配置と書き換えたデバッグレコードの除外を検証します。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` は入力・ベース・順序の不一致を拒否し、バイトが同じでも整形による置換を除外します。これは診断メタデータの検証であり、ネイティブ復元の認証ではありません。

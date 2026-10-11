@@ -1168,7 +1168,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 19 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5494`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 21 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5496`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1599,3 +1599,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `SafeSEHReference.*` 检查不可变 SafeSEH 表成员、畸形或歧义存储、重定位、其他架构与格式，以及分片间的声明顺序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 通过 `NEVERD_NONLOCAL_FINALLY_INPUTS`，测试原生 MSVC x86/x64、O0/O2、GS 开关及源码优化开关的 32 种 LLVM 组合。测试验证 LLVM 和已解析调用签名，并要求未支持的 x86 原生 EH 重建继续被拒绝。Windows EH 专项作业下载原生 fixture artifact 并运行该矩阵；缺少输入目录时测试会明确跳过。
 
 `RAMReservationTests.cpp` 验证公开写入记录的同值及 ABA 写入、保留切片、地址复用、兄弟映射、回滚、取消、故障前已提交写入和不透明执行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在首选、向下重定位和内核加载地址检查拥有独立生命周期的加载事实：恢复字节不会恢复已失效的来源证明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 区分活动 CFG 指针替换与未启用 CFG 的回退指针保留。
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 检查 PE 输出、独立 DIR64 读取器、模型重定位及对重写调试记录的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒绝来源、基址或顺序不匹配，并排除格式化替换，即使字节相同。这些检查验证诊断元数据，不代表原生恢复成功。

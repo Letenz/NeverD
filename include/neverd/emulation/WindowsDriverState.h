@@ -68,6 +68,9 @@ struct WindowsDriverState final : ProcessRuntimeState {
       bool LoaderWritePreserved;
     };
     std::vector<Field> Fields;
+    /// SHA-256 of the validated file, before relocation and model fixups.
+    /// Consumers must bind facts to this source, not just matching addresses.
+    std::array<uint8_t, 32> FileHash;
   };
   /// Supplied only by the image-loading/invocation owner, never by comparing
   /// integers in captured resource bytes. Snapshot facts own no live handles.

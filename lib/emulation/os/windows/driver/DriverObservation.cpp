@@ -300,7 +300,7 @@ DriverObservation::imageRelocations() {
     return llvm::createStringError(
         "driver relocation witnesses are incomplete");
   WindowsDriverState::ImageRelocationState State{
-      Image.Base, Image.PreferredBase, {}};
+      Image.Base, Image.PreferredBase, {}, Image.FileHash};
   for (size_t I = 0; I < Image.Relocations.size(); ++I) {
     const auto &Field = Image.Relocations[I];
     const auto &Witness = RelocationWrites[I];
