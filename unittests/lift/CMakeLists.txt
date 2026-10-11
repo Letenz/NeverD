@@ -54,6 +54,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_ControlTests.cpp
   arm32/ARM32_ExtendTests.cpp
   arm32/ARM32_IntrinsicsTests.cpp
+  arm32/ARM32_LiteralPoolTests.cpp
   arm32/ARM32_LogicTests.cpp
   arm32/ARM32_MemTests.cpp
   arm32/ARM32_MulDivTests.cpp
