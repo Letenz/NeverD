@@ -209,6 +209,7 @@ public:
   void writeStmt(const HighStmt &Stmt, int Indent);
   void writeStmtImpl(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
+  bool cxxThrowUsesRuntimeCall(const HighExpr &ThrowCall) const;
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,

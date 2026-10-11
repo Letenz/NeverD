@@ -4997,6 +4997,11 @@ void HighCWriter::foldCxxThrowConstructors(const HighFunc &Func) {
     return;
   if (!Opts.Image)
     return;
+  // PE32 ThrowInfo identifies an object, not its source constructor or member
+  // layout. Keep its initialization and exact runtime call until constructor
+  // recovery supplies that proof. Sharing an object argument is insufficient.
+  if (Opts.Image->Arch == Arch::X86)
+    return;
   struct ThrownObject {
     std::optional<int64_t> Frame;
     std::optional<va_t> Image;
