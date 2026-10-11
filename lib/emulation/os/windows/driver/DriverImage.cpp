@@ -1035,18 +1035,18 @@ llvm::Expected<DriverImage> loadDriverImage(const std::filesystem::path &Path,
         return Region.Bytes.data() + (Address - Region.Address);
     return nullptr;
   };
-  if (Rebased) {
-    // DIR64 is defined as addition of the base difference to a 64-bit field.
-    // Unsigned subtraction/addition preserve PE's modulo-2^64 field encoding,
-    // including downward rebases and loading into the canonical kernel range.
-    const uint64_t Difference = ActualBase - Base;
-    for (uint64_t RVA : Relocations) {
-      uint8_t *Target = MutableBytes(RVA);
-      if (!Target)
-        return invalid(image::RelocationTargetDisappearedFromMappingPlan);
+  // DIR64 is defined as addition of the base difference to a 64-bit field.
+  // Unsigned subtraction/addition preserve PE's modulo-2^64 field encoding,
+  // including downward rebases and loading into the canonical kernel range.
+  const uint64_t Difference = ActualBase - Base;
+  for (uint64_t RVA : Relocations) {
+    uint8_t *Target = MutableBytes(RVA);
+    if (!Target)
+      return invalid(image::RelocationTargetDisappearedFromMappingPlan);
+    if (Rebased)
       llvm::support::endian::write64le(
           Target, llvm::support::endian::read64le(Target) + Difference);
-    }
+    Image.Relocations.push_back({RVA, llvm::support::endian::read64le(Target)});
   }
   if (Cookie->RVA) {
     uint8_t *Target = MutableBytes(Cookie->RVA);

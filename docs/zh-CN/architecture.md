@@ -1498,3 +1498,5 @@ DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；Da
 DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码，并拒绝未建模的信号状态操作。Select 与 Pselect 共享 immediateSelect，统一处理位图、容量下界、提供方和按序复制；timeval 与 timespec 保留各自的字段宽度和边界。完整的非空掩码需要后续的信号状态模型。
 
 `isCheckedX86SafeSEHHandlerReference` 使用现有 SafeSEH 解码器、不可变的表及头部字节、带重定位的 load-config 指针，认证保留的 PE32 处理器入口。LLVM 在发射任何函数体前声明该源码身份，包括被分片省略的函数体。表成员资格不证明语言 personality、可调用 ABI 或原生 EH 重建权限；这些使用方仍执行独立校验。
+
+`MemoryWriteWitness` 保留精确的物理分配切片，与 RAM reservation 共用已提交写入的失效机制。同值、部分及别名写入会使记录失效；无法完整追踪写入的执行会保守地撤销证明。创建和查询要求物理所有者已停止。驱动观察在映像复制后、会话修正前绑定已验证的 DIR64 字段，只有映射分配和写入历史仍匹配时才保留加载事实。这些事实不覆盖生成的指针，也不提供原生内核状态重建器。

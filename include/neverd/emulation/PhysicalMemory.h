@@ -15,6 +15,7 @@ class AddressSpace;
 class MemoryProjection;
 class MemoryRegion;
 class MemoryView;
+class MemoryWriteWitness;
 
 /// Physical RAM is independent of address spaces, CPUs and their transports.
 /// Regions and mappings keep their owner alive. Releasing the final reference
@@ -31,6 +32,7 @@ public:
 private:
   friend class AddressSpace;
   friend class MemoryView;
+  friend class MemoryWriteWitness;
   friend class MemoryProjection;
   friend class MemoryRegion;
   struct Impl;

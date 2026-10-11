@@ -10,6 +10,9 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.RequiresAnOwnershipBaseline")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.RetainsTheExactLegacyAllocationContract")

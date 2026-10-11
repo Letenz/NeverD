@@ -13,6 +13,44 @@
 #include <cstring>
 
 namespace neverd::emulation {
+struct MemoryWriteWitness::Impl {
+  std::shared_ptr<PhysicalMemory> Memory;
+  std::vector<std::shared_ptr<RAMReservation>> Reservations;
+};
+llvm::Expected<bool> MemoryWriteWitness::intact() const {
+  if (!State)
+    return diagnostic::error(diagnostic::MemoryRegion);
+  auto &RAM = *State->Memory->State;
+  std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
+  if (!Lock.owns_lock() || RAM.Running)
+    return diagnostic::error(diagnostic::Running);
+  return std::all_of(State->Reservations.begin(), State->Reservations.end(),
+                     [](const auto &R) { return R->Valid; });
+}
+llvm::Expected<MemoryWriteWitness> MemoryView::watchWrites() const {
+  if (auto E = validate(0, Size))
+    return std::move(E);
+  if (!Size)
+    return diagnostic::error(diagnostic::MemoryRegion);
+  auto &RAM = *Memory->State;
+  std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
+  if (!Lock.owns_lock() || RAM.Running)
+    return diagnostic::error(diagnostic::Running);
+  MemoryWriteWitness Witness;
+  Witness.State = std::make_shared<MemoryWriteWitness::Impl>();
+  Witness.State->Memory = Memory;
+  for (const auto &Slice : Slices)
+    Witness.State->Reservations.push_back(
+        std::make_shared<RAMReservation>(RAMReservation{
+            MemoryView(Memory, Space, Slice.Size, {Slice}),
+            memory::ProjectionReserve + Slice.Region->Offset + Slice.Offset,
+            Slice.Size}));
+  std::erase_if(RAM.Reservations,
+                [](const auto &Weak) { return Weak.expired(); });
+  for (const auto &R : Witness.State->Reservations)
+    RAM.Reservations.push_back(R);
+  return Witness;
+}
 MemoryView::MemoryView(std::shared_ptr<PhysicalMemory> Memory,
                        std::shared_ptr<const void> Space, uint64_t Size,
                        std::vector<MemorySlice> Slices)

@@ -1485,3 +1485,5 @@ DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 �
 DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를 읽고 모델링되지 않은 신호 상태 작업을 거부합니다. Select와 Pselect는 immediateSelect에서 비트맵, 용량 하한, 공급자 및 순서대로 복사를 공유하며 timeval과 timespec은 각 필드 폭과 경계를 유지합니다. 완전한 NULL이 아닌 마스크에는 향후 신호 상태 모델이 필요합니다.
 
 `isCheckedX86SafeSEHHandlerReference`는 기존 SafeSEH 디코더, 변경 불가능한 테이블과 헤더 바이트, 재배치된 load-config 포인터로 보존할 PE32 처리기 진입점을 인증합니다. LLVM은 분할 과정에서 생략된 본문을 포함해 모든 본문을 출력하기 전에 이 소스 식별자를 선언합니다. 테이블 소속은 언어 personality, 호출 ABI 또는 네이티브 EH 재구성 권한을 증명하지 않으며 각 소비자의 독립 검사는 유지됩니다.
+
+`MemoryWriteWitness`는 정확한 물리 할당 범위를 유지하고 RAM reservation과 커밋된 쓰기의 무효화 처리를 공유합니다. 동일 값, 부분 쓰기와 별칭 쓰기는 기록을 무효화하며, 완전히 추적할 수 없는 실행은 증명을 보수적으로 폐기합니다. 생성과 조회에는 소유자의 정지가 필요합니다. 드라이버 관찰은 이미지 복사 후 세션 수정 전에 검증된 DIR64 필드를 연결하고, 할당과 쓰기 이력이 일치할 때만 소유된 사실을 게시합니다. 이 사실은 생성된 포인터나 네이티브 커널 상태 복원을 보장하지 않습니다.

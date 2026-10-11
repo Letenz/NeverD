@@ -96,6 +96,113 @@ TEST_F(RAMReservations, SameValueAndABAHostWritesInvalidateEveryOlderWitness) {
   }
 }
 
+TEST_F(RAMReservations, PublicWitnessTracksExactBytesAndCannotBeRestored) {
+  for (bool ABA : {false, true}) {
+    llvm::cantFail(Space->writeInteger(Data + 3, BeforeWord, WordBytes));
+    auto View = llvm::cantFail(Space->pinBacking(Data + 3, WordBytes));
+    auto Witness = llvm::cantFail(View.watchWrites());
+    auto Copy = Witness;
+    llvm::cantFail(Space->writeInteger(Alias + 2, AfterByte, 1));
+    llvm::cantFail(Space->writeInteger(Alias + 3 + WordBytes, AfterByte, 1));
+    EXPECT_TRUE(llvm::cantFail(Witness.intact()));
+    if (ABA)
+      llvm::cantFail(Space->writeInteger(Alias + 6, AfterByte, 1));
+    llvm::cantFail(Space->writeInteger(Alias + 3, BeforeWord, WordBytes));
+    EXPECT_EQ(llvm::cantFail(Space->readInteger(Data + 3, WordBytes)),
+              BeforeWord);
+    EXPECT_FALSE(llvm::cantFail(Witness.intact()));
+    EXPECT_FALSE(llvm::cantFail(Copy.intact()));
+    auto Next = llvm::cantFail(View.watchWrites());
+    EXPECT_TRUE(llvm::cantFail(Next.intact()));
+    EXPECT_FALSE(llvm::cantFail(Witness.intact()));
+  }
+}
+
+TEST_F(RAMReservations, PublicWitnessRetainsAllSlicesAndAllocationIdentity) {
+  llvm::cantFail(
+      Space->map(Data + memory::PageSize, memory::PageSize, Read | Write));
+  auto View =
+      llvm::cantFail(Space->pinBacking(Data + memory::PageSize - 3, WordBytes));
+  ASSERT_EQ(View.slices().size(), 2u);
+  auto Witness = llvm::cantFail(View.watchWrites());
+  auto Sibling =
+      llvm::cantFail(AddressSpace::create(Space->physicalMemory(), Limit));
+  llvm::cantFail(Sibling->mapRegion(Alias, View.slices()[1].Region, 0,
+                                    memory::PageSize, Read | Write));
+  llvm::cantFail(Space->unmap(Data, 2 * memory::PageSize));
+  llvm::cantFail(Space->map(Data, memory::PageSize, Read | Write));
+  llvm::cantFail(Space->writeInteger(Data, AfterWord, WordBytes));
+  EXPECT_TRUE(llvm::cantFail(Witness.intact()));
+  llvm::cantFail(Sibling->writeInteger(Alias + 4, 0, 1));
+  EXPECT_FALSE(llvm::cantFail(Witness.intact()));
+  auto Retained = llvm::cantFail(View.watchWrites());
+  std::weak_ptr<PhysicalMemory> Owner = View.physicalMemory();
+  Space.reset();
+  Sibling.reset();
+  Memory.reset();
+  EXPECT_TRUE(llvm::cantFail(Retained.intact()));
+  const std::array<uint8_t, 1> Same{0};
+  llvm::cantFail(View.write(0, Same));
+  EXPECT_FALSE(llvm::cantFail(Retained.intact()));
+  View = {};
+  EXPECT_FALSE(Owner.expired());
+  Witness = {};
+  Retained = {};
+  EXPECT_TRUE(Owner.expired());
+}
+
+TEST_F(RAMReservations, PublicWitnessRejectsInvalidAndRunningQueries) {
+  MemoryWriteWitness Invalid;
+  auto Result = Invalid.intact();
+  ASSERT_FALSE(bool(Result));
+  llvm::consumeError(Result.takeError());
+  auto View = llvm::cantFail(Space->pinBacking(Data, WordBytes));
+  auto Empty = llvm::cantFail(View.subview(0, 0)).watchWrites();
+  ASSERT_FALSE(bool(Empty));
+  llvm::consumeError(Empty.takeError());
+  auto Witness = llvm::cantFail(View.watchWrites());
+  start();
+  auto Create = View.watchWrites();
+  ASSERT_FALSE(bool(Create));
+  EXPECT_EQ(llvm::toString(Create.takeError()), diagnostic::Running);
+  Result = Witness.intact();
+  ASSERT_FALSE(bool(Result));
+  EXPECT_EQ(llvm::toString(Result.takeError()), diagnostic::Running);
+  auto Foreign = std::async(std::launch::async, [&] {
+    return llvm::toString(Witness.intact().takeError());
+  });
+  EXPECT_EQ(Foreign.get(), diagnostic::Running);
+  stop();
+  EXPECT_TRUE(llvm::cantFail(Witness.intact()));
+  start(RAMWriteTracking::Opaque);
+  stop();
+  EXPECT_FALSE(llvm::cantFail(Witness.intact()));
+}
+
+TEST_F(RAMReservations, PublicWitnessIgnoresRejectedAndRolledBackWrites) {
+  auto View = llvm::cantFail(Space->pinBacking(Data, WordBytes));
+  auto Witness = llvm::cantFail(View.watchWrites());
+  llvm::cantFail(Space->protect(Alias, memory::PageSize, Read));
+  llvm::consumeError(Space->writeInteger(Alias, AfterWord, WordBytes));
+  const std::array<uint8_t, 1> Byte{AfterByte};
+  llvm::consumeError(View.write(WordBytes, Byte));
+  llvm::cantFail(View.write(0, {}));
+  EXPECT_TRUE(llvm::cantFail(Witness.intact()));
+  for (bool Stage : {false, true}) {
+    start();
+    {
+      const RAMWriteRange W{Data, WordBytes};
+      auto T = llvm::cantFail(RAMTransaction::create(*Memory, W, WordBytes));
+      *Memory->physicalPointer(Memory->mappings().at(Data).Physical) =
+          AfterByte;
+      if (Stage)
+        llvm::cantFail(T->stage());
+    }
+    stop();
+    EXPECT_TRUE(llvm::cantFail(Witness.intact()));
+  }
+}
+
 TEST_F(RAMReservations,
        FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress) {
   for (uint64_t Offset = 0; Offset < 2 * PairBytes; ++Offset) {
@@ -266,6 +373,8 @@ TEST_P(RAMReservationWriters,
       auto Reservation =
           llvm::cantFail(Projection->reserveRAM(Data, WordBytes, PairBytes));
       Projection->endRun();
+      auto Witness = llvm::cantFail(
+          llvm::cantFail(Space->pinBacking(Data, WordBytes)).watchWrites());
       BackendHooks Hooks;
       Hooks.Instruction = [&](uint64_t PC, uint32_t) {
         if (PC != Code)
@@ -281,6 +390,7 @@ TEST_P(RAMReservationWriters,
                                ? ExecutionExitKind::GuestFault
                                : ExecutionExitKind::Stopped)
           << Exit.Diagnostic;
+      EXPECT_EQ(llvm::cantFail(Witness.intact()), Cancel);
       llvm::cantFail(Projection->beginRun(RAMWriteTracking::Declared));
       EXPECT_EQ(llvm::cantFail(Projection->reservationMatches(Reservation, Data,
                                                               WordBytes)),

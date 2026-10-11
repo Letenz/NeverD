@@ -56,6 +56,22 @@ struct WindowsDriverState final : ProcessRuntimeState {
   /// Present only when the driver invocation owner supplied its baseline.
   /// A kernel resource capture alone has no register/frame authority.
   std::optional<EntryContext> Entry;
+  struct ImageRelocationState {
+    uint64_t ImageBase, PreferredBase;
+    struct Field {
+      uint64_t RVA, LoadedValue;
+      /// True requires the original mapped allocation and an intact committed
+      /// write witness established before session fixups and execution. False
+      /// also covers lost mappings and execution with opaque write tracking.
+      /// This proves only retention of this loader-authenticated DIR64 field;
+      /// it does not cover generated pointers or arbitrary incoming addresses.
+      bool LoaderWritePreserved;
+    };
+    std::vector<Field> Fields;
+  };
+  /// Supplied only by the image-loading/invocation owner, never by comparing
+  /// integers in captured resource bytes. Snapshot facts own no live handles.
+  std::optional<ImageRelocationState> Relocations;
   /// Includes unsupported resources/effects, even when no pool remains live.
   std::vector<std::string> Reasons;
   bool hasAdditionalDependencies() const override {

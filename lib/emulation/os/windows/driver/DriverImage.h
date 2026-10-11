@@ -43,6 +43,9 @@ struct DriverGuardControlFlow {
   std::vector<uint64_t> ValidTargets;
 };
 struct DriverImage {
+  struct Relocation {
+    uint64_t RVA, LoadedValue;
+  };
   std::string Name;
   uint64_t Base = 0;
   uint64_t PreferredBase = 0;
@@ -52,6 +55,8 @@ struct DriverImage {
   DriverGuardControlFlow Guard;
   std::vector<DriverImageRegion> Regions;
   std::vector<DriverImport> Imports;
+  /// Exact validated DIR64 fields after applying this load's base difference.
+  std::vector<Relocation> Relocations;
   /// Validated loader metadata in preferred-image coordinates. Exception
   /// dispatch performs the checked translation to this session's actual base.
   ExceptionInfo Exceptions;

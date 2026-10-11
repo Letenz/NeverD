@@ -1436,3 +1436,5 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩，並拒絕未建模的訊號狀態操作。Select 與 Pselect 共用 immediateSelect，統一處理位元圖、容量下界、提供方與依序複製；timeval 與 timespec 保留各自的欄位寬度及邊界。完整的非空遮罩需要後續的訊號狀態模型。
 
 `isCheckedX86SafeSEHHandlerReference` 使用既有 SafeSEH 解碼器、不可變的表與標頭位元組，以及具有重定位的 load-config 指標，驗證保留的 PE32 處理器入口。LLVM 在輸出任何函式本體前宣告此來源身分，包括分片省略的本體。表成員資格不證明語言 personality、可呼叫 ABI 或原生 EH 重建權限；各使用端仍執行獨立檢查。
+
+`MemoryWriteWitness` 保留精確的實體配置切片，與 RAM reservation 共用已提交寫入的失效機制。同值、部分及別名寫入會使記錄失效；無法完整追蹤寫入的執行會保守地撤銷證明。建立和查詢要求實體擁有者已停止。驅動觀察在映像複製後、工作階段修正前綁定已驗證的 DIR64 欄位，只有映射配置和寫入歷史仍相符時才保留載入事實。這些事實不涵蓋產生的指標，也不提供原生核心狀態重建器。
