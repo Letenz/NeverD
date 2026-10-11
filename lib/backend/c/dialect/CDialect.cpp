@@ -18,6 +18,7 @@
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
 
 using namespace neverd;
@@ -63,7 +64,22 @@ public:
   using DialectPrinter::DialectPrinter;
 
 private:
-  void header() override {}
+  llvm::DenseSet<size_t> UnknownParameterLists;
+
+  void header() override {
+    if (Opts.Dialect != SourceDialect::Cpp)
+      return;
+    llvm::StringSet<> KnownFunctions;
+    for (const auto &Item : T.Items)
+      for (const Decl *D : Item.Decls)
+        if (D->Kind == DeclKind::Function && (D->Body || D->Ty->Prototyped))
+          KnownFunctions.insert(D->Name);
+    for (const auto &Item : T.Items)
+      for (const Decl *D : Item.Decls)
+        if (D->Kind == DeclKind::Function && D->UnprototypedParams &&
+            !D->Body && !KnownFunctions.contains(D->Name))
+          UnknownParameterLists.insert(*D->UnprototypedParams);
+  }
   void directive(const TopLevel &Item) override { line(Item.Text); }
   std::string escapeIdentifier(llvm::StringRef Name) const override {
     return Name.str();
@@ -85,6 +101,7 @@ private:
 
   std::string text(size_t Begin, size_t End, bool SpellNames = true) const {
     llvm::StringRef Text = T.Source.slice(Begin, End).trim();
+    const size_t SourceOffset = Text.data() - T.Source.data();
     if (Opts.Dialect != SourceDialect::Cpp)
       return Text.str();
     // Only identifiers are respelled. Strings, comments and assembler labels
@@ -112,6 +129,12 @@ private:
       else
         Out += SpellNames && Tok.Kind == TokenKind::Identifier ? name(Tok.Text)
                                                                : Tok.Text.str();
+      // C's f() leaves the parameters unknown. C++'s f() would assert zero
+      // parameters and reject recovered arguments. Keep default promotions
+      // with an ellipsis in this view; it does not prove a native variadic ABI.
+      if (Tok.Text == "(" &&
+          UnknownParameterLists.contains(SourceOffset + Tok.Offset))
+        Out += "...";
       Previous = Tok.Offset + Tok.Text.size();
     }
     Out += Text.substr(Previous);

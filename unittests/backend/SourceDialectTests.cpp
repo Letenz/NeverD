@@ -805,6 +805,80 @@ TEST(SourceDialect, PlainCCallbackRequiresItsNativeTableAndBodyIdentity) {
   }
 }
 
+TEST(SourceDialect, CxxUnknownExternalParametersKeepDefaultPromotions) {
+  const llvm::StringRef Source = R"C(
+extern int native_call(/* unknown parameters */) __asm__("native_call");
+int known(void);
+int defined();
+int known(void) { return 3; }
+int defined() { return 4; }
+int main(void) {
+  signed char value = -7;
+  float fraction = 1.25f;
+  return native_call(value, fraction, &value) + known() + defined() - 7;
+}
+)C";
+  const auto C = spell(Source, SourceDialect::C);
+  const auto Cpp = spell(Source, SourceDialect::Cpp);
+  ASSERT_TRUE(C.Unread.empty()) << C.Text;
+  ASSERT_TRUE(Cpp.Unread.empty()) << Cpp.Text;
+  EXPECT_EQ(tokens(C.Text), tokens(Source));
+  EXPECT_NE(Cpp.Text.find("native_call(.../* unknown parameters */)"),
+            std::string::npos)
+      << Cpp.Text;
+  EXPECT_NE(Cpp.Text.find("int known(void);"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("int defined();"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("int defined() {"), std::string::npos);
+  EXPECT_NE(Cpp.Text.find("native_call(value, fraction, &value)"),
+            std::string::npos);
+  // Separate prototypes and source labels still refer to their own tokens.
+  const auto Several =
+      spell("extern int first(), second() __asm__(\"first()\");\n",
+            SourceDialect::Cpp);
+  EXPECT_TRUE(Several.Unread.empty());
+  EXPECT_NE(Several.Text.find("first(...), second(...) __asm__(\"first()\")"),
+            std::string::npos)
+      << Several.Text;
+
+  const std::string Clang = NEVERD_TEST_CLANG;
+  if (Clang.empty())
+    GTEST_SKIP() << "no clang: C and C++ argument promotion is not executed";
+  llvm::SmallString<128> Dir;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory("neverd-prototype", Dir));
+  llvm::SmallString<128> Provider(Dir), Object(Dir);
+  llvm::sys::path::append(Provider, "provider.c");
+  llvm::sys::path::append(Object, "provider.o");
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream OS(Provider, EC);
+    ASSERT_FALSE(EC);
+    OS << "int native_call(int value, double fraction, signed char *pointer) "
+          "{\n"
+          "  return value != -7 || fraction != 1.25 || *pointer != -7;\n}\n";
+  }
+  auto ProviderBuild =
+      run(Clang, {"-std=c11", "-c", Provider, "-o", Object}, Dir);
+  ASSERT_TRUE(bool(ProviderBuild)) << llvm::toString(ProviderBuild.takeError());
+  for (bool IsCpp : {false, true}) {
+    llvm::SmallString<128> File(Dir), Binary(Dir);
+    llvm::sys::path::append(File, IsCpp ? "source.cpp" : "source.c");
+    llvm::sys::path::append(Binary, IsCpp ? "cpp.out" : "c.out");
+    {
+      llvm::raw_fd_ostream OS(File, EC);
+      ASSERT_FALSE(EC);
+      OS << (IsCpp ? Cpp.Text : C.Text);
+    }
+    auto Built = run(
+        Clang,
+        {IsCpp ? "-std=c++17" : "-std=c11", "-O1", "-o", Binary, File, Object},
+        Dir);
+    ASSERT_TRUE(bool(Built)) << llvm::toString(Built.takeError());
+    auto Result = run(Binary, {}, Dir);
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  }
+  llvm::sys::fs::remove_directories(Dir);
+}
+
 TEST(SourceDialect, CxxAlignmentUsesStandardSyntaxAndPreservesStorage) {
   const llvm::StringRef Source = R"C(
 #include <stdint.h>

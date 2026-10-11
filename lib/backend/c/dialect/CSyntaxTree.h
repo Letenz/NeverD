@@ -320,6 +320,9 @@ struct Decl {
   size_t End = 0;
   llvm::StringRef Name;
   const CType *Ty = nullptr;
+  /// Opening parenthesis of a function's C declaration with no prototype.
+  /// A definition still has a known parameter count, including zero.
+  std::optional<size_t> UnprototypedParams;
   bool Extern = false;
   bool Static = false;
   bool Inline = false;
