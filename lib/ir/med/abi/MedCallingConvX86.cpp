@@ -875,11 +875,16 @@ void recoverFPStackReads(
     const std::set<int64_t> &MutableSlots) {
   if (Architecture != Arch::X86 && Architecture != Arch::X64)
     return;
+  // MedIR numbers registers, temporaries and stack values from one counter,
+  // and HighIR keys them by {Id, SSAVer} alone: a new temporary takes an id
+  // above every value's, or it aliases a register's (`t30` read as EAX.30).
   int NextTemp = 0;
   const auto Observe = [&](const MedVar &V) {
-    if (V.Kind == MedVar::Temp)
+    if (!V.isConst())
       NextTemp = std::max(NextTemp, V.Id + 1);
   };
+  for (const auto &Parameter : Func.Params)
+    Observe(Parameter);
   for (const auto &Block : Func.Blocks) {
     for (const auto &Phi : Block.Phis) {
       Observe(Phi.Output);
