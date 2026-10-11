@@ -26,6 +26,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_FAMinMaxTests.cpp
   aarch64/AArch64_FPTests.cpp
   aarch64/AArch64_FunctionDiscoveryTests.cpp
+  aarch64/AArch64_HighCExecutionTests.cpp
   aarch64/AArch64_HighCIntrinsicSpellingTests.cpp
   aarch64/AArch64_IntrinsicsTests.cpp
   aarch64/AArch64_LogicTests.cpp
@@ -69,6 +70,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_DShiftTests.cpp
   x86_32/X86_32_FlagsTests.cpp
   x86_32/X86_32_FPTests.cpp
+  x86_32/X86_32_HighCDataTests.cpp
   x86_32/X86_32_HighCSignednessTests.cpp
   x86_32/X86_32_LodsMiscTests.cpp
   x86_32/X86_32_LoopTests.cpp
@@ -1187,6 +1189,7 @@ target_include_directories(NeverDI386CallContractTests PRIVATE
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
+  core/CProjectionIdentifierTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
