@@ -230,26 +230,15 @@ constexpr unsigned x86FPRoundStateElementBytes(unsigned Control) {
   return (Control & 2) ? 8 : 4;
 }
 
-/// The bytes a memory form reads at its address: a scalar's element, or the
-/// vector whose numerical bits its \p OutputSize result carries (below the
-/// four MXCSR bytes an arithmetic or rounding result adds).  0 for any other
-/// intrinsic.
-constexpr unsigned x86FPStateMemoryBytes(Intrinsic Id, unsigned OutputSize,
-                                         unsigned Control) {
-  switch (Id) {
-  case Intrinsic::X86FPArithMemoryState:
-    return x86FPArithStateIsScalar(Control)
-               ? x86FPArithStateElementBytes(Control)
-               : (OutputSize >= 4 ? OutputSize - 4 : 0);
-  case Intrinsic::X86FPRoundMemoryState:
-    return x86FPRoundStateIsScalar(Control)
-               ? x86FPRoundStateElementBytes(Control)
-               : (OutputSize >= 4 ? OutputSize - 4 : 0);
-  case Intrinsic::X86FPApprox12MemoryState:
-    return x86FPApprox12IsScalar(Control) ? 4 : OutputSize;
-  default:
-    return 0;
-  }
+/// The bytes a memory form reads at its address: the numerical bits of its
+/// \p OutputSize result, below the four MXCSR bytes an arithmetic, FMA or
+/// rounding result adds (a scalar form's element, a packed form's vector).
+/// 0 for any other intrinsic.
+constexpr unsigned x86FPStateMemoryBytes(Intrinsic Id, unsigned OutputSize) {
+  if (Id == Intrinsic::X86FPApprox12MemoryState)
+    return OutputSize;
+  return isX86FPStateMemoryIntrinsic(Id) && OutputSize >= 4 ? OutputSize - 4
+                                                            : 0;
 }
 
 constexpr bool x86FPStateShapeIsValid(Intrinsic Id,

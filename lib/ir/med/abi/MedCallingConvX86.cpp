@@ -830,8 +830,8 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
                       : Id == Intrinsic::X86FPRoundMemoryState
                           ? x86FPRoundStateIsScalar(Shape.Control)
                           : x86FPArithStateIsScalar(Shape.Control);
-  return StackMemoryRead{
-      1, x86FPStateMemoryBytes(Id, Shape.OutputSize, Shape.Control), Scalar};
+  return StackMemoryRead{1, x86FPStateMemoryBytes(Id, Shape.OutputSize),
+                         Scalar};
 }
 
 void preserveFPStackHomes(

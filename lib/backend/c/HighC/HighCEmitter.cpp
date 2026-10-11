@@ -2344,11 +2344,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if (E.Kind == ExprKind::Call &&
         isX86FPStateMemoryIntrinsic(E.IntrinsicId) &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default && E.Type &&
-        E.Operands.size() > 1 && E.Operands[0] && E.Operands[1] &&
-        E.Operands[1]->Kind == ExprKind::Const)
-      if (const unsigned Bytes = x86FPStateMemoryBytes(
-              E.IntrinsicId, E.Type->Size,
-              static_cast<unsigned>(E.Operands[1]->ConstVal))) {
+        !E.Operands.empty() && E.Operands[0])
+      if (const unsigned Bytes =
+              x86FPStateMemoryBytes(E.IntrinsicId, E.Type->Size)) {
         NoteAccessAddress(E.Operands[0].get());
         if (auto VA = constAddress(*E.Operands[0]))
           noteImageObject(*VA, NdType::makeInt(Bytes, false), false, true);
