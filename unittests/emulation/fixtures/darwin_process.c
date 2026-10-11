@@ -7442,6 +7442,205 @@ static int immediate_select_unsupported(unsigned capacity) {
   return 251;
 }
 
+/* pselect has a distinct two-signed64 LP64 timeout and a null mask. */
+struct pselect_timespec {
+  u64 seconds;
+  u64 nanoseconds;
+};
+_Static_assert(sizeof(struct pselect_timespec) == 16, "LP64 user64_timespec");
+_Static_assert(__builtin_offsetof(struct pselect_timespec, nanoseconds) == 8,
+               "64-bit nanoseconds after 64-bit seconds");
+static int pselect_result_mask(u64 number, u64 count, u64 r, u64 w, u64 x,
+                               u64 time, u64 mask, u64 expected,
+                               unsigned failure) {
+  unsigned error;
+  const u64 result = call(number, count, r, w, x, time, mask, &error);
+  if (result != expected || error != failure)
+    return 221;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (failure ? w : 0))
+#endif
+    return 222;
+  return 0;
+}
+static int pselect_result(u64 number, u64 count, u64 r, u64 w, u64 x, u64 time,
+                          u64 expected, unsigned failure) {
+  return pselect_result_mask(number, count, r, w, x, time, 0, expected,
+                             failure);
+}
+static int pselect_sample(u64 number, u64 high, unsigned count,
+                          const unsigned *input, const unsigned *expected,
+                          unsigned words, u64 result, unsigned failure) {
+  union select_guard sets[3], original[3];
+  for (unsigned i = 0; i != 3; ++i) {
+    sets[i].words[0] = sets[i].words[1] = sets[i].words[2] = sets[i].words[3] =
+        0xa5a5a5a5a5a5a5a5UL;
+    for (unsigned j = 0; j != 3; ++j)
+      sets[i].fields.bits[j] = input[j];
+    original[i] = sets[i];
+    if (!failure)
+      for (unsigned j = 0; j != words; ++j)
+        original[i].fields.bits[j] = expected[j];
+  }
+  struct pselect_timespec time = {0, 0};
+  if (pselect_result(number | high, high | count, (u64)sets[0].fields.bits,
+                     (u64)sets[1].fields.bits, (u64)sets[2].fields.bits,
+                     (u64)&time, result, failure))
+    return 223;
+  if (time.seconds || time.nanoseconds)
+    return 224;
+  /* All 96 set bytes, including every unused word and guard, are compared. */
+  for (unsigned i = 0; i != 3; ++i)
+    if (sets[i].words[0] != original[i].words[0] ||
+        sets[i].words[1] != original[i].words[1] ||
+        sets[i].words[2] != original[i].words[2] ||
+        sets[i].words[3] != original[i].words[3])
+      return 225;
+  return 0;
+}
+static int immediate_pselect(const char *path) {
+  unsigned error;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || fd >= 31)
+    return 226;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy >= 31)
+    return 226;
+  const u64 closed = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || closed >= 31)
+    return 226;
+  if (call(6, closed, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 227;
+  if (call(92, fd, 0, 31, 0, 0, 0, &error) != 31 || error || secondary ||
+      call(92, fd, 0, 32, 0, 0, 0, &error) != 32 || error || secondary ||
+      call(92, fd, 0, 64, 0, 0, 0, &error) != 64 || error || secondary)
+    return 228;
+  /* Query this provider's EOF; virtual and native payload lengths differ. */
+  const u64 eof = call(199, fd, 0, 2, 0, 0, 0, &error);
+  if (error || secondary || call(92, fd, 4, 4, 0, 0, 0, &error) || error ||
+      secondary)
+    return 229;
+  const u64 numbers[] = {394, 395};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const unsigned file = 1u << fd, duplicate = 1u << copy;
+  for (unsigned a = 0; a != 2; ++a)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 number = numbers[a] | high[h];
+      struct pselect_timespec time = {0, 0};
+      if (pselect_result(number, high[h], -1UL, -1UL, -1UL, (u64)&time, 0, 0))
+        return 230;
+      unsigned input[] = {file | 0x80000000u, 0x80000001u, 0xffffffffu};
+      unsigned expected[] = {file, 0, 0};
+      if (pselect_sample(numbers[a], high[h], (unsigned)fd + 1, input, expected,
+                         1, 3, 0))
+        return 231;
+      input[0] = file | duplicate | 0x80000000u;
+      expected[0] = file | duplicate;
+      if (pselect_sample(numbers[a], high[h], (unsigned)copy + 1, input,
+                         expected, 1, 6, 0))
+        return 232;
+      input[0] = file | 0x80000000u;
+      expected[0] = file;
+      if (pselect_sample(numbers[a], high[h], 31, input, expected, 1, 3, 0))
+        return 233;
+      expected[0] = input[0];
+      if (pselect_sample(numbers[a], high[h], 32, input, expected, 1, 6, 0))
+        return 234;
+      expected[1] = 1;
+      if (pselect_sample(numbers[a], high[h], 33, input, expected, 2, 9, 0))
+        return 235;
+      input[1] = 1;
+      if (pselect_sample(numbers[a], high[h], 64, input, expected, 2, 9, 0))
+        return 236;
+      expected[2] = 1;
+      if (pselect_sample(numbers[a], high[h], 65, input, expected, 3, 12, 0))
+        return 237;
+      time.seconds = 2147483648ULL;
+      if (pselect_result(number, high[h], -1UL, -1UL, -1UL, (u64)&time, 22, 1))
+        return 238;
+      if (pselect_result(number, high[h] | 0xffffffffu, -1UL, -1UL, -1UL, -1UL,
+                         14, 1))
+        return 239;
+      time.seconds = 2147483647;
+      if (pselect_result(number, high[h] | 0xffffffffu, -1UL, -1UL, -1UL,
+                         (u64)&time, 22, 1))
+        return 240;
+      time.seconds = 0;
+      time.nanoseconds = 1000000001;
+      if (pselect_result(number, high[h], -1UL, -1UL, -1UL, (u64)&time, 22, 1))
+        return 241;
+      time.nanoseconds = 0x100000000ULL;
+      if (pselect_result(number, high[h], -1UL, -1UL, -1UL, (u64)&time, 22, 1))
+        return 241;
+      time.nanoseconds = -1UL;
+      if (pselect_result(number, high[h], -1UL, -1UL, -1UL, (u64)&time, 22, 1))
+        return 241;
+      time.nanoseconds = 1000000000;
+      if (pselect_result(number, high[h] | 0xffffffffu, -1UL, -1UL, -1UL,
+                         (u64)&time, 22, 1))
+        return 241;
+      time.nanoseconds = 0;
+      if (pselect_result_mask(number, high[h] | 0xffffffffu, -1UL, -1UL, -1UL,
+                              (u64)&time, -1UL, 14, 1))
+        return 241;
+      if (pselect_result(number, high[h] | (fd + 1), -1UL, 0x1122334455667788UL,
+                         -1UL, (u64)&time, 14, 1))
+        return 242;
+      union select_guard guard = {
+          .words = {0xa5a5a5a5a5a5a5a5UL, 0xa5a5a5a5a5a5a5a5UL,
+                    0xa5a5a5a5a5a5a5a5UL, 0xa5a5a5a5a5a5a5a5UL}};
+      guard.fields.bits[0] = 1u << closed;
+      const union select_guard before = guard;
+      if (pselect_result(number, high[h] | (closed + 1), (u64)guard.fields.bits,
+                         -1UL, 0, (u64)&time, 14, 1) ||
+          guard.words[0] != before.words[0] ||
+          guard.words[1] != before.words[1] ||
+          guard.words[2] != before.words[2] ||
+          guard.words[3] != before.words[3])
+        return 243;
+      input[0] = 1u << closed;
+      if (pselect_sample(numbers[a], high[h], (unsigned)closed + 1, input,
+                         input, 1, 9, 1))
+        return 244;
+    }
+  if (call(199, fd, 0, 1, 0, 0, 0, &error) != eof || error || secondary ||
+      call(92, fd, 3, 0, 0, 0, 0, &error) != 4 || error || secondary ||
+      call(6, fd, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 245;
+  for (unsigned a = 0; a != 2; ++a) {
+    const unsigned gone[] = {file, 0, 0}, live[] = {duplicate, 0, 0};
+    if (pselect_sample(numbers[a], 0, (unsigned)copy + 1, gone, gone, 1, 9,
+                       1) ||
+        pselect_sample(numbers[a], 0, (unsigned)copy + 1, live, live, 1, 3, 0))
+      return 246;
+  }
+  if (call(5, (u64)path, 0, 0, 0, 0, 0, &error) != fd || error || secondary ||
+      call(199, fd, 0, 1, 0, 0, 0, &error) || error || secondary ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != eof || error || secondary)
+    return 247;
+  const u64 close_fds[] = {fd, copy, 31, 32, 64};
+  for (unsigned i = 0; i != 5; ++i)
+    if (call(6, close_fds[i], 0, 0, 0, 0, 0, &error) || error || secondary)
+      return 248;
+  const char mark = 'q';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 249;
+  return 0;
+}
+static int immediate_pselect_unsupported(unsigned mode) {
+  unsigned error;
+  const char mark = '!';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error)
+    return 250;
+  struct pselect_timespec time = {mode == 0 ? 1 : 0, 0};
+  unsigned mask = 0;
+  call(mode == 1 ? 395 : 394, mode == 1 ? 4 : 0, -1UL, -1UL, -1UL, (u64)&time,
+       mode == 2 ? (u64)&mask : 0, &error);
+  return 251;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -7488,6 +7687,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "immediate-pselect")) {
+    const int status = immediate_pselect(argc < 3 ? "/data" : argv[2]);
+    return status ? status : 37;
+  }
+  if (equal(argv[1], "immediate-pselect-wait"))
+    return immediate_pselect_unsupported(0);
+  if (equal(argv[1], "immediate-pselect-capacity"))
+    return immediate_pselect_unsupported(1);
+  if (equal(argv[1], "immediate-pselect-mask"))
+    return immediate_pselect_unsupported(2);
   if (equal(argv[1], "immediate-select")) {
     const int status = immediate_select(argc < 3 ? "/data" : argv[2]);
     return status ? status : 37;

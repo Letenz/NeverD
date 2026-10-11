@@ -2652,6 +2652,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return poll(Event, System, Result);
   if (Service == ServiceKind::Select)
     return select(Event, Result);
+  if (Service == ServiceKind::Pselect)
+    return pselect(Event, Result);
   if (Service == ServiceKind::SetXattr || Service == ServiceKind::FsetXattr ||
       Service == ServiceKind::RemoveXattr ||
       Service == ServiceKind::FremoveXattr)

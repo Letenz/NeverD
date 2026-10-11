@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: a768f2f08717e9ceca01159b9afedc4a83151c3a67ebc993ee4d132d1eaae44f -->
+<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
 
 [← 문서 목록](README.md)
 
@@ -1126,7 +1126,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all42 other file routes and direct/file-backed mappings closed / typed streams only
+all43 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -1171,7 +1171,7 @@ raw BSD poll(230), poll_nocancel(417)은 timeout low int32=0을 지원합니다.
 
 구성된 가상 일반 파일은 비철회, 일반 읽기/쓰기 필터 등록 성공, MAC/제공자 거부 없음을 명시하는 계약입니다. native vnode 종류만으로 등록 성공을 증명하지 않습니다. 이 전제에서 IN/RDNORM, OUT/WRBAND는 EOF나 읽기 전용 open에서도 준비 상태이며 남은 바이트, 접근 플래그, O_NONBLOCK, 쓰기 권한으로 추정하지 않습니다. 숫자 FD와 읽기/쓰기별 마지막 요청 행을 따로 유지하고 다른 dup FD는 합치지 않습니다. HUP 단독은 읽기 등록만 하고 준비 비트를 내지 않습니다. 음수 FD/무시 비트만은 제로, 닫힌 등록은 행별 POLLNVAL32입니다. live OOB/vnode, 스트림/디렉터리/링크는 출력 전에 미지원입니다. 8바이트 기록 입력을 전부 복사하고 불완전 입력/전체 출력 불가는 EFAULT14, 부분 출력은 접두부 복사 없이 거부합니다. 전체 출력은 fd/events를 보존하고 revents를 모두 바꿉니다. 두 정적 권한 조회 모드는 제로 개수도 사전 처리 전에 Poll을 거부하며 공유 닫힌 목록은42경로입니다.
 
-SDK 없는 immediate-poll은86이벤트와 원래59사례 기록을 보존하고 immediate-select가 하나를 더해 현재 공통 네이티브 목록은60사례입니다. 독립 ARM64 O0/O1/O2 poll582 및 select792관측은 리터럴 ABI/오류 제어와 공급자 캡처를 각각 보존하며 보편적인 상수가 아닙니다. 이전58/59사례의 소스 식별·실패·기한을 유지합니다. Intel HVF와 실제 iOS는 미검증입니다. 취소/MAC/공급자 거부, 대기, pselect, 비동기, 네트워크, 진행하는 시계, 실제 Mach IPC/스레드, dyld/TLS 및 전체 프레임워크는 미완성입니다.
+SDK 없는 immediate-poll은86이벤트와 원래59사례 기록을 보존하고 immediate-select가 하나를 더해 select 단계의 공통 네이티브 목록은60사례입니다. 독립 ARM64 O0/O1/O2 poll582 및 select792관측은 리터럴 ABI/오류 제어와 공급자 캡처를 각각 보존하며 보편적인 상수가 아닙니다. 이전58/59사례의 소스 식별·실패·기한을 유지합니다. Intel HVF와 실제 iOS는 미검증입니다. 취소/MAC/공급자 거부, 대기, pselect 신호 마스크 변경, 비동기, 네트워크, 진행하는 시계, 실제 Mach IPC/스레드, dyld/TLS 및 전체 프레임워크는 미완성입니다.
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -1181,10 +1181,10 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all42 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-60 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / select waits pselect revoked-MAC-provider failures networking unfinished
+61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
@@ -1195,7 +1195,7 @@ BSD `select`93과 `select_nocancel`407은 명시적인 0 timeval과 부호 있�
 
 집합은 리틀엔디언32비트 단어로 반올림합니다. 모든 입력 복사 후 모든 선택 FD를 검사하고 마지막에 공급자를 해석합니다. 없는 FD는 EBADF9, 선택한 스트림·디렉터리·심볼릭 설명자는 미지원입니다. 구성된 일반 설명자는 읽기·쓰기·예외에 비영 값을 반환하며 부작용과 거부가 없는 select 공급자를 선언합니다. poll과 별도 전제입니다. 집합과 각 dup 번호의 비트를 세고 읽기 전용·비차단·EOF에서도 오프셋·플래그·내용·메타데이터를 유지합니다. 복사 단어의 꼬리 비트는 지우고 외부 바이트는 보존합니다.
 
-출력끼리와16바이트 timeval의 겹침을 금지합니다. 쓰기 전에 모든 전체 권한을 확인하며, 쓰기 불가 앞부분과 쓰기 가능 뒷부분을 포함한 부분 출력은 모든 복사 전에 거부합니다. 쓰기 가능 접두 길이0만으로 전체 불가를 증명할 수 없습니다. 읽기·쓰기·예외 순으로 복사하고 전체 불가 집합은 EFAULT14지만 뒤의 쓰기 가능 집합은 갱신하며 첫 오류를 유지합니다. 두 정적 권한 조회 모드는 사전 검사 전에 Select를 닫아 총42경로를 차단합니다. SDK 없는115이벤트를 다섯 소프트웨어·필수 세 ARM64 HVF 및 C·CLI·Python에서 전체 가드로 확인합니다. 대기, `pselect`, 비동기 공급자, 전체 OS는 미완성입니다.
+출력끼리와16바이트 timeval의 겹침을 금지합니다. 쓰기 전에 모든 전체 권한을 확인하며, 쓰기 불가 앞부분과 쓰기 가능 뒷부분을 포함한 부분 출력은 모든 복사 전에 거부합니다. 쓰기 가능 접두 길이0만으로 전체 불가를 증명할 수 없습니다. 읽기·쓰기·예외 순으로 복사하고 전체 불가 집합은 EFAULT14지만 뒤의 쓰기 가능 집합은 갱신하며 첫 오류를 유지합니다. 두 정적 권한 조회 모드는 사전 검사 전에 Select를 닫아 총43경로를 차단합니다. SDK 없는115이벤트를 다섯 소프트웨어·필수 세 ARM64 HVF 및 C·CLI·Python에서 전체 가드로 확인합니다. 대기, NULL이 아닌 `pselect` 신호 마스크, 비동기 공급자, 전체 OS는 미완성입니다.
 
 ```text
 select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
@@ -1206,8 +1206,19 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-60 current native-common cases / 75 mandatory workloads per platform / ARM64225 / Intel150 unverified
+61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+즉시 `pselect394 / pselect_nocancel395`는 제공된 0 값의 `user64_timespec16`과 null 신호 마스크 포인터를 받습니다. 두 필드는 signed64이며 초는 0..2147483647, 나노초는 상한을 포함하는 0..1000000000입니다. 유효한 비제로 시간의 대기는 지원하지 않습니다. timespec 읽기와 검증, 4바이트 마스크 읽기, 개수와 비트맵 검사의 순서를 유지합니다. 읽을 수 없는 마스크는 EFAULT14이고, 완전한 비 null 마스크는 스레드 신호 상태의 교체와 복원을 모델링하지 않아 중단됩니다. null 마스크 경로는 select의 용량, 제공자, 비트맵, 전체 출력 권한 및 순차 복사 규칙을 공유합니다. 신호, 대기, dyld, Apple 프레임워크 및 실제 iOS 검증은 아직 완료되지 않았습니다.
+
+```text
+pselect394 / pselect_nocancel395 / zero supplied user64_timespec16 / null signal mask
+signed64 seconds0..2147483647 / signed64 nsec0..1000000000 inclusive
+time import validation before mask4 import before signed low32 count
+complete nonnull mask unsupported / no guessed signal state
+shared select bitmap capacity provider output owner
+918 mixed controls and captures / 729 literal controls and 189 provider captures
+```

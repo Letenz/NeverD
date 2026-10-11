@@ -58,8 +58,8 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all42 other file routes closed before preflight")
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "60 current native-common cases")
+                           "all43 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "61 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "current live FD lower bound")
@@ -1865,3 +1865,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-values")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-unsupported")
 #endif
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "pselect394 / pselect_nocancel395")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "918 mixed controls and captures")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "complete nonnull mask unsupported")

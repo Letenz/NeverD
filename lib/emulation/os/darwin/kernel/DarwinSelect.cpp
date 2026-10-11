@@ -35,7 +35,6 @@ bool overlaps(uint64_t A, uint64_t ASize, uint64_t B, uint64_t BSize) {
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::select(const ProcessServiceEvent &Event, ProcessResult &Result) {
   const auto &A = Event.Arguments;
-  const int32_t Count = int32_t(A[0]);
   bool Immediate = false;
   if (A[4]) {
     std::array<uint8_t, 16> Time;
@@ -55,10 +54,59 @@ DarwinFiles::select(const ProcessServiceEvent &Event, ProcessResult &Result) {
       return returned(InvalidArgument, true);
     Immediate = !Seconds && !Microseconds;
   }
+  return immediateSelect(Event, Result, Immediate, diagnostic::SelectWait);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::pselect(const ProcessServiceEvent &Event, ProcessResult &Result) {
+  const auto &A = Event.Arguments;
+  bool Immediate = false;
+  if (A[4]) {
+    std::array<uint8_t, 16> Time;
+    auto Prefix = userMemoryPrefix(Memory, A[4], Time.size(), Read);
+    if (!Prefix)
+      return Prefix.takeError();
+    if (*Prefix != Time.size())
+      return returned(BadAddress, true);
+    if (auto E = Memory.read(A[4], Time))
+      return std::move(E);
+    const int64_t Seconds =
+        int64_t(llvm::support::endian::read64le(Time.data()));
+    const int64_t Nanoseconds =
+        int64_t(llvm::support::endian::read64le(Time.data() + 8));
+    // Darwin's typed timespec validator includes exactly one billion ns.
+    // That value is valid but non-immediate; it cannot become EINVAL here.
+    if (Seconds < 0 || uint64_t(Seconds) > PselectMaxSeconds ||
+        Nanoseconds < 0 || Nanoseconds > 1000000000)
+      return returned(InvalidArgument, true);
+    Immediate = !Seconds && !Nanoseconds;
+  }
+  if (A[5]) {
+    std::array<uint8_t, 4> Mask;
+    auto Prefix = userMemoryPrefix(Memory, A[5], Mask.size(), Read);
+    if (!Prefix)
+      return Prefix.takeError();
+    if (*Prefix != Mask.size())
+      return returned(BadAddress, true);
+    if (auto E = Memory.read(A[5], Mask))
+      return std::move(E);
+    // Even an empty mask replaces and restores thread signal state. Reading
+    // the bytes cannot establish that behavior in this foundation model.
+    return unsupported(Result, diagnostic::PselectMask);
+  }
+  return immediateSelect(Event, Result, Immediate, diagnostic::PselectWait);
+}
+
+llvm::Expected<std::optional<ServiceResult>>
+DarwinFiles::immediateSelect(const ProcessServiceEvent &Event,
+                             ProcessResult &Result, bool Immediate,
+                             const char *WaitDiagnostic) {
+  const auto &A = Event.Arguments;
+  const int32_t Count = int32_t(A[0]);
   if (Count < 0)
     return returned(InvalidArgument, true);
   if (!Immediate)
-    return unsupported(Result, diagnostic::SelectWait);
+    return unsupported(Result, WaitDiagnostic);
   if (!Count)
     return returned(0);
 

@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: a768f2f08717e9ceca01159b9afedc4a83151c3a67ebc993ee4d132d1eaae44f -->
+<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -1126,7 +1126,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all42 other file routes and direct/file-backed mappings closed / typed streams only
+all43 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -1171,7 +1171,7 @@ raw BSD poll(230) と poll_nocancel(417) は timeout low int32=0 を扱います
 
 構築された仮想通常ファイルは非撤回、通常読書きフィルタの登録成功、MAC/提供元拒否なしを明示する契約です。native vnode の種別だけでは登録成功を証明できません。この前提で IN/RDNORM と OUT/WRBAND は EOF や読み取り専用 open でも準備完了で、残量・アクセスフラグ・O_NONBLOCK・書込み許可から推測しません。数値 FD と読/書別に最後の行を保持し、異なる dup FD は別です。HUP 単独は読フィルタを登録しますが準備ビットを出しません。負 FD/無視ビットのみはゼロ、閉じた登録は各行 POLLNVAL32。live OOB/vnode、ストリーム、ディレクトリ、リンクは出力前に未対応です。8バイト記録を全入力取得し、不完全入力/全出力不可は EFAULT14、部分出力は接頭部コピーなしで拒否。全コピーは fd/events を保存し revents 全体を置換。静的権限照会2モードはゼロ件も前処理前に Poll を拒否し、共有閉鎖一覧は42経路です。
 
-SDK 不要の immediate-poll は86イベントと元の59件一覧を保持し、immediate-select の追加で現在の共通ネイティブ一覧は60件です。独立した ARM64 O0/O1/O2 の poll582件と select792件は、リテラル ABI/エラー制御と提供者の観測を別々に保持し、普遍的定数ではありません。過去58/59件のソース識別、失敗、期限を保持します。Intel HVF と実機 iOS は未検証です。失効/MAC/提供者拒否、待機、pselect、非同期、ネットワーク、進行する時計、実際の Mach IPC/スレッド、dyld/TLS、完全なフレームワークは未完成です。
+SDK 不要の immediate-poll は86イベントと元の59件一覧を保持し、immediate-select の追加でselect 段階の共通ネイティブ一覧は60件です。独立した ARM64 O0/O1/O2 の poll582件と select792件は、リテラル ABI/エラー制御と提供者の観測を別々に保持し、普遍的定数ではありません。過去58/59件のソース識別、失敗、期限を保持します。Intel HVF と実機 iOS は未検証です。失効/MAC/提供者拒否、待機、pselect のシグナルマスク変更、非同期、ネットワーク、進行する時計、実際の Mach IPC/スレッド、dyld/TLS、完全なフレームワークは未完成です。
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -1181,10 +1181,10 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all42 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-60 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / select waits pselect revoked-MAC-provider failures networking unfinished
+61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
@@ -1195,7 +1195,7 @@ BSD `select`93 と `select_nocancel`407 は、明示したゼロ timeval と符�
 
 ビット集合はリトルエンディアン32ビット語に丸めます。全入力のコピー、全選択 FD の検査、提供者の解釈の順序です。不在 FD は EBADF9、選択したストリーム、ディレクトリー、シンボリック記述子は未対応です。構築された通常記述子は、副作用や拒否がなく読取り・書込み・例外で非ゼロを返す select 提供者を宣言します。poll とは独立した前提です。dup の数値別、集合別のビットを数え、読取り専用・非ブロッキング・EOF でもオフセット、フラグ、内容、メタデータを変えません。コピー語の末尾ビットを消し、範囲外は保持します。
 
-出力同士と16バイト timeval との重複は禁止します。全出力の権限を先に検査し、書込み不能な先頭と書込み可能な末尾を含む部分出力は全コピー前に拒否します。書込み可能な先頭長0だけでは全域不能を証明できません。全域コピーは読取り・書込み・例外の順で、全域不能なら EFAULT14、後続の書込み可能集合は更新し、最初のエラーを保持します。静的権限照会の両モードは事前検査前に Select を閉じ、合計42経路を閉じます。SDK 不要の115イベントを五つのソフトウェア、必須三つの ARM64 HVF、C・CLI・Python と完全なガードで検証します。待機、`pselect`、非同期提供者、完全な OS は未完成です。
+出力同士と16バイト timeval との重複は禁止します。全出力の権限を先に検査し、書込み不能な先頭と書込み可能な末尾を含む部分出力は全コピー前に拒否します。書込み可能な先頭長0だけでは全域不能を証明できません。全域コピーは読取り・書込み・例外の順で、全域不能なら EFAULT14、後続の書込み可能集合は更新し、最初のエラーを保持します。静的権限照会の両モードは事前検査前に Select を閉じ、合計43経路を閉じます。SDK 不要の115イベントを五つのソフトウェア、必須三つの ARM64 HVF、C・CLI・Python と完全なガードで検証します。待機、非 NULL の `pselect` シグナルマスク、非同期提供者、完全な OS は未完成です。
 
 ```text
 select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
@@ -1206,8 +1206,19 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-60 current native-common cases / 75 mandatory workloads per platform / ARM64225 / Intel150 unverified
+61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+即時 `pselect394 / pselect_nocancel395` は、指定されたゼロ値の `user64_timespec16` と null のシグナルマスクポインタを受け付けます。両フィールドは signed64 で、秒は 0..2147483647、ナノ秒は上限を含む 0..1000000000 です。有効な非ゼロタイムアウトの待機は未対応です。timespec の読み込みと検証、4 バイトのマスク読み込み、カウントとビットマップの検査の順に処理します。読み込めないマスクは EFAULT14、完全な非 null マスクはスレッドのシグナル状態の置換と復元が未実装のため停止します。null マスク経路は select の容量、提供者、ビットマップ、出力権限と順次コピーの規則を共有します。シグナル、待機、dyld、Apple フレームワーク、実機 iOS の検証は未完了です。
+
+```text
+pselect394 / pselect_nocancel395 / zero supplied user64_timespec16 / null signal mask
+signed64 seconds0..2147483647 / signed64 nsec0..1000000000 inclusive
+time import validation before mask4 import before signed low32 count
+complete nonnull mask unsupported / no guessed signal state
+shared select bitmap capacity provider output owner
+918 mixed controls and captures / 729 literal controls and 189 provider captures
+```

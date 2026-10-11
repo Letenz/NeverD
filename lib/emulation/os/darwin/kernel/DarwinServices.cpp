@@ -154,6 +154,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
     return std::optional<ServiceResult>();
   case ServiceKind::Poll:
   case ServiceKind::Select:
+  case ServiceKind::Pselect:
   case ServiceKind::Write:
   case ServiceKind::Readv:
   case ServiceKind::Writev:

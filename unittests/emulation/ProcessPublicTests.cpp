@@ -3329,4 +3329,98 @@ TEST_F(ProcessPublic, DarwinImmediateSelectPreservesRawResultsAcrossCAndCLI) {
 #endif
 }
 
+TEST_F(ProcessPublic,
+       DarwinImmediatePselectPreservesTimespecAndMaskScopeAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    const uint64_t Class =
+        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+    for (const char *Mode :
+         {"immediate-pselect", "immediate-pselect-wait",
+          "immediate-pselect-capacity", "immediate-pselect-mask"}) {
+      const bool Admitted = llvm::StringRef(Mode) == "immediate-pselect";
+      const bool Capacity =
+          llvm::StringRef(Mode) == "immediate-pselect-capacity";
+      const bool Mask = llvm::StringRef(Mode) == "immediate-pselect-mask";
+      const std::string Options =
+          std::string(
+              R"({"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["guest",")") +
+          Mode +
+          R"(","/data"],"darwin_files":{"files":[{"path":"/data","bytes_hex":"616200ff6566"}]}})";
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+      const auto *Object = Report->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getString(field::Stop),
+                Admitted ? "exited" : "unsupported_service");
+      EXPECT_EQ(Object->getString(field::Stdout), Admitted ? "71" : "21");
+      EXPECT_EQ(Object->getString(field::Stderr), "");
+      const auto *Calls = Object->getArray(field::Services);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(), Admitted ? 139u : 2u);
+      if (Admitted) {
+        EXPECT_EQ(Object->getInteger(field::ExitStatus), 37);
+        constexpr uint64_t Values[] = {0,  3,  6,  3,  6,  9,  9,  12, 22, 14,
+                                       22, 22, 22, 22, 22, 14, 14, 14, 9};
+        constexpr uint64_t High[] = {0, 0x1234567800000000ULL,
+                                     0xffffffff00000000ULL};
+        for (unsigned A = 0; A != 2; ++A)
+          for (unsigned H = 0; H != 3; ++H)
+            for (unsigned I = 0; I != 19; ++I) {
+              const auto *E = (*Calls)[9 + (A * 3 + H) * 19 + I].getAsObject();
+              ASSERT_NE(E, nullptr);
+              EXPECT_EQ(
+                  E->getString(field::Number),
+                  llvm::utohexstr(High[H] | Class | (A ? 395 : 394), true));
+              EXPECT_EQ(E->getString(field::Result),
+                        llvm::utohexstr(Values[I], true));
+              EXPECT_EQ(E->getBoolean(field::Error), I >= 8);
+            }
+        for (const auto &[Index, Value] :
+             {std::pair{123u, 6u}, std::pair{124u, 4u}, std::pair{130u, 3u},
+              std::pair{131u, 0u}, std::pair{132u, 6u}}) {
+          const auto *E = (*Calls)[Index].getAsObject();
+          ASSERT_NE(E, nullptr);
+          EXPECT_EQ(E->getString(field::Result), llvm::utohexstr(Value, true));
+          EXPECT_EQ(E->getBoolean(field::Error), false);
+        }
+      } else {
+        EXPECT_EQ(Object->getString(field::Diagnostic),
+                  Capacity
+                      ? "Darwin select descriptor table capacity is not modeled"
+                  : Mask ? "Darwin pselect signal-mask state is not implemented"
+                         : "Darwin pselect waiting is not implemented");
+        const auto *E = Calls->back().getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | (Capacity ? 395 : 394), true));
+        EXPECT_EQ(E->get(field::Error), nullptr);
+        ASSERT_NE(E->get(field::Result), nullptr);
+        EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
+      }
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                Admitted ? process_cli::GuestFailure : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+    }
+  }
+#endif
+}
+
 } // namespace
