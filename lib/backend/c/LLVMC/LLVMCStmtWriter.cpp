@@ -3962,6 +3962,26 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         OS << "(void)" << Expression << ";\n";
       return true;
     }
+    if (isX86FPComiStateIntrinsic(Id)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Id);
+      const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));
+      const auto RawInput = [&](unsigned Index) {
+        return "__builtin_bit_cast(" + RawType + ", " +
+               valueStr(Call.getArgOperand(Index)) + ")";
+      };
+      const auto Right =
+          Memory ? "(void *)(uintptr_t)(" +
+                       integerPointerOperandStr(Call.getArgOperand(1)) + ")"
+                 : RawInput(1);
+      const auto Expression = Helper->second + "(" + RawInput(0) + ", " +
+                              Right + ", (void *)" +
+                              valueStr(Call.getArgOperand(2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
     if (isX86F16CStateIntrinsic(Id)) {
       const bool Store = Id == Intrinsic::X86F16CStoreState,
                  Read = Id == Intrinsic::X86F16CReadState;

@@ -514,6 +514,49 @@ TEST(MedCallingConvFPStack, F16CReadsRetainSourceHomesAndStoresAreNotReads) {
     }
 }
 
+TEST(MedCallingConvFPStack, ScalarFlagComparisonRetainsBothValuesAndMxcsr) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 8; ++Control) {
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, 8, Arch::X64);
+      Read.addInput(
+          MedVar::makeConst(unsigned(Intrinsic::X86FPComiMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      const auto Left = MedVar::makeConst(0, x86FPComiElementBytes(Control));
+      const auto State = MedVar::makeConst(0x1fa5, 4);
+      Read.addInput(Left);
+      Read.addInput(State);
+      const auto Descriptor = med_calling_conv_detail::stackMemoryRead(Read);
+      ASSERT_TRUE(Descriptor);
+      EXPECT_TRUE(Descriptor->ScalarFP);
+      EXPECT_EQ(Descriptor->Bytes, x86FPComiElementBytes(Control));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      const auto &Value = F.Blocks[0].Ops.back();
+      EXPECT_EQ(Value.Inputs[0].ConstVal, unsigned(Intrinsic::X86FPComiState));
+      EXPECT_EQ(Value.Inputs[1].ConstVal, Control);
+      EXPECT_EQ(Value.Inputs[2], Left);
+      EXPECT_EQ(Value.Inputs[3].Size, x86FPComiElementBytes(Control));
+      EXPECT_EQ(Value.Inputs[4], State);
+      EXPECT_TRUE(x86FPStateShapeIsValid(Intrinsic::X86FPComiState,
+                                         x86FPStateMedShape(Value, Arch::X64)));
+      EXPECT_TRUE(F.MutableStackParamHomes.empty());
+    }
+}
+
 TEST(MedCallingConvFPStack, MemoryOwnershipAndMalformedReadsAreConservative) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (unsigned Mode = 0; Mode < 8; ++Mode) {

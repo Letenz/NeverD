@@ -109,9 +109,9 @@ struct Planner {
   }
 
   bool comment(uint64_t Start, uint64_t End) {
+    charge(A.Steps, searchSteps(Comments.size()));
     const auto It = std::lower_bound(Comments.begin(), Comments.end(), Start,
-                                     [&](const auto &Range, uint64_t Offset) {
-                                       charge(A.Steps);
+                                     [](const auto &Range, uint64_t Offset) {
                                        return Range.second <= Offset;
                                      });
     return It != Comments.end() && It->first < End;

@@ -217,6 +217,7 @@ int runWebArchive();
 int runWebDesktop();
 int runWebIntegrity();
 int runWebAdvisories();
+int runWebAttestation();
 int runWebInterfaces();
 int runWebStreams();
 int runWebSEA();

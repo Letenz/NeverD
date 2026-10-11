@@ -832,6 +832,8 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
   if (Id == Intrinsic::X86F16CReadState ||
       Id == Intrinsic::X86FPPackedConvertMemoryState)
     return StackMemoryRead{1, Bytes, false};
+  if (Id == Intrinsic::X86FPComiMemoryState)
+    return StackMemoryRead{1, Bytes, true};
   if (Id == Intrinsic::X86FPScalarConvertMemoryState)
     // This denotes an eligible scalar completion source, including raw integer
     // bits. Its own conversion contract retains the source's numerical type.
@@ -972,6 +974,12 @@ void recoverFPStackReads(
         R.Value.Inputs[2] = Op.Inputs[3];
         R.Value.Inputs[3] = Op.Inputs[4];
         R.Value.Inputs[4] = Source;
+      } else if (Id == Intrinsic::X86FPComiMemoryState) {
+        R.Value.Inputs[0] =
+            MedVar::makeConst(unsigned(Intrinsic::X86FPComiState), 2);
+        R.Value.Inputs[1] = Op.Inputs[2];
+        R.Value.Inputs[2] = Op.Inputs[3];
+        R.Value.Inputs[3] = Source;
       } else if (Id == Intrinsic::X86FPArithMemoryState) {
         R.Value.Inputs[0] =
             MedVar::makeConst(unsigned(Intrinsic::X86FPArithState), 2);
