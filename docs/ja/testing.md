@@ -1704,4 +1704,4 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は、表外の定数上限、符号なし値の上半分、-2 も検証します。反復なしの終了は元のレベルとフレームメモリの事実を保持し、動的な上限と無効な現在レベルは引き続き拒否します。
 
-`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` は解析完了後の誤った番兵、循環、前方・範囲外リンク、無効な初期レベルとハンドラー/フィルターの役割を検査します。初期有効スコープと空の表の対照例で EH3/EH4 の有効な番兵を保持します。
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` は解析完了後の誤った番兵、循環、前方・範囲外リンク、無効な初期レベルとハンドラー/フィルターの役割を検査します。初期有効スコープと空の表の対照例で EH3/EH4 の有効な番兵を保持します。 幅を超えるハンドラーとフィルターのアドレスも、事実を公開せず拒否します。

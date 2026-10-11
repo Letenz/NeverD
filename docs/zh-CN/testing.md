@@ -1612,4 +1612,4 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 还覆盖表外常量上界、无符号高半区和 -2。零步退出保留原层级和帧内存事实；动态上界及无效当前层级仍被拒绝。
 
-`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 检查解析状态已完成但包含错误哨兵、循环、前向或越界链接、无效初始层级及处理器/过滤器角色的记录。初始活动作用域和空表对照用例验证 EH3/EH4 合法帧哨兵仍被保留。
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 检查解析状态已完成但包含错误哨兵、循环、前向或越界链接、无效初始层级及处理器/过滤器角色的记录。初始活动作用域和空表对照用例验证 EH3/EH4 合法帧哨兵仍被保留。 超出指针宽度的处理器和过滤器地址也会被拒绝，且不发布事实。

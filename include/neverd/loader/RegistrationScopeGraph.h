@@ -32,7 +32,8 @@ inline constexpr bool isValidRegistrationScopeLevel(int32_t Level,
 
 /// This validates normalized records independently of a parser status. Code
 /// bytes, executable address ownership and frame installation have separate
-/// producers. An empty table can retain only its outside-frame state.
+/// producers. Scope code addresses use the PE32 pointer domain; an empty table
+/// can retain only its outside-frame state.
 inline bool hasValidRegistrationScopeGraph(const RegistrationChainInfo &Chain,
                                            bool IsEH4) {
   if (!Chain.SeededTryLevel ||
@@ -43,8 +44,8 @@ inline bool hasValidRegistrationScopeGraph(const RegistrationChainInfo &Chain,
   for (uint32_t I = 0; I != Chain.Scopes.size(); ++I) {
     const auto &Scope = Chain.Scopes[I];
     if (!isValidRegistrationScopeLevel(Scope.EnclosingLevel, I, IsEH4) ||
-        !Scope.HandlerVA || Scope.HandlerVA == InvalidVA ||
-        Scope.FilterVA == InvalidVA || Scope.IsFinally != (Scope.FilterVA == 0))
+        !Scope.HandlerVA || Scope.HandlerVA > UINT32_MAX ||
+        Scope.FilterVA > UINT32_MAX || Scope.IsFinally != (Scope.FilterVA == 0))
       return false;
   }
   return true;

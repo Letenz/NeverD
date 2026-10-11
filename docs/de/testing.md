@@ -1820,4 +1820,4 @@ Die Schreibbeobachter-Regressionen prüfen Sichtbarkeit vor der nächsten Anweis
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` prüft auch konstante Schranken außerhalb der Tabelle, die obere Hälfte vorzeichenloser Werte und -2. Ausstiege ohne Iteration behalten die ursprüngliche Ebene und die Fakten zum Rahmenspeicher; dynamische Schranken und ungültige aktuelle Ebenen werden weiterhin abgelehnt.
 
-`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` prüft falsche Sentinels, Zyklen, Vorwärts-/Bereichsfehler, ungültige Anfangszustände und Handler-/Filterrollen trotz vollständigem Parserstatus. Kontrollfälle mit aktivem Anfangsbereich und leerer Tabelle erhalten gültige EH3/EH4-Sentinels.
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` prüft falsche Sentinels, Zyklen, Vorwärts-/Bereichsfehler, ungültige Anfangszustände und Handler-/Filterrollen trotz vollständigem Parserstatus. Kontrollfälle mit aktivem Anfangsbereich und leerer Tabelle erhalten gültige EH3/EH4-Sentinels. Zu breite Handler- und Filteradressen werden ebenfalls ohne Veröffentlichung von Fakten abgelehnt.

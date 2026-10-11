@@ -5065,7 +5065,7 @@ The committed-write observer regressions verify visibility before the next instr
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` also covers constant bounds outside the table, the high unsigned half and -2. No-op exits retain the original level and frame-memory facts; dynamic bounds and invalid current levels still reject.
 
-`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` checks wrong sentinels, cycles, forward/out-of-range links, invalid initial levels and handler/filter roles despite a complete parser status. Initial-active-scope and empty-table controls preserve valid frame sentinels in both EH3 and EH4.
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` checks wrong sentinels, cycles, forward/out-of-range links, invalid initial levels and handler/filter roles despite a complete parser status. Initial-active-scope and empty-table controls preserve valid frame sentinels in both EH3 and EH4. Over-width handler and filter addresses also reject without publishing facts.
 
 ## Source and native object replacement tests
 

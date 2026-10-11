@@ -1819,4 +1819,4 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` couvre aussi les bornes constantes hors de la table, la moitié haute des valeurs non signées et -2. Les sorties sans itération conservent le niveau initial et les faits mémoire du cadre ; les bornes dynamiques et les niveaux courants invalides restent refusés.
 
-`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` vérifie les mauvaises sentinelles, cycles, liens futurs/hors limites, niveaux initiaux et rôles handler/filtre malgré une analyse syntaxique complète. Les contrôles d’état initial actif et de table vide préservent les sentinelles valides EH3/EH4.
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` vérifie les mauvaises sentinelles, cycles, liens futurs/hors limites, niveaux initiaux et rôles handler/filtre malgré une analyse syntaxique complète. Les contrôles d’état initial actif et de table vide préservent les sentinelles valides EH3/EH4. Les adresses trop larges des handlers et filtres sont également refusées sans publier de faits.

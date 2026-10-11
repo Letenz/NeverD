@@ -1694,4 +1694,4 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects`는 테이블 밖의 상수 상한, 부호 없는 값의 상위 절반과 -2도 검사합니다. 반복 없는 종료는 원래 단계와 프레임 메모리 사실을 유지하며, 동적 상한과 유효하지 않은 현재 단계는 계속 거부합니다.
 
-`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts`는 파싱 완료 후에도 잘못된 센티널, 순환, 전방/범위 밖 링크, 잘못된 초기 단계와 처리기/필터 역할을 검사합니다. 초기 활성 범위와 빈 테이블 대조 사례는 EH3/EH4의 유효한 센티널을 보존합니다.
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts`는 파싱 완료 후에도 잘못된 센티널, 순환, 전방/범위 밖 링크, 잘못된 초기 단계와 처리기/필터 역할을 검사합니다. 초기 활성 범위와 빈 테이블 대조 사례는 EH3/EH4의 유효한 센티널을 보존합니다. 포인터 폭을 넘는 처리기와 필터 주소도 사실을 공개하지 않고 거부합니다.

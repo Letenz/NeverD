@@ -538,7 +538,7 @@ TEST(RegistrationState, MalformedSEHScopeGraphsPublishNoStateFacts) {
   for (bool EH4 : {false, true}) {
     const auto Base = EH4 ? makeCookieFrame() : makeBranchingFrame();
     ASSERT_TRUE(analyzeRegistrationStates(Base, EH4 ? 0x4000 : 0).Complete);
-    for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
       SCOPED_TRACE(EH4);
       SCOPED_TRACE(Mutation);
       auto F = Base;
@@ -554,8 +554,12 @@ TEST(RegistrationState, MalformedSEHScopeGraphsPublishNoStateFacts) {
         Chain.SeededTryLevel = EH4 ? -1 : -2;
       else if (Mutation == 8)
         Chain.SeededTryLevel = 1;
-      else
+      else if (Mutation == 9)
         Chain.Scopes[0].HandlerVA = InvalidVA;
+      else if (Mutation == 10)
+        Chain.Scopes[0].HandlerVA = uint64_t(UINT32_MAX) + 1;
+      else
+        Chain.Scopes[0].FilterVA = uint64_t(UINT32_MAX) + 1;
       const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
       EXPECT_FALSE(A.Complete);
       EXPECT_FALSE(A.RegistrationLifetimeComplete);
