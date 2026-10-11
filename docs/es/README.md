@@ -1,6 +1,6 @@
 **Idiomas**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6241c9252ec89317b9c488c7e2b6b8c7bd60329dfdd734df27e1a7a7139b1eff -->
+<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
 
 [← Proyecto NeverD](project.md)
 
@@ -18,7 +18,8 @@ Las guías en inglés se encuentran directamente en `docs/`. Las traducciones se
 | [Contribución](CONTRIBUTING.md) | Entorno, perfiles de compilación, flujo, estilo y requisitos de PR |
 | [Arquitectura](architecture.md) | Rutas IR, límites de componentes, lifting estricto, profundidad de soporte y puntos de edición |
 | [Análisis web sin conexión (inglés)](../web-analysis.md) | Inspección C++ de artefactos, fuentes, enlaces y mapas, política de metadatos, SDK y validación actual |
-| [Perfil de Bun autónomo (inglés)](../web-bun-profile.md) | Extracción ELF fija, rangos de evidencia originales, decodificación de fuentes y procedencia de muestras fijadas |
+| [Reescrituras básicas de JavaScript (inglés)](../web-source-rewrite-profile.md) | Pasadas explícitas, comprobación de sustituciones locales, inversa exacta y exportación local vinculada al comprobante de validación |
+| [Perfil de Bun autónomo (inglés)](../web-bun-profile.md) | Extracción validada de ELF, Mach-O de una arquitectura y PE para x64/ARM64, rangos originales y procedencia de muestras fijadas |
 | [Perfil de extracción ASAR (inglés)](../web-asar-profile.md) | Asociación de capturas internas y externas, estados de integridad, consumidores de miembros y dependencia Unicode nativa |
 | [Perfil de evidencia Electron (inglés)](../web-electron-profile.md) | Rutas de entrada capturadas, alcance de manifiestos y fuentes, evidencia de ventanas y puentes, canales IPC candidatos |
 | [Perfil de fuentes HTML (inglés)](../web-html-profile.md) | Inventario acotado de scripts en C++, referencias locales capturadas y anclas originales de fuentes en línea |

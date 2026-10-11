@@ -295,15 +295,6 @@ class Allowance:
 
 ALLOWED: tuple[Allowance, ...] = (
     Allowance(
-        path="LICENSES/node/LICENSE",
-        rule="provenance-phrase",
-        reason=(
-            "Verbatim Node.js dependency notices identify the SES/Caja "
-            "copyright holders and Apache-2.0 license. Preserve this required "
-            "upstream attribution; it is not a NeverD implementation claim."
-        ),
-    ),
-    Allowance(
         path="LICENSES/bun/LICENSE.md",
         rule="provenance-phrase",
         reason=(
@@ -383,6 +374,25 @@ class HistoryAllowance:
 
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
+    HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({
+            "500c51062c3aba4e2251b8f3c76569f058fd3ef7",
+            "ec58750a8ed49319af857f5cb1aa77670810e39e",
+        }),
+        line="",
+        reason=(
+            "Reviewed replacement of a developer-specific output directory "
+            "with its portable recovery-workspace location. Artifact names, "
+            "measurements and hashes are preserved. Only the exact original "
+            "and deletion commits and line digest are covered; current and "
+            "future private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "c39893ef1f25d39cb6d25ade741abae3b95c601f77f3f228a02321667b4952f0",
+        }),
+    ),
     HistoryAllowance(
         path="tools/neverd-gui/benchmarks/results/linux-x86_64-20261010-linear-copy-performance.json",
         rule="private-path",
