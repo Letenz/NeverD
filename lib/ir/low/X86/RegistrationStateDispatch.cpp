@@ -10,6 +10,7 @@
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
+#include <bit>
 #include <utility>
 
 namespace neverd::registration_state {
@@ -25,20 +26,23 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 }
 
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
-  if (Exhausted ||
-      !charge(Source.Levels.size() + Source.Frame.cellCount() +
-              Source.Frame.OtherRegisterBytes.size() +
-              Incoming[Target].Frame.cellCount() +
-              Incoming[Target].Frame.OtherRegisterBytes.size() +
-              Source.catchCellCount() + Incoming[Target].catchCellCount() +
-              Source.RuntimeObject.cellCount() +
-              Source.RuntimeObject.OtherRegisterBytes.size() +
-              Incoming[Target].RuntimeObject.cellCount() +
-              Incoming[Target].RuntimeObject.OtherRegisterBytes.size() +
-              Source.InitializedFrameBytes.size() +
-              Incoming[Target].InitializedFrameBytes.size() + 10))
+  if (Exhausted || !charge(1 + 2 * std::bit_width(States[Target].size() + 1)))
     return;
-  Domain &Dest = Incoming[Target];
+  auto [It, New] = States[Target].try_emplace(Source.Activation);
+  auto &Node = It->second;
+  if (New)
+    Node.Facts.Invalid = InvalidBlocks[Target];
+  Domain &Dest = Node.Incoming;
+  if (!charge(Source.Levels.size() + Source.Frame.cellCount() +
+              Source.Frame.OtherRegisterBytes.size() + Dest.Frame.cellCount() +
+              Dest.Frame.OtherRegisterBytes.size() + Source.catchCellCount() +
+              Dest.catchCellCount() + Source.RuntimeObject.cellCount() +
+              Source.RuntimeObject.OtherRegisterBytes.size() +
+              Dest.RuntimeObject.cellCount() +
+              Dest.RuntimeObject.OtherRegisterBytes.size() +
+              Source.InitializedFrameBytes.size() +
+              Dest.InitializedFrameBytes.size() + 10))
+    return;
   bool Changed = !Dest.Reached;
   if (!Dest.Reached) {
     Dest = Source;
@@ -73,8 +77,8 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     MergeFlag(Dest.Installed, Source.Installed);
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
-  if (Changed)
-    Work.emplace(Order[Target], Target);
+  if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))
+    Work.emplace(Order[Target], Target, Source.Activation);
 }
 
 void RegistrationStateSolver::dispatch(
@@ -88,6 +92,8 @@ void RegistrationStateSolver::dispatch(
     return;
   }
   Domain Root;
+  if (!KnownCxx && Callback)
+    Root.Activation = {Address, SearchFilter};
   Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;

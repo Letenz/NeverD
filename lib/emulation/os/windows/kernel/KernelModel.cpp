@@ -532,19 +532,23 @@ llvm::Error KernelModel::snapshot() {
   Result.Registry = Registry.snapshot();
   if (!DriverObject)
     return modelError("cannot snapshot an uninitialized kernel model");
-  if (auto E = validateDeviceTopology())
+  // A terminal CPU fault still permits pure reads of committed RAM. Keep the
+  // same object validators, without authorizing further guest/device access.
+  if (auto E = validateDeviceTopology(ObjectRead::Snapshot))
     return E;
-  auto Unload = Memory.readInteger(DriverObject + DriverUnloadOffset, 8);
+  auto Read = [&](uint64_t Address) {
+    return readObjectField(Address, 8, ObjectRead::Snapshot);
+  };
+  auto Unload = Read(DriverObject + DriverUnloadOffset);
   if (!Unload)
     return Unload.takeError();
   Result.DriverUnload = *Unload;
-  auto Extension = Memory.readInteger(DriverObject + DriverExtensionOffset, 8);
+  auto Extension = Read(DriverObject + DriverExtensionOffset);
   if (!Extension)
     return Extension.takeError();
   if (*Extension != DriverExtension)
     return modelError("DRIVER_OBJECT.DriverExtension was corrupted");
-  auto AddDevice =
-      Memory.readInteger(DriverExtension + DriverAddDeviceOffset, 8);
+  auto AddDevice = Read(DriverExtension + DriverAddDeviceOffset);
   if (!AddDevice)
     return AddDevice.takeError();
   Result.AddDevice = *AddDevice;
@@ -557,13 +561,12 @@ llvm::Error KernelModel::snapshot() {
     }
     if (!std::all_of(First, Last, [](bool Written) { return Written; }))
       return modelError("driver left a partially initialized dispatch pointer");
-    auto Function =
-        Memory.readInteger(DriverObject + DriverDispatchOffset + I * 8, 8);
+    auto Function = Read(DriverObject + DriverDispatchOffset + I * 8);
     if (!Function)
       return Function.takeError();
     Result.MajorFunctions[I] = *Function;
   }
-  auto Inventory = driverDeviceInventory();
+  auto Inventory = driverDeviceInventory(ObjectRead::Snapshot);
   if (!Inventory)
     return Inventory.takeError();
   Result.Devices.clear();

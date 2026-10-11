@@ -247,6 +247,7 @@ struct NativeClassificationCase {
   ArtifactSelector Selector;
   NativeTargetRecord TargetRecord;
   std::vector<WindowsEHNativeSourceReason> ExpectedReasons;
+  size_t ExpectedEligibleRecords = 0;
 };
 
 Arch expectedArch(StringRef Architecture) {
@@ -299,7 +300,9 @@ TEST(WindowsEHModesCorpus, PinsTargetedNativeSourceClassificationReasons) {
        {WindowsEHNativeSourceReason::GSWrappedPersonality}},
       {{"seh_probe", "msvc", "x86", "native", true, "o2"},
        NativeTargetRecord::X86EH4Registration,
-       {WindowsEHNativeSourceReason::IncompleteRegistrationFrame}},
+       {WindowsEHNativeSourceReason::IncompleteRegistrationFrame,
+        WindowsEHNativeSourceReason::Eligible},
+       2},
       {{"cxx_eh_probe", "msvc", "arm", "native", true, "o0"},
        NativeTargetRecord::ArmCxx,
        {WindowsEHNativeSourceReason::UnsupportedArchitecture}},
@@ -331,6 +334,7 @@ TEST(WindowsEHModesCorpus, PinsTargetedNativeSourceClassificationReasons) {
     EXPECT_EQ(ImageOrErr->Arch, expectedArch(TestCase.Selector.Architecture));
 
     size_t TargetRecords = 0;
+    size_t EligibleRecords = 0;
     std::vector<bool> SawExpectedReason(TestCase.ExpectedReasons.size(), false);
     for (const ExceptionFunction &Function :
          ImageOrErr->ExceptionMetadata.Functions) {
@@ -343,17 +347,32 @@ TEST(WindowsEHModesCorpus, PinsTargetedNativeSourceClassificationReasons) {
       const auto Expected =
           llvm::find(TestCase.ExpectedReasons, Classification.Reason);
       EXPECT_NE(Expected, TestCase.ExpectedReasons.end())
-          << "target record was rejected as "
+          << "target record was classified as "
           << getWindowsEHNativeSourceReasonName(Classification.Reason);
       if (Expected != TestCase.ExpectedReasons.end())
         SawExpectedReason[std::distance(TestCase.ExpectedReasons.begin(),
                                         Expected)] = true;
-      EXPECT_FALSE(Classification.canRegenerateLanguageMetadata());
+      EXPECT_EQ(Classification.canRegenerateLanguageMetadata(),
+                Classification.Reason == WindowsEHNativeSourceReason::Eligible);
+      if (Classification.canRegenerateLanguageMetadata()) {
+        ++EligibleRecords;
+        // The two direct EH4 prologues publish their allocated pushed-cookie
+        // storage. Other records still lack a complete frame. This source
+        // classification does not replace native IR or installation checks.
+        ASSERT_EQ(TestCase.TargetRecord,
+                  NativeTargetRecord::X86EH4Registration);
+        ASSERT_TRUE(Function.Registration);
+        EXPECT_EQ(Function.Registration->RegistrationOffset, -16);
+        EXPECT_EQ(Function.Registration->TryLevelOffset, -4);
+        EXPECT_TRUE(
+            Function.CodeRange.contains(Function.Registration->ChainInstallVA));
+      }
     }
     EXPECT_GT(TargetRecords, 0u) << "no target language record was found";
+    EXPECT_EQ(EligibleRecords, TestCase.ExpectedEligibleRecords);
     for (size_t I = 0; I < TestCase.ExpectedReasons.size(); ++I)
       EXPECT_TRUE(SawExpectedReason[I])
-          << "no target record was rejected as "
+          << "no target record was classified as "
           << getWindowsEHNativeSourceReasonName(TestCase.ExpectedReasons[I]);
   }
 }

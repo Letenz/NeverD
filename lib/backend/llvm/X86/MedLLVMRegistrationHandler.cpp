@@ -20,7 +20,8 @@ MedLLVMEmitter::resolveX86RegistrationHandlerReference(va_t Address) {
     return nullptr;
   if (auto It = EmittedFuncNames.find(Address); It != EmittedFuncNames.end())
     return Mod->getFunction(It->second);
-  if (!coff_loader::isCheckedX86CxxHandlerReference(*Img, Address))
+  if (!coff_loader::isCheckedX86CxxHandlerReference(*Img, Address) &&
+      !coff_loader::isCheckedX86SafeSEHHandlerReference(*Img, Address))
     return nullptr;
   const auto Name = "__nd_registration_handler_" + llvm::utohexstr(Address);
   if (Mod->getNamedValue(Name))

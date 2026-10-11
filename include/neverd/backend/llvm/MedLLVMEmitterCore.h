@@ -119,6 +119,8 @@ private:
     uint64_t RecurrenceNodes = 0;
     uint64_t AliasNodes = 0;
     uint64_t StableOffsetProofs = 0;
+    uint64_t StableOffsetNodes = 0;
+    uint64_t ClosedScalarNodes = 0;
     uint64_t IndexedBaseProofs = 0;
     uint64_t FrameSlotNodes = 0;
     uint64_t FrameSlotCacheHits = 0;

@@ -12,6 +12,8 @@
 #include "KernelModel.h"
 #include "WindowsKernelLayout.h"
 
+#include "llvm/Support/Endian.h"
+
 #include <algorithm>
 #include <array>
 #include <set>
@@ -26,14 +28,28 @@ llvm::Error deviceError(const llvm::Twine &Message) {
 
 } // namespace
 
+llvm::Expected<uint64_t> KernelModel::readObjectField(uint64_t Address,
+                                                      unsigned Width,
+                                                      ObjectRead Mode) const {
+  if (Mode == ObjectRead::Execution)
+    return Memory.readInteger(Address, Width);
+  if (Width != 1 && Width != 2 && Width != 4 && Width != 8)
+    return deviceError("invalid kernel object scalar width");
+  std::array<uint8_t, 8> Bytes{};
+  if (auto E = Memory.snapshotBacking(
+          Address, llvm::MutableArrayRef(Bytes).take_front(Width)))
+    return std::move(E);
+  return llvm::support::endian::read64le(Bytes.data());
+}
+
 llvm::Expected<std::vector<uint64_t>>
-KernelModel::driverDeviceInventory() const {
+KernelModel::driverDeviceInventory(ObjectRead Mode) const {
   std::vector<uint64_t> Inventory;
   std::set<uint64_t> Seen;
   for (uint64_t Owner : {DriverObject, PnpProviderDriver}) {
     if (!Owner)
       continue;
-    auto Head = Memory.readInteger(Owner + DriverDeviceHead, 8);
+    auto Head = readObjectField(Owner + DriverDeviceHead, 8, Mode);
     if (!Head)
       return Head.takeError();
     uint64_t Current = *Head;
@@ -44,7 +60,7 @@ KernelModel::driverDeviceInventory() const {
         return deviceError(
             "unknown device or cycle in DRIVER_OBJECT device list");
       Inventory.push_back(Current);
-      auto Next = Memory.readInteger(Current + DeviceNext, 8);
+      auto Next = readObjectField(Current + DeviceNext, 8, Mode);
       if (!Next)
         return Next.takeError();
       Current = *Next;
@@ -55,7 +71,7 @@ KernelModel::driverDeviceInventory() const {
   return Inventory;
 }
 
-llvm::Error KernelModel::validateDeviceTopology() const {
+llvm::Error KernelModel::validateDeviceTopology(ObjectRead Mode) const {
   for (const auto &[Address, Device] : Devices) {
     const uint64_t ExpectedOwner = Device.OwnerKind == DeviceOwnerKind::Guest
                                        ? DriverObject
@@ -75,19 +91,19 @@ llvm::Error KernelModel::validateDeviceTopology() const {
                                {DeviceExtensionOffset, Device.Extension, 8},
                                {DeviceTypeOffset, Device.Type, 4},
                                {DeviceAttachedOffset, Device.Upper, 8}}}) {
-      auto Value = Memory.readInteger(Address + F.Offset, F.Width);
+      auto Value = readObjectField(Address + F.Offset, F.Width, Mode);
       if (!Value)
         return Value.takeError();
       if (*Value != F.Value)
         return deviceError(
             "DEVICE_OBJECT identity or attachment was corrupted");
     }
-    auto Count = Memory.readInteger(Address + DeviceStackCountOffset, 1);
+    auto Count = readObjectField(Address + DeviceStackCountOffset, 1, Mode);
     if (!Count)
       return Count.takeError();
     if (!*Count || *Count > MaxIRPStackCount)
       return deviceError("DEVICE_OBJECT.StackSize must be a positive CCHAR");
-    auto Flags = Memory.readInteger(Address + DeviceFlagsOffset, 4);
+    auto Flags = readObjectField(Address + DeviceFlagsOffset, 4, Mode);
     if (!Flags)
       return Flags.takeError();
     if (bool(*Flags & DeviceBusEnumerated) !=
@@ -100,7 +116,7 @@ llvm::Error KernelModel::validateDeviceTopology() const {
       if (Lower == Devices.end() || Lower->second.Upper != Address)
         return deviceError("device attachment has no matching lower neighbor");
       auto LowerCount =
-          Memory.readInteger(Device.Lower + DeviceStackCountOffset, 1);
+          readObjectField(Device.Lower + DeviceStackCountOffset, 1, Mode);
       if (!LowerCount)
         return LowerCount.takeError();
       if (*Count <= *LowerCount)

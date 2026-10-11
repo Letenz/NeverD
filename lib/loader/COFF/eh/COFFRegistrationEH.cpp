@@ -42,6 +42,103 @@ va_t findNextTableAddress(const std::vector<va_t> &Sorted, va_t TableVA) {
   return It == Sorted.end() ? 0 : *It;
 }
 
+/// After the checked four pushes, EH4 can allocate locals and save registers
+/// before publishing its node. Follow only that bounded, straight-line prefix;
+/// the LowIR state owner still proves cookie values and registration lifetime.
+std::optional<size_t> directEH4Publication(const BinaryImage &Img,
+                                           const InstallSite &Site,
+                                           const RegistrationChainInfo &Chain) {
+  const size_t Size = std::min<uint64_t>(Site.Range.size(), 128);
+  const uint8_t *P = Img.readVA(Site.Range.Begin, Size);
+  if (Img.Base > UINT32_MAX ||
+      Img.DynInfo.SecurityCookieRVA > UINT32_MAX - Img.Base)
+    return std::nullopt;
+  const va_t Cookie = Img.DynInfo.SecurityCookieRVA
+                          ? Img.Base + Img.DynInfo.SecurityCookieRVA
+                          : 0;
+  if (!P || Size < 25 || !Cookie || Cookie > UINT32_MAX ||
+      Site.Identity.Personality != ExceptionPersonality::ExceptHandler4)
+    return std::nullopt;
+  size_t Cursor = 22;
+  int64_t Allocation = 0;
+  const bool Subtract = P[Cursor + 1] == 0xec;
+  if (!Subtract && P[Cursor + 1] != 0xc4)
+    return std::nullopt;
+  if (P[Cursor] == 0x83) {
+    Allocation = int8_t(P[Cursor + 2]);
+    Cursor += 3;
+  } else if (P[Cursor] == 0x81 && Size >= Cursor + 6) {
+    Allocation = readLE<int32_t>(P + Cursor + 2);
+    Cursor += 6;
+  } else
+    return std::nullopt;
+  if (!Subtract)
+    Allocation = -Allocation;
+  if (Allocation < 8 || Allocation > limits::kMaxRegistrationEHStateWork)
+    return std::nullopt;
+  int64_t SP = -16 - Allocation;
+  unsigned Saved = 0;
+  std::vector<int64_t> SavedSlots;
+  while (Cursor < Size &&
+         (P[Cursor] == 0x53 || P[Cursor] == 0x56 || P[Cursor] == 0x57)) {
+    const unsigned Bit = 1u << (P[Cursor++] - 0x50);
+    if (Saved & Bit)
+      return std::nullopt;
+    Saved |= Bit;
+    SP -= 4;
+    SavedSlots.push_back(SP);
+  }
+  if (Size - Cursor < 10 || P[Cursor] != 0xa1 ||
+      readLE<uint32_t>(P + Cursor + 1) != Cookie || P[Cursor + 5] != 0x31 ||
+      P[Cursor + 6] != 0x45 || P[Cursor + 7] != 0xf8 ||
+      !((P[Cursor + 8] == 0x31 && P[Cursor + 9] == 0xe8) ||
+        (P[Cursor + 8] == 0x33 && P[Cursor + 9] == 0xc5)))
+    return std::nullopt;
+  Cursor += 10;
+  std::set<int32_t> Cookies{Chain.EHCookieOffset};
+  if (Chain.GSCookieOffset != -2) {
+    if (int64_t(Chain.GSCookieOffset) < int64_t(Chain.EHCookieOffset) + 4 &&
+        int64_t(Chain.EHCookieOffset) < int64_t(Chain.GSCookieOffset) + 4)
+      return std::nullopt;
+    Cookies.insert(Chain.GSCookieOffset);
+  }
+  while (!Cookies.empty()) {
+    int64_t Slot = 0;
+    if (Cursor < Size && P[Cursor] == 0x50) {
+      Slot = SP -= 4;
+      ++Cursor;
+    } else if (Size - Cursor >= 3 && P[Cursor] == 0x89 &&
+               P[Cursor + 1] == 0x45) {
+      Slot = int8_t(P[Cursor + 2]);
+      Cursor += 3;
+    } else if (Size - Cursor >= 6 && P[Cursor] == 0x89 &&
+               P[Cursor + 1] == 0x85) {
+      Slot = readLE<int32_t>(P + Cursor + 2);
+      Cursor += 6;
+    } else
+      return std::nullopt;
+    // EBP is node+16 in this exact prologue. Do not admit unallocated storage
+    // or overwrite SavedESP, exception pointers, or any byte of the node.
+    if (Slot < SP || Slot + 4 > -24 ||
+        llvm::any_of(SavedSlots,
+                     [&](int64_t Saved) {
+                       return Slot < Saved + 4 && Saved < Slot + 4;
+                     }) ||
+        !Cookies.erase(int32_t(Slot)))
+      return std::nullopt;
+  }
+  if (Size - Cursor < 3 || P[Cursor] != 0x8d || P[Cursor + 1] != 0x45 ||
+      P[Cursor + 2] != 0xf0)
+    return std::nullopt;
+  Cursor += 3;
+  const auto Store =
+      getX86RegistrationChainStoreSize(Img, Site.Range.Begin + Cursor);
+  if (!Store || *Store > Size - Cursor ||
+      (*Store == 7 && P[Cursor + 2] != 0x05))
+    return std::nullopt;
+  return Cursor;
+}
+
 /// Authenticate the direct MSVC frame from its exact entry instruction
 /// sequence. A chain-head read alone does not establish a registration, and
 /// locals containing -1/0 are not evidence of the runtime's state field.
@@ -76,37 +173,11 @@ void proveDirectRegistrationLayout(const BinaryImage &Img,
   size_t Installation = Cursor + 7;
   if (P[Cursor + 7] != 0x64 || P[Cursor + 8] != 0x89 || P[Cursor + 9] != 0x25 ||
       readLE<uint32_t>(P + Cursor + 10) != 0) {
-    // Direct EH4 initializes the encoded table and EH cookie before publishing
-    // the record. The state solver independently checks their values/lifetime.
-    P = Img.readVA(Site.Range.Begin, 48);
-    const va_t CookieVA = Img.DynInfo.SecurityCookieRVA
-                              ? Img.Base + Img.DynInfo.SecurityCookieRVA
-                              : 0;
-    if (IsCxx ||
-        Site.Identity.Personality != ExceptionPersonality::ExceptHandler4 ||
-        !P || Site.Range.size() < 48 || !CookieVA || CookieVA > UINT32_MAX ||
-        P[22] != 0x83 || P[23] != 0xec || P[24] != 16 || P[25] != 0xa1 ||
-        readLE<uint32_t>(P + 26) != CookieVA || P[30] != 0x31 ||
-        P[31] != 0x45 || P[32] != 0xf8 || P[33] != 0x31 || P[34] != 0xe8 ||
-        P[35] != 0x89 || P[36] != 0x45 || P[37] != 0xe4)
+    const auto Publication =
+        IsCxx ? std::nullopt : directEH4Publication(Img, Site, Chain);
+    if (!Publication)
       return;
-    size_t FrameAddress = 38;
-    if (Chain.GSCookieOffset != -2) {
-      // The same encoded value initializes a distinct, allocated GS slot.
-      // Header fields and dataflow, rather than a sign heuristic, prove which
-      // cookie each runtime check consumes.
-      P = Img.readVA(Site.Range.Begin, 51);
-      if (!P || Site.Range.size() < 51 || P[38] != 0x89 || P[39] != 0x45 ||
-          P[40] != 0xe0)
-        return;
-      FrameAddress += 3;
-    }
-    Installation = FrameAddress + 3;
-    if (P[FrameAddress] != 0x8d || P[FrameAddress + 1] != 0x45 ||
-        P[FrameAddress + 2] != 0xf0 || P[Installation] != 0x64 ||
-        P[Installation + 1] != 0x89 || P[Installation + 2] != 0x05 ||
-        readLE<uint32_t>(P + Installation + 3) != 0)
-      return;
+    Installation = *Publication;
   }
   Chain.RegistrationOffset = IsCxx ? -12 : -16;
   Chain.TryLevelOffset = -4;

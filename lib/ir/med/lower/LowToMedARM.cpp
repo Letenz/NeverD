@@ -14,6 +14,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/lift/ARMRegs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
@@ -693,8 +694,20 @@ LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
   // old-image integer as an independent table base loses relocation.
   RelativeLiteralOutputs Outputs;
   if (TheArch != Arch::ARM || Fmt != BinaryFormat::ELF || !Image ||
-      Image->Arch != Arch::ARM || !Image->isELF())
+      Image->Arch != Arch::ARM || !Image->isELF() ||
+      Low.RelocatedInstructionAddressOccurrences.empty())
     return Outputs;
+  // The instruction set and width of each instruction an occurrence names.
+  std::map<va_t, const LowInstructionBoundary *> Instructions;
+  for (const LowBlock &Block : Low.Blocks)
+    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
+      Instructions.emplace(Boundary.Address, &Boundary);
+  auto instruction = [&](va_t Addr) -> const LowInstructionBoundary * {
+    const auto It = Instructions.find(Addr);
+    return It != Instructions.end() && isSingleInstructionMode(It->second->Mode)
+               ? It->second
+               : nullptr;
+  };
   for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences) {
     const std::pair<va_t, int> Key{Occurrence.InstructionAddr,
                                    Occurrence.OpSeq};
@@ -726,20 +739,24 @@ LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
     const uint32_t Encoded = uint32_t(Bytes[0]) | (uint32_t(Bytes[1]) << 8) |
                              (uint32_t(Bytes[2]) << 16) |
                              (uint32_t(Bytes[3]) << 24);
-    if (static_cast<uint32_t>(Occurrence.InstructionAddr + 8) + Encoded !=
-        static_cast<uint32_t>(Occurrence.TargetVA))
+    const LowInstructionBoundary *Add = instruction(Occurrence.InstructionAddr);
+    if (!Add ||
+        armreg::pcReadValue(Occurrence.InstructionAddr, Add->Mode) + Encoded !=
+            static_cast<uint32_t>(Occurrence.TargetVA))
       continue;
     if (RelocationFree) {
       // The assembler resolved the literal, so it can only reach into the
       // ADD's own section.
       const Section *Anchor = Image->getSectionFor(Occurrence.InstructionAddr);
+      const LowInstructionBoundary *Load =
+          instruction(Occurrence.SeedInstructionAddr);
       if (Occurrence.FieldVA != InvalidVA ||
           Occurrence.Provenance != ConstantAddressProvenance::CodeAddress ||
           !Anchor || !Anchor->isExecutable() ||
-          Anchor->VA != Occurrence.TargetOwnerVA ||
+          Anchor->VA != Occurrence.TargetOwnerVA || !Load ||
           !Image->isUnrelocatedObjectField(SlotVA, 4) ||
-          !Image->isUnrelocatedObjectField(Occurrence.SeedInstructionAddr, 4) ||
-          !Image->isUnrelocatedObjectField(Occurrence.InstructionAddr, 4))
+          !Image->isUnrelocatedObjectField(Load->Address, Load->Size) ||
+          !Image->isUnrelocatedObjectField(Add->Address, Add->Size))
         continue;
     } else {
       const auto Field =

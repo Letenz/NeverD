@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: c5503091e713c63aa7b08a8cbd5fab1b5cc3c8d8950bb7da4fe754dbe5787137 -->
+<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1124,7 +1124,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all41 other file routes and direct/file-backed mappings closed / typed streams only
+all43 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -1167,9 +1167,9 @@ native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 
 يدعم BSD الخام poll(230) وpoll_nocancel(417) قيمة timeout low int32=0. يفسر nfds كـuint32؛ يتجاوز OPEN_MAX10240 فيعيد EINVAL22 قبل المؤشرات. يحتاج العدد الموجب darwin_system.resource_limits resource8 Current صريحاً. فوق Current وFD_SETSIZE1024 يعيد EINVAL؛ وإلا يحتاج UID الفعّال الأصلي الصريح، غير الصفر يرفض والصفر يسمح. استثناء root له دليل المصدر/النموذج فقط. DescriptorLimit وkern.maxfilesperproc ورقم FD وميزانيات التنفيذ ليست هذه المشاهدة. العدد صفر لا يلمس المصفوفة؛ timeout غير صفر غير مدعوم بعد قبول العدد.
 
-يعلن موفر الملف العادي الافتراضي المبني وصفاً غير مسحوب وتسجيل مرشحات القراءة/الكتابة العادية بنجاح وعدم رفض MAC/الموفر. نوع vnode الأصلي وحده لا يثبت التسجيل. بهذه الفرضية تكون IN/RDNORM وOUT/WRBAND جاهزة حتى عند EOF/open readonly، دون استنتاج من البايتات أو الأعلام أو O_NONBLOCK أو صلاحية الكتابة. يحتفظ مفتاح FD الرقمي والقراءة/الكتابة بآخر صف لكل مرشح مستقلاً؛ لا تندمج FD المختلفة عبر dup. يسجل HUP وحده القراءة دون بت جاهزية. FD السالب/الأعلام المتجاهلة صفر؛ التسجيل المغلق POLLNVAL32 لكل صف. يرفض OOB/vnode الحي والتدفقات/الأدلة/الروابط قبل الإخراج. يلتقط كامل إدخال سجل8 بايت؛ الإدخال الناقص/الإخراج غير القابل للكتابة كله EFAULT14، والإخراج الجزئي يرفض بلا نسخ بادئة. النسخ الكامل يحفظ fd/events ويستبدل revents. يغلق وضعا الاستعلام الثابت Poll قبل الفحص حتى عند صفر؛ القائمة المشتركة41 مساراً.
+يعلن موفر الملف العادي الافتراضي المبني وصفاً غير مسحوب وتسجيل مرشحات القراءة/الكتابة العادية بنجاح وعدم رفض MAC/الموفر. نوع vnode الأصلي وحده لا يثبت التسجيل. بهذه الفرضية تكون IN/RDNORM وOUT/WRBAND جاهزة حتى عند EOF/open readonly، دون استنتاج من البايتات أو الأعلام أو O_NONBLOCK أو صلاحية الكتابة. يحتفظ مفتاح FD الرقمي والقراءة/الكتابة بآخر صف لكل مرشح مستقلاً؛ لا تندمج FD المختلفة عبر dup. يسجل HUP وحده القراءة دون بت جاهزية. FD السالب/الأعلام المتجاهلة صفر؛ التسجيل المغلق POLLNVAL32 لكل صف. يرفض OOB/vnode الحي والتدفقات/الأدلة/الروابط قبل الإخراج. يلتقط كامل إدخال سجل8 بايت؛ الإدخال الناقص/الإخراج غير القابل للكتابة كله EFAULT14، والإخراج الجزئي يرفض بلا نسخ بادئة. النسخ الكامل يحفظ fd/events ويستبدل revents. يغلق وضعا الاستعلام الثابت Poll قبل الفحص حتى عند صفر؛ القائمة المشتركة42 مساراً.
 
-يغطي immediate-poll بلا SDK عدد86 حدثاً وخمسة إعدادات برمجية/ثلاثة ARM64 HVF إلزامية وC/CLI/Python، ويضيف مرجعاً أصلياً مشتركاً ليصبح المخزون59. يحتفظ مسبار O0/O1/O2 ARM64 المستقل582 تحكماً حرفياً ABI/خطأ ومشاهدات الموفر العادي مختلطة، لا ثوابت جاهزية عامة. تحتفظ أدلة58 السابقة بهوية المصدر؛ فشل التنزيل وأول مهلة أصلية والحدود السابقة محفوظة. Intel HVF وiOS الفعلي والسحب/MAC/رفض التسجيل وselect والانتظار والموفرون غير المتزامنين والشبكة والساعات المتقدمة وMach IPC/الخيوط الحقيقية وdyld/TLS والأطر الكاملة غير مختبرة أو غير مكتملة.
+يحفظ immediate-poll بلا SDK عدد86 حدثاً وقائمته الأصلية59؛ يضيف immediate-select حالة لتصبح قائمة مرحلة select المشتركة60. تحفظ مشاهدات ARM64 O0/O1/O2 المستقلة poll582 وselect792 الضوابط الحرفية ABI/الخطأ والتقاطات المزوّد منفصلة، لا ثوابت عامة. تحافظ أدلة58/59 على هوية المصدر والإخفاقات والمواعيد. Intel HVF وiOS الفعلي غير متحققين؛ الإلغاء/MAC/رفض المزوّد والانتظار وتغيير قناع الإشارة في pselect واللاتزامن والشبكة والساعات المتقدمة وMach IPC/الخيوط الفعلية وdyld/TLS والأطر الكاملة غير مكتملة.
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -1179,10 +1179,44 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all41 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-59 current native-common cases / prior58 source identity preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / waits select revoked-MAC-provider failures networking unfinished
+61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## select الفوري للملفات العادية
+
+تقبل BSD `select`93 و`select_nocancel`407 فقط timeval صفرياً صريحاً وعدداً غير سالب بإشارة في أقل32 بت؛ تبقى المؤشرات64 بت كاملة. يتكون timeval LP64 من16 بايت: ثوانٍ64 بت بإشارة عند0، ميكروثوانٍ32 بت بإشارة عند8 وحشو متجاهل عند12. تحقق الثواني0..100000000 والميكروثواني0..999999 يسبق EINVAL22 للعدد السالب؛ الاستيراد الناقص يعطي EFAULT14. المؤشر الفارغ أو الزمن الموجب غير مدعوم، والعدد0 لا يصل إلى المجموعات. أكبر FD حي زائد1 يثبت فقط حداً أدنى لـ`fd_nfiles`. إغلاق FD مرتفع يضيّق الإثبات ولا يعني تقلص التخصيص الأصلي. NOFILE والميزانيات ونوع vnode لا تثبت السعة أو المزوّد.
+
+الأقنعة little-endian32 تقرّب إلى كلمات كاملة. تنسخ كل المدخلات أولاً، ثم تفحص كل FD مختار، ثم تفسر المزوّدات. FD الغائب يعطي EBADF9؛ التدفقات والدلائل والأوصاف الرمزية المختارة غير مدعومة. يعلن المزوّد العادي المُنشأ لـ select نقاءً وعدم رفض ونتائج غير صفرية للقراءة والكتابة والاستثناء، مستقلاً عن poll. تحسب البتات عبر المجموعات وأرقام dup المختلفة حتى readonly وnonblocking وEOF دون تغيير الموضع أو الأعلام أو المحتوى أو البيانات الوصفية. تصفّر البتات الطرفية في الكلمات المنسوخة وتحفظ كل البايتات الخارجية.
+
+يجب ألا تتداخل المخرجات فيما بينها أو مع timeval ذي16 بايت. تفحص كل أذونات المخرجات الكاملة قبل الكتابة. يرفض كل إخراج جزئي قبل جميع النسخ، بما فيه بداية غير قابلة للكتابة تتبعها نهاية قابلة لها. طول بادئة قابلة للكتابة0 لا يثبت أن كل النطاق غير قابل. تجري النسخ قراءة/كتابة/استثناء بالترتيب؛ المجموعة غير القابلة كلها تعطي EFAULT14 وتظل المجموعات اللاحقة القابلة تتغير مع حفظ أول خطأ. يغلق الوضعان الثابتان Select قبل الفحص، بإجمالي43 مساراً مغلقاً. يتحقق workload بلا SDK من115 حدثاً وحراس كاملة عبر خمسة ملفات برامج وثلاثة ARM64 HVF إلزامية وC/CLI/Python. الانتظار وأقنعة الإشارة غير الفارغة في `pselect` والمزوّدات غير المتزامنة والنظام الكامل غير مكتملة.
+
+```text
+select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
+current live FD lower bound / no guessed fd_nfiles allocation or NOFILE capacity
+read write exception / bit count across sets / distinct dup numbers
+all copyins before all descriptor checks / all checks before provider interpretation
+partial outputs and overlaps unsupported before all output / zero prefix is not whole unwritable
+ordered read write exception copyout / first EFAULT14 after later whole writable copies
+792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
+immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
+61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+يقبل `pselect394 / pselect_nocancel395` الفوري قيمة صفر مقدمة في `user64_timespec16` ومؤشر قناع إشارات null. الحقلان signed64: الثواني 0..2147483647 والنانوثواني 0..1000000000 شاملًا الحد الأعلى. يبقى الانتظار بمهلة صحيحة غير صفرية غير مدعوم. يسبق استيراد timespec والتحقق منه استيراد أربعة بايتات للقناع، ثم فحص العدد وخرائط البتات. يعيد القناع غير المقروء EFAULT14؛ ويتوقف القناع الكامل غير null لعدم نمذجة استبدال حالة إشارات الخيط واستعادتها. يشترك مسار null مع select في قواعد السعة والموفر وخرائط البتات وأذونات نطاق الإخراج الكامل والنسخ المرتب. لا تزال الإشارات والانتظار وdyld وأطر Apple والتحقق على iOS فعلي غير مكتملة.
+
+```text
+pselect394 / pselect_nocancel395 / zero supplied user64_timespec16 / null signal mask
+signed64 seconds0..2147483647 / signed64 nsec0..1000000000 inclusive
+time import validation before mask4 import before signed low32 count
+complete nonnull mask unsupported / no guessed signal state
+shared select bitmap capacity provider output owner
+918 mixed controls and captures / 729 literal controls and 189 provider captures
+```

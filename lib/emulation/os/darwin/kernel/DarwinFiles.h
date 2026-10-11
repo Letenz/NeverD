@@ -299,6 +299,13 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   poll(const ProcessServiceEvent &Event,
        const std::optional<DarwinSystemOptions> &System, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  select(const ProcessServiceEvent &Event, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  pselect(const ProcessServiceEvent &Event, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  immediateSelect(const ProcessServiceEvent &Event, ProcessResult &Result,
+                  bool Immediate, const char *WaitDiagnostic);
   std::optional<ServiceResult> pathconf(const Description &File, uint32_t Name,
                                         ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

@@ -14,3 +14,5 @@ X86ReadMXCSR, X86WriteMXCSR, X86FPAddState, X86FPSubState, X86FPMulState,
     X86FPScalarConvertState, X86FPScalarConvertMemoryState,
     // SSE/VEX packed conversion owns complete numerical/MXCSR completion.
     X86FPPackedConvertState, X86FPPackedConvertMemoryState,
+    // VEX F16C owns numerical/state completion and its complete memory access.
+    X86F16CState, X86F16CReadState, X86F16CStoreState,

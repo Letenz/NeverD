@@ -214,3 +214,7 @@ SIDEEFFECT(Intrinsic::WriteCr8);
 SIDEEFFECT(Intrinsic::ReadDr);
 SIDEEFFECT(Intrinsic::WriteDr);
 SIDEEFFECT(Intrinsic::DebugService);
+
+SIDEEFFECT(Intrinsic::X86F16CState);
+SIDEEFFECT(Intrinsic::X86F16CReadState);
+SIDEEFFECT(Intrinsic::X86F16CStoreState);
