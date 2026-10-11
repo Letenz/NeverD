@@ -713,24 +713,34 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     Convert.addInput(Op.Inputs[Store ? 4 : 3]);
     const bool Complete = Evaluation.step(Convert);
     setMXCSR(Evaluation.getMXCSR());
-    if (!Complete)
-      return false;
-    auto Result = Evaluation.readOperandBytes(Convert.Output);
     if (Store) {
-      // Unmasked floating exceptions precede the destination access. Masked
-      // flags observed with a failed store are not reproducible even
-      // across identical original instructions on the same native CPU.
+      // Identical native instructions expose competing floating/access faults
+      // and different new status at an invalid target. Validate the writable
+      // target before promising an exact outgoing CSR, even if evaluation
+      // already found an unmasked floating exception. No store occurs until
+      // both numerical completion and the whole write are authenticated.
       const auto Address =
           checkX86FPStateMemory(Op, x86F16CStoreBytes(Control), 1, true);
-      if (!Address || !storeMemoryBytes(
-                          *Address, llvm::ArrayRef<uint8_t>(Result).take_front(
-                                        x86F16CStoreBytes(Control)))) {
+      if (!Address) {
+        if ((MXCSR & ~State & 0x3f) != 0)
+          MXCSRKnown = false;
+        return false;
+      }
+      if (!Complete)
+        return false;
+      const auto Result = Evaluation.readOperandBytes(Convert.Output);
+      if (!storeMemoryBytes(*Address,
+                            llvm::ArrayRef<uint8_t>(Result).take_front(
+                                x86F16CStoreBytes(Control)))) {
         if ((MXCSR & ~State & 0x3f) != 0)
           MXCSRKnown = false;
         return false;
       }
       writeOutput(Op.Output, MXCSR);
     } else {
+      if (!Complete)
+        return false;
+      auto Result = Evaluation.readOperandBytes(Convert.Output);
       Result.resize(Bytes + 4);
       for (unsigned Index = 0; Index < 4; ++Index)
         Result[Bytes + Index] = uint8_t(MXCSR >> (Index * 8));

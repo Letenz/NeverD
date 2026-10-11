@@ -331,27 +331,47 @@ TEST(F16CContract, CheckedReadsAndStoresRetainExtentPermissionsAndStateOrder) {
         }
       }
 }
-TEST(F16CContract, UnmaskedFloatingExceptionPrecedesStoreAddressValidation) {
+TEST(F16CContract, CompetingStoreFaultsDoNotInventExactState) {
   BinaryImage Image;
   Image.Arch = Arch::X64;
-  for (unsigned State : {0x1f00U, 0x0f80U, 0x1780U}) {
-    const uint32_t Bits = State == 0x1f00   ? 0x7f800071
-                          : State == 0x0f80 ? 0x3f801000
-                                            : 0x33800000;
-    const unsigned Flags = State == 0x1f00 ? 1 : State == 0x0f80 ? 0x20 : 0x10;
-    NdOpEmulator E(Image);
-    E.setStrictMode(true);
-    E.setMXCSR(0x3f80);
-    E.setRegister(1, UINT64_MAX);
-    std::vector<uint8_t> Source(16);
-    std::memcpy(Source.data(), &Bits, 4);
-    E.setRegisterBytes(3, Source);
-    E.setRegister(2, 0xa7a7a7a7);
-    EXPECT_FALSE(
-        E.step(halfStateOp(Intrinsic::X86F16CStoreState, 1, 0, State)));
-    EXPECT_EQ(E.getMXCSR(), State | Flags);
-    EXPECT_EQ(E.getRegister(2), 0xa7a7a7a7U);
-  }
+  Segment S;
+  S.VA = 0x2000;
+  S.Size = S.FileSz = 16;
+  S.Data.assign(16, 0xa7);
+  S.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Segments.push_back(S);
+  for (bool Writable : {false, true})
+    for (unsigned State : {0x1f00U, 0x0f80U, 0x1780U}) {
+      const uint32_t Bits = State == 0x1f00   ? 0x7f800071
+                            : State == 0x0f80 ? 0x3f801000
+                                              : 0x33800000;
+      const unsigned Flags = State == 0x1f00   ? 1
+                             : State == 0x0f80 ? 0x20
+                                               : 0x10;
+      NdOpEmulator E(Image);
+      E.setStrictMode(true);
+      E.setMXCSR(0x3f80);
+      E.setX86LinearAddressBits(48);
+      E.setRegister(1, Writable ? 0x2000 : UINT64_MAX);
+      std::vector<uint8_t> Source(16);
+      std::memcpy(Source.data(), &Bits, 4);
+      E.setRegisterBytes(3, Source);
+      E.setRegister(2, 0xa7a7a7a7);
+      EXPECT_FALSE(
+          E.step(halfStateOp(Intrinsic::X86F16CStoreState, 1, 0, State)));
+      if (Writable)
+        EXPECT_EQ(E.getMXCSR(), State | Flags);
+      LowOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = NdVar::tmp(9, 4);
+      Read.addInput(NdVar::cst(unsigned(Intrinsic::X86ReadMXCSR), 2));
+      EXPECT_EQ(E.step(Read), Writable);
+      if (Writable)
+        EXPECT_EQ(E.getRegister(9), State | Flags);
+      else
+        EXPECT_FALSE(E.getRegister(9));
+      EXPECT_EQ(E.getRegister(2), 0xa7a7a7a7U);
+    }
 }
 TEST(F16CContract, FailedStoresDoNotInventMaskedResultStatus) {
   BinaryImage Image;
@@ -679,45 +699,52 @@ protected:
         "<immintrin.h>\nextern void native_probe(uintptr_t);\n";
     if (Declare)
       Text += "extern void isa_probe(uintptr_t);\n";
-    Text +=
-        "#define UNCERTAIN_FLAGS " +
-        std::to_string(FaultMode >= 8 ? Flags : 0) + "\n#define MEMORY_FAULT " +
-        std::to_string(ReadFault || FaultMode >= 8) + "\n#define PAGE_TEST " +
-        std::to_string(Page) + "\n#define CROSS_PAGE " +
-        std::to_string(ReadFault || FaultMode == 9 || FaultMode == 10) +
-        "\n#define READ_TEST " + std::to_string(ReadFault) +
-        "\n#define READ_ONLY " + std::to_string(FaultMode == 11) +
-        "\n#define ACCESS_BYTES " + std::to_string(Form.Width / 2) +
-        "\n#define EXPECTED_STATE " + std::to_string(State | Flags) + "u\n";
+    Text += "#define UNCERTAIN_FLAGS " +
+            std::to_string(FaultMode >= 7 ? Flags : 0) +
+            "\n#define COMPETING_FAULTS " + std::to_string(FaultMode == 7) +
+            "\n#define MEMORY_FAULT " +
+            std::to_string(ReadFault || FaultMode >= 8) +
+            "\n#define PAGE_TEST " + std::to_string(Page) +
+            "\n#define CROSS_PAGE " +
+            std::to_string(ReadFault || FaultMode == 9 || FaultMode == 10) +
+            "\n#define READ_TEST " + std::to_string(ReadFault) +
+            "\n#define READ_ONLY " + std::to_string(FaultMode == 11) +
+            "\n#define ACCESS_BYTES " + std::to_string(Form.Width / 2) +
+            "\n#define EXPECTED_FLOAT_FLAG " + std::to_string(Flags) +
+            "\n#define EXPECTED_STATE " + std::to_string(State | Flags) + "u\n";
     Text += R"(
 static unsigned char actual[160], before[160];
 static unsigned char *operand, *prefix;
 static unsigned char prefix_before[4];
-static void check(unsigned state, uintptr_t address) {
+static void check(unsigned state, uintptr_t address, int access_fault) {
   /* Repeated identical original bytes expose both IE and PE states at #PF.
      Preserve all other state and fault atomicity; the concrete model refuses
      an exact MXCSR read rather than choosing one observed outcome. */
-  if((state^EXPECTED_STATE)&(~(unsigned)UNCERTAIN_FLAGS)) {
+  if((state^EXPECTED_STATE)&(access_fault ? ~(unsigned)UNCERTAIN_FLAGS : ~0u)) {
     fprintf(stderr,"expected=%08x actual=%08x\n",EXPECTED_STATE,state); _Exit(2);
   }
   if(memcmp(actual,before,160)) _Exit(3);
   if(prefix && memcmp(prefix,prefix_before,READ_TEST ? 2 : 4)) _Exit(4);
-  if(MEMORY_FAULT && (address<(uintptr_t)operand || address>=(uintptr_t)operand+ACCESS_BYTES)) _Exit(5);
+  if(access_fault && (address<(uintptr_t)operand || address>=(uintptr_t)operand+ACCESS_BYTES)) _Exit(5);
   _Exit(0);
 }
 #ifdef _WIN32
 #include <windows.h>
 static LONG CALLBACK observe(EXCEPTION_POINTERS *info) {
   DWORD code=info->ExceptionRecord->ExceptionCode;
-  if(MEMORY_FAULT ? code!=EXCEPTION_ACCESS_VIOLATION : code!=EXCEPTION_FLT_INVALID_OPERATION && code!=EXCEPTION_FLT_INEXACT_RESULT && code!=EXCEPTION_FLT_UNDERFLOW && code!=EXCEPTION_FLT_DENORMAL_OPERAND) return EXCEPTION_CONTINUE_SEARCH;
-  if((info->ContextRecord->MxCsr^EXPECTED_STATE)&(~(unsigned)UNCERTAIN_FLAGS)) {
+  int access_fault=code==EXCEPTION_ACCESS_VIOLATION;
+  /* Windows reports SIMD denormal #XM as invalid operation; MXCSR retains DE. */
+  DWORD expected_float=EXPECTED_FLOAT_FLAG==1 || EXPECTED_FLOAT_FLAG==2 ? EXCEPTION_FLT_INVALID_OPERATION : EXPECTED_FLOAT_FLAG==16 ? EXCEPTION_FLT_UNDERFLOW : EXCEPTION_FLT_INEXACT_RESULT;
+  int floating_fault=code==expected_float;
+  if(COMPETING_FAULTS ? !access_fault && !floating_fault : MEMORY_FAULT ? !access_fault : !floating_fault) return EXCEPTION_CONTINUE_SEARCH;
+  if((info->ContextRecord->MxCsr^EXPECTED_STATE)&(access_fault ? ~(unsigned)UNCERTAIN_FLAGS : ~0u)) {
     fprintf(stderr,"rip=%016llx xmm0=%016llx/%016llx FltSaveMxCsr=%08lx\n",
       (unsigned long long)info->ContextRecord->Rip,
       (unsigned long long)info->ContextRecord->Xmm0.High,
       (unsigned long long)info->ContextRecord->Xmm0.Low,
       info->ContextRecord->FltSave.MxCsr);
   }
-  check(info->ContextRecord->MxCsr,MEMORY_FAULT ? (uintptr_t)info->ExceptionRecord->ExceptionInformation[1] : 0);
+  check(info->ContextRecord->MxCsr,access_fault ? (uintptr_t)info->ExceptionRecord->ExceptionInformation[1] : 0,access_fault);
   return EXCEPTION_CONTINUE_SEARCH;
 }
 #else
@@ -726,8 +753,8 @@ static LONG CALLBACK observe(EXCEPTION_POINTERS *info) {
 #include <unistd.h>
 #include <ucontext.h>
 static void observe(int signal,siginfo_t *info,void *context) {
-  if(signal!=(MEMORY_FAULT ? SIGSEGV : SIGFPE)) _Exit(6);
-  ucontext_t *uc=context; check(uc->uc_mcontext.fpregs->mxcsr,(uintptr_t)info->si_addr);
+  if(COMPETING_FAULTS ? signal!=SIGSEGV && signal!=SIGFPE : signal!=(MEMORY_FAULT ? SIGSEGV : SIGFPE)) _Exit(6);
+  ucontext_t *uc=context; check(uc->uc_mcontext.fpregs->mxcsr,(uintptr_t)info->si_addr,signal==SIGSEGV);
 }
 #endif
 int main(void) {
@@ -754,6 +781,7 @@ int main(void) {
 #else
   struct sigaction sa={0};sa.sa_sigaction=observe;sa.sa_flags=SA_SIGINFO;sigemptyset(&sa.sa_mask);
   if(sigaction(MEMORY_FAULT ? SIGSEGV : SIGFPE,&sa,0))return 10;
+  if(COMPETING_FAULTS && sigaction(SIGSEGV,&sa,0))return 10;
   if(PAGE_TEST) {
     size_t page=sysconf(_SC_PAGESIZE);unsigned char *base=mmap(0,2*page,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
     if(base==MAP_FAILED)return 11;memset(base,0xa7,2*page);
@@ -917,8 +945,7 @@ TEST_F(F16CFixture, CompleteReadFaultPrecedesInvalidEvenWithDiscardedResult) {
   GTEST_SKIP() << "Fault-context oracle requires Windows/Linux x64";
 #endif
 }
-TEST_F(F16CFixture,
-       StoreFloatingExceptionsPrecedeAccessAndNoPartialWriteOccurs) {
+TEST_F(F16CFixture, StoreFaultsPreserveOutputsAndAccessBounds) {
 #if defined(_WIN32) || defined(__linux__)
   if (!nativeX64() || !llvm::sys::getHostCPUFeatures().lookup("f16c"))
     GTEST_SKIP() << "Native F16C required";

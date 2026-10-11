@@ -334,8 +334,7 @@ inline void writeX86F16CCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
   const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
                         : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
                                                                : "";
-  OS << "/* F16C ignores FTZ; stores complete floating exceptions before the "
-        "access. */\n"
+  OS << "/* F16C owns floating state and the complete memory access. */\n"
      << "static inline __attribute__((target(\"avx,f16c\"))) " << Return << " "
      << Name << "(";
   if (Store || Read)

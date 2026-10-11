@@ -374,8 +374,8 @@ rounding, DAZ, FTZ, NaN payloads, narrowing padding, aliases, unaligned accesses
 and discarded results. The concrete oracle exhausts all binary16 encodings
 and tests directed and deterministic random binary32 inputs. Low/Med/High,
 decoded metadata and owned asm contracts reject altered roles and state.
-Protected-page probes retain complete read faults, unmasked floating exception
-priority over writes, and no partial cross-page store. Newly raised masked
+Protected-page probes retain complete read faults, competing floating/access
+faults at invalid targets, and no partial cross-page store. Newly raised
 status at a failed cross-page store varies even for identical native
 bytes on the same host: this observer checks other state and atomicity, and
 the concrete regression requires a subsequent exact MXCSR read to refuse.

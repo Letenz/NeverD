@@ -1900,10 +1900,11 @@ establishes scalar FP provenance, and ABI recovery never treats a store as a
 source read. Concrete evaluation reuses the F16C numerical primitive and the
 common precision-rounding exponent boundary. Operand exceptions precede
 result exceptions; unsuccessful completion publishes no register result or
-partial memory store. Source-read faults precede conversion, while unmasked
-floating exceptions precede destination access. Repeated identical native
-cross-page stores expose both states of newly raised masked status
-at the access fault. A failed store with newly raised masked flags
+partial memory store. Source-read faults precede conversion. A valid writable
+target retains exact unmasked floating completion. Competing floating and access
+faults at an invalid target do not establish one reproducible fault priority.
+Repeated identical native cross-page stores expose both states of new status
+at the access fault. A failed store with newly raised flags
 therefore invalidates exact MXCSR knowledge rather than fabricating one
 outcome. Successful completion retains exact flags. This does not extend
 EVEX native completion or x87 state; Swift refuses this surface.
