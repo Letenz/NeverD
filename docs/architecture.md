@@ -50,6 +50,24 @@ emitting C. Source, IR and CFG views consume that prepared pipeline. Older
 engines retain the decompiler-based preparation fallback. A failed switch
 clears the worker's prepared-entry marker before another view can reuse it.
 
+Consecutive restricted x64 analyses may share a session-owned
+`PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
+relocation-root and executable-owner indexes borrowed by the bounded raw x87
+graph and call-register body caches. Each selection still builds its output
+IR, replays the ordinary proof obligations and recomputes caller-dependent
+register/argument summaries. Exact candidate and verified-entry inventories
+bind reuse; selection cannot silently change a cached function's boundaries.
+No-return proof and lazy-name memo entries are cleared between runs, so they
+do not accumulate across navigation. Image indexes scale with the loaded
+metadata; the existing graph/body payload allowances remain unchanged.
+Reload, function edits, signature matching and analysis-policy changes retire
+the cache while its image/debug owners are alive. Feature generations are
+checked even after navigation cleared the preceding pipeline result. COFF
+handler discovery conservatively retires facts before expanding metadata.
+Other architectures and whole-image analyses retain run-local ownership.
+Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
+before input or policy mutation; image pointers alone do not establish validity.
+
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
 revision and listing generation identify a document. A hit can answer before

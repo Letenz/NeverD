@@ -3379,25 +3379,45 @@ void computeCallRegisterEffects(
 }
 } // namespace
 
+struct PipelineAnalysisCache::Impl {
+  const BinaryImage *Image;
+  DebugContext *Debug;
+  std::set<va_t> Entries;
+  std::set<uint64_t> VerifiedEntries;
+  libc::NoReturnTargetIndex Targets;
+  detail::AbsoluteRelocationRootIndex Roots;
+  ExecutableCodeOwnerIndex Owners;
+  InternalNoReturnIndex Callees;
+  std::shared_ptr<X87CallGraphCache> Graphs;
+
+  Impl(const BinaryImage &Img, DebugContext *Dbg, std::set<va_t> Entries,
+       bool RetainBodies)
+      : Image(&Img), Debug(Dbg), Entries(std::move(Entries)),
+        VerifiedEntries(Img.VerifiedFunctionEntries),
+        Targets(Img,
+                Dbg ? libc::NoReturnTargetIndex::NameResolver(
+                          [Dbg](va_t Addr) { return Dbg->functionName(Addr); })
+                    : libc::NoReturnTargetIndex::NameResolver()),
+        Roots(Img), Owners(Img),
+        Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
+        Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies)) {}
+
+  bool matches(const BinaryImage &Img, DebugContext *Dbg,
+               const std::set<va_t> &CandidateEntries) const {
+    // Object identity is only a guard: the owner must retire this state on
+    // reload/mutation. These two inventories can grow during const analysis,
+    // and affect CFG boundaries, ownership and proof work charges.
+    return Image == &Img && Debug == Dbg && Entries == CandidateEntries &&
+           VerifiedEntries == Img.VerifiedFunctionEntries;
+  }
+};
+
 void Pipeline::buildLowIR(
     const BinaryImage &Img,
     const std::vector<std::pair<va_t, std::string>> &Candidates,
     const PipelineOptions &Opts, DebugContext *Dbg, PipelineResult &Result) {
   const size_t Total = Candidates.size();
   std::vector<LowFunc> AllLow(Total);
-  // A restricted load names callees on demand; ask the debug context about
-  // a callee it has not named yet, so `--func` agrees with a whole-image run.
-  libc::NoReturnTargetIndex::NameResolver ResolveName;
-  if (Dbg)
-    ResolveName = [Dbg](va_t Addr) { return Dbg->functionName(Addr); };
-  const libc::NoReturnTargetIndex NoReturnTargets(Img, std::move(ResolveName));
-  const detail::AbsoluteRelocationRootIndex AbsoluteRelocationRoots(Img);
-  // One immutable index is shared by CFG workers. Besides code ownership it
-  // gives jump-table target validation a sorted function-symbol inventory;
-  // building that inventory lazily on BinaryImage would race between workers.
-  const ExecutableCodeOwnerIndex ExecutableCodeOwners(Img);
-  const ExecutableCodeOwnerIndex *CodeOwnerIndex = &ExecutableCodeOwners;
-
   // Detected candidates plus every confirmed function-symbol start. Selecting
   // bodies must not change their boundaries: one unwind range can cover
   // independently callable entries, including address-taken ones. CFGBuilder
@@ -3408,39 +3428,47 @@ void Pipeline::buildLowIR(
   // hot/cold chunks of one function with the same int3 padding, and a jump
   // into such a chunk must keep its code in the jumping function.
   const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
-  std::set<va_t> FuncEntries;
+  std::set<va_t> CandidateEntries;
   for (const auto &C : Candidates)
     if (!BoundaryGuesses.count(C.first))
-      FuncEntries.insert(C.first);
+      CandidateEntries.insert(C.first);
   // The same symbol inventory owns both full-image and selected-function CFGs;
   // unselected bodies need not be lifted to preserve their entry boundaries.
   for (const auto &Sym : Img.Symbols)
     if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      FuncEntries.insert(Sym.Addr);
+      CandidateEntries.insert(Sym.Addr);
   if (Opts.OnlyFunctionEntries.empty()) {
     // A chained-unwind continuation is part of its parent function: a jump
     // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
       if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
-        FuncEntries.insert(Start);
+        CandidateEntries.insert(Start);
     }
   }
-  // Internal no-return proofs are requested during CFG construction, before
-  // later register-effect summaries are available. Independent builders share
-  // this index.
-  const InternalNoReturnIndex NoReturnCallees(
-      Img, &FuncEntries, &NoReturnTargets, &AbsoluteRelocationRoots,
-      CodeOwnerIndex);
-  // Share immutable x87 graph facts only inside this image analysis.
-  // Context keys snapshot the changing CFG protection sets; the immutable
-  // indexes above outlive every worker and every graph retained here.
-  // A restricted run later summarizes unselected callees. Whole-module runs
-  // already own their output bodies, so they keep only the compact x87 cache.
-  auto X87Graphs = createX87CallGraphCache(
-      &NoReturnCallees, &NoReturnTargets,
-      /*RetainCallRegisterBodies=*/!Opts.OnlyFunctionEntries.empty() ||
-          Opts.MaxFunctions != 0);
+  const bool Restricted =
+      !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
+  PipelineAnalysisCache LocalCache;
+  PipelineAnalysisCache &Cache =
+      Opts.AnalysisCache && Restricted && Img.Arch == Arch::X64
+          ? *Opts.AnalysisCache
+          : LocalCache;
+  if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries))
+    Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
+        Img, Dbg, std::move(CandidateEntries), Restricted);
+  else {
+    // Keep no-return memo storage local to each run, as before. Its stable
+    // owning index still binds the bounded raw graph/body cache contexts.
+    Cache.Facts->Callees.clearMemoizedProofs();
+    Cache.Facts->Targets.clearMemoizedNames();
+  }
+  const auto &Facts = *Cache.Facts;
+  const auto &FuncEntries = Facts.Entries;
+  const auto &NoReturnTargets = Facts.Targets;
+  const auto &AbsoluteRelocationRoots = Facts.Roots;
+  const auto *CodeOwnerIndex = &Facts.Owners;
+  const auto &NoReturnCallees = Facts.Callees;
+  const auto &X87Graphs = Facts.Graphs;
   // A small selected-function batch runs inline. Give its independent call
   // proofs the otherwise unused worker quota; parallel CFG batches and the
   // extra-callee frontier keep their existing outer parallelism.

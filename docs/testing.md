@@ -52,6 +52,16 @@ unloaded sessions and unknown ARM mode. `NeverDWorkerSourceCache` verifies
 preparation does not render discarded C and that a failed function switch
 requires real preparation before the preceding function's CFG is read again.
 
+`PipelineOutcome.AnalysisCache*` compares cold and retained call chains in
+one- and four-thread runs, including physical floating returns and integer
+argument/register summaries. It checks exact boundary/verified-entry changes,
+explicit reset after byte edits, separate images and whole-image exclusion.
+`SessionCAPITest.AnalysisCache*` checks navigation without reusing old output
+IR, same-address image replacement, failed reload, function edits, target
+policy, signature matching and feature changes between selections. Run these
+with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
+x87 and jump-table suites cover their shared proof consumers.
+
 With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
 the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages

@@ -414,6 +414,11 @@ NoReturnTargetIndex::NoReturnTargetIndex(const BinaryImage &Img,
   Targets.erase(InvalidVA);
 }
 
+void NoReturnTargetIndex::clearMemoizedNames() {
+  std::lock_guard<std::mutex> Lock(LazyMutex);
+  LazyAnswers.clear();
+}
+
 bool NoReturnTargetIndex::contains(const BinaryImage &Img, va_t Target) const {
   if (Image != &Img)
     return isNoReturnTarget(Img, Target);
