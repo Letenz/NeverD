@@ -215,9 +215,9 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
        text("unpacked_directory_id", 64, false, true)});
   Page("web_asar_records", "extraction_id");
   Add("web_package_archive_extract",
-      "Extract bounded tar or tgz package members without executing scripts.",
+      "Extract bounded tar, tgz or ZIP32 members without executing scripts.",
       {decimal("revision"), text("artifact_id"),
-       choice("format", {"tar", "tgz"})});
+       choice("format", {"tar", "tgz", "zip"})});
   Page("web_package_archive_records", "archive_id");
   Add("web_packages_analyze",
       "Analyze a selected package document using its explicit input kind.",
@@ -255,6 +255,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "evidence classes remain separate.",
       {decimal("revision"), text("analysis_id"), text("capture_id")});
   Page("web_interface_correlation_records", "correlation_id", false, 128);
+  Add("web_desktop_manifest_analyze",
+      "Inspect explicitly selected NW.js or VS Code extension manifest "
+      "evidence.",
+      {decimal("revision"), text("artifact_id"),
+       choice("input_kind", {"nwjs", "vsix"})});
   Selected("web_electron_manifest_analyze", "artifact_id",
            "Analyze captured Electron manifest entry metadata.");
   Selected(

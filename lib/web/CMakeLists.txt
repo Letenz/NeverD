@@ -3,6 +3,9 @@ add_neverd_component_library(NeverDWeb
   packages/PackageReader.cpp
   packages/PackageDiff.cpp
   packages/PackageArchive.cpp
+  archives/PathIndex.cpp
+  archives/Zip.cpp
+  archives/ZipPayload.cpp
   packages/PackageIntegrity.cpp
   packages/SHA512.cpp
   interfaces/Endpoint.cpp
@@ -26,6 +29,10 @@ add_neverd_component_library(NeverDWeb
   Asar.cpp
   SessionAsar.cpp
   ElectronManifest.cpp
+  desktop/Manifest.cpp
+  desktop/NWManifest.cpp
+  desktop/VSIXManifest.cpp
+  SessionDesktop.cpp
   SessionElectron.cpp
   SessionElectronIPC.cpp
   SessionElectronEntries.cpp

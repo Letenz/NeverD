@@ -16,6 +16,7 @@
 
 #include "../../../loader/Swift/SwiftBooleanSourceBinding.h"
 #include "../../../loader/Swift/SwiftErrorRuntime.h"
+#include "../FloatingPointContract.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
 #include "../render/X86FPStateHelpers.h"
@@ -444,6 +445,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   std::set<std::string> Names;
   FloatToIntegerHelpers.clear();
   LeadingZeroHelpers.clear();
+  SaturatingLaneHelpers.clear();
   PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
@@ -510,6 +512,13 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
       if (Inserted && Bits)
         It->second = GlobalIdentifierAllocator.allocate(
             "neverd_clz" + std::to_string(Bits), "nd_clz");
+    }
+    if (const auto Bits = x86SaturatingLaneBits(E)) {
+      auto [It, Inserted] =
+          SaturatingLaneHelpers.try_emplace({E.IntrinsicId, *Bits});
+      if (Inserted)
+        It->second = GlobalIdentifierAllocator.allocate(
+            x86SaturatingLaneHelperName(E.IntrinsicId, *Bits), "nd_saturate");
     }
     if (auto Shape = floatToIntegerConversion(E)) {
       auto [It, Inserted] = FloatToIntegerHelpers.try_emplace(Shape->key());
@@ -666,6 +675,8 @@ void HighCWriter::writeMemoryHelpers() {
        << (Bits == 32 ? "__builtin_clz" : "__builtin_clzll")
        << "(value) : " << Bits << ";\n}\n\n";
   }
+  for (const auto &[Key, Name] : SaturatingLaneHelpers)
+    writeX86SaturatingLaneHelper(OS, Name, Key.first, Key.second);
   // The accesses' types or assumptions are written only when an access can
   // name a type; otherwise every access keeps its portable byte copy.
   UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
@@ -1005,10 +1016,6 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &Ex) {
     if (!Seen.insert(&Ex).second)
       return;
-    if (Ex.Kind == ExprKind::BinOp &&
-        (Ex.Op == NdOp::FLOAT_ADD || Ex.Op == NdOp::FLOAT_SUB ||
-         Ex.Op == NdOp::FLOAT_MULT || Ex.Op == NdOp::FLOAT_DIV))
-      NeedsSeparateFPOperations = true;
     if (Ex.Kind == ExprKind::Call) {
       if (Ex.SourceCallHint) {
         const auto &Hint = *Ex.SourceCallHint;
@@ -1363,7 +1370,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
       // The x87 helpers, collected with the unit's types, need no header.
       else if (Ex.IntrinsicId != Intrinsic::None && !IsX87Helper &&
                (intrinsicCName(Ex.IntrinsicId) ||
-                x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId)))
+                x86MemoryIntrinsicUsesCHeader(Ex.IntrinsicId) ||
+                armIntrinsicUsesCHeader(Ex.IntrinsicId)))
         HasCIntrinsics = true;
       if (Opts.Format == BinaryFormat::COFF &&
           (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) &&
@@ -1478,6 +1486,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   // declarations and casts in a standalone translation unit.
   bool NeedsBlockObject = false;
   bool NeedsBool = false;
+  bool HasFloatingArithmetic = false;
   const auto CheckType = [&](const TypeRef &Type) {
     TypeRef Current = Type;
     while (Current && Current->Kind == NdTypeKind::Ptr)
@@ -1493,6 +1502,9 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
       return;
     CheckType(Expr->Type);
     CheckType(Expr->CastTo);
+    HasFloatingArithmetic |=
+        Expr->Op == NdOp::FLOAT_ADD || Expr->Op == NdOp::FLOAT_SUB ||
+        Expr->Op == NdOp::FLOAT_MULT || Expr->Op == NdOp::FLOAT_DIV;
     if (Expr->Kind == ExprKind::Call) {
       CheckType(knownCallReturnType(*Expr));
       if (Expr->SourceCallHint) {
@@ -1521,6 +1533,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     if (Int128AsBitInt)
       OS << "#define __int128 _BitInt(128)\n\n";
   };
+  if (HasFloatingArithmetic)
+    c_float::writeContractionPolicy(OS);
   if (!Opts.EmitIncludes) {
     WriteInt128Spelling();
     if (NeedsBlockObject)
@@ -1598,11 +1612,6 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
     OS << "#include <" << H << ">\n";
   if (NeedsFEnvAccess)
     OS << "#pragma STDC FENV_ACCESS ON\n";
-  // Recovered operations round separately even when printed in one expression.
-  // A cast to the same floating type does not prevent compiler contraction;
-  // explicit fused intrinsics still retain their original one-rounding call.
-  if (NeedsSeparateFPOperations)
-    OS << "#pragma STDC FP_CONTRACT OFF\n";
   OS << "\n";
   WriteInt128Spelling();
   if (NeedsBlockObject)

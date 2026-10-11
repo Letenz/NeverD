@@ -26,6 +26,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_FAMinMaxTests.cpp
   aarch64/AArch64_FPTests.cpp
   aarch64/AArch64_FunctionDiscoveryTests.cpp
+  aarch64/AArch64_HighCIntrinsicSpellingTests.cpp
   aarch64/AArch64_IntrinsicsTests.cpp
   aarch64/AArch64_LogicTests.cpp
   aarch64/AArch64_MemTests.cpp
@@ -68,6 +69,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_DShiftTests.cpp
   x86_32/X86_32_FlagsTests.cpp
   x86_32/X86_32_FPTests.cpp
+  x86_32/X86_32_HighCSignednessTests.cpp
   x86_32/X86_32_LodsMiscTests.cpp
   x86_32/X86_32_LoopTests.cpp
   x86_32/X86_32_MiscTests.cpp
@@ -191,6 +193,7 @@ add_neverd_unittest(NeverDLiftTests
   core/HighCPointerAddressTests.cpp
   core/SourceParameterPlacementTests.cpp
   core/HighCIntegerWidthTests.cpp
+  core/HighCDemandedBytesTests.cpp
   core/CSourceDefinitionTests.cpp
   core/CStringCommentTests.cpp
   core/CImageObjectTests.cpp
@@ -1670,6 +1673,8 @@ add_neverd_unittest(NeverDNativePointerRelocationBoundaryTests
 
   LINK_COMPONENTS
   Support
+  BackendC
+  BackendLLVM
 )
 
 target_compile_definitions(NeverDNativePointerRelocationBoundaryTests PRIVATE
