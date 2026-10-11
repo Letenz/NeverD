@@ -383,6 +383,25 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({
+            "d729f6d64b3ee497f020a271176fe833b779b847",
+            "9b4a32c6249a4f690394c6797c5f4dce9bc81ef9",
+        }),
+        line="",
+        reason=(
+            "The imported qualification report included a local output prefix. "
+            "The cleanup preserves artifact directory names, measurements and "
+            "hashes while removing only that machine-specific location. Review "
+            "binds its exact line digest and publication/removal commits; it "
+            "permits no current or future path occurrence."
+        ),
+        line_sha256=frozenset({
+            "c39893ef1f25d39cb6d25ade741abae3b95c601f77f3f228a02321667b4952f0",
+        }),
+    ),
+    HistoryAllowance(
         path="tools/neverd-gui/benchmarks/results/linux-x86_64-20261010-linear-copy-performance.json",
         rule="private-path",
         commits=frozenset({
