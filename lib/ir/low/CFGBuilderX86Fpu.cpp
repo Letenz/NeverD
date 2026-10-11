@@ -27,6 +27,7 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/CallRegisterBody.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/libc/LibCNames.h"
@@ -136,6 +137,7 @@ struct ActiveX87CacheBuild {
   const ActiveX87CacheBuild *Previous;
 };
 thread_local const ActiveX87CacheBuild *CurrentX87CacheBuild = nullptr;
+thread_local bool ReplayingCallRegisterBody = false;
 
 } // namespace
 
@@ -219,13 +221,143 @@ class X87CallGraphCache {
   size_t PendingBytes = 0;
   size_t Leaders = 0, Waits = 0, NonWaitingMisses = 0;
   std::condition_variable PendingChanged;
+  struct SummaryFacts {
+    CallRegisterBody Body;
+    std::vector<va_t> Calls;
+    std::vector<std::pair<va_t, bool>> NoReturnAnswers;
+  };
+  struct SummaryEntry {
+    va_t Address;
+    std::shared_ptr<const SummaryFacts> Facts;
+    size_t Bytes;
+  };
+  static constexpr size_t MaxSummaryBytes = 32 * 1024 * 1024;
+  bool RetainCallRegisterBodies;
+  std::optional<Context> SummaryInputs;
+  std::list<SummaryEntry> Summaries;
+  size_t SummaryBytes = 0;
 
 public:
   X87CallGraphCache(const NoReturnCalleeProver *Prover,
-                    const libc::NoReturnTargetIndex *Targets)
-      : NonReentrantProver(Prover), NonReentrantTargets(Targets) {}
+                    const libc::NoReturnTargetIndex *Targets, bool RetainBodies)
+      : NonReentrantProver(Prover), NonReentrantTargets(Targets),
+        RetainCallRegisterBodies(RetainBodies) {}
 
 private:
+  bool canRetainSummary(const CFGBuilder &B) const {
+    return RetainCallRegisterBodies && B.CurrentImg->Arch == Arch::X64 &&
+           B.NoReturnCalleeDepth == 0 && !B.ProtectedJumpTableRelocationSlots &&
+           !B.UnsafeJumpTableBranches &&
+           (!B.NoReturnCallees || B.NoReturnCallees == NonReentrantProver) &&
+           (!B.NoReturnTargets || B.NoReturnTargets == NonReentrantTargets);
+  }
+  static std::optional<size_t> summaryBytes(llvm::ArrayRef<LowBlock> Blocks,
+                                            size_t BlockCapacity, size_t Calls,
+                                            size_t Answers) {
+    size_t Bytes =
+        sizeof(SummaryEntry) + sizeof(SummaryFacts) + 16 * sizeof(void *);
+    auto Allocation = [&](size_t Count, size_t Width) {
+      if (!Count)
+        return true;
+      constexpr size_t Overhead = 8 * sizeof(void *);
+      if (Bytes > MaxSummaryBytes - Overhead)
+        return false;
+      Bytes += Overhead;
+      if (Count > (MaxSummaryBytes - Bytes) / Width)
+        return false;
+      Bytes += Count * Width;
+      return true;
+    };
+    if (!Allocation(BlockCapacity, sizeof(LowBlock)) ||
+        !Allocation(Calls, sizeof(va_t)) ||
+        !Allocation(Answers, sizeof(std::pair<va_t, bool>)))
+      return std::nullopt;
+    for (const LowBlock &B : Blocks)
+      if (!Allocation(B.Ops.capacity(), sizeof(LowOp)) ||
+          !Allocation(B.InstructionBoundaries.capacity(),
+                      sizeof(LowInstructionBoundary)) ||
+          !Allocation(B.Succs.capacity(), sizeof(int)) ||
+          !Allocation(B.Preds.capacity(), sizeof(int)) ||
+          !Allocation(B.ExceptionalSuccs.capacity(), sizeof(ExceptionalEdge)) ||
+          !Allocation(B.ExceptionalPreds.capacity(), sizeof(ExceptionalEdge)))
+        return std::nullopt;
+    return Bytes;
+  }
+  void retainSummary(const CFGBuilder &B, va_t Address, const LowFunc &F,
+                     const CFGBuilder::CallRegisterBodyWitness &Witness) {
+    if (!canRetainSummary(B) || !Witness.Complete ||
+        !F.hasCompleteLiftCoverage() || F.Blocks.empty() ||
+        F.Blocks.front().StartAddr != Address)
+      return;
+    // Admission precedes copying any body. This projection owns only flat
+    // machine blocks; nested function/EH/source metadata cannot escape into
+    // an unaccounted LowFunc retained by the cache.
+    if (!summaryBytes(F.Blocks, F.Blocks.capacity(), Witness.Calls.size(),
+                      Witness.NoReturnAnswers.size()))
+      return;
+    size_t EstimatedContext = sizeof(Context);
+    for (const auto *Values :
+         {B.KnownFuncEntries, B.ProtectedJumpTableRelocationSlots,
+          B.UnsafeJumpTableBranches})
+      if (Values &&
+          !accountAllocation(EstimatedContext, Values->size(), sizeof(va_t)))
+        return;
+    try {
+      auto Facts = std::make_shared<SummaryFacts>();
+      Facts->Body.Blocks = F.Blocks;
+      Facts->Body.Complete = true;
+      Facts->Body.UnsafeIndirectBranches =
+          !F.UnsafeIndirectBranchAddresses.empty();
+      Facts->Calls.assign(Witness.Calls.begin(), Witness.Calls.end());
+      Facts->NoReturnAnswers = Witness.NoReturnAnswers;
+      const auto Bytes = summaryBytes(
+          Facts->Body.Blocks, Facts->Body.Blocks.capacity(),
+          Facts->Calls.capacity(), Facts->NoReturnAnswers.capacity());
+      if (!Bytes || *Bytes > MaxSummaryBytes - EstimatedContext)
+        return;
+      std::lock_guard<std::mutex> Lock(Mutex);
+      if (!SummaryInputs || !matches(*SummaryInputs, B)) {
+        Context Next = freezeContext(B);
+        const auto NextBytes = contextBytes(Next);
+        if (!NextBytes || *Bytes > MaxSummaryBytes - *NextBytes)
+          return;
+        Summaries.clear();
+        SummaryInputs = std::move(Next);
+        SummaryBytes = *NextBytes;
+      }
+      const auto InputBytes = contextBytes(*SummaryInputs);
+      if (!InputBytes || *Bytes > MaxSummaryBytes - *InputBytes)
+        return;
+      for (auto It = Summaries.begin(); It != Summaries.end(); ++It)
+        if (It->Address == Address) {
+          Summaries.splice(Summaries.begin(), Summaries, It);
+          return;
+        }
+      while (!Summaries.empty() && (Summaries.size() >= MaxGraphs ||
+                                    *Bytes > MaxSummaryBytes - SummaryBytes)) {
+        SummaryBytes -= Summaries.back().Bytes;
+        Summaries.pop_back();
+      }
+      Summaries.push_front({Address, std::move(Facts), *Bytes});
+      SummaryBytes += *Bytes;
+    } catch (const std::bad_alloc &) {
+      // The ordinary build remains authoritative when retention is unavailable.
+    }
+  }
+  std::shared_ptr<const SummaryFacts> summary(const CFGBuilder &B,
+                                              va_t Address) {
+    if (!canRetainSummary(B))
+      return {};
+    std::lock_guard<std::mutex> Lock(Mutex);
+    if (!SummaryInputs || !matches(*SummaryInputs, B))
+      return {};
+    for (auto It = Summaries.begin(); It != Summaries.end(); ++It)
+      if (It->Address == Address) {
+        Summaries.splice(Summaries.begin(), Summaries, It);
+        return Summaries.front().Facts;
+      }
+    return {};
+  }
   static bool account(size_t &Bytes, size_t Count, size_t Width) {
     if (Bytes > MaxBytes || Count > (MaxBytes - Bytes) / Width)
       return false;
@@ -480,8 +612,16 @@ std::shared_ptr<X87CallGraphCache> createX87CallGraphCache() {
 std::shared_ptr<X87CallGraphCache>
 createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
                         const libc::NoReturnTargetIndex *NonReentrantTargets) {
-  return std::make_shared<X87CallGraphCache>(NonReentrantProver,
-                                             NonReentrantTargets);
+  return createX87CallGraphCache(NonReentrantProver, NonReentrantTargets,
+                                 false);
+}
+
+std::shared_ptr<X87CallGraphCache>
+createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
+                        const libc::NoReturnTargetIndex *NonReentrantTargets,
+                        bool RetainCallRegisterBodies) {
+  return std::make_shared<X87CallGraphCache>(
+      NonReentrantProver, NonReentrantTargets, RetainCallRegisterBodies);
 }
 
 std::array<size_t, 3> CFGBuilder::x87CallGraphCacheStatsForTesting() const {
@@ -490,6 +630,14 @@ std::array<size_t, 3> CFGBuilder::x87CallGraphCacheStatsForTesting() const {
   std::lock_guard<std::mutex> Lock(SharedX87CallGraphs->Mutex);
   return {SharedX87CallGraphs->Hits, SharedX87CallGraphs->Graphs.size(),
           SharedX87CallGraphs->RetainedBytes};
+}
+
+std::array<size_t, 2> CFGBuilder::callRegisterBodyCacheStatsForTesting() const {
+  if (!SharedX87CallGraphs)
+    return {};
+  std::lock_guard<std::mutex> Lock(SharedX87CallGraphs->Mutex);
+  return {SharedX87CallGraphs->Summaries.size(),
+          SharedX87CallGraphs->SummaryBytes};
 }
 
 std::array<size_t, 5> CFGBuilder::x87CallGraphFlightStatsForTesting() const {
@@ -637,7 +785,42 @@ class X87CallEffectIndex {
     Builder.ProtectedJumpTableRelocationSlots =
         Settings.ProtectedJumpTableRelocationSlots;
     Builder.UnsafeJumpTableBranches = Settings.UnsafeJumpTableBranches;
+    CFGBuilder::CallRegisterBodyWitness Witness;
+    struct RecordingProver : NoReturnCalleeProver {
+      const NoReturnCalleeProver &Original;
+      CFGBuilder::CallRegisterBodyWitness &Witness;
+      RecordingProver(const NoReturnCalleeProver &P,
+                      CFGBuilder::CallRegisterBodyWitness &W)
+          : Original(P), Witness(W) {}
+      bool mayNeverReturn(va_t Target) const override {
+        return Original.mayNeverReturn(Target);
+      }
+      bool neverReturns(va_t Target, unsigned Depth) const override {
+        const bool Result = Original.neverReturns(Target, Depth);
+        if (Witness.Complete) {
+          if (Witness.NoReturnAnswers.size() >= Witness.MaxDependencies)
+            Witness.Complete = false;
+          else
+            Witness.NoReturnAnswers.emplace_back(Target, Result);
+        }
+        return Result;
+      }
+    };
+    const bool RetainBody =
+        Settings.SharedX87CallGraphs &&
+        Settings.SharedX87CallGraphs->canRetainSummary(Settings);
+    std::optional<RecordingProver> Recorder;
+    if (RetainBody) {
+      Builder.CollectCallRegisterBody = &Witness;
+      if (Settings.NoReturnCallees) {
+        Recorder.emplace(*Settings.NoReturnCallees, Witness);
+        Builder.setNoReturnCalleeProver(&*Recorder,
+                                        Settings.NoReturnCalleeDepth + 1);
+      }
+    }
     const LowFunc F = Builder.build(Image, Dec, Entry);
+    if (RetainBody)
+      Settings.SharedX87CallGraphs->retainSummary(Settings, Entry, F, Witness);
     if (!F.hasCompleteInstructionLift() || !F.TruncatedPathAddresses.empty() ||
         F.Blocks.empty() || F.Blocks.front().StartAddr != Entry)
       return G;
@@ -920,6 +1103,46 @@ public:
   }
 };
 
+std::shared_ptr<const CallRegisterBody> CFGBuilder::cachedCallRegisterBody(
+    const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+    va_t Entry, const std::set<va_t> *Entries,
+    const libc::NoReturnTargetIndex *NoReturnTargets,
+    const NoReturnCalleeProver *NoReturnCallees,
+    const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+    const ExecutableCodeOwnerIndex *CodeOwners) {
+  if (!Cache || Img.Arch != Arch::X64 || ReplayingCallRegisterBody)
+    return {};
+  CFGBuilder Request;
+  Request.CurrentImg = &Img;
+  Request.setKnownFuncEntries(Entries);
+  Request.setNoReturnTargetIndex(NoReturnTargets);
+  Request.setNoReturnCalleeProver(NoReturnCallees);
+  Request.setAbsoluteRelocationRootIndex(RelocationRoots);
+  Request.setExecutableCodeOwnerIndex(CodeOwners);
+  Request.setX87CallGraphCache(Cache);
+  const auto Facts = Cache->summary(Request, Entry);
+  if (!Facts)
+    return {};
+  // A registered callback can synchronously request a summary itself. Leave
+  // nested requests to their ordinary build instead of replaying recursively.
+  llvm::SaveAndRestore<bool> Replaying(ReplayingCallRegisterBody, true);
+  // Raw floating proofs build one no-return level deeper. Replaying every
+  // observed decision at the ordinary depth must reproduce the same CFG,
+  // including decisions from earlier speculative stages and build retries.
+  for (const auto &[Target, Answer] : Facts->NoReturnAnswers)
+    if (!NoReturnCallees || NoReturnCallees->neverReturns(Target, 0) != Answer)
+      return {};
+  // No local stack use was observed at *any* skipped normalization. Only a
+  // proven floating call return could still change an operation or TOP. Each
+  // target retains the ordinary proof depth and its full private allowance;
+  // an unknown result has the same unchanged-call behavior as fixupFpuStack.
+  X87CallEffectIndex Effects(Request);
+  for (va_t Target : Facts->Calls)
+    if (Effects.effect(Target) == std::optional<int>(-1))
+      return {};
+  return {Facts, &Facts->Body};
+}
+
 std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
                                                        va_t Entry,
                                                        size_t &Remaining,
@@ -971,9 +1194,64 @@ bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
   return lowFunctionNeverReturns(Callee, Img.Arch);
 }
 
-void CFGBuilder::fixupFpuStack(LowFunc &Func) {
-  if (SkipX87StackFixup)
+void CFGBuilder::recordSkippedFpuFixup(const LowFunc &Func) {
+  if (!CollectCallRegisterBody || !CollectCallRegisterBody->Complete)
     return;
+  auto &Witness = *CollectCallRegisterBody;
+  for (const LowBlock &Block : Func.Blocks) {
+    // Also check operations outside instruction slices: the ordinary fixup's
+    // final HasFpu scan sees those, even in an intermediate CFG.
+    for (const LowOp &Op : Block.Ops) {
+      bool LocalStack = isStReg(Op.Output);
+      for (unsigned K = 0; K < Op.NumInputs; ++K)
+        LocalStack |= isStReg(Op.Inputs[K]);
+      LocalStack |=
+          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam);
+      if (LocalStack) {
+        Witness.Complete = false;
+        return;
+      }
+    }
+    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
+      const auto It = Insns.find(Boundary.Address);
+      if (It == Insns.end())
+        continue;
+      if (It->second.FpuReset || It->second.FpuTopIn != It->second.FpuTopOut) {
+        Witness.Complete = false;
+        return;
+      }
+      if (hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                       LowInstructionControlFlag::NoReturn))
+        continue;
+      for (size_t O = Boundary.FirstOp;
+           O < Boundary.FirstOp + Boundary.OpCount && O < Block.Ops.size();
+           ++O) {
+        const LowOp &Op = Block.Ops[O];
+        if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
+            !Op.NumInputs)
+          continue;
+        const auto Target = Op.Inputs[0].isConst()
+                                ? std::optional<va_t>(Op.Inputs[0].Offset)
+                                : loadedCallSlot(Func, Block, O, Op.Inputs[0]);
+        if (!Target || Witness.Calls.count(*Target))
+          continue;
+        if (Witness.Calls.size() >= Witness.MaxDependencies) {
+          Witness.Complete = false;
+          return;
+        }
+        Witness.Calls.insert(*Target);
+      }
+    }
+  }
+}
+
+void CFGBuilder::fixupFpuStack(LowFunc &Func) {
+  if (SkipX87StackFixup) {
+    recordSkippedFpuFixup(Func);
+    return;
+  }
   if (!CurrentImg)
     return;
   if (CurrentImg->Arch != Arch::X86 && CurrentImg->Arch != Arch::X64)

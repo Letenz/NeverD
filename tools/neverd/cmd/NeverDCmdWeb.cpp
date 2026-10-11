@@ -42,6 +42,9 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() && (WebArguments[0] == "package-assessment" ||
+                                WebArguments[0] == "archive-assessment"))
+    return runWebAssessment();
   if (!WebArguments.empty() && WebArguments[0] == "package-attestation")
     return runWebAttestation();
   if (!WebArguments.empty() && WebArguments[0] == "package-advisories")
@@ -90,6 +93,7 @@ int runWeb() {
   if (!WebArguments.empty() &&
       (WebArguments[0] == "archive" || WebArguments[0] == "archive-packages" ||
        WebArguments[0] == "archive-bun" ||
+       WebArguments[0] == "archive-bun-export" ||
        WebArguments[0] == "archive-desktop"))
     return runWebArchive();
   if (!WebArguments.empty() &&

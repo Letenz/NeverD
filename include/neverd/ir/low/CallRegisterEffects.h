@@ -24,7 +24,7 @@
 #define NEVERD_IR_LOW_CALLREGISTEREFFECTS_H
 
 #include "neverd/Common.h"
-#include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/CallRegisterBody.h"
 
 #include <array>
 #include <cstdint>
@@ -169,6 +169,11 @@ struct LocalRegisterEffect {
 /// those bytes (RegisterStep::FixedArguments).
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, const LowFunc &F,
+    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
+
+LocalRegisterEffect localRegisterEffect(
+    const BinaryImage &Img, CallRegisterBodyView F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
     const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
 

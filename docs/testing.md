@@ -213,6 +213,15 @@ x64. Each wrapper has no local x87 instruction and calls the same forwarding
 chain; every call and return must retain its physical 80-bit result. The
 register summaries must also agree across both schedules.
 
+`CallRegisterBodyCache` compares every machine operation, instruction boundary
+and ordinary/exceptional edge against an independent ordinary build. It covers
+ELF, COFF and Mach-O, depth-sensitive no-return disagreement, local x87/MMX
+state, floating call returns, incomplete input, exact context/opt-in rules,
+parallel readers and retained-entry eviction. Existing x87 proof-budget sweeps
+also run with body retention enabled; cached blocks grant no larger proof
+allowance. Full pipeline checks still exercise format-derived arguments and
+register/stack summaries through their ordinary consumers.
+
 `X87CallGraphCache` compares independent builders with and without shared
 graphs, including exact remaining proof budgets, recursion-depth failures,
 changed image and analysis contexts, concurrent queries and bounded eviction.
@@ -615,6 +624,21 @@ the test verifies two separately retained signature declarations, never their
 cryptographic validity. Worker/MCP compare the same metadata and digest receipts
 and reject key/verification fields. Use the same omission/restoration matrix.
 
+`WebPackageAssessment.*`, `WebPackageReview.*` and
+`WebPackageAssessmentSDK.*` check foreign registry declarations, immediate
+archive ancestry, independently computed assessment identities, canonical
+selection order, unknown advisory coverage, legacy digest strength, retained
+metadata refusal, subject receipt ownership, exact behavior/comparison owners,
+source byte anchors, 610-finding paging, head-bound reports, immutable caller
+assertions, stale heads and revisions, last-request replay, shared 256-event
+capacity, atomic refusal, reset and CLI JSON/Markdown without an external PATH.
+Worker and MCP compare all five operations to the shared API and reject arbitrary
+notes, safety scores and raw-export fields. Run the owning Web directory and
+worker/MCP/ABI checks, then the focused suites with JS omitted and all additive
+C stubs with Web omitted. Restore both build flags and rerun affected checks.
+The [assessment profile](web-package-assessment-profile.md) documents explicit
+selection, evidence relationships, report fields and shared limits.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
@@ -788,6 +812,18 @@ set. It pins the original SHA-256/size, extended layout, module/region counts,
 entry index and all decoded source totals. No target code is redistributed or
 downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
 tests cover malformed prelinked indices, counts, aliases and alignment.
+`NpmPlatformInputs/WebClaudeDistribution.*` additionally uses
+`NEVERD_CLAUDE_CODE_21296_CROSS_DIR` to select eight separately captured npm
+platform scopes. Each pins original/member hashes and sizes, compares the
+captured registry SHA-512 declaration, checks graph geometry and strictly
+decoded source totals. See the
+[cross-platform qualification](web-claude-code-cross-platform-qualification.md)
+for its exact local evidence layout. The cases do not download, install or
+execute packages and do not require the optional JS parser.
+`WebPackageArchiveSDK.CLIExport*` checks the explicit archive-to-Bun export
+consumer over tar/gzip/stored and deflate ZIP, retained original/expanded
+origins, exact recovered bytes, unavailable/non-Bun refusal, existing-output
+preservation and metadata canaries with an unusable external-tool PATH.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
@@ -1635,6 +1671,8 @@ build-release/bin/NeverDLowIRRefinementTests
 ```
 
 `NeverDLowIRUndefinedIndependenceTests` checks two-execution independence on complete acyclic LowIR graphs. Ordinary entry inputs are shared; fresh architecture-undefined producers retain their correlations through copies, overlapping writes, spills and reloads. Control predicates are checked before path assumptions. Certificates require `Complete` effect metadata bound to each full instruction boundary and exact operation digest. Missing evidence, reachable loops, calls, unknown aliases and exhausted budgets refuse a certificate. The explicit observation and nonfaulting frame contracts limit the result; this is not full native-to-C equivalence.
+
+`FreshChoiceProjection.*` belongs to `NeverDInterpreterSpecializationTests`. Independent symbolic contexts check exact node order against ordinary substitution; byte-input oracles check projected values and retained choices. Regressions cover context and leaf admission, zero and exact capacities, fallback, and total traversal work on shared incremental chains. Timing thresholds are not used.
 
 The following behavior uses the default strict audit contract. `NeverDOriginalBinaryUndefinedIndependenceTests` uses independent fixed-map x64 bytes to test physical native CALL/RET, modified return targets, exhaustive finite indirect targets and immutable loads. The same target checks complete direct-branch collection, exact byte/effect/mapping/read-witness binding, outer-return preservation of entry RSP and its return slot, and image-disjoint frame feasibility. Missing or overlapping instructions, unaudited arms outside the exact trap and explicit profile-projection rules, nonterminating or over-budget loops, incomplete target enumeration, profile/contract mismatches and exhausted budgets must refuse without a certificate or residual code. Success requires every feasible native path to finish. This opt-in gate does not certify loop invariants, exception dispatch, CET-enabled execution or native-to-C equivalence; ordinary recovery remains separate. The target also checks strictly lifted `INT3`/`UD2` terminal boundaries and binding of their complete bytes and operation digests. A `Missing` undefined-output sidecar must remain `Missing`; only symbolically unreachable traps may appear in a certificate, while any feasible trap path must return `ContractViolation` without a certificate or residual code. Trap fallthrough and exception recovery are not modeled, `codeFollowsTrap` is not used, and static LowIR API support remains unchanged.
 
@@ -4841,7 +4879,7 @@ Native loop refinement exercises deferred conditional collection and retained un
 
 `LowIRLoopInference.ProjectedCounterCopies*` covers nested loops that copy a counter lane through a separately tagged word before incrementing it. The 144 complete-state cases span registers, frames, function temporaries, both byte orders, 1/3/4-byte lanes, direct/cached exits and whole-word controls. Projected equalities must hold on saved arrivals and every incoming transition; high bits remain independent. Transition-domain entailment can identify an additive recurrence through distinct parameters. Dropped high tags, invalid updates, missing guards and one-short inference/final-proof budgets still refuse.
 
-`LowIRLoopInference.TransferredCounters*` covers a counter that moves between storage locations at different cuts while another loop can bypass each cut. Exact symbolic unit transfers propose source-counter guards and a fallback rank with one alternate cut location; every guard and rank still needs full transition proof. The 192 complete-state cases span registers, frames, function temporaries, both byte orders, 1/3/4/8-byte counters, independent tags and stationary controls. Changed results/tags, invalid rank maps, nonterminating updates, missing guards and short inference/final-proof budgets refuse. Counter traversal uses the existing symbolic-node allowance; optional graph-selector work can remain zero. Cases include decrementing to zero and incrementing to an input bound. When a new counter is discovered, bound and lane-guard pruning waits until every cut template has been rebuilt; ordinary widening and independent proof still run.
+`LowIRTransferredCounterState.*` and `LowIRLoopInference.TransferredCountersKeepProofBoundaries` cover a counter that moves between storage locations at different cuts while another loop can bypass each cut. Exact symbolic unit transfers propose source-counter guards and a fallback rank with one alternate cut location; every guard and rank still needs full transition proof. The 192 complete-state cases span registers, frames, function temporaries, both byte orders, 1/3/4/8-byte counters, independent tags and stationary controls. Changed results/tags, invalid rank maps, nonterminating updates, missing guards and short inference/final-proof budgets refuse. Counter traversal uses the existing symbolic-node allowance; optional graph-selector work can remain zero. Cases include decrementing to zero and incrementing to an input bound. When a new counter is discovered, bound and lane-guard pruning waits until every cut template has been rebuilt; ordinary widening and independent proof still run. The complete-state matrix has twelve named storage/direction/transfer groups with sixteen combinations each; CTest reports and bounds each group separately.
 
 `LowIRLoopRefinement.GuardedCuts*` and `BinaryLowIRLoopRefinement.GuardedCuts*` cover repeated PCs, register/frame/profiled-system selectors, both byte orders, unmatched finite and cyclic paths, overlap and wrong-side refusal, prefix generalization, selected undefined-value witnesses, malformed metadata, digest binding and shared budgets. Independent native tests prove both R10 contexts at one original loop address and keep unaudited boundaries ahead of selectors. Ordinary ABI certification remains separate.
 
@@ -5026,3 +5064,52 @@ The committed-write observer regressions verify visibility before the next instr
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` also checks early stopping below a bound, sentinel exits, enclosing links that skip the requested index and joins with distinct stopping levels. Missing finally bodies must still be rejected when actually traversed; a skipped cleanup must not lend a frame-write effect.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` also covers constant bounds outside the table, the high unsigned half and -2. No-op exits retain the original level and frame-memory facts; dynamic bounds and invalid current levels still reject.
+
+## Source and native object replacement tests
+
+`NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,
+atomic publication, original data bindings, native state and C++ exceptions.
+Its object cases use cross Clang plus LLD for malformed-input, relocation and
+byte-preservation checks even on a non-Linux host. Native ELF runtime cases run
+on Linux x64; Mach-O runtime cases run on Darwin ARM64. Set `NEVERD_TEST_NEVERC`
+to an optional NeverC executable to include its compiler cases. GCC C++ runtime
+cases additionally require a matching Linux x64 `g++`.
+Configure `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` with a compatible Clang
+path; the verified source profile uses Clang 22.1.6. This setting is separate
+from the compiler that builds NeverD and from other suites' fixture compilers.
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDNativeExceptionRewriteContractTests NeverDCOFFExceptionPatchTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDNativeExceptionRewriteContractTests|NeverDCOFFExceptionPatchTests)$' \
+  --output-on-failure --parallel 4
+```
+
+Use the corrected LLVM source described in [source patches](source-patching.md)
+for x64 PLT capability validation, with `NEVERD_TEST_REQUIRE_FIXED_LLVM=1`.
+Without this environment variable the regression probes the backend separately
+and requires an exact branch or fail-closed refusal. A refusal with the r3/r4
+prebuilt is a passing safety test, not a passing runtime capability test.
+The ELF IR exception-runtime case is skipped with the known r3/r4 prebuilt unless
+that capability-validation variable is set; native-object cases do not need
+this LLVM correction.
+The exception fixture's original target may throw, so the original compiler
+retains caller catch/cleanup paths. A no-throw original can erase those paths.
+The noexcept case installs a termination handler and checks its exact exit code.
+
+`SourcePatchPE` always cross-checks original/new unwind rows, separate writable
+storage, base-relocation publication, and refusal of active guard profiles or
+forged lifted EH metadata. Its FH3 runtime test additionally uses
+`NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and
+`NEVERD_TEST_WINDOWS_SDK_LIB` for x64 import-library directories. On a non-Windows
+host, `NEVERD_TEST_WINDOWS_RUNNER` must name an executable accepting the PE path
+and its arguments, returning the program exit code. Use a matching OS unwinder
+(the development run uses Wine 11); a CPU-only emulator is insufficient.
+These optional SDK files and runners are test inputs, not build dependencies.
+
+Before reviewing these changes, also build/run `NeverDLiftTests` and
+`NeverDPatchFullTests`, and run the Python SDK checks in
+[CONTRIBUTING.md](../CONTRIBUTING.md). Report platform/toolchain skips separately
+from passed tests. Object identity checks or cross-compilation alone do not
+establish operating-system unwind behavior.

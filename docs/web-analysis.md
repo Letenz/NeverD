@@ -34,6 +34,7 @@ neverd web capabilities
 neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
+neverd web archive-bun-export ./platform-package.tgz tgz 0 0 ./new-recovery-directory
 neverd web archive ./extension.vsix zip
 neverd web package-install ./package.json 0 package-json
 neverd web package-advisories ./metadata-capture 3 package-json 1:2
@@ -133,7 +134,11 @@ metadata. It retains source/time/severity uncertainty and original anchors,
 works without the JavaScript parser, and makes no freshness, publisher,
 reachability or safety claim. See the
 [actual public metadata qualification](web-package-advisory-qualification.md).
-Composed review reports and analyst dispositions remain separate work.
+The [assessment and review profile](web-package-assessment-profile.md) composes
+explicitly selected retained evidence, preserves coverage and binding limits,
+and supports fixed analyst assertions with a checked review head. Its bounded
+Markdown report contains metadata and opaque anchors. GUI presentation and
+persistent review storage remain separate work.
 
 The [attestation metadata profile](web-package-attestation-profile.md) reads
 captured npm signature declarations, in-toto statements, DSSE envelopes and
