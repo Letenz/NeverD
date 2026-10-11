@@ -861,6 +861,44 @@ std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
   return Result;
 }
 
+bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
+                                    va_t Entry, const std::string &Name) {
+  if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
+    return lowFunctionNeverReturns(build(Img, Dec, Entry, Name), Img.Arch);
+  LowFunc Callee;
+  {
+    llvm::SaveAndRestore<bool> RawStack(SkipX87StackFixup, true);
+    Callee = build(Img, Dec, Entry, Name);
+  }
+  // Without a local floating-stack consumer, normalizing a callee's returned
+  // ST(0) changes only its value definition and the unused TOP bookkeeping.
+  // Neither is an input to the terminating-path proof. In particular, asking
+  // whether a GPR-only wrapper returns must not recursively recover every
+  // callee's floating return value. A local stack operation or FXAM can expose
+  // that state to the rest of the CFG; retain its ordinary build unchanged.
+  bool NeedsStack = false;
+  for (const auto &[Address, Rec] : Insns) {
+    if (Rec.FpuReset || Rec.FpuTopIn != Rec.FpuTopOut) {
+      NeedsStack = true;
+      break;
+    }
+    for (const LowOp &Op : Rec.Ops) {
+      NeedsStack |= isStReg(Op.Output);
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        NeedsStack |= isStReg(Op.Inputs[I]);
+      NeedsStack |=
+          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam);
+    }
+    if (NeedsStack)
+      break;
+  }
+  if (NeedsStack)
+    Callee = build(Img, Dec, Entry, Name);
+  return lowFunctionNeverReturns(Callee, Img.Arch);
+}
+
 void CFGBuilder::fixupFpuStack(LowFunc &Func) {
   if (SkipX87StackFixup)
     return;

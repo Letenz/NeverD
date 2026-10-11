@@ -6,6 +6,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -555,6 +556,62 @@ TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
     EXPECT_GT(detail::X87CallGraphCacheTestAccess::stats(Builders[2])[0],
               ColdHits);
   }
+}
+
+TEST(X87CallGraphCache,
+     PublishedCodeReferencesRefreshTagsWithoutChangingRawGraphs) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(static_cast<int>(Format));
+      // The successor initially inherits the full slot. Publishing its
+      // address makes it an independent tag-proof entry with unknown state.
+      auto Image =
+          x87ExamineImage(Architecture, Format,
+                          {0xd9, 0xe8, 0xeb, 0, 0xd9, 0xe5, 0xdf, 0xe0, 0xc3});
+      const std::set<va_t> Entries{Image.Entry};
+      const libc::NoReturnTargetIndex Names(Image);
+      const InternalNoReturnIndex NoReturn(Image, &Entries, &Names, nullptr,
+                                           nullptr);
+      auto Cache = createX87CallGraphCache(&NoReturn, &Names);
+      CFGBuilder Warm, Cold;
+      for (auto *Builder : {&Warm, &Cold}) {
+        Builder->setKnownFuncEntries(&Entries);
+        Builder->setNoReturnTargetIndex(&Names);
+        Builder->setNoReturnCalleeProver(&NoReturn);
+      }
+      Warm.setX87CallGraphCache(Cache);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      ASSERT_TRUE(
+          Warm.build(Image, Dec, Image.Entry).hasCompleteInstructionLift());
+      constexpr size_t Budget = limits::kMaxX87CallProofWork;
+      const auto Original = Access::query(Warm, Image, Image.Entry, Budget);
+      ASSERT_EQ(Original.first, std::optional<int>(-1));
+      const size_t Work = Budget - Original.second;
+      ASSERT_LT(Work, 1000u);
+      const size_t Hits = Access::stats(Warm)[0];
+      Image.CodeRefTargets.insert(0x1004);
+      for (size_t Limit = 0; Limit <= Work; ++Limit)
+        EXPECT_EQ(Access::query(Warm, Image, Image.Entry, Limit),
+                  Access::query(Cold, Image, Image.Entry, Limit));
+      EXPECT_GT(Access::stats(Warm)[0], Hits);
+
+      const auto WarmLow = Warm.build(Image, Dec, Image.Entry);
+      const auto ColdLow = Cold.build(Image, Dec, Image.Entry);
+      EXPECT_FALSE(WarmLow.hasCompleteInstructionLift());
+      EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
+                std::vector<va_t>{0x1004});
+      EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
+                ColdLow.UnsupportedInstructionAddresses);
+      std::string WarmDump, ColdDump;
+      llvm::raw_string_ostream WarmOS(WarmDump), ColdOS(ColdDump);
+      Pipeline::dumpLowIR({WarmLow}, WarmOS);
+      Pipeline::dumpLowIR({ColdLow}, ColdOS);
+      EXPECT_EQ(WarmDump, ColdDump);
+    }
 }
 
 TEST(X87CallGraphCache, WarmGraphsReplayEveryProofBudgetExactly) {

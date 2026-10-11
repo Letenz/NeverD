@@ -62,6 +62,7 @@ public:
 namespace detail {
 struct ResolverGraphCacheTestAccess;
 struct X87CallGraphCacheTestAccess;
+struct NoReturnProofTestAccess;
 using JumpTableProofPoint = std::pair<va_t, int>;
 using JumpTableProofLocation = std::pair<int, int>;
 using I386GOTOFFAmbiguityReplayKey = std::tuple<va_t, va_t, int, int, va_t>;
@@ -666,6 +667,7 @@ std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
 class CFGBuilder {
   friend class X87CallEffectIndex;
   friend class X87CallGraphCache;
+  friend class InternalNoReturnIndex;
 
 public:
   /// Build CFG for a single function starting at EntryAddr.
@@ -1024,6 +1026,7 @@ public:
 private:
   friend struct detail::ResolverGraphCacheTestAccess;
   friend struct detail::X87CallGraphCacheTestAccess;
+  friend struct detail::NoReturnProofTestAccess;
   std::array<size_t, 3> x87CallGraphCacheStatsForTesting() const;
   std::array<size_t, 5> x87CallGraphFlightStatsForTesting() const;
   bool waitForX87CallGraphWaitersForTesting(size_t Count) const;
@@ -1115,6 +1118,11 @@ private:
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
   /// cases move.
   void fixupFpuStack(LowFunc &Func);
+  /// Prove termination without computing unused floating return values.
+  /// Local x87 state consumers retain the ordinary normalized CFG build.
+  /// Only the internal no-return index may consume this reduced projection.
+  bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
+                          const std::string &Name);
   bool SkipX87StackFixup = false;
   std::shared_ptr<X87CallEffectIndex> X87CallEffects;
   std::shared_ptr<X87CallGraphCache> SharedX87CallGraphs;

@@ -281,6 +281,12 @@ The LowIR no-return path proof lives in the low validation component, so call
 ABI checks do not depend on aggregate IR or MedIR. LowIR and MedIR consume the
 same architectural intrinsic-termination definition; both follow exceptional
 destinations after an ordinary no-return call.
+The internal no-return index requests a termination-only x86 CFG projection.
+It omits floating-return recovery when the body has no local ST use, TOP change,
+reset or FXAM. Such return values cannot affect this projection's control flow.
+A local consumer instead rebuilds through ordinary floating-stack normalization;
+the reduced body is never published as LowIR or passed to register summaries.
+The builder restores ordinary behavior before returning, including on exceptions.
 Registration-state transfer also consumes the exact unconditional no-return
 instruction boundary. Missing call-frame effects still refuse memory borrows,
 but cannot recreate that call's ordinary continuation or suppress its handlers.
@@ -1807,9 +1813,13 @@ under an 8 MiB retained-payload allowance including the construction context.
 This bounds the shared cache, not active builders or their private graph
 references.
 Exact function-boundary and jump-table protection sets, no-return proof depth
-and index identities bind each graph to its construction context. Image facts
-remain unchanged while a cache is shared; publishing new code references starts
-a fresh cache before additional callees are analyzed. Cache locks cover lookup
+and index identities bind each graph to its construction context. Image bytes,
+ownership and relocation metadata remain unchanged while a cache is shared.
+The pipeline's final additive `CodeRefTargets` publication may retain these raw
+graphs with its existing memoized no-return indexes: raw graph builders skip
+stack/tag normalization and do not consume that inventory. Every ordinary CFG
+still computes its tag-entry seeds against the new references; normalized CFGs
+and caller-dependent effect answers are never retained. Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated

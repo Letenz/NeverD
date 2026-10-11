@@ -222,6 +222,16 @@ actual warm hits, identical cold/warm budget consumption and a fresh successful
 proof when the same address belongs to a different valid image. Truncated
 instruction streams remain unretained.
 
+Publishing an additional code reference may retain the pipeline's raw x87
+graphs, but cannot retain an earlier tag proof. A shared-cache test publishes a
+new entry before FXAM: every raw-query budget still matches a cold query, while
+ordinary warm and cold builds both reject the newly unknown tag state.
+`InternalNoReturn` checks that termination-only builds avoid querying unused
+floating-return callees, restore binary80 call/return definitions on builder
+reuse, and preserve the full path for local x87 operations, resets and FXAM.
+Returning, terminating and unresolved exception handlers retain their original
+no-return verdicts on x86 and x64.
+
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
 inputs, independent proof budgets, exception and incomplete-lift wakeups,
