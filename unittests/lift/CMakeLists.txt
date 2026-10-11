@@ -1189,6 +1189,7 @@ target_include_directories(NeverDI386CallContractTests PRIVATE
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
+  core/CProjectionIdentifierTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
