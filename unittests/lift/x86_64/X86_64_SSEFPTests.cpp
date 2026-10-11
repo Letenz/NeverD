@@ -88,8 +88,8 @@ TEST_F(X86_64_SSE_FP, Cvtsd2siHasTrunc) {
 }
 
 TEST_F(X86_64_SSE_FP, Cvtsi2sdRetainsNumericalAndMxcsrCompletion) {
-  verifyScalarFPState(testObj(), "test_cvtsi2sd",
-                      neverd::Intrinsic::X86FPScalarConvertState, 5);
+  verifyFPState(testObj(), "test_cvtsi2sd",
+                neverd::Intrinsic::X86FPScalarConvertState, 5);
 }
 
 TEST_F(X86_64_SSE_FP, NoUnreachableInFunctions) {

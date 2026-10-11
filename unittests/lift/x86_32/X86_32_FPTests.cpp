@@ -36,8 +36,8 @@ TEST_F(X86_32_FP, Cvtss2siLifts) {
 }
 
 TEST_F(X86_32_FP, Cvtsi2ssLifts) {
-  verifyScalarFPState(testObj(), "test_cvtsi2ss32",
-                      neverd::Intrinsic::X86FPScalarConvertState, 1);
+  verifyFPState(testObj(), "test_cvtsi2ss32",
+                neverd::Intrinsic::X86FPScalarConvertState, 1);
 }
 
 TEST_F(X86_32_FP, AddsdLifts) {
