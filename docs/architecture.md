@@ -1924,6 +1924,27 @@ every source byte, independently of output width. Unsupported masks, broadcasts,
 SAE, embedded rounding and altered decoded metadata are refused. This does not
 extend MMX, unsigned, EVEX, F16C or x87 completion.
 
+VEX F16C uses `X86F16CState`, `X86F16CReadState` and
+`X86F16CStoreState`. Its single-precision vector width selects the logical
+half source/store extent independently of the padded physical XMM result.
+The canonical VEX owner authenticates raw bytes, immediate, register roles
+and complete memory addressing. Immediate bits 7:3 are ignored; bit 2 selects
+MXCSR rounding. Half widening ignores DAZ and narrowing ignores FTZ.
+LLVM, HighC and LLVMC retain the original conversion inside the incoming CSR
+scope, including Default/FS/GS memory and discarded results. No packed slice
+establishes scalar FP provenance, and ABI recovery never treats a store as a
+source read. Concrete evaluation reuses the F16C numerical primitive and the
+common precision-rounding exponent boundary. Operand exceptions precede
+result exceptions; unsuccessful completion publishes no register result or
+partial memory store. Source-read faults precede conversion. A valid writable
+target retains exact unmasked floating completion. Competing floating and access
+faults at an invalid target do not establish one reproducible fault priority.
+Repeated identical native cross-page stores expose both states of new status
+at the access fault. A failed store with newly raised flags
+therefore invalidates exact MXCSR knowledge rather than fabricating one
+outcome. Successful completion retains exact flags. This does not extend
+EVEX native completion or x87 state; Swift refuses this surface.
+
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
 MXCSR rounding, and bit 3 suppresses precision only. Packed results complete

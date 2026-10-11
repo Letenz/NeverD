@@ -30,8 +30,13 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
       isX86FPPackedConvertStateIntrinsic(Call.IntrinsicId);
   const bool Fma = isX86FPFmaStateIntrinsic(Call.IntrinsicId);
   const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
+  const bool Half = isX86F16CStateIntrinsic(Call.IntrinsicId);
+  const bool Store = Call.IntrinsicId == Intrinsic::X86F16CStoreState;
   const unsigned ControlIndex =
-      Memory || ScalarConvert || PackedConvert ? 1 : 0;
+      Store ? 2 : (Memory || ScalarConvert || PackedConvert || Half ? 1 : 0);
+  const unsigned ImmediateIndex = Store ? 3 : 2;
+  const bool HasImmediate =
+      Call.Operands.size() > ImmediateIndex && Call.Operands[ImmediateIndex];
   const bool HasControl =
       Call.Operands.size() > ControlIndex && Call.Operands[ControlIndex];
   bool ScalarOperands = true;
@@ -59,7 +64,7 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           !Memory && Index == 0 && !x86FPScalarConvertIsInteger(Control) &&
           Operand->Type->Size == x86FPScalarConvertSourceBytes(Control);
     }
-    if (PackedConvert && Operand && Operand->Type &&
+    if ((PackedConvert || Half) && Operand && Operand->Type &&
         Operand->Type->Kind == NdTypeKind::Float)
       ScalarOperands = false;
   }
@@ -76,12 +81,13 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
       .IdIsConst = true,
       .IdSize = 2,
       .IdValue = static_cast<unsigned>(Call.IntrinsicId),
-      .OutputIsWritable = Call.Type && Call.Type->Kind == NdTypeKind::Int &&
-                          Call.Type->Size > 0 &&
-                          (!(isX86FPApprox12Intrinsic(Call.IntrinsicId) ||
-                             Arithmetic || ScalarConvert || PackedConvert) ||
-                           (!Call.IsIndirectCall && !Call.IndirectTarget &&
-                            !Call.SourceCallHint && !Call.DoesNotReturn)),
+      .OutputIsWritable =
+          Call.Type && Call.Type->Kind == NdTypeKind::Int &&
+          Call.Type->Size > 0 &&
+          (!(isX86FPApprox12Intrinsic(Call.IntrinsicId) || Arithmetic ||
+             ScalarConvert || PackedConvert || Half) ||
+           (!Call.IsIndirectCall && !Call.IndirectTarget &&
+            !Call.SourceCallHint && !Call.DoesNotReturn)),
       .OutputSize = Call.Type ? Call.Type->Size : 0U,
       .OperandsAreScalar = ScalarOperands,
       .LeftSize = PointerAddress ? 8 : Size(0),
@@ -95,9 +101,10 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           Call.Operands[Memory ? 2 : 1]->Type->Kind == NdTypeKind::Int &&
           Call.Operands[Memory ? 2 : 1]->Kind == ExprKind::Const &&
           Call.Operands[Memory ? 2 : 1]->ConstVal == 0,
-      .StateSize = Size(Round || Arithmetic ? (Fma ? 4 : 3)
-                        : Conversion        ? 1
-                                            : 2),
+      .StateSize = Size(Half                  ? (Store ? 4 : 3)
+                        : Round || Arithmetic ? (Fma ? 4 : 3)
+                        : Conversion          ? 1
+                                              : 2),
       .HasAuxiliaryOutputs = !Call.IntrinsicOutputs.empty(),
       .DestinationIsConst = HasSelector &&
                             Call.Operands[2]->Kind == ExprKind::Const &&
@@ -111,12 +118,13 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           Call.Operands[ControlIndex]->Type->Kind == NdTypeKind::Int,
       .ControlSize = Size(ControlIndex),
       .Control = HasControl ? Call.Operands[ControlIndex]->ConstVal : 0,
-      .ImmediateIsConst = HasSelector &&
-                          Call.Operands[2]->Kind == ExprKind::Const &&
-                          Call.Operands[2]->Type &&
-                          Call.Operands[2]->Type->Kind == NdTypeKind::Int,
-      .ImmediateSize = Size(2),
-      .Immediate = HasSelector ? Call.Operands[2]->ConstVal : 0,
+      .ImmediateIsConst =
+          HasImmediate &&
+          Call.Operands[ImmediateIndex]->Kind == ExprKind::Const &&
+          Call.Operands[ImmediateIndex]->Type &&
+          Call.Operands[ImmediateIndex]->Type->Kind == NdTypeKind::Int,
+      .ImmediateSize = Size(ImmediateIndex),
+      .Immediate = HasImmediate ? Call.Operands[ImmediateIndex]->ConstVal : 0,
       .AddressIsScalar =
           PointerAddress ||
           (!Call.Operands.empty() && Call.Operands[0] &&
