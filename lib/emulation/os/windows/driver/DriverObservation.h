@@ -9,6 +9,7 @@
 #include "../kernel/KernelExportRegistry.h"
 
 #include "neverd/emulation/ProcessObserver.h"
+#include "neverd/emulation/WindowsDriverState.h"
 
 namespace neverd::emulation {
 struct DriverImage;
@@ -64,7 +65,9 @@ public:
 
 private:
   llvm::Error replaceWatches(std::vector<ExecutionWatch> Next);
-  llvm::Expected<bool> entryContextUnchanged();
+  llvm::Expected<WindowsDriverState::RegisterFile> entryRegisters();
+  llvm::Expected<WindowsDriverState::EntryContext>
+  entryContext(bool IncludeBacking);
   ProcessObserver *Observer;
   ExecutionBackend &CPU;
   const DriverImage &Image;
@@ -74,9 +77,7 @@ private:
   std::string Name;
   bool Started = false, EntryInvocation = false;
   ProcessStackView Stack{};
-  uint64_t InitialSP = 0;
-  uint64_t InitialDirection = 0;
-  std::vector<RegisterValue> InitialRegisters;
+  WindowsDriverState::RegisterFile InitialRegisters;
   std::array<uint8_t, 40> InitialFrame{};
   std::optional<uint64_t> ResumePC;
   std::vector<ExecutionWatch> Watches;

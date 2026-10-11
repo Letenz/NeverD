@@ -34,6 +34,8 @@ Clock reads through `KeQueryPerformanceCounter`, `RDTSC`, or `RDTSCP` retain an 
 
 `ProcessView::runtimeState(include_backing)` exposes `WindowsDriverState` for stopped drivers. The kernel owner retains each live pool's allocation API, exact requested size, tag and effective legacy type or complete modern flags. Requested backing is an independent copy of exactly those bytes; metadata-only capture leaves it absent. Freed pools, borrowed loader objects and device objects do not become pool records. This capture supplies neither pointer provenance nor a native initializer; existing dependency and relocation refusals still apply.
 
+`WindowsDriverState::Entry` retains the original DriverEntry register baseline and return/shadow frame, the stopped integer/XMM/floating-control registers, and the active OS-owned stack range. Requested backing copies the complete active stack. Later dispatch and unload invocations retain the original baseline and are explicitly marked as outside DriverEntry. These concrete observations do not establish pointer provenance or bindings to a fresh caller.
+
 Kernel image relocations remain a separate loader dependency even when no pool or borrowed object survives. Because the current writer strips relocations for generated content, default driver recovery returns `unsupported_state` without creating or truncating output. Only explicit `snapshot_only` emits the fixed image and retains this diagnostic. An original relocation table is not proof that it covers generated pointers.
 
 ```bash

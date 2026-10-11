@@ -36,6 +36,8 @@ Las lecturas del reloj mediante `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` 
 
 `ProcessView::runtimeState(include_backing)` proporciona `WindowsDriverState` para controladores detenidos. El propietario del núcleo conserva la API de asignación, el tamaño exacto solicitado, la etiqueta y el tipo heredado efectivo o todas las banderas modernas de cada pool vivo. El contenido solicitado es una copia independiente de esos bytes exactos; la captura de solo metadatos no incluye contenido. Los pools liberados, los objetos prestados del cargador y los objetos de dispositivos no se convierten en registros de pool. Esta captura no proporciona procedencia de punteros ni un inicializador nativo; siguen vigentes los rechazos existentes por dependencias y reubicaciones.
 
+`WindowsDriverState::Entry` conserva los registros iniciales de DriverEntry y su marco de retorno/shadow space, los registros enteros, XMM y de control flotante al detenerse, y el rango de la pila activa que pertenece al SO. Al solicitar backing se copia toda la pila activa. Las llamadas posteriores de despacho y descarga conservan la referencia original y se marcan explícitamente como externas a DriverEntry. Estas observaciones concretas no prueban la procedencia de los punteros ni su vinculación con un nuevo llamador.
+
 Las reubicaciones de la imagen del núcleo siguen siendo una dependencia del cargador aunque no queden pools ni objetos prestados. El generador elimina actualmente las reubicaciones del contenido generado, por lo que la recuperación predeterminada devuelve `unsupported_state` sin crear ni truncar la salida. Solo `snapshot_only` explícito emite la imagen de dirección fija y conserva el diagnóstico. La tabla original no demuestra que cubra los punteros generados.
 
 ```bash
