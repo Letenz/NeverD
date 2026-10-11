@@ -1063,15 +1063,33 @@ TEST(RegistrationState, CanonicalNoReturnKeepsExceptionalFlowWithoutBorrowing) {
 }
 
 TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
-  for (unsigned Mutation = 0; Mutation != 20; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 25; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = makeBranchingFrame();
     auto &Chain = *F.ExceptionMetadata->Registration;
     Chain.Scopes = {{-1, 0, 0x1800, true}};
     if (Mutation == 10)
       Chain.Scopes.front().EnclosingLevel = 0;
-    if (Mutation == 11)
+    if (Mutation == 11) {
       Chain.Scopes.push_back({-1, 0, 0x1900, true});
+      // Actually traverse the missing finally, rather than requesting an
+      // already higher stopping bound that executes no cleanup.
+      Chain.TryLevelStores.front().Level = 1;
+      F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(1, 4);
+    }
+    if (Mutation >= 20) {
+      // _local_unwind2 stops at the sentinel or any level at/below its
+      // unsigned threshold. It need not encounter that exact scope index.
+      Chain.Scopes.push_back({-1, 0, 0x1800, true});
+      const int32_t From = Mutation == 21 ? 1 : Mutation == 22 ? -1 : 0;
+      Chain.TryLevelStores.front().Level = From;
+      F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(From), 4);
+      if (Mutation == 23) {
+        Chain.Scopes.push_back({0, 0, 0x1800, true});
+        Chain.TryLevelStores.front().Level = 2;
+        F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(2, 4);
+      }
+    }
     F.Blocks.resize(7);
     auto &Setup = F.Blocks[4];
     Setup.Id = 4;
@@ -1095,11 +1113,13 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     Call.Succs = {2};
     emitOp(Call, 0x1100, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
            {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
-    const auto Level = Mutation == 3    ? NdVar::reg(x86reg::RAX, 4)
-                       : Mutation == 2  ? NdVar::cst(99, 4)
-                       : Mutation == 9  ? NdVar::cst(0, 4)
-                       : Mutation == 11 ? NdVar::cst(1, 4)
-                                        : NdVar::cst(UINT32_MAX, 4);
+    const auto Level =
+        Mutation == 3   ? NdVar::reg(x86reg::RAX, 4)
+        : Mutation == 2 ? NdVar::cst(99, 4)
+        : Mutation == 9 || Mutation == 21 || Mutation == 22 || Mutation == 24
+            ? NdVar::cst(0, 4)
+        : Mutation >= 20 ? NdVar::cst(1, 4)
+                         : NdVar::cst(UINT32_MAX, 4);
     emitOp(Call, 0x1100, NdOp::STORE, {}, {NdVar::reg(x86reg::RSP, 4), Level});
     emitOp(Call, 0x1102, NdOp::INT_ADD, NdVar::reg(x86reg::RDX, 4),
            {NdVar::reg(x86reg::RBP, 4),
@@ -1155,7 +1175,7 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
              {NdVar::reg(x86reg::RBP, 4)});
       ++Finally.InstructionBoundaries.back().OpCount;
     }
-    if (Mutation >= 17) {
+    if (Mutation >= 17 && Mutation < 20) {
       // Both successors return through this invocation. Join the actual
       // effects, and refuse when even one path changes the return slot.
       Finally.Ops.pop_back();
@@ -1190,6 +1210,22 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
         F.Blocks.push_back(std::move(Exit));
       }
     }
+    if (Mutation == 24) {
+      // One path is already at zero; the other unwinds level one to -1.
+      // The shared call must retain both exits and only a may-write effect.
+      LowBlock Other = F.Blocks[1];
+      Other.Id = 7;
+      Other.StartAddr = 0x1090;
+      Other.EndAddr = 0x1097;
+      Other.InstructionBoundaries.front().Address = Other.StartAddr;
+      for (auto &Op : Other.Ops)
+        Op.Addr = Other.StartAddr;
+      Other.Ops.back().Inputs[1] = NdVar::cst(1, 4);
+      Other.Succs = {5};
+      F.Blocks[4].Succs = {1, 7};
+      Chain.TryLevelStores.push_back({Other.StartAddr, Other.EndAddr, 1});
+      F.Blocks.push_back(std::move(Other));
+    }
     emitOp(F.Blocks[2], 0x1020, NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
            {NdVar::reg(x86reg::RSP, 4)});
     const auto ReadSeq = F.Blocks[2].Ops.back().Seq;
@@ -1206,8 +1242,16 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     EXPECT_FALSE(A.CallFrameEffectsComplete);
     EXPECT_TRUE(A.CallFrameEffects.empty());
     if (Valid) {
-      ASSERT_EQ(A.Blocks[2].Levels.size(), 1u);
-      EXPECT_EQ(A.Blocks[2].Levels.front(), Mutation == 9 ? 0 : -1);
+      if (Mutation == 24) {
+        EXPECT_EQ(A.Blocks[2].Levels, (std::vector<int32_t>{-1, 0}));
+      } else {
+        EXPECT_EQ(A.Blocks[2].Levels.size(), 1u);
+        if (A.Blocks[2].Levels.size() != 1)
+          continue;
+        const int32_t ExpectedLevel =
+            Mutation == 9 || Mutation == 20 || Mutation == 23 ? 0 : -1;
+        EXPECT_EQ(A.Blocks[2].Levels.front(), ExpectedLevel);
+      }
       bool FoundSP = false;
       bool FoundFinallyWrite = false;
       for (const auto &Value : A.FrameValues)
@@ -1218,7 +1262,7 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
       for (const auto &Value : A.FrameValues)
         if (Value.Address == 0x1020 && Value.OpSeq == WrittenValueSeq) {
           FoundFinallyWrite = true;
-          if (Mutation == 19)
+          if (Mutation == 19 || Mutation == 24)
             EXPECT_FALSE(Value.EstablishedFrameOffset);
           else
             EXPECT_EQ(Value.EstablishedFrameOffset, 0);
@@ -1226,7 +1270,8 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
       EXPECT_TRUE(FoundSP);
       // A zero-step unwind must not inherit the separately analyzed runtime
       // callback's writes; a traversed finally must publish its actual effect.
-      EXPECT_EQ(FoundFinallyWrite, Mutation != 9);
+      EXPECT_EQ(FoundFinallyWrite,
+                Mutation != 9 && Mutation != 20 && Mutation != 22);
     }
   }
 }

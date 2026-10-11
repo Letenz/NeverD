@@ -4995,3 +4995,5 @@ Each whole-function frame query validates its immutable CFG once and indexes pro
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. Bound and shared-budget queries bypass reuse; feasible-edge rebuilds and module emission clear it, and a query spanning a rebuild cannot publish its result.
+
+`_local_unwind2` uses an unsigned stopping bound: it stops at the -1 sentinel or a level no greater than the requested bound, even when an enclosing link skips that index. The shared PE32 EH3 solver joins the actual stopping levels and only the effects of traversed finally callbacks; a zero-step unwind preserves the incoming registration level and frame-memory facts. Existing frame-argument, runtime-field and callback-stack proofs remain mandatory.

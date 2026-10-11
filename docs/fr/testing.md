@@ -1812,3 +1812,5 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` et `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` vérifient la corruption du PC du parent et les écritures locales disjointes sur PE, ELF et Mach-O x64, ainsi que ELF i386. Préserver seulement le PC de l’appelé ne suffit pas à autoriser un appel ordinaire.
 
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` borne le travail des requêtes positives et négatives répétées sur x86, x64, ARM et AArch64. Les tests de contexte conservent les refus pour valeurs liées, SP d’entrée, largeur et budget nul, et abandonnent les réponses après un graphe possible provisoire ou reconstruit et un changement de fonction.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` vérifie aussi les arrêts sous une borne, les sorties sentinelles, les liens parents sautant l’indice demandé et les réunions de niveaux d’arrêt distincts. Un corps finally absent reste refusé lorsqu’il est parcouru ; un nettoyage sauté ne fournit aucun effet d’écriture de frame.

@@ -1697,3 +1697,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` と `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` は、PE・ELF・Mach-O x64 と ELF i386 で親の戻りアドレス破壊と重ならない親ローカル書き込みを検査します。呼び出し先の戻りアドレス保持だけでは通常呼び出しを許可できません。
 
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` は x86、x64、ARM、AArch64 で肯定・否定照会の反復作業量を制限します。コンテキストのテストは束縛値、入口 SP、幅、予算ゼロの拒否を維持し、暫定・再構築された実行可能グラフや関数の変更後に古い回答を破棄します。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は境界より下での早期停止、番兵での終了、要求インデックスを飛ばす親リンク、異なる停止階層の結合も検証します。実際に通過する finally 本体が欠けている場合は引き続き拒否し、飛ばしたクリーンアップからフレーム書き込み効果を得ることはありません。

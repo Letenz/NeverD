@@ -1687,3 +1687,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `OrdinaryInternalReturnsRetainTheParentsReturnPC`와 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation`은 PE, ELF, Mach-O x64 및 ELF i386에서 부모 반환 주소 손상과 겹치지 않는 부모 지역 쓰기를 검사합니다. 피호출자 반환 주소 보존만으로 일반 호출을 허용할 수 없습니다.
 
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork`는 x86, x64, ARM, AArch64에서 반복된 긍정 및 부정 질의의 작업량을 제한합니다. 문맥 테스트는 바인딩 값, 진입 SP, 폭 및 예산 0의 거부를 유지하고, 임시 또는 재구축된 실행 가능 그래프와 함수 변경 후 이전 답을 폐기합니다.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects`는 경계 아래의 조기 중단, 센티널 종료, 요청 인덱스를 건너뛰는 부모 링크, 서로 다른 중단 단계의 병합도 검사합니다. 실제로 통과해야 하는 finally 본문이 없으면 계속 거부하며, 건너뛴 정리는 프레임 쓰기 효과를 제공하지 않습니다.

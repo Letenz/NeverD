@@ -1605,3 +1605,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` 和 `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` 在 PE、ELF、Mach-O x64 及 ELF i386 上检查父返回地址损坏和不相交的父局部变量写入。仅保住被调用者的返回地址不能授权普通调用。
 
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 和 AArch64 上限制重复肯定及否定查询的工作量。上下文测试保留绑定值、入口 SP、位宽和零预算的拒绝，并在临时或重建的可行图及函数切换后丢弃旧答案。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 还检查低于边界的提前停止、哨兵退出、父层级跳过请求索引，以及不同停止层级的合并。实际经过的 finally 函数体缺失时仍须拒绝；跳过的清理不能提供栈帧写入效果。

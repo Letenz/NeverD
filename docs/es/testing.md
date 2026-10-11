@@ -1798,3 +1798,5 @@ Las regresiones del observador de escrituras verifican la visibilidad antes de l
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` y `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` comprueban la corrupción del retorno del padre y las escrituras locales disjuntas en PE, ELF y Mach-O x64 y ELF i386. Conservar solo el retorno del llamado no autoriza una llamada ordinaria.
 
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` limita el trabajo repetido de consultas positivas y negativas en x86, x64, ARM y AArch64. Las pruebas de contexto mantienen los rechazos por valores vinculados, SP de entrada, ancho y presupuesto cero, y descartan respuestas tras grafos factibles provisionales o reconstruidos y cambios de función.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` también comprueba paradas por debajo del límite, salidas por centinela, enlaces padres que omiten el índice solicitado y uniones con distintos niveles finales. Se siguen rechazando los cuerpos finally ausentes que deban recorrerse; una limpieza omitida no aporta efectos de escritura del marco.

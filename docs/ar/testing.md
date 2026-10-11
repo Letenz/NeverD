@@ -1722,3 +1722,5 @@ guest/Python5,000,000us / quantum1024 / public10s
 يفحص `OrdinaryInternalReturnsRetainTheParentsReturnPC` و`OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` تلف عنوان عودة الأم والكتابات المحلية غير المتداخلة في PE وELF وMach-O x64 وELF i386. حفظ عنوان عودة المستدعى وحده لا يجيز استدعاءً عاديًا.
 
 يحدّ `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` من عمل الاستعلامات الإيجابية والسلبية المتكررة على x86 وx64 وARM وAArch64. تحافظ اختبارات السياق على رفض القيم المرتبطة ومتطلبات SP عند الدخول والعرض والميزانية الصفرية، وتتخلص من الإجابات بعد الرسوم الممكنة المؤقتة أو المعاد بناؤها وتغيير الدالة.
+
+يختبر `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` أيضاً التوقف المبكر تحت الحد، والخروج عند القيمة الحارسة، وروابط الأب التي تتجاوز الفهرس المطلوب، ودمج مستويات توقف مختلفة. يظل غياب جسم finally مرفوضاً عند الحاجة إلى عبوره؛ ولا يمنح التنظيف المتجاوز أي تأثير كتابة في إطار المكدس.

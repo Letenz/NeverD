@@ -177,13 +177,17 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
   if (!Level || !validLevel(int32_t(*Level)) || After.Levels.empty())
     return Refuse();
   std::optional<FrameState> Joined;
+  std::set<int32_t> StoppedLevels;
   for (int32_t From : After.Levels) {
     if (!charge(After.Frame.cellCount() + 1))
       return Refuse();
     FrameState Frame = After.Frame;
     int32_t Walk = From;
     size_t Steps = 0;
-    while (Walk != int32_t(*Level)) {
+    // EH3's runtime stops at -1, or at any unsigned level not above the
+    // requested bound. An enclosing link can skip that bound entirely, and
+    // an already retired registration must not execute another finally.
+    while (Walk != -1 && (*Level == UINT32_MAX || uint32_t(Walk) > *Level)) {
       if (!charge(1) || Walk < 0 || size_t(Walk) >= Chain.Scopes.size() ||
           ++Steps > Chain.Scopes.size())
         return Refuse();
@@ -194,6 +198,7 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
       if (Scope.IsFinally && !runLocalFinally(Scope.HandlerVA, Frame))
         return Refuse();
     }
+    StoppedLevels.insert(Walk);
     if (!Joined)
       Joined = std::move(Frame);
     else if (!charge(Joined->cellCount() + Frame.cellCount() + 10))
@@ -202,8 +207,10 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
       Joined->merge(Frame);
   }
   After.Frame.Cells = std::move(Joined->Cells);
-  After.Levels = {int32_t(*Level)};
-  After.Frame.store(*Chain.TryLevelOffset, 4, FrameValue::constant(*Level));
+  After.Levels = std::move(StoppedLevels);
+  if (After.Levels.size() == 1)
+    After.Frame.store(*Chain.TryLevelOffset, 4,
+                      FrameValue::constant(uint32_t(*After.Levels.begin())));
   // _local_unwind2 is caller-cleanup. Its proved returning path retains the
   // argument-area ESP, independently of every memory/native-output contract.
   return SP;

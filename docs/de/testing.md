@@ -1813,3 +1813,5 @@ Die Schreibbeobachter-Regressionen prüfen Sichtbarkeit vor der nächsten Anweis
 `OrdinaryInternalReturnsRetainTheParentsReturnPC` und `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` prüfen beschädigte Eltern-Rücksprungadressen und getrennte lokale Schreibzugriffe auf PE, ELF und Mach-O x64 sowie ELF i386. Die erhaltene Rücksprungadresse des Aufgerufenen allein erlaubt keinen gewöhnlichen Aufruf.
 
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` begrenzt wiederholte positive und negative Abfragen auf x86, x64, ARM und AArch64. Kontexttests erhalten Ablehnungen für gebundene Werte, Eintritts-SP, Breite und Nullbudget und verwerfen Antworten nach vorläufigen oder neu aufgebauten Erreichbarkeitsgraphen und Funktionswechseln.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` prüft auch frühe Abbrüche unterhalb einer Grenze, Sentinel-Ausgänge, übersprungene Zielindizes und unterschiedliche Endzustände beim Zusammenführen. Fehlende finally-Rümpfe werden beim tatsächlichen Durchlaufen weiter abgewiesen; übersprungene Bereinigungen liefern keinen Frame-Schreibeffekt.
