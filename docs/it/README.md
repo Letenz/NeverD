@@ -1,6 +1,6 @@
 **Lingue**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 6241c9252ec89317b9c488c7e2b6b8c7bd60329dfdd734df27e1a7a7139b1eff -->
+<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
 
 [← Progetto NeverD](project.md)
 
@@ -18,7 +18,8 @@ Le guide inglesi sono direttamente in `docs/`. Le traduzioni sono raggruppate in
 | [Contribuire](CONTRIBUTING.md) | Ambiente, profili di build, workflow, stile e requisiti PR |
 | [Architettura](architecture.md) | Percorsi IR, confini dei componenti, lifting strict, profondità del supporto e punti di modifica |
 | [Analisi Web offline (inglese)](../web-analysis.md) | Ispezione C++ di artefatti, sorgenti, associazioni e mappe, criteri dei metadati, SDK e verifica attuale |
-| [Profilo Bun autonomo (inglese)](../web-bun-profile.md) | Estrazione ELF fissa, intervalli di evidenza originali, decodifica dei sorgenti e provenienza dei campioni fissati |
+| [Riscritture primitive JavaScript (inglese)](../web-source-rewrite-profile.md) | Passaggi espliciti, controlli locali di sostituzione, inversione esatta ed esportazione locale vincolata alla ricevuta |
+| [Profilo Bun autonomo (inglese)](../web-bun-profile.md) | Estrazione qualificata ELF, Mach-O a singola architettura e PE per x64/ARM64, intervalli originali e provenienza dei campioni fissati |
 | [Profilo di estrazione ASAR (inglese)](../web-asar-profile.md) | Associazione delle acquisizioni interne ed esterne, stati di integrità, utilizzatori dei membri e dipendenza Unicode nativa |
 | [Profilo di evidenza Electron (inglese)](../web-electron-profile.md) | Percorsi di ingresso acquisiti, ambito di manifesti e sorgenti, evidenza di finestre e bridge, canali IPC candidati |
 | [Profilo sorgente HTML (inglese)](../web-html-profile.md) | Inventario limitato degli script in C++, riferimenti locali acquisiti e ancore originali dei sorgenti incorporati |
