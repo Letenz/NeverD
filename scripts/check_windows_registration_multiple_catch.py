@@ -67,7 +67,7 @@ def observe(path: Path, case: str, route: str, receipt: dict,
             raise ValueError("catch cleanup order or count differs")
     match = OBSERVATION.fullmatch(output)
     if result.get("exit_code") != int(case.endswith("-control")) or not match:
-        raise ValueError("multiple-catch runtime or negative control failed")
+        raise ValueError(f"multiple-catch runtime or negative control failed: {result}")
     values = [int(v, 16) for v in match.groups()]
     if tuple(values[:8]) != expected_values:
         raise ValueError("catch dispatch, reference effect or registration chain differs")

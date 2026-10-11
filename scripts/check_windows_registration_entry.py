@@ -85,7 +85,7 @@ def observe(path, case, route, receipt, launcher, env, timeout, *, source_sectio
     result = run_image(path, launcher, env, timeout)
     match = OBSERVATION.fullmatch(result.get("stdout", ""))
     if result.get("exit_code") != int(case.endswith("-control")) or not match:
-        raise ValueError("entry runtime or negative control failed")
+        raise ValueError(f"entry runtime or negative control failed: {result}")
     values = tuple(int(value, 16) for value in match.groups())
     if values[:11] != expected_values(case):
         raise ValueError("entry arguments, returns, ESP or FS chain differ")
