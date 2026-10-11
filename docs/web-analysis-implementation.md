@@ -2122,3 +2122,48 @@ the latter also passed the 16-commit history scan after the unpublished work was
 consolidated without machine-specific documentation paths. Logs:
 `/tmp/neverd-behavior-diff-dev-{build,full-web,worker,mcp,api,capabilities,provenance}.log`
 and `/tmp/neverd-package-triage-dev-history.log`.
+
+## Captured npm advisory declarations — 2026-10-11
+
+The independently reviewed offline-assessment plan requires source/time
+descriptors, unknown-selector coverage and separately bounded uncomposed
+imports. `packages/evidence/Descriptor` owns timestamp/source admission;
+`packages/advisories/{Reader,SemVer,Match,Publication}` own declarations,
+version semantics, comparison and fixed metadata. The session caches imports
+and canonical selections atomically. Four C APIs and thin CLI/worker/MCP
+consumers share these owners without JavaScript or runtime dependencies.
+See the [profile](web-package-advisory-profile.md).
+
+The first compilation found a use of `size()` on LLVM's JSON `ObjectKey`;
+the explicit `StringRef` view corrects that boundary. All 15 core cases then
+passed, including the pinned public OSV record. The first expanded run passed
+23 of 24 cases; CLI output stopped after the existing inventory page because
+that older API uses a null continuation without `page_complete`. The adapter
+now consumes the common `next_offset` contract. All nine SDK/CLI cases passed
+after repair, including 600-entry pages, uncomposed import capacity, shared
+retained-byte and aggregate matching-work failures with unchanged caches.
+Logs: `/tmp/neverd-advisory-{core-build,core-tests,focused-tests}.log` and
+`/tmp/neverd-advisory-{cli-repair-build,sdk-repaired-tests}.log`.
+
+Actual NeverD CLI commands compared the original public OSV declaration against
+captured official npm metadata for lodash 4.17.18 and 4.17.19 with an unusable
+external-tool PATH. The reports retain one declared match and one selected-range
+non-match respectively, original anchors and explicit unverified exploitability.
+The [qualification](web-package-advisory-qualification.md) pins input, descriptor
+and report hashes. Originals and reports are preserved locally.
+
+Complete Web regression passed 631 of 638 cases; the six unavailable LLVM Zstd
+map cases and ASAR-policy omission case explicitly skipped. All ten worker
+suites, five MCP suites and enabled ABI discovery passed. Logs:
+`/tmp/neverd-advisory-{full-web,worker,mcp,api}.log`.
+With JavaScript disabled, all 24 advisory core/SDK cases, worker Web, five MCP
+suites and enabled ABI discovery passed. Replaying the preserved real capture
+produced the byte-identical CLI report. Logs:
+`/tmp/neverd-advisory-nojs-{config,build,focused,worker,mcp,api}.log`.
+The 23-capability manifest and 7,267-file tracked-source provenance check,
+including 16 history commits, passed. With the backend disabled, both ABI/stub
+cases and four MCP suites passed; worker Web and actual Claude extraction
+explicitly skipped. After restoring both options, all 24 advisory cases, ten
+worker suites, five MCP suites and enabled ABI discovery passed. Logs:
+`/tmp/neverd-advisory-{off,restored}-{config,build,api,worker,mcp}.log` and
+`/tmp/neverd-advisory-restored-focused.log`.

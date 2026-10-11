@@ -63,9 +63,31 @@ void closedArguments() {
                     "node_behavior_records", "package_behavior_analyze",
                     "package_behavior_records", "package_install_analyze",
                     "package_install_records", "package_behavior_diff_analyze",
-                    "package_behavior_diff_records"}),
+                    "package_behavior_diff_records", "package_advisory_import",
+                    "package_advisory_records", "package_advisories_match",
+                    "package_advisories_match_records"}),
       0);
   const auto &View = C.find("neverd_web_source_view_preview");
+  const auto &Advisory = C.find("neverd_web_package_advisory_import");
+  const Json ImportArgs{
+      {"revision", "1"}, {"artifact_id", "a"}, {"descriptor_artifact_id", "d"}};
+  Advisory.payload(ImportArgs);
+  auto Remote = ImportArgs;
+  Remote["fetch"] = true;
+  refuses([&] { Advisory.payload(Remote); });
+  const auto &Match = C.find("neverd_web_package_advisories_match");
+  Json Matching{{"revision", "1"}, {"package_analysis_id", "p"}};
+  Match.payload(Matching);
+  Matching["advisory_ids"] = Json::array();
+  Match.payload(Matching);
+  Matching["advisory_ids"] = Json::array({std::string(64, 'a')});
+  Match.payload(Matching);
+  for (const auto &IDs :
+       {Json::array({1}), Json::array({std::string("s\0x", 3)}),
+        Json(std::vector<std::string>(17, std::string(64, 'a')))}) {
+    Matching["advisory_ids"] = IDs;
+    refuses([&] { Match.payload(Matching); });
+  }
   const Json Valid{{"revision", "1"}, {"source_id", "s"}};
   require(View.payload(Valid).at("revision") == "1", "Valid view refused");
   for (const auto *Field : {"options", "reviewed_ranges", "path", "_meta"}) {

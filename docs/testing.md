@@ -559,6 +559,18 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebPackageSemVer.*`, `WebPackageEvidenceTime.*`, `WebPackageEvidence.*` and
+`WebPackageAdvisories.*` cover strict arbitrary-width precedence, source/time
+admission, OSV union/order/endpoints, wildcard and PURL identity, unsupported
+coverage and bounded matching. Set `NEVERD_OSV_NPM_ADVISORY` to the hash-pinned
+public record in the [qualification](web-package-advisory-qualification.md).
+`WebPackageAdvisorySDK.*` checks original anchors, 600-entry paging, uncomposed
+import capacity, aggregate retained bytes and work, atomic failures, cache and
+revision invalidation, private canaries and CLI parity with an unusable PATH.
+Run the complete owning Web directory and worker/MCP suites after changes to
+the session boundary; verify advisory core/SDK/transport checks with JS omitted
+and all C stubs with the backend omitted, then restore both flags to ON.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded

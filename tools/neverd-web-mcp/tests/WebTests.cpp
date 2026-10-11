@@ -67,7 +67,7 @@ public:
             "Wrong tool failure diagnostic");
     return Error;
   }
-  Json import(std::size_t Index) {
+  Json import(std::size_t Index, std::size_t ExpectedArtifacts = 1) {
     const auto Preview = get("web_import_preview", {{"input_index", Index}});
     const auto Other =
         Reference.execute("web_import_preview",
@@ -82,7 +82,8 @@ public:
     Revision = Commit.at("revision").get<std::string>();
     same("web_metadata", Json::object());
     const auto Items = same("web_artifacts", {{"revision", Revision}});
-    require(Items.at("items").size() == 1, "Unexpected single-file capture");
+    require(Items.at("items").size() == ExpectedArtifacts,
+            "Unexpected captured artifact count");
     return Items.at("items")[0].at("artifact_id");
   }
 };
@@ -311,6 +312,75 @@ void archives(Harness &H, bool HasParser) {
          {{"revision", H.Revision},
           {"analysis_id", Package.at("package_analysis_id")},
           {"record_kind", "scripts"}});
+}
+
+void offlineAdvisories() {
+  Fixture F;
+  F.write("a.advisory",
+          R"({"id":"CANARY_GHSA","modified":"2026-10-10T00:00:00Z",
+    "affected":[{"package":{"ecosystem":"npm","name":"CANARY_PACKAGE"},
+      "versions":["1.0.0"]}],"severity":[{"type":"CVSS_V3","score":"CANARY"}]})");
+  F.write("b.descriptor", R"({"schema_version":1,"source":"CANARY_FEED",
+    "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})");
+  F.write("c.package", R"({"name":"CANARY_PACKAGE","version":"1.0.0"})");
+  Harness H({F.Root.string()});
+  H.import(0, 4);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto &Items = Artifacts.at("items");
+  Json Import{{"revision", H.Revision},
+              {"artifact_id", Items[1].at("artifact_id")},
+              {"descriptor_artifact_id", Items[2].at("artifact_id")}};
+  const auto Advisory = H.same("web_package_advisory_import", Import);
+  require(Advisory.at("publisher_authenticated") == false &&
+              Advisory.at("freshness_assessed") == false,
+          "MCP upgraded captured metadata into authentication or freshness");
+  const auto ID = Advisory.at("package_advisory_id");
+  for (const auto *Kind : {"affected", "severities"})
+    H.same("web_package_advisory_records", {{"revision", H.Revision},
+                                            {"package_advisory_id", ID},
+                                            {"record_kind", Kind}});
+  const auto P = H.same("web_packages_analyze",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[3].at("artifact_id")},
+                         {"input_kind", "package-json"}});
+  Json Selection{{"revision", H.Revision},
+                 {"package_analysis_id", P.at("package_analysis_id")}};
+  for (const bool Selected : {false, true}) {
+    if (Selected)
+      Selection["advisory_ids"] = Json::array({ID});
+    const auto M = H.same("web_package_advisories_match", Selection);
+    require(M.at("declared_version_match_count") == (Selected ? 1 : 0) &&
+                M.at("exploitability_verified") == false &&
+                M.at("analysis_status") == "partial",
+            "MCP lost version selection or its explicit evidence boundary");
+    const auto Records = H.same(
+        "web_package_advisories_match_records",
+        {{"revision", H.Revision},
+         {"package_advisory_matches_id", M.at("package_advisory_matches_id")}});
+    require(Records.at("items").size() == (Selected ? 1 : 0),
+            "MCP changed selected advisory match rows");
+    if (Selected)
+      require(Records.at("items")[0].at("match_status") ==
+                  "declared_version_match",
+              "MCP changed the admitted version membership");
+  }
+  Selection["advisory_ids"] = Json::array({ID, ID});
+  H.fail("web_package_advisories_match", Selection,
+         "package_advisory_duplicate_selection");
+  Import["fetch"] = true;
+  invalid([&] { H.get("web_package_advisory_import", Import); });
+  const auto Old = H.Revision;
+  H.import(0, 4);
+  H.fail("web_package_advisory_records",
+         {{"revision", Old},
+          {"package_advisory_id", ID},
+          {"record_kind", "affected"}},
+         "stale_revision");
+  H.fail("web_package_advisory_records",
+         {{"revision", H.Revision},
+          {"package_advisory_id", ID},
+          {"record_kind", "affected"}},
+         "unknown_package_advisory");
 }
 
 void passiveInputs(Harness &H) {
@@ -619,6 +689,7 @@ int main() {
                                      {"byte_length", "1"}});
       }
     }
+    offlineAdvisories();
     passiveInputs(H);
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&

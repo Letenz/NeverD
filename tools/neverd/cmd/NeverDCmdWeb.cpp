@@ -42,6 +42,8 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() && WebArguments[0] == "package-advisories")
+    return runWebAdvisories();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "package-behavior-diff" ||
        WebArguments[0] == "archive-package-behavior-diff"))

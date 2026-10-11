@@ -100,6 +100,32 @@ NEVERD_API const char *neverd_web_package_integrity_verify_json(
     const char *DeclarationID, size_t DeclarationIDSize, const char *PackageID,
     size_t PackageIDSize);
 
+/// Import one captured OSV record and one captured provenance descriptor.
+/// Descriptor schema_version:1 admits optional source/retrieved_at/as_of
+/// declarations. No fetch, freshness, publisher or exploitability inference.
+NEVERD_API const char *neverd_web_package_advisory_import_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DescriptorArtifactID, size_t DescriptorArtifactIDSize);
+/// RecordKind is affected or severities; Limit is 1..512. Supplied names,
+/// prose, scores and source labels remain private behind original anchors.
+NEVERD_API const char *neverd_web_package_advisory_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AdvisoryID, size_t AdvisoryIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+/// Options schema_version:1, optional advisory_ids array (0..16). Match exact
+/// declared npm identity and admitted version selectors, never installed code
+/// or reachability. Unknown selectors prevent negative coverage claims.
+NEVERD_API const char *neverd_web_package_advisories_match_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+NEVERD_API const char *neverd_web_package_advisories_match_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *MatchesID, size_t MatchesIDSize,
+    uint64_t Offset, uint64_t Limit);
+
 /// Explicit tar/tgz/zip profile; captured originals only, no recursive
 /// extraction.
 NEVERD_API const char *neverd_web_package_archive_extract_json(
