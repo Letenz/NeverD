@@ -130,7 +130,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.MovableDirectories.empty() ||
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
-       Options.OwnershipMutations))
+       Options.OwnershipMutations || Options.AdvisoryLocks))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -353,15 +353,21 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return false;
   };
+  const auto AdmitOrdinaryObject = [&](const std::string &Path,
+                                       const char *Reason) -> llvm::Error {
+    const auto M = Options.Metadata.find(Path);
+    if (!Options.Files.contains(Path) || M == Options.Metadata.end() ||
+        M->second.Flags || (M->second.Mode & 07000) ||
+        M->second.LinkCount != 1 || HasAlias(Path))
+      return failure(Reason);
+    return PathInput(Path, false);
+  };
   const auto AdmitOrdinaryGrants = [&](const auto &Objects,
                                        const char *Reason) -> llvm::Error {
     for (const auto &[Path, Time] : Objects) {
-      const auto M = Options.Metadata.find(Path);
-      if (!Options.Files.contains(Path) || M == Options.Metadata.end() ||
-          M->second.Flags || (M->second.Mode & 07000) ||
-          M->second.LinkCount != 1 || HasAlias(Path) || !validTime(Time))
+      if (!validTime(Time))
         return failure(Reason);
-      if (auto E = PathInput(Path, false))
+      if (auto E = AdmitOrdinaryObject(Path, Reason))
         return E;
     }
     return llvm::Error::success();
@@ -374,6 +380,11 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations->Objects,
                                      diagnostic::FileOwnershipOption))
       return E;
+  if (Options.AdvisoryLocks)
+    for (const auto &Path : Options.AdvisoryLocks->Objects)
+      if (auto E =
+              AdmitOrdinaryObject(Path, diagnostic::FileAdvisoryLockOption))
+        return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
     const auto M = Options.Metadata.find(Path);
@@ -647,6 +658,8 @@ void DarwinFiles::initializeNamespace() {
       if (Time != Options->ModeMutations->Objects.end())
         Node->ModeTime = &Time->second;
     }
+    Node->AdvisoryLocks = Options->AdvisoryLocks &&
+                          Options->AdvisoryLocks->Objects.contains(Path);
     if (Options->OwnershipMutations) {
       const auto Time = Options->OwnershipMutations->Objects.find(Path);
       if (Time != Options->OwnershipMutations->Objects.end())
@@ -2755,6 +2768,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       return unsupported(Result, authorizationScope());
     }
   }
+  if (Service == ServiceKind::Flock)
+    return advisoryLock(Event, Result);
   if (Service == ServiceKind::Poll)
     return poll(Event, System, Result);
   if (Service == ServiceKind::Select)

@@ -7871,6 +7871,95 @@ static int ordinary_ownership_mutations(const char *path) {
   return 0;
 }
 
+/* Original SDK-free whole-file advisory lock controls. */
+union flock_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int flock_result(u64 number, u64 fd, u64 how, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, how, 0, 0, 0, 0, &error);
+  if (value != expected || error != !!expected || secondary)
+    return 250;
+  return 0;
+}
+static int flock_status(u64 fd, const union flock_stat_guard *initial) {
+  union flock_stat_guard observed;
+  for (unsigned i = 0; i != 20; ++i)
+    observed.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(observed.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary)
+    return 251;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 252;
+  return 0;
+}
+static int flock_offset(u64 fd, u64 expected) {
+  unsigned error;
+  if (call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary)
+    return 253;
+  return 0;
+}
+static int ordinary_advisory_locks(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 254;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 254;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 254;
+  union flock_stat_guard initial;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (call(339, a, (u64)(initial.bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || initial.words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      initial.words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(initial.bytes + 12, 2) & 0170000) != 0100000)
+    return 255;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h) {
+    const u64 high = highs[h], number = high | 131;
+    if (flock_result(number, high | a, high | 2, 0) ||
+        flock_result(number, high | d, high | 6, 0) ||
+        flock_result(number, high | b, high | 5, 35) ||
+        flock_result(number, high | d, high | 8, 0) ||
+        flock_result(number, high | b, high | 5, 0) ||
+        flock_result(number, high | a, high | 5, 0) ||
+        flock_result(number, high | a, high | 6, 35) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 35) ||
+        flock_result(number, high | a, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 0) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_status(a, &initial) || flock_status(b, &initial) ||
+        flock_status(d, &initial) || flock_offset(d, 2) || flock_offset(b, 0))
+      return 256;
+  }
+  if (flock_result(131, a, 0, 9) || flock_result(131, a, 4, 9) ||
+      flock_result(131, a, 0x40000000, 9) ||
+      flock_result(131, a, 0x40000005, 0) ||
+      flock_result(131, a, 0x4000000a, 0) ||
+      flock_result(131, a, 0x40000007, 0) || flock_result(131, b, 5, 35) ||
+      flock_result(131, d, 8, 0) || flock_result(131, 0xffffffffUL, 0, 9) ||
+      flock_status(a, &initial) || flock_status(b, &initial))
+    return 257;
+  if (flock_result(131, a, 6, 0) || flock_result(6, a, 0, 0) ||
+      flock_result(131, a, 6, 9) || flock_result(131, b, 6, 35) ||
+      flock_result(6, d, 0, 0) || flock_result(131, b, 6, 0) ||
+      flock_result(131, b, 8, 0) || flock_status(b, &initial) ||
+      flock_result(6, b, 0, 0))
+    return 258;
+  if (call(4, 1, (u64) "K", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 259;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -7917,6 +8006,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "ordinary-advisory-locks")) {
+    int result = ordinary_advisory_locks(argc > 2 ? argv[2] : "/data");
+    return result ? result : 39;
+  }
   if (equal(argv[1], "ordinary-ownership-mutations")) {
     int result = ordinary_ownership_mutations(argc > 2 ? argv[2] : "/data");
     return result ? result : 38;

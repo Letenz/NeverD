@@ -1613,3 +1613,8 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 ## 原生不透明狀態檢查
 
 `X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
+
+
+## Ordinary Darwin whole-file lock coverage
+
+`DarwinAdvisoryLockOptions` and `DarwinAdvisoryLockTest` check complete unique initial objects, shared byte budgets, both page sizes, low carriers, action priority, readonly EX, reentry, failed upgrades, downgrade, missing versus empty providers, FD/kind ordering, duplicate/fcntl/dup2 lifetime, descriptor reuse, hardlinks, rename, held zero-name unlink and creation refusal. Real VM mappings and retained Contents cannot keep a closed description’s lock; mode/ownership/data/xattr changes keep independent authority and metadata validity. A contended blocking request stops before model mutation. Strict C/CLI/Python and the original SDK-free77-record workload cover five software and three matching HVF profiles, including empty-provider boundaries. Native-common64 and mandatory79 per platform require all237 matching ARM64 native identities to execute successfully. The720 original ARM64 O0/O1/O2 literal observations comprise522 action and198 namespace/descriptor/VM-lifetime controls. Intel native, physical iOS, external peers and wait lifecycle remain separate unverified coverage. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged.

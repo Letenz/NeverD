@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
+#include "DarwinAdvisoryLockTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinModeTestData.h"
@@ -3639,6 +3640,127 @@ TEST_F(ProcessPublic,
     (*Input.getAsObject()->getObject(
         field::DarwinFiles))[field::FileOwnershipMutations] =
         llvm::cantFail(llvm::json::parse(Owners));
+    const auto Options = llvm::formatv("{0}", Input).str();
+    EXPECT_TRUE(takeString(neverd_emulate_process_json(Session, Path.c_str(),
+                                                       IOSSimulatorMachO64,
+                                                       Options.c_str()))
+                    .empty());
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+#endif
+}
+
+TEST_F(ProcessPublic,
+       DarwinOrdinaryAdvisoryLocksPreserveProviderAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    const uint64_t Class =
+        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+    for (bool Granted : {true, false}) {
+      llvm::json::Value Input = llvm::json::Object{
+          {"backend", "unicorn"},
+          {"instruction_quantum", 1024},
+          {"timeout_microseconds", 5000000},
+          {"arguments",
+           llvm::json::Array{"guest", "ordinary-advisory-locks", "/data"}},
+          {"darwin_files",
+           llvm::cantFail(llvm::json::parse(
+               emulation::darwin_test::AdvisoryLockFilesJSON))}};
+      if (!Granted)
+        (*Input.getAsObject()
+              ->getObject(field::DarwinFiles)
+              ->getObject(
+                  field::FileAdvisoryLocks))[field::FileAdvisoryLockObjects] =
+            llvm::json::Array{};
+      const auto Options = llvm::formatv("{0}", Input).str();
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+      const auto *Object = Report->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getString(field::Stop),
+                Granted ? "exited" : "unsupported_service");
+      EXPECT_EQ(Object->getString(field::Stdout), Granted ? "4b" : "");
+      EXPECT_EQ(Object->getString(field::Stderr), "");
+      const auto *Calls = Object->getArray(field::Services);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(), Granted ? 77u : 6u);
+      if (Granted) {
+        EXPECT_EQ(Object->getInteger(field::ExitStatus), 39);
+        constexpr uint64_t High[] = {0, 0x1234567800000000ULL,
+                                     0xffffffff00000000ULL};
+        constexpr uint64_t FDs[] = {3, 5, 4, 5, 4, 3, 3, 4, 4, 3, 4, 4},
+                           Actions[] = {2, 6, 5, 8, 5, 5, 6, 8, 6, 8, 6, 8},
+                           Values[] = {0, 0, 35, 0, 0, 0, 35, 0, 35, 0, 0, 0};
+        for (unsigned H = 0; H != 3; ++H)
+          for (unsigned I = 0; I != 12; ++I) {
+            const auto *E = (*Calls)[5 + H * 17 + I].getAsObject();
+            ASSERT_NE(E, nullptr);
+            EXPECT_EQ(E->getString(field::Number),
+                      llvm::utohexstr(Class | High[H] | 131, true));
+            EXPECT_EQ(E->getString(field::Result),
+                      llvm::utohexstr(Values[I], true));
+            EXPECT_EQ(E->getBoolean(field::Error), bool(Values[I]));
+            const auto *A = E->getArray(field::Arguments);
+            ASSERT_NE(A, nullptr);
+            ASSERT_EQ(A->size(), 6u);
+            EXPECT_EQ((*A)[0].getAsString(),
+                      llvm::utohexstr(High[H] | FDs[I], true));
+            EXPECT_EQ((*A)[1].getAsString(),
+                      llvm::utohexstr(High[H] | Actions[I], true));
+          }
+        constexpr uint64_t ValuesTail[] = {9, 9, 9, 0, 0, 0, 35, 0, 9};
+        for (unsigned I = 0; I != 9; ++I) {
+          const auto *E = (*Calls)[56 + I].getAsObject();
+          ASSERT_NE(E, nullptr);
+          EXPECT_EQ(E->getString(field::Result),
+                    llvm::utohexstr(ValuesTail[I], true));
+          EXPECT_EQ(E->getBoolean(field::Error), bool(ValuesTail[I]));
+        }
+      } else {
+        EXPECT_EQ(
+            Object->getString(field::Diagnostic),
+            "Darwin regular-object advisory lock provider is not configured");
+        const auto *E = Calls->back().getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | 131, true));
+        EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
+        EXPECT_EQ(E->get(field::Error), nullptr);
+      }
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                Granted ? process_cli::GuestFailure : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+    }
+  }
+  for (const char *Locks :
+       {R"({})", R"({"objects":[],"extra":true})", R"({"objects":"unknown"})",
+        R"({"objects":[3]})", R"({"objects":[{"path":"/data"}]})",
+        R"({"objects":["/data","/data"]})", R"({"objects":["relative"]})",
+        R"({"objects":["/missing"]})"}) {
+    auto Input = llvm::cantFail(
+        llvm::json::parse(std::string(R"({"darwin_files":)") +
+                          emulation::darwin_test::AdvisoryLockFilesJSON + "}"));
+    (*Input.getAsObject()->getObject(
+        field::DarwinFiles))[field::FileAdvisoryLocks] =
+        llvm::cantFail(llvm::json::parse(Locks));
     const auto Options = llvm::formatv("{0}", Input).str();
     EXPECT_TRUE(takeString(neverd_emulate_process_json(Session, Path.c_str(),
                                                        IOSSimulatorMachO64,

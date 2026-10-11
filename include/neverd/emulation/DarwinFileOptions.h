@@ -218,6 +218,18 @@ struct DarwinOwnershipMutationOptions {
   std::map<std::string, DarwinFileTime> Objects;
 };
 
+/// Explicit whole-file flock provider for initial ordinary regular objects.
+/// Initial locks are empty; every owner is a modeled current open description.
+/// No external peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC,
+/// listeners, revocation, provider errors, native leases or wait lifecycle.
+/// This does not supply general DAC, host durability or vnode observations.
+struct DarwinAdvisoryLockOptions {
+  /// Independent object grants, retained through runtime links/rename/unlink.
+  /// Created/reused names do not inherit them. Closing the last duplicate
+  /// releases its description's lock; VM leases do not retain descriptions.
+  std::set<std::string> Objects;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -239,6 +251,9 @@ struct DarwinFileOptions {
   /// coexist with mode authority, but either immutable query environment
   /// rejects it.
   std::optional<DarwinOwnershipMutationOptions> OwnershipMutations;
+  /// Independent flock authority; absence is unknown. Either static query
+  /// environment rejects this declaration, including an empty object list.
+  std::optional<DarwinAdvisoryLockOptions> AdvisoryLocks;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

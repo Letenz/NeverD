@@ -349,6 +349,22 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
           return invalid(Name);
         Remaining -= Path->size() + 1;
       }
+    } else if (Name == field::FileAdvisoryLocks) {
+      const auto *Environment = V.getAsObject();
+      const auto *Objects =
+          Environment ? Environment->getArray(field::FileAdvisoryLockObjects)
+                      : nullptr;
+      if (!Environment || Environment->size() != 1 || !Objects ||
+          Objects->size() > darwin_file_limits::Files)
+        return invalid(Name);
+      auto &Locks = Out.AdvisoryLocks.emplace();
+      for (const auto &Value : *Objects) {
+        const auto Path = Value.getAsString();
+        if (!Path || Path->size() >= Remaining ||
+            !Locks.Objects.insert(Path->str()).second)
+          return invalid(Name);
+        Remaining -= Path->size() + 1;
+      }
     } else if (Name == field::FileOwnershipMutations) {
       const auto *Environment = V.getAsObject();
       const auto *Objects =

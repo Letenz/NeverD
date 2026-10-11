@@ -198,6 +198,7 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Lseek:
   case ServiceKind::Dup:
   case ServiceKind::Dup2:
+  case ServiceKind::Flock:
   case ServiceKind::Fcntl:
   case ServiceKind::GetAttrList:
   case ServiceKind::FgetAttrList:

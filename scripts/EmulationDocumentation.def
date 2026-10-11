@@ -58,8 +58,8 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all49 other file routes closed before preflight")
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "63 current native-common cases")
+                           "all50 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "current live FD lower bound")
@@ -1882,7 +1882,7 @@ NEVERD_EMULATION_DOC_TOKEN(
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "invalidated records never restored")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "78 mandatory workloads per platform")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "79 mandatory workloads per platform")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free54 service records")
 
@@ -1904,9 +1904,31 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "AT_SYMLINK_NOFOLLOW0x20 only")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free77 service records")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "78 mandatory workloads per platform")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "79 mandatory workloads per platform")
 
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "720 owner observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "flock131 / Int ABI")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "advisory_locks / objects")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "UN8 > EX2 > SH1")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "failed upgrade keeps SH")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "VM mapping Contents leases do not retain description locks")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free77 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "13 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "79 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "720 literal native lock observations")

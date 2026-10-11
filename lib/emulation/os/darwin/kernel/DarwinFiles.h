@@ -174,6 +174,7 @@ private:
     const DarwinFileMutationPolicy *Policy = nullptr;
     const DarwinFileTime *ModeTime = nullptr;
     const DarwinFileTime *OwnershipTime = nullptr;
+    bool AdvisoryLocks = false;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;
@@ -214,6 +215,7 @@ private:
   using FileEntry = NamedEntry<Contents>;
   using LinkEntry = NamedEntry<LinkNode>;
   enum class DirectoryIteration { None, Entries, Bulk };
+  enum class AdvisoryLock { None, Shared, Exclusive };
   struct Description {
     Kind Type;
     llvm::ArrayRef<uint8_t> Input;
@@ -231,6 +233,7 @@ private:
     DirectoryIteration Iteration = DirectoryIteration::None;
     uint64_t BulkCursor = 0;
     bool BulkEOF = false;
+    AdvisoryLock Lock = AdvisoryLock::None;
     llvm::ArrayRef<uint8_t> bytes() const {
       return File ? File->bytes() : Link ? Link->bytes() : Input;
     }
@@ -312,6 +315,8 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   changeOwnership(ServiceKind Service, const ProcessServiceEvent &Event,
                   ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);

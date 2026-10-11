@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 4cd8f855ba12d5ec2c8af03f86d73abb4bba4f755b356ad440668f4255f66dd8 -->
+<!-- i18n-source: bcff11667836dc88f8fa84f83888f2c0cb0f1ef6491b2c7f731314415833bac6 -->
 
 [← Index de la documentation](README.md)
 
@@ -1179,9 +1179,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all49 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all50 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-63 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+64 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -1204,7 +1204,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-63 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+64 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -1245,11 +1245,11 @@ empty declaration supplies environment without object provider grants
 missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
 SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
 OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
-63 current native-common cases / 78 mandatory workloads per platform
-ARM64 matching native mandatory234 / native Intel and physical iOS unverified
+64 current native-common cases / 79 mandatory workloads per platform
+ARM64 matching native mandatory237 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all49 other file routes closed before preflight / static query declarations incompatible
+all50 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
@@ -1276,13 +1276,49 @@ creation and name reuse do not inherit grants / invalidated records never restor
 mode data namespace xattr storage and VM mapping leases keep independent contracts
 SDK-free77 service records / 77 authored raw calls / 41 guarded stat records
 separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
-63 current native-common cases / 78 mandatory workloads per platform
-ARM64 matching native mandatory234 / actual successful execution required
+64 current native-common cases / 79 mandatory workloads per platform
+ARM64 matching native mandatory237 / actual successful execution required
 720 owner observations / 702 literal controls and 18 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all49 other file routes closed before preflight / static query declarations incompatible
+all50 other file routes closed before preflight / static query declarations incompatible
 no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
 
 [XNU ownership routes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU ownership actions](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [XNU vnode_setattr provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/kpi_vfs.c).
+
+
+## Verrous consultatifs explicites de fichier entier
+
+flock131 déclare le provider des objets réguliers initiaux par les chaînes uniques objects de advisory_locks. Une omission reste inconnue; un tableau vide n’accorde aucun objet. Dup, fcntl et dup2 partagent le propriétaire de description. Sa dernière fermeture libère le verrou même si une projection VM conserve les données. UN > EX > SH; EAGAIN35 non bloquant conserve l’ancien SH. Une attente en conflit reste non prise en charge avant toute mutation du modèle. Liens et renommages conservent les grants de l’objet; créations et noms réutilisés ne les héritent pas. Les faits ci-dessous fixent les limites. Intel natif, iOS physique et l’OS complet restent non vérifiés ou incomplets.
+
+```text
+flock131 / Int ABI / low32 FD and how / raw high carriers retained
+advisory_locks / objects / explicit initial ordinary regular-object provider
+missing environment unknown / empty objects no provider / initial locks empty
+complete initial metadata / flags0 / ordinary mode / link_count1 / no initial inode alias
+path+NUL shares input byte budget / strict unique string array / unknown keys rejected
+FD lookup first / known vnode without action EBADF9 / unrelated action bits ignored
+UN8 > EX2 > SH1 / NB4 selects nonblocking / readonly EX allowed
+whole-file description owner / dup fcntl duplication dup2 share one owner
+separate open descriptions arbitrate / shared-shared compatible / exclusive conflicts
+nonblocking conflict EAGAIN35 before old-lock removal / failed upgrade keeps SH
+success replaces upgrade or downgrade / uncontended blocking completes immediately
+contended blocking unsupported before model mutation / no wait or unlock fabrication
+current descriptor membership owns lock lifetime / last duplicate close releases lock
+VM mapping Contents leases do not retain description locks
+runtime hardlink rename held zero-name unlink keep object grant
+created or reused names do not inherit provider grants / path registry not lock authority
+bytes cursors descriptor flags stat records xattrs and allocation unchanged by flock
+mode ownership data namespace policies independent / invalidated records never restored
+all50 other file routes closed before preflight / either static query rejects even empty declaration
+SDK-free77 service records / 13 guarded full stat observations / separate main return39
+OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime
+64 current native-common cases / 79 mandatory workloads per platform
+ARM64 matching native mandatory237 / actual successful execution required
+720 literal native lock observations / 522 action controls and198 lifetime controls
+native O0 O1 O2 / raw SVC and syscall / three high-carrier variants
+no external or interprocess peers / no POSIX OFD range locks / no fork or descriptor transfer
+no MAC listener revocation provider error native-lease or blocking-wait lifecycle
+native Intel and physical iOS unverified / full macOS-iOS environment incomplete
+```

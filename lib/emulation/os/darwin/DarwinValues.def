@@ -23,6 +23,11 @@ NEVERD_DARWIN_VALUE(ParentID, 1)
 NEVERD_DARWIN_VALUE(UserID, 1000)
 NEVERD_DARWIN_VALUE(GroupID, 1000)
 NEVERD_DARWIN_VALUE(BadDescriptor, 9)
+NEVERD_DARWIN_VALUE(LockWouldBlock, 35)
+NEVERD_DARWIN_VALUE(LockShared, 1)
+NEVERD_DARWIN_VALUE(LockExclusive, 2)
+NEVERD_DARWIN_VALUE(LockNonblocking, 4)
+NEVERD_DARWIN_VALUE(LockUnlock, 8)
 NEVERD_DARWIN_VALUE(NoEntry, 2)
 NEVERD_DARWIN_VALUE(NoProcess, 3)
 NEVERD_DARWIN_VALUE(OperationNotPermitted, 1)
@@ -216,6 +221,7 @@ NEVERD_DARWIN_SERVICE(GetDTableSize, 89, Int)
 NEVERD_DARWIN_SERVICE(GetPriority, 100, Int)
 NEVERD_DARWIN_SERVICE(Dup2, 90, Int)
 NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
+NEVERD_DARWIN_SERVICE(Flock, 131, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
@@ -513,6 +519,24 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     FileOwnershipProvider,
     "Darwin regular-object ownership provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileAdvisoryLockOption,
+                         "Darwin advisory lock grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockEnvironment,
+    "Darwin whole-file advisory lock environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockKind,
+    "Darwin advisory lock descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockTarget,
+    "Darwin advisory lock requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockProvider,
+    "Darwin regular-object advisory lock provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileAdvisoryLockWait,
+    "Darwin contended blocking advisory lock wait is not implemented")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")
 NEVERD_DARWIN_DIAGNOSTIC(

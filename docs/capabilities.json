@@ -13308,10 +13308,11 @@
         "Optional DarwinFileOptions.Authorization / darwin_files.authorization=\"static-ordinary-queries\" retains the immutable ordinary mount/security assumptions and closed routes of static-owner-queries, whose owner-only behavior stays unchanged. Actual checks require explicit credentials, object metadata and selected nonzero UID. Owners use their whole requested owner mask; nonowners use equal whole-mask group/world outcomes without membership, including equal denials for different bit sets. Otherwise a known member selects group and a proved nonmember selects world; unresolved external membership stops UnsupportedService before lookup/effects. Positive primary/in-credential membership is known; credentials.groups is the ordered list with effective GID at index0 and duplicates retained, not the SDK extended resolver list. Real-copy identity changes scan the first supplementary real-GID match and swap the old primary into it; no match displaces that primary and disables memberd. That proved change or explicit original GroupMembershipUID=KAUTH_UID_NONE, each with an explicit complete list, supplies known negative membership. Missing lists never supply negative answers; unequal UIDs with equal GIDs still transform, and duplicate primaries may preserve unknown membership. AT_EACCESS uses the original effective context. All43 other file routes and direct/file-backed mappings remain closed, typed streams and anonymous VM independent. Original read-only ARM64 O0/O1/O2 evidence retains270 raw/SDK literal pairs with held-object/stat/ACL-property guards; raw groups16 and SDK extended groups17 are distinct observations. Equal native IDs do not establish distinct identity transforms or every external hook. Five software and three required ARM64 HVF profiles plus C/CLI/Python verify the supplied-model workload outside the58 native-common cases; all deadlines remain unchanged. Root, ACL/MAC, general vnode authorization, full group resolution, dynamic credentials, readiness/networking, advancing clocks, Mach IPC/threads, dyld/TLS and complete OS/frameworks remain incomplete; native Intel HVF and physical iOS unverified.",
         "Optional DarwinCredentials.GroupMembershipUID / darwin_system.credentials.group_membership_uid declares independent original cr_gmuid: bounded 0..INT32_MAX or exact KAUTH_UID_NONE4294967195 (0xffffff9b, UINT32_MAX minus100), using shared lossless numeric/decimal-string admission. Positive primary/in-credential membership wins before negatives. Original NONE plus an explicit complete list proves missing membership; omitted groups never prove negatives. First-match real copies preserve original NONE, while proved displacement also disables memberd. Omission and other admitted UIDs retain external uncertainty; no resolver, root bypass or new vnode-operation authority is supplied. Four scalar IDs, group-list entries, getgroups, creation ownership and old modes retain their existing contract; NONE remains invalid in ordinary UID/GID/group entries. Five software and three mandatory ARM64 HVF profiles, C/CLI and Python verify173 supplied-model events and strict admission. Local O0/O1/O2 SDK controls establish only the sentinel and four-byte uid_t, not host cr_gmuid or resolver state; prior270 actual native nonowner pairs keep their original identity. All58 native-common references, original bounds and unverified Intel/physical-iOS/full-OS gaps remain unchanged.",
         "Raw Darwin poll230/poll_nocancel417 support timeout low int32=0 with explicit ResourceLimits[8].Current count admission, OPEN_MAX10240, FD_SETSIZE1024 and original effective UID only when needed; DescriptorLimit and MaxFilesPerProcess are independent. Zero count touches no pointer. Constructed regular descriptions explicitly model successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; native vnode kind alone is not proof. IN/RDNORM and OUT/WRBAND readiness is independent of EOF, access flags, O_NONBLOCK and write grants. Numeric FD/read or FD/write retains each last row, distinct dup aliases remain separate, HUP alone registers read without a ready bit; negative/ignored-only rows zero and closed registrations each yield POLLNVAL32. Complete input snapshot and whole copyout preserve fd/events; incomplete input/wholly unwritable output gives EFAULT14, partial output is Unsupported without a prefix. Both static query environments close Poll before preflight, including zero, for43 closed file routes. SDK-free workload86 events covers five software/three mandatory ARM64 HVF profiles plus C/CLI/Python and original59 common native cases; prior58 proofs retain original source identity. O0/O1/O2 ARM64582 observations mix literal ABI/error controls and provider captures, not universal constants. Native Intel/physical iOS, revoked/MAC/refused registration, select waiting/pselect signal masks, asynchronous providers and complete OS/network/framework semantics remain unverified or unfinished; original failed attempts and deadlines are retained.",
-        "Raw Darwin select93/select_nocancel407 support only an explicit zero LP64 user64_timeval16, signed low32 nonnegative count and the current live-FD lower-bound proof. Seconds signed64 0..100000000 and microseconds signed32 0..999999 precede negative-count errors; pointers remain full64 and padding is ignored. All complete bitmap inputs precede all selected-FD checks, which precede the independent pure/nonrefusing constructive ordinary read/write/exception provider. Count bits across sets and distinct dup FDs, including readonly/nonblocking EOF, without changing description state. Missing FDs yield EBADF9; other selected providers are Unsupported. Output masks clear tail bits only inside rounded little-endian32 words. Global whole-permission/disjoint-range preflight refuses every partial destination and overlap before all writes; zero writable prefix alone does not prove whole unwritability. Whole copyouts continue in read/write/exception order after an entirely unwritable set, retaining first EFAULT14. Both static domains close Select before preflight, for49 routes. SDK-free115-event workload covers five software and three mandatory ARM64 HVF profiles with C/CLI/Python; select-era common native inventory60 and mandatory platform inventory75. Original ARM64 O0/O1/O2 select792 observations preserve540 literal controls and252 provider captures with225 separately analyzed projections, not universal constants. Prior58/59 proof identities and failed attempts/deadlines stay separate. Intel native HVF, physical iOS, waiting/pselect signal masks, asynchronous/MAC/revoked providers and full OS/network/framework semantics remain unverified or unfinished.",
-        "Raw BSD pselect394/pselect_nocancel395 admit a supplied zero user64_timespec16 and null signal mask through the same immediateSelect bitmap/capacity/provider/output owner as select93/407. Signed64 seconds0..2147483647 and signed64 nanoseconds0..1000000000 inclusive validate before a four-byte mask import and signed low32 count. Invalid time yields EINVAL22; incomplete time/mask imports yield EFAULT14 in that order. Every complete nonnull mask is Unsupported before bitmap effects because signal replacement/restoration is absent; negative count with null mask remains EINVAL even for null/positive valid time. Nonnegative count with null or nonzero valid time is Unsupported waiting. Both static authorization modes close Pselect before preflight, now49 file routes. SDK-free139-event workload and pselect-era61 common native cases/76 mandatory workloads per platform require separate current verification. Original O0/O1/O2 ARM64918 observations retain729 literal controls and189 provider captures at their original source identity. Signal state, waits, asynchronous/refusing providers, full OS/frameworks, native Intel and physical iOS remain incomplete or unverified; no original deadline is extended.",
-        "chmod15/fchmod124/fchmodat467 require the explicit operation-specific ordinary mode_mutations environment, canonical nonroot effective credentials, complete current ordinary security attributes and independent initial-regular-object provider/ctime grants. No ACL/MAC/listener/privilege bypass/revocation/native file-directory leases or unmodeled pre-setattr lifecycle is inferred. Current pathname SEARCH precedes missing names and uses the sole complete-record validity owner; unknown groups/credentials/metadata remain unsupported. Changed nonowner modes yield EPERM; same-mode has no WRITE_SECURITY ownership denial but still requires its provider grant. ALLPERMS-filtered ordinary permissions and fixed virtual ctime are the only changed fields. Object grants follow dup/independent opens/runtime hardlinks/rename/held unlink, never creation/name reuse, and never restore invalidated metadata. Data/namespace/xattr/storage and VM mapping lifetime retain independent contracts. Strict JSON distinguishes absent/empty environments and rejects extra/duplicate/lossy inputs. Invalid low32 flags yield EINVAL before import; independently known pointer/empty/FD errors preserve shared ordering and absolute-path dirfd bypass. Final directory/link, special bits, selected root and general DAC/vnode authorization are unsupported. SDK-free54-service-record/54-raw-call workload (main return is not a raw exit event) and31 guarded stat records accompany literal both-page-size current/invalidated/nonowner/SEARCH/VM tests and C/CLI/Python paths. Mode-era62 common native cases/77 mandatory workloads per platform required actual successful matching ARM64 HVF/native execution; counts/skips cannot qualify. Original450 owner observations preserve414 literal controls and36 link-provider captures, not native nonowner or universal ctime claims. Original failed rounds/deadlines/source identities remain unchanged; native Intel, physical iOS, broader ownership/fsync/flock/signals/sockets/kqueue/dyld/frameworks and the full macOS/iOS goal remain incomplete or unverified.",
-        "chown16/fchown123/fchownat468 require explicit ownership_mutations with independent initial ordinary regular-object provider/time grants, current complete attributes and canonical nonroot effective credentials. UID third-party denial precedes changed target-group membership; unknown membership remains unsupported, TAKE_OWNERSHIP has no ordinary POSIX fallback and group-only WRITE_SECURITY requires the current owner. Same IDs have no change-derived security-right request but still need a provider. Low32 UINT32_MAX deactivates an ID: both inactive preserve the full record and ctime, while any active ID assigns fixed declared virtual ctime even at the same numeric value. Current SEARCH, retained object identity, existing metadata-validity and independent mode/data/namespace/xattr/storage/VM lease owners remain authoritative. Created/reused names never inherit grants and invalidated records cannot be restored. fchownat only accepts NOFOLLOW0x20; ANY0x800 is EINVAL before pointer/FD import. Both immutable query closures deny all49 other file routes before preflight. The SDK-free workload has77 service records/41 guarded stat observations and separate main return38, with C/CLI/Python paths. Current63 common native cases/78 mandatory workloads per platform require actual matching ARM64 execution, not discovery/count/skip inference. Original720 owner captures comprise702 literal controls and18 final-link provider captures; nonowner authorization is source/model evidence and native ctime is not a universal constant. No ACL/MAC/listener/bypass/revocation/native leases or broader setattr lifecycle is supplied. Native Intel, physical iOS, broader ownership and full OS/framework environment remain incomplete or unverified."
+        "Raw Darwin select93/select_nocancel407 support only an explicit zero LP64 user64_timeval16, signed low32 nonnegative count and the current live-FD lower-bound proof. Seconds signed64 0..100000000 and microseconds signed32 0..999999 precede negative-count errors; pointers remain full64 and padding is ignored. All complete bitmap inputs precede all selected-FD checks, which precede the independent pure/nonrefusing constructive ordinary read/write/exception provider. Count bits across sets and distinct dup FDs, including readonly/nonblocking EOF, without changing description state. Missing FDs yield EBADF9; other selected providers are Unsupported. Output masks clear tail bits only inside rounded little-endian32 words. Global whole-permission/disjoint-range preflight refuses every partial destination and overlap before all writes; zero writable prefix alone does not prove whole unwritability. Whole copyouts continue in read/write/exception order after an entirely unwritable set, retaining first EFAULT14. Both static domains close Select before preflight, for50 routes. SDK-free115-event workload covers five software and three mandatory ARM64 HVF profiles with C/CLI/Python; select-era common native inventory60 and mandatory platform inventory75. Original ARM64 O0/O1/O2 select792 observations preserve540 literal controls and252 provider captures with225 separately analyzed projections, not universal constants. Prior58/59 proof identities and failed attempts/deadlines stay separate. Intel native HVF, physical iOS, waiting/pselect signal masks, asynchronous/MAC/revoked providers and full OS/network/framework semantics remain unverified or unfinished.",
+        "Raw BSD pselect394/pselect_nocancel395 admit a supplied zero user64_timespec16 and null signal mask through the same immediateSelect bitmap/capacity/provider/output owner as select93/407. Signed64 seconds0..2147483647 and signed64 nanoseconds0..1000000000 inclusive validate before a four-byte mask import and signed low32 count. Invalid time yields EINVAL22; incomplete time/mask imports yield EFAULT14 in that order. Every complete nonnull mask is Unsupported before bitmap effects because signal replacement/restoration is absent; negative count with null mask remains EINVAL even for null/positive valid time. Nonnegative count with null or nonzero valid time is Unsupported waiting. Both static authorization modes close Pselect before preflight, now50 file routes. SDK-free139-event workload and pselect-era61 common native cases/76 mandatory workloads per platform require separate current verification. Original O0/O1/O2 ARM64918 observations retain729 literal controls and189 provider captures at their original source identity. Signal state, waits, asynchronous/refusing providers, full OS/frameworks, native Intel and physical iOS remain incomplete or unverified; no original deadline is extended.",
+        "chmod15/fchmod124/fchmodat467 require the explicit operation-specific ordinary mode_mutations environment, canonical nonroot effective credentials, complete current ordinary security attributes and independent initial-regular-object provider/ctime grants. No ACL/MAC/listener/privilege bypass/revocation/native file-directory leases or unmodeled pre-setattr lifecycle is inferred. Current pathname SEARCH precedes missing names and uses the sole complete-record validity owner; unknown groups/credentials/metadata remain unsupported. Changed nonowner modes yield EPERM; same-mode has no WRITE_SECURITY ownership denial but still requires its provider grant. ALLPERMS-filtered ordinary permissions and fixed virtual ctime are the only changed fields. Object grants follow dup/independent opens/runtime hardlinks/rename/held unlink, never creation/name reuse, and never restore invalidated metadata. Data/namespace/xattr/storage and VM mapping lifetime retain independent contracts. Strict JSON distinguishes absent/empty environments and rejects extra/duplicate/lossy inputs. Invalid low32 flags yield EINVAL before import; independently known pointer/empty/FD errors preserve shared ordering and absolute-path dirfd bypass. Final directory/link, special bits, selected root and general DAC/vnode authorization are unsupported. SDK-free54-service-record/54-raw-call workload (main return is not a raw exit event) and31 guarded stat records accompany literal both-page-size current/invalidated/nonowner/SEARCH/VM tests and C/CLI/Python paths. Mode-era62 common native cases/77 mandatory workloads per platform required actual successful matching ARM64 HVF/native execution; counts/skips cannot qualify. Original450 owner observations preserve414 literal controls and36 link-provider captures, not native nonowner or universal ctime claims. Original failed rounds/deadlines/source identities remain unchanged; native Intel, physical iOS, broader ownership/fsync/flock waits/signals/sockets/kqueue/dyld/frameworks and the full macOS/iOS goal remain incomplete or unverified.",
+        "chown16/fchown123/fchownat468 require explicit ownership_mutations with independent initial ordinary regular-object provider/time grants, current complete attributes and canonical nonroot effective credentials. UID third-party denial precedes changed target-group membership; unknown membership remains unsupported, TAKE_OWNERSHIP has no ordinary POSIX fallback and group-only WRITE_SECURITY requires the current owner. Same IDs have no change-derived security-right request but still need a provider. Low32 UINT32_MAX deactivates an ID: both inactive preserve the full record and ctime, while any active ID assigns fixed declared virtual ctime even at the same numeric value. Current SEARCH, retained object identity, existing metadata-validity and independent mode/data/namespace/xattr/storage/VM lease owners remain authoritative. Created/reused names never inherit grants and invalidated records cannot be restored. fchownat only accepts NOFOLLOW0x20; ANY0x800 is EINVAL before pointer/FD import. Both immutable query closures deny all50 other file routes before preflight. The SDK-free workload has77 service records/41 guarded stat observations and separate main return38, with C/CLI/Python paths. Current64 common native cases/79 mandatory workloads per platform require actual matching ARM64 execution, not discovery/count/skip inference. Original720 owner captures comprise702 literal controls and18 final-link provider captures; nonowner authorization is source/model evidence and native ctime is not a universal constant. No ACL/MAC/listener/bypass/revocation/native leases or broader setattr lifecycle is supplied. Native Intel, physical iOS, broader ownership and full OS/framework environment remain incomplete or unverified.",
+        "flock131 requires explicit advisory_locks with unique initial ordinary regular-object grants and a closed whole-file provider with initially empty locks and only current modeled open-description owners. Low32 FD/action and Int results retain raw upper carriers. FD lookup precedes action; known vnodes without action return EBADF9, UN8 > EX2 > SH1 and unrelated bits are ignored. Readonly EX is allowed. Shared/shared is compatible; nonblocking conflicts return EAGAIN35 before removing an old lock, so failed upgrades retain SH. Success replaces lock type, while a contended blocking wait is unsupported before model mutation. Dup/fcntl/dup2 share owners and the final descriptor close/replacement releases locks; VM mappings or retained Contents do not keep them. Object grants follow runtime links, rename and held zero-name unlink; created/reused names never inherit them. No stat/bytes/cursor/flags/xattr/allocation/namespace effects or restoration of invalidated metadata. Mode, ownership, data and namespace policies remain independent. Missing versus empty providers stay distinct, including unlock, and both static query environments reject even empty declarations and deny all50 other file routes before preflight. SDK-free77 records/13 guarded stat observations/main39 have C/CLI/Python and matching ARM64 HVF coverage requirements. Current64 common native cases/79 mandatory per platform require all237 matching ARM64 identities to actually pass. Original720 literal native observations comprise522 action and198 namespace/duplicate/VM-lifetime controls at O0/O1/O2. No external/interprocess peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC/listeners/revocation/provider errors/native leases or blocking-wait lifecycle. Native Intel, physical iOS and the complete macOS/iOS environment remain unverified or incomplete."
       ],
       "tests": [
         {
@@ -17156,6 +17157,248 @@
           "target": "NeverDProcessPublicTests",
           "source": "unittests/emulation/ProcessPublicTests.cpp",
           "filter": "ProcessPublic.DarwinOrdinaryOwnershipPreserveStrictAuthorityAcrossCAndCLI",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "DarwinAdvisoryLockOptions.CompleteOrdinaryObjectsAndQueryClosure",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "DarwinAdvisoryLockOptions.ReferencesShareTheInputByteBudget",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.ReadonlyCarriersReentryAndWholeRecords/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.FailedUpgradeRetainsSharedLockAndDowngradeReplaces/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.ActionPrecedenceIgnoresUnrelatedBits/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.DescriptorAndVnodeActionPrecedeProvider/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.MissingAndEmptyProvidersStayDistinctEvenForUnlock/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.CredentialsAndModeDoNotInventAdditionalAuthorization/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.DupFcntlAndFinalCloseOwnOneLock/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.Dup2SameOwnerAndReplacingFinalTargetReleaseCorrectly/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.FailedDupAndReusedDescriptorPreserveOtherOwners/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.IndependentDescriptionsAndObjectsKeepSeparateLocks/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.HardlinksRenameAndHeldZeroNameUnlinkKeepObjectGrant/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.CreatedAndReusedNamesCannotBorrowInitialGrant/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.MappingAndRetainedContentsDoNotKeepClosedDescriptionLock/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.XattrInvalidationDoesNotEraseGrantOrRestoreMetadata/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.ModeOwnershipAndLocksKeepIndependentPolicies/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.DataAndCursorChangesDoNotEraseLocks/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.BlockingConflictRefusesBeforeDroppingOldLock/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinAdvisoryLockTests.cpp",
+          "filter": "*/DarwinAdvisoryLockTest.QueryClosurePrecedesDescriptorAndAction/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.DarwinOrdinaryAdvisoryLocksPreserveProviderAcrossCAndCLI",
           "platforms": [
             "darwin",
             "linux",
