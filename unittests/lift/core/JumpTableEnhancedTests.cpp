@@ -10721,6 +10721,117 @@ TEST_F(JTE_ARM32,
   EXPECT_NE(Independent.find("i32 1, label"), std::string::npos) << Independent;
 }
 
+static fs::path relocationFreeLiteralARMObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_arm_relocation_free_literal.o";
+}
+
+/// The relocation-free literal certificates CFGBuilder publishes for \p Name.
+static std::vector<neverd::RelocatedInstructionAddressOccurrence>
+relocationFreeLiterals(const neverd::BinaryImage &Image, const char *Name,
+                       neverd::LowFunc *LowOut = nullptr) {
+  std::vector<neverd::RelocatedInstructionAddressOccurrence> Found;
+  const neverd::Symbol *Function = Image.findSymbol(Name);
+  EXPECT_NE(Function, nullptr) << Name;
+  if (!Function)
+    return Found;
+  neverd::Decoder Decoder;
+  EXPECT_TRUE(Decoder.init(neverd::Arch::ARM));
+  neverd::CFGBuilder Builder;
+  neverd::LowFunc Low = Builder.build(Image, Decoder, Function->Addr, Name);
+  for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences)
+    if (Occurrence.Authority ==
+        neverd::RelocatedInstructionAddressProofKind::ARMRelocationFreeLiteral)
+      Found.push_back(Occurrence);
+  if (LowOut)
+    *LowOut = std::move(Low);
+  return Found;
+}
+
+// The assembler resolves a literal naming a function in its own section, so
+// the object carries no relocation for it.  PC + literal is still that
+// function's address, and MedIR receives it as one.
+TEST_F(JTE_ARM32, UnrelocatedLiteralAddsToTheFunctionItNames) {
+  auto ImageOrErr = neverd::loadBinary(relocationFreeLiteralARMObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+  ASSERT_TRUE(Image.ObjectRelocationWriteBytes);
+  const neverd::Symbol *Function = Image.findSymbol("arm_local_fp");
+  const neverd::Symbol *Target = Image.findSymbol("arm_local_target");
+  ASSERT_NE(Function, nullptr);
+  ASSERT_NE(Target, nullptr);
+
+  neverd::LowFunc Low;
+  const auto Found = relocationFreeLiterals(Image, "arm_local_fp", &Low);
+  ASSERT_EQ(Found.size(), 1u);
+  const neverd::RelocatedInstructionAddressOccurrence &Literal = Found.front();
+  EXPECT_FALSE(Literal.OutputMayDepend);
+  EXPECT_EQ(Literal.TargetVA, Target->Addr);
+  EXPECT_EQ(Literal.FieldVA, neverd::InvalidVA);
+  EXPECT_EQ(Literal.LiteralVA, Function->Addr + 12);
+  EXPECT_EQ(Literal.Provenance, neverd::ConstantAddressProvenance::CodeAddress);
+  EXPECT_EQ(Literal.OutputOpcode, neverd::NdOp::INT_ADD);
+
+  neverd::LowToMedConverter Converter;
+  Converter.setBinaryImage(&Image);
+  const neverd::MedFunc Med =
+      Converter.convert(Low, neverd::Arch::ARM, neverd::BinaryFormat::ELF);
+  const neverd::MedOp *Bound = nullptr;
+  for (const auto &Block : Med.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Addr == Literal.InstructionAddr && Op.OriginSeq == Literal.OpSeq)
+        Bound = &Op;
+  ASSERT_NE(Bound, nullptr);
+  ASSERT_EQ(Bound->Opcode, neverd::NdOp::COPY);
+  ASSERT_EQ(Bound->NumInputs, 1);
+  EXPECT_TRUE(Bound->Inputs[0].isConst());
+  EXPECT_EQ(Bound->Inputs[0].ConstVal, Target->Addr);
+  EXPECT_EQ(Bound->Inputs[0].Provenance,
+            neverd::ConstantAddressProvenance::CodeAddress);
+  EXPECT_EQ(Bound->Inputs[0].AddressOwnerVA, Literal.TargetOwnerVA);
+}
+
+// A relocation-free literal is an address only when it reaches the PC ADD on
+// every path, lands inside the ADD's section, and the object's complete
+// relocation footprint shows no relocation writes it.
+TEST_F(JTE_ARM32, UnrelocatedLiteralNeedsEveryPartOfItsProof) {
+  auto ImageOrErr = neverd::loadBinary(relocationFreeLiteralARMObj());
+  ASSERT_TRUE(static_cast<bool>(ImageOrErr))
+      << llvm::toString(ImageOrErr.takeError());
+  neverd::BinaryImage &Image = *ImageOrErr;
+
+  const auto Bypass = relocationFreeLiterals(Image, "arm_local_fp_bypass");
+  ASSERT_EQ(Bypass.size(), 1u);
+  EXPECT_TRUE(Bypass.front().OutputMayDepend);
+  EXPECT_TRUE(relocationFreeLiterals(Image, "arm_local_plain_literal").empty());
+  EXPECT_TRUE(relocationFreeLiterals(Image, "arm_local_outside").empty());
+
+  Image.ObjectRelocationWriteBytes.reset();
+  EXPECT_TRUE(relocationFreeLiterals(Image, "arm_local_fp").empty());
+}
+
+TEST_F(JTE_ARM32, UnrelocatedLiteralPrintsAsTheFunction) {
+  auto R = decompileToHighC(relocationFreeLiteralARMObj());
+  ASSERT_EQ(R.exitCode, 0) << "Decompile failed: " << R.err;
+  std::ifstream IFS(tmpFile("decompiled_high.c"));
+  ASSERT_TRUE(IFS) << "C output file not created";
+  std::ostringstream SS;
+  SS << IFS.rdbuf();
+  const std::string C = SS.str();
+  auto Body = [&](const char *Name) {
+    const size_t Start = C.find(std::string(" ") + Name + "(");
+    if (Start == std::string::npos)
+      return std::string();
+    return C.substr(Start, C.find("\n}", Start) - Start);
+  };
+  const std::string Named = Body("arm_local_fp");
+  ASSERT_FALSE(Named.empty()) << C;
+  EXPECT_NE(Named.find("arm_local_target"), std::string::npos) << Named;
+  const std::string Outside = Body("arm_local_outside");
+  ASSERT_FALSE(Outside.empty()) << C;
+  EXPECT_EQ(Outside.find("arm_local_target"), std::string::npos) << Outside;
+}
+
 static fs::path worldClassARMObj() {
   return fs::path(TEST_OBJ_DIR) / "test_jumptable_worldclass_arm.o";
 }

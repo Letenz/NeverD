@@ -2388,6 +2388,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_frame_pointer_void_arm.s
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
+  arm32/test_arm_relocation_free_literal.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
   arm32/test_arith_arm.c
