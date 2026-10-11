@@ -1435,6 +1435,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDOwnInteriorCallTests` 涵蓋 x86 與 x86-64 函式直接 call 自身 unwind 範圍內標籤的情況，分別在 Microsoft x64 `.pdata` 條目、System V x86-64 DWARF FDE 與 i386 DWARF FDE 下測試。只為壓入返回位址而做的 call 會提升為壓堆疊加跳轉，x86-64 直線與迴圈兩種情形產生的 C 在 `-O0` 與 `-O2` 下以 AddressSanitizer 與未定義行為陷阱執行。返回時恰好彈出該 call 自身返回位址的目標仍是一般呼叫；切換堆疊之後的返回或低於入口堆疊指標的返回會被拒絕。從 i386 註冊鏈還原的範圍不能界定函式本體，因此其中的 call 仍是 call。
 
+將目標判定為一般子程序前，返回位址槽檢查會拒絕重疊寫入、未知寫入、原子寫入及效果未證明的被呼叫函式寫入。PE、ELF 和 Mach-O 案例涵蓋返回位址的部分寬度破壞及 i386 擴寬記憶體位址。私有堆疊寫入、捨棄的返回位址和終止分支仍可通過驗證。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 與 `QDomNode::isDocument` 的形態檢查 x86-64 System V 呼叫約定。摘要顯示會讀取某個引數暫存器的直接被呼叫者會收到呼叫者的值，包括原樣傳遞的傳入 `this`；虛擬呼叫會取得支配區塊載入 `RDI` 的物件；在某條路徑上不寫 `RAX` 就返回、在其他路徑上只傳遞被呼叫者結果的方法為 void；在比較鏈之前寫入 `AL` 的位元組在每條路徑上都是返回值。產生的程式在 `-O0` 與 `-O2` 下搭配 AddressSanitizer 與未定義行為陷阱執行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 檢查 CoreImage 提供方、CIImage 工廠、完整 48 位元組邏輯記錄與 x2 指標，拒絕缺失或錯誤的提供方、x86_64 及衝突宣告。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 區分原始呼叫與沿用相同機器位址的結果賦值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒絕 24 類憑據、參數、儲存、框架、中繼資料、匯入、重複呼叫與儲存 IR 的修改，包括同時一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 執行未修改的產生 C，對照獨立從編譯器觀察到的 x2 指標接收函式，檢查六個浮點位元模式、選擇器與接收者身分、單次求值、傳回物件、合法副本寫入、輸入不變性與邊界保護。其他主機略過此實體 ABI 執行測試。

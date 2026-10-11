@@ -1397,6 +1397,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 
 `NeverDOwnInteriorCallTests` 覆盖 x86 和 x86-64 函数直接 call 自身 unwind 范围内标签的情况，分别在 Microsoft x64 `.pdata` 条目、System V x86-64 DWARF FDE 和 i386 DWARF FDE 下测试。只为压入返回地址而做的 call 被提升为压栈加跳转，x86-64 直线和循环两种情形生成的 C 在 `-O0` 和 `-O2` 下以 AddressSanitizer 和未定义行为陷阱运行。返回时恰好弹出该 call 自身返回地址的目标仍是普通调用；切换栈之后的返回或低于入口栈指针的返回会被拒绝。从 i386 注册链恢复的范围不能界定函数体，因此其中的 call 仍是 call。
 
+将目标判定为普通子程序前，返回地址槽检查会拒绝重叠写入、未知写入、原子写入及效果未证明的被调函数写入。PE、ELF 和 Mach-O 用例覆盖返回地址的部分宽度破坏及 i386 扩宽内存地址。私有栈写入、丢弃的返回地址和终止分支仍可通过验证。
+
 `NeverDSysVCallContractTests` 以 QtXml 中 `QDomNode::save` 和 `QDomNode::isDocument` 的形态检查 x86-64 System V 调用约定。摘要显示会读取某个参数寄存器的直接被调用者会收到调用者的值，包括原样传递的传入 `this`；虚调用会取得支配块载入 `RDI` 的对象；在某条路径上不写 `RAX` 就返回、在其他路径上只传递被调用者结果的方法为 void；在比较链之前写入 `AL` 的字节在每条路径上都是返回值。生成的程序在 `-O0` 和 `-O2` 下带 AddressSanitizer 与未定义行为陷阱运行。
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` 检查 CoreImage 提供方、CIImage 工厂、完整 48 字节逻辑记录及 x2 指针，拒绝缺失或错误的提供方、x86_64 和冲突声明。`ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` 区分原始调用与沿用同一机器地址的结果赋值。`RejectsChangedCopyCallBodyAndCurrentImage` 拒绝 24 类凭据、参数、存储、帧、元数据、导入、重复调用及保存 IR 的修改，包括同时一致地修改 MedIR 和 HighIR。`GeneratedCExecutesAgainstIndependentPhysicalCopyABI` 在 ARM64 上以 O0/O2 执行未经修改的生成 C，对照独立从编译器观察到的 x2 指针接收函数，检查六个浮点位模式、选择器与接收者身份、单次求值、返回对象、合法副本写入、输入不变性和边界保护。其他主机跳过此物理 ABI 执行测试。
