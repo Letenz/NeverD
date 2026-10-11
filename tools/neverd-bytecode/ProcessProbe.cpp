@@ -1,5 +1,7 @@
 //===- ProcessProbe.cpp - Direct bounded process SDK driver --------------===//
 // NeverD Decompiler
+/// \file
+/// Run the process SDK with an explicit profile and preserve its typed stop.
 #include "neverd/emulation/ProcessReport.h"
 #include "neverd/emulation/ProcessSession.h"
 

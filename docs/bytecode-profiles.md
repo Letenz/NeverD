@@ -476,3 +476,17 @@ See [Android native emulation](android-native-emulation.md) for explicit guest
 memory, library scopes and supported services. A shared object compiled from
 emitted bytecode C still needs an input-ABI adapter for its external gateways.
 Running it does not establish equivalence to an unavailable original runtime.
+
+For a fully specified memory gateway, `memory_copy`, `memory_fill`, and
+`memory_havoc` continuations describe exactly one bounded writable range.
+`destination_register` and `size_register` select its pointer and byte count;
+copy/fill also require `source_register` (a source pointer or the fill byte).
+Copy snapshots source bytes before writing, so this model has memmove semantics;
+use `require_disjoint: true` for memcpy to require known non-overlapping
+ranges before continuing. Counts must be concrete and at most 4096 bytes;
+unresolved ranges stop. The shared
+`SymExec` call-effect interface applies writes and conservative alias handling.
+The state bank is preserved except for the declared result and register writes.
+`return_destination: true` selects the destination as the result; otherwise it
+remains symbolic. These are explicit complete call contracts, not automatic
+recognition of external implementations or proof of pointer validity.

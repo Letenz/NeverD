@@ -191,6 +191,58 @@ class Observation(unittest.TestCase):
         self.assertEqual(call['arguments'][0]['value']['rendering_omitted'],
                          'expression budget')
 
+    def test_memory_contracts_use_exact_ranges(self):
+        def load(value, register):
+            return operation('COPY', [operand('const', value)], operand('reg', register))
+        self.language['encodings'] += [
+            {'size': 1, 'match': [{'offset': 0, 'value': 11}], 'operations': [
+                load(0x4000, 0), load(0x3000, 8), load(6, 16), load(0, 24),
+                operation('CALL', [operand('const', 0x10001)])]},
+            {'size': 1, 'match': [{'offset': 0, 'value': 12}], 'operations': [
+                operation('CALL', [operand('const', 0x10000)])]}]
+        self.code = bytes([11, 12, 5])
+        self.functions = [{'entry': 0, 'end': 3, 'name': 'memory_calls'}]
+        spec = {'target': 0x10001, 'continuation': 'memory_copy',
+                'destination_register': 0, 'source_register': 8, 'size_register': 16,
+                'result_offset_register': 24, 'return_destination': True}
+        self.inputs['calls'].append(spec)
+        calls = self.run_engine()['functions'][0]['calls']
+        self.assertEqual(calls[1]['arguments'][0]['string'], 'right')
+        ops = self.language['encodings'][-2]['operations']
+        for destination, count in ((0x4000, 4097), (0xffffffffffffffff, 6)):
+            ops[0] = load(destination, 0)
+            ops[2] = load(count, 16)
+            stopped = self.run_engine()['functions'][0]
+            self.assertEqual(stopped['stops'][0]['reason'], 'unresolved_memory_effect')
+        ops[2] = load(6, 16)
+        ops[0] = load(0x3001, 0)
+        calls = self.run_engine()['functions'][0]['calls']
+        self.assertEqual(calls[1]['arguments'][0]['string'], 'right')
+        spec['require_disjoint'] = True
+        stopped = self.run_engine()['functions'][0]
+        self.assertEqual(stopped['stops'][0]['reason'], 'unresolved_memory_effect')
+        del spec['require_disjoint']
+        ops[0] = load(0x4000, 0)
+        # Fill four bytes only: the adjacent 't' and terminator must survive.
+        data = self.root / 'destination'
+        data.write_bytes(b'right\0')
+        self.inputs['memory'].append({'address': 0x4000, 'path': str(data)})
+        ops = self.language['encodings'][-2]['operations']
+        ops[1] = load(ord('A'), 8)
+        ops[2] = load(4, 16)
+        spec['continuation'] = 'memory_fill'
+        calls = self.run_engine()['functions'][0]['calls']
+        self.assertEqual(calls[1]['arguments'][0]['string'], 'AAAAt')
+        spec['continuation'] = 'memory_havoc'
+        calls = self.run_engine()['functions'][0]['calls']
+        self.assertNotIn('string', calls[1]['arguments'][0])
+        self.assertEqual(calls[1]['arguments'][0]['initial_string_reference'], 'right')
+        spec['return_destination'] = 'true'
+        self.run_engine(success=False)
+        del spec['return_destination']
+        del spec['size_register']
+        self.run_engine(success=False)
+
 
 if __name__ == '__main__':
     unittest.main()

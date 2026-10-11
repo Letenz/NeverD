@@ -6,6 +6,8 @@
 // shared BytecodeDecoder, SymExec and bitvector solver own all instruction,
 // memory, arithmetic and feasibility semantics. No dialect is built in.
 //===----------------------------------------------------------------------===//
+/// \file
+/// Traverse bytecode with shared symbolic semantics and emit bounded evidence.
 
 #include "neverd/analysis/BytecodeDecoder.h"
 #include "neverd/solver/BitVectorSolver.h"
@@ -83,11 +85,21 @@ void validateCall(const J::Object &O, unsigned Depth = 0) {
       throw std::runtime_error(std::string("expected object: ") + K);
   if (O.get("continuation")) {
     auto K = textField(O, "continuation");
-    if (K != "stop" && K != "havoc" && K != "register_effects")
+    if (K != "stop" && K != "havoc" && K != "register_effects" &&
+        K != "memory_copy" && K != "memory_fill" && K != "memory_havoc")
       throw std::runtime_error("unsupported call continuation");
     if (K == "register_effects" && O.getString("memory_effect") != "none")
       throw std::runtime_error(
           "register_effects requires explicit memory_effect=none");
+    if (K == "memory_copy" || K == "memory_fill" || K == "memory_havoc") {
+      field(O, "destination_register");
+      field(O, "size_register");
+      if (K != "memory_havoc")
+        field(O, "source_register");
+      for (auto Flag : {"require_disjoint", "return_destination"})
+        if (O.get(Flag) && !O.getBoolean(Flag))
+          throw std::runtime_error(std::string("expected boolean: ") + Flag);
+    }
   }
   if (auto *Cases = O.getObject("selector_cases"))
     for (const auto &[Key, Case] : *Cases) {
@@ -331,6 +343,10 @@ class Observer {
     if (Spec.getString("memory_effect") != "none")
       throw std::runtime_error(
           "register_effects requires explicit memory_effect=none");
+    applyResult(P, Spec);
+    applyRegisterWrites(P, Spec);
+  }
+  void applyResult(Path &P, const J::Object &Spec, SymRef Override = {}) {
     auto &C = P.State.context();
     if (auto *R = Spec.get("result_offset_register")) {
       auto Offset = value(C, readRegister(P, number(*R)));
@@ -345,11 +361,13 @@ class Observer {
         throw std::runtime_error("unknown contract result offset");
       checkRange(*Offset, Bytes);
       auto *Concrete = Spec.get("result_value");
-      P.State.write(SymSpace::Register, *Offset,
-                    Concrete ? C.mkConst(Bytes * 8, number(*Concrete))
-                             : C.mkFreshVar(Bytes * 8, "external_result"));
+      auto Result =
+          Override.isValid()
+              ? C.mkZExtOrTrunc(Override, Bytes * 8)
+              : (Concrete ? C.mkConst(Bytes * 8, number(*Concrete))
+                          : C.mkFreshVar(Bytes * 8, "external_result"));
+      P.State.write(SymSpace::Register, *Offset, Result);
     }
-    applyRegisterWrites(P, Spec);
   }
   void applyRegisterWrites(Path &P, const J::Object &Spec) {
     auto &C = P.State.context();
@@ -361,6 +379,58 @@ class Observer {
         P.State.write(SymSpace::Register, Offset,
                       C.mkConst(Bytes * 8, field(W, "value")));
       }
+  }
+  bool applyMemoryEffect(Path &P, const J::Object &Spec, const LowOp &Op) {
+    auto &C = P.State.context();
+    auto Count = value(C, readRegister(P, field(Spec, "size_register")));
+    if (!Count || *Count > 4096)
+      return false;
+    auto Destination = readRegister(P, field(Spec, "destination_register"));
+    auto Kind = Spec.getString("continuation");
+    auto Source = Kind == "memory_havoc"
+                      ? SymRef{}
+                      : readRegister(P, field(Spec, "source_register"));
+    for (auto Address :
+         {Destination, Kind == "memory_copy" ? Source : SymRef{}})
+      if (Address.isValid())
+        if (auto N = value(C, Address);
+            N && *Count && *N > UINT64_MAX - (*Count - 1))
+          return false;
+    if (*Count && Kind == "memory_copy" &&
+        Spec.getBoolean("require_disjoint").value_or(false)) {
+      auto D = value(C, Destination), S = value(C, Source);
+      if (!D || !S || (*D <= *S ? *S - *D < *Count : *D - *S < *Count))
+        return false;
+    }
+    SymCallEffect Effect;
+    Effect.Memory = SymCallMemoryEffect::Preserve;
+    for (uint64_t I = 0; I < *Count; ++I) {
+      auto Offset = C.mkConst(64, I);
+      auto Byte = Kind == "memory_copy"
+                      ? P.State.load(C.mkAdd(Source, Offset), 1)
+                  : Kind == "memory_fill" ? C.mkZExtOrTrunc(Source, 8)
+                                          : C.mkFreshVar(8, "external_byte");
+      Effect.Writes.push_back({C.mkAdd(Destination, Offset), Byte});
+    }
+    // The descriptor is a complete state-gateway contract. The shared engine
+    // applies its memory writes, overlap/alias rules and preservation policy.
+    SymExec Exec(C, P.State);
+    std::vector<SymRegisterRange> Preserve;
+    for (uint64_t I = 0; I < Decoder->profile().RegisterBytes;) {
+      auto Size =
+          std::min<uint64_t>(UINT16_MAX, Decoder->profile().RegisterBytes - I);
+      Preserve.push_back({I, uint16_t(Size)});
+      I += Size;
+    }
+    Exec.setCallPreservedRegisters(std::move(Preserve));
+    if (Exec.step(Op, &Effect) == StepResult::Unmodelled)
+      return false;
+    applyResult(P, Spec,
+                Spec.getBoolean("return_destination").value_or(false)
+                    ? Destination
+                    : SymRef{});
+    applyRegisterWrites(P, Spec);
+    return true;
   }
 
 public:
@@ -543,6 +613,19 @@ public:
                       "register_effects; memory_effect=none";
                   Events.push_back(std::move(Event));
                   applyRegisterEffects(P, *Spec);
+                  ++P.Opaque;
+                  continue;
+                }
+                if (Spec && Spec->getString("continuation")
+                                .value_or("")
+                                .starts_with("memory_")) {
+                  Event["continuation_contract"] =
+                      *Spec->getString("continuation");
+                  Events.push_back(std::move(Event));
+                  if (!applyMemoryEffect(P, *Spec, Op)) {
+                    Stop = "unresolved_memory_effect";
+                    break;
+                  }
                   ++P.Opaque;
                   continue;
                 }
