@@ -15,10 +15,20 @@ analysis and comparison output belong outside the repository.
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
 | The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Complete decoded callee chains and certified runtime-only continuations retain their frame evidence. This case still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
 | The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Runtime callback entries now retain separate invocation stacks across shared tails. Ordinary finally calls and nonlocal exits still need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. Neither a zero-pop summary nor an unconditional no-return annotation is valid. |
-| Two native out-of-line catch tests match an unused forward declaration as if it were an executed call | Audit declarations separately from emitted function bodies; the historical build reproduces both failures, while the catch body already resumes after the skipped call. |
 
 ## CRT and catch-continuation repairs
 
+- Direct PE32 EH4 publication follows bounded stack allocation, saved registers
+  and cookie initialization instead of requiring fixed byte positions. Both
+  pushed cookies and explicit disp8/disp32 stores retain their exact header
+  offsets. Unallocated, overlapping, saved-register and runtime-administration
+  bytes remain rejected; shared LowIR still proves values and lifetime.
+- `scripts/check_windows_nonlocal_finally.py` supplies independently authored
+  MSVC x86/x64 source/runtime baselines for conditional finally exits and
+  returns during normal flow and unwinding. O0/O2 and GS variants retain their
+  linker maps and exact images. Altered cleanup traces are negative controls.
+  These compact inputs reproduce mixed physical returns and parent-stack
+  restoration; successful original execution is not a reconstruction receipt.
 - Same-frame x64 local-unwind arguments use one all-predecessor LowIR proof,
   including stable loops, partial writes, released storage and independent
   roots. Both module ownership and SSA consumers retain exact call identities;
