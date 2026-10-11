@@ -517,6 +517,7 @@ std::vector<DarwinPublicCase> darwinPublicCases() {
           std::pair{"mach-self-ports", "4a"},
           std::pair{"owner-queries", "50"},
           std::pair{"ordinary-queries", "47"},
+          std::pair{"ordinary-queries-closed-groups", "474e"},
           std::pair{"ordinary-query-unknown", "21"},
           std::pair{"ordinary-query-open", "21"},
           std::pair{"ordinary-query-map", "21"},
@@ -584,8 +585,9 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
   const bool SelfPorts = ModeName.starts_with("mach-self-port");
   const bool UnknownSelfPort = ModeName.starts_with("mach-self-port-missing-");
   const bool OrdinaryQueries = ModeName.starts_with("ordinary-quer");
+  const bool ClosedOrdinary = ModeName == "ordinary-queries-closed-groups";
   const bool UnknownOrdinary =
-      OrdinaryQueries && ModeName != "ordinary-queries";
+      OrdinaryQueries && ModeName != "ordinary-queries" && !ClosedOrdinary;
   const bool Entropy = ModeName.starts_with("entropy-");
   const bool UnknownEntropy = Entropy && ModeName != "entropy-replay";
   const bool Incomplete =
@@ -1074,7 +1076,18 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
         llvm::json::parse(emulation::darwin_test::OrdinaryQueriesJSON));
     (*Input.getAsObject())[field::DarwinSystem] =
         llvm::cantFail(llvm::json::parse(
-            emulation::darwin_test::OrdinaryQueryCredentialsJSON));
+            ClosedOrdinary
+                ? emulation::darwin_test::ClosedGroupQueryCredentialsJSON
+                : emulation::darwin_test::OrdinaryQueryCredentialsJSON));
+    if (ClosedOrdinary) {
+      auto Extra = llvm::cantFail(llvm::json::parse(
+          emulation::darwin_test::ClosedGroupQueriesExtraJSON));
+      auto *Files = Input.getAsObject()->getObject(field::DarwinFiles);
+      for (const char *Key :
+           {field::Files, field::Directories, field::SymbolicLinks})
+        for (auto &Entry : *Extra.getAsObject()->getArray(Key))
+          Files->getArray(Key)->push_back(std::move(Entry));
+    }
     (*Input.getAsObject()->getArray(field::Arguments))[2] = "/unknown";
     Options = llvm::formatv("{0}", Input).str();
   }
@@ -1166,7 +1179,7 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       ASSERT_NE(Last->get(field::Result), nullptr);
       EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
     } else {
-      ASSERT_EQ(Events->size(), 146u);
+      ASSERT_EQ(Events->size(), ClosedOrdinary ? 173u : 146u);
       constexpr uint64_t Read[] = {0, 13, 13, 13, 0, 13, 13, 13};
       constexpr uint64_t None[] = {0, 13, 13, 13, 13, 13, 13, 13};
       constexpr uint64_t RW[] = {0, 13, 0, 13, 0, 13, 0, 13};
@@ -1201,11 +1214,80 @@ TEST_P(DarwinInputsPublic, InputsAndMachReturnsAgreeAcrossSDKAndCLI) {
       }
       EXPECT_EQ((*Events)[142].getAsObject()->getString(field::Number),
                 X64 ? "1234567802000021" : "1234567800000021");
+      if (ClosedOrdinary) {
+        for (unsigned I = 0; I != 2; ++I) {
+          const auto *E = (*Events)[146 + I].getAsObject();
+          EXPECT_EQ(E->getString(field::Number), X64 ? "20001d2" : "1d2");
+          EXPECT_EQ(E->getString(field::Result), "d");
+          EXPECT_EQ(E->getBoolean(field::Error), true);
+          const auto *Args = E->getArray(field::Arguments);
+          ASSERT_NE(Args, nullptr);
+          EXPECT_EQ((*Args)[2].getAsString(), I ? "6" : "2");
+          EXPECT_EQ((*Args)[3].getAsString(), "10");
+        }
+        constexpr uint64_t Search[] = {2, 0, 0, 0, 13, 13, 0, 0};
+        for (unsigned API = 0; API != 3; ++API)
+          for (unsigned I = 0; I != 8; ++I) {
+            const auto *E = (*Events)[148 + API * 8 + I].getAsObject();
+            EXPECT_EQ(E->getString(field::Number),
+                      llvm::utohexstr((API ? 466 : 33) | (X64 ? 0x2000000 : 0),
+                                      true));
+            EXPECT_EQ(E->getString(field::Result),
+                      llvm::utohexstr(Search[I], true));
+            EXPECT_EQ(E->getBoolean(field::Error), Search[I] != 0);
+          }
+        EXPECT_EQ((*Events)[172].getAsObject()->getString(field::Result), "1");
+      }
       auto Repeated = takeString(neverd_emulate_process_json(
           Session, Path.c_str(), Profile, Options.c_str()));
       auto Again = llvm::json::parse(Repeated);
       ASSERT_TRUE(bool(Again)) << llvm::toString(Again.takeError());
       EXPECT_EQ(*Again, *Report);
+      if (ClosedOrdinary) {
+        auto StringInput = llvm::cantFail(llvm::json::parse(Options));
+        auto *Credential = StringInput.getAsObject()
+                               ->getObject(field::DarwinSystem)
+                               ->getObject(field::SystemCredentials);
+        (*Credential)[field::CredentialGroupMembershipUID] = "4294967195";
+        const auto StringOptions = llvm::formatv("{0}", StringInput).str();
+        auto StringResult =
+            llvm::json::parse(takeString(neverd_emulate_process_json(
+                Session, Path.c_str(), Profile, StringOptions.c_str())));
+        ASSERT_TRUE(bool(StringResult))
+            << llvm::toString(StringResult.takeError());
+        EXPECT_EQ(*StringResult, *Report);
+        for (auto ID : {0u, uint32_t(INT32_MAX)})
+          for (bool String : {false, true}) {
+            auto Unknown = llvm::cantFail(llvm::json::parse(Options));
+            auto *C = Unknown.getAsObject()
+                          ->getObject(field::DarwinSystem)
+                          ->getObject(field::SystemCredentials);
+            (*C)[field::CredentialGroupMembershipUID] =
+                String ? llvm::json::Value(std::to_string(ID))
+                       : llvm::json::Value(ID);
+            (*Unknown.getAsObject()->getArray(field::Arguments))[1] =
+                "ordinary-query-unknown";
+            const auto Request = llvm::formatv("{0}", Unknown).str();
+            auto Stopped =
+                llvm::json::parse(takeString(neverd_emulate_process_json(
+                    Session, Path.c_str(), Profile, Request.c_str())));
+            ASSERT_TRUE(bool(Stopped)) << llvm::toString(Stopped.takeError());
+            EXPECT_EQ(Stopped->getAsObject()->getString(field::Stop),
+                      "unsupported_service");
+            EXPECT_EQ(Stopped->getAsObject()->getString(field::Stdout), "21");
+            EXPECT_EQ(Stopped->getAsObject()->getString(field::Diagnostic),
+                      "Darwin ordinary authorization requires known group "
+                      "membership");
+            const auto *Calls =
+                Stopped->getAsObject()->getArray(field::Services);
+            ASSERT_NE(Calls, nullptr);
+            ASSERT_EQ(Calls->size(), 2u);
+            EXPECT_EQ(Calls->back().getAsObject()->get(field::Error), nullptr);
+            EXPECT_EQ(*Calls->back().getAsObject()->get(field::Result),
+                      llvm::json::Value(nullptr));
+            EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+          }
+      }
     }
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
   }
@@ -1787,6 +1869,114 @@ TEST_F(ProcessPublic, DarwinOwnerQueriesRejectContradictionsBeforeLoading) {
                 field::DarwinFilesProfile);
       EXPECT_EQ(neverd_session_is_loaded(Session), 0);
     }
+  }
+}
+
+TEST_F(ProcessPublic,
+       DarwinMembershipUIDRejectsMalformedCredentialsBeforeLoading) {
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  auto RequestFor = [](const char *Key, const char *Wire) {
+    return std::string(
+               R"({"darwin_system":{"credentials":{"real_uid":501,"effective_uid":502,"real_gid":30,"effective_gid":20,"groups":[20,40],")") +
+           Key + R"(":)" + Wire + "}}}";
+  };
+  for (const char *Bad : {"null",
+                          "true",
+                          "false",
+                          "{}",
+                          "[]",
+                          "0.5",
+                          "-1",
+                          "2147483648",
+                          "4294967194",
+                          "4294967196",
+                          "4294967295",
+                          "4294967296",
+                          R"("-1")",
+                          R"("1.5")",
+                          R"("0x10")",
+                          R"("x")",
+                          R"("")",
+                          R"(" 0")",
+                          R"("0 ")",
+                          R"("2147483648")",
+                          R"("4294967194")",
+                          R"("4294967196")",
+                          R"("4294967295")",
+                          R"("4294967296")",
+                          R"("1\u0000")"}) {
+    SCOPED_TRACE(Bad);
+    const auto Request = RequestFor(field::CredentialGroupMembershipUID, Bad);
+    for (const char *Profile :
+         {MacOSMachO64, IOSMachO64, IOSSimulatorMachO64}) {
+      EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                            Request.c_str()),
+                nullptr);
+      const auto Error = takeString(neverd_last_error(Session));
+      EXPECT_TRUE(llvm::StringRef(Error).contains("credentials") ||
+                  llvm::StringRef(Error).contains("group membership UID"))
+          << Error;
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
+    if (llvm::StringRef(Bad) == "null" ||
+        llvm::StringRef(Bad) == "4294967194" ||
+        llvm::StringRef(Bad) == R"("4294967296")") {
+      EXPECT_EQ(
+          runCLIRequest("missing.macho", MacOSMachO64, Request, Output, true),
+          process_cli::Error);
+      auto Error = llvm::MemoryBuffer::getFile(Output);
+      ASSERT_TRUE(bool(Error)) << Error.getError().message();
+      EXPECT_TRUE((*Error)->getBuffer().contains("credentials") ||
+                  (*Error)->getBuffer().contains("group membership UID"));
+    }
+  }
+  // NONE is an independent membership sentinel, not an ordinary UID/GID.
+  for (const char *Key :
+       {field::CredentialRealUID, field::CredentialEffectiveUID,
+        field::CredentialRealGID, field::CredentialEffectiveGID,
+        field::CredentialGroups}) {
+    auto System = llvm::cantFail(llvm::json::parse(
+        emulation::darwin_test::ClosedGroupQueryCredentialsJSON));
+    auto *Credentials =
+        System.getAsObject()->getObject(field::SystemCredentials);
+    ASSERT_NE(Credentials, nullptr);
+    (*Credentials)[Key] =
+        llvm::StringRef(Key) == field::CredentialGroups
+            ? llvm::json::Value(llvm::json::Array{20, 4294967195LL})
+            : llvm::json::Value(4294967195LL);
+    llvm::json::Object RequestOptions;
+    RequestOptions[field::DarwinSystem] = std::move(System);
+    const auto Request = jsonText(std::move(RequestOptions));
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("Darwin credentials"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Key :
+       {"GroupMembershipUID", "group_membership_uid\\u0000"}) {
+    const auto Request = RequestFor(Key, "4294967195");
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho",
+                                          MacOSMachO64, Request.c_str()),
+              nullptr);
+    EXPECT_NE(takeString(neverd_last_error(Session)).find("credentials"),
+              std::string::npos);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+  for (const char *Profile : {LinuxELF64, WindowsPE64, AndroidNativeAArch64}) {
+    const auto Request =
+        RequestFor(field::CredentialGroupMembershipUID, "4294967195");
+    EXPECT_EQ(neverd_emulate_process_json(Session, "missing.macho", Profile,
+                                          Request.c_str()),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_last_error(Session)),
+              field::DarwinSystemProfile);
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
   }
 }
 

@@ -117,6 +117,21 @@ inline DarwinFileOptions ordinaryQueryOptions() {
   O.SymbolicLinks["/via"] = {'d', 'i', 'r', 'e', 'c', 't', 'o', 'r', 'y'};
   return O;
 }
+inline DarwinFileOptions closedGroupQueryOptions() {
+  auto O = ordinaryQueryOptions();
+  O.Directories.insert("/external");
+  O.Directories.insert("/blocked");
+  O.Files["/external/leaf"] = {};
+  O.Metadata["/external"] = ownerQueryMetadata(040001, 9, 0);
+  O.Metadata["/blocked"] = ownerQueryMetadata(040010, 10, 0);
+  O.Metadata["/external/leaf"] = ownerQueryMetadata(0100644, 11, 0);
+  for (const char *Path : {"/external", "/blocked", "/external/leaf"}) {
+    O.Metadata[Path].UID = 700;
+    O.Metadata[Path].GID = 50;
+  }
+  O.SymbolicLinks["/external-via"] = {'e', 'x', 't', 'e', 'r', 'n', 'a', 'l'};
+  return O;
+}
 inline constexpr char OrdinaryQueriesJSON[] = R"({
   "authorization": "static-ordinary-queries",
   "files": [
@@ -400,6 +415,119 @@ inline constexpr char OrdinaryQueriesJSON[] = R"({
 inline constexpr char OrdinaryQueryCredentialsJSON[] = R"({"credentials":{
   "real_uid":501,"effective_uid":502,"real_gid":30,"effective_gid":20,
   "groups":[20,40]}})";
+
+inline constexpr char ClosedGroupQueriesExtraJSON[] = R"({
+  "files": [
+    {
+      "path": "/external/leaf",
+      "bytes_hex": "",
+      "metadata": {
+        "device": 7,
+        "inode": 11,
+        "mode": 33188,
+        "link_count": 1,
+        "uid": 700,
+        "gid": 50,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      }
+    }
+  ],
+  "directories": [
+    {
+      "path": "/external",
+      "metadata": {
+        "device": 7,
+        "inode": 9,
+        "mode": 16385,
+        "link_count": 2,
+        "uid": 700,
+        "gid": 50,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      }
+    },
+    {
+      "path": "/blocked",
+      "metadata": {
+        "device": 7,
+        "inode": 10,
+        "mode": 16392,
+        "link_count": 2,
+        "uid": 700,
+        "gid": 50,
+        "size": 0,
+        "block_size": 4096,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 0,
+        "access_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "modification_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "change_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        },
+        "birth_time": {
+          "seconds": 0,
+          "nanoseconds": 0
+        }
+      }
+    }
+  ],
+  "symbolic_links": [
+    {
+      "path": "/external-via",
+      "target_hex": "65787465726e616c"
+    }
+  ]
+})";
+inline constexpr char ClosedGroupQueryCredentialsJSON[] = R"({"credentials":{
+  "real_uid":501,"effective_uid":502,"real_gid":30,"effective_gid":20,
+  "groups":[20,40],"group_membership_uid":4294967195}})";
 
 inline constexpr char KernelPathConfHex[] =
     "0100000000000000010000000000000001000000000000000000000000000000"

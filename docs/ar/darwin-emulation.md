@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
+<!-- i18n-source: 96008a1080031d252edd0ac02e0a87379caeb30be04154b57c7c6d33eae3d8e4 -->
 
 [← فهرس الوثائق](README.md)
 
@@ -630,7 +630,7 @@ macOS ARM64 Release المسجل/الناجح/المتجاوز دون تنفيذ
 
 ## هويات صريحة ومجموعات وملكية إنشاء متسقة
 
-Credentials الاختيارية تحتوي RealUID/EffectiveUID/RealGID/EffectiveGID وGroupAccessList اختيارية مستقلة. الغياب يبقي الاستعلامات الأربعة1000؛ الصفر/root الصريح صالح وID0..INT32_MAX. المجموعات1..16 وأولهاEffectiveGID، الترتيب والتكرار محفوظان؛ الغياب مجهول ولا يُستنتجhost/EGID. darwin_system.credentials يتطلب بالضبط real_uid/effective_uid/real_gid/effective_gid وgroups اختيارية. أعداد دون فقد والتحقق المركزي يرفضان الشكل/الحقول/المدى/العدد/عدم اتساق الأول قبل التحميل؛ غيرDarwin مرفوض.
+Credentials الاختيارية تحتوي RealUID/EffectiveUID/RealGID/EffectiveGID وGroupAccessList وGroupMembershipUID اختياريتين مستقلتين. الغياب يبقي الاستعلامات الأربعة1000؛ الصفر/root الصريح صالح ومدى المعرّفات الأربعة وعناصر المجموعة0..INT32_MAX؛ مجال GroupMembershipUID مستقل أدناه. المجموعات1..16 وأولهاEffectiveGID، الترتيب والتكرار محفوظان؛ الغياب مجهول ولا يُستنتجhost/EGID. darwin_system.credentials يتطلب بالضبط real_uid/effective_uid/real_gid/effective_gid وgroups وgroup_membership_uid اختياريتين مستقلتين. أعداد دون فقد والتحقق المركزي يرفضان الشكل/الحقول/المدى/العدد/عدم اتساق الأول قبل التحميل؛ غيرDarwin مرفوض.
 
 getuid24/geteuid25/getgid47/getegid43/getgroups79 تشترك بمالكsystem واحد. الملف العادي الجديد يستخدمUID الفعال وdevice/GID الأب المباشر؛ rename/FD المحفوظة/إعادة الاسم تحفظ الكائن وstat المدخل ثابت. Root لا يمنح كتابة/تعديل دليل/ACL؛ setuid/setgid/setgroups وprocess/session غير منفذة.
 
@@ -1096,7 +1096,7 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
@@ -1108,7 +1108,7 @@ native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 
 يستخدم المالك جميع البتات المطلوبة من فئته. لغير المالك تُقارن نتائج المجموعة والآخرين للقناع الكامل؛ النتائج المتساوية تحدد السماح أو EACCES13 دون استعلام عضوية، وقد ترفض مجموعتان مختلفتان من البتات الطلب نفسه. خلاف ذلك يستخدم العضو المعروف حقوق المجموعة وغير العضو المثبت حقوق الآخرين؛ توقف العضوية المجهولة UnsupportedService قبل البحث أو الآثار، ولا تُجمع الفئات.
 
-credentials.groups قائمة مرتبة داخل بيانات اعتماد النواة، تبدأ بـEffectiveGID وتحفظ التكرارات؛ ليست قائمة محلل SDK getgroups الموسعة. المجموعة الأساسية المحددة والعضوية الإيجابية الصريحة معلومتان، لكن الغياب أو حذف القائمة لا يثبت عادة عدم العضوية. إذا اتفق زوجا UID/GID يبقى السياق الحقيقي الأصلي. وإلا يُستبدل الموضع0 بـRealGID ويحل EffectiveGID القديم محل أول RealGID إضافي مطابق. دون تطابق تُزاح المجموعة الأساسية القديمة ويُعطل memberd؛ هذا التحول المثبت مع قائمة كاملة صريحة فقط يجعل الغياب نفيًا معلومًا. اختلاف UID مع تساوي GID يسبب التحول أيضًا، وقد يبقي تكرار المجموعة الأساسية العضوية الخارجية مجهولة. يستخدم AT_EACCESS السياق الفعال الأصلي وتبقى المدخلات ثابتة.
+credentials.groups قائمة مرتبة داخل بيانات اعتماد النواة، تبدأ بـEffectiveGID وتحفظ التكرارات؛ ليست قائمة محلل SDK getgroups الموسعة. المجموعة الأساسية المحددة والعضوية الإيجابية الصريحة معلومتان، لكن الغياب أو حذف القائمة لا يثبت عادة عدم العضوية. إذا اتفق زوجا UID/GID يبقى السياق الحقيقي الأصلي. وإلا يُستبدل الموضع0 بـRealGID ويحل EffectiveGID القديم محل أول RealGID إضافي مطابق. دون تطابق تُزاح المجموعة الأساسية القديمة ويُعطل memberd؛ هذا التحول المثبت أو KAUTH_UID_NONE الأصلي الصريح، مع قائمة كاملة صريحة، يجعل الغياب نفيًا معلومًا. اختلاف UID مع تساوي GID يسبب التحول أيضًا، وقد يبقي تكرار المجموعة الأساسية العضوية الخارجية مجهولة. يستخدم AT_EACCESS السياق الفعال الأصلي وتبقى المدخلات ثابتة.
 
 يرفض المثال الاستعلام الحقيقي بعد إزاحة GID20 ويسمح لـAT_EACCESS عبر المجموعة الأساسية الفعالة20 المعروفة. يُحدد SEARCH باتفاق نتائج المجموعة والآخرين؛ لا يصرح بـUID0 محدد أو فتح الملف.
 
@@ -1123,13 +1123,42 @@ DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-q
 owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
-missing membership usually unknown / explicit displaced real list proves negatives
+missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
 all40 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
+
+## سياق عضوية المجموعة الأصلي الصريح
+
+يعلن `DarwinCredentials::GroupMembershipUID` / `darwin_system.credentials.group_membership_uid` الاختياري cr_gmuid الأصلي مستقلًا عن المعرّفات الأربعة وgroups. يقبل0..INT32_MAX أو KAUTH_UID_NONE=4294967195 بالضبط (0xffffff9b، UINT32_MAX ناقص100). يستخدم مفكك الأعداد الصحيحة الدقيقة والسلاسل العشرية دون فقد؛ تُرفض الأنواع الخاطئة والكسور والسوالب والقيم الأخرى خارج النطاق قبل التحميل. يبقى المؤشر غير صالح في UID/GID العادية وعناصر المجموعات. لا يثبت الحذف أو UID آخر مسموح عدم العضوية الخارجية ولا يُفعّل محللًا.
+
+تُعرف المجموعة الأساسية والعناصر الإيجابية أولًا. يثبت NONE الأصلي مع قائمة كاملة صريحة عدم عضوية العنصر الغائب؛ حذف القائمة يبقيها مجهولة. تحافظ النسخة الحقيقية على NONE الأصلي حتى عند أول تطابق إضافي يحتفظ بالمجموعة الأساسية القديمة؛ والإزاحة المثبتة تُعطل الحل الخارجي أيضًا. لا تتغير الاستعلامات العددية أو raw getgroups أو ملكية الإنشاء أو الأوضاع القديمة. يختار مالك الاستعلام العادي نفسه أذونات الآخرين ويفحص SEARCH قبل البحث عن الطفل؛ تبقى العمليات الأخرى مغلقة.
+
+المستدعي في المثال ليس عضوًا في GID50؛ يمكن للهويتين قراءة /data بينما يعطي استعلام إذن الكتابة EACCES13. حذف group_membership_uid يبقي النتائج المختلفة بين المجموعة والآخرين غير مدعومة.
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":32772,"link_count":1,"uid":700,"gid":50,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20,"groups":[20],"group_membership_uid":4294967195}}}
+```
+
+تثبت تنفيذات SDK المحلية O0/O1/O2 المؤشر وuid_t ذي أربعة بايت فقط، ولا تراقب cr_gmuid المضيف أو المحلل ولا تستبدل270 زوج raw/SDK فعليًا سابقًا. يفحص ordinary-queries-closed-groups عدد173 حدثًا، رفض غير العضو الفعال وSEARCH للأطفال المفقودين والنقطة والنقطتين والروابط عبر خمسة إعدادات برمجية وثلاثة ARM64 HVF إلزامية وC/CLI/Python. يبقى خارج58 مرجع native-common. الجذر وACL/MAC وحل المجموعات الكامل وتفويض vnode العام والاعتمادات الديناميكية والانتظار/الشبكات والساعات المتقدمة وMach IPC/الخيوط وdyld/TLS والأطر الكاملة غير مكتملة. Intel HVF وiOS المادي غير متحققين؛ المهل الأصلية ثابتة.
+
+```text
+GroupMembershipUID / group_membership_uid / original cr_gmuid
+0..INT32_MAX or KAUTH_UID_NONE=4294967195 / 0xffffff9b / not UINT32_MAX
+positive entries first / original NONE plus complete list proves negatives
+omitted list unknown / first-match real copy preserves original NONE
+ordinary-queries-closed-groups / 173 events / stdout GN
+OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
+SDK constant O0/O1/O2 only / prior actual nonowner pairs270 remain separate
+58 native-common references unchanged / Intel and physical iOS unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU KAUTH_UID_NONE](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/kauth.h), [XNU credential membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c).

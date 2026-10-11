@@ -2008,6 +2008,46 @@ TEST_P(DarwinSystemTest, GroupsPreserveDuplicatesAndOnlyCopyActualCount) {
   EXPECT_EQ(*Options->Credentials->GroupAccessList,
             (std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}));
 }
+TEST_P(DarwinSystemTest,
+       MembershipUIDKeepsScalarAndGroupObservationsIndependent) {
+  const std::optional<uint32_t> MembershipUIDs[] = {
+      std::nullopt, 0u, uint32_t(INT32_MAX), 4294967195u};
+  for (auto MembershipUID : MembershipUIDs) {
+    Options = darwin_test::credentialOptions();
+    Options->Credentials->GroupMembershipUID = MembershipUID;
+    Options->ProcessTainted = false;
+    ASSERT_FALSE(bool(validateSystemOptions(*Options)));
+    const ServiceKind Kinds[] = {ServiceKind::GetUID, ServiceKind::GetEUID,
+                                 ServiceKind::GetGID, ServiceKind::GetEGID};
+    const uint32_t IDs[] = {101, 202, 303, 404};
+    for (unsigned I = 0; I != 4; ++I) {
+      FailingSystemMemory Memory(*Space);
+      Memory.FailAccess = Memory.FailRead = Memory.FailWrite = 1;
+      auto Out = systemService(Memory, Page, Kinds[I],
+                               {0, 0, {UINT64_MAX, UINT64_MAX}, std::nullopt},
+                               Options, Result);
+      ASSERT_TRUE(bool(Out)) << llvm::toString(Out.takeError());
+      ASSERT_TRUE(*Out);
+      EXPECT_EQ((**Out).Value, IDs[I]);
+      EXPECT_FALSE((**Out).Error);
+      EXPECT_EQ(Memory.Accesses, 0u);
+      EXPECT_EQ(Memory.Reads, 0u);
+      EXPECT_EQ(Memory.Writes, 0u);
+    }
+    fill();
+    auto Out = invoke(ServiceKind::GetGroups, {16, Output + 1});
+    ASSERT_TRUE(Out);
+    EXPECT_EQ(Out->Value, 5u);
+    EXPECT_FALSE(Out->Error);
+    std::string Expected(Page * 2, '\xa5');
+    Expected.replace(Output + 1 - Base, 20,
+                     llvm::fromHex("9401000000000000ffffff7f0700000007000000"));
+    EXPECT_EQ(bytes(Base, Page * 2), Expected);
+    EXPECT_EQ(Options->Credentials->GroupMembershipUID, MembershipUID);
+    EXPECT_EQ(*Options->Credentials->GroupAccessList,
+              (std::vector<uint32_t>{404, 0, INT32_MAX, 7, 7}));
+  }
+}
 TEST_P(DarwinSystemTest, GroupsMaximumAndExplicitRootAreNotDefaulted) {
   for (bool Maximum : {false, true}) {
     Options = DarwinSystemOptions{};
@@ -2233,6 +2273,33 @@ TEST(DarwinSystemOptions, CredentialsRequireBoundedCoherentGroups) {
   EXPECT_FALSE(bool(validateSystemOptions(O)));
   O.Credentials.reset();
   EXPECT_FALSE(bool(validateSystemOptions(O)));
+}
+TEST(DarwinSystemOptions, MembershipUIDAdmitsOnlyBoundedIDsOrExactNone) {
+  auto O = darwin_test::credentialOptions();
+  for (auto ID : {0u, uint32_t(INT32_MAX), 4294967195u}) {
+    O.Credentials->GroupMembershipUID = ID;
+    EXPECT_FALSE(bool(validateSystemOptions(O)));
+    auto NoGroups = O;
+    NoGroups.Credentials->GroupAccessList.reset();
+    EXPECT_FALSE(bool(validateSystemOptions(NoGroups)));
+  }
+  for (auto ID : {0x80000000u, 4294967194u, 4294967196u, UINT32_MAX}) {
+    O.Credentials->GroupMembershipUID = ID;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+              diagnostic::GroupMembershipUIDOption);
+  }
+  O.Credentials->GroupMembershipUID = 4294967195u;
+  for (auto Member :
+       {&DarwinCredentials::RealUID, &DarwinCredentials::EffectiveUID,
+        &DarwinCredentials::RealGID, &DarwinCredentials::EffectiveGID}) {
+    auto Bad = O;
+    (*Bad.Credentials).*Member = 4294967195u;
+    EXPECT_EQ(llvm::toString(validateSystemOptions(Bad)),
+              diagnostic::CredentialOption);
+  }
+  O.Credentials->GroupAccessList->push_back(4294967195u);
+  EXPECT_EQ(llvm::toString(validateSystemOptions(O)),
+            diagnostic::CredentialOption);
 }
 
 class SystemQueryCPU final : public ExecutionBackend {

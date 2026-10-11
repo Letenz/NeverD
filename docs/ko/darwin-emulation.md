@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
+<!-- i18n-source: 96008a1080031d252edd0ac02e0a87379caeb30be04154b57c7c6d33eae3d8e4 -->
 
 [← 문서 목록](README.md)
 
@@ -632,7 +632,7 @@ macOS ARM64 Release 등록/통과/미실행 skip/실패 1371/867/504/0, 필수 H
 
 ## 명시적 자격 정보와 그룹 및 생성 소유자 일관성
 
-선택Credentials는RealUID/EffectiveUID/RealGID/EffectiveGID와 독립 선택GroupAccessList입니다. 생략하면 네조회1000, 명시0/root 유효, ID0..INT32_MAX. 그룹1..16, 첫항EffectiveGID, 순서/중복보존. 누락은 알수없음이며host/EGID로 채우지 않습니다. 엄격darwin_system.credentials는real_uid/effective_uid/real_gid/effective_gid 필수, groups선택. 무손실 정수/중앙검증은 모양/필드/범위/수/첫그룹 오류를 로드전 거부하며 비Darwin도 거부합니다.
+선택Credentials는RealUID/EffectiveUID/RealGID/EffectiveGID와 독립 선택GroupAccessList와 GroupMembershipUID입니다. 생략하면 네조회1000, 명시0/root 유효, 네 스칼라 ID/그룹 항목0..INT32_MAX. GroupMembershipUID의 독립 범위는 아래와 같습니다. 그룹1..16, 첫항EffectiveGID, 순서/중복보존. 누락은 알수없음이며host/EGID로 채우지 않습니다. 엄격darwin_system.credentials는real_uid/effective_uid/real_gid/effective_gid 필수, groups와 group_membership_uid는 독립 선택. 무손실 정수/중앙검증은 모양/필드/범위/수/첫그룹 오류를 로드전 거부하며 비Darwin도 거부합니다.
 
 getuid24/geteuid25/getgid47/getegid43/getgroups79는 단일system소유자입니다. 새일반파일UID는 유효UID, device/GID는 직계부모상속. rename/보존FD/이름재사용은 객체 유지, 입력stat불변. root는 쓰기/디렉터리변경/권한/ACL을 부여하지 않으며 setuid/setgid/setgroups와process/session 미구현입니다.
 
@@ -1098,7 +1098,7 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
@@ -1110,7 +1110,7 @@ native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 
 소유자는 요청된 소유자 비트를 모두 사용합니다. 비소유자는 전체 요청 마스크에 대한 그룹과 기타 권한 결과를 비교합니다. 결과가 같으면 그룹 조회 없이 허용 또는 EACCES13을 확정하며, 서로 다른 비트도 같은 거부를 낼 수 있습니다. 결과가 다르면 알려진 구성원은 그룹, 증명된 비구성원은 기타 권한을 사용합니다. 알려지지 않은 소속은 조회나 효과 전에 UnsupportedService로 멈추며 권한 범주를 합치지 않습니다.
 
-credentials.groups 는 순서 있는 커널 자격 그룹 목록이며 첫 항목은 EffectiveGID이고 중복을 보존합니다. SDK getgroups의 확장 해석기 목록이 아닙니다. 선택 주 그룹과 명시적 양성 소속은 알려져 있지만 누락이나 목록 생략은 일반적으로 비소속 증거가 아닙니다. 실제/유효 UID 및 GID 쌍이 모두 같으면 원 문맥을 유지합니다. 그 외에는 첫 항목을 RealGID로 바꾸고 처음 일치하는 보충 RealGID 항목에 이전 EffectiveGID를 넣습니다. 일치 항목이 없으면 이전 주 그룹을 제거하고 memberd를 끕니다. 이 증명된 변환과 명시적 완전 목록이 함께 있을 때만 누락을 비소속으로 확정합니다. GID가 같고 UID만 다른 경우도 변환하며 주 그룹 중복은 외부 소속을 미지로 남길 수 있습니다. AT_EACCESS는 원 유효 문맥을 쓰며 입력은 불변입니다.
+credentials.groups 는 순서 있는 커널 자격 그룹 목록이며 첫 항목은 EffectiveGID이고 중복을 보존합니다. SDK getgroups의 확장 해석기 목록이 아닙니다. 선택 주 그룹과 명시적 양성 소속은 알려져 있지만 누락이나 목록 생략은 일반적으로 비소속 증거가 아닙니다. 실제/유효 UID 및 GID 쌍이 모두 같으면 원 문맥을 유지합니다. 그 외에는 첫 항목을 RealGID로 바꾸고 처음 일치하는 보충 RealGID 항목에 이전 EffectiveGID를 넣습니다. 일치 항목이 없으면 이전 주 그룹을 제거하고 memberd를 끕니다. 이 증명된 변환 또는 명시된 원래 KAUTH_UID_NONE과 완전한 명시 목록이 함께 있으면 누락을 비소속으로 확정합니다. GID가 같고 UID만 다른 경우도 변환하며 주 그룹 중복은 외부 소속을 미지로 남길 수 있습니다. AT_EACCESS는 원 유효 문맥을 쓰며 입력은 불변입니다.
 
 예제의 실제 질의는 GID20 제거로 거부되고 AT_EACCESS는 알려진 유효 주 그룹20으로 성공합니다. 디렉터리 SEARCH는 그룹/기타 결과 일치로 확정되며 선택 UID0이나 파일 열기를 허용하지 않습니다.
 
@@ -1125,13 +1125,42 @@ DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-q
 owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
-missing membership usually unknown / explicit displaced real list proves negatives
+missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
 all40 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
+
+## 명시적 원래 그룹 소속 문맥
+
+선택 `DarwinCredentials::GroupMembershipUID` / `darwin_system.credentials.group_membership_uid`는 원래 cr_gmuid를 선언하며 네 ID와 groups에서 독립적입니다. 0..INT32_MAX 또는 정확한 KAUTH_UID_NONE=4294967195(0xffffff9b, UINT32_MAX에서100을 뺀 값)를 허용합니다. 기존 무손실 십진 문자열 및 정확한 수치 정수 디코더를 사용하며 잘못된 유형, 소수, 음수와 다른 범위 밖 값은 로드 전에 거부합니다. 일반 UID/GID나 그룹 항목에는 이 센티넬을 허용하지 않습니다. 생략이나 다른 유효 UID는 외부 비소속을 증명하거나 해석기를 제공하지 않습니다.
+
+선택 주 그룹과 명시적 양성 소속을 먼저 판정합니다. 원래 NONE과 명시적 완전 목록이 함께 있어야 누락을 비소속으로 확정하고, 목록 생략은 미지입니다. 실제 자격 복사는 첫 보충 일치로 이전 유효 주 그룹을 보존하더라도 원래 NONE을 유지하며, 증명된 제거도 외부 해석을 끕니다. 스칼라 조회, 원시 getgroups, 생성 소유권 및 기존 모드는 바뀌지 않습니다. 같은 일반 질의 소유자가 기타 권한을 선택하고 자식 조회 전에 SEARCH를 검사하며 다른 vnode 작업은 닫힌 상태입니다.
+
+예제의 호출자는 GID50 비소속으로 두 신분에서 /data 읽기가 가능하지만 쓰기 권한 질의는 EACCES13입니다. group_membership_uid 생략 시 서로 다른 그룹/기타 결과는 미지원입니다.
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":32772,"link_count":1,"uid":700,"gid":50,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20,"groups":[20],"group_membership_uid":4294967195}}}
+```
+
+로컬 O0/O1/O2 SDK 실행은 센티넬과4바이트 uid_t만 검증하며 호스트 cr_gmuid나 해석기 상태를 관측하지 않습니다. 앞선 실제 raw/SDK 비소유자270쌍과 별개입니다. ordinary-queries-closed-groups는173이벤트, 유효 비소속 거부, 누락/점/점점/링크 SEARCH를5소프트웨어 및3필수ARM64 HVF 설정과 C/CLI/Python에서 검증하며58 native-common 참조에는 포함하지 않습니다. root, ACL/MAC, 완전 그룹 해석, 일반 vnode 권한, 동적 자격, 대기/네트워크, 진행 시계, Mach IPC/스레드, dyld/TLS 및 완전 프레임워크는 미완성입니다. Intel HVF/물리 iOS는 미검증이며 기존 시간 한도는 유지합니다.
+
+```text
+GroupMembershipUID / group_membership_uid / original cr_gmuid
+0..INT32_MAX or KAUTH_UID_NONE=4294967195 / 0xffffff9b / not UINT32_MAX
+positive entries first / original NONE plus complete list proves negatives
+omitted list unknown / first-match real copy preserves original NONE
+ordinary-queries-closed-groups / 173 events / stdout GN
+OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
+SDK constant O0/O1/O2 only / prior actual nonowner pairs270 remain separate
+58 native-common references unchanged / Intel and physical iOS unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU KAUTH_UID_NONE](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/kauth.h), [XNU credential membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c).

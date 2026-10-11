@@ -49,6 +49,12 @@ struct DarwinCredentials {
   uint32_t RealGID = 0;
   uint32_t EffectiveGID = 0;
   std::optional<std::vector<uint32_t>> GroupAccessList;
+  /// Original credential cr_gmuid, independent of scalar UID observations.
+  /// Values 0..INT32_MAX or KAUTH_UID_NONE (4294967195) are supported.
+  /// NONE makes an explicit complete group list authoritative for ordinary
+  /// queries; an omitted list still cannot prove negative membership.
+  /// Omission leaves the external membership context unknown.
+  std::optional<uint32_t> GroupMembershipUID = std::nullopt;
 };
 /// Fixed system observations, independent of host hardware and OS identity.
 /// Missing is unknown; an empty string is an explicit value. Strings contain

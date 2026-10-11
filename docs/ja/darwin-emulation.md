@@ -1,6 +1,6 @@
 **言語**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
+<!-- i18n-source: 96008a1080031d252edd0ac02e0a87379caeb30be04154b57c7c6d33eae3d8e4 -->
 
 [← ドキュメント一覧](README.md)
 
@@ -632,7 +632,7 @@ macOS ARM64 Release 登録/成功/未実行 skip/失敗 1371/867/504/0、必須 
 
 ## 明示的資格情報とグループ、作成所有者の整合
 
-任意CredentialsはRealUID/EffectiveUID/RealGID/EffectiveGIDと独立任意GroupAccessList。省略時4照会1000、明示的0/rootは有効、ID0..INT32_MAX。グループ1..16、先頭EffectiveGID、順序/重複保持。欠落は未知でhost/EGIDから補完しません。厳密darwin_system.credentialsはreal_uid/effective_uid/real_gid/effective_gid必須、groups任意。無損整数/中央検証で形/項目/範囲/数/先頭不一致をロード前拒否、非Darwinも拒否。
+任意CredentialsはRealUID/EffectiveUID/RealGID/EffectiveGIDと独立任意GroupAccessListとGroupMembershipUID。省略時4照会1000、明示的0/rootは有効、4個のスカラーIDとグループ項目0..INT32_MAX。GroupMembershipUIDの独立範囲は後述。グループ1..16、先頭EffectiveGID、順序/重複保持。欠落は未知でhost/EGIDから補完しません。厳密darwin_system.credentialsはreal_uid/effective_uid/real_gid/effective_gid必須、groupsとgroup_membership_uidは独立任意。無損整数/中央検証で形/項目/範囲/数/先頭不一致をロード前拒否、非Darwinも拒否。
 
 getuid24/geteuid25/getgid47/getegid43/getgroups79は単一system所有者。新通常ファイルUIDは実効UID、device/GIDは直接親を継承。rename/保持FD/名前再利用で物体を維持、入力stat不変。rootは書込/ディレクトリ変更/権限/ACLを与えず、setuid/setgid/setgroupsやprocess/sessionは未実装。
 
@@ -1098,7 +1098,7 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
@@ -1110,7 +1110,7 @@ native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 
 所有者は要求した全所有者ビットを使います。非所有者では要求マスク全体についてグループとその他の結果を比較し、一致すればグループ照会なしで許可または EACCES13 を確定します。異なるビット集合も同じ拒否になり得ます。不一致なら既知のメンバーはグループ、証明された非メンバーはその他を使い、未知なら検索や効果の前に UnsupportedService で停止します。権限クラスは混合しません。
 
-credentials.groups は順序付きのカーネル資格情報リストで、先頭は EffectiveGID、重複を保持します。SDK getgroups の拡張リゾルバリストとは別です。選択された主グループと明示的な正の所属は既知ですが、欠落やリスト省略は通常、非所属を証明しません。実 UID/GID の両組が有効値と一致すれば元の文脈を保持し、そうでなければ先頭を RealGID に置換し、最初に一致する補助 RealGID の位置へ旧 EffectiveGID を移します。一致がなければ旧主グループを除いて memberd を無効化します。この証明された置換と明示的な完全リストだけが欠落の否定を確定します。GID が等しく UID が異なる場合も変換し、主グループの重複は外部所属を未知のままにできます。AT_EACCESS は元の有効文脈を使い、入力は不変です。
+credentials.groups は順序付きのカーネル資格情報リストで、先頭は EffectiveGID、重複を保持します。SDK getgroups の拡張リゾルバリストとは別です。選択された主グループと明示的な正の所属は既知ですが、欠落やリスト省略は通常、非所属を証明しません。実 UID/GID の両組が有効値と一致すれば元の文脈を保持し、そうでなければ先頭を RealGID に置換し、最初に一致する補助 RealGID の位置へ旧 EffectiveGID を移します。一致がなければ旧主グループを除いて memberd を無効化します。この証明された置換または明示的な元の KAUTH_UID_NONE と、明示的な完全リストを組み合わせると、欠落の否定が確定します。GID が等しく UID が異なる場合も変換し、主グループの重複は外部所属を未知のままにできます。AT_EACCESS は元の有効文脈を使い、入力は不変です。
 
 以下では GID20 の置換により実クエリが拒否され、有効主グループ20を使う AT_EACCESS は成功します。ディレクトリ SEARCH はグループとその他の結果一致で確定し、選択 UID0 や open を許可しません。
 
@@ -1125,13 +1125,42 @@ DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-q
 owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
-missing membership usually unknown / explicit displaced real list proves negatives
+missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
 all40 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
+
+## 明示的な元のグループ所属文脈
+
+任意の `DarwinCredentials::GroupMembershipUID` / `darwin_system.credentials.group_membership_uid` は元の cr_gmuid を宣言し、4個の身分 ID と groups から独立しています。0..INT32_MAX または正確な KAUTH_UID_NONE=4294967195（0xffffff9b、UINT32_MAXから100を減算）を許可します。既存の無損十進文字列・正確な数値整数デコーダを使い、不正な型、小数、負数、その他の範囲外値をロード前に拒否します。通常 UID/GID とリストにはこの番兵を許可しません。省略と他の有効 UID は外部所属の否定を与えず、リゾルバを実装しません。
+
+選択主グループと明示的な正の所属を先に判定します。元の NONE と明示的な完全リストがあれば欠落は非所属ですが、リスト省略は未知です。実資格情報へのコピーは最初の補助一致で旧有効主グループを保持する場合も元の NONE を保持し、証明された除去も外部解決を無効化します。スカラー照会、raw getgroups、作成所有権と従来モードは変わりません。同じ普通照会所有者がその他の権限を選び、子の検索前に SEARCH を確認し、他の vnode 操作を閉じます。
+
+例の呼出元は GID50 の非所属で、両身分は /data を読めますが、書込権限照会は EACCES13 です。group_membership_uid を省略すると異なるグループ/その他の結果は未対応です。
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":32772,"link_count":1,"uid":700,"gid":50,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20,"groups":[20],"group_membership_uid":4294967195}}}
+```
+
+ローカル O0/O1/O2 SDK 実行は番兵と4バイト uid_t のみを検証し、ホスト cr_gmuid やリゾルバ状態を観測しません。先の実 raw/SDK 非所有者270組とは別です。ordinary-queries-closed-groups は173イベント、有効非所属の拒否、欠落・ドット・ドットドット・リンクの SEARCH を5ソフトウェア/3必須ARM64 HVF設定と C/CLI/Python で検証し、58 native-common 参照には含めません。root、ACL/MAC、完全グループ解決、一般 vnode 認可、動的資格、待機/ネットワーク、進行時計、Mach IPC/スレッド、dyld/TLS、完全フレームワークは未完成です。Intel HVF/実機 iOS は未検証、既存制限は不変です。
+
+```text
+GroupMembershipUID / group_membership_uid / original cr_gmuid
+0..INT32_MAX or KAUTH_UID_NONE=4294967195 / 0xffffff9b / not UINT32_MAX
+positive entries first / original NONE plus complete list proves negatives
+omitted list unknown / first-match real copy preserves original NONE
+ordinary-queries-closed-groups / 173 events / stdout GN
+OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
+SDK constant O0/O1/O2 only / prior actual nonowner pairs270 remain separate
+58 native-common references unchanged / Intel and physical iOS unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU KAUTH_UID_NONE](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/kauth.h), [XNU credential membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c).

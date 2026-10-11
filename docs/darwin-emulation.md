@@ -1332,13 +1332,15 @@ Physical iOS, suspended Intel HVF and remote merge CI need separate acceptance.
 ## Explicit credentials, group access and coherent creation ownership
 
 Optional C++ DarwinSystemOptions::Credentials holds RealUID, EffectiveUID,
-RealGID, EffectiveGID and independently optional GroupAccessList. Omission keeps
+RealGID, EffectiveGID and independently optional GroupAccessList and
+GroupMembershipUID. Omission keeps
 the historical four scalar getters at1000. An explicit record is complete;
 zero/root is a valid declaration. Missing groups remain unknown and are never
-inferred from host membership or EGID. The supported subset is0..INT32_MAX for
-each ID. Groups contain1..16 entries, preserve order and duplicates, and begin
+inferred from host membership or EGID. The four scalar IDs and group entries support0..INT32_MAX;
+the independent membership UID has its separate range below. Groups contain1..16 entries, preserve order and duplicates, and begin
 with EffectiveGID. Strict darwin_system.credentials requires exactly real_uid,
-effective_uid, real_gid, effective_gid and optionally groups. Lossless integer
+effective_uid, real_gid, effective_gid and independently optional groups and
+group_membership_uid. Lossless integer
 decoding and the central validator reject malformed shapes, fields, ranges,
 group counts or first-group mismatch before image loading; non-Darwin profiles
 still reject the option.
@@ -1910,7 +1912,7 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
@@ -1948,8 +1950,8 @@ Access/faccessat without AT_EACCESS use the pinned real-credential copy. If both
 UID/GID pairs agree, it preserves the original context. Otherwise, the copy
 replaces index0 with RealGID and swaps the old EffectiveGID into the first
 matching supplementary RealGID entry, when present. With no supplementary match,
-it displaces the old primary and disables memberd. Only that proved displacement
-plus an explicit complete in-credential list makes missing groups known negative.
+it displaces the old primary and disables memberd. That proved displacement or explicit original KAUTH_UID_NONE, together with an
+explicit complete in-credential list, makes missing groups known negative.
 Unequal UIDs with equal GIDs still take this path; a duplicate primary in a
 supplementary position can preserve unknown external membership. AT_EACCESS
 always uses the original effective context. The supplied record never changes.
@@ -1984,13 +1986,42 @@ DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-q
 owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
-missing membership usually unknown / explicit displaced real list proves negatives
+missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
 all40 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
+
+## Explicit original group membership context
+
+Optional `DarwinCredentials::GroupMembershipUID` / `darwin_system.credentials.group_membership_uid` declares the original `cr_gmuid`, independently of the four scalar IDs and `groups`. It accepts 0..INT32_MAX or exactly KAUTH_UID_NONE=4294967195 (0xffffff9b, UINT32_MAX minus100). Lossless decimal strings and exact numeric integers use the existing decoder; malformed, fractional, negative and other out-of-range inputs fail before loading. The sentinel remains invalid in scalar IDs and group entries. Omission supplies no external membership knowledge, and another admitted UID does not enable a resolver.
+
+A selected primary or positive in-credential entry remains known first. Original NONE plus an explicit complete list proves a missing entry is a nonmember; NONE with an omitted list cannot prove that. The real-credential copy preserves original NONE even when its first supplementary match retains the old effective primary. A proved displacement also disables external membership. These inputs do not change getuid/geteuid/getgid/getegid, raw getgroups, creation ownership or the legacy authorization modes. The same ordinary-query owner selects world permissions and checks pathname SEARCH before child lookup; all other vnode operations remain closed.
+
+The example declares a known nonmember of GID50: both identities may read `/data`, while a write-permission query returns EACCES13. Omitting group_membership_uid leaves the differing group/world decision unsupported.
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":32772,"link_count":1,"uid":700,"gid":50,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20,"groups":[20],"group_membership_uid":4294967195}}}
+```
+
+Local O0/O1/O2 SDK executions verify only the sentinel and four-byte uid_t carrier. They do not observe the host's cr_gmuid, disable its resolver or replace the earlier270 actual raw/SDK nonowner pairs. The supplied `ordinary-queries-closed-groups` workload checks173 events, effective nonmember denials and allowed/denied search through missing children, dot/dotdot and links across five software profiles and three mandatory ARM64 HVF profiles, with C/CLI/Python admission checks. It remains outside the58 native-common deterministic references. Root, ACL/MAC, full group resolution, general vnode authorization, dynamic credentials, readiness/networking, advancing clocks, Mach IPC/threads, dyld/TLS and complete frameworks remain unfinished. Native Intel HVF and physical iOS are unverified; original deadlines are unchanged.
+
+```text
+GroupMembershipUID / group_membership_uid / original cr_gmuid
+0..INT32_MAX or KAUTH_UID_NONE=4294967195 / 0xffffff9b / not UINT32_MAX
+positive entries first / original NONE plus complete list proves negatives
+omitted list unknown / first-match real copy preserves original NONE
+ordinary-queries-closed-groups / 173 events / stdout GN
+OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
+SDK constant O0/O1/O2 only / prior actual nonowner pairs270 remain separate
+58 native-common references unchanged / Intel and physical iOS unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU KAUTH_UID_NONE](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/kauth.h), [XNU credential membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c).

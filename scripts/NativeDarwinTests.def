@@ -129,3 +129,5 @@ NEVERD_NATIVE_DARWIN_CASE(MachSelfPortsPreserveExplicitBitsAndIndependentRuns)
 NEVERD_NATIVE_DARWIN_CASE(OwnerQueriesKeepPermissionAndUnknownBoundaries)
 NEVERD_NATIVE_DARWIN_CASE(
     OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch)
+NEVERD_NATIVE_DARWIN_CASE(
+    OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver)

@@ -134,6 +134,7 @@ NEVERD_DARWIN_VALUE(PriorityGame, 7)
 NEVERD_DARWIN_VALUE(PriorityCarPlay, 8)
 NEVERD_DARWIN_VALUE(SystemMIBLimit, 12)
 NEVERD_DARWIN_VALUE(CredentialIDMax, 0x7fffffff)
+NEVERD_DARWIN_VALUE(GroupMembershipUIDNone, 0xffffff9b)
 NEVERD_DARWIN_VALUE(GroupAccessLimit, 16)
 NEVERD_DARWIN_VALUE(ResourceLimitCount, 9)
 NEVERD_DARWIN_VALUE(ResourceLimitNoFile, 8)
@@ -339,6 +340,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     CredentialOption,
     "Darwin credentials require bounded IDs and coherent 1..16 groups")
+NEVERD_DARWIN_DIAGNOSTIC(
+    GroupMembershipUIDOption,
+    "Darwin group membership UID requires a bounded ID or KAUTH_UID_NONE")
 NEVERD_DARWIN_DIAGNOSTIC(GroupObservation,
                          "Darwin group access list is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(GroupPartialOutput,

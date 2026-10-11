@@ -4206,10 +4206,11 @@ TEST_P(DarwinFileTest, OrdinaryQueriesMatchIndependentWholeMaskMatrices) {
       {501, 501, 20, 20, {}},
       {501, 501, 20, 20, std::vector<uint32_t>{20, 40}},
       {501, 501, 30, 20, std::vector<uint32_t>{20, 40}},
-      {501, 501, 20, 20, {}}};
+      {501, 501, 20, 20, {}},
+      {501, 501, 20, 20, std::vector<uint32_t>{20, 40}, 4294967195u}};
   QueryAuthorization = DarwinFileAuthorization::StaticOrdinaryQueries;
   for (unsigned Mode = 0; Mode != 01000; ++Mode) {
-    for (unsigned Context = 0; Context != 4; ++Context) {
+    for (unsigned Context = 0; Context != std::size(Contexts); ++Context) {
       ownerQueries(Contexts[Context]);
       auto &M = Options->Metadata["/data"];
       M.Mode = 0100000 | Mode;
@@ -4226,10 +4227,10 @@ TEST_P(DarwinFileTest, OrdinaryQueriesMatchIndependentWholeMaskMatrices) {
           SCOPED_TRACE(testing::PrintToString(
               std::make_tuple(Mode, Context, Request, API)));
           // Literal membership cases: owner, supplementary member, displaced
-          // real nonmember, and unknown membership. Effective misses remain
-          // unknown even when the supplied in-credential list is complete.
-          const bool Known =
-              Context < 2 || (Context == 2 && API != 2) || Group == World;
+          // real nonmember, unknown membership, and explicit original NONE.
+          // A complete list alone leaves effective misses unknown.
+          const bool Known = Context < 2 || (Context == 2 && API != 2) ||
+                             Context == 4 || Group == World;
           const bool Allowed = Context == 0   ? Owner
                                : Context == 1 ? Group
                                               : World;
@@ -4261,7 +4262,8 @@ TEST_P(DarwinFileTest,
     Options->Metadata["/data"].Mode = 0100644;
     Files = std::make_unique<DarwinFiles>(
         *Space, Options, process_defaults::Output, 1000,
-        DarwinCredentials{501, 501, 20, 20, {}});
+        DarwinCredentials{501, 501, 20, 20, std::vector<uint32_t>{20},
+                          4294967195u});
     path("/data");
     if (Authorization == DarwinFileAuthorization::StaticOwnerQueries) {
       EXPECT_FALSE(invoke(ServiceKind::Access, {Base, 4}));
@@ -4337,7 +4339,47 @@ TEST_P(DarwinFileTest, OrdinaryQueriesUseLiteralRealGroupTransformCases) {
       {{501, 501, 40, 20, std::vector<uint32_t>{20, 30, 40, 40}}, 50, -1, -1},
       {{501, 501, 30, 20, {}}, 20, -1, 1},
       {{501, 501, 30, 20, {}}, 30, 1, -1},
-      {{501, 501, 30, 20, {}}, 50, -1, -1}};
+      {{501, 501, 30, 20, {}}, 50, -1, -1},
+      {{501, 501, 20, 20, std::vector<uint32_t>{20}, 4294967195u}, 40, 0, 0},
+      {{501, 501, 20, 20, std::vector<uint32_t>{20, 40}, 4294967195u},
+       40,
+       1,
+       1},
+      {{501, 501, 20, 20, {}, 4294967195u}, 40, -1, -1},
+      {{501, 501, 20, 20, {}, 4294967195u}, 20, 1, 1},
+      {{501, 502, 30, 20, std::vector<uint32_t>{20, 30}, 4294967195u},
+       50,
+       0,
+       0},
+      {{501, 502, 30, 20, std::vector<uint32_t>{20, 30}, 4294967195u},
+       20,
+       1,
+       1},
+      {{501, 502, 20, 20, std::vector<uint32_t>{20, 20}, 4294967195u},
+       50,
+       0,
+       0},
+      {{501, 502, 20, 20, std::vector<uint32_t>{20, 40, 20}, 4294967195u},
+       40,
+       1,
+       1},
+      {{501, 501, 30, 20, std::vector<uint32_t>{20, 30, 30}, 4294967195u},
+       30,
+       1,
+       1},
+      {{501, 501, 40, 20, std::vector<uint32_t>{20, 30, 40, 40}, 4294967195u},
+       50,
+       0,
+       0},
+      {{501, 501, 30, 20, std::vector<uint32_t>{20, 40}, 4294967195u},
+       20,
+       0,
+       1},
+      {{501, 501, 30, 20, std::vector<uint32_t>{20, 30}, 0u}, 50, -1, -1},
+      {{501, 501, 30, 20, std::vector<uint32_t>{20, 40}, uint32_t(INT32_MAX)},
+       50,
+       0,
+       -1}};
   QueryAuthorization = DarwinFileAuthorization::StaticOrdinaryQueries;
   for (unsigned Index = 0; Index != std::size(Cases); ++Index) {
     const auto &C = Cases[Index];
@@ -4375,6 +4417,74 @@ TEST_P(DarwinFileTest, OrdinaryQueriesUseLiteralRealGroupTransformCases) {
       EXPECT_EQ(C.Credentials.RealGID, Before.RealGID);
       EXPECT_EQ(C.Credentials.EffectiveGID, Before.EffectiveGID);
       EXPECT_EQ(C.Credentials.GroupAccessList, Before.GroupAccessList);
+      EXPECT_EQ(C.Credentials.GroupMembershipUID, Before.GroupMembershipUID);
+    }
+  }
+}
+TEST_P(DarwinFileTest, OrdinaryQueriesUseOriginalMembershipUIDForSearch) {
+  const DarwinCredentials C{
+      501, 502, 30, 20, std::vector<uint32_t>{20, 30}, 4294967195u};
+  QueryAuthorization = DarwinFileAuthorization::StaticOrdinaryQueries;
+  const std::string Long = "/directory/" + std::string(256, 'a');
+  for (bool WorldSearch : {false, true}) {
+    ownerQueries(C);
+    Options->Metadata["/"].UID = 0;
+    Options->Metadata["/"].Mode = 0040777;
+    Options->Metadata["/directory"].UID = 700;
+    Options->Metadata["/directory"].GID = 50;
+    Options->Metadata["/directory"].Mode = WorldSearch ? 0040001 : 0040010;
+    Files = std::make_unique<DarwinFiles>(*Space, Options,
+                                          process_defaults::Output, 1000, C);
+    for (const char *Text : {"/directory/missing", "/directory/leaf",
+                             "/directory/.", "/directory/..", "/via/leaf"}) {
+      path(Text);
+      for (unsigned API = 0; API != 3; ++API) {
+        auto Out = API ? invoke(ServiceKind::FaccessAt,
+                                {999, Base, 0, API == 2 ? 16u : 0u})
+                       : invoke(ServiceKind::Access, {Base, 0});
+        ASSERT_TRUE(Out) << Result.Diagnostic;
+        const unsigned Expected = !WorldSearch ? 13
+                                  : llvm::StringRef(Text).ends_with("missing")
+                                      ? 2
+                                      : 0;
+        EXPECT_EQ(Out->Value, Expected);
+        EXPECT_EQ(Out->Error, Expected != 0);
+      }
+    }
+    path(Long);
+    if (WorldSearch) {
+      EXPECT_FALSE(invoke(ServiceKind::Access, {Base, 0}));
+      EXPECT_EQ(Result.Diagnostic, diagnostic::FileAuthorizationName);
+    } else
+      error(ServiceKind::Access, {Base, 0}, 13);
+    path("/directory///");
+    EXPECT_EQ(ok(ServiceKind::Access, {Base, 0}), 0u);
+  }
+  for (unsigned Missing = 0; Missing != 3; ++Missing) {
+    auto Unknown = C;
+    if (Missing == 0)
+      Unknown.GroupMembershipUID.reset();
+    else if (Missing == 1)
+      Unknown.GroupMembershipUID = 0;
+    else
+      Unknown.GroupAccessList.reset();
+    ownerQueries(Unknown);
+    Options->Metadata["/"].UID = 0;
+    Options->Metadata["/"].Mode = 0040777;
+    Options->Metadata["/directory"].UID = 700;
+    Options->Metadata["/directory"].GID = 50;
+    Options->Metadata["/directory"].Mode = 0040001;
+    Files = std::make_unique<DarwinFiles>(
+        *Space, Options, process_defaults::Output, 1000, Unknown);
+    for (const auto &Text : {std::string("/directory/missing"), Long}) {
+      path(Text);
+      for (unsigned API = 0; API != 3; ++API) {
+        EXPECT_FALSE(API ? invoke(ServiceKind::FaccessAt,
+                                  {999, Base, 0, API == 2 ? 16u : 0u})
+                         : invoke(ServiceKind::Access, {Base, 0}));
+        EXPECT_EQ(Result.Diagnostic,
+                  diagnostic::FileOrdinaryAuthorizationGroups);
+      }
     }
   }
 }

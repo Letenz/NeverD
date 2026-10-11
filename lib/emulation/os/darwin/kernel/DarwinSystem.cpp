@@ -144,6 +144,9 @@ llvm::Error validateSystemOptions(const DarwinSystemOptions &Options) {
     for (auto ID : {C.RealUID, C.EffectiveUID, C.RealGID, C.EffectiveGID})
       if (ID > CredentialIDMax)
         return failure(diagnostic::CredentialOption);
+    if (C.GroupMembershipUID && *C.GroupMembershipUID > CredentialIDMax &&
+        *C.GroupMembershipUID != GroupMembershipUIDNone)
+      return failure(diagnostic::GroupMembershipUIDOption);
     if (C.GroupAccessList) {
       const auto &G = *C.GroupAccessList;
       if (G.empty() || G.size() > GroupAccessLimit ||

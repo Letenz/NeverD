@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: f5562e8160d90cae8c870f0ab6d656d1ffe115145038fe7c3031da067bd088bc -->
+<!-- i18n-source: 96008a1080031d252edd0ac02e0a87379caeb30be04154b57c7c6d33eae3d8e4 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -630,7 +630,7 @@ Erster Gesamtgate:866 bestanden, ein bestehender iOS ARM64 HVF rename5s-Timeout,
 
 ## Explizite Identitäten, Gruppen und konsistenter Ersteller
 
-Optionale Credentials enthalten RealUID/EffectiveUID/RealGID/EffectiveGID und unabhängig optionale GroupAccessList. Ohne Credentials vier Getter1000; explizit0/root gültig, IDs0..INT32_MAX. Gruppen1..16, erste=EffectiveGID, Reihenfolge/Duplikate erhalten; fehlend unbekannt, keine Host/EGID-Ableitung. darwin_system.credentials verlangt genau real_uid/effective_uid/real_gid/effective_gid, optional groups. Verlustfreie Ganzzahlen/zentraler Validator verweigern Form/Felder/Bereich/Anzahl/erste Inkonsistenz vor Laden; NichtDarwin ebenso.
+Optionale Credentials enthalten RealUID/EffectiveUID/RealGID/EffectiveGID und unabhängig optionale GroupAccessList und GroupMembershipUID. Ohne Credentials vier Getter1000; explizit0/root gültig, vier skalare IDs/Gruppeneinträge0..INT32_MAX; GroupMembershipUID hat die eigene Spanne unten. Gruppen1..16, erste=EffectiveGID, Reihenfolge/Duplikate erhalten; fehlend unbekannt, keine Host/EGID-Ableitung. darwin_system.credentials verlangt genau real_uid/effective_uid/real_gid/effective_gid, unabhängig optional groups und group_membership_uid. Verlustfreie Ganzzahlen/zentraler Validator verweigern Form/Felder/Bereich/Anzahl/erste Inkonsistenz vor Laden; NichtDarwin ebenso.
 
 getuid24/geteuid25/getgid47/getegid43/getgroups79 haben einen Systembesitzer. Neue reguläre Datei benutzt effektiveUID, device/GID vom direkten Elternteil; rename/gehalteneFD/Namensreuse erhalten Objekt, Inputstat unverändert. Root gewährt keine Schreib/Verzeichnis/ACL-Rechte; setuid/setgid/setgroups und Prozess/Session fehlen.
 
@@ -1096,7 +1096,7 @@ anonymous memory independent / file-backed mmap and mappingSource closed
 Name255 availability stop after allowed SEARCH / no guessed filesystem errno
 owner-queries / owner-query-stop / owner-query-open / owner-query-map
 OwnerQueriesKeepPermissionAndUnknownBoundaries
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 pairs2472 / literal2439 / capture-only33
 native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 ```
@@ -1108,7 +1108,7 @@ native5s / compile120s / owner-build1200s / guest-Python5,000,000us
 
 Eigentümer verwenden alle angeforderten Eigentümerbits. Für andere Benutzer werden Gruppen-/Sonstigen-Ergebnisse für die gesamte Maske verglichen. Gleiche Ergebnisse erlauben oder verweigern mit EACCES13 ohne Gruppenabfrage; verschiedene Bitmengen können beide verweigern. Andernfalls nutzt ein bekannter Mitgliedsstatus Gruppenbits, bewiesene Nichtmitgliedschaft Sonstigenbits, und unbekannte Mitgliedschaft stoppt vor Suche oder Effekten mit UnsupportedService. Klassen werden nicht vermischt.
 
-credentials.groups ist die geordnete Liste im Kernel-Berechtigungsnachweis, mit EffectiveGID an Stelle0 und erhaltenen Duplikaten, nicht die erweiterte Resolverliste von SDK getgroups. Ausgewählte Primärgruppe und ausdrückliche positive Einträge sind bekannt; fehlende Einträge oder eine ausgelassene Liste beweisen gewöhnlich keine Nichtmitgliedschaft. Stimmen beide UID/GID-Paare überein, bleibt der reale Kontext unverändert. Sonst ersetzt RealGID Stelle0, und die erste zusätzliche RealGID-Stelle erhält den alten EffectiveGID. Ohne Treffer wird die alte Primärgruppe verdrängt und memberd deaktiviert. Nur dieser bewiesene Schritt zusammen mit einer ausdrücklichen vollständigen Liste macht negative Antworten bekannt. Unterschiedliche UIDs bei gleichen GIDs lösen ihn ebenfalls aus; eine doppelte Primärgruppe kann externe Mitgliedschaft unbekannt lassen. AT_EACCESS verwendet den ursprünglichen effektiven Kontext; die Eingabe bleibt gleich.
+credentials.groups ist die geordnete Liste im Kernel-Berechtigungsnachweis, mit EffectiveGID an Stelle0 und erhaltenen Duplikaten, nicht die erweiterte Resolverliste von SDK getgroups. Ausgewählte Primärgruppe und ausdrückliche positive Einträge sind bekannt; fehlende Einträge oder eine ausgelassene Liste beweisen gewöhnlich keine Nichtmitgliedschaft. Stimmen beide UID/GID-Paare überein, bleibt der reale Kontext unverändert. Sonst ersetzt RealGID Stelle0, und die erste zusätzliche RealGID-Stelle erhält den alten EffectiveGID. Ohne Treffer wird die alte Primärgruppe verdrängt und memberd deaktiviert. Dieser bewiesene Schritt oder ausdrücklich ursprüngliches KAUTH_UID_NONE macht zusammen mit einer vollständigen expliziten Liste negative Antworten bekannt. Unterschiedliche UIDs bei gleichen GIDs lösen ihn ebenfalls aus; eine doppelte Primärgruppe kann externe Mitgliedschaft unbekannt lassen. AT_EACCESS verwendet den ursprünglichen effektiven Kontext; die Eingabe bleibt gleich.
 
 Das Beispiel verweigert die reale Abfrage nach Verdrängung von GID20 und erlaubt AT_EACCESS über die bekannte effektive Primärgruppe20. SEARCH folgt aus gleichen Gruppen-/Sonstigen-Ergebnissen; ausgewählte UID0 und Dateiöffnungen bleiben ausgeschlossen.
 
@@ -1123,13 +1123,42 @@ DarwinFileAuthorization::StaticOrdinaryQueries / authorization=static-ordinary-q
 owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
-missing membership usually unknown / explicit displaced real list proves negatives
+missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
 all40 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
-72 mandatory workloads per platform / ARM64 216 / Intel 144 unverified
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
 original ARM64 O0/O1/O2 nonowner pairs270 / raw-groups16 / SDK-extended-groups17
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
 [XNU ordinary mode authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c), [real credential and group membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c), [raw in-credential getgroups](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_prot.c), [SDK extended getgroups](https://github.com/apple-oss-distributions/Libc/blob/Libc-1698.140.3/sys/getgroups.c).
+
+## Ausdrücklicher ursprünglicher Gruppenmitgliedschaftskontext
+
+Optionales `DarwinCredentials::GroupMembershipUID` / `darwin_system.credentials.group_membership_uid` deklariert den ursprünglichen cr_gmuid unabhängig von vier IDs und groups. Zulässig sind0..INT32_MAX oder genau KAUTH_UID_NONE=4294967195 (0xffffff9b, UINT32_MAX minus100). Der bestehende Decoder nimmt verlustfreie Dezimalzeichenfolgen und exakte numerische Ganzzahlen an; falsche Typen, Brüche, negative und andere unzulässige Werte werden vor Laden verweigert. Der Sentinel bleibt in normalen UID/GID und Gruppeneinträgen unzulässig. Auslassung und andere zulässige UIDs beweisen keine externe Nichtmitgliedschaft und aktivieren keinen Resolver.
+
+Primärgruppe und positive Einträge werden zuerst erkannt. Ursprüngliches NONE plus vollständige explizite Liste beweist fehlende Mitgliedschaft; ohne Liste bleibt sie unbekannt. Die reale Kopie erhält ursprüngliches NONE auch bei erstem zusätzlichen Treffer mit erhaltener alter Primärgruppe; bewiesene Verdrängung deaktiviert ebenfalls externe Auflösung. Skalare Abfragen, raw getgroups, Erstellungseigentum und ältere Modi bleiben gleich. Derselbe Abfragebesitzer wählt Sonstigenrechte und prüft SEARCH vor Kindersuche; andere vnode-Operationen bleiben geschlossen.
+
+Der Aufrufer im Beispiel gehört nicht GID50 an: beide Identitäten dürfen /data lesen, eine Schreibrechteabfrage liefert EACCES13. Ohne group_membership_uid bleiben unterschiedliche Gruppen-/Sonstigenergebnisse ununterstützt.
+
+```json
+{"darwin_files":{"authorization":"static-ordinary-queries","files":[{"path":"/data","bytes_hex":"00","metadata":{"device":7,"inode":2,"mode":32772,"link_count":1,"uid":700,"gid":50,"size":1,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"directories":[{"path":"/","metadata":{"device":7,"inode":1,"mode":16895,"link_count":2,"uid":0,"gid":0,"size":0,"block_size":4096,"blocks":0,"flags":0,"generation":0,"access_time":{"seconds":0,"nanoseconds":0},"modification_time":{"seconds":0,"nanoseconds":0},"change_time":{"seconds":0,"nanoseconds":0},"birth_time":{"seconds":0,"nanoseconds":0}}}],"working_directory":"/"},"darwin_system":{"credentials":{"real_uid":501,"effective_uid":501,"real_gid":20,"effective_gid":20,"groups":[20],"group_membership_uid":4294967195}}}
+```
+
+Lokale O0/O1/O2-SDK-Ausführungen prüfen nur Sentinel und vier Byte uid_t, nicht Host-cr_gmuid oder Resolverzustand; sie ersetzen nicht die früheren270 tatsächlichen raw/SDK-Nichteigentümerpaare. ordinary-queries-closed-groups prüft173 Ereignisse, effektive Nichtmitgliedsverweigerungen und SEARCH für fehlende Kinder, Punkt/Doppelpunkt und Links in fünf Software-/drei obligatorischen ARM64-HVF-Profilen sowie C/CLI/Python. Es bleibt außerhalb58 native-common Referenzen. Root, ACL/MAC, vollständige Gruppenauflösung, allgemeine vnode-Autorisierung, dynamische Credentials, Warten/Netzwerk, fortschreitende Uhren, Mach IPC/Threads, dyld/TLS und vollständige Frameworks bleiben offen. Intel HVF/physisches iOS sind ungeprüft; bestehende Fristen bleiben gleich.
+
+```text
+GroupMembershipUID / group_membership_uid / original cr_gmuid
+0..INT32_MAX or KAUTH_UID_NONE=4294967195 / 0xffffff9b / not UINT32_MAX
+positive entries first / original NONE plus complete list proves negatives
+omitted list unknown / first-match real copy preserves original NONE
+ordinary-queries-closed-groups / 173 events / stdout GN
+OrdinaryQueriesUseExplicitMembershipUIDWithoutResolver
+73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
+SDK constant O0/O1/O2 only / prior actual nonowner pairs270 remain separate
+58 native-common references unchanged / Intel and physical iOS unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU KAUTH_UID_NONE](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/kauth.h), [XNU credential membership](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_credential.c).
