@@ -390,10 +390,12 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
       }
     }
     std::optional<FrameValue> CallSP;
+    std::optional<FrameValue> CallResult;
     bool CheckedCall = false;
     if (auto Call = transferCall(I, After, Op)) {
       CheckedCall = true;
       CallSP = Call->StackPointer;
+      CallResult = Call->Result;
       NoReturnAtExit = Call->DoesNotReturn;
       if (NoReturnAtExit)
         NoReturnEnd = Call->EndAddress;
@@ -464,6 +466,14 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     }
     if (CallSP)
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] = *CallSP;
+    if (CallResult) {
+      After.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
+          *CallResult;
+      LowOp Returned;
+      Returned.Opcode = NdOp::COPY;
+      Returned.Output = Op.Output;
+      Transfer.write(Returned, *CallResult);
+    }
     if (CheckCalls && Op.Output.isReg() &&
         Op.Output.Offset / x86reg::GeneralRegStride ==
             x86reg::RSP / x86reg::GeneralRegStride) {

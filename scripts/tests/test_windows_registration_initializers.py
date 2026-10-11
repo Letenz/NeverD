@@ -28,8 +28,8 @@ class InitializerEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root)
-            self.assertEqual(len(replay.validate_capture(root, capture)), 64)
-            self.assertEqual(len(relift.validate_first(root, capture)), 64)
+            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            self.assertEqual(len(relift.validate_first(root, capture)), 128)
             for key in ("source_sha256", "object_types_sha256", "object_proof_sha256"):
                 changed = copy.deepcopy(capture)
                 changed[key] = "stale"
@@ -50,7 +50,7 @@ class InitializerEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root)
-            self.assertEqual(len(capture["cases"]), 8)
+            self.assertEqual(len(capture["cases"]), 16)
             for index in range(len(capture["cases"])):
                 changed = copy.deepcopy(capture)
                 del changed["cases"][index]
@@ -61,10 +61,12 @@ class InitializerEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 replay.validate_capture(root, capture)
 
-    def test_direct_constructors_cannot_reuse_private_helper_evidence(self):
+    def test_direct_and_private_constructors_have_distinct_required_cases(self):
         for case in initializers.CASES:
             self.assertEqual(relift.entry_context(case), (0, 0, b"callback_parent"))
-        for case in ("direct-nested-o0-llvm-fixed", "direct-rethrow-o1-llvm-fixed", "unknown"):
+        self.assertIn("direct-nested-o0-llvm-fixed", initializers.CASES)
+        self.assertIn("direct-rethrow-o1-llvm-fixed", initializers.CASES)
+        for case in ("direct-secondary-o0-llvm-fixed", "unknown"):
             with self.subTest(case=case), self.assertRaises(ValueError):
                 relift.entry_context(case)
 

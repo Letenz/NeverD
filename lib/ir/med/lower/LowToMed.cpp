@@ -24,6 +24,7 @@
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
+#include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/ir/med/X86RegistrationEntry.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
@@ -872,10 +873,16 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       // pop here -- before SSA, so the chain is well-formed -- and later stack
       // accesses (the cdecl `add esp, k` cleanup, the result-buffer reload) use
       // the corrected SP.
-      if (CalleePopMap && MOp.Opcode == NdOp::CALL && MOp.NumInputs >= 1 &&
+      if (MOp.Opcode == NdOp::CALL && MOp.NumInputs >= 1 &&
           MOp.Inputs[0].isConst()) {
-        auto It = CalleePopMap->find(MOp.Inputs[0].ConstVal);
-        if (It != CalleePopMap->end() && It->second > 0) {
+        auto Pop = TheArch == Arch::X86 ? registrationCallStackPop(Low, LB, LOp)
+                                        : std::nullopt;
+        if (!Pop && CalleePopMap) {
+          const auto It = CalleePopMap->find(MOp.Inputs[0].ConstVal);
+          if (It != CalleePopMap->end())
+            Pop = It->second;
+        }
+        if (Pop && *Pop) {
           const auto &TRI = getTargetRegInfo(TheArch);
           MedVar Sp;
           Sp.Kind = MedVar::Reg;
@@ -900,7 +907,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
           Adj.Output = Sp;
           Adj.addInput(Sp);
           Adj.addInput(
-              MedVar::makeConst(static_cast<uint64_t>(It->second),
+              MedVar::makeConst(static_cast<uint64_t>(*Pop),
                                 static_cast<uint16_t>(TRI.PointerSize)));
           MB.Ops.push_back(Adj);
         }

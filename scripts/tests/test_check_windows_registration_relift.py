@@ -116,7 +116,7 @@ class ReliftEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root, "initializers")
-            self.assertEqual(len(replay.validate_capture(root, capture)), 64)
+            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
             for wrong in ("copies", "objects", "destructors", "entry", "catch-cleanup"):
                 with self.subTest(profile=wrong), self.assertRaises(ValueError):
                     replay.validate_capture(root, capture | {"profile": wrong})

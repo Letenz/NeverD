@@ -42,6 +42,21 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
         Contract->Target = Target;
         Contract->DoesNotReturn = true;
         Contract->CodeRanges.push_back({Target, Target + 6});
+      } else if (auto Initializer =
+                     getCheckedX86RegistrationInitializerCalleeABI(
+                         Image, Target, &Work)) {
+        auto &Object = Initializer->Object;
+        Contract.emplace();
+        Contract->CalleeKind =
+            RegistrationCalleeFrameContract::Kind::Initializer;
+        Contract->Target = Target;
+        Contract->StackPopBytes = Object.StackPopBytes;
+        Contract->ECXReads = std::move(Object.ECXReads);
+        Contract->ECXWrites = std::move(Object.ECXWrites);
+        Contract->ECXInitialized = std::move(Initializer->Initialized);
+        Contract->ImageReads = std::move(Object.ImageReads);
+        Contract->ImageWrites = std::move(Object.ImageWrites);
+        Contract->CodeRanges = std::move(Object.CodeRanges);
       } else if (auto Leaf = getCheckedX86RegistrationLeafCalleeABI(
                      Image, Target, &Work)) {
         Contract.emplace();
@@ -76,12 +91,12 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
     }
     if (Existing->second) {
       const auto &Contract = *Existing->second;
-      if (!chargeCalleeWork(Work, Contract.ECXReads.size() +
-                                      Contract.ECXWrites.size() +
-                                      Contract.ImageReads.size() +
-                                      Contract.ImageWrites.size() +
-                                      Contract.CallerPCWrites.size() +
-                                      Contract.CodeRanges.size() + 1))
+      if (!chargeCalleeWork(
+              Work,
+              Contract.ECXReads.size() + Contract.ECXWrites.size() +
+                  Contract.ECXInitialized.size() + Contract.ImageReads.size() +
+                  Contract.ImageWrites.size() + Contract.CallerPCWrites.size() +
+                  Contract.CodeRanges.size() + 1))
         return std::nullopt;
       Result.push_back(Contract);
     }

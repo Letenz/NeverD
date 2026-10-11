@@ -3560,7 +3560,13 @@ Ordinary object initialization has a separate x86 LowIR contract in
 cleanup, exact ECX return identity and definitely initialized object bytes.
 `RegistrationInitializerCall.cpp` composes that proof into a preserved private
 throw helper, keeping its outgoing argument area separate from the object and
-caller storage. The shared private-frame transfer owns reads, writes, spills,
+caller storage. `RegistrationStateInitializer.cpp` binds direct parent calls
+to initialized scalar arguments and grants must-writes only on normal return.
+The x86 MedIR call adapter carries that cleanup into stack SSA even when no
+whole-image callee map exists, and ABI recovery retains ECX followed by the
+proved scalar words. Native LLVM calls preserve the exact returned object
+identity. Independent COFF replay checks argument privacy and keeps constructor
+initialization off the exceptional edge. The shared private-frame transfer owns reads, writes, spills,
 nonvolatile registers and return identity for leaf, copy and initializer
 contracts; call sites consume these facts without decoding a competing ABI.
 May-write effects invalidate exact scalar values while retaining possible

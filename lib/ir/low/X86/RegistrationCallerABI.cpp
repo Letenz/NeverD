@@ -182,6 +182,20 @@ bool hasRegistrationCallFrameABI(
         continue;
       }
     if (UseReachability)
+      if (const auto Initializer =
+              getCheckedX86RegistrationInitializerCalleeABI(Image, Target,
+                                                            &Work)) {
+        const auto &Object = Initializer->Object;
+        if (!chargeCalleeWork(Work, Object.ImageReads.size() +
+                                        Object.ImageWrites.size()))
+          return false;
+        for (const auto &Read : Object.ImageReads)
+          Effects.Reads.emplace(Read.Begin, Read.End);
+        for (const auto &Write : Object.ImageWrites)
+          Effects.Writes.emplace(Write.Begin, Write.End);
+        continue;
+      }
+    if (UseReachability)
       if (const auto Leaf =
               getCheckedX86RegistrationLeafCalleeABI(Image, Target, &Work)) {
         if (!chargeCalleeWork(Work, Leaf->ImageReads.size() +

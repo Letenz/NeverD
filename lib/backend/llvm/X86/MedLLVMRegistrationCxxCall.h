@@ -29,6 +29,7 @@ struct RegistrationCxxCallABI {
   llvm::CallingConv::ID Convention = llvm::CallingConv::C;
   bool BorrowsECX = false;
   bool RuntimeThrow = false;
+  bool Initializer = false;
   uint64_t ThrowInfoVA = 0;
 };
 std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(

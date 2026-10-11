@@ -20,9 +20,10 @@ MedToHighConverter::collectRegistrationCallArgs(const MedBlock &Block,
   if (!ABI)
     return std::nullopt;
   std::vector<ExprPtr> Args;
-  if (ABI->RuntimeThrow) {
+  if (ABI->RuntimeThrow || ABI->Initializer) {
     const auto *Call = CurMed->findCall(Block.Id, CallIdx);
-    if (!Call || Call->Args.size() != 2)
+    const unsigned Count = ABI->RuntimeThrow ? 2 : 1 + ABI->ScalarStackWords;
+    if (!Call || Call->Args.size() != Count)
       return std::nullopt;
     for (const auto &Argument : Call->Args)
       Args.push_back(medvarToExpr(Argument));

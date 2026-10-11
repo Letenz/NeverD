@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 #include "RegistrationDirectThrowTestUtils.h"
 
+#include "RegistrationInitializerTestUtils.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/codegen/COFF/COFFRegistrationPatch.h"
@@ -68,6 +69,7 @@ void checkCallbackBoundaries(const MedFunc &Med, const BinaryImage &Image) {
 void checkDirectThrowEdits(const MedFunc &Med, const llvm::Function &Parent,
                            const BinaryImage &Image) {
   checkCallbackBoundaries(Med, Image);
+  checkInitializerEdits(Med, Parent, Image);
   for (bool Callback : {false, true})
     for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
       SCOPED_TRACE(Callback);

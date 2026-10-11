@@ -259,7 +259,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       if (!Effect || Effect->CalleeIndex >= States.CalleeContracts.size() ||
           !Call || Call->getParent() != IR || Call->isMustTailCall() ||
           Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
-          Op.Inputs[0].ConstVal != Effect->Target || Effect->StackPopBytes)
+          Op.Inputs[0].ConstVal != Effect->Target)
         return false;
       const auto &Contract = States.CalleeContracts[Effect->CalleeIndex];
       const bool Throw = Contract.isThrow();
@@ -608,10 +608,18 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       } else
         Args.assign(2, llvm::ConstantPointerNull::get(Ptr));
     }
-    if (Plan.ABI.BorrowsECX)
+    if (Plan.ABI.Initializer) {
+      auto *Object = Old->getArgOperand(0);
+      Args.push_back(Object->getType()->isPointerTy()
+                         ? Object
+                         : B.CreateIntToPtr(Object, Ptr));
+    } else if (Plan.ABI.BorrowsECX)
       Args.push_back(B.CreateInBoundsGEP(
           I8, FrameAlloca,
           B.getInt32(Layout->Establisher + *Plan.Effect->ECXFrameOffset)));
+    if (Plan.ABI.Initializer)
+      for (unsigned I = 1; I < Old->arg_size(); ++I)
+        Args.push_back(Old->getArgOperand(I));
     const int32_t Level =
         Plan.State->Levels.empty() ? -1 : Plan.State->Levels.front();
     auto *Unwind = ProtectedCall(*Plan.State) ? UnwindAt(Level) : nullptr;
@@ -652,12 +660,17 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
         Operation.IR = Call;
     if (!Plan.Throw) {
       llvm::Value *Result = Call;
-      if (Old->getType() != Call->getType()) {
+      if (Plan.ABI.Initializer || Old->getType() != Call->getType()) {
         if (auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(Call))
           B.SetInsertPoint(&*Invoke->getNormalDest()->getFirstInsertionPt());
         else
           B.SetInsertPoint(Old);
-        Result = B.CreateZExt(Call, Old->getType());
+        // The callee proof returns exactly its incoming ECX. Preserve that
+        // frame identity instead of introducing an opaque pointer result.
+        Result =
+            Plan.ABI.Initializer ? B.CreatePtrToInt(Args.front(), I32) : Call;
+        if (Result->getType() != Old->getType())
+          Result = B.CreateZExt(Result, Old->getType());
       }
       Old->replaceAllUsesWith(Result);
     }

@@ -12,6 +12,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -258,6 +259,44 @@ TEST(RegistrationInitializer, InputPE32BindsSourceConstruction) {
   for (const auto &Diagnostic : Low.RegistrationStates->Diagnostics)
     ADD_FAILURE() << Diagnostic;
   EXPECT_TRUE(Low.RegistrationStates->Complete);
+  EXPECT_TRUE(Low.RegistrationStates->CallFrameEffectsComplete);
+  std::set<uint32_t> DirectPops;
+  bool DirectThrow = false;
+  for (const auto &Callee : Low.RegistrationStates->CalleeContracts) {
+    DirectThrow |= Callee.isRuntimeThrow();
+    if (!Callee.isInitializer())
+      continue;
+    DirectPops.insert(Callee.StackPopBytes);
+    const auto Fresh =
+        getCheckedX86RegistrationInitializerCalleeABI(*Image, Callee.Target);
+    ASSERT_TRUE(Fresh);
+    EXPECT_EQ(Callee.ECXInitialized, Fresh->Initialized);
+  }
+  EXPECT_EQ(DirectPops,
+            DirectThrow ? (std::set<uint32_t>{8, 12}) : std::set<uint32_t>{});
+  unsigned DirectCalls = 0;
+  for (const auto &Block : Low.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (Op.Opcode != NdOp::CALL)
+        continue;
+      const auto *Effect =
+          Low.RegistrationStates->callFrameEffect(Op.Addr, Op.Seq);
+      if (!Effect)
+        continue;
+      const auto &Callee =
+          Low.RegistrationStates->CalleeContracts[Effect->CalleeIndex];
+      if (!Callee.isInitializer())
+        continue;
+      ++DirectCalls;
+      EXPECT_EQ(registrationCallStackPop(Low, Block, Op), Callee.StackPopBytes);
+      auto Retargeted = Op;
+      ++Retargeted.Inputs[0].Offset;
+      EXPECT_FALSE(registrationCallStackPop(Low, Block, Retargeted));
+      ++Retargeted.Seq;
+      Retargeted.Inputs[0] = Op.Inputs[0];
+      EXPECT_FALSE(registrationCallStackPop(Low, Block, Retargeted));
+    }
+  EXPECT_EQ(DirectCalls, DirectThrow ? 2u : 0u);
 }
 
 } // namespace

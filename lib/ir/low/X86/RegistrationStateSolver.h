@@ -113,9 +113,13 @@ private:
     FrameValue StackPointer;
     bool DoesNotReturn;
     va_t EndAddress;
+    std::optional<FrameValue> Result;
   };
   std::optional<CallTransfer> transferCall(size_t I, Domain &After,
                                            const LowOp &Op);
+  bool transferInitializer(Domain &After,
+                           const RegistrationCalleeFrameContract &Callee,
+                           FrameValue &StackPointer, FrameValue &Object);
   std::optional<FrameValue> transferLocalUnwind(size_t I, Domain &After,
                                                 const LowOp &Op);
   bool runLocalFinally(va_t Target, FrameState &Parent);

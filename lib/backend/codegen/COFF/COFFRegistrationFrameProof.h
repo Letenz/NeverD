@@ -43,6 +43,11 @@ struct RegistrationFrameBorrow {
   const llvm::AllocaInst *Root = nullptr;
   /// Nonzero selects the two-pointer stdcall CRT ABI and exact table identity.
   va_t ThrowInfoVA = 0;
+  /// Ordinary construction reads only values it initialized during the call.
+  /// These must-writes seed the normal edge, never an unwind edge.
+  bool Initializer = false;
+  uint32_t ScalarStackWords = 0;
+  std::vector<RegistrationObjectExtent> Initialized;
 };
 struct RegistrationRuntimeAccess {
   int32_t Offset = 0;

@@ -13,6 +13,7 @@ add_neverd_component_library(NeverDIRLowValidation
 add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationState.cpp
   X86/RegistrationStateCalls.cpp
+  X86/RegistrationStateInitializer.cpp
   X86/RegistrationStateCxx.cpp
   X86/RegistrationStateObject.cpp
   X86/RegistrationStateResume.cpp

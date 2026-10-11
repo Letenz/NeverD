@@ -21,8 +21,9 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
                               Op.Inputs[0].isConst() && Op.Inputs[0].Size == 4
                           ? CalleeIndices.find(Op.Inputs[0].Offset)
                           : CalleeIndices.end();
-  const auto StackPointer =
+  auto StackPointer =
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
+  std::optional<FrameValue> CallResult;
   const auto SP = parentStackOffset(After);
   bool Valid = !After.Unknown && !Facts[I].Invalid && Op.Seq >= 0 &&
                Boundary != Boundaries.end() &&
@@ -60,7 +61,8 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
     Valid &= !BorrowsObject || Effect.ECXFrameOffset.has_value();
     if (Valid && BorrowsObject) {
       Valid &= projectFrameObject(After, *Effect.ECXFrameOffset, SP,
-                                  Contract.ECXReads, Effect.FrameReads, true);
+                                  Contract.ECXReads, Effect.FrameReads,
+                                  !Contract.isInitializer());
       Valid &=
           projectFrameObject(After, *Effect.ECXFrameOffset, SP,
                              Contract.ECXWrites, Effect.FrameWrites, false);
@@ -82,6 +84,12 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
                                      uint32_t(Write.End - Write.Begin));
       }
     }
+    if (Valid && Contract.isInitializer()) {
+      FrameValue Object;
+      Valid = transferInitializer(After, Contract, StackPointer, Object);
+      if (Valid)
+        CallResult = Object;
+    }
   }
   if (Valid && !InvalidCalls.count(Identity)) {
     const auto [It, Inserted] = CallEffects.emplace(Identity, Effect);
@@ -99,7 +107,8 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
       After.Frame.forgetCellValues();
     return std::nullopt;
   }
-  return CallTransfer{StackPointer, Effect.DoesNotReturn, Effect.EndAddress};
+  return CallTransfer{StackPointer, Effect.DoesNotReturn, Effect.EndAddress,
+                      CallResult};
 }
 
 } // namespace neverd::registration_state

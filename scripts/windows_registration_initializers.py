@@ -10,8 +10,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_initializer_driver.cpp"
 TYPES = ROOT / "unittests/lift/eh/fixtures/registration_copy_types.h"
 PROOF = ROOT / "unittests/lift/eh/RegistrationInitializerTests.cpp"
+EDIT_PROOF = ROOT / "unittests/lift/eh/RegistrationInitializerTestUtils.cpp"
 FORMS = {family + "-" + mode + "-llvm-fixed": "-" + mode.upper()
-         for family in ("nested", "rethrow") for mode in ("o0", "o1")}
+         for family in ("nested", "rethrow", "direct-nested", "direct-rethrow")
+         for mode in ("o0", "o1")}
 CASES = tuple(name + suffix for name in FORMS for suffix in ("", "-control"))
 
 
@@ -19,6 +21,6 @@ def profile(validate_nested):
     result = copy_profile(validate_nested)
     result.source, result.types, result.proof = SOURCE, TYPES, PROOF
     result.forms, result.cases = FORMS, CASES
-    result.dependencies = (COPY_SOURCE, SHARED_DRIVER)
+    result.dependencies = (COPY_SOURCE, SHARED_DRIVER, EDIT_PROOF)
     result.test = "RegistrationInitializer.InputPE32BindsSourceConstruction"
     return result

@@ -3355,15 +3355,21 @@ capture in their place. C/C++ syntax checks also cover records with no default
 constructor; RTTI alone must not invent a constructor or remove initialization.
 
 The `initializers` source and relift profiles keep ordinary scalar-argument
-constructors out of line before private throw helpers enter the CRT. Eight
-O0/O1 nested/rethrow source/control cases produce 64 images per capture or
-replay; the complete two-generation sequence executes 256 images. The source
+constructors out of line in both the parent and private throw helpers before
+entering the CRT. Sixteen O0/O1 direct/private nested/rethrow source/control
+cases produce 128 images per capture or replay; the complete two-generation
+sequence executes 512 images. The source
 profile binds the initializer proof, the constructor-selection wrapper, both
 shared drivers and the actual type declarations. It retains the independent
 four-copy/twelve-destruction oracle and rejects copy-only evidence in place of
 ordinary-constructor evidence. `RegistrationInitializer.*` checks callee stack
 cleanup, exact returned destination, private spills, all-path initialization,
 source closure and the nearest pointer/argument/caller-storage refusals.
+`RegistrationInitializerState.*` checks exact stack cleanup and return identity
+without borrowing uninitialized arguments. `RegistrationInitializerFrame.*`
+checks disjoint must-writes, exceptional-edge isolation and scalar argument
+privacy. Direct-source mutations also challenge the installed constructor ABI,
+object pointer and optimizer promises.
 `RegistrationState.APossibleCalleeWriteCannotLaunderTheObjectPointer` checks
 that both partial and full-width may-writes preserve possible frame-pointer
 provenance until a definite replacement has been proved.

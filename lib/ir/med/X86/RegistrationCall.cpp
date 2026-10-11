@@ -5,9 +5,42 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
+#include "neverd/lift/X86Regs.h"
 
 namespace neverd {
+
+llvm::ArrayRef<uint64_t> RegistrationCallABI::integerArgumentRegisters() const {
+  static constexpr uint64_t ThisRegister[] = {x86reg::RCX};
+  return BorrowsECX ? llvm::ArrayRef<uint64_t>(ThisRegister)
+                    : llvm::ArrayRef<uint64_t>{};
+}
+
+std::optional<uint32_t> registrationCallStackPop(const LowFunc &Func,
+                                                 const LowBlock &Block,
+                                                 const LowOp &Call) {
+  if (!Func.ExceptionMetadata || !Func.RegistrationStates ||
+      !Func.RegistrationStates->Complete ||
+      !Func.RegistrationStates->CallFrameEffectsComplete ||
+      Call.Opcode != NdOp::CALL || Call.NumInputs != 1 ||
+      !Call.Inputs[0].isConst() || Call.Inputs[0].Size != 4 || Call.Seq < 0)
+    return std::nullopt;
+  const auto &States = *Func.RegistrationStates;
+  const auto *Effect = States.callFrameEffect(Call.Addr, Call.Seq);
+  if (!Effect || Effect->Target != Call.Inputs[0].Offset ||
+      Effect->CalleeIndex >= States.CalleeContracts.size() ||
+      Effect->DoesNotReturn || Call.Addr < Block.StartAddr ||
+      Effect->EndAddress > Block.EndAddr || Effect->EndAddress <= Call.Addr ||
+      !Func.ExceptionMetadata->ownsCode({Call.Addr, Effect->EndAddress}))
+    return std::nullopt;
+  const auto &Callee = States.CalleeContracts[Effect->CalleeIndex];
+  if (!Callee.isInitializer() || Callee.Target != Effect->Target ||
+      Callee.StackPopBytes != Effect->StackPopBytes ||
+      Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4)
+    return std::nullopt;
+  return Callee.StackPopBytes;
+}
 
 std::optional<RegistrationCallABI> registrationCallABI(const MedFunc &Func,
                                                        const MedBlock &Block,
@@ -37,22 +70,28 @@ std::optional<RegistrationCallABI> registrationCallABI(const MedFunc &Func,
     }
   if (!Effect || Effect->Target != Call.Inputs[0].ConstVal ||
       Effect->CalleeIndex >= State.CalleeContracts.size() ||
-      Effect->StackPopBytes || Effect->DoesNotReturn != Call.DoesNotReturn ||
+      Effect->DoesNotReturn != Call.DoesNotReturn ||
       Call.Addr < Block.StartAddr || Effect->EndAddress <= Call.Addr ||
       Effect->EndAddress > Block.EndAddr ||
       !EH.ownsCode({Call.Addr, Effect->EndAddress}))
     return std::nullopt;
   const auto &Callee = State.CalleeContracts[Effect->CalleeIndex];
-  if (Callee.Target != Effect->Target || Callee.StackPopBytes ||
+  if (Callee.Target != Effect->Target ||
+      Callee.StackPopBytes != Effect->StackPopBytes ||
+      (Callee.isInitializer()
+           ? Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4 ||
+                 Callee.StackPopBytes / 4 >= limits::kMaxCallArgs
+           : Callee.StackPopBytes != 0) ||
       Callee.isRuntimeThrow() != Effect->RuntimeThrow.has_value() ||
       Callee.DoesNotReturn != Effect->DoesNotReturn)
     return std::nullopt;
   const bool Borrow = !Callee.ECXReads.empty() || !Callee.ECXWrites.empty();
   if (Borrow != Effect->ECXFrameOffset.has_value() ||
-      (Callee.isThrow()
-           ? !Callee.DoesNotReturn || Borrow
-           : Callee.CalleeKind != RegistrationCalleeFrameContract::Kind::Leaf ||
-                 Callee.DoesNotReturn))
+      (Callee.isThrow() ? !Callee.DoesNotReturn || Borrow
+                        : (Callee.CalleeKind !=
+                               RegistrationCalleeFrameContract::Kind::Leaf &&
+                           !Callee.isInitializer()) ||
+                              Callee.DoesNotReturn))
     return std::nullopt;
 
   size_t Work = 0;
@@ -67,8 +106,9 @@ std::optional<RegistrationCallABI> registrationCallABI(const MedFunc &Func,
         return std::nullopt;
       Found = true;
     }
-  return Found ? std::optional(
-                     RegistrationCallABI{Borrow, Callee.isRuntimeThrow()})
+  return Found ? std::optional(RegistrationCallABI{
+                     Borrow, Callee.isRuntimeThrow(), Callee.isInitializer(),
+                     Callee.StackPopBytes / 4})
                : std::nullopt;
 }
 

@@ -52,6 +52,8 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     const RegistrationCallFrameEffect &Effect, const llvm::CallInst &Call,
     size_t &Work) {
   if (Contract.Target != Effect.Target ||
+      Contract.StackPopBytes != Effect.StackPopBytes ||
+      (!Contract.isInitializer() && Effect.StackPopBytes) ||
       Contract.DoesNotReturn != Effect.DoesNotReturn)
     return std::nullopt;
   auto &Context = Call.getContext();
@@ -105,6 +107,30 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
         return std::nullopt;
       ABI.Type = llvm::FunctionType::get(Void, false);
     }
+  } else if (Contract.isInitializer()) {
+    const auto Proof = getCheckedX86RegistrationInitializerCalleeABI(
+        Image, Effect.Target, &Work);
+    if (!Proof || Proof->Object.StackPopBytes != Effect.StackPopBytes ||
+        Proof->Initialized != Contract.ECXInitialized || Effect.DoesNotReturn ||
+        !Effect.ECXFrameOffset ||
+        Call.arg_size() != 1 + Effect.StackPopBytes / 4 ||
+        (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
+      return std::nullopt;
+    const auto *Object = Call.getArgOperand(0);
+    if (llvm::isa<llvm::Constant>(Object) ||
+        (!Object->getType()->isIntegerTy(32) &&
+         !Object->getType()->isIntegerTy(64) &&
+         (!Object->getType()->isPointerTy() ||
+          Object->getType()->getPointerAddressSpace())))
+      return std::nullopt;
+    for (unsigned I = 1; I < Call.arg_size(); ++I)
+      if (!Call.getArgOperand(I)->getType()->isIntegerTy(32))
+        return std::nullopt;
+    llvm::SmallVector<llvm::Type *, 4> Arguments(Call.arg_size(), I32);
+    Arguments.front() = Ptr;
+    ABI.Type = llvm::FunctionType::get(Void, Arguments, false);
+    ABI.Convention = llvm::CallingConv::X86_ThisCall;
+    ABI.BorrowsECX = ABI.Initializer = true;
   } else {
     const auto Proof =
         getCheckedX86RegistrationLeafCalleeABI(Image, Effect.Target, &Work);

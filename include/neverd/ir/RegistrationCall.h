@@ -66,7 +66,8 @@ struct RegistrationCalleeFrameContract {
     Leaf,
     PrivateThrow,
     PrivateRethrow,
-    RuntimeThrow
+    RuntimeThrow,
+    Initializer
   } CalleeKind = Kind::Leaf;
   va_t Target = InvalidVA;
   uint32_t StackPopBytes = 0;
@@ -76,6 +77,8 @@ struct RegistrationCalleeFrameContract {
   std::vector<RegistrationRuntimeThrowInfo> RuntimeThrowInfos;
   std::vector<RegistrationObjectExtent> ECXReads;
   std::vector<RegistrationObjectExtent> ECXWrites;
+  /// Bytes initialized on every normal return from an ordinary constructor.
+  std::vector<RegistrationObjectExtent> ECXInitialized;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;
@@ -88,6 +91,7 @@ struct RegistrationCalleeFrameContract {
   }
   bool isRethrow() const { return CalleeKind == Kind::PrivateRethrow; }
   bool isRuntimeThrow() const { return CalleeKind == Kind::RuntimeThrow; }
+  bool isInitializer() const { return CalleeKind == Kind::Initializer; }
 };
 
 /// One exact source call with a proved stack and bounded, initialized object

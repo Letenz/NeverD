@@ -381,22 +381,32 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     const bool Throw = Receipt.Contract.isThrow();
     const bool Borrow = Receipt.ObjectFrameOffset.has_value();
     const bool RuntimeThrow = Receipt.Contract.isRuntimeThrow();
+    const bool Initializer = Receipt.Contract.isInitializer();
+    const unsigned ScalarWords =
+        Initializer ? Receipt.Contract.StackPopBytes / 4 : 0;
     if (RuntimeThrow != Receipt.RuntimeThrow.has_value() || !Callee ||
         !Callee->isDeclaration() || !Callee->hasExternalLinkage() ||
         Callee->isVarArg() || Call->isInlineAsm() || Call->isTailCall() ||
-        Call->arg_size() != (RuntimeThrow ? 2u : unsigned(Borrow)) ||
+        Call->arg_size() !=
+            (RuntimeThrow ? 2u : unsigned(Borrow) + ScalarWords) ||
+        (Initializer && !Borrow) ||
         Call->getCallingConv() != (RuntimeThrow ? llvm::CallingConv::X86_StdCall
                                    : Borrow ? llvm::CallingConv::X86_ThisCall
                                             : llvm::CallingConv::C) ||
         Call->getCallingConv() != Callee->getCallingConv() ||
         Call->getFunctionType() != Callee->getFunctionType() ||
         (Borrow && !Call->getArgOperand(0)->getType()->isPointerTy()) ||
-        (Throw || Receipt.Cleanup ? !Call->getType()->isVoidTy()
-                                  : !Call->getType()->isIntegerTy(32)) ||
+        (Throw || Receipt.Cleanup || Initializer
+             ? !Call->getType()->isVoidTy()
+             : !Call->getType()->isIntegerTy(32)) ||
         Call->doesNotReturn() != Throw || Callee->doesNotReturn() != Throw ||
         (Receipt.Cleanup && !Call->doesNotThrow()) ||
         (!Receipt.Cleanup && Call->doesNotThrow()))
       return rejectIR("C++ preserved callee changed its physical call ABI");
+    if (Initializer)
+      for (unsigned I = 1; I < Call->arg_size(); ++I)
+        if (!Call->getArgOperand(I)->getType()->isIntegerTy(32))
+          return rejectIR("C++ constructor changed a scalar stack argument");
     if (!hasExactCxxCallAttributes(*Call, Receipt))
       return rejectIR("C++ preserved callee changed its proved effects");
     if (RuntimeThrow) {
