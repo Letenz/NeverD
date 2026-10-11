@@ -1332,6 +1332,14 @@ target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
 
+add_neverd_unittest(NeverDKernelSnapshotTests
+  NO_PRETTY_VALUES
+  KernelSnapshotTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS Emulation)
+target_include_directories(NeverDKernelSnapshotTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
+
 add_neverd_unittest(NeverDDriverGuardMetadataTests
   DriverDormantGuardTests.cpp
   TIMEOUT 30

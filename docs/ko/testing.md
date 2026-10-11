@@ -1656,6 +1656,8 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `NeverDUnpackDriverTests`는 진입점, 커널 가져오기, 잔여 자원, ABI, 내보내기, 스케줄링, 요청 및 언로드, C API/CLI, PE 체크섬을 검증합니다. 필수 KVM/WHP 사례와 Windows ImageHlp 비교는 네이티브 커널 로드를 증명하지 않습니다. [UNPACK](unpack.md).
 
+`NeverDKernelSnapshotTests`는 종결 메모리 오류와 지원하지 않는 명령 이후의 객체 진단 스냅샷을 검사합니다. 확정된 장치 및 디스패치 상태는 읽을 수 있지만 최초 오류는 유지되고 CPU 접근은 계속 금지됩니다. 손상된 소유 관계, 순환 장치 목록, 잘못된 드라이버 확장, 일부만 초기화된 디스패치 포인터는 계속 실패합니다. 네이티브 KVM/WHP 검증에는 해당 백엔드 사례가 필수입니다.
+
 ## 불투명 상태 검사
 
 `X86PreservedState.*`는 새 스칼라 형식, 정확한 별칭, 엄격한 초기화, 오래된 바이트/연산 구간/버전 거부를 검사한다. `OriginalBinaryUndefinedIndependence.*Opaque*`는 분기, 내부 호출, 완전한 간접 대상, 정확한 프로필, 독립 디코딩으로 계산한 메타데이터 예산의 정확/1 부족 경계를 다룬다. `BinaryLowIR*.*Opaque*`는 증인과 임의 미정의 선택, 여러 귀납 소스, 후반 순위/예산 실패, 실제 진입 스칼라 보존, LowIR이 같은 후속 소스 바이트 변경의 실행 해시 변경을 검사한다. `NativeUndefinedIndependence.*Opaque*`와 `NativeStackControl.*FreshMemoryCall*`는 그룹 내부, 절단점 전 경계, 오래된 기록, 스택 변경 전 대상 평가를 검사한다. `NeverDInterpreterLLVMRefinementTests`를 포함한 영향받는 메타데이터 사용자를 재빌드하고, sanitizer 및 컴파일한 결함 주입 결과는 일반 테스트와 별도로 보고한다.

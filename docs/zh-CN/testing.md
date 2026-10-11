@@ -1574,6 +1574,8 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 
 `NeverDUnpackDriverTests` 覆盖 DriverEntry 恢复、静态／动态内核导入、遗留内核资源、入口 ABI／控制状态、畸形导出、调度、请求／卸载生命周期、C API／CLI 一致性及 PE 校验和。原生驱动清单要求对应 KVM／WHP 用例执行；Windows 还对照 ImageHlp。这不代表原生内核加载验收。见[脱壳](unpack.md)。
 
+`NeverDKernelSnapshotTests` 检查终止性内存故障和不支持指令之后的对象诊断快照。已提交的设备和分派状态仍可读取，原始故障保留，CPU 访问仍被禁止。损坏的归属关系、循环设备链表、无效驱动扩展和部分初始化的分派指针仍会失败。原生 KVM／WHP 验收要求对应后端用例执行。
+
 ## 原生不透明状态检查
 
 `X86PreservedState.*` 检查新鲜标量形式、精确寄存器别名、严格重置及字节/操作段/版本陈旧拒绝。`OriginalBinaryUndefinedIndependence.*Opaque*` 覆盖分支、内部调用、完整间接目标、精确配置及独立解码的元数据预算恰好够用/少一单位边界。`BinaryLowIR*.*Opaque*` 覆盖选择见证与任意未定义选择、多归纳源、后期秩/预算拒绝、真实入口标量保持，以及 LowIR 不变但后续源段字节改变时执行摘要必须变化。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 检查分组内部、切点前边界、陈旧记录及栈修改前的目标求值。重建受影响的元数据消费者，包括 `NeverDInterpreterLLVMRefinementTests`；分别报告 sanitizer、编译故障注入与普通测试结果。

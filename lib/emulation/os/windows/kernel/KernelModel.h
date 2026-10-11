@@ -1286,8 +1286,13 @@ private:
   llvm::Error retireDeviceIfUnreferenced(uint64_t Address);
   llvm::Expected<uint64_t> topAttachedDevice(uint64_t Base) const;
   llvm::Expected<std::vector<uint64_t>> deviceStack(uint64_t Top) const;
-  llvm::Error validateDeviceTopology() const;
-  llvm::Expected<std::vector<uint64_t>> driverDeviceInventory() const;
+  enum class ObjectRead { Execution, Snapshot };
+  llvm::Expected<uint64_t> readObjectField(uint64_t Address, unsigned Width,
+                                           ObjectRead Mode) const;
+  llvm::Error
+  validateDeviceTopology(ObjectRead Mode = ObjectRead::Execution) const;
+  llvm::Expected<std::vector<uint64_t>>
+  driverDeviceInventory(ObjectRead Mode = ObjectRead::Execution) const;
   llvm::Expected<uint64_t> attachDevice(uint64_t Source, uint64_t Target);
   llvm::Error detachDevice(uint64_t Lower);
   llvm::Error retainDevice(uint64_t Device);

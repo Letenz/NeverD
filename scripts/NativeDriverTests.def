@@ -6,8 +6,27 @@
 #ifdef NEVERD_NATIVE_DRIVER_OWNER
 NEVERD_NATIVE_DRIVER_OWNER(NeverDNativeDriverTests)
 NEVERD_NATIVE_DRIVER_OWNER(NeverDUnpackDriverTests)
+NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.MemoryFaultRetainsCommittedObjectsAndFirstFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.UnsupportedInstructionRetainsCommittedObjects/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.CorruptedDeviceIdentityStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.CyclicDeviceListStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.CorruptedDriverExtensionStillFailsAfterFault/"
+    "{backend}_checked")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Native/KernelSnapshot.PartialDispatchPointerStillFailsAfterFault/"
+    "{backend}_checked")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Native/DriverCPUIDExecution.ReportsDeclaredRegistersAcrossBackends/"
     "{backend}_driver")
