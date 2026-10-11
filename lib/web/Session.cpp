@@ -425,6 +425,20 @@ std::string Session::capabilities() {
       {"whole_program_equivalence", false},
       {"source_reflection_preserved", false},
       {"executes_input", false}});
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "javascript_boolean_branches"},
+      {"profile", std::string(SourceBranchProfile)},
+      {"passes", llvm::json::Array{"boolean_branches"}},
+      {"max_source_bytes", std::to_string(MaxSourceRewriteBytes)},
+      {"max_candidate_bytes", std::to_string(MaxSourceRewriteBytes)},
+      {"max_records", MaxSourceRewriteRecords},
+      {"max_steps", MaxSourceRewriteSteps},
+      {"max_cached", MaxCachedSourceRewrites},
+      {"cache_pool", "source_rewrites"},
+      {"statements_rewritten", false},
+      {"whole_program_equivalence", false},
+      {"source_reflection_preserved", false},
+      {"executes_input", false}});
   Operations.emplace_back("source_modules_analyze");
   Operations.emplace_back("source_module_records");
   Operations.emplace_back("source_bundles_analyze");

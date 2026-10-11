@@ -83,6 +83,17 @@ llvm::json::Object summary(const SourceRewrite &A, uint64_t Revision) {
         verified(A) ? "same_scopes_declarations_and_reference_resolution"
                     : "unavailable";
     Result["original_name_recovery"] = false;
+  } else if (A.Pass == "boolean_branches") {
+    Result["value_verification"] =
+        verified(A) ? "constant_boolean_condition_only" : "unavailable";
+    Result["outside_tree_verification"] =
+        verified(A) ? "same_retained_tree_with_get_value_sequence"
+                    : "unavailable";
+    Result["binding_verification"] =
+        verified(A) ? "same_scopes_declarations_and_retained_references"
+                    : "unavailable";
+    Result["retained_expression_effects"] = "preserved_not_assumed_absent";
+    Result["statements_rewritten"] = false;
   }
   return Result;
 }
@@ -107,6 +118,13 @@ llvm::json::Object record(const SourceRewriteRecord &R) {
   if (!R.BindingID.empty()) {
     Result["binding_id"] = R.BindingID;
     Result["identifier_role"] = R.Role;
+  }
+  if (!R.ConditionID.empty()) {
+    Result["condition_node_id"] = R.ConditionID;
+    Result["retained_node_id"] =
+        Accepted ? llvm::json::Value(R.RetainedID) : llvm::json::Value(nullptr);
+    Result["selected_operand"] =
+        Accepted ? llvm::json::Value(R.Selection) : llvm::json::Value(nullptr);
   }
   return Result;
 }

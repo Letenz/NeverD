@@ -74,6 +74,7 @@ Domain labels and field order are defined in
 | Effect analysis | Source ID, binding/value analysis IDs and fixed effect profile |
 | Source rewrite | Source ID, explicitly selected pass/profile and binding/value/effect identities; lexical renaming has no value/effect identities |
 | Rename occurrence | Rewrite ID, original binding ID, node ID, declaration/reference role and fixed status/reason; no standalone name hash |
+| Boolean branch occurrence | Rewrite ID, original expression/condition/retained node identities and indices, selected operand, fixed status/reason; no operand bytes or individual value hashes |
 | Module inventory | Source ID, binding analysis ID and module-evidence profile |
 | Module occurrence | Module inventory ID, fixed kind, syntax node ID and traversal ordinal |
 | Admitted module-file comparison | Module inventory ID, snapshot ID and file-comparison profile |

@@ -1,5 +1,40 @@
 # Claude Code 2.1.296: offline NeverD qualification
 
+## Reversible Boolean branch selection — 2026-10-11
+
+NeverD's native C++ CLI extracted original Bun module 1047 from the same
+hash-pinned standalone ELF and applied `boolean_branches` with a module parse
+goal. Preview and receipt-bound export used `PATH=/neverd-no-external-tools`.
+
+| Evidence | Result |
+| --- | --- |
+| Original decoded source | 6,309 bytes; SHA-256 `faa820c7d6f239d9404d70278eb294ab926bc9c1ad4a32993b047d33baa62a91` |
+| Profile | `javascript-boolean-branches-v1` |
+| Accepted / refused expressions | 1 / 6 |
+| Candidate | 6,309 bytes; SHA-256 `e15ee77e5296c38f3d1065a46d9f7a7023340f7adaca86f3b6b8b6da2f20561d` |
+| Rewrite ID | `9a333c1bfdcecedfc7f46404d5b39a934519725b7543d71f763306f9ef7544aa` |
+| Exported receipt SHA-256 | `bb700e0774af697b5185391faacaa5c4a9019d3e107b9e877423b7c469fed5d7` |
+
+The candidate passed complete retained-tree/GetValue-scaffolding checks,
+surviving lexical-reference projection and exact inverse validation. The
+exported original also matched recovered `m01047.js` byte-for-byte. Local
+`original.js`, `candidate.js` and `receipt.json` are retained under
+`/Users/gmh/code/claude-code-recovery/2.1.296/boolean-branches/module-01047/`.
+No target was executed and no sample source is committed.
+
+The same profile on module 1897 retained all 1,007 candidates, with zero
+accepted changes. Its 156,255-byte candidate remained exactly the original,
+SHA-256 `1be18858dfe6863b48e9e0c25e25f9d04b22221935cb1a9e286cbd992d70f722`.
+Module 1613 was refused before rewriting with `source_byte_budget_exceeded`.
+The optional C++ regression extracts all three selections through NeverD and
+retains these outcomes without raising limits. Selection does not imply that
+all bundled code can be simplified or that selected effects disappear.
+
+Use `neverd web bun-rewrite <binary> 1047 module boolean_branches`, then
+`neverd web bun-rewrite-export <binary> 1047 module boolean_branches <export_receipt> <new-directory>`.
+See the [profile](web-boolean-branches-profile.md) for exclusions. Local evidence
+is `/tmp/neverd-branch-claude-{1047,1047-export,1613,1897}.jsonl`.
+
 ## Reversible lexical renaming — 2026-10-11
 
 The native C++ CLI selected original Bun module 1 from the pinned standalone

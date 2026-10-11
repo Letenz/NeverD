@@ -124,6 +124,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     rewrite/Plan.cpp
     rewrite/Rename.cpp
     rewrite/RenameValidate.cpp
+    rewrite/Branches.cpp
+    rewrite/BranchValidate.cpp
     rewrite/Primitive.cpp
     rewrite/Apply.cpp
     rewrite/Validate.cpp

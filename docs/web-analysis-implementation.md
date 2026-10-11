@@ -44,7 +44,7 @@ their existing scope; no Python support for web APIs is claimed.
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
 | P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and selected source behavior/inventory joins implemented; two official Claude Code npm packages qualify original digest and payload evidence | Install-entry propagation, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
-| P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites and bounded whole-binding renaming with distinct profiles, exact inverse and refusal tests | Branch/control-flow transforms and broader qualification remain |
+| P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
 | P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader, nexe 4.0.0-rc.7 EOF reader and pkg 5.8.1 uncompressed VFS reader; shared source/asset consumers and producer qualification below | Tauri/Wails bridges/assets and broader host/producer qualification remain; other Node-family layouts stay unsupported |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
@@ -1947,3 +1947,51 @@ core/SDK tests, ten worker suites, five MCP suites, ABI discovery and the
 `/tmp/neverd-rename-restored-{build,web,worker,mcp,api}.log` and
 `/tmp/neverd-rename-capabilities.log`. This increment does not complete general
 control-flow simplification or the remaining four tracks.
+
+## Reversible Boolean branch expressions — 2026-10-11
+
+`javascript-boolean-branches-v1` adds explicit `boolean_branches` selection
+through the shared C++ binding/value/effect models. The independently reviewed
+plan required two corrections: retain module asynchrony by refusing every
+candidate containing await, even in an unreachable branch; and use
+`(0,(<selected bytes>))` so a chosen sequence remains one operand and GetValue
+semantics survive calls, typeof, delete and indirect eval. No statement
+transformation or duplicate truthiness/binding analysis was introduced.
+
+`rewrite/Branches.cpp` owns bounded candidate selection and syntax barriers;
+`BranchValidate.cpp` owns exact GetValue scaffolding and retained AST/reference
+projection. Complete scope/declaration ownership survives. Chosen side effects
+and possible exceptions are retained, never assumed absent. Exact inversion
+and the existing private export transaction precede publication. Session,
+SDK/CLI, worker and MCP share the new profile and two-result cache. The older
+primitive goldens and a pre-change rename golden retain their entire serialized
+receipt bytes, hashes, IDs and export tokens.
+
+The actual NeverD Bun CLI selected Claude module 1047, accepting one branch and
+refusing six; its exported original exactly matches the earlier recovered
+member and its candidate passes reparse, graph projection and inverse checks.
+Module 1897 retains all 1,007 candidates unchanged. Module 1613 refuses the
+source-byte ceiling before rewriting. C++ tests extract all three from the
+original hash-pinned executable. See the
+[qualification](web-claude-code-qualification.md) and
+[profile](web-boolean-branches-profile.md). No target was executed or sample
+source committed; budgets were unchanged.
+
+All 50 focused core/SDK tests passed, including work exhaustion, old raw
+receipts, private canaries and unusable-PATH CLI export. Enabled ABI discovery,
+the actual worker Web transport and all five MCP suites passed. After adding
+the three-member real test, complete Web regression passed 570 of 577 cases,
+including all supplied runtime/package corpora and all 2,345 Claude JS units.
+Seven explicit skips remain the six unavailable LLVM Zstd map cases and the
+ASAR-policy omission case. All ten worker regressions and the 23-capability
+manifest check passed. Logs: `/tmp/neverd-branch-{focused,full-web,api,mcp,worker-all,capabilities}.log`.
+
+With JS parsing disabled, ABI discovery, worker Web and four MCP suites passed;
+the source-dependent Claude MCP case skipped. With the whole backend disabled,
+both ABI/stub cases and four MCP suites passed; worker Web and Claude MCP
+explicitly skipped. Both flags were restored to ON, then all 51 focused rewrite
+core/SDK cases, ten worker suites, five MCP suites and ABI discovery passed.
+The backend-omission-only ABI case skipped in the enabled profile. Logs:
+`/tmp/neverd-branch-nojs-{api,worker,mcp}.log`,
+`/tmp/neverd-branch-off-{api,worker,mcp}.log` and
+`/tmp/neverd-branch-restored-{build,web,api,worker,mcp}.log`.

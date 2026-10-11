@@ -65,7 +65,7 @@ The limits are 1 MiB per original/candidate/inverse, 4,096 total records and
 8,000,000 planning/application/validation steps. Identifier traversal, name
 comparison/collision work and byte copies consume that budget. Parser and
 binding limits also apply. Inverse validation has its own 8,000,000-step limit.
-All three rewrite passes share two cached results per session. A failure
+All four rewrite passes share two cached results per session. A failure
 publishes no candidate or partial binding edits.
 
 The two existing primitive passes retain `javascript-primitive-rewrite-v1`

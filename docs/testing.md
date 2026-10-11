@@ -691,6 +691,17 @@ names, shared cache limits, revision-bound receipts and CLI export without an
 external-tool PATH. Worker/MCP check the same profile and record evidence.
 `WebRewriteSDK.PrimitiveV1ReceiptsRemainExactlyCompatible` compares both older
 passes against fixed pre-rename export bytes, IDs, tokens and SHA-256 hashes.
+`WebSourceBranch` supplies independent expected text and retained-tree oracles
+for Boolean `?:`/`&&`/`||`, method/optional/tag calls, indirect eval, typeof/delete,
+selected sequences, chosen effects/exceptions, lexical projection, await and
+scope exclusions, ASI/comments, tampered receipts and byte/record/work/lexer
+ceilings. `WebBranchSDK` checks private operand metadata, distinct evidence,
+shared cache/revision receipts and CLI export with an unusable PATH. Worker/MCP
+compare the same branch result and records. `WebRenameSDK` additionally pins
+the complete pre-branch rename receipt; existing primitive goldens still apply.
+Its optional original Claude test accepts one branch and refuses six in module
+1047, leaves all 1,007 module 1897 candidates unchanged, and checks module 1613's
+source-byte refusal through the same Bun decoder. No target is executed.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative

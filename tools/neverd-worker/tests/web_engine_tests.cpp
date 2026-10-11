@@ -1791,6 +1791,66 @@ int main(int argc, char **argv) {
                   reply.dump().find("neverd_local_") == std::string::npos,
               "Worker rename records differ or expose names");
       }
+      if (hasBindings) {
+        const auto Input = fixture.root / "branches.js";
+        std::ofstream(Input) << "function SECRET_WEB_NAME(SECRET_WEB_ARG){"
+                                "return true ? SECRET_WEB_ARG.method() : "
+                                "SECRET_WEB_UNUSED;}";
+        const auto Before = web.revision(), PreviousProject = web.projectId();
+        const Json Import{{"schema_version", 1}, {"path", Input.string()}};
+        const auto Preview = web.execute("web_import_preview", Import);
+        const auto Commit = web.execute(
+            "web_import_commit", {{"schema_version", 1},
+                                  {"preview_token", Preview["preview_token"]}});
+        reply =
+            process.call("web_import_preview", Import, Before, PreviousProject);
+        reply =
+            process.call("web_import_commit",
+                         {{"schema_version", 1},
+                          {"preview_token", reply["payload"]["preview_token"]}},
+                         Before, PreviousProject);
+        check(reply["payload"] == Commit, "Branch import differs");
+        const auto Revision = web.revision(), Project = web.projectId();
+        const auto Items = web.execute(
+            "web_artifacts", {{"schema_version", 1}, {"revision", Revision}});
+        const Json SourceArgs{{"schema_version", 1},
+                              {"revision", Revision},
+                              {"artifact_id", Items["items"][0]["artifact_id"]},
+                              {"source_type", "script"}};
+        const auto Source = web.execute("web_source_analyze", SourceArgs);
+        reply =
+            process.call("web_source_analyze", SourceArgs, Revision, Project);
+        check(reply["payload"] == Source, "Branch source differs");
+        const Json Args{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"source_id", Source["source_id"]},
+                        {"pass", "boolean_branches"}};
+        const auto A = web.execute("web_source_rewrite_analyze", Args);
+        reply =
+            process.call("web_source_rewrite_analyze", Args, Revision, Project);
+        check(reply["payload"] == A &&
+                  A["profile"] == "javascript-boolean-branches-v1" &&
+                  A["analysis_status"] == "verified_local_rewrites" &&
+                  A["accepted_count"] == 1 &&
+                  A["value_verification"] ==
+                      "constant_boolean_condition_only" &&
+                  A["binding_verification"] ==
+                      "same_scopes_declarations_and_retained_references" &&
+                  A["retained_expression_effects"] ==
+                      "preserved_not_assumed_absent" &&
+                  A["statements_rewritten"] == false,
+              "Worker changed Boolean branch evidence");
+        const Json Page{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"rewrite_id", A["rewrite_id"]}};
+        const auto Records = web.execute("web_source_rewrite_records", Page);
+        reply =
+            process.call("web_source_rewrite_records", Page, Revision, Project);
+        check(reply["payload"] == Records && Records["items"].size() == 1 &&
+                  Records["items"][0]["selected_operand"] == "consequent" &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker branch records differ or expose source");
+      }
       const auto streamRoot = fixture.root / "streams";
       fs::create_directory(streamRoot);
       std::ofstream(streamRoot / "a.jsonl")

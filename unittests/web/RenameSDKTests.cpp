@@ -193,6 +193,20 @@ TEST_F(WebRenameSDK, SharedCacheAndRevisionBoundReceiptsRemainAuthoritative) {
             "source_rewrite_export_receipt_mismatch");
 }
 
+TEST_F(WebRenameSDK, RenameV1ReceiptRemainsExactlyCompatible) {
+  const auto GoldenBytes = read(std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) /
+                                "rewrite" / "scope-renaming-v1-receipt.json");
+  ASSERT_FALSE(GoldenBytes.empty());
+  const auto Golden = parse(GoldenBytes);
+  const auto A = analyze();
+  EXPECT_EQ(field(A, "rewrite_id"), field(Golden, "rewrite_id"));
+  EXPECT_EQ(field(A, "export_receipt"), field(Golden, "export_receipt"));
+  const auto E = exportTo(A, field(A, "export_receipt"), Root / "golden");
+  EXPECT_EQ(field(E, "receipt_sha256"),
+            "434de5241d88899e51247722e0595106718cdecb3b99821fab1c1253b199eabc");
+  EXPECT_EQ(read(Root / "golden" / "receipt.json"), GoldenBytes);
+}
+
 TEST_F(WebRenameSDK, CLIUsesTheSameReceiptWithNoExternalRuntime) {
 #ifndef NEVERD_WEB_TEST_CLI
   GTEST_SKIP() << "CLI unavailable";

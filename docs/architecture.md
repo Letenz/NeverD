@@ -543,6 +543,12 @@ and reference resolution using the same lexical owner. Non-simple parameter
 environments and name-sensitive declarations remain excluded. Pass/profile
 selection has one shared authority; primitive identities and serialized receipts
 remain unchanged. Rename evidence does not borrow primitive SameValue claims.
+`Branches` selects proven Boolean expression operands through the existing
+value/effect owners and excludes declaration/scope/await subtrees. Its validator
+checks an explicit GetValue sequence, exact retained syntax and the surviving
+reference projection against the shared lexical owner. No duplicate resolver
+or general truthiness evaluator is introduced. See the
+[Boolean branch profile](web-boolean-branches-profile.md).
 `SessionRewrite` retains at most two private results and publishes metadata.
 Its raw local export requires a pass/source/revision-bound receipt;
 `rewrite/Export` owns exclusive fixed files and descriptor-based rollback.

@@ -211,7 +211,7 @@ Heartbeat retains its native fields and adds
 | `web_source_binding_records` | Exact `revision`, `source_id`, `record_kind: scopes/bindings/declarations/references`, optional page fields |
 | `web_source_semantics_analyze` | Exact `revision`, `source_id`; returns bounded primitive/effect analysis status and counts |
 | `web_source_semantic_records` | Exact `revision`, `source_id`, optional page fields; private value kinds/status and immediate/deferred effect categories only |
-| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding/scope_renaming`; private candidate and metadata-only profile-specific receipt |
+| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding/scope_renaming/boolean_branches`; private candidate and metadata-only profile-specific receipt |
 | `web_source_rewrite_records` | Exact `revision`, `rewrite_id`, optional page fields; fixed reasons and original/candidate ranges, no literal bytes or per-patch hashes |
 | `web_source_modules_analyze` | Exact `revision`, `source_id`; module inventory and admitted-file comparison; derived HTML inline sources retain explicit document/script/base context, without runtime resolution |
 | `web_source_module_records` | Exact `revision`, `source_id`, `record_kind: requests/imports/exports/attributes`, optional page fields; reported link profile/context and nullable URL presence flags, no specifier/name/path values |
@@ -249,10 +249,12 @@ Original regions require `locally_reviewed:true` and exact `reviewed_ranges` in
 the preview's options, followed by commit. This is a local caller assertion,
 not authorization for network/model disclosure. Replacing a source's policy
 revokes its prior view; import commit clears all projections. View operations
-do not authorize semantic rewrites. The separate primitive rewrite operations
-apply additional complete-lexer, local value/effect, outer-tree and inverse
-checks; they publish metadata only and make no whole-program or source-reflection
-equivalence claim. Raw rewrite export remains local C API/CLI only.
+do not authorize semantic rewrites. The separate rewrite operations apply
+profile-specific complete-lexer, local value/effect or lexical-binding checks,
+retained-tree validation and exact inversion. Boolean expression selection
+retains chosen effects and adds explicit GetValue scaffolding. All profiles
+publish metadata only and make no whole-program or source-reflection equivalence
+claim. Raw rewrite export remains local C API/CLI only.
 Ordinary semantic results explicitly deny rewrite permission. An unavailable effect
 record is null rather than an empty list. These additive entry points are
 resolved optionally, so an older web-capable engine still supports its existing

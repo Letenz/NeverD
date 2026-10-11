@@ -1,4 +1,4 @@
-# Primitive rewrite compatibility receipts
+# Source rewrite compatibility receipts
 
 These are actual raw local export receipts recorded before adding lexical
 renaming, from local pre-rebase NeverD `15e92c7ff` on macOS arm64 Release
@@ -15,3 +15,9 @@ No target code was executed. Retain exact bytes; there is no final newline.
 The SDK regression compares new export bytes to these originals; it separately
 checks rewrite identity, record identities and the export authorization token.
 Adding new pass evidence must not silently alter existing primitive receipts.
+
+`scope-renaming-v1-receipt.json` was captured from published `8a1a303a0`, before
+adding Boolean branch selection, using the exact self-authored `WebRenameSDK`
+single-file fixture named `input.js`, script goal and revision 1. Its SHA-256
+is `434de5241d88899e51247722e0595106718cdecb3b99821fab1c1253b199eabc`.
+It likewise has no final newline; the SDK compares the complete raw export.

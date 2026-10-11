@@ -65,8 +65,10 @@ traffic or access the network. Source inference and recorded observations keep
 their separate evidence classes. Tool annotations mark metadata reads as
 read-only; analyses and publication can mutate process-local caches.
 Rewrite tools expose the explicitly selected `string_recovery`,
-`constant_folding` or `scope_renaming` pass and paged profile-specific receipts.
-Lexical graph validation stays distinct from primitive SameValue evidence.
+`constant_folding`, `scope_renaming` or `boolean_branches` pass and paged
+profile-specific receipts. Lexical graph validation and Boolean-condition
+selection stay distinct from primitive SameValue evidence. Chosen branch
+effects remain in the candidate and are not assumed absent.
 Original/replacement text and per-patch literal
 hashes stay private; `source_rewrite_export` is local C API/CLI only.
 

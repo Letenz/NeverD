@@ -48,6 +48,7 @@ neverd web semantics ./bundle.js script
 neverd web rewrite ./bundle.js script string_recovery
 neverd web rewrite ./bundle.js script constant_folding
 neverd web rewrite ./bundle.js script scope_renaming
+neverd web rewrite ./bundle.js script boolean_branches
 neverd web modules ./entry.mjs module
 neverd web bundles ./webpack-bundle.js script
 neverd web view ./bundle.js script
@@ -95,6 +96,9 @@ checks do not establish whole-program or source-reflection equivalence. See
 the [primitive rewrite profile](web-source-rewrite-profile.md) and
 [lexical rename profile](web-scope-rename-profile.md). Renaming preserves
 complete admitted binding relationships; generated names are not original names.
+The [Boolean branch profile](web-boolean-branches-profile.md) selects proven
+Boolean expression operands with forced GetValue and retained binding checks;
+it preserves chosen effects and does not transform statements.
 
 All new analysis and adapter code is C++. JavaScript parsing embeds a pinned
 Hermes parser/AST subset. There is no JavaScript VM, target evaluation, package

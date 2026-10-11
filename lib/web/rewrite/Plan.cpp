@@ -196,10 +196,17 @@ SourceRewrite rewriteJavaScript(std::string_view ArtifactID,
       A.EffectID = E.ID;
       A.ID =
           identity("source-rewrite", {S.ID, Profile, Pass, B.ID, V.ID, E.ID});
-      Planner{S, B, V, E, Bytes, A}.run();
-      rewrite::apply(A, Bytes);
-      rewrite::validate(A, S, V);
-      A.Reason = "local_primitive_evaluation_only";
+      if (Pass == "boolean_branches") {
+        rewrite::planBranches(A, S, B, V, E, Bytes);
+        rewrite::apply(A, Bytes);
+        rewrite::validateBranches(A, S, B);
+        A.Reason = "constant_boolean_selection_with_get_value";
+      } else {
+        Planner{S, B, V, E, Bytes, A}.run();
+        rewrite::apply(A, Bytes);
+        rewrite::validate(A, S, V);
+        A.Reason = "local_primitive_evaluation_only";
+      }
     }
     A.Status = A.Accepted ? "verified_local_rewrites" : "no_eligible_rewrites";
     // The inverse is checked before any candidate bytes are published.

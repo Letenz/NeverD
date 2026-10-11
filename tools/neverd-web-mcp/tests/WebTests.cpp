@@ -234,6 +234,39 @@ void scopeRename(Harness &H) {
           "MCP exposed generated names");
 }
 
+void booleanBranches(Harness &H) {
+  const auto Artifact = H.import(0);
+  const auto Source = H.same("web_source_analyze", {{"revision", H.Revision},
+                                                    {"artifact_id", Artifact},
+                                                    {"source_type", "script"}});
+  const Json Args{{"revision", H.Revision},
+                  {"source_id", Source.at("source_id")},
+                  {"pass", "boolean_branches"}};
+  const auto A = H.same("web_source_rewrite_analyze", Args);
+  require(A.at("profile") == "javascript-boolean-branches-v1" &&
+              A.at("analysis_status") == "verified_local_rewrites" &&
+              A.at("accepted_count") == 1 &&
+              A.at("value_verification") == "constant_boolean_condition_only" &&
+              A.at("binding_verification") ==
+                  "same_scopes_declarations_and_retained_references" &&
+              A.at("retained_expression_effects") ==
+                  "preserved_not_assumed_absent" &&
+              A.at("statements_rewritten") == false,
+          "MCP changed Boolean branch evidence");
+  const auto Page =
+      H.same("web_source_rewrite_records",
+             {{"revision", H.Revision}, {"rewrite_id", A.at("rewrite_id")}});
+  require(Page.at("items").size() == 1, "Branch record missing");
+  const auto &R = Page.at("items")[0];
+  require(R.contains("condition_node_id") && R.contains("retained_node_id") &&
+              R.at("selected_operand") == "consequent" &&
+              !R.contains("binding_id") && !R.contains("identifier_role") &&
+              !R.contains("before") && !R.contains("after"),
+          "Branch receipt changed or exposed private source");
+  redacted(A);
+  redacted(Page);
+}
+
 void archives(Harness &H, bool HasParser) {
   auto Artifact = H.import(1);
   const Json Args{{"revision", H.Revision},
@@ -447,6 +480,9 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "const CANARY_LOCAL=CANARY_ARG;return CANARY_LOCAL;}");
       scopeRename(H);
+      F.write("source", "function CANARY_NAME(CANARY_ARG){"
+                        "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
+      booleanBranches(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);

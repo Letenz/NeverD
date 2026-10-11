@@ -81,11 +81,19 @@ std::string undoSourceRewrite(const SourceRewrite &A,
     if (Rename && (R.BindingID.empty() ||
                    (R.Role != "declaration" && R.Role != "reference")))
       throw Error("source_rewrite_invalid_receipt");
-    const auto RecordID =
+    auto RecordID =
         Rename ? identity("source-rename-record", {A.ID, R.BindingID, R.NodeID,
                                                    R.Role, R.Status, R.Reason})
                : identity("source-rewrite-record",
                           {A.ID, R.NodeID, R.Status, R.Reason});
+    if (A.Pass == "boolean_branches") {
+      if (R.ConditionID.empty() || R.RetainedID.empty() ||
+          R.Condition == NoSourceIndex || R.Retained == NoSourceIndex ||
+          (R.Selection != "consequent" && R.Selection != "alternate" &&
+           R.Selection != "left" && R.Selection != "right"))
+        throw Error("source_rewrite_invalid_receipt");
+      RecordID = rewrite::branchRecordIdentity(A, R);
+    }
     if (R.ID != RecordID || R.SourceStart < SourceCursor ||
         R.SourceStart >= R.SourceEnd || R.SourceEnd > A.SourceSize ||
         R.SourceEnd - R.SourceStart != R.Before.size() || R.Start < Cursor ||

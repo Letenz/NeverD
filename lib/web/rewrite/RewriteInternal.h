@@ -12,6 +12,7 @@
 #pragma once
 
 #include "neverd/web/SourceBindings.h"
+#include "neverd/web/SourceEffects.h"
 #include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceValues.h"
 
@@ -29,5 +30,13 @@ void planRename(SourceRewrite &Result, const SourceAnalysis &Original,
                 const SourceBindingAnalysis &Bindings, std::string_view Bytes);
 void validateRename(SourceRewrite &Result, const SourceAnalysis &Original,
                     const SourceBindingAnalysis &Bindings);
+void planBranches(SourceRewrite &Result, const SourceAnalysis &Original,
+                  const SourceBindingAnalysis &Bindings,
+                  const SourceValueAnalysis &Values,
+                  const SourceEffectAnalysis &Effects, std::string_view Bytes);
+void validateBranches(SourceRewrite &Result, const SourceAnalysis &Original,
+                      const SourceBindingAnalysis &Bindings);
+std::string branchRecordIdentity(const SourceRewrite &Result,
+                                 const SourceRewriteRecord &Record);
 
 } // namespace neverd::web::rewrite

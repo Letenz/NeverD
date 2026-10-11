@@ -109,9 +109,11 @@ generated or implied.
 
 Issue #714 remains open in scope. The separate
 [lexical rename profile](web-scope-rename-profile.md) adds `scope_renaming` while
-preserving these two primitive passes and their receipts exactly. Justified
-branch and statement transforms and broader control-flow deobfuscation remain
-outside these profiles. The other four JS epics retain their documented gaps.
+preserving these two primitive passes and their receipts exactly. The separate
+[Boolean branch profile](web-boolean-branches-profile.md) selects proven
+Boolean expression operands with retained binding and GetValue validation.
+Statement transforms and broader control-flow deobfuscation remain outside
+these profiles. The other four JS epics retain their documented gaps.
 
 Language references: [SameValue](https://tc39.es/ecma262/multipage/abstract-operations.html#sec-samevalue),
 [directive prologues](https://tc39.es/ecma262/multipage/ecmascript-language-source-code.html#sec-directive-prologues-and-the-use-strict-directive),

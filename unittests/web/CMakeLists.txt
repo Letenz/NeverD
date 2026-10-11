@@ -65,6 +65,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceRecoveryTests.cpp
     SourceRewriteTests.cpp
     SourceRenameTests.cpp
+    SourceBranchTests.cpp
     RewriteExportTests.cpp
     SourceBindingTests.cpp
     SourceDeclarationIndexTests.cpp
@@ -93,6 +94,7 @@ if(TARGET neverd_shared)
     SDKTests.cpp
     RewriteSDKTests.cpp
     RenameSDKTests.cpp
+    BranchSDKTests.cpp
     NodeBehaviorSDKTests.cpp
     PackageSDKTests.cpp
     PackageArchiveSDKTests.cpp
