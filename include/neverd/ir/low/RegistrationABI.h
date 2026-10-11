@@ -68,6 +68,17 @@ std::optional<RegistrationLeafCalleeABI> getCheckedX86RegistrationLeafCalleeABI(
     const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
     RegistrationLeafResult Result = RegistrationLeafResult::Observed);
 
+/// Extend the returning leaf contract to a bounded acyclic object call graph.
+/// Direct children borrow the same ECX object or a nonnegative subobject and
+/// consume only initialized private scalar arguments. Their results remain
+/// unproved; an observed graph result requires an independent 32-bit scalar.
+/// Transitive code, object and image effects belong to this invocation's proof.
+/// Each caller still owns object extent, contents, lifetime and return usage.
+std::optional<RegistrationLeafCalleeABI>
+getCheckedX86RegistrationObjectCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
+    RegistrationLeafResult Result = RegistrationLeafResult::Observed);
+
 /// A CRT copy constructor borrows two separate objects: destination ECX and
 /// the source pointer in its one callee-popped stack word. Every destination
 /// byte is initialized on every return, and source storage is read-only.
@@ -99,9 +110,9 @@ getCheckedX86RegistrationInitializerCalleeABI(const BinaryImage &Image,
                                               size_t *CumulativeWork = nullptr);
 
 /// A single unadjusted object and its optional preserved runtime callbacks. The
-/// destructor must be a private, returning leaf with bounded ECX accesses and
-/// no observation of the CRT caller PC. Metadata decoding alone cannot prove
-/// these effects or authorize a runtime callback.
+/// destructor must be a private, returning object graph with bounded ECX
+/// accesses and no observation of the CRT caller PC. Metadata decoding alone
+/// cannot prove these effects or authorize a runtime callback.
 struct RegistrationThrowObjectABI {
   coff_loader::X86IdentityCxxThrowInfo Info;
   std::optional<RegistrationLeafCalleeABI> Destructor;
@@ -130,8 +141,8 @@ struct RegistrationCleanupParentFrame {
 };
 
 /// A checked cleanup relay derives each ECX object from the establisher EBP.
-/// It tail-jumps to one leaf or saves/restores runtime EBP around an ordered
-/// sequence of leaf calls. The parent must prove every borrow at dispatch.
+/// It tail-jumps to one returning object callee or saves/restores runtime EBP
+/// around an ordered sequence of calls. The parent proves every borrow.
 struct RegistrationCleanupRelayABI {
   va_t Target = InvalidVA;
   va_t EndAddress = InvalidVA;

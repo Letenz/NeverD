@@ -406,15 +406,23 @@ layouts: C++ syntax checks use the fixture's real type declarations, while
 output retains native offsets and unknown aggregate throw calls.
 
 An optional exception destructor requires a separate LowIR proof: it must be a
-returning leaf with a private stack, preserved nonvolatile registers and bounded
-ECX-relative object accesses. Its image effects and immutable code join the
+returning object callee with a private stack, preserved nonvolatile registers
+and bounded ECX-relative object accesses. Bounded acyclic direct calls may
+borrow that same object or a nonnegative subobject and consume initialized
+private scalar arguments. The proof rejects recursion and shares depth, node
+and work limits; children supply no returned-pointer or constructor-initialization
+authority. Its transitive image effects and immutable code join the
 preserved call closure. It cannot observe the CRT caller PC, escape the object,
 change exception metadata or make an unchecked call. The CRT discards its return
 register; that invocation rule does not authorize an ordinary pointer-returning
 call. Both private helpers and direct throws use this same proof, including at
 independent installation. O0/O1 lifetime fixtures check the count, order and
 object contents of catch-copy and exception destruction across rethrow, both
-patch modes, forced bases and a second reconstruction.
+patch modes, forced bases and a second reconstruction. A separate destructor-graph
+fixture retains two out-of-line member calls and checks those same lifetime
+observations. Ordinary observed graph calls additionally require an independently
+computed scalar return; discarding a runtime result cannot authorize its use
+at an ordinary call.
 
 A nontrivial runtime copy constructor is also supported when its independent
 LowIR proof separates the destination in ECX from the source pointer in one

@@ -61,9 +61,9 @@ getCheckedX86RegistrationCleanupRelayABI(const BinaryImage &Image, va_t Target,
       return std::nullopt;
     const uint32_t LeafTarget =
         uint32_t(CallEnd) + readLE<uint32_t>(Bytes->data() + AddressSize + 1);
-    auto Leaf = getCheckedX86RegistrationLeafCalleeABI(
+    auto Leaf = getCheckedX86RegistrationObjectCalleeABI(
         Image, LeafTarget, &Work, RegistrationLeafResult::Discarded);
-    if (!Leaf || !Leaf->CallerPCWrites.empty())
+    if (!Leaf || Leaf->StackPopBytes || !Leaf->CallerPCWrites.empty())
       return std::nullopt;
     Result.Calls.push_back({int32_t(ObjectOffset), std::move(*Leaf)});
     Result.EndAddress = CallEnd;

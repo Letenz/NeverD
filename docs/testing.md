@@ -3565,6 +3565,19 @@ their replay tools validate the identical files with Wine or native Windows.
 `RegistrationThrowObject.*` rejects out-of-bounds effects, escapes, CRT caller
 observations, mutable code, metadata writes, unchecked calls and exhausted
 budgets. It also retains helper and destructor code in either address order.
+
+The separate `destructor-graphs` profile keeps both observable destructor
+operations behind two real out-of-line member calls. Its sixteen O0/O1 cases
+and controls each exercise both installation routes and forced bases (128
+images per generation); capture, replay, re-lift and replay retain the exact
+source, declarations and transitive lifetime proof hashes. The existing leaf
+destructor profile remains a control. `RegistrationObjectGraph.*` checks
+same-object and subobject effects, conditional may-writes, private scalar
+arguments, exact cleanup, child-result privacy, pointer escapes, metadata and
+code writes, recursion, depth, distinct-node and work exhaustion, and changed
+transitive code. The input-PE32 test requires complete runtime object and cleanup
+state, both destructor identities, two actual child calls and closure of their
+code ranges in the parent's current contracts.
 `SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` checks the
 frontend IR argument types for the C/C++ views on every host: a C declaration
 with unknown parameters cannot become a zero-argument C++ prototype. Both views

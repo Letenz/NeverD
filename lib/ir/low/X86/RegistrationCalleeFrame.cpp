@@ -45,8 +45,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
                            const PrivateFrameOptions &Options) {
   const auto [BorrowECX, ThrowProof, IndependentScalarReturn,
-              DiscardReturnValue, CopyObjectSize, Initializer, Initializers] =
-      Options;
+              DiscardReturnValue, CopyObjectSize, Initializer, Initializers,
+              ObjectCallbacks, CallbackStackPopBytes] = Options;
   if (CopyObjectSize && (!BorrowECX || !DiscardReturnValue || ThrowProof))
     return false;
   if (Initializer && (!BorrowECX || DiscardReturnValue || CopyObjectSize ||
@@ -55,6 +55,14 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
     return false;
   if (Initializers && !ThrowProof && !Initializer)
     return false;
+  if ((ObjectCallbacks &&
+       (!BorrowECX || ThrowProof || CopyObjectSize || Initializer ||
+        Initializers || CallbackStackPopBytes > UINT16_MAX ||
+        CallbackStackPopBytes % 4)) ||
+      (!ObjectCallbacks && CallbackStackPopBytes))
+    return false;
+  const uint32_t ScalarArgumentBytes =
+      Initializer ? Initializer->StackPopBytes : CallbackStackPopBytes;
   const bool InitializesObject = CopyObjectSize || Initializer;
   if (IndependentScalarReturn)
     *IndependentScalarReturn = true;
@@ -191,9 +199,10 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                                     Memory.AccessSize == 4 &&
                                     Op.Opcode == NdOp::LOAD;
           const bool ScalarArgument =
-              Initializer && Address.Offset && *Address.Offset >= 8 &&
+              (Initializer || ObjectCallbacks) && Address.Offset &&
+              *Address.Offset >= 8 &&
               uint64_t(*Address.Offset) + Memory.AccessSize <=
-                  uint64_t(8) + Initializer->StackPopBytes &&
+                  uint64_t(8) + ScalarArgumentBytes &&
               Op.Opcode == NdOp::LOAD && Memory.AccessSize <= 4 &&
               (*Address.Offset - 8) % 4 + Memory.AccessSize <= 4;
           if ((!Address.Offset && !Address.Constant) ||
@@ -272,7 +281,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       std::optional<FrameValue> AfterCallResult;
       std::optional<FrameValue> AfterCallObject;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-        if (BorrowECX && !Initializer)
+        if (BorrowECX && !Initializer && !ObjectCallbacks)
           return false;
         const RegistrationInitializerCalleeABI *Init = nullptr;
         if (Initializers)
@@ -286,7 +295,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             return false;
           const auto Call =
               Initializer
-                  ? applyObjectInitializerCall(State, *Init, Work, Effects)
+                  ? applyBorrowedObjectCall(State, Init->Object,
+                                            Init->Initialized, Work, Effects)
                   : applyPrivateInitializerCall(State, *Init, Work, Effects,
                                                 *ThrowProof);
           if (!Call)
@@ -296,6 +306,20 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             AfterCallObject = Call->Object;
           else
             AfterCallResult = Call->Object;
+        } else if (ObjectCallbacks) {
+          const auto It = ObjectCallbacks->find({Op.Addr, Op.Seq});
+          if (It == ObjectCallbacks->end() || Op.Opcode != NdOp::CALL ||
+              Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+              Op.Inputs[0].Size != 4 ||
+              Op.Inputs[0].Offset != It->second.Target)
+            return false;
+          const auto Call =
+              applyBorrowedObjectCall(State, It->second, {}, Work, Effects);
+          if (!Call)
+            return false;
+          AfterCallSP = Call->StackOffset;
+          // No constructor identity or child result accompanies this call.
+          // FrameTransfer retains unknown volatile values until overwritten.
         } else if (ThrowProof) {
           const auto SP =
               State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
@@ -473,6 +497,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       if (AfterCallSP)
         State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
             FrameValue::frame(*AfterCallSP);
+      if (AfterCallSP && ObjectCallbacks)
+        State.Borrow.Registers[x86reg::RSP / x86reg::GeneralRegStride] = {};
       if (AfterCallResult) {
         State.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
             *AfterCallResult;

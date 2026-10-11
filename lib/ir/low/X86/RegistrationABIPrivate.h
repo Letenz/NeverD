@@ -88,6 +88,23 @@ std::optional<RegistrationInitializerCalleeABI>
 checkedInitializerCalleeABI(const BinaryImage &Image, va_t Target, size_t &Work,
                             InitializerContext &Context);
 
+using ObjectCallbackCalls =
+    std::map<std::pair<va_t, int>, RegistrationLeafCalleeABI>;
+
+constexpr unsigned kMaxObjectCallbackDepth = 32;
+constexpr size_t kMaxObjectCallbackNodes = 256;
+
+/// A separate object graph never inherits constructor return-this or
+/// initialization authority. Failures and in-progress nodes are memoized.
+struct ObjectCallbackContext {
+  std::map<va_t, std::optional<RegistrationLeafCalleeABI>> Callees;
+  unsigned Depth = 0;
+};
+
+std::optional<RegistrationLeafCalleeABI>
+checkedObjectCallbackCalleeABI(const BinaryImage &Image, va_t Target,
+                               size_t &Work, ObjectCallbackContext &Context);
+
 struct PrivateFrameOptions {
   bool BorrowECX = false;
   RegistrationThrowCalleeABI *ThrowProof = nullptr;
@@ -96,6 +113,8 @@ struct PrivateFrameOptions {
   uint32_t CopyObjectSize = 0;
   InitializerFrame *Initializer = nullptr;
   const InitializerCalls *Initializers = nullptr;
+  const ObjectCallbackCalls *ObjectCallbacks = nullptr;
+  uint32_t CallbackStackPopBytes = 0;
 };
 
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
@@ -107,7 +126,9 @@ std::optional<RegistrationLeafCalleeABI> checkedLeafCalleeABI(
     RegistrationLeafResult ResultKind, uint32_t CopyObjectSize = 0,
     std::vector<RegistrationObjectExtent> *CopySource = nullptr,
     InitializerFrame *Initializer = nullptr,
-    InitializerContext *Context = nullptr);
+    InitializerContext *Context = nullptr,
+    ObjectCallbackContext *Callbacks = nullptr,
+    uint32_t CallbackStackPopBytes = 0);
 
 } // namespace neverd::registration_abi
 

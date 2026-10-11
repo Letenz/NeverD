@@ -1,11 +1,10 @@
-//===- RegistrationObjectInitializerCall.cpp - PE32 constructor calls -----===//
+//===- RegistrationBorrowedObjectCall.cpp - PE32 object calls -------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Compose construction of an ECX object or subobject through private
-/// arguments.
+/// Compose checked ECX object effects and private scalar argument cleanup.
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationPrivateFrame.h"
@@ -16,15 +15,16 @@
 namespace neverd::registration_abi {
 
 std::optional<PrivateInitializerResult>
-applyObjectInitializerCall(PrivateFrameState &State,
-                           const RegistrationInitializerCalleeABI &Callee,
-                           size_t &Work, ImageFrameEffects &Effects) {
+applyBorrowedObjectCall(PrivateFrameState &State,
+                        const RegistrationLeafCalleeABI &Callee,
+                        llvm::ArrayRef<RegistrationObjectExtent> Initialized,
+                        size_t &Work, ImageFrameEffects &Effects) {
   using namespace registration_state;
   const auto SP =
       State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride].Offset;
   const unsigned This = x86reg::RCX / x86reg::GeneralRegStride;
   const auto Object = State.Borrow.Registers[This];
-  const auto &ABI = Callee.Object;
+  const auto &ABI = Callee;
   if (!SP || !Object.Offset || *Object.Offset < 0 || Object.FrameOnlyFromCall ||
       Object.ReturnPC || State.Frame.Registers[This].MayBeFrame ||
       State.Frame.Registers[This].Constant ||
@@ -48,9 +48,9 @@ applyObjectInitializerCall(PrivateFrameState &State,
           int64_t(*SP) < int64_t(Cell) + 4)
         return std::nullopt;
   }
-  for (const auto *Ranges :
-       {&ABI.ECXReads, &ABI.ECXWrites, &Callee.Initialized})
-    for (const auto &Range : *Ranges) {
+  for (const auto Ranges : {llvm::ArrayRef(ABI.ECXReads),
+                            llvm::ArrayRef(ABI.ECXWrites), Initialized})
+    for (const auto &Range : Ranges) {
       const int64_t End = int64_t(*Object.Offset) + Range.End;
       if (!chargeCalleeWork(Work, 1) || Range.Begin < 0 ||
           Range.End <= Range.Begin || End > INT32_MAX ||
@@ -68,7 +68,7 @@ applyObjectInitializerCall(PrivateFrameState &State,
     State.Borrow.forgetCellValues(*Object.Offset + Range.Begin,
                                   uint32_t(Range.End - Range.Begin));
   }
-  for (const auto &Range : Callee.Initialized) {
+  for (const auto &Range : Initialized) {
     if (!chargeCalleeWork(Work, size_t(Range.End - Range.Begin)))
       return std::nullopt;
     for (int32_t Byte = Range.Begin; Byte != Range.End; ++Byte)

@@ -2205,7 +2205,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
             install --yes --no-install-recommends lld wine wine32:i386
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_destructor_graphs scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
       - name: Fetch genuine MSVC C++ source inputs
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         uses: actions/download-artifact@v4
@@ -2322,6 +2322,9 @@ jobs:
           build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
             --gtest_filter='RegistrationInitializerGraph.*-RegistrationInitializerGraph.InputPE32*' \
             --gtest_output=xml:build-windows-eh/evidence/initializer-graph-contracts.xml
+          build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
+            --gtest_filter='RegistrationObjectGraph.*-RegistrationObjectGraph.InputPE32*' \
+            --gtest_output=xml:build-windows-eh/evidence/destructor-graph-contracts.xml
           build-windows-eh/bin/NeverDHighControlFlowTests \
             --gtest_filter='WindowsSEHFallback.*' \
             --gtest_output=xml:build-windows-eh/evidence/native-dispatch-views.xml
@@ -2414,6 +2417,17 @@ jobs:
             --patch-binary build-windows-eh/bin/neverd \
             --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
             --output build-windows-eh/evidence/destructor-rewrite
+      - name: Reconstruct x86 exception objects with destructor call graphs
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          WINEARCH: win32
+        run: |
+          WINEPREFIX="$RUNNER_TEMP/neverd-wine32" \
+          python scripts/check_windows_registration_nested_try.py --profile destructor-graphs \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+            --output build-windows-eh/evidence/destructor-graph-rewrite
       - name: Reconstruct x86 exception objects with checked copy construction
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2480,6 +2494,17 @@ jobs:
             --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --patch-binary build-windows-eh/bin/neverd \
             --output build-windows-eh/evidence/destructor-relift
+      - name: Re-lift exception objects with destructor call graphs
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          WINEARCH: win32
+        run: |
+          WINEPREFIX="$RUNNER_TEMP/neverd-wine32" \
+          python scripts/check_windows_registration_relift.py --profile destructor-graphs \
+            --input-root build-windows-eh/evidence/destructor-graph-rewrite \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --output build-windows-eh/evidence/destructor-graph-relift
       - name: Re-lift exception objects with checked copy construction
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2684,6 +2709,10 @@ jobs:
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/destructor-rewrite --output build-windows-eh/native-destructor-replay.json
 
+      - name: Replay identical destructor graphs with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/destructor-graph-rewrite --output build-windows-eh/native-destructor-graph-replay.json
+
       - name: Replay identical exception object construction with the Windows CRT
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/copy-rewrite --output build-windows-eh/native-copy-replay.json
@@ -2715,6 +2744,10 @@ jobs:
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/destructor-relift --output build-windows-eh/native-destructor-relift-replay.json
 
+      - name: Replay both destructor graph generations with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/destructor-graph-relift --output build-windows-eh/native-destructor-graph-relift-replay.json
+
       - name: Replay both copy constructor generations with the Windows CRT
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/copy-relift --output build-windows-eh/native-copy-relift-replay.json
@@ -2743,6 +2776,8 @@ jobs:
             build-windows-eh/native-object-replay.json
             build-windows-eh/native-object-relift-replay.json
             build-windows-eh/native-destructor-replay.json
+            build-windows-eh/native-destructor-graph-replay.json
+            build-windows-eh/native-destructor-graph-relift-replay.json
             build-windows-eh/native-destructor-relift-replay.json
             build-windows-eh/native-copy-replay.json
             build-windows-eh/native-copy-relift-replay.json

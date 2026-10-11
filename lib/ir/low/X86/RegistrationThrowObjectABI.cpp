@@ -24,7 +24,7 @@ getCheckedX86RegistrationThrowObjectABI(const BinaryImage &Image, va_t Address,
     return std::nullopt;
   RegistrationThrowObjectABI Result{std::move(*Info), std::nullopt};
   if (Result.Info.DestructorVA) {
-    Result.Destructor = getCheckedX86RegistrationLeafCalleeABI(
+    Result.Destructor = getCheckedX86RegistrationObjectCalleeABI(
         Image, Result.Info.DestructorVA, &Work,
         RegistrationLeafResult::Discarded);
     if (!Result.Destructor || Result.Destructor->StackPopBytes ||

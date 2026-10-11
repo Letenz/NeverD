@@ -13,6 +13,8 @@
 #include "RegistrationABIPrivate.h"
 #include "RegistrationFrame.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 namespace neverd::registration_abi {
 
 struct PrivateFrameState {
@@ -39,9 +41,10 @@ applyPrivateInitializerCall(PrivateFrameState &State,
                             RegistrationThrowCalleeABI &Throw);
 
 std::optional<PrivateInitializerResult>
-applyObjectInitializerCall(PrivateFrameState &State,
-                           const RegistrationInitializerCalleeABI &Callee,
-                           size_t &Work, ImageFrameEffects &Effects);
+applyBorrowedObjectCall(PrivateFrameState &State,
+                        const RegistrationLeafCalleeABI &Callee,
+                        llvm::ArrayRef<RegistrationObjectExtent> Initialized,
+                        size_t &Work, ImageFrameEffects &Effects);
 
 } // namespace neverd::registration_abi
 

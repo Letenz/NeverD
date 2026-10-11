@@ -218,8 +218,11 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
     const BinaryImage &Image, va_t Target, size_t &Work,
     RegistrationLeafResult ResultKind, uint32_t CopyObjectSize,
     std::vector<RegistrationObjectExtent> *CopySource,
-    InitializerFrame *Initializer, InitializerContext *Context) {
-  if ((Initializer && CopyObjectSize) || (bool(Initializer) != bool(Context)))
+    InitializerFrame *Initializer, InitializerContext *Context,
+    ObjectCallbackContext *Callbacks, uint32_t CallbackStackPopBytes) {
+  if ((Initializer && CopyObjectSize) || (bool(Initializer) != bool(Context)) ||
+      (Callbacks && (Initializer || CopyObjectSize)) ||
+      (!Callbacks && CallbackStackPopBytes))
     return std::nullopt;
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
       Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
@@ -235,12 +238,14 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
   LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-leaf");
   const uint32_t Pop = Initializer      ? Initializer->StackPopBytes
                        : CopyObjectSize ? 4
+                       : Callbacks      ? CallbackStackPopBytes
                                         : 0;
   if (!chargeDecodedCallee(Work, Callee) || !Callee.hasCompleteLiftCoverage() ||
       Callee.Blocks.empty() || Callee.ExceptionMetadata ||
       !retainLeafEntryBlocks(Callee, Work, Pop))
     return std::nullopt;
   InitializerCalls Initializers;
+  ObjectCallbackCalls ObjectCallbacks;
   for (const auto &Block : Callee.Blocks) {
     if (Block.Succs.empty() &&
         (Block.Ops.empty() || Block.Ops.back().Opcode != NdOp::RETURN))
@@ -248,17 +253,29 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
     for (const auto &Op : Block.Ops) {
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
-      if (!Context || Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
-          !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 || Op.Seq < 0 ||
-          Initializers.size() >= kMaxInitializerGraphNodes)
+      if ((!Context && !Callbacks) || Op.Opcode != NdOp::CALL ||
+          Op.NumInputs != 1 || !Op.Inputs[0].isConst() ||
+          Op.Inputs[0].Size != 4 || Op.Seq < 0 ||
+          Initializers.size() + ObjectCallbacks.size() >=
+              kMaxObjectCallbackNodes)
         return std::nullopt;
-      auto Nested = checkedInitializerCalleeABI(Image, Op.Inputs[0].Offset,
-                                                Work, *Context);
-      if (!Nested ||
-          !Initializers
-               .emplace(std::make_pair(Op.Addr, Op.Seq), std::move(*Nested))
-               .second)
-        return std::nullopt;
+      if (Context) {
+        auto Nested = checkedInitializerCalleeABI(Image, Op.Inputs[0].Offset,
+                                                  Work, *Context);
+        if (!Nested ||
+            !Initializers
+                 .emplace(std::make_pair(Op.Addr, Op.Seq), std::move(*Nested))
+                 .second)
+          return std::nullopt;
+      } else {
+        auto Nested = checkedObjectCallbackCalleeABI(Image, Op.Inputs[0].Offset,
+                                                     Work, *Callbacks);
+        if (!Nested ||
+            !ObjectCallbacks
+                 .emplace(std::make_pair(Op.Addr, Op.Seq), std::move(*Nested))
+                 .second)
+          return std::nullopt;
+      }
     }
   }
   ImageFrameEffects Effects;
@@ -269,7 +286,9 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
       .DiscardReturnValue = ResultKind == RegistrationLeafResult::Discarded,
       .CopyObjectSize = CopyObjectSize,
       .Initializer = Initializer,
-      .Initializers = Initializer ? &Initializers : nullptr};
+      .Initializers = Initializer ? &Initializers : nullptr,
+      .ObjectCallbacks = Callbacks ? &ObjectCallbacks : nullptr,
+      .CallbackStackPopBytes = CallbackStackPopBytes};
   if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, Frame))
     return std::nullopt;
   if (!callerPCIsNotReadBack(Effects))
@@ -287,6 +306,12 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
     if (!chargeCalleeWork(Work, Nested.Object.CodeRanges.size()))
       return std::nullopt;
     for (const auto &Range : Nested.Object.CodeRanges)
+      Code.emplace(Range.Begin, Range.End);
+  }
+  for (const auto &[Site, Nested] : ObjectCallbacks) {
+    if (!chargeCalleeWork(Work, Nested.CodeRanges.size()))
+      return std::nullopt;
+    for (const auto &Range : Nested.CodeRanges)
       Code.emplace(Range.Begin, Range.End);
   }
   Result.CodeRanges.clear();

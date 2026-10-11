@@ -3736,7 +3736,17 @@ receipts cannot authorize added calls, aliased memory or altered CFG targets.
 The COFF ThrowInfo decoder owns single-type identity adjustment and the optional
 copy-constructor and destructor addresses. `RegistrationThrowObjectABI.cpp` owns
 the independent LowIR proof of bounded runtime callbacks: returning private
-leaves, nonescaping object accesses, immutable code and checked image effects.
+object callees, nonescaping accesses, immutable code and checked image effects.
+`RegistrationObjectCallbackABI.cpp` extends this proof to acyclic direct object
+call graphs. Each query owns success, failure and in-progress cache entries;
+depth 32, 256 distinct callees and one cumulative work budget bound the proof.
+Children borrow the same object or a nonnegative subobject and take only
+initialized private scalar words. Exact callee cleanup cannot consume saved
+registers or caller storage. Child return values remain unknown in every frame
+domain; a source-observed root needs its own independent scalar result.
+Transitive code and image effects join the same closure at source analysis,
+LLVM emission and independent COFF installation. Runtime destruction has no
+constructor return-this or must-initialization authority.
 `RegistrationCopyABI.cpp` binds the CRT's ECX destination and callee-popped source
 pointer to separate address domains in the shared private-frame transfer. Source
 storage is read-only; every returning path must initialize every destination
@@ -3754,7 +3764,7 @@ Ordinary object initialization has a separate x86 LowIR contract in
 cleanup, exact ECX return identity and definitely initialized object bytes.
 Each query owns a bounded, cycle-rejecting cache of direct initializer callees;
 cached results and transitive ranges consume the same work budget. There is no
-cross-image proof cache. `RegistrationObjectInitializerCall.cpp` composes each
+cross-image proof cache. `RegistrationBorrowedObjectCall.cpp` composes each
 child's must-writes relative to the borrowed object or subobject while keeping
 outgoing scalar storage in the private-frame domain. Child return pointers
 retain the object domain, and outer returns must recover the original object.

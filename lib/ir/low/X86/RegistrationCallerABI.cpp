@@ -197,7 +197,9 @@ bool hasRegistrationCallFrameABI(
       }
     if (UseReachability)
       if (const auto Leaf =
-              getCheckedX86RegistrationLeafCalleeABI(Image, Target, &Work)) {
+              getCheckedX86RegistrationObjectCalleeABI(Image, Target, &Work)) {
+        if (Leaf->StackPopBytes)
+          return false;
         if (!chargeCalleeWork(Work, Leaf->ImageReads.size() +
                                         Leaf->ImageWrites.size() +
                                         Leaf->CallerPCWrites.size()))

@@ -133,7 +133,7 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
     ABI.BorrowsECX = ABI.Initializer = true;
   } else {
     const auto Proof =
-        getCheckedX86RegistrationLeafCalleeABI(Image, Effect.Target, &Work);
+        getCheckedX86RegistrationObjectCalleeABI(Image, Effect.Target, &Work);
     if (!Proof || !Proof->HasIndependentScalarReturn || Proof->StackPopBytes ||
         Effect.DoesNotReturn ||
         (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
