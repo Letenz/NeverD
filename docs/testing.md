@@ -1027,6 +1027,16 @@ scalar ranges and frame intervals consume one saturating budget, including
 nested queries. Interval regressions reject independent rootless cycles and
 mutually seeded recurrences that eventually grow into another stack slot;
 reversing PHI-arm order must preserve the result.
+Repeated reaching-store iterations and successor edges reuse an unbound alias
+proof only for the identical address and write width within that one reload
+query. Overlapping and differently sized writes retain their independent
+checks. Shared scalar LOAD/SELECT graphs also have deterministic expansion
+counts across all four architectures and ELF, Mach-O and COFF: completed scalar
+and exact frame reload proofs are reused without exhausting the path budget.
+Opaque loads of pointer width, address-owned arms and forbidden values remain
+rejected; recurrence and frame-memory assumptions cannot escape their scope.
+An earlier scalar load from a slot cannot authorize a later pointer load from
+that same slot, in either operand order.
 
 `NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
 strings, generic builtins compiled for a different source ISA, and dead image

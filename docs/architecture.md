@@ -638,10 +638,17 @@ For a single absolute consumer, a relocation-backed physical run may contain
 unused pointers to other functions. Validate target ownership for every
 admitted selector coordinate before graph growth; an excluded prefix slot
 neither truncates the selector proof nor becomes a local successor.
-The LLVM scalar-offset proof may retry a depth-limited recursive walk with its
-independent closed-value-graph proof. That proof still checks every initializer,
-address provenance, forbidden value and memory source, with its own 512-level
-and 8192-node limits; reaching the first limit is never itself a certificate.
+The LLVM scalar-offset proof reuses completed scalar subgraphs only when no
+step borrowed an active recurrence or frame-memory assumption. Independently
+proven scalar loads qualify, including exact frame reloads whose complete
+sources are independently numeric. An active frame slot/domain or a skipped
+path-local backedge invalidates reuse for every enclosing expression; bounded
+numeric-mask proofs remain a separate cache partition. Recursive paths restore
+their own visited, frame-slot and PHI entries at scope exit, avoiding full path
+copies while keeping sibling operands independent. A depth- or node-limited
+walk may still retry its independent closed-value-graph proof, which checks every
+initializer, address provenance, forbidden value and memory source with its own
+512-level and 8192-node limits. Exhaustion never certifies a result.
 The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
