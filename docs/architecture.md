@@ -556,6 +556,13 @@ JS/assets through `ArtifactView`. Caches and snapshots remain opaque; native
 activation/version authentication are not inferred. Asset keys never establish
 a filesystem namespace. Package analysis of an explicitly selected asset uses
 one document with no directory inventory. See the [SEA profile](web-sea-profile.md).
+`nexe/Reader` owns explicit EOF envelope framing and complete byte partitions;
+`nexe/Index` owns bounded first-shim JSON, private portable paths and deduplicated
+range hashing. `SessionNexe` publishes immutable occurrences only after complete
+admission. `ArtifactView` composes nested coordinates and retains one namespace
+per extraction; typed package ancestry establishes outer delivery only. The
+opaque prefix has no implicit native/signature/runtime validation. See the
+[nexe profile](web-nexe-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -563,7 +570,7 @@ comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
 `packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
 consumes shared bindings/module origins/values, and `Package` owns exact
-inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+inventory and retained Bun/SEA/nexe delivery joins. `Publication` emits metadata;
 the two behavior session adapters own selection, cache and revision boundaries.
 Source ownership, delivery package and declared entry remain distinct.
 `SourceModel::indexSourceDeclarations` supplies the order-independent unique

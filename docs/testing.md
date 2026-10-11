@@ -570,6 +570,18 @@ require worker protocol/Web and affected mock transport regressions. These
 MCP suites own catalog qualification separately from the existing Python
 native capability checker. See the [profile](web-mcp-profile.md).
 
+`WebNexe.*` covers pinned EOF framing, strict first-shim JSON, malformed binary64
+lengths, first-sentinel window boundaries, private paths, overlap/alias coverage
+and independent member/work/private-metadata budgets. `WebNexeSDK.*` exercises
+publication and cache atomicity, stored/deflate ZIP nonzero source coordinates,
+two identical occurrences with isolated package namespaces, outer delivery-only
+joins, source/bootstrap/native consumers and CLI operation with an unusable
+PATH. Set `NEVERD_NEXE_4RC7_CORPUS` for three optional producer-built full images;
+missing samples explicitly skip and tests never generate/download/execute them.
+Worker/MCP suites verify both operations through the shared C API. Check
+parser-off extraction and backend-off ABI/discovery, then restore both options.
+See the [nexe profile](web-nexe-profile.md).
+
 `WebSEA.*` covers independent Node SEA serialization, x64/ARM64 ELF/Mach-O/PE
 resource location, malformed names/tables, duplicate mappings, cumulative work,
 opaque V8 evidence and exact compiler-generated blobs. `WebSEASDK.*` and
