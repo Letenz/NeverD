@@ -825,13 +825,20 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
   const auto Shape = x86FPStateMedShape(Op);
   if (!x86FPStateShapeIsValid(Id, Shape))
     return std::nullopt;
+  const unsigned Bytes =
+      x86FPStateMemoryBytes(Id, Shape.OutputSize, Shape.Control);
+  if (Id == Intrinsic::X86FPPackedConvertMemoryState)
+    return StackMemoryRead{1, Bytes, false};
+  if (Id == Intrinsic::X86FPScalarConvertMemoryState)
+    // This denotes an eligible scalar completion source, including raw integer
+    // bits. Its own conversion contract retains the source's numerical type.
+    return StackMemoryRead{1, Bytes, true};
   const bool Scalar = Id == Intrinsic::X86FPApprox12MemoryState
                           ? x86FPApprox12IsScalar(Shape.Control)
                       : Id == Intrinsic::X86FPRoundMemoryState
                           ? x86FPRoundStateIsScalar(Shape.Control)
                           : x86FPArithStateIsScalar(Shape.Control);
-  return StackMemoryRead{1, x86FPStateMemoryBytes(Id, Shape.OutputSize),
-                         Scalar};
+  return StackMemoryRead{1, Bytes, Scalar};
 }
 
 void preserveFPStackHomes(
@@ -950,7 +957,11 @@ void recoverFPStackReads(
         Source = Compose.Output;
       }
       const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
-      if (Id == Intrinsic::X86FPFmaMemoryState) {
+      if (Id == Intrinsic::X86FPScalarConvertMemoryState) {
+        R.Value.Inputs[0] =
+            MedVar::makeConst(unsigned(Intrinsic::X86FPScalarConvertState), 2);
+        R.Value.Inputs[1] = Source;
+      } else if (Id == Intrinsic::X86FPFmaMemoryState) {
         R.Value.Inputs[0] =
             MedVar::makeConst(unsigned(Intrinsic::X86FPFmaState), 2);
         R.Value.Inputs[1] =
