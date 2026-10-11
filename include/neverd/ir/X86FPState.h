@@ -268,6 +268,26 @@ constexpr unsigned x86FPRoundStateElementBytes(unsigned Control) {
   return (Control & 2) ? 8 : 4;
 }
 
+/// The bytes a memory form reads at its address: a conversion's source as its
+/// \p Control says, else the numerical bits of its \p OutputSize result,
+/// below the four MXCSR bytes an arithmetic, FMA or rounding result adds (a
+/// scalar form's element, a packed form's vector).  0 for any other
+/// intrinsic.
+constexpr unsigned x86FPStateMemoryBytes(Intrinsic Id, unsigned OutputSize,
+                                         unsigned Control) {
+  switch (Id) {
+  case Intrinsic::X86FPScalarConvertMemoryState:
+    return x86FPScalarConvertSourceBytes(Control);
+  case Intrinsic::X86FPPackedConvertMemoryState:
+    return x86FPPackedConvertSourceBytes(Control);
+  case Intrinsic::X86FPApprox12MemoryState:
+    return OutputSize;
+  default:
+    return isX86FPStateMemoryIntrinsic(Id) && OutputSize >= 4 ? OutputSize - 4
+                                                              : 0;
+  }
+}
+
 constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
                                       const X86FPStateShape &Shape) {
   if (!isX86FPStateIntrinsic(Id) || !Shape.ArchitectureMatchesOperands ||

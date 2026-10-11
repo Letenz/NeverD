@@ -874,6 +874,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         }
     }
   SegmentDataGlobals.clear();
+  SegmentDataBases.clear();
   WritableSegmentGlobals.clear();
   CodePtrTableGlobals.clear();
   PreparedFuncBlocks.clear();
