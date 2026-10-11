@@ -222,11 +222,26 @@ actual warm hits, identical cold/warm budget consumption and a fresh successful
 proof when the same address belongs to a different valid image. Truncated
 instruction streams remain unretained.
 
+Publishing an additional code reference may retain the pipeline's raw x87
+graphs, but cannot retain an earlier tag proof. A shared-cache test publishes a
+new entry before FXAM: every raw-query budget still matches a cold query, while
+ordinary warm and cold builds both reject the newly unknown tag state.
+`InternalNoReturn` checks that termination-only builds avoid querying unused
+floating-return callees, restore binary80 call/return definitions on builder
+reuse, and preserve the full path for local x87 operations, resets and FXAM.
+Returning, terminating and unresolved exception handlers retain their original
+no-return verdicts on x86 and x64.
+
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
 inputs, independent proof budgets, exception and incomplete-lift wakeups,
 different contexts, and reentrant callbacks across threads and caches. These
 overlaps are coordinated by conditions rather than assumed from timing.
+Independent call-proof tests hold two distinct callee builds at their real
+no-return callbacks, require both to enter before release, and compare complete
+LowIR with a serial build on x86/x64 in ELF, COFF and Mach-O. Injected failures
+must return only after all workers join. An unregistered callback stays on its
+original thread even when the caller supplies a parallel quota.
 
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked
@@ -1800,6 +1815,13 @@ Calls, stores, ordered memory and non-default address spaces remain observable
 even when several assignments share an expression. Cyclic expression graphs
 exercise effect propagation in both encounter orders; cleanup must terminate
 without dropping an effect or its inputs.
+
+Cleanup progress regressions distinguish rejected copy candidates from actual
+replacements, including simplification that makes a previously unstable candidate
+safe on the next round. Shared-node operator changes, child replacements and
+in-place operand rewrites must report progress and preserve independent
+interpreter results. Refused ordered-memory rewrites report no progress and
+retain the access.
 
 `CProjectionIdentifiers.*` in `NeverDHighControlFlowTests` checks first-free
 source names after dense and explicit suffix collisions, canonicalization,
