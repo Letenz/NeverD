@@ -262,11 +262,20 @@ class WDKDriverFixtureTests(unittest.TestCase):
         }
         self.assertTrue(snapshot_required)
         self.assertTrue(snapshot_required <= required)
+        pool_source = (source.parent / "KernelUnpackStateTests.cpp").read_text()
+        pool_required = {
+            f"KernelUnpackState.{name}"
+            for name in re.findall(r"TEST_F\(KernelUnpackState,\s*(\w+)\)",
+                                   pool_source)
+        }
+        self.assertTrue(pool_required)
+        self.assertTrue(pool_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required) + len(scheduling_required)
                          + len(wait_required) + len(unpack_required)
                          + len(timestamp_required) + len(image_required)
-                         + len(cpuid_required) + len(snapshot_required))
+                         + len(cpuid_required) + len(snapshot_required)
+                         + len(pool_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
                    f"+ {len(wait_required)} wait sets "
@@ -274,7 +283,8 @@ class WDKDriverFixtureTests(unittest.TestCase):
                    f"+ {len(timestamp_required)} clock reads "
                    f"+ {len(image_required)} image memory checks "
                    f"+ {len(cpuid_required)} CPUID "
-                   f"+ {len(snapshot_required)} kernel snapshots = {len(required)}")
+                   f"+ {len(snapshot_required)} kernel snapshots "
+                   f"+ {len(pool_required)} pool captures = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         tokens = i18n.emulation_document_tokens(definitions.read_text(encoding="utf-8"))
         self.assertIn(formula, tokens["NativeDriverCI"])

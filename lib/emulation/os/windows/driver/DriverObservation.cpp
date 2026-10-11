@@ -10,7 +10,7 @@
 #include "DriverImage.h"
 
 #include "neverd/emulation/IntegerABI.h"
-#include "neverd/emulation/ProcessRuntimeState.h"
+#include "neverd/emulation/WindowsDriverState.h"
 
 #include "llvm/Support/Endian.h"
 
@@ -31,16 +31,6 @@ constexpr CPURegister EntryRegisters[] = {
     CPURegister::X64V14, CPURegister::X64V15, CPURegister::X64MXCSR,
     CPURegister::X64FPCW};
 
-struct DriverState final : ProcessRuntimeState {
-  explicit DriverState(std::vector<std::string> Reasons)
-      : ProcessRuntimeState(Kind::WindowsDriverX64),
-        Reasons(std::move(Reasons)) {}
-  bool hasAdditionalDependencies() const override { return !Reasons.empty(); }
-  std::vector<std::string> additionalDependencyReasons() const override {
-    return Reasons;
-  }
-  std::vector<std::string> Reasons;
-};
 } // namespace
 
 DriverObservation::DriverObservation(
@@ -86,10 +76,11 @@ llvm::Error DriverObservation::entered(bool Entry, ProcessStackView NewStack) {
         return V.takeError();
       InitialRegisters.push_back(*V);
     }
+    // The initial stopped observer may query the completed invocation baseline.
+    Started = true;
     auto Next = Observer->started(*this);
     if (!Next)
       return Next.takeError();
-    Started = true;
     return replaceWatches(std::move(*Next));
   }
   auto Next = Observer->invoking(*this);
@@ -242,17 +233,17 @@ llvm::Expected<bool> DriverObservation::entryContextUnchanged() {
   return true;
 }
 llvm::Expected<std::shared_ptr<const ProcessRuntimeState>>
-DriverObservation::runtimeState(bool) {
+DriverObservation::runtimeState(bool IncludeBacking) {
   auto Unchanged = entryContextUnchanged();
   if (!Unchanged)
     return Unchanged.takeError();
-  auto Dependencies = Kernel.unpackDependencies();
-  if (!Dependencies)
-    return Dependencies.takeError();
+  auto State = Kernel.captureUnpackRuntime(IncludeBacking);
+  if (!State)
+    return State.takeError();
   if (!*Unchanged)
-    Dependencies->emplace_back("changed DriverEntry invocation context");
+    State->Reasons.emplace_back("changed DriverEntry invocation context");
   return std::shared_ptr<const ProcessRuntimeState>(
-      std::make_shared<DriverState>(std::move(*Dependencies)));
+      std::make_shared<WindowsDriverState>(std::move(*State)));
 }
 std::optional<uint64_t> DriverObservation::nativeCallCount() const {
   return Result.Calls.size();

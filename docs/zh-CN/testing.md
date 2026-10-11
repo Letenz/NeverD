@@ -1168,7 +1168,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 12 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots = 5478`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 13 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5488`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1575,6 +1575,8 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `NeverDUnpackDriverTests` 覆盖 DriverEntry 恢复、静态／动态内核导入、遗留内核资源、入口 ABI／控制状态、畸形导出、调度、请求／卸载生命周期、C API／CLI 一致性及 PE 校验和。原生驱动清单要求对应 KVM／WHP 用例执行；Windows 还对照 ImageHlp。这不代表原生内核加载验收。见[脱壳](unpack.md)。
 
 `NeverDKernelSnapshotTests` 检查终止性内存故障和不支持指令之后的对象诊断快照。已提交的设备和分派状态仍可读取，原始故障保留，CPU 访问仍被禁止。损坏的归属关系、循环设备链表、无效驱动扩展和部分初始化的分派指针仍会失败。原生 KVM／WHP 验收要求对应后端用例执行。
+
+`KernelUnpackStateTests.cpp` 为 `NeverDKernelSnapshotTests` 增加九个可移植用例，覆盖池分配契约、内容副本、已释放对象的生命周期、缺失内存和剩余依赖。终止故障用例也捕获存活池。`UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` 验证会话销毁后的公共观察状态。这些用例纳入原生驱动必测门槛，不构成原生内核恢复认证。
 
 ## 原生不透明状态检查
 

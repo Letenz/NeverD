@@ -9,6 +9,7 @@
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/ExecutionConfiguration.h"
 #include "neverd/emulation/ProcessObserver.h"
+#include "neverd/emulation/WindowsDriverState.h"
 #include "neverd/object/PEChecksum.h"
 #include "neverd/unpack/Unpack.h"
 
@@ -403,6 +404,73 @@ public:
     return llvm::Error::success();
   }
 };
+
+class DriverPoolObserver final : public ProcessObserver {
+public:
+  explicit DriverPoolObserver(uint64_t EntryRVA) : EntryRVA(EntryRVA) {}
+  std::shared_ptr<const ProcessRuntimeState> Initial, Metadata, Contents;
+  llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
+    auto State = P.runtimeState(true);
+    if (!State)
+      return State.takeError();
+    Initial = std::move(*State);
+    auto M = P.inputModule();
+    return std::vector<ExecutionWatch>{{M->Base + EntryRVA, 1}};
+  }
+  llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+  watched(ProcessView &P, uint64_t) override {
+    auto State = P.runtimeState(false);
+    if (!State)
+      return State.takeError();
+    Metadata = std::move(*State);
+    State = P.runtimeState(true);
+    if (!State)
+      return State.takeError();
+    Contents = std::move(*State);
+    return std::nullopt;
+  }
+
+private:
+  uint64_t EntryRVA;
+};
+
+TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
+  DriverPoolObserver Observer(Original.Entry);
+  auto Run = observeDriver(packed(1), scenario(), Observer);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+  // The driver session and its memory have already been destroyed here.
+  ASSERT_TRUE(Observer.Initial);
+  ASSERT_EQ(Observer.Initial->Profile,
+            ProcessRuntimeState::Kind::WindowsDriverX64);
+  const auto &Initial =
+      static_cast<const WindowsDriverState &>(*Observer.Initial);
+  EXPECT_TRUE(Initial.Pools.empty());
+  EXPECT_EQ(Initial.additionalDependencyReasons(), std::vector<std::string>{});
+  EXPECT_FALSE(Initial.hasAdditionalDependencies());
+  for (const auto &State : {Observer.Metadata, Observer.Contents}) {
+    ASSERT_TRUE(State);
+    ASSERT_EQ(State->Profile, ProcessRuntimeState::Kind::WindowsDriverX64);
+    const auto &Driver = static_cast<const WindowsDriverState &>(*State);
+    ASSERT_EQ(Driver.Pools.size(), 1u);
+    const auto &Pool = Driver.Pools.front();
+    EXPECT_NE(Pool.Address, 0u);
+    EXPECT_EQ(Pool.RequestedSize, 32u);
+    EXPECT_EQ(Pool.API, WindowsDriverState::PoolAPI::ExAllocatePoolWithTag);
+    EXPECT_EQ(Pool.TypeOrFlags, 0u);
+    EXPECT_EQ(Pool.Tag, 0x44564e55u);
+    EXPECT_TRUE(Driver.hasAdditionalDependencies());
+    EXPECT_EQ(Driver.additionalDependencyReasons(),
+              (std::vector<std::string>{"live kernel pool allocations",
+                                        "retained kernel object allocations"}));
+    if (State == Observer.Metadata)
+      EXPECT_FALSE(Pool.Bytes);
+    else {
+      ASSERT_TRUE(Pool.Bytes);
+      EXPECT_EQ(*Pool.Bytes, std::vector<uint8_t>(32, 0xcd));
+    }
+  }
+}
 
 TEST_P(UnpackDriver, ObservationPreservesLifecycleAndCallbackProvenance) {
   DriverObserver Observer;

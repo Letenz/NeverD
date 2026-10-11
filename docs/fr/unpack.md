@@ -34,6 +34,8 @@ Les lectures d’horloge via `KeQueryPerformanceCounter`, `RDTSC` ou `RDTSCP` co
 
 `runtime_state.additional_dependency_reasons` énumère les raisons observées par le modèle du pilote : pools ou MDL actifs, objets du chargeur modifiés, effets du noyau et contexte d’appel d’entrée modifié. Le refus par défaut et les instantanés explicites conservent les mêmes raisons. Une liste vide ne remplace pas `has_additional_dependencies` et ne prouve aucun contrat de restauration.
 
+`ProcessView::runtimeState(include_backing)` fournit un `WindowsDriverState` pour les pilotes arrêtés. Le propriétaire noyau conserve pour chaque pool vivant l’API d’allocation, la taille exacte demandée, le tag et le type historique effectif ou tous les indicateurs modernes. Le contenu demandé est une copie indépendante de ces seuls octets ; une capture des seules métadonnées ne contient aucun octet. Les pools libérés, les objets empruntés au chargeur et les objets de périphériques ne deviennent pas des enregistrements de pool. Cette capture ne fournit ni provenance des pointeurs ni initialiseur natif ; les refus existants liés aux dépendances et aux relocalisations restent applicables.
+
 Les relocalisations de l’image noyau restent une dépendance du chargeur même sans pool ni objet emprunté conservé. Le générateur supprime actuellement les relocalisations du contenu produit : la récupération par défaut renvoie donc `unsupported_state` sans créer ni tronquer la sortie. Seul `snapshot_only` explicite émet l’image à adresse fixe en conservant ce diagnostic. La table d’origine ne prouve pas qu’elle couvre les pointeurs générés.
 
 ```bash
