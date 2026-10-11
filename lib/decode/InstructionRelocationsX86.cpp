@@ -65,32 +65,38 @@ void addFixedImageDisplacement(const BinaryImage &Img, const DecodedInsn &DI,
       InvalidVA, /*PCRelativeFromInstructionEnd=*/false});
 }
 
-/// i386 ELF fields the loader recorded: an unlinked object's immediate no
-/// relocation writes, and the GOT-pointer fields of position-independent
-/// code.
+/// An unlinked ELF object's immediate field no relocation writes: every
+/// address of the object's own sections in an instruction needs one, so the
+/// field is a number.
+void addUnrelocatedImmediate(const BinaryImage &Img, const DecodedInsn &DI,
+                             InstructionRelocations &Result) {
+  if (!DI.Raw || !DI.Raw->detail)
+    return;
+  const auto &Encoding = DI.Raw->detail->x86.encoding;
+  const uint8_t Width = Encoding.imm_size;
+  if (Width == 0 || Width > 8 || Encoding.imm_offset == 0 ||
+      Encoding.imm_offset + Width > DI.Size)
+    return;
+  const va_t FieldVA = DI.Addr + Encoding.imm_offset;
+  if (!Img.isUnrelocatedObjectField(FieldVA, Width))
+    return;
+  uint64_t Encoded = 0;
+  for (uint8_t Byte = 0; Byte < Width; ++Byte)
+    Encoded |= uint64_t(DI.Raw->bytes[Encoding.imm_offset + Byte])
+               << (Byte * 8);
+  Result.Scalars.push_back(
+      {FieldVA, Encoded, Width,
+       RelocatedScalarOperand::Kind::X86ELFUnrelocatedImmediate});
+}
+
+/// i386 ELF fields the loader recorded: the GOT-pointer fields of
+/// position-independent code.
 void addI386ELFFields(const BinaryImage &Img, const DecodedInsn &DI,
                       InstructionRelocations &Result) {
   const va_t Cur = DI.Addr;
   const int Sz = DI.Size;
   const va_t Next = Cur + static_cast<va_t>(Sz);
   std::vector<RelocatedScalarOperand> &RelocatedScalarOperands = Result.Scalars;
-  if (DI.Raw && DI.Raw->detail) {
-    const auto &Encoding = DI.Raw->detail->x86.encoding;
-    const uint8_t Width = Encoding.imm_size;
-    if (Width > 0 && Width <= 4 && Encoding.imm_offset > 0 &&
-        Encoding.imm_offset + Width <= Sz) {
-      const va_t FieldVA = Cur + Encoding.imm_offset;
-      if (Img.isUnrelocatedObjectField(FieldVA, Width)) {
-        uint64_t Encoded = 0;
-        for (uint8_t Byte = 0; Byte < Width; ++Byte)
-          Encoded |= uint64_t(DI.Raw->bytes[Encoding.imm_offset + Byte])
-                     << (Byte * 8);
-        RelocatedScalarOperands.push_back(
-            {FieldVA, Encoded, Width,
-             RelocatedScalarOperand::Kind::I386ELFUnrelocatedImmediate});
-      }
-    }
-  }
   if (Img.getPointerSize() != 4)
     return;
   auto Field = Img.I386GOTPCFields.lower_bound(Cur);
@@ -128,6 +134,8 @@ void addI386ELFFields(const BinaryImage &Img, const DecodedInsn &DI,
 
 void addX86Fields(const BinaryImage &Img, const DecodedInsn &DI,
                   InstructionRelocations &Result) {
+  if (Img.isELF())
+    addUnrelocatedImmediate(Img, DI, Result);
   if (Img.Arch == Arch::X86 && Img.isELF())
     addI386ELFFields(Img, DI, Result);
   addFixedImageDisplacement(Img, DI, Result);

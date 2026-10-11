@@ -98,7 +98,7 @@ struct RelocatedScalarOperand {
   enum class Kind : uint8_t {
     I386ELFGOTPC,
     I386ELFAmbiguousGOTOFF,
-    I386ELFUnrelocatedImmediate,
+    X86ELFUnrelocatedImmediate,
     AArch64ELFUnrelocatedWideMove,
   };
 

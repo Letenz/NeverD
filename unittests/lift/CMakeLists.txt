@@ -111,6 +111,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_MemAtomicTests.cpp
   x86_64/X86_64_MiscTests.cpp
   x86_64/X86_64_MulDivTests.cpp
+  x86_64/X86_64_ObjectImmediateTests.cpp
   x86_64/X86_64_PipelineE2ETests.cpp
   x86_64/X86_64_RclRcrTests.cpp
   x86_64/X86_64_RotateShiftTests.cpp
