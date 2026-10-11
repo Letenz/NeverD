@@ -104,6 +104,13 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("source_binding_records"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_semantics_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_semantic_records"), bool(NEVERD_TEST_WEB_JS));
+  EXPECT_EQ(Has("source_rewrite_analyze"), bool(NEVERD_TEST_WEB_JS));
+  EXPECT_EQ(Has("source_rewrite_records"), bool(NEVERD_TEST_WEB_JS));
+#ifndef _WIN32
+  EXPECT_EQ(Has("source_rewrite_export"), bool(NEVERD_TEST_WEB_JS));
+#else
+  EXPECT_FALSE(Has("source_rewrite_export"));
+#endif
   EXPECT_EQ(Has("source_modules_analyze"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_module_records"), bool(NEVERD_TEST_WEB_JS));
   EXPECT_EQ(Has("source_bundles_analyze"), bool(NEVERD_TEST_WEB_JS));
@@ -118,7 +125,13 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   ASSERT_NE(Session, nullptr);
 #if !NEVERD_TEST_WEB_JS
   for (const auto *Owned :
-       {neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
+       {neverd_web_source_rewrite_analyze_json(Session, "1", 1, "source", 6,
+                                               "constant_folding", 16),
+        neverd_web_source_rewrite_records_json(Session, "1", 1, "rewrite", 7, 0,
+                                               1),
+        neverd_web_source_rewrite_export_json(Session, "1", 1, "rewrite", 7,
+                                              "receipt", 7, "output", 6),
+        neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
         neverd_web_interface_records_json(Session, "1", 1, "analysis", 8, 0, 1),
         neverd_web_interfaces_compare_json(Session, "1", 1, "analysis", 8,
                                            "capture", 7),
@@ -238,6 +251,12 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                                  0),
         neverd_web_source_semantic_records_json(nullptr, nullptr, 0, nullptr, 0,
                                                 0, 1),
+        neverd_web_source_rewrite_analyze_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0),
+        neverd_web_source_rewrite_records_json(nullptr, nullptr, 0, nullptr, 0,
+                                               0, 1),
+        neverd_web_source_rewrite_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                              nullptr, 0, nullptr, 0),
         neverd_web_source_modules_analyze_json(nullptr, nullptr, 0, nullptr, 0),
         neverd_web_source_bundles_analyze_json(nullptr, nullptr, 0, nullptr, 0),
         neverd_web_source_bundle_records_json(nullptr, nullptr, 0, nullptr, 0,

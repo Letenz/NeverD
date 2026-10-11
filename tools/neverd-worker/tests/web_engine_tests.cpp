@@ -1520,7 +1520,8 @@ int main(int argc, char **argv) {
              "SECRET_WEB_XHR.open('GET','https://SECRET_WEB/a');"
              "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
              "SECRET_WEB_XHR.send('SECRET_WEB');"
-             "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;";
+             "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;"
+             "const recovered='SECRET_'+'WEB_RECOVERED';const n=1+2;";
       const auto beforeInterfaces = web.revision(),
                  beforeProject = web.projectId();
       const Json interfaceImport{{"schema_version", 1},
@@ -1615,6 +1616,36 @@ int main(int argc, char **argv) {
                       sites["items"][4]["receiver_binding_id"] &&
                   reply.dump().find("SECRET_WEB") == std::string::npos,
               "XHR syntax evidence differs or exposes values");
+        for (const auto *Pass : {"string_recovery", "constant_folding"}) {
+          auto RewriteArgs = infer;
+          RewriteArgs["pass"] = Pass;
+          const auto Rewritten =
+              web.execute("web_source_rewrite_analyze", RewriteArgs);
+          reply = process.call("web_source_rewrite_analyze", RewriteArgs,
+                               interfaceRevision, interfaceProject);
+          check(reply["payload"] == Rewritten &&
+                    Rewritten["analysis_status"] == "verified_local_rewrites" &&
+                    Rewritten["accepted_count"] == 1 &&
+                    Rewritten["whole_program_equivalence"] == false &&
+                    Rewritten["source_reflection_preserved"] == false &&
+                    reply.dump().find("SECRET_WEB") == std::string::npos,
+                "Rewrite evidence differs or exposes private values");
+          const Json RewritePage{{"schema_version", 1},
+                                 {"revision", interfaceRevision},
+                                 {"rewrite_id", Rewritten["rewrite_id"]}};
+          const auto Records =
+              web.execute("web_source_rewrite_records", RewritePage);
+          reply = process.call("web_source_rewrite_records", RewritePage,
+                               interfaceRevision, interfaceProject);
+          check(reply["payload"] == Records &&
+                    reply.dump().find("SECRET_WEB") == std::string::npos,
+                "Rewrite records differ or expose recovered literals");
+          RewriteArgs["path"] = "SECRET_WEB";
+          reply = process.call("web_source_rewrite_analyze", RewriteArgs,
+                               interfaceRevision, interfaceProject);
+          check(reply["error"]["code"] == "invalid_request",
+                "Rewrite analysis accepted an export path");
+        }
         const Json compare{{"schema_version", 1},
                            {"revision", interfaceRevision},
                            {"analysis_id", analysis["interface_analysis_id"]},

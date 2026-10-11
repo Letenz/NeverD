@@ -937,6 +937,53 @@ const char *neverd_web_source_semantic_records_json(
 #endif
 }
 
+const char *neverd_web_source_rewrite_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *SourceID, size_t SourceIDSize,
+    const char *Pass, size_t PassSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.analyzeSourceRewrite(buffer(ExpectedRevision, RevisionSize, 20),
+                                  buffer(SourceID, SourceIDSize, 64),
+                                  buffer(Pass, PassSize, 32));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_source_rewrite_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RewriteID, size_t RewriteIDSize,
+    uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.sourceRewriteRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                                  buffer(RewriteID, RewriteIDSize, 64), Offset,
+                                  Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_source_rewrite_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RewriteID, size_t RewriteIDSize,
+    const char *Receipt, size_t ReceiptSize, const char *OutputDirectory,
+    size_t OutputDirectorySize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.exportSourceRewrite(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(RewriteID, RewriteIDSize, 64), buffer(Receipt, ReceiptSize, 64),
+        buffer(OutputDirectory, OutputDirectorySize, 32768));
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_source_map_analyze_json(neverd_web_session_t Session,
                                                const char *ExpectedRevision,
                                                size_t RevisionSize,

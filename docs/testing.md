@@ -558,6 +558,19 @@ downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
 tests cover malformed prelinked indices, counts, aliases and alignment.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+`WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
+surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
+directive preservation, tagged-template refusal, ASI outer-tree mismatches,
+exact inverse and tampered receipts. Lexer, record and output-growth budgets
+must refuse atomically. Its optional pinned Claude module 1897 case checks 5
+string-recovery and 201 constant-folding substitutions, each retaining 1,496
+refused candidates, with exact original recovery. This does not qualify every
+module for semantic rewriting. `WebRewriteExport` checks candidate/receipt
+failure rollback, foreign files, symlinks and renamed/replaced output paths.
+`WebRewriteSDK` checks private literals, cache/revision and parse-goal bindings,
+immutable captured bytes and receipt-bound CLI export with an unusable PATH.
+Worker/MCP tests compare both passes and record pages against the shared API;
+MCP excludes raw export and arbitrary output paths.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative

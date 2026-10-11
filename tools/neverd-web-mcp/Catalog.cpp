@@ -297,6 +297,12 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
         "web_source_bundle_records", "web_source_navigation_records"})
     Page(Operation, "source_id", true);
   Page("web_source_semantic_records", "source_id");
+  Add("web_source_rewrite_analyze",
+      "Verify an explicit local primitive rewrite pass; return metadata only, "
+      "without source execution or whole-program equivalence claims.",
+      {decimal("revision"), text("source_id"),
+       choice("pass", {"string_recovery", "constant_folding"})});
+  Page("web_source_rewrite_records", "rewrite_id");
   Add("web_source_anchor",
       "Resolve a source byte span to original immutable storage and optional "
       "structural view coordinates.",

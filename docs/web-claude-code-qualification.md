@@ -1,5 +1,41 @@
 # Claude Code 2.1.296: offline NeverD qualification
 
+## Reversible primitive rewrites — 2026-10-11
+
+The native C++ `bun-rewrite` and receipt-bound `bun-rewrite-export` commands
+selected module 1,897 directly from the hash-pinned standalone ELF below.
+NeverD extracted and decoded the module before analyzing it with the `module`
+parse goal. Both commands ran with `PATH=/neverd-no-external-tools`; neither
+the target nor a JavaScript runtime was executed.
+
+The original module is 156,255 bytes with SHA-256
+`1be18858dfe6863b48e9e0c25e25f9d04b22221935cb1a9e286cbd992d70f722`.
+
+| Explicit pass | Accepted | Refused | Candidate bytes | Candidate SHA-256 |
+| --- | ---: | ---: | ---: | --- |
+| `string_recovery` | 5 | 1,496 | 156,272 | `507d9d6f8f2f763be152c7ceed333e6d16789d2ee086efde82ad1f84dba2a2dc` |
+| `constant_folding` | 201 | 1,496 | 157,167 | `d9c7bd3785557b55a90ac921187b8e658ec06ed9bb2df8248c4b69cdb6faab7a` |
+
+Both candidates passed complete reparse, retained outer-tree comparison,
+primitive SameValue and exact inverse verification. The exported originals
+also matched the previously recovered `m01897.js` byte for byte. The private
+local outputs are under
+`/Users/gmh/code/claude-code-recovery/2.1.296/primitive-rewrites/`, in
+`module-01897-strings` and `module-01897-constants`; each contains
+`original.js`, `candidate.js` and `receipt.json`. No sample content is committed.
+
+Use `neverd web bun-rewrite <binary> 1897 module <pass>` for metadata, then
+`neverd web bun-rewrite-export <binary> 1897 module <pass> <export_receipt> <new-directory>`
+with the returned receipt. Another pass's receipt is rejected. Receipts and
+ordinary record pages contain ranges and fixed reasons, not recovered strings.
+
+These are two independent passes over one selected original module, not a
+combined transformation or qualification of all 2,345 modules for semantic
+rewriting. Refused expressions remain intact unless they contain an
+independently admitted child. Original TypeScript, variable names, source
+reflection and whole-program equivalence are not recovered or certified.
+See the [rewrite profile](web-source-rewrite-profile.md) for the exact boundary.
+
 ## VSIX container and embedded CLI equality — 2026-10-11
 
 The official [Marketplace extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code)

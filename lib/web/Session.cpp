@@ -322,6 +322,23 @@ std::string Session::capabilities() {
   Operations.emplace_back("source_binding_records");
   Operations.emplace_back("source_semantics_analyze");
   Operations.emplace_back("source_semantic_records");
+  Operations.emplace_back("source_rewrite_analyze");
+  Operations.emplace_back("source_rewrite_records");
+#ifndef _WIN32
+  Operations.emplace_back("source_rewrite_export");
+#endif
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "javascript_primitive_rewrite"},
+      {"profile", std::string(SourceRewriteProfile)},
+      {"passes", llvm::json::Array{"string_recovery", "constant_folding"}},
+      {"max_source_bytes", std::to_string(MaxSourceRewriteBytes)},
+      {"max_candidate_bytes", std::to_string(MaxSourceRewriteBytes)},
+      {"max_records", MaxSourceRewriteRecords},
+      {"max_steps", MaxSourceRewriteSteps},
+      {"max_cached", MaxCachedSourceRewrites},
+      {"whole_program_equivalence", false},
+      {"source_reflection_preserved", false},
+      {"executes_input", false}});
   Operations.emplace_back("source_modules_analyze");
   Operations.emplace_back("source_module_records");
   Operations.emplace_back("source_bundles_analyze");
@@ -568,6 +585,7 @@ std::string Session::commit(std::string_view Token) {
   State->Maps.clear();
   State->CachedMapSegments = 0;
   State->SourceViews.clear();
+  State->SourceRewrites.clear();
   State->PendingSourceView.reset();
   State->SourceViewToken.clear();
   State->Revision = Revision;
@@ -603,6 +621,7 @@ std::string Session::metadata() const {
       {"electron_entries_count", State->ElectronEntryAnalyses.size()},
       {"source_map_count", State->Maps.size()},
       {"source_view_count", State->SourceViews.size()},
+      {"source_rewrite_count", State->SourceRewrites.size()},
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},

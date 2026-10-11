@@ -188,6 +188,18 @@ public:
   std::string sourceSemanticRecords(std::string_view ExpectedRevision,
                                     std::string_view SourceID, uint64_t Offset,
                                     uint64_t Limit) const;
+  /// Private local substitutions; metadata never includes recovered literals.
+  std::string analyzeSourceRewrite(std::string_view ExpectedRevision,
+                                   std::string_view SourceID,
+                                   std::string_view Pass);
+  std::string sourceRewriteRecords(std::string_view ExpectedRevision,
+                                   std::string_view RewriteID, uint64_t Offset,
+                                   uint64_t Limit) const;
+  /// Explicit local raw disclosure requires the exact analysis export receipt.
+  std::string exportSourceRewrite(std::string_view ExpectedRevision,
+                                  std::string_view RewriteID,
+                                  std::string_view Receipt,
+                                  std::string_view OutputDirectory);
   std::string analyzeSourceModules(std::string_view ExpectedRevision,
                                    std::string_view SourceID);
   std::string sourceModuleRecords(std::string_view ExpectedRevision,

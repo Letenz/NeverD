@@ -106,7 +106,8 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze";
+    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+                         Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
   }
@@ -127,6 +128,23 @@ void sourceAndMaps(Harness &H) {
         "web_source_navigation_analyze", "web_interfaces_analyze"})
     H.same(Op, Args);
   H.same("web_source_semantic_records", Args);
+  for (const auto *Pass : {"string_recovery", "constant_folding"}) {
+    auto RewriteArgs = Args;
+    RewriteArgs["pass"] = Pass;
+    const auto Rewrite = H.same("web_source_rewrite_analyze", RewriteArgs);
+    require(Rewrite.at("analysis_status") == "verified_local_rewrites" &&
+                Rewrite.at("accepted_count") == 1 &&
+                Rewrite.at("whole_program_equivalence") == false &&
+                Rewrite.at("source_reflection_preserved") == false,
+            "MCP changed rewrite admission or its qualifications");
+    const auto Records = H.same(
+        "web_source_rewrite_records",
+        {{"revision", H.Revision}, {"rewrite_id", Rewrite.at("rewrite_id")}});
+    redacted(Rewrite);
+    redacted(Records);
+    RewriteArgs["path"] = "CANARY";
+    invalid([&] { H.get("web_source_rewrite_analyze", RewriteArgs); });
+  }
   const auto Interfaces = H.same("web_interfaces_analyze", Args);
   require(Interfaces.at("interface_count") == 5 &&
               Interfaces.at("xhr_correlation") == false &&
@@ -324,7 +342,8 @@ int main() {
                       "CANARY_XHR.open('GET','https://CANARY/a');"
                       "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
                       "CANARY_XHR.send('CANARY');"
-                      "CANARY_XHR.onload = CANARY_CALLBACK;");
+                      "CANARY_XHR.onload = CANARY_CALLBACK;"
+                      "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
     F.write(

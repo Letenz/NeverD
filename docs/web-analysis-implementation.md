@@ -1593,3 +1593,58 @@ stdio case; see `/tmp/neverd-xhr-restored-mcp.log`.
 This advances #717 without completing it. Request wrappers, response dataflow,
 encoding/compression/crypto tracing, schema exports and reviewed endpoint
 displays remain required.
+
+## Reversible primitive source rewrites — 2026-10-11
+
+`javascript-primitive-rewrite-v1` adds explicit string recovery and other
+primitive folding. The shared frontend, bindings, values and effects remain
+the semantic owners. `rewrite/Plan`, `Primitive`, `Apply` and `Validate` own
+selection, closed emission, exact inverse and complete outside-tree checks;
+`SessionRewrite` publishes bounded metadata and two private cached results.
+`rewrite/Export` separately owns fresh private files and ownership-aware
+rollback. It retains created-file descriptors through the transaction so
+unlink/inode reuse cannot turn a foreign replacement into a cleanup target.
+The C API and CLI expose pass/source/revision-bound local export; worker and
+MCP only expose metadata. See the [profile](web-source-rewrite-profile.md).
+
+Independent plan review required complete lexer evidence, ASI outside-tree
+comparison, pass-bound disclosure receipts and a distinct transactional writer.
+The implementation and C++ tests cover those contracts, private literal
+canaries, UTF-16/signed-zero/BigInt cases, comment preservation, no-effect
+admission, tampered inverse evidence, bounded growth, partial disk write
+failure and preservation of foreign files or replaced output directories.
+The first integration run passed all 18 core/export cases but its four SDK
+cases failed because the fixture omitted the captured root directory when
+counting artifacts. Correcting the fixture's source/CLI indices made all four
+pass; the product import semantics were unchanged.
+
+The actual CLI extracted Claude Code module 1,897 from the pinned original and
+exported both selected passes with an unusable external-tool PATH. String
+recovery accepted 5 substitutions and constant folding accepted 201; both
+retained 1,496 refused candidates and passed exact inverse verification.
+The exported originals also matched the prior raw recovery byte for byte.
+Exact hashes and retained local files are in the
+[qualification record](web-claude-code-qualification.md#reversible-primitive-rewrites--2026-10-11).
+
+The enabled owning Web suite registered 466 cases: 459 passed and seven skipped
+(six need unavailable LLVM Zstd; one only applies with ASAR path policy omitted).
+All supplied Bun/SEA/npm/VSIX corpora were enabled, including readable recovery
+and reparse of every one of the 2,345 Claude Code JavaScript modules. Worker Web,
+all five MCP suites including the real native Claude stdio case, and enabled
+C ABI availability passed. Its backend-omission-only case skipped as expected.
+Logs: `/tmp/neverd-rewrite-full-web-tests.log`,
+`/tmp/neverd-rewrite-sdk-fixed-tests.log`, `/tmp/neverd-rewrite-worker-tests.log`,
+`/tmp/neverd-rewrite-mcp-tests.log`, `/tmp/neverd-rewrite-mcp-claude.log` and
+`/tmp/neverd-rewrite-api-tests.log`.
+
+With JavaScript parsing disabled, C ABI availability checked explicit refusal
+for all three new entry points; worker Web and four MCP suites passed. All
+four rewrite SDK behavior cases explicitly skipped because they require the
+parser. With the entire Web backend disabled, both ABI cases and four MCP
+suites passed; worker Web and the optional Claude MCP case skipped. Logs are
+`/tmp/neverd-rewrite-nojs-{api,worker,mcp,sdk}.log` and
+`/tmp/neverd-rewrite-disabled-{api,worker,mcp}.log`.
+
+These checks establish local primitive substitutions, not whole-program or
+source-reflection equivalence. Scope renaming, branch/control-flow transforms
+and the other epics' pending capabilities still prevent completion of #714–#718.
