@@ -646,11 +646,14 @@ static void iterativeDCE(HighFunc &Func,
       else
         ++It;
     }
-    bool InlineChanged = !InlineDefs.empty();
-    if (InlineChanged)
-      inlineSingleDefs(Func.Body, InlineDefs);
-    simplifyAllExprs(Func.Body);
-    if (!DCEChanged && !InlineChanged)
+    const bool HadCandidates = !InlineDefs.empty();
+    const bool InlineChanged =
+        HadCandidates && inlineSingleDefs(Func.Body, InlineDefs);
+    const bool Simplified = simplifyAllExprs(Func.Body);
+    // Keep the original no-candidate stopping point. Otherwise a rejected
+    // candidate is not progress: another round needs an actual IR change.
+    // Simplification can make an earlier rejected candidate safe to inline.
+    if (!DCEChanged && (!HadCandidates || (!InlineChanged && !Simplified)))
       break;
   }
 }
