@@ -110,6 +110,14 @@ std::string Session::analyzePackageBehavior(std::string_view Revision,
     for (const auto &R : E.Regions)
       if (R.selectable())
         Add(R.ID, E.ArtifactID, R.ID, "sea_region");
+  for (const auto &[ID, E] : State->PkgExtractions) {
+    for (const auto &M : E.Members)
+      if (M.selectable())
+        Add(M.ID, E.ArtifactID, M.ID, "pkg_member");
+    for (const auto &R : E.Regions)
+      if (R.selectable())
+        Add(R.ID, E.ArtifactID, R.ID, "pkg_prelude");
+  }
   for (const auto &[ID, E] : State->NexeExtractions) {
     for (const auto &M : E.Members)
       Add(M.ID, E.ArtifactID, M.ID, "nexe_member");

@@ -3482,12 +3482,26 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
       Img.getPointerSize() != 4)
     return;
 
+  // Output certificates are rebuilt from the current final proof graph.  One
+  // from an earlier provisional CFG must not survive a later batch whose
+  // analysis is incomplete or that sees a new predecessor of the PC ADD.
+  RelocatedInstructionAddressOccurrences.erase(
+      std::remove_if(RelocatedInstructionAddressOccurrences.begin(),
+                     RelocatedInstructionAddressOccurrences.end(),
+                     [](const RelocatedInstructionAddressOccurrence &Item) {
+                       return Item.DefinesOutput;
+                     }),
+      RelocatedInstructionAddressOccurrences.end());
+
   struct LiteralDefinition {
     va_t SlotVA = InvalidVA;
     va_t TargetVA = InvalidVA;
     va_t TargetOwnerVA = InvalidVA;
     uint32_t Encoded = 0;
     JumpTableValueOccurrence Occurrence;
+    /// No relocation writes the literal: its target is known only at the ADD
+    /// that adds the PC, and must lie in that ADD's own section.
+    bool RelocationFree = false;
   };
   std::vector<LiteralDefinition> Literals;
 
@@ -3532,6 +3546,21 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
                    Field.TargetOwnerVA,
                    Field.EncodedValue,
                    {Op.Output, Op.Addr, Op.Seq, /*DefinedAtPoint=*/true}});
+          } else if (Applied == Img.ARMRelativeLiteralFields.end() && Slot &&
+                     SlotSegment && SlotSegment->isReadable() &&
+                     !SlotSegment->isWritable() && Bytes &&
+                     Op.Output.Size == 4 &&
+                     Img.isUnrelocatedObjectField(*Slot, sizeof(uint32_t)) &&
+                     Img.isUnrelocatedObjectField(Rec.Addr, Rec.Size)) {
+            // The assembler resolved this literal itself, so the PC-relative
+            // load and the word it reads are both its final values.
+            Literals.push_back(
+                {*Slot,
+                 InvalidVA,
+                 InvalidVA,
+                 readLE<uint32_t>(Bytes),
+                 {Op.Output, Op.Addr, Op.Seq, /*DefinedAtPoint=*/true},
+                 /*RelocationFree=*/true});
           }
         }
       }
@@ -3564,124 +3593,157 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
     size_t ExactQuery = 0;
     std::vector<std::pair<const LiteralDefinition *, size_t>> Sources;
   };
-  std::vector<JumpTableValueQuery> Queries;
-  std::vector<PendingMaterialization> Pending;
-  for (const auto &[Addr, Rec] : Insns) {
-    (void)Addr;
-    if (Rec.IsInstructionGuard)
-      continue;
-    std::vector<std::pair<NdVar, uint32_t>> Known;
-    auto knownValue = [&](const NdVar &Value) -> std::optional<uint32_t> {
-      if (Value.isConst())
-        return static_cast<uint32_t>(Value.Offset);
-      for (auto It = Known.rbegin(); It != Known.rend(); ++It)
-        if (It->first == Value)
-          return It->second;
-      return std::nullopt;
-    };
-    for (const LowOp &Op : Rec.Ops) {
-      if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2 &&
-          (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size == 4) {
-        int PCSide = -1;
-        for (int Side = 0; Side < 2; ++Side) {
-          const std::optional<uint32_t> PC = knownValue(Op.Inputs[Side]);
-          if (!PC || *PC != static_cast<uint32_t>(Op.Addr + 8))
-            continue;
-          if (PCSide != -1) {
-            PCSide = -2;
-            break;
-          }
-          PCSide = Side;
-        }
-        if (PCSide >= 0) {
-          using TargetKey = std::pair<va_t, va_t>;
-          std::map<TargetKey, std::vector<const LiteralDefinition *>> Groups;
-          const uint32_t PC = static_cast<uint32_t>(Op.Addr + 8);
-          for (const LiteralDefinition &Literal : Literals) {
-            if (static_cast<uint32_t>(PC + Literal.Encoded) !=
-                    static_cast<uint32_t>(Literal.TargetVA) ||
-                Literal.Occurrence.Value.Size != Op.Inputs[1 - PCSide].Size)
-              continue;
-            const TargetKey Key{Literal.TargetVA, Literal.TargetOwnerVA};
-            Groups[Key].push_back(&Literal);
-          }
-          for (auto &[Key, Sources] : Groups) {
-            std::vector<JumpTableValueOccurrence> Alternatives;
-            Alternatives.reserve(Sources.size());
-            for (const LiteralDefinition *Source : Sources)
-              Alternatives.push_back(Source->Occurrence);
-            const size_t ExactQuery = Queries.size();
-            Queries.push_back({Op.Inputs[1 - PCSide], Op.Addr, Op.Seq,
-                               Alternatives, false, false});
-            PendingMaterialization Candidate{
-                &Op, Key.first, Key.second, ExactQuery, {}};
-            Candidate.Sources.reserve(Sources.size());
-            for (const LiteralDefinition *Source : Sources) {
-              const size_t MayQuery = Queries.size();
-              JumpTableValueQuery MayDepend{
-                  Op.Inputs[1 - PCSide], Op.Addr, Op.Seq,
-                  {Source->Occurrence},  false,   false};
-              MayDepend.Relation = JumpTableValueRelation::MayDepend;
-              Queries.push_back(std::move(MayDepend));
-              Candidate.Sources.emplace_back(Source, MayQuery);
-            }
-            Pending.push_back(std::move(Candidate));
-          }
-        }
-      }
-
-      std::optional<uint32_t> Result;
-      if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
-        Result = knownValue(Op.Inputs[0]);
-      } else if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2) {
-        const auto Left = knownValue(Op.Inputs[0]);
-        const auto Right = knownValue(Op.Inputs[1]);
-        if (Left && Right)
-          Result = static_cast<uint32_t>(*Left + *Right);
-      } else if (Op.Opcode == NdOp::INT_SUB && Op.NumInputs == 2) {
-        const auto Left = knownValue(Op.Inputs[0]);
-        const auto Right = knownValue(Op.Inputs[1]);
-        if (Left && Right)
-          Result = static_cast<uint32_t>(*Left - *Right);
-      }
-      if (Result && Op.Output.Size == 4)
-        Known.emplace_back(Op.Output, *Result);
-    }
-  }
-  if (Queries.empty())
-    return;
-
-  bool AnalysisComplete = false;
-  const std::vector<bool> Matches =
-      tableValuesMatchAtUses(Queries, &AnalysisComplete);
-  if (!AnalysisComplete || Matches.size() != Queries.size())
-    return;
-  for (const PendingMaterialization &Candidate : Pending) {
-    if (!Candidate.Op || Candidate.ExactQuery >= Matches.size())
-      continue;
-    const bool IsExact = Matches[Candidate.ExactQuery];
-    for (const auto &[Source, MayQuery] : Candidate.Sources) {
-      if (!Source || MayQuery >= Matches.size() || !Matches[MayQuery])
+  auto ProveLiterals = [&](bool RelocationFree) {
+    std::vector<JumpTableValueQuery> Queries;
+    std::vector<PendingMaterialization> Pending;
+    for (const auto &[Addr, Rec] : Insns) {
+      (void)Addr;
+      if (Rec.IsInstructionGuard)
         continue;
-      RelocatedInstructionAddressOccurrence Occurrence;
-      Occurrence.FieldVA = Source->SlotVA;
-      Occurrence.InstructionAddr = Candidate.Op->Addr;
-      Occurrence.OpSeq = Candidate.Op->Seq;
-      Occurrence.TargetVA = Candidate.TargetVA;
-      Occurrence.TargetOwnerVA = Candidate.TargetOwnerVA;
-      Occurrence.Width = 4;
-      Occurrence.Provenance = Img.hasExecutableCodeOwnerAt(Candidate.TargetVA)
-                                  ? ConstantAddressProvenance::CodeAddress
-                                  : ConstantAddressProvenance::DataAddress;
-      Occurrence.DefinesOutput = true;
-      Occurrence.OutputMayDepend = !IsExact;
-      Occurrence.OutputOpcode = Candidate.Op->Opcode;
-      Occurrence.OutputWitness = Candidate.Op->Output;
-      if (!llvm::is_contained(RelocatedInstructionAddressOccurrences,
-                              Occurrence))
-        RelocatedInstructionAddressOccurrences.push_back(std::move(Occurrence));
+      std::vector<std::pair<NdVar, uint32_t>> Known;
+      auto knownValue = [&](const NdVar &Value) -> std::optional<uint32_t> {
+        if (Value.isConst())
+          return static_cast<uint32_t>(Value.Offset);
+        for (auto It = Known.rbegin(); It != Known.rend(); ++It)
+          if (It->first == Value)
+            return It->second;
+        return std::nullopt;
+      };
+      for (const LowOp &Op : Rec.Ops) {
+        if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2 &&
+            (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size == 4) {
+          int PCSide = -1;
+          for (int Side = 0; Side < 2; ++Side) {
+            const std::optional<uint32_t> PC = knownValue(Op.Inputs[Side]);
+            if (!PC || *PC != static_cast<uint32_t>(Op.Addr + 8))
+              continue;
+            if (PCSide != -1) {
+              PCSide = -2;
+              break;
+            }
+            PCSide = Side;
+          }
+          if (PCSide >= 0) {
+            using TargetKey = std::pair<va_t, va_t>;
+            std::map<TargetKey, std::vector<const LiteralDefinition *>> Groups;
+            const uint32_t PC = static_cast<uint32_t>(Op.Addr + 8);
+            // An object's sections move independently, so an unrelocated
+            // PC-relative difference can only name the ADD's own section.
+            va_t AnchorOwner = InvalidVA;
+            if (const Section *Anchor = Img.getSectionFor(Op.Addr);
+                Anchor && Anchor->isExecutable() &&
+                Img.isUnrelocatedObjectField(Rec.Addr, Rec.Size))
+              AnchorOwner = Anchor->VA;
+            for (const LiteralDefinition &Literal : Literals) {
+              if (Literal.RelocationFree != RelocationFree ||
+                  Literal.Occurrence.Value.Size != Op.Inputs[1 - PCSide].Size)
+                continue;
+              TargetKey Key{Literal.TargetVA, Literal.TargetOwnerVA};
+              if (Literal.RelocationFree) {
+                Key = {static_cast<uint32_t>(PC + Literal.Encoded),
+                       AnchorOwner};
+                if (!Img.relocatedTargetBelongsToOwner(Key.first, Key.second))
+                  continue;
+              } else if (static_cast<uint32_t>(PC + Literal.Encoded) !=
+                         static_cast<uint32_t>(Literal.TargetVA)) {
+                continue;
+              }
+              Groups[Key].push_back(&Literal);
+            }
+            for (auto &[Key, Sources] : Groups) {
+              std::vector<JumpTableValueOccurrence> Alternatives;
+              Alternatives.reserve(Sources.size());
+              for (const LiteralDefinition *Source : Sources)
+                Alternatives.push_back(Source->Occurrence);
+              const size_t ExactQuery = Queries.size();
+              Queries.push_back({Op.Inputs[1 - PCSide], Op.Addr, Op.Seq,
+                                 Alternatives, false, false});
+              PendingMaterialization Candidate{
+                  &Op, Key.first, Key.second, ExactQuery, {}};
+              Candidate.Sources.reserve(Sources.size());
+              for (const LiteralDefinition *Source : Sources) {
+                const size_t MayQuery = Queries.size();
+                JumpTableValueQuery MayDepend{
+                    Op.Inputs[1 - PCSide], Op.Addr, Op.Seq,
+                    {Source->Occurrence},  false,   false};
+                MayDepend.Relation = JumpTableValueRelation::MayDepend;
+                Queries.push_back(std::move(MayDepend));
+                Candidate.Sources.emplace_back(Source, MayQuery);
+              }
+              Pending.push_back(std::move(Candidate));
+            }
+          }
+        }
+
+        std::optional<uint32_t> Result;
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1) {
+          Result = knownValue(Op.Inputs[0]);
+        } else if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2) {
+          const auto Left = knownValue(Op.Inputs[0]);
+          const auto Right = knownValue(Op.Inputs[1]);
+          if (Left && Right)
+            Result = static_cast<uint32_t>(*Left + *Right);
+        } else if (Op.Opcode == NdOp::INT_SUB && Op.NumInputs == 2) {
+          const auto Left = knownValue(Op.Inputs[0]);
+          const auto Right = knownValue(Op.Inputs[1]);
+          if (Left && Right)
+            Result = static_cast<uint32_t>(*Left - *Right);
+        }
+        if (Result && Op.Output.Size == 4)
+          Known.emplace_back(Op.Output, *Result);
+      }
     }
-  }
+    if (Queries.empty())
+      return;
+
+    bool AnalysisComplete = false;
+    const std::vector<bool> Matches =
+        tableValuesMatchAtUses(Queries, &AnalysisComplete);
+    if (!AnalysisComplete || Matches.size() != Queries.size())
+      return;
+    for (const PendingMaterialization &Candidate : Pending) {
+      if (!Candidate.Op || Candidate.ExactQuery >= Matches.size())
+        continue;
+      const bool IsExact = Matches[Candidate.ExactQuery];
+      for (const auto &[Source, MayQuery] : Candidate.Sources) {
+        if (!Source || MayQuery >= Matches.size() || !Matches[MayQuery])
+          continue;
+        RelocatedInstructionAddressOccurrence Occurrence;
+        if (Source->RelocationFree) {
+          Occurrence.Authority =
+              RelocatedInstructionAddressProofKind::ARMRelocationFreeLiteral;
+          Occurrence.LiteralVA = Source->SlotVA;
+          Occurrence.SeedInstructionAddr = Source->Occurrence.Addr;
+          Occurrence.SeedOpSeq = Source->Occurrence.Seq;
+          Occurrence.SeedOpcode = NdOp::LOAD;
+          Occurrence.SeedOutputWitness = Source->Occurrence.Value;
+        } else {
+          Occurrence.FieldVA = Source->SlotVA;
+        }
+        Occurrence.InstructionAddr = Candidate.Op->Addr;
+        Occurrence.OpSeq = Candidate.Op->Seq;
+        Occurrence.TargetVA = Candidate.TargetVA;
+        Occurrence.TargetOwnerVA = Candidate.TargetOwnerVA;
+        Occurrence.Width = 4;
+        Occurrence.Provenance = Img.hasExecutableCodeOwnerAt(Candidate.TargetVA)
+                                    ? ConstantAddressProvenance::CodeAddress
+                                    : ConstantAddressProvenance::DataAddress;
+        Occurrence.DefinesOutput = true;
+        Occurrence.OutputMayDepend = !IsExact;
+        Occurrence.OutputOpcode = Candidate.Op->Opcode;
+        Occurrence.OutputWitness = Candidate.Op->Output;
+        if (!llvm::is_contained(RelocatedInstructionAddressOccurrences,
+                                Occurrence))
+          RelocatedInstructionAddressOccurrences.push_back(
+              std::move(Occurrence));
+      }
+    }
+  };
+  // A relocation-free literal is far less selective than a loader field's
+  // exact target, so it gets its own batch: its analysis budget can never
+  // withdraw a loader field's proof.
+  ProveLiterals(/*RelocationFree=*/false);
+  ProveLiterals(/*RelocationFree=*/true);
 }
 
 //===----------------------------------------------------------------------===//

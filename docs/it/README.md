@@ -18,8 +18,8 @@ Le guide inglesi sono direttamente in `docs/`. Le traduzioni sono raggruppate in
 | [Contribuire](CONTRIBUTING.md) | Ambiente, profili di build, workflow, stile e requisiti PR |
 | [Architettura](architecture.md) | Percorsi IR, confini dei componenti, lifting strict, profondità del supporto e punti di modifica |
 | [Analisi Web offline (inglese)](../web-analysis.md) | Ispezione C++ di artefatti, sorgenti, associazioni e mappe, criteri dei metadati, SDK e verifica attuale |
-| [Riscritture JavaScript primitive (inglese)](../web-source-rewrite-profile.md) | Passaggi espliciti, verifiche delle sostituzioni locali, inversa esatta ed esportazione locale associata alla ricevuta |
-| [Profilo Bun autonomo (inglese)](../web-bun-profile.md) | Estrazione verificata di ELF, Mach-O sottile e PE per x64/ARM64, intervalli originali e provenienza dei campioni fissati |
+| [Riscritture primitive JavaScript (inglese)](../web-source-rewrite-profile.md) | Passaggi espliciti, verifiche di sostituzione locale, inversa esatta ed esportazione locale vincolata alla ricevuta |
+| [Profilo Bun autonomo (inglese)](../web-bun-profile.md) | Estrazione delimitata di ELF, Mach-O a singola architettura e PE per x64/ARM64, intervalli originali e provenienza dei campioni fissati |
 | [Profilo di estrazione ASAR (inglese)](../web-asar-profile.md) | Associazione delle acquisizioni interne ed esterne, stati di integrità, utilizzatori dei membri e dipendenza Unicode nativa |
 | [Profilo di evidenza Electron (inglese)](../web-electron-profile.md) | Percorsi di ingresso acquisiti, ambito di manifesti e sorgenti, evidenza di finestre e bridge, canali IPC candidati |
 | [Profilo sorgente HTML (inglese)](../web-html-profile.md) | Inventario limitato degli script in C++, riferimenti locali acquisiti e ancore originali dei sorgenti incorporati |

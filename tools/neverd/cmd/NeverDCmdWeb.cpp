@@ -63,6 +63,11 @@ int runWeb() {
        WebArguments[0] == "archive-nexe-source"))
     return runWebNexe();
   if (!WebArguments.empty() &&
+      (WebArguments[0] == "pkg" || WebArguments[0] == "pkg-source" ||
+       WebArguments[0] == "archive-pkg" ||
+       WebArguments[0] == "archive-pkg-source"))
+    return runWebPkg();
+  if (!WebArguments.empty() &&
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
        WebArguments[0] == "interface-correlate"))
@@ -281,6 +286,11 @@ int runWeb() {
            "| nexe <root> <profile> [artifact-index] "
            "| nexe-source <root> <profile> <artifact-index> <member-index> "
            "<source-type> | archive-nexe[-source] <root> <profile> "
+           "<tar|tgz|zip> <archive-index> <archive-member-index> "
+           "[<member-index> <source-type>] "
+           "| pkg <root> <profile> [artifact-index] "
+           "| pkg-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | archive-pkg[-source] <root> <profile> "
            "<tar|tgz|zip> <archive-index> <archive-member-index> "
            "[<member-index> <source-type>] "
            "| map|bun "

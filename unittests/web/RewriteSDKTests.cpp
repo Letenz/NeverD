@@ -166,6 +166,39 @@ TEST_F(WebRewriteSDK, MetadataKeepsRecoveredValuesPrivateAndExportBindsPass) {
   EXPECT_EQ(read(Out / "original.js"), Original);
 }
 
+TEST_F(WebRewriteSDK, PrimitiveV1ReceiptsRemainExactlyCompatible) {
+  if (!NEVERD_TEST_WEB_JAVASCRIPT)
+    GTEST_SKIP() << "JavaScript parser omitted";
+  const auto Source = source();
+  for (const auto &[Pass, File] :
+       {std::pair{"string_recovery", "string-recovery-v1-receipt.json"},
+        {"constant_folding", "constant-folding-v1-receipt.json"}}) {
+    SCOPED_TRACE(Pass);
+    const auto GoldenBytes =
+        read(std::filesystem::path(NEVERD_WEB_FIXTURE_DIR) / "rewrite" / File);
+    ASSERT_FALSE(GoldenBytes.empty());
+    const auto Golden = parse(GoldenBytes);
+    const auto A = analyze(Source, Pass);
+    EXPECT_EQ(field(A, "rewrite_id"), field(Golden, "rewrite_id"));
+    EXPECT_EQ(field(A, "export_receipt"), field(Golden, "export_receipt"));
+    const auto Page = records(field(A, "rewrite_id"));
+    const auto &Rows = *Page.getAsObject()->getArray("items");
+    const auto &OldRows = *Golden.getAsObject()->getArray("records");
+    ASSERT_EQ(Rows.size(), OldRows.size());
+    for (size_t I = 0; I < Rows.size(); ++I)
+      EXPECT_EQ(field(Rows[I], "record_id"), field(OldRows[I], "record_id"));
+    const auto Out = Root / Pass;
+    const auto Exported = exportTo(A, field(A, "export_receipt"), Out);
+    EXPECT_EQ(
+        field(Exported, "receipt_sha256"),
+        std::string_view(Pass) == "string_recovery"
+            ? "ec2173260577fc3f4b8d8fb4602500c693fa91fd80e380dbd98878f39e2aa6f2"
+            : "8e29fa15d36cece4f8cca5a7587cce4745f4689f52c4adcfe5663753e65e29f"
+              "a");
+    EXPECT_EQ(read(Out / "receipt.json"), GoldenBytes);
+  }
+}
+
 TEST_F(WebRewriteSDK, BoundedCacheAndRevisionChangesRevokeOldReceipts) {
   if (!NEVERD_TEST_WEB_JAVASCRIPT)
     GTEST_SKIP() << "JavaScript parser omitted";

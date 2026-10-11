@@ -18,8 +18,8 @@
 | [기여 가이드](CONTRIBUTING.md) | 개발 환경, 빌드 프로필, 워크플로, 스타일, PR 요구 사항 |
 | [아키텍처](architecture.md) | IR 경로, 구성 요소 경계, strict lifting, 지원 깊이, 수정 위치 |
 | [오프라인 Web 분석 (영문)](../web-analysis.md) | C++ 산출물·소스·바인딩·맵 검사, 메타데이터 정책, SDK 및 현재 검증 범위 |
-| [기본 JavaScript 재작성 (영문)](../web-source-rewrite-profile.md) | 명시적 패스, 국소 치환 검사, 정확한 역변환 및 실행 기록에 연결된 로컬 내보내기 |
-| [Bun 독립 실행 파일 프로필 (영문)](../web-bun-profile.md) | 검증된 x64/ARM64 ELF, 단일 아키텍처 Mach-O 및 PE 추출, 원본 범위와 고정 테스트 자료의 출처 |
+| [JavaScript 기본 재작성 (영문)](../web-source-rewrite-profile.md) | 명시적 패스, 지역 치환 검사, 정확한 역변환 및 검증 기록에 연결된 로컬 내보내기 |
+| [Bun 독립 실행 파일 프로필 (영문)](../web-bun-profile.md) | x64/ARM64 ELF, 단일 아키텍처 Mach-O 및 PE의 한정된 추출 범위, 원본 범위와 고정 테스트 자료의 출처 |
 | [ASAR 추출 프로필 (영문)](../web-asar-profile.md) | 내부·외부 파일 캡처 연결, 무결성 상태, 멤버 소비자 및 네이티브 Unicode 의존성 |
 | [Electron 증거 프로필 (영문)](../web-electron-profile.md) | 캡처한 진입 경로, 매니페스트·소스 범위, 창·브리지 증거 및 IPC 채널 후보 |
 | [HTML 소스 프로필 (영문)](../web-html-profile.md) | 유한 범위의 C++ 스크립트 목록, 캡처한 로컬 참조 및 원본 인라인 소스 앵커 |

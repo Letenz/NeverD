@@ -537,13 +537,26 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 explicit primitive passes using the existing binding/value/effect owners;
 `Primitive` emits closed values, `Validate` checks SameValue and the complete
 unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`Rename` selects complete function-local bindings and collision-free names;
+`RenameValidate` reparses and compares all syntax, scope ownership, declarations
+and reference resolution using the same lexical owner. Non-simple parameter
+environments and name-sensitive declarations remain excluded. Pass/profile
+selection has one shared authority; primitive identities and serialized receipts
+remain unchanged. Rename evidence does not borrow primitive SameValue claims.
+`Branches` selects proven Boolean expression operands through the existing
+value/effect owners and excludes declaration/scope/await subtrees. Its validator
+checks an explicit GetValue sequence, exact retained syntax and the surviving
+reference projection against the shared lexical owner. No duplicate resolver
+or general truthiness evaluator is introduced. See the
+[Boolean branch profile](web-boolean-branches-profile.md).
 `SessionRewrite` retains at most two private results and publishes metadata.
 Its raw local export requires a pass/source/revision-bound receipt;
 `rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
 This transaction does not change Bun export's retained-partial-evidence policy.
 Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
 claim source-reflection or whole-program equivalence. See the
-[primitive rewrite profile](web-source-rewrite-profile.md).
+[primitive rewrite profile](web-source-rewrite-profile.md) and
+[lexical rename profile](web-scope-rename-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -563,6 +576,13 @@ admission. `ArtifactView` composes nested coordinates and retains one namespace
 per extraction; typed package ancestry establishes outer delivery only. The
 opaque prefix has no implicit native/signature/runtime validation. See the
 [nexe profile](web-nexe-profile.md).
+`pkg/Locator` independently owns fixed loader declarations, `pkg/Index` owns
+typed VFS/stat admission and private snapshot paths, and `pkg/Reader` owns
+complete partitions and deduplicated store hashing. `SessionPkg` publishes
+only admitted occurrences. Content, opaque V8 caches and private metadata have
+distinct roles; source/cache equivalence and symlink resolution remain unknown.
+`ArtifactView` retains occurrence namespaces and nested coordinates for shared
+consumers. See the [pkg profile](web-pkg-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -570,7 +590,7 @@ comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
 `packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
 consumes shared bindings/module origins/values, and `Package` owns exact
-inventory and retained Bun/SEA/nexe delivery joins. `Publication` emits metadata;
+inventory and retained Bun/SEA/nexe/pkg delivery joins. `Publication` emits metadata;
 the two behavior session adapters own selection, cache and revision boundaries.
 Source ownership, delivery package and declared entry remain distinct.
 `SourceModel::indexSourceDeclarations` supplies the order-independent unique
@@ -1903,6 +1923,27 @@ scalar FP return. Incoming stack homes retain the packed memory contract and
 every source byte, independently of output width. Unsupported masks, broadcasts,
 SAE, embedded rounding and altered decoded metadata are refused. This does not
 extend MMX, unsigned, EVEX, F16C or x87 completion.
+
+VEX F16C uses `X86F16CState`, `X86F16CReadState` and
+`X86F16CStoreState`. Its single-precision vector width selects the logical
+half source/store extent independently of the padded physical XMM result.
+The canonical VEX owner authenticates raw bytes, immediate, register roles
+and complete memory addressing. Immediate bits 7:3 are ignored; bit 2 selects
+MXCSR rounding. Half widening ignores DAZ and narrowing ignores FTZ.
+LLVM, HighC and LLVMC retain the original conversion inside the incoming CSR
+scope, including Default/FS/GS memory and discarded results. No packed slice
+establishes scalar FP provenance, and ABI recovery never treats a store as a
+source read. Concrete evaluation reuses the F16C numerical primitive and the
+common precision-rounding exponent boundary. Operand exceptions precede
+result exceptions; unsuccessful completion publishes no register result or
+partial memory store. Source-read faults precede conversion. A valid writable
+target retains exact unmasked floating completion. Competing floating and access
+faults at an invalid target do not establish one reproducible fault priority.
+Repeated identical native cross-page stores expose both states of new status
+at the access fault. A failed store with newly raised flags
+therefore invalidates exact MXCSR knowledge rather than fabricating one
+outcome. Successful completion retains exact flags. This does not extend
+EVEX native completion or x87 state; Swift refuses this surface.
 
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
@@ -4775,7 +4816,7 @@ DarwinFiles owns retained attribute state, initial-object mutation grants, share
 
 DarwinFiles also owns the sole static owner/ordinary-query authorizer and its actual pathname SEARCH points. Process construction passes the canonical explicit credential record separately from scalar observation defaults; JSON imports the exact authorization declaration and uses the same admission owner. The immutable query environment closes all other file routes by default, exempts only actual opaque stream descriptions, and closes direct mappingSource access so DarwinMemory cannot bypass the operation domain. Anonymous VM retains its independent owner. Whole-mask group/world outcomes and explicit selected-credential membership share this owner; a missing group remains unknown except for explicit original GroupMembershipUID=KAUTH_UID_NONE or proved real-copy displacement, each with a complete supplied list. DarwinSystem owns canonical admission of the independent membership UID; JSON uses the shared lossless integer decoder, and no resolver context is inferred from scalar IDs. Broader vnode authorization must extend this same evaluator with operation-specific and resulting-state semantics before opening that domain.
 
-DarwinFiles owns immediate poll count admission, descriptor lookup and numeric-FD/filter registration in DarwinPoll.cpp. DarwinServices passes the existing canonical explicit system observations without interpreting limits or credentials. Constructed virtual regular descriptions declare successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; a native vnode kind alone supplies none of these facts. Duplicate filter winners are independent of shared open-description identity. The owner snapshots complete input before projecting ordinary readiness and uses the shared user-memory copy owner for whole output; partial output and unknown providers stop before effects. Both immutable permission-query domains close this route before preflight. Waiting, select and real provider/security lifecycle need explicit extension of this same owner.
+DarwinFiles owns immediate poll count admission, descriptor lookup and numeric-FD/filter registration in DarwinPoll.cpp. DarwinServices passes the existing canonical explicit system observations without interpreting limits or credentials. Constructed virtual regular descriptions declare successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; a native vnode kind alone supplies none of these facts. Duplicate filter winners are independent of shared open-description identity. The owner snapshots complete input before projecting ordinary readiness and uses the shared user-memory copy owner for whole output; partial output and unknown providers stop before effects. Both immutable permission-query domains close this route before preflight. Waiting and real provider/security lifecycle need explicit extension of this same owner. DarwinSelect.cpp is the same descriptor owner's independent immediate bitmap route: it validates LP64 timeval, proves the count from current live keys, snapshots all inputs, checks all selected descriptors, then applies the constructive pure three-class select provider. It checks complete permissions and disjoint output ranges globally before ordered read/write/exception copyouts, retaining the first whole-output fault after later copies. Partial destinations and overlapping ranges remain explicitly unsupported; a zero writable prefix alone never proves an entirely unwritable range. NOFILE and native vnode kind supply neither allocation capacity nor provider purity. Both immutable query domains close Select before preflight. Waiting, pselect and asynchronous lifecycle remain unimplemented.
 
 When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
 
@@ -4786,3 +4827,5 @@ When a recovered DLL entry differs from its original PE entry, the writer emits 
 `support/X86Addressing.h` owns the width-specific interpretation of absent ordinary SIB indices for both lifting and checked execution. `EIZ` is absent only with a 32-bit address, and `RIZ` only with a 64-bit address; neither is a base register or VSIB vector index. REX.X-selected R12/R12D remains a real scaled index. `X64Address` regressions compare original processor execution, access observations, cancellation and memory faults at both privilege levels, while `X86NoIndexAddress` retains the strict lifting and malformed-alias checks.
 
 Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an explicit LOCK prefix. The shared RAM transaction retains the original effective address, serializes publication and discards cancelled or faulted writes; the processor executes the original exchange. `X64Address` tests cover address/register overlap, partial register writes, cache-line and page crossings, observers and missing-page faults. MMIO exchanges retain their provider and natural-alignment requirements; other locked instruction families retain their existing admission rules.
+
+DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.

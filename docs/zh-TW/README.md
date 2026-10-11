@@ -18,8 +18,8 @@
 | [貢獻指南](CONTRIBUTING.md) | 開發環境、建置設定、工作流程、風格與 PR 要求 |
 | [架構](architecture.md) | IR 路徑、元件邊界、嚴格提升、支援深度與修改位置 |
 | [離線 Web 分析（英文）](../web-analysis.md) | C++ 製品、原始碼、繫結與映射檢查，中繼資料策略、SDK 與目前驗證範圍 |
-| [基礎 JavaScript 重寫（英文）](../web-source-rewrite-profile.md) | 明確變換、局部替換檢查、精確逆變換及與回執繫結的本機匯出 |
-| [Bun 獨立程式設定（英文）](../web-bun-profile.md) | 經驗證的 x64/ARM64 ELF、薄型 Mach-O 和 PE 擷取、原始範圍與固定測試樣本的來源 |
+| [JavaScript 基礎重寫（英文）](../web-source-rewrite-profile.md) | 明確處理步驟、局部替換檢查、精確逆轉換與受驗證憑據約束的本機匯出 |
+| [Bun 獨立程式設定（英文）](../web-bun-profile.md) | 限定範圍的 x64/ARM64 ELF、單架構 Mach-O 與 PE 擷取、原始範圍及固定測試樣本的來源 |
 | [ASAR 擷取設定（英文）](../web-asar-profile.md) | 封裝內外擷取關聯、完整性狀態、成員使用者及原生 Unicode 相依項 |
 | [Electron 證據設定（英文）](../web-electron-profile.md) | 擷取的進入路徑、清單與原始碼範圍、視窗和橋接證據及 IPC 通道候選 |
 | [HTML 原始碼設定（英文）](../web-html-profile.md) | 有界 C++ 指令碼清單、擷取的本機參照與原始行內原始碼錨點 |

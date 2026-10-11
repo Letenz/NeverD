@@ -302,9 +302,10 @@ std::optional<uint32_t> approximate12Lane(uint32_t Bits, bool Rsqrt,
 
 } // namespace
 
-std::optional<std::vector<uint8_t>>
-NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
-                                   unsigned Alignment) {
+std::optional<uint64_t> NdOpEmulator::checkX86FPStateMemory(const LowOp &Op,
+                                                            uint16_t Bytes,
+                                                            unsigned Alignment,
+                                                            bool Write) {
   if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
       (Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
       (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
@@ -321,10 +322,18 @@ NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
   for (unsigned Index = 0; Index < Bytes; ++Index) {
     const uint64_t ByteAddress = *Address + Index;
     const Segment *Mapped = Img.getSegmentFor(ByteAddress);
-    if (!Mapped || !Mapped->isReadable() || ByteAddress < Mapped->VA ||
-        ByteAddress - Mapped->VA >= Mapped->Size)
+    if (!Mapped || (Write ? !Mapped->isWritable() : !Mapped->isReadable()) ||
+        ByteAddress < Mapped->VA || ByteAddress - Mapped->VA >= Mapped->Size)
       return std::nullopt;
   }
+  return Address;
+}
+std::optional<std::vector<uint8_t>>
+NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
+                                   unsigned Alignment) {
+  const auto Address = checkX86FPStateMemory(Op, Bytes, Alignment, false);
+  if (!Address)
+    return std::nullopt;
   const auto Loaded = loadMemoryBytes(*Address, Bytes);
   if (Loaded && CollectLoads &&
       static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
@@ -665,6 +674,78 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     writeOutputBytes(Op.Output, Result);
     if (Approximated)
       ++Skips.ApproximatedOps;
+    return true;
+  }
+  if (isX86F16CStateIntrinsic(Id)) {
+    const bool Store = Id == Intrinsic::X86F16CStoreState;
+    const bool Read = Id == Intrinsic::X86F16CReadState;
+    const unsigned Control = Op.Inputs[Store ? 3 : 2].Offset;
+    const unsigned Bytes = x86F16CDestinationBytes(Control);
+    const auto State = readOperand(Op.Inputs[Store ? 5 : 4]);
+    if (State & ~UINT64_C(0xffff))
+      return false;
+    if (Read) {
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      setMXCSR(State);
+    }
+    auto Source = Read
+                      ? loadX86FPStateMemory(Op, x86F16CSourceBytes(Control), 1)
+                      : std::optional<std::vector<uint8_t>>(
+                            readOperandBytes(Op.Inputs[Store ? 2 : 1]));
+    if (!Source || Source->size() != x86F16CSourceBytes(Control))
+      return false;
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(State);
+    Evaluation.writeOutputBytes(NdVar::tmp(1, Source->size()), *Source);
+    LowOp Convert;
+    Convert.Opcode = NdOp::INTRINSIC;
+    Convert.Output = NdVar::tmp(0, Bytes);
+    Convert.addInput(NdVar::cst(unsigned(Intrinsic::F16CConvert), 2));
+    Convert.addInput(NdVar::cst(unsigned(x86F16CIsNarrow(Control)
+                                             ? F16CConvertKind::SingleToHalf
+                                             : F16CConvertKind::HalfToSingle),
+                                1));
+    Convert.addInput(NdVar::tmp(1, Source->size()));
+    Convert.addInput(Op.Inputs[Store ? 4 : 3]);
+    const bool Complete = Evaluation.step(Convert);
+    setMXCSR(Evaluation.getMXCSR());
+    if (Store) {
+      // Identical native instructions expose competing floating/access faults
+      // and different new status at an invalid target. Validate the writable
+      // target before promising an exact outgoing CSR, even if evaluation
+      // already found an unmasked floating exception. No store occurs until
+      // both numerical completion and the whole write are authenticated.
+      const auto Address =
+          checkX86FPStateMemory(Op, x86F16CStoreBytes(Control), 1, true);
+      if (!Address) {
+        if ((MXCSR & ~State & 0x3f) != 0)
+          MXCSRKnown = false;
+        return false;
+      }
+      if (!Complete)
+        return false;
+      const auto Result = Evaluation.readOperandBytes(Convert.Output);
+      if (!storeMemoryBytes(*Address,
+                            llvm::ArrayRef<uint8_t>(Result).take_front(
+                                x86F16CStoreBytes(Control)))) {
+        if ((MXCSR & ~State & 0x3f) != 0)
+          MXCSRKnown = false;
+        return false;
+      }
+      writeOutput(Op.Output, MXCSR);
+    } else {
+      if (!Complete)
+        return false;
+      auto Result = Evaluation.readOperandBytes(Convert.Output);
+      Result.resize(Bytes + 4);
+      for (unsigned Index = 0; Index < 4; ++Index)
+        Result[Bytes + Index] = uint8_t(MXCSR >> (Index * 8));
+      writeOutputBytes(Op.Output, Result);
+    }
     return true;
   }
   if (isX86FPPackedConvertStateIntrinsic(Id)) {

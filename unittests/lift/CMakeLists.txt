@@ -2388,6 +2388,7 @@ set(ARM32_TEST_SOURCES
   arm32/test_frame_pointer_void_arm.s
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
+  arm32/test_arm_relocation_free_literal.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
   arm32/test_arith_arm.c
@@ -3771,6 +3772,11 @@ add_neverd_unittest(NeverDX86FPPackedConvertStateTests
   x86_64/X86_64_FPPackedConvertStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPPackedConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86F16CStateTests
+  x86_64/X86_64_F16CStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86F16CStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp

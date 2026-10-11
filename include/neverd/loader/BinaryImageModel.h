@@ -914,6 +914,17 @@ struct BinaryImage {
     return false;
   }
 
+  /// True when this relocatable ELF object's complete relocation write
+  /// footprint is known and no relocation writes a byte of [VA, VA + Width):
+  /// those bytes hold the assembler's final value.
+  bool isUnrelocatedObjectField(va_t VA, unsigned Width) const {
+    if (!isELF() || !IsRelocatable || !ObjectRelocationWriteBytes ||
+        Width == 0 || VA > InvalidVA - Width)
+      return false;
+    const auto Writer = ObjectRelocationWriteBytes->lower_bound(VA);
+    return Writer == ObjectRelocationWriteBytes->end() || *Writer >= VA + Width;
+  }
+
   /// Verify the symbol owner retained for an i386 ELF R_386_GOTOFF field.
   /// Most GOTOFF addends resolve inside (or one-past) their symbol's ordinary
   /// section owner and use relocatedTargetBelongsToOwner directly.  Clang may

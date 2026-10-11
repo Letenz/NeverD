@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: c5503091e713c63aa7b08a8cbd5fab1b5cc3c8d8950bb7da4fe754dbe5787137 -->
+<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
 
 [← 文档索引](README.md)
 
@@ -1230,7 +1230,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all41 other file routes and direct/file-backed mappings closed / typed streams only
+all43 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -1273,9 +1273,9 @@ native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 
 原始 BSD poll(230) 与 poll_nocancel(417) 支持 timeout 的 low int32=0。描述符所有者把 nfds 解码为 uint32；超过 OPEN_MAX10240 先返回 EINVAL22，不访问指针。正数条目需要明确的 darwin_system.resource_limits 资源8 Current，省略代表未知。超过 Current 时，条目数大于 FD_SETSIZE1024 返回 EINVAL；较小条目数需要原始显式有效 UID，非零返回 EINVAL，零允许继续。root 例外仅有源码/模型证据。DescriptorLimit、kern.maxfilesperproc、FD 数值和执行预算不提供该观测。零条目不访问数组；非零超时在条目准入后报告不支持。
 
-构造的虚拟普通文件明确采用未撤销、普通读写过滤器注册成功、没有 MAC 或提供方拒绝的契约；原生 vnode 的文件类型本身不能证明注册成功。在此前提下，IN/RDNORM 和 OUT/WRBAND 在 EOF 或只读打开时也就绪，不从剩余字节、访问标志、O_NONBLOCK 或写授权推断。过滤器按数字 FD 与读/写类别分别保留最后请求位置，dup 的不同 FD 不合并。单独 HUP 登记读过滤器但不输出就绪位。负 FD 与仅忽略位为零，关闭 FD 的有效登记逐条返回 POLLNVAL32。活动 OOB/vnode、流、目录和符号链接提供方在任何输出前拒绝。先完整快照八字节记录输入；输入不完整或输出完全不可写返回 EFAULT14，部分输出则拒绝且不复制前缀。完整复制保留 fd/events，替换全部 revents。两种静态权限查询模式在预检前关闭 Poll，包括零条目；共享清单现在有41条关闭的文件路由。
+构造的虚拟普通文件明确采用未撤销、普通读写过滤器注册成功、没有 MAC 或提供方拒绝的契约；原生 vnode 的文件类型本身不能证明注册成功。在此前提下，IN/RDNORM 和 OUT/WRBAND 在 EOF 或只读打开时也就绪，不从剩余字节、访问标志、O_NONBLOCK 或写授权推断。过滤器按数字 FD 与读/写类别分别保留最后请求位置，dup 的不同 FD 不合并。单独 HUP 登记读过滤器但不输出就绪位。负 FD 与仅忽略位为零，关闭 FD 的有效登记逐条返回 POLLNVAL32。活动 OOB/vnode、流、目录和符号链接提供方在任何输出前拒绝。先完整快照八字节记录输入；输入不完整或输出完全不可写返回 EFAULT14，部分输出则拒绝且不复制前缀。完整复制保留 fd/events，替换全部 revents。两种静态权限查询模式在预检前关闭 Poll，包括零条目；共享清单现在有42条关闭的文件路由。
 
-无 SDK 的 immediate-poll 工作负载覆盖86个事件、五个软件设置和三个必需 ARM64 HVF 设置，含 C/CLI/Python 检查，并新增一个公共原生参考，当前清单为59例。独立 O0/O1/O2 ARM64 探针保留582次混合的字面 ABI/错误控制及普通提供方观测，不是通用就绪常量。旧58例证明保留原源码身份；下载失败和首次原生超时也保留，未延长时限。原生 Intel HVF、实体 iOS、撤销/MAC/注册拒绝、select、阻塞等待、异步提供方、网络、推进时钟、真实 Mach IPC/线程、dyld/TLS 与完整框架仍未验证或未完成。 不支持或不返回的事件在 JSON 中使用 `result: null`，并省略 `error`。
+无 SDK 的 immediate-poll 保留86个事件；其原清单为59例，immediate-select 新增一例，select 阶段的公共原生清单为60例。独立 ARM64 O0/O1/O2 poll582次与 select792次观测分别保留字面 ABI/错误控制和提供方捕获，不是通用提供方常量。旧58/59例证明保留原源码身份、失败尝试及原时限。原生 Intel HVF 和实体 iOS 仍未验证。撤销/MAC/提供方拒绝、等待、pselect 信号掩码变更、异步就绪、网络、推进时钟、真实 Mach IPC/线程、dyld/TLS 及完整框架仍未完成。不支持事件的 JSON 使用 `result: null` 并省略 `error`。
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -1285,10 +1285,44 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all41 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-59 current native-common cases / prior58 source identity preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / waits select revoked-MAC-provider failures networking unfinished
+61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## 普通文件的即时 select
+
+原始 BSD `select`93 与 `select_nocancel`407 只接受显式零 timeval 和非负的有符号低32位条目上限；指针保留完整64位。LP64 timeval 为16字节：偏移0为有符号64位秒，偏移8为有符号32位微秒，偏移12的填充忽略且不改写。秒范围0..100000000，微秒范围0..999999。先导入、验证 timeval，再处理负条目数的 EINVAL22；导入不完整为 EFAULT14。空指针或正超时明确报告不支持。条目数0不访问位图。当前最高活动 FD 加1只证明 `fd_nfiles` 的下界；关闭高 FD 会缩小这个证明，并不声称原生分配容量随之缩小。NOFILE、预算和 vnode 类型都不能补出容量或提供方事实。
+
+位图使用小端32位字，向完整字取整。先快照全部非空输入，再检查全部选中 FD，最后解释提供方；缺失 FD 为 EBADF9，选中的流、目录和符号描述符明确不支持。模型构造的普通描述符声明纯粹、不会拒绝的 select 提供方，对读、写、异常均返回非零；这与 poll 过滤器规则独立。跨三组与不同 dup 编号逐位计数，包含只读、非阻塞、EOF 状态，不改变偏移、标志、内容或元数据。清除复制字内的尾位，保留范围外全部字节。
+
+输出之间及输出与16字节 timeval 必须不重叠；任何写入前检查所有输出的完整权限。部分可写，包括不可写前缀后有可写尾部，均在全部复制前报告不支持；可写前缀为0并不证明整个范围不可写。允许的整段输出依读、写、异常顺序尝试复制：完全不可写的组为 EFAULT14，后面的可写组仍更新，最终保留首个错误。两种静态权限查询模式在预检前关闭 Select，共43条关闭路由。无 SDK 样例通过五个软件和三个必需 ARM64 HVF 设置以及 C、CLI、Python 检查115个有序事件，完整保护对象同时验证未使用的字。等待、非空 `pselect` 信号掩码、异步提供方和完整操作系统仍未完成。
+
+```text
+select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
+current live FD lower bound / no guessed fd_nfiles allocation or NOFILE capacity
+read write exception / bit count across sets / distinct dup numbers
+all copyins before all descriptor checks / all checks before provider interpretation
+partial outputs and overlaps unsupported before all output / zero prefix is not whole unwritable
+ordered read write exception copyout / first EFAULT14 after later whole writable copies
+792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
+immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
+61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+即时 `pselect394 / pselect_nocancel395` 接受已提供的零值 `user64_timespec16` 和空信号掩码指针。两个字段均为 signed64：秒数为 0..2147483647，纳秒为 0..1000000000，包含上界。有效的非零超时仍停止为未实现等待。先导入并验证 timespec，再导入四字节掩码，最后检查计数和位图。不可读掩码返回 EFAULT14；完整的非空掩码因尚未建模线程信号替换与恢复而停止。空掩码路径复用 select 的位图、容量、提供者和输出规则，包括整个输出范围的权限检查及有序复制。这并未完成信号、等待、dyld、Apple 框架或 iOS 真机验收。
+
+```text
+pselect394 / pselect_nocancel395 / zero supplied user64_timespec16 / null signal mask
+signed64 seconds0..2147483647 / signed64 nsec0..1000000000 inclusive
+time import validation before mask4 import before signed low32 count
+complete nonnull mask unsupported / no guessed signal state
+shared select bitmap capacity provider output owner
+918 mixed controls and captures / 729 literal controls and 189 provider captures
+```

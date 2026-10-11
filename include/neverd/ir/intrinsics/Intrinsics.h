@@ -622,6 +622,8 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
   case Intrinsic::X86FPScalarConvertMemoryState:
+  case Intrinsic::X86F16CReadState:
+  case Intrinsic::X86F16CStoreState:
   case Intrinsic::X86FPPackedConvertMemoryState:
   case Intrinsic::X86FPApprox12MemoryState:
   case Intrinsic::Movsb:
@@ -840,6 +842,13 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     // [id,address,control,MXCSR]; widths are owned by X86FPState.h.
     return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&
            DataSize == 4 && (OutputSize == 8 || OutputSize == 12);
+  case Intrinsic::X86F16CReadState:
+    return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 1 && (OutputSize == 20 || OutputSize == 36);
+  case Intrinsic::X86F16CStoreState:
+    return NumInputs == 6 && AddressSize == 8 &&
+           (MaskSize == 16 || MaskSize == 32) && DataSize == 1 &&
+           OutputSize == 4;
   case Intrinsic::X86FPPackedConvertMemoryState:
     // [id,address,control,MXCSR]; complete output includes register padding.
     return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&

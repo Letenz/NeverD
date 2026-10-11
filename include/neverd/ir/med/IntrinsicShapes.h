@@ -95,7 +95,14 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
            static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) ||
        isX86FPPackedConvertStateIntrinsic(
            static_cast<Intrinsic>(Op.Inputs[0].ConstVal)));
-  const unsigned ControlIndex = Memory || ScalarConvert ? 2 : 1;
+  const auto Id = Op.NumInputs && Op.Inputs[0].isConst()
+                      ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
+                      : Intrinsic::X86ReadMXCSR;
+  const bool Half = isX86F16CStateIntrinsic(Id),
+             Store = Id == Intrinsic::X86F16CStoreState;
+  const unsigned ControlIndex =
+      Store ? 3 : (Memory || ScalarConvert || Half ? 2 : 1);
+  const unsigned ImmediateIndex = Store ? 4 : 3;
   const bool Fma =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPFmaStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
@@ -136,9 +143,12 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
       .ArithmeticLeftIsZero = Op.NumInputs > (Memory ? 3U : 2U) &&
                               Op.Inputs[Memory ? 3 : 2].isConst() &&
                               Op.Inputs[Memory ? 3 : 2].ConstVal == 0,
-      .StateSize = Round || Arithmetic ? (Op.NumInputs > (Fma ? 5U : 4U)
-                                              ? Op.Inputs[Fma ? 5 : 4].Size
-                                              : 0U)
+      .StateSize = Half                  ? (Op.NumInputs > (Store ? 5U : 4U)
+                                                ? Op.Inputs[Store ? 5 : 4].Size
+                                                : 0U)
+                   : Round || Arithmetic ? (Op.NumInputs > (Fma ? 5U : 4U)
+                                                ? Op.Inputs[Fma ? 5 : 4].Size
+                                                : 0U)
                    : Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
                                 : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
       .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty(),
@@ -152,9 +162,13 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
           Op.NumInputs > ControlIndex ? Op.Inputs[ControlIndex].Size : 0U,
       .Control =
           Op.NumInputs > ControlIndex ? Op.Inputs[ControlIndex].ConstVal : 0U,
-      .ImmediateIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
-      .ImmediateSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
-      .Immediate = Op.NumInputs > 3 ? Op.Inputs[3].ConstVal : 0U,
+      .ImmediateIsConst =
+          Op.NumInputs > ImmediateIndex && Op.Inputs[ImmediateIndex].isConst(),
+      .ImmediateSize =
+          Op.NumInputs > ImmediateIndex ? Op.Inputs[ImmediateIndex].Size : 0U,
+      .Immediate = Op.NumInputs > ImmediateIndex
+                       ? Op.Inputs[ImmediateIndex].ConstVal
+                       : 0U,
       .AddressIsScalar = Op.NumInputs > 1 && Scalar};
 }
 

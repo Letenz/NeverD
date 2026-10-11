@@ -194,6 +194,39 @@ inline std::string x86FPPackedConvertAsm(unsigned Layout, bool Memory) {
          ",$0\n\tstmxcsr ($2)";
 }
 
+inline llvm::Type *x86F16CSourceType(llvm::LLVMContext &C, unsigned Control) {
+  return x86F16CIsNarrow(Control)
+             ? llvm::FixedVectorType::get(llvm::Type::getFloatTy(C),
+                                          x86F16CSourceBytes(Control) / 4)
+             : llvm::FixedVectorType::get(llvm::Type::getInt16Ty(C), 8);
+}
+inline llvm::Type *x86F16CResultType(llvm::LLVMContext &C, unsigned Control) {
+  return x86F16CIsNarrow(Control)
+             ? llvm::FixedVectorType::get(llvm::Type::getInt16Ty(C), 8)
+             : llvm::FixedVectorType::get(llvm::Type::getFloatTy(C),
+                                          x86F16CDestinationBytes(Control) / 4);
+}
+inline const char *x86F16CConstraints(Intrinsic Id) {
+  return Id == Intrinsic::X86F16CStoreState  ? "r,x,r,~{memory}"
+         : Id == Intrinsic::X86F16CReadState ? "=&x,r,r,~{memory}"
+                                             : "=&x,x,r,~{memory}";
+}
+inline std::string x86F16CAsm(Intrinsic Id, unsigned Layout) {
+  const unsigned Control = (Layout >> 8) & 3;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  const bool Store = Id == Intrinsic::X86F16CStoreState;
+  const bool Read = Id == Intrinsic::X86F16CReadState;
+  return "ldmxcsr ($2)\n\t" + std::string(x86F16CMnemonic(Control)) + " " +
+         (x86F16CIsNarrow(Control)
+              ? "$$" + std::to_string((Layout >> 16) & 7) + ","
+              : "") +
+         (Read ? std::string(Segment) + "($1)" : "$1") + "," +
+         (Store ? std::string(Segment) + "($0)" : "$0") + "\n\tstmxcsr ($2)";
+}
+
 /// Only owned, fully typed assembly contracts may acquire FP state source
 /// helpers. A mnemonic alone cannot prove the operand roles or completion.
 inline std::optional<std::pair<Intrinsic, unsigned>>
@@ -208,6 +241,44 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     return Value->getType()->isPointerTy() &&
            Value->getType()->getPointerAddressSpace() == 0;
   };
+  for (Intrinsic Id : {Intrinsic::X86F16CState, Intrinsic::X86F16CReadState,
+                       Intrinsic::X86F16CStoreState}) {
+    const bool Store = Id == Intrinsic::X86F16CStoreState,
+               Read = Id == Intrinsic::X86F16CReadState;
+    if (Call.arg_size() != (Store ? 3U : 2U) ||
+        !PointerIsDefault(Call.getArgOperand(Store ? 2 : 1)))
+      continue;
+    for (unsigned Control = 0; Control < 4; ++Control) {
+      if ((Store && !x86F16CIsNarrow(Control)) ||
+          (Read && x86F16CIsNarrow(Control)) ||
+          Call.getType() !=
+              (Store ? llvm::Type::getVoidTy(Call.getContext())
+                     : x86F16CResultType(Call.getContext(), Control)))
+        continue;
+      for (unsigned Imm = 0; Imm < (x86F16CIsNarrow(Control) ? 8U : 1U); ++Imm)
+        for (auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          if (!Store && !Read && Space != NdMemoryAddressSpace::Default)
+            continue;
+          const unsigned Layout = x86FPRoundStateLayout(
+              x86F16CSourceBytes(Control), Control, Imm, Space);
+          auto *Source = Call.getArgOperand(Store ? 1 : 0)->getType();
+          auto *Address = Call.getArgOperand(0)->getType();
+          if ((Read
+                   ? Address->isPointerTy() &&
+                         Address->getPointerAddressSpace() ==
+                             llvmX86MemoryAddressSpace(Space)
+                   : Source == x86F16CSourceType(Call.getContext(), Control)) &&
+              (!Store || (Address->isPointerTy() &&
+                          Address->getPointerAddressSpace() ==
+                              llvmX86MemoryAddressSpace(Space))) &&
+              Asm->getConstraintString() == x86F16CConstraints(Id) &&
+              Asm->getAsmString() == x86F16CAsm(Id, Layout))
+            return std::pair{Id, Layout};
+        }
+    }
+  }
   if (Call.arg_size() == 2 && PointerIsDefault(Call.getArgOperand(1)))
     for (unsigned Control = 0; Control < 32; ++Control) {
       if (!x86FPPackedConvertControlIsValid(Control) ||
