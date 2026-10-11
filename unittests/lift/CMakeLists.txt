@@ -122,6 +122,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_SSEAVXTests.cpp
   x86_64/X86_64_SSEFPTests.cpp
   x86_64/X86_64_SSEMiscTests.cpp
+  x86_64/X86_64_SignedCompareTests.cpp
   x86_64/X86_64_StackMovTests.cpp
   x86_64/X86_64_StackMemorySemanticTests.cpp
   x86_64/X86_64_NativeHostModeTests.cpp

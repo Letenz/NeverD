@@ -91,6 +91,29 @@ std::pair<uint16_t, bool> commonArithmeticType(std::pair<uint16_t, bool> A,
   return Unsigned.first >= Signed.first ? Unsigned : Signed;
 }
 
+/// The type C gives an unsuffixed integer literal (C17 6.4.4.1), as its byte
+/// width and signedness: the first of int, long and long long that holds a
+/// decimal value, and for a hexadecimal one also each unsigned type after its
+/// signed one.  A negated literal has the literal's type.  int is 4 bytes on
+/// every target and long long 8, so a value beyond 32 bits is 8 bytes
+/// whatever long is.
+std::optional<std::pair<uint16_t, bool>> literalType(llvm::StringRef Text) {
+  Text.consume_front("-");
+  const bool Hex = Text.starts_with("0x") || Text.starts_with("0X");
+  uint64_t Value = 0;
+  if (Text.getAsInteger(0, Value))
+    return std::nullopt;
+  if (Value <= uint64_t(std::numeric_limits<int32_t>::max()))
+    return std::pair<uint16_t, bool>{4, true};
+  if (Hex && Value <= std::numeric_limits<uint32_t>::max())
+    return std::pair<uint16_t, bool>{4, false};
+  if (Value <= uint64_t(std::numeric_limits<int64_t>::max()))
+    return std::pair<uint16_t, bool>{8, true};
+  if (Hex)
+    return std::pair<uint16_t, bool>{8, false};
+  return std::nullopt;
+}
+
 /// Whether the integer \p Count is certainly below \p Limit, so a shift by it
 /// needs no guard against C's undefined overshift: a constant, a mask by a
 /// small constant (x86 masks a variable count to the operand width), or such
@@ -1170,6 +1193,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
           return Printed->first == CmpSize && Printed->second == NeedsSignedCast
                      ? Text
                      : "(" + UTy + ")" + Text;
+        // Arithmetic of no known printed type compares as C converts its
+        // operands, not as its IR type says, like a forwarded variable's.
+        if (printsIntegerArithmetic(*Op))
+          return "(" + UTy + ")" + Text;
       }
       if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
           Op->Type->Size == CmpSize && Op->Type->IsSigned == NeedsSignedCast)
@@ -1218,7 +1245,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     Result = "(" + Result + ")";
   // C converts the operands of arithmetic to a common type, so when both
   // operands' printed types are known, so is this text's.  An unsuffixed
-  // literal that fits an int is one.
+  // literal has the type C gives it: `0xC0000000` is an unsigned int.
   if (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB ||
       E.Op == NdOp::INT_MULT || E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
       E.Op == NdOp::INT_XOR) {
@@ -1227,10 +1254,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             llvm::StringRef Text) -> std::optional<std::pair<uint16_t, bool>> {
       if (const auto Printed = printedIntegerType(Operand))
         return Printed;
-      uint64_t Value = 0;
-      if (Operand.Kind == ExprKind::Const && !Text.getAsInteger(0, Value) &&
-          Value <= INT32_MAX)
-        return std::pair<uint16_t, bool>{4, true};
+      if (Operand.Kind == ExprKind::Const)
+        return literalType(Text);
       return std::nullopt;
     };
     const auto Left = OperandType(*E.Operands[0], LHS);
