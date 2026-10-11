@@ -63,3 +63,31 @@ int crc8(int a) {
 )C",
                        "crc8", {"crc8"});
 }
+
+// A pointer walking a static array is compared with the address one past the
+// array's end, where no object starts: that is the array's address plus its
+// size, not the number the image gives it.
+TEST_F(X86_64_ImageTable, APointerComparesWithTheEndOfItsArray) {
+  expectRunsLikeSource(R"C(
+static int A[16];
+int ptrcmp(int a) {
+  unsigned s = (unsigned)a | 1u;
+  int h = 0;
+  for (int i = 0; i < 16; i++) {
+    s = s * 1103515245u + 12345u;
+    A[i] = (int)(s >> 9);
+  }
+  int *p = A + ((s >> 4) & 15u);
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    *p += (int)(s >> 11);
+    h = h * 131 + *p;
+    p++;
+    if (p >= A + 16)
+      p = A;
+  }
+  return h + A[0] + A[15];
+}
+)C",
+                       "ptrcmp", {"ptrcmp", "A"});
+}
