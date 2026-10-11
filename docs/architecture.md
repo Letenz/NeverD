@@ -3555,6 +3555,19 @@ discards can ignore a leaf's return register; ordinary calls retain return-value
 privacy checks. State analysis
 still proves complete initialization and pointer privacy for every object byte;
 RTTI remains a type identity, not a recovered member layout.
+Ordinary object initialization has a separate x86 LowIR contract in
+`RegistrationInitializerABI.cpp`. It authenticates scalar stack words, callee
+cleanup, exact ECX return identity and definitely initialized object bytes.
+`RegistrationInitializerCall.cpp` composes that proof into a preserved private
+throw helper, keeping its outgoing argument area separate from the object and
+caller storage. The shared private-frame transfer owns reads, writes, spills,
+nonvolatile registers and return identity for leaf, copy and initializer
+contracts; call sites consume these facts without decoding a competing ABI.
+May-write effects invalidate exact scalar values while retaining possible
+frame-pointer provenance. Only must-writes discharge that provenance and grant
+initialization. Preserved initializer code and image effects join the same
+closure consumed by source analysis, LLVM and independent PE installation.
+
 The HighC Windows throw adapter also owns whether a throw keeps its runtime
 call. Emission and external-declaration collection share that decision. PE32
 RTTI alone cannot fold an arbitrary call into a constructor or hide object

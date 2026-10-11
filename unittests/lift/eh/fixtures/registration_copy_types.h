@@ -2,6 +2,10 @@
 #ifndef NEVERD_TEST_REGISTRATION_COPY_TYPES_H
 #define NEVERD_TEST_REGISTRATION_COPY_TYPES_H
 
+#ifndef NEVERD_REGISTRATION_INITIALIZER
+#define NEVERD_REGISTRATION_INITIALIZER __attribute__((always_inline))
+#endif
+
 extern "C" volatile unsigned callback_copies;
 extern "C" volatile unsigned callback_copy_trace;
 extern "C" volatile unsigned callback_destructors;
@@ -10,8 +14,10 @@ extern "C" volatile unsigned callback_destructor_trace;
 struct ValueObject {
   int Head;
   int Tail;
-  // Isolate the runtime copy callback from ordinary constructor-call recovery.
-  __attribute__((always_inline)) ValueObject(int H, int T) : Head(H), Tail(T) {}
+  // Copy-only fixtures inline initialization; constructor fixtures keep the
+  // call.
+  NEVERD_REGISTRATION_INITIALIZER ValueObject(int H, int T)
+      : Head(H), Tail(T) {}
   __attribute__((noinline)) ValueObject(const ValueObject &Other)
       : Head(Other.Head), Tail(Other.Tail) {
     ++callback_copies;
@@ -29,8 +35,8 @@ struct ReferenceObject {
   unsigned Head;
   unsigned Tail;
   unsigned Tag;
-  __attribute__((always_inline)) ReferenceObject(unsigned H, unsigned T,
-                                                 unsigned G)
+  NEVERD_REGISTRATION_INITIALIZER ReferenceObject(unsigned H, unsigned T,
+                                                  unsigned G)
       : Head(H), Tail(T), Tag(G) {}
   __attribute__((noinline)) ReferenceObject(const ReferenceObject &Other)
       : Head(Other.Head), Tail(Other.Tail), Tag(Other.Tag) {

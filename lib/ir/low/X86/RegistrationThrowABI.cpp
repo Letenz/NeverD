@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Prove preserved private scalar-throw and active-exception rethrow helpers.
+/// Prove private object construction, throws and active-exception rethrows.
 //===----------------------------------------------------------------------===//
 
 #include "RegistrationABIPrivate.h"
@@ -48,18 +48,31 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
     return std::nullopt;
   RegistrationThrowCalleeABI Result;
   Result.Target = Target;
+  registration_abi::InitializerCalls Initializers;
   unsigned Calls = 0;
   for (const auto &Block : Callee.Blocks) {
     bool ThrowAtExit = false;
     for (const auto &Op : Block.Ops) {
       if (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL)
         continue;
-      if (++Calls != 1 || Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
+      if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 ||
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 || Op.Seq < 0)
         return std::nullopt;
       const auto Import = getCheckedX86RegistrationThrowImportABI(
           Image, Op.Inputs[0].Offset, &Work);
-      if (!Import)
+      if (!Import) {
+        if (Initializers.size() == 256)
+          return std::nullopt;
+        auto Initializer = getCheckedX86RegistrationInitializerCalleeABI(
+            Image, Op.Inputs[0].Offset, &Work);
+        if (!Initializer || !Initializers
+                                 .emplace(std::make_pair(Op.Addr, Op.Seq),
+                                          std::move(*Initializer))
+                                 .second)
+          return std::nullopt;
+        continue;
+      }
+      if (++Calls != 1)
         return std::nullopt;
       const auto Boundary =
           llvm::find_if(Block.InstructionBoundaries,
@@ -85,7 +98,9 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
   if (Calls != 1)
     return std::nullopt;
   ImageFrameEffects Effects;
-  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, false, &Result) ||
+  if (!hasPrivateCallerFrame(
+          Callee, Image, Work, Effects,
+          {.ThrowProof = &Result, .Initializers = &Initializers}) ||
       (Result.IsRethrow ? Result.ThrowInfo.Address != InvalidVA
                         : Result.ThrowInfo.Address == InvalidVA) ||
       !callerPCIsNotReadBack(Effects))

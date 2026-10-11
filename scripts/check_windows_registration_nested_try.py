@@ -133,12 +133,18 @@ def source_profile(name):
         else:
             from windows_registration_copies import profile
         return profile(validate_decompilation)
+    if name == "initializers":
+        if __package__:
+            from .windows_registration_initializers import profile
+        else:
+            from windows_registration_initializers import profile
+        return profile(validate_decompilation)
     raise ValueError("unknown nested source profile")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "copies"), default="nested")
+    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "copies", "initializers"), default="nested")
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--runtime-libs", type=Path, required=True)

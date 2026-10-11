@@ -36,7 +36,7 @@ Analysis support does not imply native reconstruction support.
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
 | x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
 | x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated direct-frame subset below, including initialized EH/GS cookies |
-| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, unadjusted object or unbound catch subset below, including bounded copy constructors and destructors |
+| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, unadjusted object or unbound catch subset below, including bounded copy constructors, destructors and private helper initialization |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -427,9 +427,22 @@ fixtures check four copies and twelve destructions per run, including object
 contents, nested catches, reference rethrows, both patch modes, forced bases
 and both reconstruction generations. RTTI does not prove a source constructor:
 unknown aggregate throws retain their exact runtime call, declaration and
-initialization stores instead of inventing `throw Type()`. Ordinary constructor
-call graphs, conversions, virtual-base copying and general destructor call
-graphs remain unsupported.
+initialization stores instead of inventing `throw Type()`.
+
+Private throw helpers may also call an independently checked ordinary object
+initializer before entering the CRT. Its physical ABI takes the destination in
+ECX and scalar words in its callee-popped stack area, and returns exactly that
+destination. The caller proves initialized, pointer-free arguments and a
+bounded object disjoint from those arguments and caller storage. Only bytes
+initialized on every normal return become initialized in the caller; reads
+inside the initializer must follow its own writes. Mutable code, pointer
+escapes, caller observations, unchecked nested calls and unproved return
+identities reject reconstruction. The original initializer's code and image
+effects remain in the preserved closure. O0/O1 fixtures retain the ordinary
+constructor calls and observe copies, destruction, nested catches and rethrows
+across both patch modes, rebasing and two generations. Direct constructor calls
+inside the rewritten parent, general constructor/destructor call graphs,
+conversions and virtual-base copying remain unsupported.
 
 ## IR contract
 

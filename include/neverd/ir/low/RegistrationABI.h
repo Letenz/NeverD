@@ -81,6 +81,20 @@ getCheckedX86RegistrationCopyCalleeABI(const BinaryImage &Image, va_t Target,
                                        uint32_t ObjectSize,
                                        size_t *CumulativeWork = nullptr);
 
+/// A returning object initializer takes scalar stack words and entry ECX,
+/// returns that exact object pointer and pops its complete argument area.
+/// Initialized records bytes written on every returning path. Each caller
+/// must independently bind the arguments and object to its live private frame.
+struct RegistrationInitializerCalleeABI {
+  RegistrationLeafCalleeABI Object;
+  std::vector<RegistrationObjectExtent> Initialized;
+};
+
+std::optional<RegistrationInitializerCalleeABI>
+getCheckedX86RegistrationInitializerCalleeABI(const BinaryImage &Image,
+                                              va_t Target,
+                                              size_t *CumulativeWork = nullptr);
+
 /// A single unadjusted object and its optional preserved runtime callbacks. The
 /// destructor must be a private, returning leaf with bounded ECX accesses and
 /// no observation of the CRT caller PC. Metadata decoding alone cannot prove

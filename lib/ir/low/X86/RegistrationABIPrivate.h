@@ -65,18 +65,34 @@ std::optional<uint16_t> parentPopBytes(const LowFunc &Function,
 std::optional<uint32_t>
 checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target);
 bool callerPCIsNotReadBack(const ImageFrameEffects &Effects);
+
+struct InitializerFrame {
+  uint32_t StackPopBytes = 0;
+  std::optional<std::set<int32_t>> Initialized;
+};
+
+using InitializerCalls =
+    std::map<std::pair<va_t, int>, RegistrationInitializerCalleeABI>;
+
+struct PrivateFrameOptions {
+  bool BorrowECX = false;
+  RegistrationThrowCalleeABI *ThrowProof = nullptr;
+  bool *IndependentScalarReturn = nullptr;
+  bool DiscardReturnValue = false;
+  uint32_t CopyObjectSize = 0;
+  InitializerFrame *Initializer = nullptr;
+  const InitializerCalls *Initializers = nullptr;
+};
+
 bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
-                           bool BorrowECX = false,
-                           RegistrationThrowCalleeABI *ThrowProof = nullptr,
-                           bool *IndependentScalarReturn = nullptr,
-                           bool DiscardReturnValue = false,
-                           uint32_t CopyObjectSize = 0);
+                           const PrivateFrameOptions &Options = {});
 
 std::optional<RegistrationLeafCalleeABI> checkedLeafCalleeABI(
     const BinaryImage &Image, va_t Target, size_t &Work,
     RegistrationLeafResult ResultKind, uint32_t CopyObjectSize = 0,
-    std::vector<RegistrationObjectExtent> *CopySource = nullptr);
+    std::vector<RegistrationObjectExtent> *CopySource = nullptr,
+    InitializerFrame *Initializer = nullptr);
 
 } // namespace neverd::registration_abi
 

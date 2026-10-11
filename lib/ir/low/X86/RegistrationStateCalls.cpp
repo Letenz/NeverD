@@ -78,18 +78,8 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
         }
         // Callee writes are may-effects. They invalidate value facts
         // without inventing definite initialization on untaken paths.
-        for (auto It = After.Frame.Cells.begin();
-             It != After.Frame.Cells.end();)
-          if (int64_t(It->first) < Write.End &&
-              Write.Begin < int64_t(It->first) + 4) {
-            if (It->second.MayBeFrame && (Write.Begin > It->first ||
-                                          int64_t(It->first) + 4 > Write.End)) {
-              It->second = {{}, {}, false, true};
-              ++It;
-            } else
-              It = After.Frame.Cells.erase(It);
-          } else
-            ++It;
+        After.Frame.forgetCellValues(Write.Begin,
+                                     uint32_t(Write.End - Write.Begin));
       }
     }
   }

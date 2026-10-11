@@ -112,6 +112,9 @@ struct FrameState {
 
   bool merge(const FrameState &Other);
   void forgetCellValues();
+  /// A possible write drops exact values but retains pointer provenance from
+  /// paths on which the store does not execute. Definite stores use store().
+  void forgetCellValues(int32_t Offset, uint32_t Width);
 
   void store(int32_t Offset, uint16_t Width, const FrameValue &Value);
 

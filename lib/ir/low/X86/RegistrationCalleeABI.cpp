@@ -217,7 +217,10 @@ bool retainLeafEntryBlocks(LowFunc &Function, size_t &Work,
 std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
     const BinaryImage &Image, va_t Target, size_t &Work,
     RegistrationLeafResult ResultKind, uint32_t CopyObjectSize,
-    std::vector<RegistrationObjectExtent> *CopySource) {
+    std::vector<RegistrationObjectExtent> *CopySource,
+    InitializerFrame *Initializer) {
+  if (Initializer && CopyObjectSize)
+    return std::nullopt;
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
       Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
       !Image.isCodeAddress(Target) ||
@@ -230,9 +233,12 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
     return std::nullopt;
   CFGBuilder Builder;
   LowFunc Callee = Builder.build(Image, Decoder, Target, "abi-leaf");
+  const uint32_t Pop = Initializer      ? Initializer->StackPopBytes
+                       : CopyObjectSize ? 4
+                                        : 0;
   if (!chargeDecodedCallee(Work, Callee) || !Callee.hasCompleteLiftCoverage() ||
       Callee.Blocks.empty() || Callee.ExceptionMetadata ||
-      !retainLeafEntryBlocks(Callee, Work, CopyObjectSize ? 4 : 0))
+      !retainLeafEntryBlocks(Callee, Work, Pop))
     return std::nullopt;
   for (const auto &Block : Callee.Blocks) {
     if (Block.Succs.empty() &&
@@ -244,15 +250,19 @@ std::optional<RegistrationLeafCalleeABI> registration_abi::checkedLeafCalleeABI(
   }
   ImageFrameEffects Effects;
   bool IndependentScalarReturn = false;
-  if (!hasPrivateCallerFrame(
-          Callee, Image, Work, Effects, true, nullptr, &IndependentScalarReturn,
-          ResultKind == RegistrationLeafResult::Discarded, CopyObjectSize))
+  const PrivateFrameOptions Frame{
+      .BorrowECX = true,
+      .IndependentScalarReturn = &IndependentScalarReturn,
+      .DiscardReturnValue = ResultKind == RegistrationLeafResult::Discarded,
+      .CopyObjectSize = CopyObjectSize,
+      .Initializer = Initializer};
+  if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, Frame))
     return std::nullopt;
   if (!callerPCIsNotReadBack(Effects))
     return std::nullopt;
   RegistrationLeafCalleeABI Result;
   Result.Target = Target;
-  Result.StackPopBytes = CopyObjectSize ? 4 : 0;
+  Result.StackPopBytes = Pop;
   Result.HasIndependentScalarReturn = IndependentScalarReturn;
   if (!collectCalleeCodeRanges(Callee, Image, Work, Result.CodeRanges))
     return std::nullopt;
