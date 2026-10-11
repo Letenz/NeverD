@@ -55,6 +55,7 @@ bool RegistrationStateSolver::initializeContracts() {
                ? Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4
                : Callee.StackPopBytes != 0) ||
           (!Leaf && !Throw && !Initializer) || Callee.DoesNotReturn != Throw ||
+          (Callee.HasIndependentScalarReturn && !Leaf) ||
           ((Leaf || Initializer || Callee.isRethrow() ||
             Callee.isRuntimeThrow()) &&
            (Callee.ThrownTypeVA || Callee.ThrownObjectSize)) ||

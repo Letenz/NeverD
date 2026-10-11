@@ -478,6 +478,8 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       Returned.Opcode = NdOp::COPY;
       Returned.Output = Op.Output;
       Transfer.write(Returned, *CallResult);
+      if (CheckRuntimeObjects)
+        RuntimeTransfer.write(Returned, {});
     }
     if (CheckCalls && Op.Output.isReg() &&
         Op.Output.Offset / x86reg::GeneralRegStride ==

@@ -89,6 +89,10 @@ struct FrameValue {
 
 FrameValue join(FrameValue Left, const FrameValue &Right);
 
+/// A checked PE32 scalar call defines either its instruction-local result or
+/// the complete physical EAX. Other register outputs carry no return authority.
+bool hasX86ScalarCallOutput(const LowOp &Op);
+
 struct FrameState {
   std::array<FrameValue, 8> Registers;
   /// Flags and vector registers carry conservative byte taint. They cannot

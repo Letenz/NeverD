@@ -3746,6 +3746,11 @@ registers or caller storage. A child result remains unknown unless every return
 independently proves a 32-bit scalar. Only that result loses frame, object and
 copy-source taint; it grants no constructor identity or initialized bytes.
 A source-observed root needs its own independent scalar result.
+`RegistrationCalleeFrameContract` retains that result proof for ordinary parent
+and catch calls. The state solver clears only the exact 32-bit result in its
+frame and runtime-object domains, preserving all other volatile clobbers and
+keeping initialization separate. LLVM emission and independent COFF admission
+compare this source fact with a fresh proof of the current callee.
 Transitive code and image effects join the same closure at source analysis,
 LLVM emission and independent COFF installation. Runtime destruction has no
 constructor return-this or must-initialization authority.

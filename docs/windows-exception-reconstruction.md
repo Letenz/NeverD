@@ -424,7 +424,11 @@ observations. Ordinary observed graph calls additionally require an independentl
 computed scalar return; discarding a runtime result cannot authorize its use
 at an ordinary call. A child result may be consumed only when every child return
 independently proves a 32-bit scalar; borrowed pointers and unproved return
-paths remain unknown. The separate scalar-result destructor corpus checks
+paths remain unknown. The same callee proof clears only the exact 32-bit result
+at ordinary parent and catch calls, including calls exposed by destructor
+inlining; other volatile results remain unknown. Source analysis grants no
+object identity or initialized bytes, and both native consumers repeat the
+current scalar-return proof. The separate scalar-result destructor corpus checks
 those values through the same lifetime order and content oracle.
 An ordinary call without an independent result can be
 lowered as void only when current SSA proves that copies, extensions and PHIs

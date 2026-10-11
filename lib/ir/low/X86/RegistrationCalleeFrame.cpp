@@ -322,7 +322,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           // A checked scalar result grants no object identity or initialized
           // bytes. Every other volatile result remains unknown.
           AfterCallScalar = It->second.HasIndependentScalarReturn;
-          if (AfterCallScalar && Op.Output.Size != 4)
+          if (AfterCallScalar && !hasX86ScalarCallOutput(Op))
             return false;
         } else if (ThrowProof) {
           const auto SP =

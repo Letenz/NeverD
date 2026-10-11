@@ -1308,6 +1308,7 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationScalarCallStateTests.cpp
   eh/RegistrationInitializerStateTests.cpp
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp

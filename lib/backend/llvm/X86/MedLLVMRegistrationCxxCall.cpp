@@ -134,7 +134,10 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
   } else {
     const auto Proof = getCheckedX86RegistrationObjectCalleeABI(
         Image, Effect.Target, &Work, RegistrationLeafResult::Discarded);
-    if (!Proof || (!Proof->HasIndependentScalarReturn && !ResultUnused) ||
+    if (!Proof ||
+        Proof->HasIndependentScalarReturn !=
+            Contract.HasIndependentScalarReturn ||
+        (!Proof->HasIndependentScalarReturn && !ResultUnused) ||
         Proof->StackPopBytes || Effect.DoesNotReturn ||
         (!Call.getType()->isIntegerTy(32) && !Call.getType()->isIntegerTy(64)))
       return std::nullopt;

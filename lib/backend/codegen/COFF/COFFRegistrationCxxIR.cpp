@@ -392,7 +392,8 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
       const auto Fresh = getCheckedX86RegistrationObjectCalleeABI(
           Image, Receipt.Contract.Target, &CallResultWork,
           RegistrationLeafResult::Discarded);
-      if (!Fresh)
+      if (!Fresh || Fresh->HasIndependentScalarReturn !=
+                        Receipt.Contract.HasIndependentScalarReturn)
         return rejectIR("C++ returning call lost its current object contract");
       DiscardResult = !Fresh->HasIndependentScalarReturn;
       const auto SourceCall = SourceCallEffects.find(Call);

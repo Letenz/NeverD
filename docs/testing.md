@@ -3581,7 +3581,14 @@ code ranges in the parent's current contracts.
 The separate `destructor-results` profile consumes a returned object-field
 calculation when updating the same independent lifetime trace. Its sixteen
 O0/O1 cases and controls produce 128 images per generation, with identical-file
-replay on Wine and native Windows. Pure graph tests require an independent
+replay on Wine and native Windows.
+`RegistrationScalarCallState.*` additionally checks parent and catch calls,
+physical and instruction-local return values, unproved or wide results,
+changed output identities, other volatile register escapes and separate object
+initialization. Authentic source tests also flip the result proof and require
+native emission to refuse the stale contract. O1 corpus inputs expose ordinary scalar calls
+after destructor inlining and require complete source state before rewriting.
+Pure graph tests require an independent
 scalar on every return, reject borrowed pointers and entry-EAX alternatives,
 and retain the private scalar-argument proof when a child returns an argument.
 `NeverDRegistrationCallResultTests` independently checks source result-use

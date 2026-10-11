@@ -11,6 +11,12 @@
 
 namespace neverd::registration_state {
 
+bool hasX86ScalarCallOutput(const LowOp &Op) {
+  return Op.Opcode == NdOp::CALL && Op.Output.Size == 4 &&
+         (Op.Output.isTemp() ||
+          (Op.Output.isReg() && Op.Output.Offset == x86reg::RAX));
+}
+
 FrameValue join(FrameValue Left, const FrameValue &Right) {
   if (Left == Right)
     return Left;

@@ -62,6 +62,7 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
         Contract.emplace();
         Contract->Target = Target;
         Contract->StackPopBytes = Leaf->StackPopBytes;
+        Contract->HasIndependentScalarReturn = Leaf->HasIndependentScalarReturn;
         Contract->ECXReads = std::move(Leaf->ECXReads);
         Contract->ECXWrites = std::move(Leaf->ECXWrites);
         Contract->ImageReads = std::move(Leaf->ImageReads);

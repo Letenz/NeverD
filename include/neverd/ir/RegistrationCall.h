@@ -72,6 +72,10 @@ struct RegistrationCalleeFrameContract {
   va_t Target = InvalidVA;
   uint32_t StackPopBytes = 0;
   bool DoesNotReturn = false;
+  /// Every normal return proves a 32-bit scalar independent of incoming
+  /// registers, borrowed pointers and the physical caller PC. This grants no
+  /// object identity or initialization; native consumers reprove the callee.
+  bool HasIndependentScalarReturn = false;
   va_t ThrownTypeVA = 0;
   uint32_t ThrownObjectSize = 0;
   std::vector<RegistrationRuntimeThrowInfo> RuntimeThrowInfos;
