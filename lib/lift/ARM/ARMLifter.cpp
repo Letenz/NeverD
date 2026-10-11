@@ -101,6 +101,15 @@ bool hasControlTerminator(const std::vector<LowOp> &Ops, size_t First) {
   return false;
 }
 
+/// Whether a memory operand of the instruction is based on PC.
+bool hasPCBasedMemoryOperand(const cs_arm &ARM) {
+  for (uint8_t I = 0; I < ARM.op_count; ++I)
+    if (ARM.operands[I].type == ARM_OP_MEM &&
+        ARM.operands[I].mem.base == ARM_REG_PC)
+      return true;
+  return false;
+}
+
 bool hasObservableEffect(const std::vector<LowOp> &Ops, size_t First) {
   for (size_t I = First; I < Ops.size(); ++I)
     switch (Ops[I].Opcode) {
@@ -153,15 +162,15 @@ void ARMLifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops) {
     return;
   }
 
-  // A32 reads PC as address+8. T32 reads Align(address+4, 4), including for a
-  // 32-bit instruction beginning at the second halfword of an aligned word.
+  // A32 reads PC as address+8 and T32 as address+4, including for a 32-bit
+  // instruction beginning at the second halfword of a word.  A PC-based memory
+  // operand is a literal access, which first aligns the value down to a word;
+  // TBB/TBH, whose PC-based table is not, install the raw value themselves.
   // Preserve architectural address origin so a PC-relative value that escapes
   // the memory resolver remains relocatable.
-  const uint32_t InsnAddress = static_cast<uint32_t>(Insn->address);
-  const uint32_t PCValue =
-      SourceMode == InstructionMode::Thumb
-          ? static_cast<uint32_t>((InsnAddress + 4u) & ~uint32_t{3})
-          : static_cast<uint32_t>(InsnAddress + 8u);
+  const uint32_t PCValue = hasPCBasedMemoryOperand(ARM)
+                               ? armreg::literalBase(Insn->address, SourceMode)
+                               : armreg::pcReadValue(Insn->address, SourceMode);
   S.emit(NdOp::COPY, NdVar::reg(armreg::PC, 4), {NdVar::address(PCValue, 4)});
 
   // A genuinely predicated instruction carries a real condition (EQ..LE).

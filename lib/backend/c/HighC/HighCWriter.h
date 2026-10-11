@@ -141,6 +141,7 @@ public:
   void writeMemoryHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
+  void writeLinuxSyscallHelpers();
   // X86/HighCRegistration.cpp: explicit runtime ABI inputs in the EH view.
   void writeRegistrationEntryDeclarations(const std::vector<HighFunc> &Funcs);
   std::string registrationEntryExpression(const HighExpr &E) const;
@@ -750,6 +751,8 @@ public:
   std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
+  /// The modeled supervisor calls the output makes, whose helpers it defines.
+  std::set<Intrinsic> LinuxSyscallHelpers;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
@@ -1067,6 +1070,9 @@ public:
   }
   /// The constant a call argument prints as when it is a function's address.
   const HighExpr *functionAddressArgument(const HighExpr &Arg);
+  /// The entry FunctionAddressNames keys address constant \p Const by: its
+  /// value, less the Thumb interworking bit of a certified code address.
+  va_t functionAddressKey(const HighExpr &Const) const;
   struct ImageBacking {
     va_t Base;
     va_t End;

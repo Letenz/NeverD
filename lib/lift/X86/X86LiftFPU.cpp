@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
 
@@ -142,37 +143,20 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_FLDL2T:
   case X86_INS_FLDLG2:
   case X86_INS_FLDLN2: {
-    // Push a built-in constant.  Each maps to its correctly-rounded double bit
-    // pattern (see x86reg::FPU_CONST_*); the placeholder intrinsic that used to
-    // back the transcendental constants pushed garbage onto the stack.
-    uint64_t Bits = 0;
-    switch (InsnId) {
-    case X86_INS_FLD1:
-      Bits = x86reg::FPU_CONST_1;
-      break;
-    case X86_INS_FLDZ:
-      Bits = 0;
-      break;
-    case X86_INS_FLDPI:
-      Bits = x86reg::FPU_CONST_PI;
-      break;
-    case X86_INS_FLDL2E:
-      Bits = x86reg::FPU_CONST_L2E;
-      break;
-    case X86_INS_FLDL2T:
-      Bits = x86reg::FPU_CONST_L2T;
-      break;
-    case X86_INS_FLDLG2:
-      Bits = x86reg::FPU_CONST_LG2;
-      break;
-    case X86_INS_FLDLN2:
-      Bits = x86reg::FPU_CONST_LN2;
-      break;
-    default:
-      break;
-    }
+    // The native ROM is rounded directly to binary80 using the current x87
+    // control word. Never route the value through a double constant.
+    const unsigned Selector = InsnId == X86_INS_FLD1     ? 0
+                              : InsnId == X86_INS_FLDL2T ? 1
+                              : InsnId == X86_INS_FLDL2E ? 2
+                              : InsnId == X86_INS_FLDPI  ? 3
+                              : InsnId == X86_INS_FLDLG2 ? 4
+                              : InsnId == X86_INS_FLDLN2 ? 5
+                                                         : 6;
+    NdVar Control = S.makeTemp(2);
+    S.emitIntrinsic(Intrinsic::X87ReadControl, Control);
     FPUTop = (FPUTop - 1) & 7;
-    fpuSetFromDoubleBits(S, ST(0), Bits);
+    S.emitIntrinsic(Intrinsic::X87LoadConstant, ST(0),
+                    {NdVar::cst(Selector, 1), Control});
     break;
   }
   case X86_INS_FST:
@@ -518,13 +502,18 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   }
   case X86_INS_FNSTCW: {
-    if (X86.op_count >= 1)
-      S.storeToMem(X86.operands[0], NdVar::reg(x86reg::FPU_CW, 2));
+    if (X86.op_count != 1 || X86.operands[0].type != X86_OP_MEM ||
+        X86.operands[0].size != 2)
+      return false;
+    NdVar Control = S.makeTemp(2);
+    S.emitIntrinsic(Intrinsic::X87ReadControl, Control);
+    S.storeToMem(X86.operands[0], Control);
     break;
   }
   case X86_INS_FLDCW: {
     if (X86.op_count >= 1) {
       NdVar Val = operandRead(S, X86.operands[0]);
+      S.emitVoidIntrinsic(Intrinsic::X87WriteControl, {Val});
       S.emit(NdOp::COPY, NdVar::reg(x86reg::FPU_CW, 2), {Val});
     }
     break;

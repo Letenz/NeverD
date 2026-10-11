@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 #include "neverd/ir/low/X87PartialRemainder.h"
@@ -59,6 +60,49 @@ bool NdOpEmulator::executeX87(const LowOp &Op) {
     return false;
 
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (isX87ConstantControlIntrinsic(Id)) {
+    if (!x87ConstantControlShapeIsValid(
+            Id, x87ConstantControlLowShape(Op, Img.Arch)))
+      return false;
+    if (Id == Intrinsic::X87ReadControl) {
+      const auto Control = getRegister(x86reg::FPU_CW);
+      if (!Control)
+        return false;
+      writeOutput(Op.Output, *Control);
+      return true;
+    }
+    const auto &Input = Op.Inputs[Id == Intrinsic::X87LoadConstant ? 2 : 1];
+    const auto Control = Input.isConst() ? std::optional<uint64_t>(Input.Offset)
+                                         : getRegister(Input.Offset);
+    if (!Control)
+      return false;
+    const auto Status = getRegister(x86reg::FPU_SW);
+    // Waiting instructions cannot pass an unknown or pending exception state.
+    const auto OldControl = getRegister(x86reg::FPU_CW);
+    if (!Status || !OldControl || (*Status & 0x80) ||
+        (*Status & ~*OldControl & 0x3f))
+      return false;
+    if (Id == Intrinsic::X87WriteControl) {
+      // The numerical model admits defined control fields only. Reserved PC
+      // and nonarchitectural reserved bits must not acquire guessed semantics.
+      if ((*Control & ~UINT64_C(0x1f7f)) || !(*Control & 0x40) ||
+          ((*Control >> 8) & 3) == 1)
+        return false;
+      Registers[x86reg::FPU_CW] = *Control;
+      WideRegisters.erase(x86reg::FPU_CW);
+      return true;
+    }
+    const auto Bits = x87ConstantBits(Op.Inputs[1].Offset, *Control);
+    if (!Bits)
+      return false;
+    std::array<uint8_t, 10> Bytes{};
+    for (unsigned I = 0; I < 8; ++I)
+      Bytes[I] = static_cast<uint8_t>(Bits->Significand >> (I * 8));
+    Bytes[8] = static_cast<uint8_t>(Bits->Exponent);
+    Bytes[9] = static_cast<uint8_t>(Bits->Exponent >> 8);
+    writeOutputBytes(Op.Output, Bytes);
+    return true;
+  }
   if (Id == Intrinsic::X87Wait) {
     if (Op.NumInputs != 1 || Op.Output.Size != 0)
       return false;

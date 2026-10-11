@@ -61,6 +61,11 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isX87ConstantControlIntrinsic(Id) &&
+              !x87ConstantControlShapeIsValid(
+                  Id, x87ConstantControlMedShape(Op, Arch::Unknown)))
+            Err("x87 constant/control intrinsic has an invalid contract",
+                Blk.Id, Op.Addr);
           if (Id == Intrinsic::CetRdSsp &&
               !x86ShadowStackReadShapeIsValid(x86ShadowStackReadMedShape(Op)))
             Err("shadow stack read has an invalid full-GPR contract", Blk.Id,

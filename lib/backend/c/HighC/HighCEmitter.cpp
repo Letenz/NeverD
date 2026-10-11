@@ -29,6 +29,7 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
+#include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/libc/LibCNames.h"
@@ -1367,6 +1368,8 @@ void HighCWriter::collectCallTargetsExpr(const HighExpr &Expr,
         NeedsX64SyscallHelper = true;
       else if (Ex.IntrinsicId == Intrinsic::X64WindowsSyscall)
         NeedsX64WindowsSyscallHelper = true;
+      else if (modeledSyscallConvention(Ex.IntrinsicId))
+        LinuxSyscallHelpers.insert(Ex.IntrinsicId);
       // The x87 helpers, collected with the unit's types, need no header.
       else if (Ex.IntrinsicId != Intrinsic::None && !IsX87Helper &&
                (intrinsicCName(Ex.IntrinsicId) ||
@@ -2245,7 +2248,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   std::function<void(const HighExpr &)> Visit = [&](const HighExpr &E) {
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
-      noteFunctionAddress(E.ConstVal, Funcs);
+      noteFunctionAddress(functionAddressKey(E), Funcs);
     // An address into an object, not at its start, that the code keeps as a
     // value is a pointer it walks over the object (`p = &sig[2]; p++`).
     if (E.Kind == ExprKind::Const && !AccessAddresses.count(&E) &&
@@ -2987,6 +2990,12 @@ void HighCWriter::writeX64SyscallHelper() {
         "}\n\n";
 }
 
+void HighCWriter::writeLinuxSyscallHelpers() {
+  for (Intrinsic Id : LinuxSyscallHelpers)
+    if (const SyscallConvention *Convention = modeledSyscallConvention(Id))
+      OS << linuxSyscallHelperDefinition(*Convention, intrinsicCName(Id));
+}
+
 void HighCWriter::writeX64WindowsSyscallHelper() {
   if (!NeedsX64WindowsSyscallHelper)
     return;
@@ -3079,6 +3088,7 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeMemoryHelpers();
   writeX64SyscallHelper();
   writeX64WindowsSyscallHelper();
+  writeLinuxSyscallHelpers();
   writeRegistrationEntryDeclarations(Funcs);
   writeForwardDecls(Funcs);
   writeImageObjects();

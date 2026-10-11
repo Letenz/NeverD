@@ -46,6 +46,7 @@ add_neverd_component_library(NeverDBackendC
   render/LLVMC/LLVMCIntrinsicRender.cpp
   render/LLVMC/LLVMCIntrinsicRenderARM.cpp
   render/LLVMC/LLVMCIntrinsicRenderX86.cpp
+  render/SyscallHelpers.cpp
 
   LINK_COMPONENTS
   IR

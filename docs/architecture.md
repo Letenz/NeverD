@@ -628,6 +628,25 @@ binding projection for origins, paths, navigation and bundles; valid class
 outer/inner declarations preserve ambiguity without poisoning other nodes.
 The full binding declaration model stays authoritative. See the
 [Node behavior profile](web-node-behavior-profile.md).
+`packages/install/Command` owns the complete literal Node command subset;
+`Trace` joins the exact package namespace and selected source/behavior models
+and chooses bounded candidate request chains. `Publication` emits fixed metadata.
+`SessionPackageInstall` owns optional selection, paging and its independent
+two-result cache. `SessionPackages` retains the original namespace alongside
+each package result; imports revoke both. Package entry paths share
+`packages/Paths`, while `SourceModules` owns both original ESM links and the
+separate Node candidate adapter using authoritative `SourceOrigins`. No layer
+infers execution or a dependency edge from file association. See the
+[installation trace profile](web-package-install-profile.md).
+`packages/behavior/Diff` owns exact inventory-relative source pairing and
+per-pair syntax-pattern counts; `DiffPublication` emits coverage and original
+occurrence anchors. `Package` retains a bounded internal copy of source
+mode/hash/size and upstream origin/value status from its original typed inputs.
+Comparison neither recomputes source semantics nor assumes the independent
+Node behavior cache exists. `SessionPackageBehaviorDiff` joins exact retained
+before/after selections to the existing package diff and atomically caches
+two results. All adapters use this owner; absent or degraded coverage prevents
+count comparison. See the [comparison profile](web-package-behavior-diff-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
@@ -643,6 +662,24 @@ comparison; `SessionPackageIntegrity` binds selected captured registry/lock
 declarations to selected original artifacts. Archive validation, byte equality,
 publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
+`packages/evidence/Descriptor` owns captured metadata source/time admission.
+`packages/advisories/Reader` retains bounded OSV declarations; `SemVer` and
+`Match` own exact declared npm identity and version membership, including
+unsupported coverage. `Publication` emits fixed states and original anchors.
+`SessionPackageAdvisories` atomically retains imports, shared descriptors and
+explicit match selections under independent session-wide count/byte budgets.
+These metadata owners do not depend on the JS parser and do not alter existing
+inventory or integrity results. All consumers use the same owners; no transport
+fetches a feed or interprets a negative row as package safety. See the
+[advisory profile](web-package-advisory-profile.md).
+`packages/attestations` separates registry, DSSE/statement, SLSA metadata,
+bounded encoding, explicit subject-digest selection and publication.
+`Digest` delegates original-byte comparisons to `PackageIntegrity`;
+`packages/evidence/Publication` owns shared descriptor/time output.
+`SessionPackageAttestations` shares descriptor and retained-byte ceilings with
+advisory imports and keeps four independent original-byte receipts. No metadata
+reader fetches a key or treats subject equality as signature authentication or
+package-inventory binding. See the [attestation profile](web-package-attestation-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
@@ -905,6 +942,18 @@ reuse dense block visitation storage while preserving walk order and logical
 work charges. Value and memory reconstruction split their ordered memo indexes
 by block ID, retaining full keys, stable recursive references and the original
 global entry counts used by evidence accounting.
+Affine frame equations are independent of value-query matching modes. A mode
+change retires value and memory results while retaining completed frame facts
+within the same frozen batch. Incomplete reconstruction still clears frame
+equations before the next independent query.
+
+Load-address validation first tries an exact instruction-local ADD producer
+when the LOAD's base is not a SELECT or mask blend. The ordinary value matcher
+must prove its base and index, and the existing copy-chain proof must connect
+its output to the exact LOAD. Only a completed positive proof avoids searching
+unrelated ADDs. Missing or failed local proofs fall back to full-function
+discovery; all queries share the candidate's evidence allowance. Final address,
+selector-coordinate and transactional publication checks remain in place.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -1914,6 +1963,31 @@ invalid conversions. HighC and the LLVM lowering select that same policy;
 both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
+
+`ir/X86FPComiState.h` owns legacy/VEX COMI and UCOMI flag/MXCSR completion.
+One raw aggregate carries LAHF's defined status byte below outgoing MXCSR;
+it never acquires scalar floating provenance. Source reads and actual compare
+instructions remain inside the native completion scope. Low/Med/High validation,
+LLVM and both C routes retain operand roles, signaling mode and memory spaces.
+Scalar stack-home recovery retains both numerical inputs and the same CSR when
+it replaces an immutable memory source. `ir/X86FPComparison.h` owns each active
+lane's NaN, denormal, DAZ and relation classification for both COMI and existing
+EVEX predicates. Concrete unmasked exceptions publish state but no flag result;
+failed reads publish neither. EVEX COMI/SAE, enabled alignment checking and
+unavailable-feature faults remain outside this completion surface. Swift
+refuses it until it has an equivalent lowering.
+
+`ir/X87Constant.h` owns binary80 constant-ROM values and the bounded explicit
+control-word contracts. `X87ReadControl` imports the actual word at each read;
+`X87WriteControl` commits it, and `X87LoadConstant` retains its selector and
+incoming word. Native LLVM and both C routes execute the original constant
+instruction into raw eighty-bit storage, so Windows binary64 long double
+cannot narrow it. Concrete values round directly from the ROM according to RC,
+independently of PC. Waiting concrete boundaries refuse unknown or pending
+state. These value contracts share the existing CFG stack projection; they do
+not establish complete source TOP/tag/condition-code or fault-order semantics.
+Reserved control fields remain outside concrete admission. Swift refuses this
+completion surface until it has an equivalent lowering.
 
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate

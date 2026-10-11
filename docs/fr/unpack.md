@@ -36,6 +36,8 @@ Les lectures d’horloge via `KeQueryPerformanceCounter`, `RDTSC` ou `RDTSCP` co
 
 `ProcessView::runtimeState(include_backing)` fournit un `WindowsDriverState` pour les pilotes arrêtés. Le propriétaire noyau conserve pour chaque pool vivant l’API d’allocation, la taille exacte demandée, le tag et le type historique effectif ou tous les indicateurs modernes. Le contenu demandé est une copie indépendante de ces seuls octets ; une capture des seules métadonnées ne contient aucun octet. Les pools libérés, les objets empruntés au chargeur et les objets de périphériques ne deviennent pas des enregistrements de pool. Cette capture ne fournit ni provenance des pointeurs ni initialiseur natif ; les refus existants liés aux dépendances et aux relocalisations restent applicables.
 
+`WindowsDriverState::Entry` conserve les registres initiaux de DriverEntry et sa trame de retour/shadow space, les registres entiers, XMM et de contrôle flottant à l’arrêt, ainsi que la plage de pile active appartenant au système. La demande de backing copie toute la pile active. Les appels ultérieurs de dispatch et de déchargement gardent la référence initiale et sont explicitement marqués comme extérieurs à DriverEntry. Ces observations concrètes ne prouvent ni la provenance des pointeurs ni leur liaison à un nouvel appelant.
+
 Les relocalisations de l’image noyau restent une dépendance du chargeur même sans pool ni objet emprunté conservé. Le générateur supprime actuellement les relocalisations du contenu produit : la récupération par défaut renvoie donc `unsupported_state` sans créer ni tronquer la sortie. Seul `snapshot_only` explicite émet l’image à adresse fixe en conservant ce diagnostic. La table d’origine ne prouve pas qu’elle couvre les pointeurs générés.
 
 ```bash

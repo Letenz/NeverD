@@ -21,6 +21,7 @@
 #include "neverd/decode/InstructionRelocations.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/lift/ARMRegs.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
@@ -3685,11 +3686,13 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
       };
       for (const LowOp &Op : Rec.Ops) {
         if (Op.Opcode == NdOp::INT_ADD && Op.NumInputs == 2 &&
-            (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size == 4) {
+            (Op.Output.isReg() || Op.Output.isTemp()) && Op.Output.Size == 4 &&
+            isSingleInstructionMode(Rec.Mode)) {
+          const uint32_t PC = armreg::pcReadValue(Op.Addr, Rec.Mode);
           int PCSide = -1;
           for (int Side = 0; Side < 2; ++Side) {
-            const std::optional<uint32_t> PC = knownValue(Op.Inputs[Side]);
-            if (!PC || *PC != static_cast<uint32_t>(Op.Addr + 8))
+            const std::optional<uint32_t> Value = knownValue(Op.Inputs[Side]);
+            if (!Value || *Value != PC)
               continue;
             if (PCSide != -1) {
               PCSide = -2;
@@ -3700,7 +3703,6 @@ void CFGBuilder::completeExactARMRelativeLiteralAddresses(
           if (PCSide >= 0) {
             using TargetKey = std::pair<va_t, va_t>;
             std::map<TargetKey, std::vector<const LiteralDefinition *>> Groups;
-            const uint32_t PC = static_cast<uint32_t>(Op.Addr + 8);
             // An object's sections move independently, so an unrelocated
             // PC-relative difference can only name the ADD's own section.
             va_t AnchorOwner = InvalidVA;

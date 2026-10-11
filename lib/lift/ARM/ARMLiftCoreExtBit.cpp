@@ -32,15 +32,15 @@ bool liftCoreExtBit(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
   // Additional integer: ADR, BFC, BFI, REV16, REVSH, RBIT, RRX, CLZ variants
   // ========================================================================
   case ARM_INS_ADR: {
-    if (ARM.op_count < 2)
-      break;
-    NdVar Dst = L.operandWrite(ARM.operands[0]);
-    NdVar Src = L.operandRead(S, ARM.operands[1]);
-    if (Src.isConst()) {
-      Src.Size = Dst.Size;
-      Src.Provenance = ConstantAddressProvenance::Address;
-    }
-    S.emit(NdOp::COPY, Dst, {Src});
+    // The immediate is the signed offset from the word-aligned PC, not the
+    // address (A32 decodes its ADR forms as ADD/SUB of PC instead).
+    if (ARM.op_count < 2 || ARM.operands[0].type != ARM_OP_REG ||
+        ARM.operands[1].type != ARM_OP_IMM)
+      return false;
+    const uint32_t Target = armreg::literalBase(S.Addr, L.sourceMode()) +
+                            static_cast<uint32_t>(ARM.operands[1].imm);
+    S.emit(NdOp::COPY, L.operandWrite(ARM.operands[0]),
+           {NdVar::address(Target, 4)});
     break;
   }
   case ARM_INS_BFC: {

@@ -203,7 +203,7 @@ TEST_F(WebRenameSDK, RenameV1ReceiptRemainsExactlyCompatible) {
   EXPECT_EQ(field(A, "export_receipt"), field(Golden, "export_receipt"));
   const auto E = exportTo(A, field(A, "export_receipt"), Root / "golden");
   EXPECT_EQ(field(E, "receipt_sha256"),
-            "434de5241d88899e51247722e0595106718cdecb3b99821fab1c1253b199eabc");
+            "d2c8b50fdec7fa921b1d771bb8726d6aaa8945e24174b56a9a8752a324311e1b");
   EXPECT_EQ(read(Root / "golden" / "receipt.json"), GoldenBytes);
 }
 

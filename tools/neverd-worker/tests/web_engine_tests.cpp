@@ -1289,7 +1289,7 @@ int main(int argc, char **argv) {
     fs::create_directories(packageRoot / "before");
     fs::create_directories(packageRoot / "after");
     std::ofstream(packageRoot / "before/package.json")
-        << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
+        << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"node z.js SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
     std::ofstream(packageRoot / "after/package.json")
         << R"({"name":"SECRET_WEB_PACKAGE","version":"2","optionalDependencies":{"SECRET_WEB_DEP":"2"}})";
     std::ofstream(packageRoot / "before/z.js")
@@ -1298,6 +1298,20 @@ int main(int argc, char **argv) {
     std::ofstream(packageRoot / "z.original") << "abc";
     std::ofstream(packageRoot / "zz.registry")
         << R"({"name":"SECRET_WEB","dist":{"integrity":"sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="}})";
+    std::ofstream(packageRoot / "zzza.advisory")
+        << R"({"id":"SECRET_WEB_GHSA","modified":"2026-10-10T00:00:00Z",
+          "affected":[{"package":{"ecosystem":"npm","name":"SECRET_WEB"},
+          "versions":["1.0.0"]}]})";
+    std::ofstream(packageRoot / "zzzb.descriptor")
+        << R"({"schema_version":1,"source":"SECRET_WEB_FEED",
+          "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})";
+    std::ofstream(packageRoot / "zzzc.package")
+        << R"({"name":"SECRET_WEB","version":"1.0.0"})";
+    std::ofstream(packageRoot / "zzzd.statement")
+        << R"({"_type":"https://in-toto.io/Statement/v1",
+          "subject":[{"name":"SECRET_WEB","digest":{"sha256":
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}}],
+          "predicateType":"SECRET_WEB"})";
     const Json packagePreview{{"schema_version", 1},
                               {"path", packageRoot.string()}};
     preview = web.execute("web_import_preview", packagePreview);
@@ -1391,6 +1405,36 @@ int main(int argc, char **argv) {
       check(reply["payload"] == aggregate && aggregate["record_count"] == 1 &&
                 aggregate["selection_complete"] == false,
             "Package behavior differs or claims complete selection");
+      Json installArgs{{"schema_version", 1},
+                       {"revision", packageRevision},
+                       {"package_analysis_id", packageIDs[0]}};
+      const auto noSources =
+          web.execute("web_package_install_analyze", installArgs);
+      reply = process.call("web_package_install_analyze", installArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == noSources && noSources["source_count"] == 0,
+            "Worker installation traces require source selection");
+      installArgs["package_behavior_id"] = aggregate["package_behavior_id"];
+      const auto trace =
+          web.execute("web_package_install_analyze", installArgs);
+      reply = process.call("web_package_install_analyze", installArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == trace && trace["association_count"] == 1 &&
+                trace["reachability_verified"] == false,
+            "Worker installation trace differs or upgrades evidence");
+      for (const auto *kind :
+           {"scripts", "sources", "requests", "associations"}) {
+        const Json rowArgs{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_install_id", trace["package_install_id"]},
+                           {"record_kind", kind}};
+        const auto rows = web.execute("web_package_install_records", rowArgs);
+        reply = process.call("web_package_install_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker installation traces differ or disclose command text");
+      }
       for (const auto *kind : {"sources", "records"}) {
         const Json rowArgs{
             {"schema_version", 1},
@@ -1405,6 +1449,53 @@ int main(int argc, char **argv) {
               "Package behavior rows differ or expose private values");
       }
       auto bad = selection;
+      const Json baseArgs{{"schema_version", 1},
+                          {"revision", packageRevision},
+                          {"before_id", packageIDs[0]},
+                          {"after_id", packageIDs[0]}};
+      const auto base = web.execute("web_packages_compare", baseArgs);
+      reply = process.call("web_packages_compare", baseArgs, packageRevision,
+                           packageProject);
+      check(reply["payload"] == base, "Worker comparison base differs");
+      Json diffArgs{{"schema_version", 1},
+                    {"revision", packageRevision},
+                    {"package_diff_id", base["package_diff_id"]}};
+      const auto emptyDiff =
+          web.execute("web_package_behavior_diff_analyze", diffArgs);
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == emptyDiff &&
+                emptyDiff["source_pair_count"] == 0,
+            "Worker invented selected source comparison coverage");
+      diffArgs["before_package_behavior_id"] = aggregate["package_behavior_id"];
+      diffArgs["after_package_behavior_id"] = aggregate["package_behavior_id"];
+      const auto behaviorDiff =
+          web.execute("web_package_behavior_diff_analyze", diffArgs);
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == behaviorDiff &&
+                behaviorDiff["occurrence_count"] == 2 &&
+                behaviorDiff["call_correspondence_verified"] == false,
+            "Worker changed recognized pattern evidence");
+      for (const auto *kind : {"pairs", "patterns", "occurrences"}) {
+        const Json rowArgs{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_behavior_diff_id",
+                            behaviorDiff["package_behavior_diff_id"]},
+                           {"record_kind", kind}};
+        const auto rows =
+            web.execute("web_package_behavior_diff_records", rowArgs);
+        reply = process.call("web_package_behavior_diff_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker behavior comparison differs or discloses private data");
+      }
+      diffArgs["execute"] = false;
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["error"]["code"] == "invalid_request",
+            "Worker accepted execution metadata");
       bad["origin"] = Json::object();
       reply = process.call("web_package_behavior_analyze", bad, packageRevision,
                            packageProject);
@@ -1452,6 +1543,141 @@ int main(int argc, char **argv) {
                          packageRevision, packageProject);
     check(reply["error"]["code"] == "invalid_request",
           "Worker integrity accepted an execution flag");
+    const Json advisoryImport{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][8]["artifact_id"]},
+        {"descriptor_artifact_id",
+         packageArtifacts["items"][9]["artifact_id"]}};
+    const auto advisory =
+        web.execute("web_package_advisory_import", advisoryImport);
+    reply = process.call("web_package_advisory_import", advisoryImport,
+                         packageRevision, packageProject);
+    check(reply["payload"] == advisory &&
+              advisory["publisher_authenticated"] == false &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker changed advisory source evidence or disclosed private "
+          "declarations");
+    for (const auto *kind : {"affected", "severities"}) {
+      const Json args{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"package_advisory_id", advisory["package_advisory_id"]},
+                      {"record_kind", kind}};
+      const auto direct = web.execute("web_package_advisory_records", args);
+      reply = process.call("web_package_advisory_records", args,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed or disclosed captured advisory records");
+    }
+    const Json advisoryPackageArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][10]["artifact_id"]},
+        {"input_kind", "package-json"}};
+    const auto advisoryPackage =
+        web.execute("web_packages_analyze", advisoryPackageArgs);
+    reply = process.call("web_packages_analyze", advisoryPackageArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] == advisoryPackage,
+          "Advisory package inventory differs");
+    Json advisoryMatchArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_analysis_id", advisoryPackage["package_analysis_id"]}};
+    for (const bool selected : {false, true}) {
+      if (selected)
+        advisoryMatchArgs["advisory_ids"] =
+            Json::array({advisory["package_advisory_id"]});
+      const auto matched =
+          web.execute("web_package_advisories_match", advisoryMatchArgs);
+      reply = process.call("web_package_advisories_match", advisoryMatchArgs,
+                           packageRevision, packageProject);
+      check(
+          reply["payload"] == matched &&
+              matched["declared_version_match_count"] == (selected ? 1 : 0) &&
+              matched["exploitability_verified"] == false &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker upgraded selected version evidence into an execution claim");
+      const Json page{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"package_advisory_matches_id",
+                       matched["package_advisory_matches_id"]}};
+      const auto direct =
+          web.execute("web_package_advisories_match_records", page);
+      reply = process.call("web_package_advisories_match_records", page,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed original advisory match anchors");
+    }
+    auto invalidAdvisory = advisoryImport;
+    invalidAdvisory["fetch"] = true;
+    reply = process.call("web_package_advisory_import", invalidAdvisory,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted remote metadata fetching");
+    const Json attestationImport{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][11]["artifact_id"]},
+        {"descriptor_artifact_id", packageArtifacts["items"][9]["artifact_id"]},
+        {"input_kind", "intoto-statement"}};
+    const auto attestation =
+        web.execute("web_package_attestation_import", attestationImport);
+    reply = process.call("web_package_attestation_import", attestationImport,
+                         packageRevision, packageProject);
+    check(reply["payload"] == attestation &&
+              attestation["signature_verification"] == "not_performed" &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker changed private attestation metadata");
+    Json digestRows;
+    for (const auto *kind : {"signatures", "subjects", "digests"}) {
+      const Json args{
+          {"schema_version", 1},
+          {"revision", packageRevision},
+          {"package_attestation_id", attestation["package_attestation_id"]},
+          {"record_kind", kind}};
+      const auto direct = web.execute("web_package_attestation_records", args);
+      reply = process.call("web_package_attestation_records", args,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed attestation original records");
+      if (std::string_view(kind) == "digests")
+        digestRows = direct;
+    }
+    const Json digestArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][6]["artifact_id"]},
+        {"package_attestation_id", attestation["package_attestation_id"]},
+        {"digest_id", digestRows["items"][0]["digest_id"]}};
+    const auto digestResult =
+        web.execute("web_package_attestation_digest_match", digestArgs);
+    reply = process.call("web_package_attestation_digest_match", digestArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] == digestResult &&
+              digestResult["integrity_status"] == "match" &&
+              digestResult["publisher_authenticated"] == false &&
+              digestResult["package_inventory_bound"] == false,
+          "Worker upgraded byte equality to authentication");
+    const Json resultArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_attestation_digest_match_id",
+         digestResult["package_attestation_digest_match_id"]}};
+    reply = process.call("web_package_attestation_digest_result", resultArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] ==
+              web.execute("web_package_attestation_digest_result", resultArgs),
+          "Worker lost retained digest result");
+    auto invalidAttestation = attestationImport;
+    invalidAttestation["key_path"] = "SECRET_WEB";
+    reply = process.call("web_package_attestation_import", invalidAttestation,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted a key path");
     for (const auto &a : caps["analysis"])
       if (a["kind"] == "package_archive") {
         hasArchive = a["available"];

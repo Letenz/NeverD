@@ -11,6 +11,8 @@
 
 #ifndef NEVERD_BACKEND_C_PASS_LLVMC_LLVMCPASSES_H
 #define NEVERD_BACKEND_C_PASS_LLVMC_LLVMCPASSES_H
+#include "neverd/ir/med/MedSyscallConvention.h"
+
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 
@@ -55,6 +57,10 @@ unsigned x86CPUQueryResultWords(const llvm::CallInst &Call);
 bool isLinuxX64SyscallInlineAsm(const llvm::CallInst &Call);
 /// True when \p Call is the backend's Windows NT x64 SYSCALL inline asm.
 bool isWindowsX64SyscallInlineAsm(const llvm::CallInst &Call);
+/// The supervisor call convention whose exact lowering \p Call is on
+/// \p TheArch, or null.
+const SyscallConvention *modeledSyscallInlineAsm(Arch TheArch,
+                                                 const llvm::CallInst &Call);
 bool isCallResultLive(const LLVMCAnalysisState &State,
                       const llvm::CallInst *Call);
 const llvm::Value *tryCollapseHiLo(const LLVMCAnalysisState &State,

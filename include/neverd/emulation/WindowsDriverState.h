@@ -12,8 +12,11 @@
 #define NEVERD_EMULATION_WINDOWSDRIVERSTATE_H
 
 #include "neverd/emulation/ProcessRuntimeState.h"
+#include "neverd/emulation/Registers.h"
 
+#include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 
 namespace neverd::emulation {
@@ -35,6 +38,24 @@ struct WindowsDriverState final : ProcessRuntimeState {
     std::optional<std::vector<uint8_t>> Bytes;
   };
   std::vector<PoolAllocation> Pools;
+  using RegisterFile = std::map<CPURegister, RegisterValue>;
+  struct EntryContext {
+    /// Concrete integer, XMM and floating-control values. Equal observations
+    /// do not prove preservation of arbitrary incoming caller values.
+    RegisterFile InitialRegisters, Registers;
+    /// Return address and shadow space at InitialRegisters[X64SP], before
+    /// execution and at this stop. Neither array proves an executed CALL.
+    std::array<uint8_t, 40> InitialFrame, Frame;
+    /// The active OS-owned stack, which can differ during a nested callback.
+    uint64_t StackBase, StackSize;
+    /// The complete stack allocation, present only when backing was requested.
+    /// Bytes have no inferred pointer or fresh-caller binding semantics.
+    std::optional<std::vector<uint8_t>> StackBytes;
+    bool DriverEntryActive;
+  };
+  /// Present only when the driver invocation owner supplied its baseline.
+  /// A kernel resource capture alone has no register/frame authority.
+  std::optional<EntryContext> Entry;
   /// Includes unsupported resources/effects, even when no pool remains live.
   std::vector<std::string> Reasons;
   bool hasAdditionalDependencies() const override {

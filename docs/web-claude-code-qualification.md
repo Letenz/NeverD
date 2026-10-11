@@ -1,5 +1,78 @@
 # Claude Code 2.1.296: offline NeverD qualification
 
+## Selected wrapper behavior comparison — 2026-10-11
+
+The native C++ CLI compared the captured 2.1.295 and 2.1.296 npm wrappers with
+`PATH=/neverd-no-external-tools`. Both original archives were decoded by NeverD;
+manifest member 3 and CommonJS members 0/1 were explicitly selected per side:
+
+```console
+neverd web archive-package-behavior-diff archives tgz 2 3 1 3 package-json before:0:commonjs before:1:commonjs after:0:commonjs after:1:commonjs
+```
+
+The capture directory contains `after.tgz` at artifact index 1 and `before.tgz`
+at index 2. The official [2.1.295 wrapper](https://registry.npmjs.org/@anthropic-ai/claude-code/-/claude-code-2.1.295.tgz)
+is 28,892 bytes, SHA-256
+`fe0d5efb8136f23e7292e227d14a1fc04f3fb05981dd9d0585d03be7bd8d863a`.
+Its captured [registry metadata](https://registry.npmjs.org/@anthropic-ai/claude-code/2.1.295)
+has SHA-256
+`5b08bcfe0bd28ab796d40388a360e8f5b5d5db672376106887972e0715109578`.
+NeverD's original integrity owner verified that archive against the supplied
+registry SHA-512 declaration; the integrity result ID is
+`793393d63938493a35684c87733f927e456bfd516c309dee156ba30c2ebe2b50`.
+Publisher/signature authentication remains unverified. The 2.1.296 original is
+the same 29,001-byte archive pinned in the installation qualification below.
+
+Under [node-selected-behavior-diff-v1](web-package-behavior-diff-profile.md),
+both selected source pairs have identical supplied bytes. Six source-specific
+pattern groups retain equal before/after counts, with 16 original occurrences
+across the two versions. Original record IDs and byte spans resolve through
+each retained package behavior. This does not compare the native payloads,
+unselected code, argument values, runtime execution or security posture.
+
+The comparison ID is
+`ba49da739c1420e550bbb9a51b30f9c504d671e80a81cf0ba4a12bfc3f85fd8d`
+and charged work is 42,732 units. The four-line CLI report has SHA-256
+`e37ea840e21edef6e97b585074a9d28870dfca7639c716574a2e9156c4d083ed`,
+retained at
+`<local-recovery>/package-behavior-diff/2.1.295-to-2.1.296.jsonl`.
+The 2.1.295 archive, metadata and integrity report remain under
+`<local-corpus>/2.1.295/package-evidence/`.
+No package command, sample JavaScript or external analyzer was executed.
+
+## Installation entry traces — 2026-10-11
+
+The C++ CLI selected the original npm wrapper, its manifest member 3 and JS
+members 0 and 1 with the external-tool PATH unusable:
+
+```console
+neverd web archive-package-install claude-code-2.1.296.tgz tgz 0 3 package-json 0:commonjs 1:commonjs
+```
+
+The 29,001-byte archive SHA-256 remains
+`f6c375d51d4c22a7a850e185a0d7ddda85173f89dbbeb3262aa7971e3bd670b5`.
+Under [node-install-entry-traces-v1](web-package-install-profile.md), two
+lifecycle declarations remain visible. One literal Node command identifies JS
+member 1 as an exact captured entry candidate and associates its six existing
+Node behavior records. The second declaration refuses unsupported command
+syntax. Member 0's two behavior records are not attached to the other entry.
+All 13 selected module requests retain boundaries: seven unsupported literal
+specifiers, four exact manifest-file candidates without selected source, and
+two unverified `require.resolve` calls. No module-request chain reaches another
+selected source. Runtime activation, platform selection, actual downloads,
+callee identity and reachability remain unverified.
+
+The analysis ID is
+`45a9d309ab74aae4575efee5389ac46f10d84abbde32726c22d950185ff9b904`.
+The five-line CLI metadata report has SHA-256
+`c5dfb85ab2935f2cc705fbce7ae8e8d2f2f2029978dc521f3c24c31c6a23e484`
+and is retained at
+`<local-recovery>/package-install/install-traces-with-anchors.jsonl`.
+Each association carries its original API/kind/origin class and node/byte span.
+The C++ real-input case independently extracts the original archive and checks
+each associated record against member 1's behavior model and the CLI identity.
+No lifecycle command or supplied JS was executed, and no source is committed.
+
 ## Reversible Boolean branch selection — 2026-10-11
 
 NeverD's native C++ CLI extracted original Bun module 1047 from the same
@@ -14,6 +87,10 @@ goal. Preview and receipt-bound export used `PATH=/neverd-no-external-tools`.
 | Candidate | 6,309 bytes; SHA-256 `e15ee77e5296c38f3d1065a46d9f7a7023340f7adaca86f3b6b8b6da2f20561d` |
 | Rewrite ID | `9a333c1bfdcecedfc7f46404d5b39a934519725b7543d71f763306f9ef7544aa` |
 | Exported receipt SHA-256 | `bb700e0774af697b5185391faacaa5c4a9019d3e107b9e877423b7c469fed5d7` |
+
+This receipt hash was recorded on macOS when `rewrite_steps` counted
+comparator calls. Searches and sorts now charge deterministic bounds, so a
+re-export differs only in `rewrite_steps` and its hash.
 
 The candidate passed complete retained-tree/GetValue-scaffolding checks,
 surviving lexical-reference projection and exact inverse validation. The
@@ -51,6 +128,10 @@ No target, external formatter or JavaScript runtime was executed.
 | Candidate | 1,908 bytes; SHA-256 `858a4f1f64ec90f02a650eae0e79c6a3967508bdfe4caa81e22211d598895cae` |
 | Rewrite ID | `a1b685aca498eb7d5d34345d97f79a12f0195429e665b6262536c28fca1805a2` |
 | Exported receipt SHA-256 | `119aa0e1c34c97d9669791e64740f295a1cfb0c5a9aa7410f8a3c5fcce4d11a6` |
+
+This receipt hash was recorded on macOS when `rewrite_steps` counted
+comparator calls. Searches and sorts now charge deterministic bounds, so a
+re-export differs only in `rewrite_steps` and its hash.
 
 Complete reparse, retained syntax and lexical-graph comparison, and exact
 inverse verification passed. Rest parameters and exported function names

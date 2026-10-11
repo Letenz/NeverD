@@ -211,6 +211,61 @@ std::string Session::capabilities() {
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
   Operations.emplace_back("package_integrity_verify");
+  for (const auto *Name :
+       {"package_attestation_import", "package_attestation_records",
+        "package_attestation_digest_match",
+        "package_attestation_digest_result"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_attestations"},
+      {"profile", std::string(PackageAttestationProfile)},
+      {"descriptor_profile", std::string(PackageEvidenceProfile)},
+      {"available", true},
+      {"input_kinds",
+       llvm::json::Array{"registry-dist", "intoto-statement", "dsse-intoto"}},
+      {"max_input_bytes", MaxPackageEvidenceInputBytes},
+      {"max_retained_metadata_bytes", MaxPackageEvidenceRetainedBytes},
+      {"max_descriptors", MaxPackageEvidenceDescriptors},
+      {"max_imports", MaxPackageAttestationImports},
+      {"max_subjects", MaxPackageAttestationSubjects},
+      {"max_digests", MaxPackageAttestationDigests},
+      {"max_signatures", MaxPackageAttestationSignatures},
+      {"max_payload_bytes", MaxPackageAttestationPayloadBytes},
+      {"max_signature_bytes", MaxPackageAttestationSignatureBytes},
+      {"max_cached_digest_matches", MaxPackageAttestationDigestMatches},
+      {"max_steps", MaxPackageEvidenceSteps},
+      {"digest_algorithms", llvm::json::Array{"sha256", "sha512"}},
+      {"signature_verification", "not_performed"},
+      {"publisher_authenticated", false},
+      {"trust_chain_verified", false},
+      {"transparency_verified", false},
+      {"slsa_level_verified", false},
+      {"fetches_remote_data", false}});
+  for (const auto *Name :
+       {"package_advisory_import", "package_advisory_records",
+        "package_advisories_match", "package_advisories_match_records"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "package_advisories"},
+      {"profile", std::string(PackageAdvisoryProfile)},
+      {"descriptor_profile", std::string(PackageEvidenceProfile)},
+      {"available", true},
+      {"max_input_bytes", MaxPackageEvidenceInputBytes},
+      {"max_retained_metadata_bytes", MaxPackageEvidenceRetainedBytes},
+      {"max_descriptors", MaxPackageEvidenceDescriptors},
+      {"max_imports", MaxPackageAdvisoryImports},
+      {"max_affected_entries", MaxPackageAdvisoryEntries},
+      {"max_selectors", MaxPackageAdvisorySelectors},
+      {"max_severities", MaxPackageAdvisorySeverities},
+      {"max_records", MaxPackageAdvisoryMatches},
+      {"max_cached_matches", MaxCachedPackageAdvisoryMatches},
+      {"max_steps", MaxPackageEvidenceSteps},
+      {"fetches_remote_data", false},
+      {"publisher_authenticated", false},
+      {"feed_completeness_verified", false},
+      {"freshness_assessed", false},
+      {"reachability_verified", false},
+      {"exploitability_verified", false}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "package_integrity"},
       {"profile", std::string(PackageIntegrityProfile)},
@@ -377,6 +432,38 @@ std::string Session::capabilities() {
   Operations.emplace_back("node_behavior_records");
   Operations.emplace_back("package_behavior_analyze");
   Operations.emplace_back("package_behavior_records");
+  Operations.emplace_back("package_behavior_diff_analyze");
+  Operations.emplace_back("package_behavior_diff_records");
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "node_selected_behavior_diff"},
+                         {"profile", std::string(PackageBehaviorDiffProfile)},
+                         {"max_sources_per_side", MaxPackageBehaviorSources},
+                         {"max_records_per_side", MaxPackageBehaviorRecords},
+                         {"max_pairs", MaxPackageBehaviorDiffPairs},
+                         {"max_occurrences", MaxPackageBehaviorDiffOccurrences},
+                         {"max_steps", MaxPackageBehaviorDiffSteps},
+                         {"max_cached", MaxCachedPackageBehaviorDiffs},
+                         {"shares_session_source_cache", true},
+                         {"selection_complete", false},
+                         {"call_correspondence_verified", false},
+                         {"executes_input", false}});
+  Operations.emplace_back("package_install_analyze");
+  Operations.emplace_back("package_install_records");
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "node_install_entry_traces"},
+                         {"profile", std::string(PackageInstallProfile)},
+                         {"max_scripts", MaxPackageInstallScripts},
+                         {"max_requests", MaxPackageInstallRequests},
+                         {"max_associations", MaxPackageInstallAssociations},
+                         {"max_depth", MaxPackageInstallDepth},
+                         {"max_steps", MaxPackageInstallSteps},
+                         {"max_cached", MaxCachedPackageInstalls},
+                         {"max_selected_sources", MaxPackageBehaviorSources},
+                         {"max_selected_bytes", MaxPackageBehaviorBytes},
+                         {"max_selected_nodes", MaxPackageBehaviorNodes},
+                         {"runtime_resolution_verified", false},
+                         {"reachability_verified", false},
+                         {"executes_input", false}});
   Analyses.emplace_back(
       llvm::json::Object{{"kind", "node_source_behavior"},
                          {"profile", std::string(NodeBehaviorProfile)},
@@ -669,10 +756,19 @@ std::string Session::commit(std::string_view Token) {
   State->ElectronIPCs.clear();
   State->ElectronEntryAnalyses.clear();
   State->PackageAnalyses.clear();
+  State->PackageNamespaces.clear();
+  State->PackageInstalls.clear();
   State->NodeBehaviors.clear();
   State->PackageBehaviors.clear();
+  State->PackageBehaviorDiffs.clear();
   State->PackageArchives.clear();
   State->PackageIntegrity.clear();
+  State->PackageAdvisoryMatchResults.clear();
+  State->PackageAdvisories.clear();
+  State->PackageAttestationDigests.clear();
+  State->PackageAttestations.clear();
+  State->PackageEvidenceDescriptors.clear();
+  State->PackageEvidenceBytes = 0;
   State->HARCaptures.clear();
   State->StreamCaptures.clear();
   State->PendingStream.reset();
@@ -730,6 +826,17 @@ std::string Session::metadata() const {
       {"source_rewrite_count", State->SourceRewrites.size()},
       {"node_behavior_count", State->NodeBehaviors.size()},
       {"package_behavior_count", State->PackageBehaviors.size()},
+      {"package_behavior_diff_count", State->PackageBehaviorDiffs.size()},
+      {"package_install_count", State->PackageInstalls.size()},
+      {"package_advisory_count", State->PackageAdvisories.size()},
+      {"package_attestation_count", State->PackageAttestations.size()},
+      {"package_attestation_digest_match_count",
+       State->PackageAttestationDigests.size()},
+      {"package_advisory_matches_count",
+       State->PackageAdvisoryMatchResults.size()},
+      {"package_evidence_descriptor_count",
+       State->PackageEvidenceDescriptors.size()},
+      {"package_evidence_retained_bytes", State->PackageEvidenceBytes},
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},
