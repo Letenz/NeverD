@@ -845,6 +845,73 @@ TEST(RegistrationCallABI, BindsTheMemoizedContractToOneBuildImage) {
   EXPECT_TRUE(Changed->empty());
 }
 
+TEST(RegistrationCallABI, PrivateThrowClosesOnlyOrdinaryFallthrough) {
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    ThrowImage F;
+    Segment Parent;
+    Parent.VA = 0x405000;
+    Parent.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Parent.Data = {
+        0x55, 0x8b, 0xec, 0x6a, 0xff, 0x68, 0, 0x11, 0x40, 0, 0x64, 0xa1, 0, 0,
+        0, 0, 0x50, 0x64, 0x89, 0x25, 0, 0, 0, 0, 0xe8, 0, 0, 0, 0,
+        // This dead branch lands inside the independently rooted callback.
+        0xeb, 1, 0xb8, 1, 2, 3, 4, 0xc3};
+    writeLE<uint32_t>(Parent.Data.data() + 25,
+                      uint32_t(ThrowImage::TextVA - (Parent.VA + 29)));
+    Parent.Size = Parent.FileSz = Parent.Data.size();
+    ExceptionFunction EH;
+    EH.CodeRange = {Parent.VA, Parent.VA + Parent.Size};
+    EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+    EH.Encoding = ExceptionEncoding::X86CxxFuncInfo;
+    auto &Chain = EH.Registration.emplace();
+    Chain.HandlerVA = ThrowImage::TextVA + 0x100;
+    Chain.SeededTryLevel = -1;
+    Chain.TryLevelOffset = -4;
+    Chain.RegistrationOffset = -12;
+    Chain.ChainInstallVA = Parent.VA + 17;
+    Chain.TryLevelStores = {{Parent.VA + 3, Parent.VA + 5, -1}};
+    auto &Cxx = EH.Cxx.emplace();
+    Cxx.MaxState = 2;
+    Cxx.UnwindMap.resize(2);
+    CxxTryBlock Try;
+    Try.TryLow = Try.TryHigh = 0;
+    Try.CatchHigh = 1;
+    CxxCatchHandler Catch;
+    Catch.Adjectives = 0x40;
+    Catch.HandlerVA = Parent.VA + 31;
+    Try.Handlers.push_back(Catch);
+    Cxx.TryBlocks.push_back(Try);
+    F.Image.Segments.push_back(Parent);
+    F.Image.ExceptionMetadata.Functions.push_back(EH);
+    F.Image.ExceptionMetadata.rebuildIndex();
+    if (Mutation == 1)
+      F.Image.Imports.front().Name = "unknown_throw";
+    if (Mutation == 2)
+      F.Image.Segments.front().Data[0] = 0xc3;
+    Decoder Decode;
+    ASSERT_TRUE(Decode.init(F.Image));
+    const auto Low = CFGBuilder().build(F.Image, Decode, Parent.VA);
+    bool DeadBranch = false, Callback = false, NoReturnCall = false;
+    for (const auto &Block : Low.Blocks)
+      for (const auto &Boundary : Block.InstructionBoundaries) {
+        DeadBranch |= Boundary.Address == Parent.VA + 29;
+        Callback |= Boundary.Address == Parent.VA + 31;
+        if (Boundary.Address == Parent.VA + 24)
+          NoReturnCall = hasLowInstructionControlFlag(
+              Boundary.ControlFlags, LowInstructionControlFlag::NoReturn);
+      }
+    EXPECT_EQ(NoReturnCall, Mutation == 0);
+    EXPECT_EQ(DeadBranch, Mutation != 0);
+    EXPECT_TRUE(Callback);
+    if (Mutation == 0) {
+      auto Error = validateLowInstructionBoundaries(
+          Low, LowInstructionBoundaryRequirement::Required);
+      EXPECT_FALSE(bool(Error)) << llvm::toString(std::move(Error));
+    }
+  }
+}
+
 TEST(RegistrationCallABI, RuntimeThrowTypesBelongToTheCurrentCaller) {
   for (bool Reverse : {false, true}) {
     ThrowImage F;

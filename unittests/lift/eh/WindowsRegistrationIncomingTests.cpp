@@ -158,6 +158,65 @@ TEST(WindowsRegistrationIncoming, RecoversStackHomesReadOnlyByCallbacks) {
   EXPECT_EQ(ABI->RegisterCount, 0u);
 }
 
+TEST(WindowsRegistrationIncoming, PreservesExactNarrowRegisterWidths) {
+  for (unsigned Registers : {1u, 2u})
+    for (uint16_t First : {1, 2, 4})
+      for (uint16_t Second : {1, 2, 4}) {
+        SCOPED_TRACE(Registers);
+        SCOPED_TRACE(First);
+        SCOPED_TRACE(Second);
+        MedFunc Source;
+        Source.RegistrationCxxEntryPopBytes = 4;
+        Source.RegistrationStates.emplace();
+        Source.RegistrationStates->IncomingFrameAccessesComplete = true;
+        llvm::LLVMContext Context;
+        llvm::Module Module("narrow-entry", Context);
+        std::vector<llvm::Type *> Types;
+        for (unsigned I = 0; I != Registers; ++I) {
+          MedVar Param;
+          Param.Kind = MedVar::Param;
+          Param.Id = 10 + I;
+          Param.Size = I ? Second : First;
+          Param.RegOff = getTargetRegInfo(Arch::X86).IntParamRegs[I];
+          Source.Params.push_back(Param);
+          Types.push_back(llvm::Type::getIntNTy(Context, Param.Size * 8));
+        }
+        completeX86RegistrationEntryParameters(Source);
+        ASSERT_EQ(Source.Params.size(), Registers + 1);
+        auto *I32 = llvm::Type::getInt32Ty(Context);
+        Types.push_back(I32);
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(I32, Types, false),
+            llvm::GlobalValue::ExternalLinkage, "parent", Module);
+        const auto Convention = Registers == 2
+                                    ? llvm::CallingConv::X86_FastCall
+                                    : llvm::CallingConv::X86_ThisCall;
+        EXPECT_EQ(getX86RegistrationCxxEntryABI(Source, *Function), Convention);
+        for (uint16_t Invalid : {0, 3, 8}) {
+          auto Changed = Source;
+          Changed.Params.front().Size = Invalid;
+          EXPECT_FALSE(projectX86RegistrationEntry(Changed));
+        }
+        auto Changed = Source;
+        Changed.Params.front().Size = First == 4 ? 1 : 4;
+        EXPECT_FALSE(getX86RegistrationCxxEntryABI(Changed, *Function));
+        Changed = Source;
+        Changed.Params.back().Size = 2;
+        EXPECT_FALSE(projectX86RegistrationEntry(Changed));
+        Function->setCallingConv(Convention);
+        if (Registers == 2) {
+          Function->addParamAttr(0, llvm::Attribute::InReg);
+          Function->addParamAttr(1, llvm::Attribute::InReg);
+        }
+        EXPECT_TRUE(hasX86RegistrationCxxEntryABI(Source, *Function));
+        for (auto Extension : {llvm::Attribute::SExt, llvm::Attribute::ZExt}) {
+          Function->addParamAttr(0, Extension);
+          EXPECT_FALSE(hasX86RegistrationCxxEntryABI(Source, *Function));
+          Function->removeParamAttr(0, Extension);
+        }
+      }
+}
+
 TEST(WindowsRegistrationIncoming,
      FailedProjectionRestoresMemoryAndDeclaration) {
   llvm::LLVMContext Context;

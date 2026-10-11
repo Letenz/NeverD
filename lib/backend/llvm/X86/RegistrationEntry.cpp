@@ -21,7 +21,7 @@ entryConvention(const MedFunc &Source, const llvm::Function &Function) {
       Function.isVarArg())
     return std::nullopt;
   for (const auto &Arg : Function.args())
-    if (!Arg.getType()->isIntegerTy(32))
+    if (!Arg.getType()->isIntegerTy(Source.Params[Arg.getArgNo()].Size * 8))
       return std::nullopt;
   if (ABI->RegisterCount == 2)
     return llvm::CallingConv::X86_FastCall;

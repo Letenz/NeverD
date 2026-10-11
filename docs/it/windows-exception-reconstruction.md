@@ -67,6 +67,11 @@ una handler map in molte try entry non supera il budget aggregato. I record FH3
 con `FuncInfo` e personality comuni formano un gruppo limitato: accettano i propri
 catch funclet, non indirizzi runtime estranei.
 
+Gli argomenti interi stretti conservano la larghezza provata di 8, 16 o 32 bit in ECX/EDX;
+gli slot fisici dello stack restano a 32 bit. Le istruzioni originali determinano l’estensione
+con segno o con zeri. I caricamenti e i salvataggi locali precedenti alla pubblicazione FS
+devono preservare ESP, EBP e tutti i campi di registrazione.
+
 Gli ingressi C++ PE32 generati possono essere caricati, elevati e ricostruiti di nuovo se la prova completa dell’origine riesce.
 Il loader verifica nei byte la scrittura FS:[0] esatta, il frame riallineato e i ruoli dei puntatori SafeSEH.
 L’installazione può modificare un ingresso autenticato in una sezione eseguibile generata in precedenza se la memoria

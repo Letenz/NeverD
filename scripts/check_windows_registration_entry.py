@@ -32,11 +32,17 @@ SOURCE = ROOT / "unittests/lift/eh/fixtures/registration_entry_driver.cpp"
 PROOF = ROOT / "unittests/lift/eh/RegistrationEntryABITests.cpp"
 RECEIPT = ROOT / "unittests/lift/eh/RegistrationSourceReceiptTestUtils.cpp"
 ABIS = {"cdecl": (0, 0), "stdcall": (0, 16), "thiscall": (1, 12), "fastcall": (2, 8)}
-FORMS = {abi + "-" + mode: (abi, "-" + mode.upper())
-         for abi in ABIS for mode in ("o0", "o1")}
+FORMS = {abi + narrow + "-" + mode: (abi, "-" + mode.upper())
+         for narrow in ("", "-narrow") for abi in ABIS for mode in ("o0", "o1")}
 CASES = tuple(name + suffix for name in FORMS for suffix in ("", "-control"))
 OBSERVATION = re.compile(r"ENTRY " + r"([0-9A-F]{8}) " * 13 + r"([0-9A-F]{8})\r?\n")
 EXPECTED = (309, 336, 363, 389, 7, 18, 39, 49, 1, 16, 16)
+
+
+def expected_values(case):
+    if case not in CASES:
+        raise ValueError("unknown entry ABI profile")
+    return (341, 362, 383, 403, *EXPECTED[4:]) if "-narrow-" in case else EXPECTED
 
 
 def entry_context(case):
@@ -81,7 +87,7 @@ def observe(path, case, route, receipt, launcher, env, timeout, *, source_sectio
     if result.get("exit_code") != int(case.endswith("-control")) or not match:
         raise ValueError("entry runtime or negative control failed")
     values = tuple(int(value, 16) for value in match.groups())
-    if values[:11] != EXPECTED:
+    if values[:11] != expected_values(case):
         raise ValueError("entry arguments, returns, ESP or FS chain differ")
     owner = "source" if route == "original" else "generated"
     begin, end = receipt[owner + "_begin"], receipt[owner + "_end"]
@@ -143,6 +149,7 @@ def main():
                 registers, pop, _ = entry_context(name)
                 run([compiler, "--target=i686-pc-windows-msvc", "-fms-extensions", "-fexceptions",
                      "-fcxx-exceptions", "-fno-omit-frame-pointer", optimization,
+                     *(["-DNARROW_ENTRY"] if "-narrow-" in name else []),
                      "-DENTRY_ABI=__" + abi, "-DEXPECTED_BIAS=" + str(int(control)),
                      "-c", SOURCE, "-o", case / "driver.obj"])
                 original, product = case / "original.exe", case / "product.exe"

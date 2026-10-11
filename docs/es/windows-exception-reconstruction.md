@@ -68,6 +68,11 @@ una handler map en muchas try entries no supera el presupuesto agregado. Los
 records FH3 que comparten `FuncInfo` y personality forman un grupo acotado:
 aceptan sus catch funclets, no direcciones runtime ajenas.
 
+Los argumentos enteros estrechos conservan su ancho probado de 8, 16 o 32 bits en ECX/EDX;
+las posiciones físicas de pila siguen siendo de 32 bits. Las instrucciones originales determinan
+la extensión de signo o por ceros. Las cargas y guardados locales anteriores a la publicación FS
+deben preservar ESP, EBP y todos los campos de registro.
+
 Las entradas C++ PE32 generadas se pueden volver a cargar, elevar y reconstruir si pasa la prueba completa del origen.
 El cargador verifica en los bytes la escritura exacta FS:[0], el frame realineado y las funciones de los punteros SafeSEH.
 La instalación puede modificar una entrada autenticada de una sección ejecutable generada anteriormente si su

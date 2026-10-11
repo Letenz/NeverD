@@ -63,6 +63,7 @@ add_neverd_component_library(NeverDBackendLLVM
   X86/MedLLVMRegistrationCxxBlocks.cpp
   X86/MedLLVMRegistrationCxxCall.cpp
   emit/MedLLVMCall.cpp
+  emit/MedLLVMDeadSlots.cpp
   emit/MedLLVMEmitter.cpp
   emit/MedLLVMFloatEmitter.cpp
   emit/MedLLVMFuncBody.cpp

@@ -2953,9 +2953,11 @@ substituted evidence.
 
 `check_windows_registration_entry.py` uses the native registration test binary
 and captured CRT libraries for cdecl, stdcall, thiscall and fastcall parents at
-O0/O1. Four changing arguments, four caller stack layouts and three catch paths
-plus a normal return exercise register/stack ordering, caller-visible results,
-ESP balance and FS-chain restoration. Its 128 executions cover source and
+O0/O1. Word and narrow integer profiles include high unsigned-byte bits and
+negative signed shorts, so sign and zero extension are observable. Four changing
+arguments, four caller stack layouts and three catch paths plus a normal return
+exercise register/stack ordering, caller-visible results,
+ESP balance and FS-chain restoration. Its 256 executions cover source and
 wrong-result controls, the checked installation, both CLI modes and two bases.
 The C++ proof rejects altered source RET boundaries, incomplete continuations,
 changed calling conventions and missing or misplaced fastcall `inreg` attributes;
@@ -2963,20 +2965,30 @@ it also decodes the generated parent RET cleanup count. Both C and C++ output
 must retain two tries, three callback bodies and their exact resume labels and
 pass syntax checks. `replay_windows_registration_entry.py` authenticates every
 source, proof, receipt, object, IR, output and executable before repeating the
-same 128 images with the Windows CRT. Python tests reject missing cases, skipped
+same 256 images with the Windows CRT. Python tests reject missing cases, skipped
 proofs, stale identities and substitutions of the ABI, runtime or rebased image.
 
 `check_windows_registration_relift.py` consumes the authenticated entry capture
 and treats each first-generation product as fresh PE32 input. Its native test
 reproves the frame, callback states, incoming ABI and LLVM privacy contract before
 a second rewrite; both CLI modes must reproduce the API transaction byte for byte.
-The 16 cases produce 128 executions across four routes and two image bases, with
+The 32 cases produce 256 executions across four routes and two image bases, with
 16 calls each. Caller PCs must move into the second generated owner, and ESP,
 FS:[0], argument writes and results must still match. The independent
 `replay_windows_registration_relift.py` validates both complete capture identities,
 source/IR/receipt hashes, both trampolines, native CRT and exact rebased bytes
-before replaying those 128 images on Wine or Windows. Mutation tests reject missing
+before replaying those 256 images on Wine or Windows. Mutation tests reject missing
 cases, changed identities, stale proofs, wrong ABI and forged caller ownership.
+The re-lift proof also validates every LowIR instruction boundary. A focused
+private-throw regression places a dead branch inside a runtime callback's
+instruction, checks that authenticated nonreturning calls cut that path, and
+retains the independent callback root. Unknown imports and returning callees
+must preserve their ordinary fallthrough.
+`NeverDMedLLVMDeadSlotsTests` checks transitive unused PHI scratch, live return
+values, escaping pointers, volatile reads, atomic/volatile stores and source
+observations. The narrow O1 entry re-lift also catches an unused ECX PHI that
+previously became an uninitialized native frame read on catch return. The
+source-frame initialization validator must still reject that old generated code.
 `RegistrationFrameStores` and `RegistrationFrameTaint` test bounded LLVM spill
 proofs, joins, backedges, partial writes and exhausted budgets. Loader tests keep
 independent SafeSEH/code references and real function boundaries while excluding

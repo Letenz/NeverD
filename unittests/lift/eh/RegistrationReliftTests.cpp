@@ -53,6 +53,9 @@ TEST(RegistrationRelift, InputPE32ReconstructsGeneratedFunction) {
   ASSERT_TRUE(Decode.init(*Image));
   const auto Low =
       CFGBuilder().build(*Image, Decode, Address, "relifted_parent");
+  auto Boundaries = validateLowInstructionBoundaries(
+      Low, LowInstructionBoundaryRequirement::Required);
+  ASSERT_FALSE(bool(Boundaries)) << llvm::toString(std::move(Boundaries));
   ASSERT_TRUE(Low.RegistrationStates);
   const auto &States = *Low.RegistrationStates;
   for (const auto &Diagnostic : States.Diagnostics)

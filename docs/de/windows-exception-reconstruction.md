@@ -67,6 +67,11 @@ Handler-Maps können den Gesamtaufwand nicht vervielfachen. FH3-Records mit
 gemeinsamem `FuncInfo` und gleicher Personality bilden eine begrenzte Gruppe:
 Catch-Funclets des Parents sind erlaubt, fremde Runtime Functions nicht.
 
+Schmale Ganzzahlargumente behalten ihre nachgewiesene Breite von 8, 16 oder 32 Bit in ECX/EDX;
+physische Stack-Slots bleiben 32 Bit breit. Die Quellbefehle bestimmen Vorzeichen- und Nullerweiterung.
+Ladevorgänge und lokale Sicherungen vor der FS-Veröffentlichung müssen ESP, EBP und alle
+Registrierungsfelder erhalten.
+
 Generierte PE32-C++-Einstiege lassen sich bei vollständigem Quellnachweis erneut laden, liften und rekonstruieren.
 Der Loader prüft den exakten FS:[0]-Store, den neu ausgerichteten Frame und die SafeSEH-Zeigerrollen anhand der Bytes.
 Die Installation darf einen authentifizierten Einstieg in einer zuvor erzeugten ausführbaren Section patchen,

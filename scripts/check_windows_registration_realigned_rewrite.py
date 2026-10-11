@@ -37,6 +37,7 @@ INCOMING_PROOFS = (
     "WindowsRegistrationIncoming.EntryRequiresObservedPhysicalWords",
     "WindowsRegistrationIncoming.ProjectsRegisterAndCalleeCleanupEntries",
     "WindowsRegistrationIncoming.RecoversStackHomesReadOnlyByCallbacks",
+    "WindowsRegistrationIncoming.PreservesExactNarrowRegisterWidths",
     "WindowsRegistrationIncoming.FailedProjectionRestoresMemoryAndDeclaration",
 )
 FORMS = {

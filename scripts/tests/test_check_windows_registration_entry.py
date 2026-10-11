@@ -68,7 +68,7 @@ class EntryEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root)
-            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            self.assertEqual(len(replay.validate_capture(root, capture)), 256)
             for mutation in range(14):
                 changed = copy.deepcopy(capture)
                 case = changed["cases"][0]
@@ -147,7 +147,7 @@ class EntryEvidenceTests(unittest.TestCase):
             case = capture["cases"][0]
             parent = root / case["case"]
             receipt = json.loads((parent / "contract.json").read_text())
-            values = list(runner.EXPECTED) + [runner.BASES[0] + 0x1004] * 3
+            values = list(runner.expected_values(case["case"])) + [runner.BASES[0] + 0x1004] * 3
             def output(v):
                 return "ENTRY " + " ".join(f"{item:08X}" for item in v) + "\n"
             with patch.object(runner, "run_image", return_value={"exit_code": 0, "stdout": output(values)}):
@@ -163,6 +163,32 @@ class EntryEvidenceTests(unittest.TestCase):
                 with patch.object(runner, "run_image", return_value={"exit_code": 0, "stdout": text}):
                     with self.assertRaises(ValueError):
                         runner.observe(parent / "original.exe", case["case"], "original", receipt, [], {}, 1)
+
+    def test_narrow_profiles_require_signed_short_and_unsigned_byte_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root)
+            for case in capture["cases"]:
+                if "-narrow-" not in case["case"]:
+                    continue
+                parent = root / case["case"]
+                receipt = json.loads((parent / "contract.json").read_text())
+                values = list(runner.expected_values(case["case"])) + [runner.BASES[0] + 0x1004] * 3
+                for delta in (0, -256, 3 * 65536):
+                    changed = values.copy()
+                    changed[0] += delta
+                    output = "ENTRY " + " ".join(f"{value:08X}" for value in changed) + "\n"
+                    with self.subTest(case=case["case"], delta=delta), patch.object(
+                            runner, "run_image", return_value={"exit_code": int(case["case"].endswith("-control")),
+                                                               "stdout": output}):
+                        args = (parent / "original.exe", case["case"], "original", receipt, [], {}, 1)
+                        if delta:
+                            with self.assertRaises(ValueError):
+                                runner.observe(*args)
+                        else:
+                            runner.observe(*args)
+            with self.assertRaises(ValueError):
+                runner.expected_values("unknown")
 
 
 if __name__ == "__main__":

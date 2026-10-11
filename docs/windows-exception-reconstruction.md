@@ -248,11 +248,14 @@ reference accesses retain the CRT-provided object identity through catch return.
 Reads and writes must retain the original image storage identity.
 Checked incoming words retain their physical caller locations across parent
 code and catch execution, including writes observed by the caller. C++ parent
-entries support cdecl, stdcall, thiscall and fastcall with 32-bit physical words:
-zero, one (ECX), or two (ECX/EDX) register parameters precede contiguous stack
-parameters. LowIR authenticates each reachable parent RET against the source
-bytes independently of callback RETs. Its checked cleanup count also preserves
-unused callee-popped slots; callback-only reads can recover caller-owned slots.
+entries support cdecl, stdcall, thiscall and fastcall with 32-bit physical stack
+slots. Zero, one (ECX), or two (ECX/EDX) integer register parameters precede
+contiguous stack parameters. Register parameters retain their proved 8-, 16- or
+32-bit width; the source instructions own sign and zero extension. Narrow
+loads and private spills before FS publication must preserve ESP, EBP and all
+registration fields. LowIR authenticates each reachable parent RET against the
+source bytes independently of callback RETs. Its checked cleanup count also
+preserves unused callee-popped slots; callback-only reads can recover caller-owned slots.
 Unknown or conflicting returns, variadic entries and incomplete frame proofs
 remain rejected. LLVM emission and independent installation agree on the exact
 convention and parameter attributes, including both fastcall `inreg` words.
@@ -286,6 +289,9 @@ independent IR validation replays that transfer and its restored stack.
 Private rethrow helpers are distinguished from helpers constructing a new
 exception. The helper must pass two known null arguments to the authenticated
 CRT import, and its source caller must have a proved live catch invocation.
+CFG closure uses the same authenticated nonreturning callee contracts as state
+analysis. Dead fallthrough after a throw cannot supply callback instructions;
+independent runtime and address-taken entries remain separate roots.
 The runtime retains the current exception's type and object, including changes
 made through a reference catch. A rethrow supplies no new ThrowInfo or implicit
 object initialization. A direct rethrow additionally proves both initialized

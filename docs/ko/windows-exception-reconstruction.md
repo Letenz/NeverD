@@ -62,6 +62,10 @@ entry가 같은 handler map을 재사용해도 총 예산을 넘지 않습니다
 공유하는 FH3 record는 bounded function group으로 decode하므로 부모 IP-to-state map은 자신의
 catch funclet을 참조할 수 있지만 관련 없는 runtime function address는 거부합니다.
 
+좁은 정수 인수는 검증된 ECX/EDX의 8·16·32비트 폭을 유지하며 물리 스택 슬롯은 32비트입니다.
+부호 및 0 확장은 원본 명령을 따릅니다. FS 등록 전의 인수 로드와 로컬 저장은 ESP, EBP와
+등록 필드를 변경할 수 없습니다.
+
 생성된 PE32 C++ 진입점은 완전한 소스 증명이 성공하면 다시 로드, 리프트 및 재구성할 수 있습니다.
 loader는 실제 FS:[0] 쓰기, 정렬 프레임, SafeSEH 포인터 역할을 이미지 바이트에서 검증합니다.
 설치기는 이전에 생성된 실행 섹션의 인증된 진입점도 수정하지만, 가상 및 파일 저장 범위가 유일하고

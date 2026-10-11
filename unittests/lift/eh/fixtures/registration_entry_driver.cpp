@@ -12,6 +12,13 @@ extern "C" void *_ReturnAddress();
 #ifndef ENTRY_ABI
 #define ENTRY_ABI __cdecl
 #endif
+#ifdef NARROW_ENTRY
+using FirstArgument = unsigned char;
+using SecondArgument = short;
+#else
+using FirstArgument = unsigned;
+using SecondArgument = unsigned;
+#endif
 extern "C" {
 __declspec(dllexport) volatile unsigned callback_caller = 0;
 __declspec(dllexport) volatile unsigned callback_caught = 0;
@@ -29,7 +36,7 @@ __declspec(dllexport) __declspec(noinline) void callback_throw_float() {
   throw 7.0f;
 }
 __declspec(dllexport) __declspec(noinline) unsigned ENTRY_ABI
-callback_parent(unsigned A, unsigned B, unsigned C, unsigned D) {
+callback_parent(FirstArgument A, SecondArgument B, unsigned C, unsigned D) {
   try {
     try {
       if (callback_choice == 0)
@@ -64,8 +71,13 @@ __declspec(noinline) unsigned call_with_padding(unsigned Seed,
   const auto Chain = __readfsdword(0);
   unsigned Before = 0, After = 0;
   __asm { mov Before, esp }
+#ifdef NARROW_ENTRY
+  const unsigned Value =
+      callback_parent(Seed + 130, -int(Seed) - 4, Seed + 6, Seed + 8);
+#else
   const unsigned Value =
       callback_parent(Seed + 2, Seed + 4, Seed + 6, Seed + 8);
+#endif
   __asm { mov After, esp }
   Balanced += Before == After;
   for (unsigned I = 0; I != Padding; ++I)
@@ -106,9 +118,14 @@ extern "C" __declspec(noreturn) void mainCRTStartup() {
 #ifndef EXPECTED_BIAS
 #define EXPECTED_BIAS 0
 #endif
-      Passed &= Values[Choice] ==
-                    Expected[Choice] + 100 + 16 * Seed + EXPECTED_BIAS &&
-                Caught[Choice] == ExpectedCaught[Choice];
+#ifdef NARROW_ENTRY
+      const unsigned ArgumentResult = 204 + 10 * Seed;
+#else
+      const unsigned ArgumentResult = 100 + 16 * Seed;
+#endif
+      Passed &=
+          Values[Choice] == Expected[Choice] + ArgumentResult + EXPECTED_BIAS &&
+          Caught[Choice] == ExpectedCaught[Choice];
       ++Iterations;
     }
   const unsigned Restored = __readfsdword(0) == Chain;

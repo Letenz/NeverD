@@ -155,7 +155,7 @@ class ReliftEvidenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             capture = self.capture(root)
-            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            self.assertEqual(len(replay.validate_capture(root, capture)), 256)
             for mutation in range(13):
                 changed = copy.deepcopy(capture)
                 case = changed["cases"][0]

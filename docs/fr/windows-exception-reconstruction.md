@@ -69,6 +69,11 @@ travail au-delà du budget global. Les records FH3 partageant `FuncInfo` et la
 personality forment un groupe borné, ce qui autorise les catch funclets du parent
 sans accepter les adresses de fonctions sans rapport.
 
+Les arguments entiers étroits conservent leur largeur prouvée de 8, 16 ou 32 bits dans ECX/EDX ;
+les emplacements physiques de pile restent de 32 bits. Les instructions sources déterminent
+l’extension signée ou par zéro. Avant la publication FS, chargements et sauvegardes locales
+doivent préserver ESP, EBP et tous les champs d’enregistrement.
+
 Les entrées C++ PE32 générées peuvent être rechargées, relevées et reconstruites si la preuve source complète réussit.
 Le chargeur vérifie les octets de l’écriture FS:[0], le cadre réaligné et les rôles des pointeurs SafeSEH.
 L’installation peut modifier une entrée authentifiée d’une section exécutable précédemment générée, à condition que

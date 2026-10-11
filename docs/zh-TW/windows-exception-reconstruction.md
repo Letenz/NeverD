@@ -63,6 +63,9 @@ try-map entry 重複使用同一 handler map，解析工作也不能超過總預
 `FuncInfo` 與 personality 的 FH3 record 會當作有界函式群組解碼，使父函式的
 IP-to-state map 能合法指向其 catch funclet，同時排除不相關 runtime function 地址。
 
+窄整數參數保留已證明的 8、16 或 32 位元 ECX/EDX 寬度，實體堆疊槽仍為 32 位元。
+符號與零擴充由來源指令決定；FS 發布前的載入與區域保存不得修改 ESP、EBP 或註冊欄位。
+
 產生的 PE32 C++ 入口在完整來源證明通過後，可再次載入、提升及重建。loader 從映像
 位元組核驗精確的 FS:[0] 寫入、對齊框架及 SafeSEH 指標用途。安裝器允許修改先前產生的
 可執行節內經過認證的入口，但要求虛擬位址與原始檔案儲存皆唯一，且位元組與分析輸入一致。

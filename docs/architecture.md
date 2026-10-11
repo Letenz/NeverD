@@ -162,6 +162,14 @@ captures the physical entry frame in an escaped slot, and rollback restores
 pointers, metadata, volatility and newly introduced declarations. The shared
 C++ entry projection in `lib/ir/med/X86/RegistrationEntry.cpp` orders physical
 ECX/EDX and stack words using the LowIR parent's authenticated RET cleanup count.
+Register inputs retain their proved 8-, 16- or 32-bit width; source operations
+own sign and zero extension, while physical stack slots remain four bytes.
+After materializing implicit ABI uses and native registration exception edges,
+the LLVM emitter discards store-only private SSA slots and their dead pure inputs.
+This prevents unused PHI copies from reading unavailable register values in
+`optnone` code. Escaping slots, live values, source observations and volatile or
+atomic operations remain intact; no source-frame initialization is invented.
+Ordinary analysis IR retains its original value graph.
 `lib/ir/low/X86/RegistrationEntryABI.cpp` binds those returns to source bytes and
 keeps callback returns separate. The LLVM adapter selects cdecl, stdcall,
 thiscall or fastcall and independently validates its exact parameter attributes;
@@ -3430,7 +3438,11 @@ entry component, with stable address ordering for independent roots. Runtime
 dispatch and continuation restoration still provide the only reaching states;
 scheduling never creates an edge or widens the cumulative work limit. Failed
 continuation closure retains earlier analysis diagnostics even if withdrawing
-a candidate makes the reduced graph easier to analyze. The loader applies its
+a candidate makes the reduced graph easier to analyze. The x86 CFG closure in
+`RegistrationCFG.cpp` also applies the state solver's authenticated nonreturning
+callee contracts to ordinary reachability. Dead fallthrough cannot create
+overlapping callback instructions; independent runtime and address-taken roots
+retain their own identities. The loader applies its
 shared decode budget to long straight-line registration initializers. It retains
 confirmed function boundaries and stops at control transfers; padding-like
 immediate bytes cannot truncate a decoded instruction merely because a local

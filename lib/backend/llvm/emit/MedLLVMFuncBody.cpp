@@ -18,6 +18,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "MedLLVMDeadSlots.h"
+
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -1081,9 +1083,10 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
 
   // Registration-chain and table-driven WinEH have separate source contracts.
   // Install their runtime edges before promoting the callback SSA slots.
-  if (!emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap) &&
-      !emitNativeX86RegistrationCxx(Func, *LLVMFunc, BBMap, PHICopyEdges) &&
-      !emitNativeSEH(Func, *LLVMFunc, BBMap) &&
+  const bool NativeRegistration =
+      emitNativeX86RegistrationSEH(Func, *LLVMFunc, BBMap) ||
+      emitNativeX86RegistrationCxx(Func, *LLVMFunc, BBMap, PHICopyEdges);
+  if (!NativeRegistration && !emitNativeSEH(Func, *LLVMFunc, BBMap) &&
       !emitNativeCxxEH(Func, *LLVMFunc, BBMap))
     emitNativeItaniumEH(Func, *LLVMFunc, BBMap);
 
@@ -1098,6 +1101,15 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     }
   }
 
+  // Analysis IR retains the original value graph. Native registration bodies
+  // use optnone and must not materialize unused, unavailable PHI inputs as
+  // physical frame reads that a subsequent reconstruction cannot prove.
+  if (NativeRegistration) {
+    llvm::SmallVector<llvm::AllocaInst *, 32> PrivateSlots;
+    for (const auto &[Key, Slot] : VarAllocs)
+      PrivateSlots.push_back(Slot);
+    discardDeadMedLLVMSlots(PrivateSlots);
+  }
   return LLVMFunc;
 }
 

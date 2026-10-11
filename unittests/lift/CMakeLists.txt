@@ -1425,6 +1425,14 @@ add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
   LINK_COMPONENTS BackendLLVM
 )
 
+add_neverd_unittest(NeverDMedLLVMDeadSlotsTests
+  core/MedLLVMDeadSlotsTests.cpp
+  LINK_COMPONENTS BackendLLVM
+)
+target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/backend/llvm/emit
+)
+
 target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}

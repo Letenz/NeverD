@@ -40,15 +40,16 @@ std::optional<X86RegistrationEntryABI> describeEntry(const MedFunc &Function) {
   const auto &Registers = getTargetRegInfo(Arch::X86).IntParamRegs;
   for (unsigned Index = 0; Index != Function.Params.size(); ++Index) {
     const auto &Param = Function.Params[Index];
-    if ((Param.Kind != MedVar::Param && Param.Kind != MedVar::Reg) ||
-        Param.Size != 4)
+    if (Param.Kind != MedVar::Param && Param.Kind != MedVar::Reg)
       return std::nullopt;
     if (Param.RegOff != kNoParamReg) {
-      if (Index != ABI.RegisterCount || ABI.RegisterCount >= 2 ||
+      if ((Param.Size != 1 && Param.Size != 2 && Param.Size != 4) ||
+          Index != ABI.RegisterCount || ABI.RegisterCount >= 2 ||
           Param.RegOff != Registers[ABI.RegisterCount])
         return std::nullopt;
       ++ABI.RegisterCount;
-    } else if (Param.Kind != MedVar::Param || Param.Id != int(Index) ||
+    } else if (Param.Kind != MedVar::Param || Param.Size != 4 ||
+               Param.Id != int(Index) ||
                Index - ABI.RegisterCount >= ABI.StackWords) {
       return std::nullopt;
     }
