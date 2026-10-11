@@ -1168,6 +1168,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 頁面執行 `X64MachineProb
 
 `CheckedX64Instructions.def` 透過既有 CPU 後端准入 8/16/32/64 位元無號 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用獨立的 `X64IntegerCases.def` 編碼和預期值，在兩種特權級驗證部分暫存器保留、32 位元零擴展、乘積高低兩部分、已定義的 CF/OF 結果及符號擴展不改變旗標。一般 RAM 乘法保留完整存取範圍的權限檢查和讀取觀察回呼；故障或觀察回呼停止會保留隱式輸出暫存器及 PC。裝置運算元仍不支援。這些案例也在 checked Unicorn 上執行；不可用的原生後端明確略過。
 
+`X64Integer.BitScan*` 使用獨立編碼及純量位元索引 oracle，涵蓋位元寬度、零輸入、暫存器重疊、已定義旗標、跨頁 RAM、觀察器停止、記憶體錯誤和非法 LOCK／裝置運算元。零來源值的目的暫存器和未定義旗標不採用可攜值假設。七項案例在兩個特權層級執行，KVM/WHP 原生驗收要求對應主機的全部十四項通過；不可用平台明確略過。
+
 `X64BitInstructions.def` 支援 16/32/64 位元暫存器及一般 RAM 的 `BT/BTS/BTR/BTC`。暫存器位元索引依運算元寬度解讀為有號數並選取完整資料字；立即數索引限制於基底位址的資料字內。位址寬度截斷先於 FS/GS 基底位址相加。CF 與寫入值由處理器提供；`RAMTransaction` 在觀察回呼接受前保留私有執行結果。完整範圍權限檢查涵蓋獨立頁面配置與別名。停止、回呼失敗或頁面權限不足均保留原始 CPU 與 RAM。LOCK 僅支援自然對齊的記憶體修改形式；MMIO 與硬體平行 SMP 仍不支援。`X64BitStringTests.cpp` 使用獨立編碼與 x64 本機實際執行對照，檢查負索引、寬度截斷、跨頁存取、取消及非法 LOCK 形式。參見 [Intel 指令參考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 統一管理一般 RAM 上 8/16/32/64 位元的 `MOVS/STOS/LODS`；`CLD/STD` 只改變方向旗標。每個 REP 元素在觀察回呼前驗證整個運算元，並於一個可恢復邊界提交。後續錯誤保留先前完成的元素；取消或回呼例外不改變目前元素。FS/GS 僅作用於來源位址，且在位址寬度截斷之後相加。AL/AX 載入保留高位元，EAX 載入零擴展。32 位元位址模式的零次 REP 要求計數高位元為零，MOVS/STOS 還要求參與的位址暫存器高位元為零，否則不同真實 CPU 實作會產生不同結果。MOVS/STOS/LODS 的 REPNE 形式與 STOS/LODS 裝置運算元仍不支援。`X64StringTransferTests.cpp` 用獨立的主機指令對照寬度、方向、重疊和零次數，並分別檢查權限、別名、回繞、錯誤與恢復。原創 WDK 資源驅動程式透過 `driver_resource_strings.def` 執行四種寬度的 STOS/LODS。
@@ -1204,7 +1206,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 12 driver UNPACK + 6 clock reads + 4 image memory checks = 5452`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 15 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5490`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1609,6 +1611,14 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` 檢查原程式的模型執行、恢復、區段權限及原始與恢復程式的 Windows 原生執行，涵蓋私有堆積擴容與釋放、編碼內部指標、FLS 回呼重設、遞迴鎖、LastError，以及虛擬頁面的保留、提交與保護。`MaterializationRequiresKnownSupportedState` 拒絕缺失版本及動態 TLS；`RuntimeRestorationHasTheSameCAPIAndCLIContract` 比較精確位元組及報告。Linux 建構檢查與 Wine 觀察不能取代原生 Windows 生命週期證據。
 
 `NeverDUnpackDriverTests` 涵蓋 DriverEntry 恢復、靜態／動態核心匯入、殘留核心資源、入口 ABI／控制狀態、畸形匯出、排程、要求／卸載生命週期、C API／CLI 一致性與 PE 檢查碼。原生驅動清單要求對應 KVM／WHP 案例執行；Windows 另以 ImageHlp 對照。這不代表原生核心載入驗收。見[脫殼](unpack.md)。
+
+`NeverDKernelSnapshotTests` 檢查終止性記憶體故障和不支援指令之後的物件診斷快照。已提交的裝置和分派狀態仍可讀取，原始故障保留，CPU 存取仍被禁止。損壞的歸屬關係、循環裝置串列、無效驅動程式擴充和部分初始化的分派指標仍會失敗。原生 KVM／WHP 驗收要求對應後端案例執行。
+
+`KernelUnpackStateTests.cpp` 為 `NeverDKernelSnapshotTests` 增加九個可攜式案例，涵蓋集區配置契約、內容副本、已釋放物件的生命週期、缺失記憶體和剩餘相依性。終止故障案例也擷取存活集區。`UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` 驗證工作階段銷毀後的公開觀察狀態。這些案例納入原生驅動必測門檻，不構成原生核心還原認證。
+
+受監視寫入的觀察回歸驗證下一條指令執行前的可見性、不依賴寫入日誌的準確指令計數，以及觀察者錯誤傳播。對應 KVM／WHP 後端必須涵蓋 legacy 和 checked 兩種契約。
+
+`UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction`; `UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors`.
 
 ## 原生不透明狀態檢查
 

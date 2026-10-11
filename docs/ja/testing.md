@@ -1222,6 +1222,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
 
+`X64Integer.BitScan*` は独立した符号化とビット位置の期待値を使い、幅、ゼロ入力、レジスタ重複、定義済みフラグ、ページ境界、監視停止、メモリ障害、不正な LOCK、デバイス入力を検査します。ゼロ入力の出力先や未定義フラグに共通値を仮定しません。7 ケースを両特権レベルで実行し、KVM/WHP のネイティブ検証では対応ホストの全 14 ケースの成功を要求します。利用不能な環境は明示的にスキップします。
+
 `X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列されたメモリ変更形式に限られ、MMIO とハードウェア並列 SMP は未対応です。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
 `X64StringInstructions.def` は通常 RAM の 8/16/32/64 ビット `MOVS/STOS/LODS` を管理し、`CLD/STD` は他のフラグを変えずに方向を制御します。REP は各要素の全範囲を観測前に検証し、再開可能な境界で確定します。後続の障害でも完了済み要素は残り、停止やコールバック例外は現在の要素を変更しません。FS/GS はアドレス幅の切り詰め後にソースだけへ加算します。AL/AX のロードは上位ビットを保持し、EAX はゼロ拡張します。32 ビットアドレスのゼロ回 REP はカウントの上位ビットがゼロである必要があり、MOVS/STOS では使用するアドレスレジスタも同様です。それ以外は実 CPU ごとに結果が異なります。MOVS/STOS/LODS の REPNE 形式と STOS/LODS のデバイス操作数は未対応です。`X64StringTransferTests.cpp` は独立したホスト命令で幅、方向、重なり、ゼロ回を照合し、権限、エイリアス、折り返し、障害、再開も検証します。独自の WDK リソースドライバは `driver_resource_strings.def` を使い STOS/LODS の全四幅を実行します。
@@ -1258,7 +1260,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 12 driver UNPACK + 6 clock reads + 4 image memory checks = 5452`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 15 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5490`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1663,6 +1665,14 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` は元プログラムのモデル実行、復元、セクション権限、元と復元結果の Windows ネイティブ実行を検証します。ヒープ再割り当て・解放、符号化した内部ポインター、FLS コールバックの再設定、再帰ロック、LastError、仮想ページの予約・コミット・保護を含みます。`MaterializationRequiresKnownSupportedState` はバージョン欠落と動的 TLS を拒否し、`RuntimeRestorationHasTheSameCAPIAndCLIContract` は正確なバイト列と報告を比較します。Linux での構築検証や Wine の観測は Windows ネイティブの寿命検証を代替しません。
 
 `NeverDUnpackDriverTests` は入口、カーネルインポート、残存資源、ABI、エクスポート、スケジューリング、要求とアンロード、C API/CLI、PE チェックサムを検証します。KVM/WHP の必須ケースと Windows ImageHlp 比較は、ネイティブカーネルへのロード証明ではありません。 [UNPACK](unpack.md).
+
+`NeverDKernelSnapshotTests` は、終端メモリ障害と未対応命令の後のオブジェクト診断スナップショットを検証します。確定済みのデバイスとディスパッチ状態を読み取れても、最初の障害は保持され、CPU アクセスは禁止されたままです。所有関係の破損、循環デバイスリスト、不正なドライバー拡張、部分初期化されたディスパッチポインターは引き続き失敗します。ネイティブ KVM/WHP 検証では対応するバックエンドのケースを必須とします。
+
+`KernelUnpackStateTests.cpp` は `NeverDKernelSnapshotTests` に、プール割り当て契約、内容の独立コピー、解放後の寿命、欠落したメモリー、残存依存関係を検証する九つの移植可能なケースを追加します。終端障害のケースでも生存するプールを取得します。`UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` はセッション破棄後の公開観測状態を検証します。これらはネイティブドライバーの必須ゲートに含まれますが、ネイティブカーネルでの復元を認証するものではありません。
+
+書き込み監視の回帰テストは、次の命令より前の可視性、書き込みログなしの正確な命令計数、観察者のエラー伝播を検証します。対応する KVM／WHP では legacy と checked の両契約が必須です。
+
+`UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction`; `UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors`.
 
 ## 不透明状態の検査
 
