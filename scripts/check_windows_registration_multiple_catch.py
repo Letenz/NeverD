@@ -54,7 +54,8 @@ def observe(path: Path, case: str, route: str, receipt: dict,
             launcher: list[str], env: dict[str, str], timeout: float,
             *, expected_values: tuple = (17, 28, 39, 7, 18, 39, 1, 12),
             expected_cleanup: tuple | None = None,
-            expected_lifetime: tuple | None = None, source_section: str = ".text") -> dict:
+            expected_lifetime: tuple | None = None,
+            expected_copy: tuple | None = None, source_section: str = ".text") -> dict:
     image = PE32(path.read_bytes())
     if image.base not in BASES or image.u16(image.optional + 70) & 0x40:
         raise ValueError("multiple-catch probe has no forced base")
@@ -66,6 +67,12 @@ def observe(path: Path, case: str, route: str, receipt: dict,
         if not separator or not matched or \
                 tuple(int(v, 16) for v in matched.groups()) != expected_lifetime:
             raise ValueError(f"exception destruction count, order or contents differ: {result}")
+    if expected_copy is not None:
+        output, separator, construction = output.rpartition("COPY ")
+        matched = re.fullmatch(r"([0-9A-F]{8}) ([0-9A-F]{8})\r?\n", construction)
+        if not separator or not matched or \
+                tuple(int(v, 16) for v in matched.groups()) != expected_copy:
+            raise ValueError(f"exception copy count, order or contents differ: {result}")
     if expected_cleanup is not None:
         output, separator, cleanup = output.rpartition("CLEANUP ")
         matched = re.fullmatch(r"([0-9A-F]{8}) ([0-9A-F]{8}) ([0-9A-F]{8})\r?\n", cleanup)

@@ -98,8 +98,15 @@ Un destructor opcional requiere una prueba LowIR independiente: una función hoj
 retorna, con pila privada y accesos ECX limitados al objeto. Su código y sus efectos en
 memoria forman parte del contrato preservado. Los casos O0/O1 comprueban cantidad, orden
 y contenido de los objetos destruidos, incluidos relanzamientos y dos reconstrucciones.
-Siguen sin admitirse constructores de copia no triviales, conversiones ni grafos generales
-de llamadas de destructores.
+
+Un constructor de copia no trivial requiere una prueba LowIR que separe el destino ECX
+del puntero de origen pasado por pila. El origen es de solo lectura; los accesos están
+acotados, cada retorno inicializa todo el destino y usa `RET 4`. Se rechazan fugas de
+punteros, observación del llamador CRT y llamadas no probadas. Los casos O0/O1 comprueban
+cuatro copias y doce destrucciones por ejecución en dos generaciones. Los agregados
+desconocidos conservan la llamada throw y la inicialización original; RTTI no justifica
+`throw Type()`. Siguen pendientes los grafos generales de constructores, conversiones,
+copias de bases virtuales y grafos generales de destructores.
 
 ## Contrato IR
 

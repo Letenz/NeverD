@@ -26,12 +26,23 @@ struct PrivateFrameState {
   registration_state::FrameState Frame;
   registration_state::FrameState Borrow;
   registration_state::FrameState BorrowSpills;
+  registration_state::FrameState CopySource;
+  registration_state::FrameState CopySourceSpills;
+  std::set<int32_t> CopyInitialized;
   std::set<int32_t> Initialized;
 
   bool merge(const PrivateFrameState &Other) {
     bool Changed = Frame.merge(Other.Frame);
     Changed |= Borrow.merge(Other.Borrow);
     Changed |= BorrowSpills.merge(Other.BorrowSpills);
+    Changed |= CopySource.merge(Other.CopySource);
+    Changed |= CopySourceSpills.merge(Other.CopySourceSpills);
+    for (auto It = CopyInitialized.begin(); It != CopyInitialized.end();)
+      if (!Other.CopyInitialized.count(*It)) {
+        It = CopyInitialized.erase(It);
+        Changed = true;
+      } else
+        ++It;
     for (auto It = Initialized.begin(); It != Initialized.end();)
       if (!Other.Initialized.count(*It)) {
         It = Initialized.erase(It);
@@ -48,7 +59,9 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            bool BorrowECX,
                            RegistrationThrowCalleeABI *ThrowProof,
                            bool *IndependentScalarReturn,
-                           bool DiscardReturnValue) {
+                           bool DiscardReturnValue, uint32_t CopyObjectSize) {
+  if (CopyObjectSize && (!BorrowECX || !DiscardReturnValue || ThrowProof))
+    return false;
   if (IndependentScalarReturn)
     *IndependentScalarReturn = true;
   using namespace registration_state;
@@ -73,6 +86,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
     Initial.Borrow.Registers[x86reg::RCX / x86reg::GeneralRegStride] =
         FrameValue::frame(0);
   }
+  if (CopyObjectSize)
+    Initial.CopySourceSpills.Cells[8] = FrameValue::frame(0);
   for (const auto &Block : Function.Blocks) {
     Blocks.emplace(Block.Id, &Block);
     for (const auto &Op : Block.Ops)
@@ -103,11 +118,16 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                 Incoming.at(Id).Borrow.Cells.size() +
                 Incoming.at(Id).BorrowSpills.Cells.size() +
                 Incoming.at(Id).Borrow.OtherRegisterBytes.size() +
+                Incoming.at(Id).CopySource.Cells.size() +
+                Incoming.at(Id).CopySourceSpills.Cells.size() +
+                Incoming.at(Id).CopySource.OtherRegisterBytes.size() +
+                Incoming.at(Id).CopyInitialized.size() +
                 Incoming.at(Id).Initialized.size()))
       return false;
     PrivateFrameState State = Incoming.at(Id);
     FrameTransfer Transfer(State.Frame, 0);
     FrameTransfer BorrowTransfer(State.Borrow, 0);
+    FrameTransfer CopySourceTransfer(State.CopySource, 0);
     bool Threw = false;
     for (const auto &Op : Blocks.at(Id)->Ops) {
       size_t RegisterBytes = Op.Output.Size;
@@ -118,41 +138,67 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
         return false;
       Transfer.beginInstruction(Op.Addr);
       BorrowTransfer.beginInstruction(Op.Addr);
+      CopySourceTransfer.beginInstruction(Op.Addr);
       auto BorrowValue = BorrowTransfer.evaluate(Op, false);
+      auto CopySourceValue = CopySourceTransfer.evaluate(Op, false);
       const auto Memory = lowMemoryOperands(Op);
       if (Memory.Address) {
         if (!Memory.Complete ||
             !Charge(State.Frame.Cells.size() + State.Borrow.Cells.size() +
-                    State.BorrowSpills.Cells.size() + Memory.AccessSize))
+                    State.BorrowSpills.Cells.size() +
+                    State.CopySource.Cells.size() +
+                    State.CopySourceSpills.Cells.size() + Memory.AccessSize))
           return false;
         const auto Address = Transfer.read(*Memory.Address);
         const auto Object = BorrowTransfer.read(*Memory.Address);
-        if (Object.MayBeFrame && !Object.Offset)
+        const auto CopySource = CopySourceTransfer.read(*Memory.Address);
+        if ((Object.MayBeFrame && !Object.Offset) ||
+            (CopySource.MayBeFrame && !CopySource.Offset) ||
+            (Object.MayBeFrame && CopySource.MayBeFrame))
           return false;
         if (BorrowECX && Object.Offset) {
           const int64_t End = int64_t(*Object.Offset) + Memory.AccessSize;
           if (Address.Offset || Address.Constant || Address.MayBeFrame ||
               *Object.Offset < 0 || End > INT32_MAX ||
-              End > limits::kMaxRegistrationEHStateWork)
+              End > limits::kMaxRegistrationEHStateWork ||
+              (CopyObjectSize && uint64_t(End) > CopyObjectSize))
             return false;
+          if (CopyObjectSize && Op.Opcode != NdOp::STORE)
+            for (int64_t Byte = *Object.Offset; Byte != End; ++Byte)
+              if (!State.CopyInitialized.count(int32_t(Byte)))
+                return false;
           if (Op.Opcode != NdOp::STORE)
             Effects.ECXReads.emplace(*Object.Offset, int32_t(End));
           if (Memory.StoredValue) {
             const auto Stored = Transfer.read(*Memory.StoredValue);
             const auto Borrowed = BorrowTransfer.read(*Memory.StoredValue);
             if (Op.Opcode != NdOp::STORE || Stored.MayBeFrame ||
-                Borrowed.MayBeFrame)
+                Borrowed.MayBeFrame ||
+                CopySourceTransfer.read(*Memory.StoredValue).MayBeFrame)
               return false;
             Effects.ECXWrites.emplace(*Object.Offset, int32_t(End));
             State.Borrow.store(*Object.Offset, Memory.AccessSize, Borrowed);
+            if (CopyObjectSize)
+              for (int64_t Byte = *Object.Offset; Byte != End; ++Byte)
+                State.CopyInitialized.insert(int32_t(Byte));
           }
+        } else if (CopyObjectSize && CopySource.Offset) {
+          const int64_t End = int64_t(*CopySource.Offset) + Memory.AccessSize;
+          if (Address.Offset || Address.Constant || Address.MayBeFrame ||
+              *CopySource.Offset < 0 || uint64_t(End) > CopyObjectSize ||
+              Op.Opcode != NdOp::LOAD || Memory.StoredValue)
+            return false;
+          Effects.CopySourceReads.emplace(*CopySource.Offset, int32_t(End));
         } else {
           // An unknown address can point into the caller frame. Stack arguments
           // also require a separate extent/initialization proof, not a guessed
           // parameter list from an arbitrary positive EBP displacement.
+          const bool CopyArgument = CopyObjectSize && Address.Offset == 8 &&
+                                    Memory.AccessSize == 4 &&
+                                    Op.Opcode == NdOp::LOAD;
           if ((!Address.Offset && !Address.Constant) ||
               (Address.MayBeFrame && !Address.Offset) ||
-              (Address.Offset &&
+              (Address.Offset && !CopyArgument &&
                int64_t(*Address.Offset) + Memory.AccessSize > 8))
             return false;
           if (Address.Constant && *Address.Constant != 0) {
@@ -183,7 +229,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                     .Offset;
             if (!CallerPC && (!SP || *Address.Offset < *SP))
               return false;
-            if (Reads && !CallerPC)
+            if (Reads && !CallerPC && !CopyArgument)
               for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
                 if (!State.Initialized.count(int32_t(Byte)))
                   return false;
@@ -196,12 +242,19 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                 State.BorrowSpills.store(
                     *Address.Offset, Memory.AccessSize,
                     BorrowTransfer.read(*Memory.StoredValue));
+              if (CopyObjectSize)
+                State.CopySourceSpills.store(
+                    *Address.Offset, Memory.AccessSize,
+                    CopySourceTransfer.read(*Memory.StoredValue));
               for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
                 State.Initialized.insert(int32_t(Byte));
             }
-            if (Op.Opcode == NdOp::LOAD)
+            if (Op.Opcode == NdOp::LOAD) {
               BorrowValue =
                   State.BorrowSpills.load(Address.Offset, Memory.AccessSize);
+              CopySourceValue = State.CopySourceSpills.load(Address.Offset,
+                                                            Memory.AccessSize);
+            }
           } else if (Memory.StoredValue &&
                      Transfer.read(*Memory.StoredValue).MayBeFrame) {
             if (!Transfer.read(*Memory.StoredValue).ReturnPC)
@@ -210,7 +263,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                 *Address.Constant, va_t(*Address.Constant) + Memory.AccessSize);
           }
           if (Memory.StoredValue && !Address.Offset &&
-              BorrowTransfer.read(*Memory.StoredValue).MayBeFrame)
+              (BorrowTransfer.read(*Memory.StoredValue).MayBeFrame ||
+               CopySourceTransfer.read(*Memory.StoredValue).MayBeFrame))
             return false;
         }
       }
@@ -260,18 +314,20 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             Effects.Reads.emplace(Range.Begin, Range.End);
           Effects.Reads.emplace(Info.TypeDescriptorRange.Begin,
                                 Info.TypeDescriptorRange.End);
-          if (const auto &Destructor = ObjectABI->Destructor) {
-            if (!Charge(Destructor->ImageReads.size() +
-                        Destructor->ImageWrites.size() +
-                        Destructor->CodeRanges.size()))
+          for (const auto *Callback : ObjectABI->callbacks()) {
+            if (!Callback)
+              continue;
+            if (!Charge(Callback->ImageReads.size() +
+                        Callback->ImageWrites.size() +
+                        Callback->CodeRanges.size()))
               return false;
-            for (const auto &Range : Destructor->ImageReads)
+            for (const auto &Range : Callback->ImageReads)
               Effects.Reads.emplace(Range.Begin, Range.End);
-            for (const auto &Range : Destructor->ImageWrites)
+            for (const auto &Range : Callback->ImageWrites)
               Effects.Writes.emplace(Range.Begin, Range.End);
             ThrowProof->CodeRanges.insert(ThrowProof->CodeRanges.end(),
-                                          Destructor->CodeRanges.begin(),
-                                          Destructor->CodeRanges.end());
+                                          Callback->CodeRanges.begin(),
+                                          Callback->CodeRanges.end());
           }
           ThrowProof->ObjectOffset = *Object.Offset;
           ThrowProof->ThrowInfo = std::move(ObjectABI->Info);
@@ -332,6 +388,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           const auto Value = Transfer.read(Op.Inputs[Index]);
           if (BorrowTransfer.read(Op.Inputs[Index]).MayBeFrame)
             return false;
+          if (CopySourceTransfer.read(Op.Inputs[Index]).MayBeFrame)
+            return false;
           if (Value.MayBeFrame &&
               !(Op.Opcode == NdOp::RETURN &&
                 (Value.FrameOnlyFromCall || Value.ReturnPC ||
@@ -344,7 +402,10 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           *IndependentScalarReturn &=
               Op.NumInputs == 1 && Op.Inputs[0].Size == 4 &&
               !Transfer.read(Op.Inputs[0]).MayBeFrame &&
-              !BorrowTransfer.read(Op.Inputs[0]).MayBeFrame;
+              !BorrowTransfer.read(Op.Inputs[0]).MayBeFrame &&
+              !CopySourceTransfer.read(Op.Inputs[0]).MayBeFrame;
+        if (CopyObjectSize && State.CopyInitialized.size() != CopyObjectSize)
+          return false;
         if (State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
                 .Offset != 4)
           return false;
@@ -355,11 +416,16 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             return false;
           if (State.Borrow.Registers[Index] != Initial.Borrow.Registers[Index])
             return false;
+          if (State.CopySource.Registers[Index] !=
+              Initial.CopySource.Registers[Index])
+            return false;
         }
       }
       Transfer.write(Op, Transfer.evaluate(Op, false));
       if (BorrowECX)
         BorrowTransfer.write(Op, BorrowValue);
+      if (CopyObjectSize)
+        CopySourceTransfer.write(Op, CopySourceValue);
       if (AfterCallSP)
         State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] =
             FrameValue::frame(*AfterCallSP);
@@ -371,7 +437,10 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       const auto StateSize = [](const PrivateFrameState &S) {
         return S.Frame.Cells.size() + S.Frame.OtherRegisterBytes.size() +
                S.Borrow.Cells.size() + S.BorrowSpills.Cells.size() +
-               S.Borrow.OtherRegisterBytes.size() + S.Initialized.size();
+               S.Borrow.OtherRegisterBytes.size() + S.Initialized.size() +
+               S.CopySource.Cells.size() + S.CopySourceSpills.Cells.size() +
+               S.CopySource.OtherRegisterBytes.size() +
+               S.CopyInitialized.size();
       };
       if (!Charge(
               1 + StateSize(State) +

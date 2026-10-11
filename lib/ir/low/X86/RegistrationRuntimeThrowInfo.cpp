@@ -39,16 +39,18 @@ collectRegistrationRuntimeThrowInfos(const LowFunc &Function,
             getCheckedX86RegistrationThrowObjectABI(Image, Address, &Work)) {
       const auto &Info = Object->Info;
       Result.push_back({Info.Address, Info.TypeDescriptorVA, Info.ObjectSize});
-      if (const auto &Destructor = Object->Destructor) {
-        if (!chargeCalleeWork(Work, Destructor->ImageReads.size() +
-                                        Destructor->ImageWrites.size() +
-                                        Destructor->CodeRanges.size()))
+      for (const auto *Callback : Object->callbacks()) {
+        if (!Callback)
+          continue;
+        if (!chargeCalleeWork(Work, Callback->ImageReads.size() +
+                                        Callback->ImageWrites.size() +
+                                        Callback->CodeRanges.size()))
           return std::nullopt;
-        for (const auto &Range : Destructor->ImageReads)
+        for (const auto &Range : Callback->ImageReads)
           Effects.Reads.emplace(Range.Begin, Range.End);
-        for (const auto &Range : Destructor->ImageWrites)
+        for (const auto &Range : Callback->ImageWrites)
           Effects.Writes.emplace(Range.Begin, Range.End);
-        for (const auto &Range : Destructor->CodeRanges)
+        for (const auto &Range : Callback->CodeRanges)
           Code.emplace(Range.Begin, Range.End);
       }
     }

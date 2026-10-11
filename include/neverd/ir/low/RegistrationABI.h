@@ -11,6 +11,7 @@
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
 #include "neverd/loader/ExceptionCommon.h"
 
+#include <array>
 #include <map>
 #include <optional>
 #include <vector>
@@ -67,13 +68,32 @@ std::optional<RegistrationLeafCalleeABI> getCheckedX86RegistrationLeafCalleeABI(
     const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
     RegistrationLeafResult Result = RegistrationLeafResult::Observed);
 
-/// A single identity-copy object and its optional preserved destructor. The
+/// A CRT copy constructor borrows two separate objects: destination ECX and
+/// the source pointer in its one callee-popped stack word. Every destination
+/// byte is initialized on every return, and source storage is read-only.
+struct RegistrationCopyCalleeABI {
+  RegistrationLeafCalleeABI Destination;
+  std::vector<RegistrationObjectExtent> SourceReads;
+};
+
+std::optional<RegistrationCopyCalleeABI>
+getCheckedX86RegistrationCopyCalleeABI(const BinaryImage &Image, va_t Target,
+                                       uint32_t ObjectSize,
+                                       size_t *CumulativeWork = nullptr);
+
+/// A single unadjusted object and its optional preserved runtime callbacks. The
 /// destructor must be a private, returning leaf with bounded ECX accesses and
 /// no observation of the CRT caller PC. Metadata decoding alone cannot prove
 /// these effects or authorize a runtime callback.
 struct RegistrationThrowObjectABI {
   coff_loader::X86IdentityCxxThrowInfo Info;
   std::optional<RegistrationLeafCalleeABI> Destructor;
+  std::optional<RegistrationCopyCalleeABI> CopyConstructor;
+
+  std::array<const RegistrationLeafCalleeABI *, 2> callbacks() const {
+    return {Destructor ? &*Destructor : nullptr,
+            CopyConstructor ? &CopyConstructor->Destination : nullptr};
+  }
 };
 
 std::optional<RegistrationThrowObjectABI>

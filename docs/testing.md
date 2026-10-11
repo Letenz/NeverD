@@ -3222,6 +3222,18 @@ executes the C/C++ views against an independent C callee: a C declaration with
 unknown parameters cannot become a zero-argument C++ prototype. Its C++ ellipsis
 preserves default promotions and does not grant a native variadic ABI contract.
 
+The `copies` source and relift profiles extend that matrix with nontrivial CRT
+copy callbacks for both records. Each run checks four copies and twelve
+destructions with separate count and object-content traces. Negative controls
+change the expected copy count. The sixteen source/control cases produce 128
+executions per capture or replay, including both patch modes and forced bases.
+`RegistrationCopy.*` separately rejects source writes, bounds violations,
+partial destination initialization on any return, pointer escapes, caller
+storage observations and incorrect `RET 4` cleanup. Replay admission binds the
+copy proof and source declarations and rejects a trivial-object or destructor
+capture in their place. C/C++ syntax checks also cover records with no default
+constructor; RTTI alone must not invent a constructor or remove initialization.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.

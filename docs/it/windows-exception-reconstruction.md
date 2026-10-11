@@ -96,9 +96,16 @@ mentre l’output conserva offset nativi e chiamate throw per aggregati sconosci
 Un distruttore facoltativo richiede una prova LowIR indipendente: una funzione foglia
 che ritorna, con stack privato e accessi ECX limitati all’oggetto. Codice ed effetti
 in memoria fanno parte del contratto preservato. I casi O0/O1 verificano numero, ordine
-e contenuto degli oggetti distrutti, anche nei rilanci e in due ricostruzioni. Restano
-esclusi costruttori di copia non banali, conversioni e grafi generali di chiamate
-dei distruttori.
+e contenuto degli oggetti distrutti, anche nei rilanci e in due ricostruzioni.
+
+Un costruttore di copia non banale richiede una prova LowIR che separi la destinazione ECX
+dal puntatore sorgente sullo stack. La sorgente è di sola lettura; gli accessi sono limitati,
+ogni percorso di ritorno inizializza tutta la destinazione e usa `RET 4`. Sono rifiutati
+fughe di puntatori, osservazione del chiamante CRT e chiamate non provate. I casi O0/O1
+verificano quattro copie e dodici distruzioni per esecuzione in due generazioni. Gli aggregati
+sconosciuti conservano chiamata throw e inizializzazione originali; RTTI non giustifica
+`throw Type()`. Restano esclusi grafi generali dei costruttori, conversioni, copie di basi
+virtuali e grafi generali dei distruttori.
 
 ## Contratto IR
 

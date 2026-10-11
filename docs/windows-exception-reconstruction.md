@@ -36,7 +36,7 @@ Analysis support does not imply native reconstruction support.
 | `__GSHandlerCheck_SEH/EH/EH4` | Wrapped personality plus checked GS cookie provenance | Base-language graph and wrapper annotation | Analysis only; a touched function is rejected rather than downgraded |
 | x86 registration-chain SEH3 | Checked scope graph, actual FS:[0] administration, callback roots and CFG-derived reaching try levels | Reducible, unambiguous regions become explicit EH nodes; other state flow retains native annotations | Native PE32 reconstruction for the checked fixed-frame, caller-cleanup subset below |
 | x86 registration-chain SEH4 | Checked cookie expressions, encoded scope pointer and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the authenticated direct-frame subset below, including initialized EH/GS cookies |
-| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, identity-copy object or unbound catch subset below, including bounded destructors |
+| x86 registration-chain C++ EH | Absolute-pointer FuncInfo, cleanup/object contracts and CFG-derived state flow | Structured EH where reducible; lossless annotations otherwise | Native PE32 reconstruction for the checked synchronous try and scalar, unadjusted object or unbound catch subset below, including bounded copy constructors and destructors |
 
 Malformed records are never treated as ordinary complete records. A partially
 decoded record remains useful for inspection, but cannot authorize native
@@ -232,7 +232,7 @@ requires `LLVM_NEVERD_X86_REGISTRATION_GS`. The older published r3 package
 rejects native installation.
 
 Native x86 C++ reconstruction supports synchronous parent try groups with
-ordered catches, with at most 128 source unwind states. A catch may bind a checked scalar or identity-copy object
+ordered catches, with at most 128 source unwind states. A catch may bind a checked scalar or unadjusted object
 by value or reference, omit its local object, or be `catch(...)`. An unbound
 typed catch retains its exact RTTI and adjectives; catch-all retains null RTTI
 and its native catch-all adjective. An absent object home requires complete
@@ -414,9 +414,22 @@ register; that invocation rule does not authorize an ordinary pointer-returning
 call. Both private helpers and direct throws use this same proof, including at
 independent installation. O0/O1 lifetime fixtures check the count, order and
 object contents of catch-copy and exception destruction across rethrow, both
-patch modes, forced bases and a second reconstruction. Nontrivial copy
-constructors, conversion graphs and general destructor call graphs remain
-unsupported.
+patch modes, forced bases and a second reconstruction.
+
+A nontrivial runtime copy constructor is also supported when its independent
+LowIR proof separates the destination in ECX from the source pointer in one
+callee-popped stack word. The source is read-only, accesses stay inside each
+object, and every destination byte must be initialized on every return. The
+callback preserves nonvolatile registers and cannot escape either pointer,
+observe the CRT caller PC or call an unproved target. Its immutable code and
+checked image effects join the same preserved closure as the destructor. O0/O1
+fixtures check four copies and twelve destructions per run, including object
+contents, nested catches, reference rethrows, both patch modes, forced bases
+and both reconstruction generations. RTTI does not prove a source constructor:
+unknown aggregate throws retain their exact runtime call, declaration and
+initialization stores instead of inventing `throw Type()`. Ordinary constructor
+call graphs, conversions, virtual-base copying and general destructor call
+graphs remain unsupported.
 
 ## IR contract
 

@@ -97,8 +97,16 @@ Ein optionaler Destruktor benötigt einen unabhängigen LowIR-Nachweis als zurü
 Blattfunktion mit privatem Stack und begrenzten ECX-Objektzugriffen. Seine Codebereiche und
 Speichereffekte bleiben Teil des erhaltenen Aufrufvertrags. Die O0/O1-Tests prüfen Anzahl,
 Reihenfolge und Objektinhalt bei Zerstörung, erneutem Werfen und zwei Rekonstruktionen.
-Nichttriviale Kopierkonstruktoren, Typumwandlungen und allgemeine Destruktor-Aufrufgraphen
-bleiben ausgeschlossen.
+
+Nichttriviale Laufzeit-Kopierkonstruktoren benötigen einen LowIR-Nachweis mit getrennten
+Adressbereichen für das ECX-Ziel und den Quellzeiger auf dem Stack. Die Quelle bleibt
+schreibgeschützt; Zugriffe sind begrenzt, jeder Rückkehrpfad initialisiert das gesamte Ziel
+und endet mit `RET 4`. Zeiger dürfen nicht entweichen; der CRT-Aufrufer darf nicht beobachtet
+und kein ungeprüftes Ziel aufgerufen werden. O0/O1 prüfen vier Kopien und zwölf Zerstörungen
+je Ausführung über zwei Generationen. Unbekannte Aggregate behalten ursprüngliche
+Initialisierung und Throw-Aufruf; RTTI rechtfertigt kein `throw Type()`. Allgemeine
+Konstruktor-Aufrufgraphen, Konvertierungen, virtuelle Basiskopien und allgemeine
+Destruktor-Aufrufgraphen bleiben ausgeschlossen.
 
 ## IR-Vertrag
 

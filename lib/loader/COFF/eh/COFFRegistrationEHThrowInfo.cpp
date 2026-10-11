@@ -48,8 +48,12 @@ getCheckedX86IdentityCxxThrowInfo(const BinaryImage &Img, va_t Address) {
   if (!Catchable || (readLE<uint32_t>(Catchable) & ~1u) ||
       readLE<int32_t>(Catchable + 8) != 0 ||
       readLE<int32_t>(Catchable + 12) != -1 ||
-      readLE<int32_t>(Catchable + 16) != 0 ||
-      readLE<uint32_t>(Catchable + 24) != 0)
+      readLE<int32_t>(Catchable + 16) != 0)
+    return std::nullopt;
+  Result.CopyConstructorVA = readLE<uint32_t>(Catchable + 24);
+  if (Result.CopyConstructorVA &&
+      (readLE<uint32_t>(Catchable) != 0 ||
+       !Img.isCodeAddress(Result.CopyConstructorVA)))
     return std::nullopt;
   Result.ObjectSize = readLE<uint32_t>(Catchable + 20);
   Result.TypeDescriptorVA = readLE<uint32_t>(Catchable + 4);
@@ -95,7 +99,8 @@ getCheckedX86IdentityCxxThrowInfo(const BinaryImage &Img, va_t Address) {
 std::optional<X86SimpleCxxThrowInfo>
 getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address) {
   auto Info = getCheckedX86IdentityCxxThrowInfo(Img, Address);
-  return Info && !Info->DestructorVA ? Info : std::nullopt;
+  return Info && !Info->DestructorVA && !Info->CopyConstructorVA ? Info
+                                                                 : std::nullopt;
 }
 
 } // namespace neverd::coff_loader

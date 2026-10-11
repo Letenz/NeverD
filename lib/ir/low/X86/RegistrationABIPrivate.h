@@ -22,6 +22,7 @@ struct ImageFrameEffects {
   std::set<std::pair<va_t, va_t>> CallerPCWrites;
   std::set<std::pair<int32_t, int32_t>> ECXReads;
   std::set<std::pair<int32_t, int32_t>> ECXWrites;
+  std::set<std::pair<int32_t, int32_t>> CopySourceReads;
 };
 
 template <typename Set, typename Vector>
@@ -69,7 +70,13 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            bool BorrowECX = false,
                            RegistrationThrowCalleeABI *ThrowProof = nullptr,
                            bool *IndependentScalarReturn = nullptr,
-                           bool DiscardReturnValue = false);
+                           bool DiscardReturnValue = false,
+                           uint32_t CopyObjectSize = 0);
+
+std::optional<RegistrationLeafCalleeABI> checkedLeafCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t &Work,
+    RegistrationLeafResult ResultKind, uint32_t CopyObjectSize = 0,
+    std::vector<RegistrationObjectExtent> *CopySource = nullptr);
 
 } // namespace neverd::registration_abi
 

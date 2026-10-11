@@ -66,7 +66,8 @@ def validate_search_context(receipt, case):
     return context
 
 
-def observe(path, case, route, receipt, launcher, env, timeout, *, expected_lifetime=None):
+def observe(path, case, route, receipt, launcher, env, timeout, *,
+            expected_lifetime=None, expected_copy=None):
     context = validate_search_context(receipt, case)
     rethrow, secondary = context["rethrow_search"], context["secondary_search"]
     expected = ((39, 28, 39, 39, 18, 39, 1, 12) if rethrow else
@@ -75,6 +76,7 @@ def observe(path, case, route, receipt, launcher, env, timeout, *, expected_life
     return observe_catches(path, case, route, receipt, launcher, env, timeout,
                            expected_values=expected,
                            expected_lifetime=expected_lifetime,
+                           expected_copy=expected_copy,
                            expected_cleanup=(0, 53, 0) if context["catch_cleanup"] else None)
 
 
@@ -125,12 +127,18 @@ def source_profile(name):
         else:
             from windows_registration_destructors import profile
         return profile(validate_decompilation)
+    if name == "copies":
+        if __package__:
+            from .windows_registration_copies import profile
+        else:
+            from windows_registration_copies import profile
+        return profile(validate_decompilation)
     raise ValueError("unknown nested source profile")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("nested", "objects", "destructors"), default="nested")
+    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "copies"), default="nested")
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--runtime-libs", type=Path, required=True)

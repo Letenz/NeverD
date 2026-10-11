@@ -99,9 +99,16 @@ et appels throw des agrégats inconnus.
 Un destructeur optionnel exige une preuve LowIR indépendante : une fonction feuille qui
 retourne, avec pile privée et accès ECX bornés par l’objet. Son code et ses effets mémoire
 font partie du contrat conservé. Les cas O0/O1 vérifient le nombre, l’ordre et le contenu
-des objets détruits, y compris les relances et deux reconstructions. Les constructeurs de
-copie non triviaux, les conversions et les graphes généraux d’appels des destructeurs
-restent exclus.
+des objets détruits, y compris les relances et deux reconstructions.
+
+Un constructeur de copie non trivial peut être reconstruit avec une preuve LowIR séparant
+la destination ECX de la source passée sur la pile. La source reste en lecture seule ;
+les accès sont bornés, chaque retour initialise toute la destination et utilise `RET 4`.
+Les fuites de pointeurs, l’observation de l’appelant CRT et les appels non prouvés sont refusés.
+Les cas O0/O1 vérifient quatre copies et douze destructions par exécution sur deux générations.
+Les agrégats inconnus conservent l’appel throw et l’initialisation d’origine ; le RTTI ne
+justifie pas `throw Type()`. Les graphes généraux de construction, conversions, copies de
+bases virtuelles et graphes généraux de destruction restent exclus.
 
 ## Contrat IR
 

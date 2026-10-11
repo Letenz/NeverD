@@ -23,41 +23,50 @@ getCheckedX86RegistrationThrowObjectABI(const BinaryImage &Image, va_t Address,
   if (!Info)
     return std::nullopt;
   RegistrationThrowObjectABI Result{std::move(*Info), std::nullopt};
-  if (!Result.Info.DestructorVA)
-    return Result;
-  auto Destructor = getCheckedX86RegistrationLeafCalleeABI(
-      Image, Result.Info.DestructorVA, &Work,
-      RegistrationLeafResult::Discarded);
-  if (!Destructor || Destructor->StackPopBytes ||
-      !Destructor->CallerPCWrites.empty())
-    return std::nullopt;
-  for (const auto &Range : Destructor->CodeRanges) {
-    const auto *Owner = Image.getSegmentFor(Range.Begin);
-    if (!registration_abi::chargeCalleeWork(Work, 1) || !Owner ||
-        !Owner->isReadable() || !Owner->isExecutable() ||
-        (Owner->isWritable() && !Owner->ReadOnlyAfterRelocations) ||
-        Range.End - Owner->VA > Owner->Size)
+  if (Result.Info.DestructorVA) {
+    Result.Destructor = getCheckedX86RegistrationLeafCalleeABI(
+        Image, Result.Info.DestructorVA, &Work,
+        RegistrationLeafResult::Discarded);
+    if (!Result.Destructor || Result.Destructor->StackPopBytes ||
+        !Result.Destructor->CallerPCWrites.empty())
       return std::nullopt;
   }
-  for (const auto *Ranges : {&Destructor->ECXReads, &Destructor->ECXWrites})
-    for (const auto &Range : *Ranges)
-      if (!registration_abi::chargeCalleeWork(Work, 1) || Range.Begin < 0 ||
-          Range.End <= Range.Begin ||
-          uint32_t(Range.End) > Result.Info.ObjectSize)
-        return std::nullopt;
-  for (const auto &Write : Destructor->ImageWrites) {
-    const auto *Owner = Image.getSegmentFor(Write.Begin);
-    if (!registration_abi::chargeCalleeWork(
-            Work, Result.Info.ReadOnlyRanges.size() + 1) ||
-        !Owner || !Owner->isWritable() || Owner->isExecutable() ||
-        Owner->ReadOnlyAfterRelocations ||
-        Write.overlaps(Result.Info.TypeDescriptorRange))
+  if (Result.Info.CopyConstructorVA) {
+    Result.CopyConstructor = getCheckedX86RegistrationCopyCalleeABI(
+        Image, Result.Info.CopyConstructorVA, Result.Info.ObjectSize, &Work);
+    if (!Result.CopyConstructor)
       return std::nullopt;
-    for (const auto &Range : Result.Info.ReadOnlyRanges)
-      if (Write.overlaps(Range))
-        return std::nullopt;
   }
-  Result.Destructor = std::move(Destructor);
+  for (const auto *Callback : Result.callbacks()) {
+    if (!Callback)
+      continue;
+    for (const auto &Range : Callback->CodeRanges) {
+      const auto *Owner = Image.getSegmentFor(Range.Begin);
+      if (!registration_abi::chargeCalleeWork(Work, 1) || !Owner ||
+          !Owner->isReadable() || !Owner->isExecutable() ||
+          (Owner->isWritable() && !Owner->ReadOnlyAfterRelocations) ||
+          Range.End - Owner->VA > Owner->Size)
+        return std::nullopt;
+    }
+    for (const auto *Ranges : {&Callback->ECXReads, &Callback->ECXWrites})
+      for (const auto &Range : *Ranges)
+        if (!registration_abi::chargeCalleeWork(Work, 1) || Range.Begin < 0 ||
+            Range.End <= Range.Begin ||
+            uint32_t(Range.End) > Result.Info.ObjectSize)
+          return std::nullopt;
+    for (const auto &Write : Callback->ImageWrites) {
+      const auto *Owner = Image.getSegmentFor(Write.Begin);
+      if (!registration_abi::chargeCalleeWork(
+              Work, Result.Info.ReadOnlyRanges.size() + 1) ||
+          !Owner || !Owner->isWritable() || Owner->isExecutable() ||
+          Owner->ReadOnlyAfterRelocations ||
+          Write.overlaps(Result.Info.TypeDescriptorRange))
+        return std::nullopt;
+      for (const auto &Range : Result.Info.ReadOnlyRanges)
+        if (Write.overlaps(Range))
+          return std::nullopt;
+    }
+  }
   return Result;
 }
 } // namespace neverd

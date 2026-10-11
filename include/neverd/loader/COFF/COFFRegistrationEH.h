@@ -98,15 +98,16 @@ getCheckedX86RegistrationPointerRoles(const BinaryImage &Img);
 std::optional<std::pair<va_t, va_t>>
 getCheckedX86SafeSEHTablePointer(const BinaryImage &Img);
 
-/// Checked PE32 throw metadata with one scalar or trivially copied object,
-/// no copy/forwarding callback and no pointer adjustment. The three
+/// Checked PE32 throw metadata with one directly catchable type,
+/// no forwarding callback and no pointer adjustment. The three
 /// metadata records must be immutable mapped data. TypeDescriptor is retained
 /// by identity; it does not supply a guessed C++ type or object layout. A
-/// destructor address is decoded separately from its ABI and memory effects.
+/// runtime callback address is decoded separately from its ABI and effects.
 struct X86IdentityCxxThrowInfo {
   va_t Address = InvalidVA;
   va_t TypeDescriptorVA = InvalidVA;
   va_t DestructorVA = 0;
+  va_t CopyConstructorVA = 0;
   uint32_t Attributes = 0;
   uint32_t ObjectSize = 0;
   std::vector<ExceptionAddressRange> ReadOnlyRanges;
