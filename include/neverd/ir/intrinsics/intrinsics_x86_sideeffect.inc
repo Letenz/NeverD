@@ -221,3 +221,5 @@ SIDEEFFECT(Intrinsic::DebugService);
 SIDEEFFECT(Intrinsic::X86F16CState);
 SIDEEFFECT(Intrinsic::X86F16CReadState);
 SIDEEFFECT(Intrinsic::X86F16CStoreState);
+SIDEEFFECT(Intrinsic::X86FPComiState);
+SIDEEFFECT(Intrinsic::X86FPComiMemoryState);

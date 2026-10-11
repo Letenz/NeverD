@@ -32,6 +32,21 @@ inline constexpr char X86FPStateRoundMemoryConstraints[] = "=&x,r,r,~{memory}";
 inline constexpr char X86FPApprox12ValueConstraints[] = "=&x,x,~{memory}";
 inline constexpr char X86FPApprox12MemoryConstraints[] = "=&x,r,~{memory}";
 
+inline const char *x86FPComiConstraints(bool Memory) {
+  return Memory ? "=&{ax},x,r,r,~{memory},~{flags}"
+                : "=&{ax},x,x,r,~{memory},~{flags}";
+}
+inline std::string x86FPComiAsm(unsigned Layout, bool Memory) {
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  return "ldmxcsr ($3)\n\t" +
+         std::string(x86FPComiMnemonic(x86FPRoundStateControl(Layout))) + " " +
+         (Memory ? std::string(Segment) + "($2)" : "$2") +
+         ",$1\n\tlahf\n\tmovzbl %ah,%eax\n\tstmxcsr ($3)";
+}
+
 inline llvm::Type *x86FPArithStateLLVMType(llvm::LLVMContext &Context,
                                            unsigned Layout) {
   const unsigned Control = x86FPArithStateControl(Layout);
@@ -241,6 +256,34 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     return Value->getType()->isPointerTy() &&
            Value->getType()->getPointerAddressSpace() == 0;
   };
+  if (Call.arg_size() == 3 && Call.getType()->isIntegerTy(32) &&
+      PointerIsDefault(Call.getArgOperand(2)))
+    for (unsigned Control = 0; Control < 8; ++Control) {
+      const unsigned Bytes = x86FPComiElementBytes(Control);
+      auto *Type = Bytes == 4 ? llvm::Type::getFloatTy(Call.getContext())
+                              : llvm::Type::getDoubleTy(Call.getContext());
+      if (Call.getArgOperand(0)->getType() != Type)
+        continue;
+      for (bool Memory : {false, true})
+        for (auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          if (!Memory && Space != NdMemoryAddressSpace::Default)
+            continue;
+          const unsigned Layout =
+              x86FPRoundStateLayout(Bytes, Control, 0, Space);
+          const auto *Input = Call.getArgOperand(1)->getType();
+          if ((Memory ? Input->isPointerTy() &&
+                            Input->getPointerAddressSpace() ==
+                                llvmX86MemoryAddressSpace(Space)
+                      : Input == Type) &&
+              Asm->getConstraintString() == x86FPComiConstraints(Memory) &&
+              Asm->getAsmString() == x86FPComiAsm(Layout, Memory))
+            return std::pair{Memory ? Intrinsic::X86FPComiMemoryState
+                                    : Intrinsic::X86FPComiState,
+                             Layout};
+        }
+    }
   for (Intrinsic Id : {Intrinsic::X86F16CState, Intrinsic::X86F16CReadState,
                        Intrinsic::X86F16CStoreState}) {
     const bool Store = Id == Intrinsic::X86F16CStoreState,

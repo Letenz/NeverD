@@ -246,3 +246,5 @@ C(Intrinsic::WriteCr4, "__writecr4");
 C(Intrinsic::WriteCr8, "__writecr8");
 C(Intrinsic::ReadDr, "__readdr");
 C(Intrinsic::WriteDr, "__writedr");
+C(Intrinsic::X86FPComiState, "neverd_x86_comi_state");
+C(Intrinsic::X86FPComiMemoryState, "neverd_x86_comi_memory_state");
