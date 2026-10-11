@@ -3341,10 +3341,20 @@ their replay tools validate the identical files with Wine or native Windows.
 `RegistrationThrowObject.*` rejects out-of-bounds effects, escapes, CRT caller
 observations, mutable code, metadata writes, unchecked calls and exhausted
 budgets. It also retains helper and destructor code in either address order.
-`SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` compiles and
-executes the C/C++ views against an independent C callee: a C declaration with
-unknown parameters cannot become a zero-argument C++ prototype. Its C++ ellipsis
-preserves default promotions and does not grant a native variadic ABI contract.
+`SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` checks the
+frontend IR argument types for the C/C++ views on every host: a C declaration
+with unknown parameters cannot become a zero-argument C++ prototype. Both views
+execute against an independent C callee where the physical ABIs agree. Darwin
+AArch64 executes the C view and checks the C++ view's promoted IR types, because
+its fully variadic and fixed C ABIs differ. The provider uses the exact assembler
+label on Mach-O. The source ellipsis does not grant a native variadic ABI contract.
+
+`NeverDLiftTest.HostHalfFMAProviderMatchesIndependentIEEEOracle` checks the
+test-only binary16 FMA provider against APFloat for 10,936 edge and randomized
+triples at O0/O2. `AArch64_FP.HalfPrecisionArithmeticExecutesThroughHighC` uses
+that provider when an older host library lacks `fmaf16`; its expected values
+also come from APFloat. This fixture proves default nearest-even execution,
+without granting a product floating-environment or other rounding-mode contract.
 
 The `copies` source and relift profiles extend that matrix with nontrivial CRT
 copy callbacks for both records. Each run checks four copies and twelve

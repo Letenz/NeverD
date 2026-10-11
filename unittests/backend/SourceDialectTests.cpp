@@ -12,6 +12,7 @@
 #include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/SymbolSpelling.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -852,7 +853,11 @@ int main(void) {
   {
     llvm::raw_fd_ostream OS(Provider, EC);
     ASSERT_FALSE(EC);
-    OS << "int native_call(int value, double fraction, signed char *pointer) "
+    // The source's explicit assembler label is exact on Mach-O as well.
+    // An ordinary definition would otherwise acquire the platform prefix.
+    OS << "int native_call(int, double, signed char *) "
+          "__asm__(\"native_call\");\n"
+          "int native_call(int value, double fraction, signed char *pointer) "
           "{\n"
           "  return value != -7 || fraction != 1.25 || *pointer != -7;\n}\n";
   }
@@ -868,6 +873,30 @@ int main(void) {
       ASSERT_FALSE(EC);
       OS << (IsCpp ? Cpp.Text : C.Text);
     }
+    // Check the actual frontend argument types on every host. Darwin AArch64
+    // has different fixed and variadic physical ABIs; the C++ ellipsis is a
+    // source view and cannot authorize a call to the fixed C provider there.
+    llvm::SmallString<128> IR(Dir);
+    llvm::sys::path::append(IR, IsCpp ? "source-cpp.ll" : "source-c.ll");
+    auto CompiledIR = run(Clang,
+                          {IsCpp ? "-std=c++17" : "-std=c11", "-O0", "-S",
+                           "-emit-llvm", File, "-o", IR},
+                          Dir);
+    ASSERT_TRUE(bool(CompiledIR)) << llvm::toString(CompiledIR.takeError());
+    auto Buffer = llvm::MemoryBuffer::getFile(IR);
+    ASSERT_TRUE(bool(Buffer));
+    bool Promoted = false;
+    llvm::SmallVector<llvm::StringRef> Lines;
+    Buffer.get()->getBuffer().split(Lines, '\n');
+    for (const auto Line : Lines)
+      if (Line.contains("call ") && Line.contains("native_call"))
+        Promoted |= Line.contains("i32 ") && Line.contains("double ") &&
+                    Line.contains("ptr ");
+    EXPECT_TRUE(Promoted) << Buffer.get()->getBuffer().str();
+#if defined(__APPLE__) && defined(__aarch64__)
+    if (IsCpp)
+      continue;
+#endif
     auto Built = run(
         Clang,
         {IsCpp ? "-std=c++17" : "-std=c11", "-O1", "-o", Binary, File, Object},

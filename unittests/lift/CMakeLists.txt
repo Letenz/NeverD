@@ -183,6 +183,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjCBlockCallHintTests.cpp
   core/HighFrameTemporaryTests.cpp
   core/HighX86CallSetupTests.cpp
+  core/HalfFMAHostTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/LowZeroIdiomTests.cpp
   ../backend/HighSwiftEmitterTests.cpp
