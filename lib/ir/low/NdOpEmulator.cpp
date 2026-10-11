@@ -488,6 +488,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
       switch (Id) {
       case Intrinsic::X86FPRoundMemoryState:
       case Intrinsic::X86FPScalarConvertMemoryState:
+      case Intrinsic::X86FPPackedConvertMemoryState:
       case Intrinsic::X86FPApprox12MemoryState:
       case Intrinsic::X86FPArithMemoryState:
         return executeX86ScalarFPState(Op);

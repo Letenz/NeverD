@@ -8,6 +8,7 @@
 #ifndef NEVERD_IR_X86FPSTATE_H
 #define NEVERD_IR_X86FPSTATE_H
 
+#include "neverd/ir/X86FPPackedConvertState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include <string>
@@ -125,6 +126,7 @@ constexpr bool isX86FPStateMemoryIntrinsic(Intrinsic Id) {
   return Id == Intrinsic::X86FPRoundMemoryState ||
          Id == Intrinsic::X86FPApprox12MemoryState ||
          Id == Intrinsic::X86FPScalarConvertMemoryState ||
+         Id == Intrinsic::X86FPPackedConvertMemoryState ||
          Id == Intrinsic::X86FPArithMemoryState ||
          Id == Intrinsic::X86FPFmaMemoryState;
 }
@@ -156,6 +158,7 @@ constexpr bool isX86ScalarFPStateIntrinsic(Intrinsic Id) {
 constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
   return isX86ScalarFPStateIntrinsic(Id) || isX86FPApprox12Intrinsic(Id) ||
          isX86FPScalarConvertStateIntrinsic(Id) ||
+         isX86FPPackedConvertStateIntrinsic(Id) ||
          isX86FPArithStateIntrinsic(Id) || Id == Intrinsic::X86FPRoundState ||
          Id == Intrinsic::X86FPRoundMemoryState ||
          Id == Intrinsic::X86FPCvtToIntState ||
@@ -320,6 +323,19 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
            (!x86FPArithStateIsUnary(Shape.Control) ||
             Shape.ArithmeticLeftIsZero);
   }
+  if (isX86FPPackedConvertStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
+    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 4 &&
+           Shape.OutputIsWritable && Shape.OperandsAreScalar &&
+           Shape.ControlIsConst && Shape.ControlSize == 1 &&
+           x86FPPackedConvertControlIsValid(Shape.Control) &&
+           Shape.StateSize == 4 &&
+           Shape.OutputSize ==
+               x86FPPackedConvertDestinationBytes(Shape.Control) + 4 &&
+           (Memory ? Shape.AddressIsScalar && Shape.LeftSize == 8
+                   : Shape.LeftSize ==
+                         x86FPPackedConvertSourceBytes(Shape.Control));
+  }
   if (isX86FPScalarConvertStateIntrinsic(Id)) {
     const bool Memory = Id == Intrinsic::X86FPScalarConvertMemoryState;
     return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 4 &&
@@ -456,6 +472,8 @@ constexpr const char *x86FPRoundStateMnemonic(unsigned Layout) {
   return x86FPRoundStateElementBytes(Control) == 8 ? "roundpd" : "roundps";
 }
 constexpr unsigned x86FPStateDestinationBytes(Intrinsic Id, unsigned Layout) {
+  if (isX86FPPackedConvertStateIntrinsic(Id))
+    return x86FPPackedConvertDestinationBytes((Layout >> 8) & 0xff);
   return isX86FPScalarConvertStateIntrinsic(Id)
              ? x86FPScalarConvertDestinationBytes((Layout >> 8) & 0xff)
          : isX86FPConversionStateIntrinsic(Id) ? Layout >> 8
@@ -463,6 +481,9 @@ constexpr unsigned x86FPStateDestinationBytes(Intrinsic Id, unsigned Layout) {
 }
 constexpr unsigned x86FPStateHelperLayout(Intrinsic Id,
                                           const X86FPStateShape &Shape) {
+  if (isX86FPPackedConvertStateIntrinsic(Id))
+    return x86FPRoundStateLayout(x86FPPackedConvertSourceBytes(Shape.Control),
+                                 Shape.Control, 0, Shape.MemoryAddressSpace);
   return isX86FPArithStateIntrinsic(Id)
              ? x86FPRoundStateLayout(Shape.OutputSize - 4, Shape.Control, 0,
                                      Shape.MemoryAddressSpace)

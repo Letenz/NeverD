@@ -1579,7 +1579,8 @@ std::string renderX86TypedIntrinsicCall(
     const bool Approx12 = isX86FPApprox12Intrinsic(Call.IntrinsicId);
     const bool Arithmetic = isX86FPArithStateIntrinsic(Call.IntrinsicId);
     const bool ScalarConvert =
-        isX86FPScalarConvertStateIntrinsic(Call.IntrinsicId);
+        isX86FPScalarConvertStateIntrinsic(Call.IntrinsicId) ||
+        isX86FPPackedConvertStateIntrinsic(Call.IntrinsicId);
     const bool Fma = isX86FPFmaStateIntrinsic(Call.IntrinsicId);
     const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
     const unsigned Operands =

@@ -1767,8 +1767,24 @@ the shared SIMD converter: input exceptions precede newly raised result
 exceptions, and unsuccessful completion leaves numerical output untouched.
 IEEE bit arithmetic supplements APFloat's narrowing status for directed finite
 overflow and SSE tininess before denormalization; FTZ remains per active lane.
-Unsigned, packed, EVEX, F16C and x87 conversions retain their separate contracts.
+Unsigned, EVEX, F16C and x87 conversions retain their separate contracts.
 Swift refuses this completion surface until it has an equivalent lowering.
+
+SSE/VEX CVTDQ2PS/PD, CVTPS2PD/CVTPD2PS and CVT(T)PS/PD2DQ share
+`X86FPPackedConvertState` and `X86FPPackedConvertMemoryState`. The packed control
+owner selects numerical kind, VEX identity and vector length; rounded and
+truncated integer conversions remain distinct. Logical source bytes, source
+register width and padded destination bytes are separate facts: m64/low64
+widening uses an initialized physical XMM carrier, while VEX memory narrowing
+retains the encoded 128/256-bit source width in assembly. One completion owns
+all active lanes, outgoing MXCSR and the complete source access. Native LLVM
+and both C routes execute the original operation; concrete evaluation reuses
+the common SIMD converter. Only legacy m128 forms require 16-byte alignment;
+widening m64 and VEX sources remain unaligned. No packed slice establishes a
+scalar FP return. Incoming stack homes retain the packed memory contract and
+every source byte, independently of output width. Unsupported masks, broadcasts,
+SAE, embedded rounding and altered decoded metadata are refused. This does not
+extend MMX, unsigned, EVEX, F16C or x87 completion.
 
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects

@@ -191,6 +191,8 @@ SIDEEFFECT(Intrinsic::X86FPArithState);
 SIDEEFFECT(Intrinsic::X86FPArithMemoryState);
 SIDEEFFECT(Intrinsic::X86FPScalarConvertState);
 SIDEEFFECT(Intrinsic::X86FPScalarConvertMemoryState);
+SIDEEFFECT(Intrinsic::X86FPPackedConvertState);
+SIDEEFFECT(Intrinsic::X86FPPackedConvertMemoryState);
 SIDEEFFECT(Intrinsic::X86FPExtract);
 SIDEEFFECT(Intrinsic::X86FPRange);
 SIDEEFFECT(Intrinsic::X86FPFixup);

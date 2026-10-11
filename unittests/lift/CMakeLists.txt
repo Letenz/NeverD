@@ -3723,6 +3723,11 @@ add_neverd_unittest(NeverDX86FPScalarConvertStateTests
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPScalarConvertStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPPackedConvertStateTests
+  x86_64/X86_64_FPPackedConvertStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPPackedConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)

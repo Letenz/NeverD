@@ -414,6 +414,48 @@ TEST(MedCallingConvFPStack,
     }
 }
 
+TEST(MedCallingConvFPStack,
+     PackedConversionRetainsEverySourceHomeAndMemoryContract) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 32; ++Control) {
+      if (!x86FPPackedConvertControlIsValid(Control))
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86FPPackedConvertDestinationBytes(Control) + 4,
+                         Arch::X64);
+      Read.addInput(MedVar::makeConst(
+          unsigned(Intrinsic::X86FPPackedConvertMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0x1f80, 4));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      EXPECT_EQ(F.Blocks[0].Ops.back().Inputs[0].ConstVal,
+                Read.Inputs[0].ConstVal);
+      const unsigned Slots = x86FPPackedConvertSourceBytes(Control) / 8;
+      ASSERT_EQ(F.MutableStackParamHomes.size(), Slots);
+      for (unsigned Slot = 0; Slot < Slots; ++Slot) {
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].first,
+                  int(Layout.Registers.size() + Slot));
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].second,
+                  Layout.EntryStackBase + int64_t(Slot * 8));
+      }
+    }
+}
+
 TEST(MedCallingConvFPStack, MemoryOwnershipAndMalformedReadsAreConservative) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (unsigned Mode = 0; Mode < 8; ++Mode) {

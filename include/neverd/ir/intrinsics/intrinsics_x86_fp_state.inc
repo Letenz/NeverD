@@ -12,3 +12,5 @@ X86ReadMXCSR, X86WriteMXCSR, X86FPAddState, X86FPSubState, X86FPMulState,
     X86FPArithState, X86FPArithMemoryState,
     // Append-only: signed integer/precision conversion to scalar FP + MXCSR.
     X86FPScalarConvertState, X86FPScalarConvertMemoryState,
+    // SSE/VEX packed conversion owns complete numerical/MXCSR completion.
+    X86FPPackedConvertState, X86FPPackedConvertMemoryState,

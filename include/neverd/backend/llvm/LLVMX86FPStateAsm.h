@@ -15,6 +15,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <algorithm>
 #include <optional>
 #include <string>
 
@@ -155,6 +156,44 @@ inline std::string x86FPScalarConvertAsm(unsigned Layout, bool Memory) {
          ((Control & 8) ? ",$1" : "") + ",$0\n\tstmxcsr ($3)";
 }
 
+inline llvm::Type *x86FPPackedConvertResultType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  const unsigned Kind = Control & 7;
+  llvm::Type *Element =
+      Kind >= 4 ? llvm::Type::getInt32Ty(C)
+      : x86FPPackedConvertDestinationElementBytes(Control) == 8
+          ? llvm::Type::getDoubleTy(C)
+          : llvm::Type::getFloatTy(C);
+  return llvm::FixedVectorType::get(
+      Element,
+      x86FPPackedConvertDestinationBytes(Control) /
+          (Kind >= 4 ? 4 : x86FPPackedConvertDestinationElementBytes(Control)));
+}
+inline llvm::Type *x86FPPackedConvertSourceType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  const unsigned Kind = Control & 7;
+  llvm::Type *Element = Kind < 2 ? llvm::Type::getInt32Ty(C)
+                        : x86FPPackedConvertSourceElementBytes(Control) == 8
+                            ? llvm::Type::getDoubleTy(C)
+                            : llvm::Type::getFloatTy(C);
+  return llvm::FixedVectorType::get(
+      Element, std::max(16u, x86FPPackedConvertSourceBytes(Control)) /
+                   x86FPPackedConvertSourceElementBytes(Control));
+}
+inline const char *x86FPPackedConvertConstraints(bool Memory) {
+  return Memory ? "=&x,r,r,~{memory}" : "=&x,x,r,~{memory}";
+}
+inline std::string x86FPPackedConvertAsm(unsigned Layout, bool Memory) {
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  return "ldmxcsr ($2)\n\t" +
+         x86FPPackedConvertAsmMnemonic((Layout >> 8) & 0xff, Memory) + " " +
+         (Memory ? std::string(Segment) + "($1)" : "$1") +
+         ",$0\n\tstmxcsr ($2)";
+}
+
 /// Only owned, fully typed assembly contracts may acquire FP state source
 /// helpers. A mnemonic alone cannot prove the operand roles or completion.
 inline std::optional<std::pair<Intrinsic, unsigned>>
@@ -169,6 +208,34 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     return Value->getType()->isPointerTy() &&
            Value->getType()->getPointerAddressSpace() == 0;
   };
+  if (Call.arg_size() == 2 && PointerIsDefault(Call.getArgOperand(1)))
+    for (unsigned Control = 0; Control < 32; ++Control) {
+      if (!x86FPPackedConvertControlIsValid(Control) ||
+          Call.getType() !=
+              x86FPPackedConvertResultType(Call.getContext(), Control))
+        continue;
+      for (bool Memory : {false, true})
+        for (auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          if (!Memory && Space != NdMemoryAddressSpace::Default)
+            continue;
+          const auto Layout = x86FPRoundStateLayout(
+              x86FPPackedConvertSourceBytes(Control), Control, 0, Space);
+          const auto *Source = Call.getArgOperand(0)->getType();
+          if ((Memory ? Source->isPointerTy() &&
+                            Source->getPointerAddressSpace() ==
+                                llvmX86MemoryAddressSpace(Space)
+                      : Source == x86FPPackedConvertSourceType(
+                                      Call.getContext(), Control)) &&
+              Asm->getConstraintString() ==
+                  x86FPPackedConvertConstraints(Memory) &&
+              Asm->getAsmString() == x86FPPackedConvertAsm(Layout, Memory))
+            return std::pair{Memory ? Intrinsic::X86FPPackedConvertMemoryState
+                                    : Intrinsic::X86FPPackedConvertState,
+                             Layout};
+        }
+    }
   if (Call.arg_size() == 3)
     for (unsigned Control = 0; Control < 16; ++Control) {
       if (!x86FPScalarConvertControlIsValid(Control))
