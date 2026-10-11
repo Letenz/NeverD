@@ -391,12 +391,21 @@ TEST_P(RAMReservationWriters,
        ScalarStringAndFaultingFrameWritesPublishInterference) {
   for (auto Bytes : {llvm::ArrayRef(StoreX64), llvm::ArrayRef(StringStoreX64),
                      llvm::ArrayRef(FaultingEnterX64)}) {
+    const uint64_t WrittenSize =
+        Bytes == llvm::ArrayRef(StringStoreX64) ? 1 : WordBytes;
+    const uint64_t StoredValue =
+        Bytes == llvm::ArrayRef(FaultingEnterX64) ? Unmapped + WordBytes
+        : Bytes == llvm::ArrayRef(StringStoreX64) ? uint8_t(BeforeWord)
+                                                  : BeforeWord;
+    SCOPED_TRACE(WrittenSize);
     for (auto Contract :
          {ExecutionContract::CheckedX64, ExecutionContract::Legacy}) {
+      SCOPED_TRACE(unsigned(Contract));
       if (Contract == ExecutionContract::Legacy &&
           GetParam().Backend != ExecutionBackendKind::Unicorn)
         continue;
       for (bool Cancel : {false, true}) {
+        SCOPED_TRACE(Cancel);
         auto Projection = llvm::cantFail(MemoryProjection::create(Limit));
         auto Space = Projection->addressSpace();
         llvm::cantFail(Space->map(Data, memory::PageSize, Read | Write));
@@ -448,8 +457,16 @@ TEST_P(RAMReservationWriters,
         else
           EXPECT_FALSE(
               llvm::cantFail(Witness.intact())); // Opaque stays opaque.
+        // Checked observers cancel before commit. The software contract may
+        // finish its current store after stop(); its AFTER event must describe
+        // those real bytes, rather than treating the stop flag as rollback.
+        const bool Committed = !Cancel || Contract == ExecutionContract::Legacy;
+        EXPECT_EQ(llvm::cantFail(Space->readInteger(Data, WordBytes)),
+                  Committed ? StoredValue : 0);
         for (uint64_t I = 0; I < WordBytes; ++I)
-          EXPECT_EQ(Initialization->initialized(I), !Cancel) << I;
+          EXPECT_EQ(Initialization->initialized(I),
+                    Committed && I < WrittenSize)
+              << I;
         llvm::cantFail(Projection->beginRun(RAMWriteTracking::Declared));
         EXPECT_EQ(llvm::cantFail(Projection->reservationMatches(
                       Reservation, Data, WordBytes)),
