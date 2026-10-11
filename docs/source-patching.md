@@ -261,6 +261,11 @@ All 3,216 composed semantic cases across four architectures and three formats
 passed at this checkpoint, with no skips. These checks cover the shared rewrite
 pipeline and do not extend the runtime-verified source profiles.
 
+After incorporating the later C-output changes through `a5f9115d3`, the final
+build repeated the 475 focused executions with the same 473 passes and two
+Linux-only skips. All five incoming image-table and signed-comparison tests
+also passed. The composed matrix above was run at the earlier checkpoint.
+
 The final CLI's Clang IR and GCC object replacements each passed seven Linux
 C++ exception scenarios in Docker. The GCC input retains stack protection.
 The PE FH3 runtime test passed its seven scenarios under Wine. These remain
