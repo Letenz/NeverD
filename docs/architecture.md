@@ -294,6 +294,12 @@ destinations after an ordinary no-return call.
 Registration-state transfer also consumes the exact unconditional no-return
 instruction boundary. Missing call-frame effects still refuse memory borrows,
 but cannot recreate that call's ordinary continuation or suppress its handlers.
+Exact registration-frame accesses search the ordered cell map only for
+overlapping four-byte cells. The cumulative work budget charges the bounded
+lookup and possible insertions; it does not charge unrelated local slots for
+every access. Unknown addresses still inspect all possible frame coordinates.
+Partial writes retain pointer taint in untouched bytes, and releasing or
+merging a frame still processes its full state.
 PE32 EH3 local unwinds have a separate runtime contract. Current strong
 `_local_unwind2` imports and immutable IAT veneers identify the protocol; the
 state solver binds its actual registration pointer and target level at the
@@ -305,6 +311,20 @@ SEH filter and finally entries share the private invocation-stack coordinate
 used by C++ catches. A finally may save registers and allocate locals below
 its runtime return PC; loads require initialized bytes in the current
 allocation, and releasing stack storage invalidates its saved identities.
+SEH state propagation keeps the callback entry and search/unwind mode as an
+activation key. Different callbacks can share decoded tail blocks without
+merging their private stacks. Every activation must restore its own stack and
+parent EBP; shared source-value projections intersect observations from all
+activations, including scalar and unknown observations. Publication unions
+reaching levels only after those independent transfers. An ordinary parent
+entry into callback code still requires a separate invocation-exit contract;
+moving ESP alone does not provide one. All activations share the original
+cumulative work budget.
+Registration no-return annotations and ordinary-edge removal bind the same
+current call occurrence, target, instruction extent and operation range. A
+conditional or malformed instruction cannot reuse that receipt. A separate
+decoded no-return boundary remains authoritative when memory-effect evidence
+is unavailable; it does not grant a restored-frame or native-output proof.
 Only established parent addresses can modify parent locals, so a callback
 stack pointer cannot escape there or alias a parent slot at the same offset.
 SEH and C++ share the check for a final, decoded, unconditional callback
@@ -547,13 +567,26 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 explicit primitive passes using the existing binding/value/effect owners;
 `Primitive` emits closed values, `Validate` checks SameValue and the complete
 unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`Rename` selects complete function-local bindings and collision-free names;
+`RenameValidate` reparses and compares all syntax, scope ownership, declarations
+and reference resolution using the same lexical owner. Non-simple parameter
+environments and name-sensitive declarations remain excluded. Pass/profile
+selection has one shared authority; primitive identities and serialized receipts
+remain unchanged. Rename evidence does not borrow primitive SameValue claims.
+`Branches` selects proven Boolean expression operands through the existing
+value/effect owners and excludes declaration/scope/await subtrees. Its validator
+checks an explicit GetValue sequence, exact retained syntax and the surviving
+reference projection against the shared lexical owner. No duplicate resolver
+or general truthiness evaluator is introduced. See the
+[Boolean branch profile](web-boolean-branches-profile.md).
 `SessionRewrite` retains at most two private results and publishes metadata.
 Its raw local export requires a pass/source/revision-bound receipt;
 `rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
 This transaction does not change Bun export's retained-partial-evidence policy.
 Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
 claim source-reflection or whole-program equivalence. See the
-[primitive rewrite profile](web-source-rewrite-profile.md).
+[primitive rewrite profile](web-source-rewrite-profile.md) and
+[lexical rename profile](web-scope-rename-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -566,6 +599,20 @@ JS/assets through `ArtifactView`. Caches and snapshots remain opaque; native
 activation/version authentication are not inferred. Asset keys never establish
 a filesystem namespace. Package analysis of an explicitly selected asset uses
 one document with no directory inventory. See the [SEA profile](web-sea-profile.md).
+`nexe/Reader` owns explicit EOF envelope framing and complete byte partitions;
+`nexe/Index` owns bounded first-shim JSON, private portable paths and deduplicated
+range hashing. `SessionNexe` publishes immutable occurrences only after complete
+admission. `ArtifactView` composes nested coordinates and retains one namespace
+per extraction; typed package ancestry establishes outer delivery only. The
+opaque prefix has no implicit native/signature/runtime validation. See the
+[nexe profile](web-nexe-profile.md).
+`pkg/Locator` independently owns fixed loader declarations, `pkg/Index` owns
+typed VFS/stat admission and private snapshot paths, and `pkg/Reader` owns
+complete partitions and deduplicated store hashing. `SessionPkg` publishes
+only admitted occurrences. Content, opaque V8 caches and private metadata have
+distinct roles; source/cache equivalence and symlink resolution remain unknown.
+`ArtifactView` retains occurrence namespaces and nested coordinates for shared
+consumers. See the [pkg profile](web-pkg-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -573,7 +620,7 @@ comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
 `packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
 consumes shared bindings/module origins/values, and `Package` owns exact
-inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+inventory and retained Bun/SEA/nexe/pkg delivery joins. `Publication` emits metadata;
 the two behavior session adapters own selection, cache and revision boundaries.
 Source ownership, delivery package and declared entry remain distinct.
 `SourceModel::indexSourceDeclarations` supplies the order-independent unique
@@ -581,6 +628,25 @@ binding projection for origins, paths, navigation and bundles; valid class
 outer/inner declarations preserve ambiguity without poisoning other nodes.
 The full binding declaration model stays authoritative. See the
 [Node behavior profile](web-node-behavior-profile.md).
+`packages/install/Command` owns the complete literal Node command subset;
+`Trace` joins the exact package namespace and selected source/behavior models
+and chooses bounded candidate request chains. `Publication` emits fixed metadata.
+`SessionPackageInstall` owns optional selection, paging and its independent
+two-result cache. `SessionPackages` retains the original namespace alongside
+each package result; imports revoke both. Package entry paths share
+`packages/Paths`, while `SourceModules` owns both original ESM links and the
+separate Node candidate adapter using authoritative `SourceOrigins`. No layer
+infers execution or a dependency edge from file association. See the
+[installation trace profile](web-package-install-profile.md).
+`packages/behavior/Diff` owns exact inventory-relative source pairing and
+per-pair syntax-pattern counts; `DiffPublication` emits coverage and original
+occurrence anchors. `Package` retains a bounded internal copy of source
+mode/hash/size and upstream origin/value status from its original typed inputs.
+Comparison neither recomputes source semantics nor assumes the independent
+Node behavior cache exists. `SessionPackageBehaviorDiff` joins exact retained
+before/after selections to the existing package diff and atomically caches
+two results. All adapters use this owner; absent or degraded coverage prevents
+count comparison. See the [comparison profile](web-package-behavior-diff-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
@@ -596,6 +662,24 @@ comparison; `SessionPackageIntegrity` binds selected captured registry/lock
 declarations to selected original artifacts. Archive validation, byte equality,
 publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
+`packages/evidence/Descriptor` owns captured metadata source/time admission.
+`packages/advisories/Reader` retains bounded OSV declarations; `SemVer` and
+`Match` own exact declared npm identity and version membership, including
+unsupported coverage. `Publication` emits fixed states and original anchors.
+`SessionPackageAdvisories` atomically retains imports, shared descriptors and
+explicit match selections under independent session-wide count/byte budgets.
+These metadata owners do not depend on the JS parser and do not alter existing
+inventory or integrity results. All consumers use the same owners; no transport
+fetches a feed or interprets a negative row as package safety. See the
+[advisory profile](web-package-advisory-profile.md).
+`packages/attestations` separates registry, DSSE/statement, SLSA metadata,
+bounded encoding, explicit subject-digest selection and publication.
+`Digest` delegates original-byte comparisons to `PackageIntegrity`;
+`packages/evidence/Publication` owns shared descriptor/time output.
+`SessionPackageAttestations` shares descriptor and retained-byte ceilings with
+advisory imports and keeps four independent original-byte receipts. No metadata
+reader fetches a key or treats subject equality as signature authentication or
+package-inventory binding. See the [attestation profile](web-package-attestation-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
@@ -753,10 +837,17 @@ For a single absolute consumer, a relocation-backed physical run may contain
 unused pointers to other functions. Validate target ownership for every
 admitted selector coordinate before graph growth; an excluded prefix slot
 neither truncates the selector proof nor becomes a local successor.
-The LLVM scalar-offset proof may retry a depth-limited recursive walk with its
-independent closed-value-graph proof. That proof still checks every initializer,
-address provenance, forbidden value and memory source, with its own 512-level
-and 8192-node limits; reaching the first limit is never itself a certificate.
+The LLVM scalar-offset proof reuses completed scalar subgraphs only when no
+step borrowed an active recurrence or frame-memory assumption. Independently
+proven scalar loads qualify, including exact frame reloads whose complete
+sources are independently numeric. An active frame slot/domain or a skipped
+path-local backedge invalidates reuse for every enclosing expression; bounded
+numeric-mask proofs remain a separate cache partition. Recursive paths restore
+their own visited, frame-slot and PHI entries at scope exit, avoiding full path
+copies while keeping sibling operands independent. A depth- or node-limited
+walk may still retry its independent closed-value-graph proof, which checks every
+initializer, address provenance, forbidden value and memory source with its own
+512-level and 8192-node limits. Exhaustion never certifies a result.
 The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
@@ -807,9 +898,18 @@ retain one successful graph with an owned instruction snapshot. Reuse requires
 exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
-under a separate 8 MiB retained-payload allowance. Exact ordered query
-fields, proof limits, output shape, function context and both relocation
-occurrence inventories bind each result. Hits pay the complete cold value
+under a separate 8 MiB retained-payload allowance. Within one read-only target
+role, load-address role or mask-domain invocation, a local scope can reuse its
+validated graph without recopying the instruction snapshot. It is bound to its
+builder and cannot cross instruction, block or storage-owner mutations.
+Each query still compares roots and owned effective edge overrides, including
+temporary and empty overrides, and pays the original snapshot and graph work.
+One scope retains one bounded graph and at most 64 KiB of override keys;
+oversized keys keep the ordinary validation path. Nested queries own separate
+leases, and a new invocation validates its graph in full.
+Exact ordered query fields, proof limits, output shape, function context and
+both relocation occurrence inventories bind each retained value result.
+Hits pay the complete cold value
 charge; a smaller budget runs the normal path. Fixed reconstruction-depth and
 match-work refusals may be retained with the exact result, completion flag and
 feasible mask of each query. A local depth refusal does not suppress independent
@@ -828,6 +928,18 @@ reuse dense block visitation storage while preserving walk order and logical
 work charges. Value and memory reconstruction split their ordered memo indexes
 by block ID, retaining full keys, stable recursive references and the original
 global entry counts used by evidence accounting.
+Affine frame equations are independent of value-query matching modes. A mode
+change retires value and memory results while retaining completed frame facts
+within the same frozen batch. Incomplete reconstruction still clears frame
+equations before the next independent query.
+
+Load-address validation first tries an exact instruction-local ADD producer
+when the LOAD's base is not a SELECT or mask blend. The ordinary value matcher
+must prove its base and index, and the existing copy-chain proof must connect
+its output to the exact LOAD. Only a completed positive proof avoids searching
+unrelated ADDs. Missing or failed local proofs fall back to full-function
+discovery; all queries share the candidate's evidence allowance. Final address,
+selector-coordinate and transactional publication checks remain in place.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -1773,11 +1885,35 @@ prove a saved frame value. `LowSEHFrameProof` owns the all-predecessor
 intersection, including stable loops, independent roots and released stack
 storage. A digest binds every operation, instruction boundary, root and CFG
 edge in that function; changing an earlier block invalidates the receipt.
-The analysis runs once per queried function, within the module evidence budget.
-Shared SSA then checks the call occurrence, parent
-unwind allocation, decoded prologue, converted SP effects and every relevant
-predecessor path. The initial contract requires an ordinary-reachable target;
-cross-funclet frame borrowing and saved frames surviving opaque calls remain
+Caller and callee proofs share one check for complete instruction boundaries,
+nonoverlapping blocks and actual taken/fallthrough successors. Removing both
+sides of an edge or dropping a whole write-containing block cannot turn an
+incomplete graph into a frame proof. Indirect branches require a separate proof
+and remain outside this bounded frame analysis.
+Complete decoded callees can retain saved cells when their concrete
+argument values bound every store and all returns restore the invocation SP
+without changing its physical return PC. The analysis intersects all returning
+paths, validates complete instruction boundaries and both decoded branch
+successors, and discards private callee storage at return. Nested direct calls
+share the same budget and protect every active return PC, including the write
+made by CALL itself. Recursion, more than 16 nested bodies, opaque calls,
+unknown writes, exceptional transfers and independent callee roots refuse the
+proof. A preserved register keeps a frame identity only when both its ABI and
+the inspected return states preserve it. A receipt names all inspected callees,
+including transitive dependencies; shared SSA requires their current
+operation/CFG digests before accepting the frame. Source signatures grant no
+memory effects.
+The analysis runs once per queried function, with a cumulative module work cap
+separate from the address-use receipt limit. Transfers charge the tracked
+register/cell facts as well as operations; joins and dependency hashing also
+consume this cap. Frame-proof exhaustion retains independent roots without
+discarding otherwise complete address-use evidence.
+Shared SSA then checks the call occurrence, parent unwind allocation, decoded
+prologue, converted SP effects and every relevant predecessor path. Certified
+runtime transfers participate in frame-proof reachability even when no ordinary
+edge reaches their target. Such a root receives the established SP and unknown
+volatile registers, with the same offset required by every certified source.
+Cross-funclet frame borrowing and saved frames surviving opaque calls remain
 unsupported until their memory and activation lifetimes can be proved.
 
 LLVMC preserves relocatable constant address arithmetic, and constant
@@ -1813,6 +1949,31 @@ invalid conversions. HighC and the LLVM lowering select that same policy;
 both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
+
+`ir/X86FPComiState.h` owns legacy/VEX COMI and UCOMI flag/MXCSR completion.
+One raw aggregate carries LAHF's defined status byte below outgoing MXCSR;
+it never acquires scalar floating provenance. Source reads and actual compare
+instructions remain inside the native completion scope. Low/Med/High validation,
+LLVM and both C routes retain operand roles, signaling mode and memory spaces.
+Scalar stack-home recovery retains both numerical inputs and the same CSR when
+it replaces an immutable memory source. `ir/X86FPComparison.h` owns each active
+lane's NaN, denormal, DAZ and relation classification for both COMI and existing
+EVEX predicates. Concrete unmasked exceptions publish state but no flag result;
+failed reads publish neither. EVEX COMI/SAE, enabled alignment checking and
+unavailable-feature faults remain outside this completion surface. Swift
+refuses it until it has an equivalent lowering.
+
+`ir/X87Constant.h` owns binary80 constant-ROM values and the bounded explicit
+control-word contracts. `X87ReadControl` imports the actual word at each read;
+`X87WriteControl` commits it, and `X87LoadConstant` retains its selector and
+incoming word. Native LLVM and both C routes execute the original constant
+instruction into raw eighty-bit storage, so Windows binary64 long double
+cannot narrow it. Concrete values round directly from the ROM according to RC,
+independently of PC. Waiting concrete boundaries refuse unknown or pending
+state. These value contracts share the existing CFG stack projection; they do
+not establish complete source TOP/tag/condition-code or fault-order semantics.
+Reserved control fields remain outside concrete admission. Swift refuses this
+completion surface until it has an equivalent lowering.
 
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
@@ -1897,6 +2058,27 @@ scalar FP return. Incoming stack homes retain the packed memory contract and
 every source byte, independently of output width. Unsupported masks, broadcasts,
 SAE, embedded rounding and altered decoded metadata are refused. This does not
 extend MMX, unsigned, EVEX, F16C or x87 completion.
+
+VEX F16C uses `X86F16CState`, `X86F16CReadState` and
+`X86F16CStoreState`. Its single-precision vector width selects the logical
+half source/store extent independently of the padded physical XMM result.
+The canonical VEX owner authenticates raw bytes, immediate, register roles
+and complete memory addressing. Immediate bits 7:3 are ignored; bit 2 selects
+MXCSR rounding. Half widening ignores DAZ and narrowing ignores FTZ.
+LLVM, HighC and LLVMC retain the original conversion inside the incoming CSR
+scope, including Default/FS/GS memory and discarded results. No packed slice
+establishes scalar FP provenance, and ABI recovery never treats a store as a
+source read. Concrete evaluation reuses the F16C numerical primitive and the
+common precision-rounding exponent boundary. Operand exceptions precede
+result exceptions; unsuccessful completion publishes no register result or
+partial memory store. Source-read faults precede conversion. A valid writable
+target retains exact unmasked floating completion. Competing floating and access
+faults at an invalid target do not establish one reproducible fault priority.
+Repeated identical native cross-page stores expose both states of new status
+at the access fault. A failed store with newly raised flags
+therefore invalidates exact MXCSR knowledge rather than fabricating one
+outcome. Successful completion retains exact flags. This does not extend
+EVEX native completion or x87 state; Swift refuses this surface.
 
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
@@ -3137,6 +3319,8 @@ Native `FOP/FIP/FDP` follow the host’s x87 save/restore rules. AMD may clear t
 The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/compacted FP/SSE packets, physical TOP rotation, absent-component init state and atomic validation. WHP uses complete XSAVE APIs, preferring `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` with the older XSAVE APIs as a compatibility path. Legacy individual x87 registers cannot replace complete packets. Non-initial extended components, malformed headers, invalid controls and truncated captures fail explicitly. WHP mapping failures retain HRESULT, GPA and size for diagnosis.
 
 `CheckedX64Instructions.def` admits unsigned `MUL` at 8/16/32/64 bits and `CBW/CWDE/CDQE/CWD/CDQ/CQO` through the existing processor transport. `NeverDX64IntegerTests` uses independent `X64IntegerCases.def` encodings and expected values at both privilege levels: partial-register preservation, 32-bit zero extension, both product halves, defined CF/OF results and unchanged flags for sign extension. Ordinary-RAM multiplication retains whole-span permission checks and read observers; a fault or observer stop preserves implicit output registers and PC. Device operands remain unsupported. These cases also run on checked Unicorn; unavailable native transports skip explicitly.
+
+The same checked x64 instruction inventory admits 16/32/64-bit `BSF` and `BSR`. The selected processor executes the original instruction, including zero-source cases; the ISA layer does not invent a portable destination for an architecturally undefined result. Register and ordinary-RAM sources use the existing full-span access checks and pre-effect observers. Device operands and invalid LOCK forms remain rejected before callbacks or data effects.
 
 `X64BitInstructions.def` admits register and ordinary-RAM `BT/BTS/BTR/BTC` at 16/32/64 bits. A register bit index is signed at the operand width and selects a complete word; an immediate stays within the base word. Address-size wrapping occurs before FS/GS base addition. The processor supplies CF and written values; `RAMTransaction` keeps the result private until observers accept it. Whole-span permission checks cover separate page allocations and aliases. Stops, callback failures and denied pages preserve the original CPU and RAM. LOCK requires natural alignment; modifying MMIO forms require an explicit prepared-atomic provider. `X64BitStringTests.cpp` compares independent encodings with actual x64 host execution and checks negative indices, width truncation, cross-page accesses, cancellation and invalid LOCK forms. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
@@ -4821,7 +5005,7 @@ DarwinFiles owns retained attribute state, initial-object mutation grants, share
 
 DarwinFiles also owns the sole static owner/ordinary-query authorizer and its actual pathname SEARCH points. Process construction passes the canonical explicit credential record separately from scalar observation defaults; JSON imports the exact authorization declaration and uses the same admission owner. The immutable query environment closes all other file routes by default, exempts only actual opaque stream descriptions, and closes direct mappingSource access so DarwinMemory cannot bypass the operation domain. Anonymous VM retains its independent owner. Whole-mask group/world outcomes and explicit selected-credential membership share this owner; a missing group remains unknown except for explicit original GroupMembershipUID=KAUTH_UID_NONE or proved real-copy displacement, each with a complete supplied list. DarwinSystem owns canonical admission of the independent membership UID; JSON uses the shared lossless integer decoder, and no resolver context is inferred from scalar IDs. Broader vnode authorization must extend this same evaluator with operation-specific and resulting-state semantics before opening that domain.
 
-DarwinFiles owns immediate poll count admission, descriptor lookup and numeric-FD/filter registration in DarwinPoll.cpp. DarwinServices passes the existing canonical explicit system observations without interpreting limits or credentials. Constructed virtual regular descriptions declare successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; a native vnode kind alone supplies none of these facts. Duplicate filter winners are independent of shared open-description identity. The owner snapshots complete input before projecting ordinary readiness and uses the shared user-memory copy owner for whole output; partial output and unknown providers stop before effects. Both immutable permission-query domains close this route before preflight. Waiting, select and real provider/security lifecycle need explicit extension of this same owner.
+DarwinFiles owns immediate poll count admission, descriptor lookup and numeric-FD/filter registration in DarwinPoll.cpp. DarwinServices passes the existing canonical explicit system observations without interpreting limits or credentials. Constructed virtual regular descriptions declare successful ordinary read/write filter attachment, no revocation and no MAC/provider refusal; a native vnode kind alone supplies none of these facts. Duplicate filter winners are independent of shared open-description identity. The owner snapshots complete input before projecting ordinary readiness and uses the shared user-memory copy owner for whole output; partial output and unknown providers stop before effects. Both immutable permission-query domains close this route before preflight. Waiting and real provider/security lifecycle need explicit extension of this same owner. DarwinSelect.cpp is the same descriptor owner's independent immediate bitmap route: it validates LP64 timeval, proves the count from current live keys, snapshots all inputs, checks all selected descriptors, then applies the constructive pure three-class select provider. It checks complete permissions and disjoint output ranges globally before ordered read/write/exception copyouts, retaining the first whole-output fault after later copies. Partial destinations and overlapping ranges remain explicitly unsupported; a zero writable prefix alone never proves an entirely unwritable range. NOFILE and native vnode kind supply neither allocation capacity nor provider purity. Both immutable query domains close Select before preflight. Waiting, pselect and asynchronous lifecycle remain unimplemented.
 
 When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
 
@@ -4832,3 +5016,7 @@ When a recovered DLL entry differs from its original PE entry, the writer emits 
 `support/X86Addressing.h` owns the width-specific interpretation of absent ordinary SIB indices for both lifting and checked execution. `EIZ` is absent only with a 32-bit address, and `RIZ` only with a 64-bit address; neither is a base register or VSIB vector index. REX.X-selected R12/R12D remains a real scaled index. `X64Address` regressions compare original processor execution, access observations, cancellation and memory faults at both privilege levels, while `X86NoIndexAddress` retains the strict lifting and malformed-alias checks.
 
 Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an explicit LOCK prefix. The shared RAM transaction retains the original effective address, serializes publication and discards cancelled or faulted writes; the processor executes the original exchange. `X64Address` tests cover address/register overlap, partial register writes, cache-line and page crossings, observers and missing-page faults. MMIO exchanges retain their provider and natural-alignment requirements; other locked instruction families retain their existing admission rules.
+
+DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.
+
+`isCheckedX86SafeSEHHandlerReference` authenticates a retained PE32 handler entry through the existing SafeSEH decoder, immutable table/header bytes and the relocated load-config pointer. LLVM declares that source identity before emitting any body, including omitted shards. Table membership establishes neither a language personality nor a callable ABI or native EH reconstruction permission; those consumers keep their independent checks.

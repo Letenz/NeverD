@@ -19,7 +19,7 @@ Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`,
 | [Architektur](architecture.md) | IR-Pfade, Komponentengrenzen, striktes Lifting, Supporttiefe und Änderungsorte |
 | [Offline-Webanalyse (Englisch)](../web-analysis.md) | C++-Prüfung von Artefakten, Quellen, Bindungen und Maps, Metadatenrichtlinie, SDK und aktueller Prüfumfang |
 | [Primitive JavaScript-Umschreibungen (Englisch)](../web-source-rewrite-profile.md) | Explizite Durchläufe, lokale Ersetzungsprüfungen, exakte Umkehrung und beleggebundener lokaler Export |
-| [Profil für eigenständige Bun-Programme (Englisch)](../web-bun-profile.md) | Qualifizierte ELF-, Thin-Mach-O- und PE-Extraktion für x64/ARM64, ursprüngliche Bereiche und Herkunft festgelegter Testdateien |
+| [Profil für eigenständige Bun-Programme (Englisch)](../web-bun-profile.md) | Abgegrenzte ELF-, Thin-Mach-O- und PE-Extraktion für x64/ARM64, ursprüngliche Bereiche und Herkunft festgelegter Testdateien |
 | [ASAR-Extraktionsprofil (Englisch)](../web-asar-profile.md) | Zuordnung interner und externer Erfassungen, Integritätszustände, Nutzer der Archiveinträge und native Unicode-Abhängigkeit |
 | [Electron-Evidenzprofil (Englisch)](../web-electron-profile.md) | Erfasste Einstiegspfade, Manifest- und Quellumfang, Fenster- und Bridge-Evidenz sowie mögliche IPC-Kanäle |
 | [HTML-Quellprofil (Englisch)](../web-html-profile.md) | Begrenztes C++-Skriptinventar, erfasste lokale Referenzen und ursprüngliche Inline-Quellanker |

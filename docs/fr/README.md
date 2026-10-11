@@ -18,8 +18,8 @@ Les guides anglais se trouvent directement dans `docs/`. Les traductions sont re
 | [Contribution](CONTRIBUTING.md) | Environnement, profils de compilation, workflow, style et exigences de PR |
 | [Architecture](architecture.md) | Parcours IR, frontières, lifting strict, profondeur de support et points de modification |
 | [Analyse Web hors ligne (anglais)](../web-analysis.md) | Inspection C++ des artefacts, sources, liaisons et cartes, politique des métadonnées, SDK et validation actuelle |
-| [Réécritures primitives JavaScript (anglais)](../web-source-rewrite-profile.md) | Passes explicites, vérifications locales de substitution, inverse exact et export local lié au reçu |
-| [Profil Bun autonome (anglais)](../web-bun-profile.md) | Extraction qualifiée ELF, Mach-O monoarchitecture et PE pour x64/ARM64, plages originales et provenance des fixtures figées |
+| [Réécritures primitives JavaScript (anglais)](../web-source-rewrite-profile.md) | Passes explicites, contrôles de substitution locale, inverse exacte et export local lié à un justificatif |
+| [Profil Bun autonome (anglais)](../web-bun-profile.md) | Extraction délimitée ELF, Mach-O monoarchitecture et PE pour x64/ARM64, plages originales et provenance des fixtures figées |
 | [Profil d’extraction ASAR (anglais)](../web-asar-profile.md) | Association des captures internes et externes, états d’intégrité, consommateurs des membres et dépendance Unicode native |
 | [Profil de preuves Electron (anglais)](../web-electron-profile.md) | Chemins d’entrée capturés, périmètre des manifestes et sources, preuves de fenêtres et ponts, canaux IPC candidats |
 | [Profil source HTML (anglais)](../web-html-profile.md) | Inventaire C++ borné des scripts, références locales capturées et ancres des sources intégrées originales |

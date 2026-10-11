@@ -20,7 +20,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
+#include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -996,6 +998,28 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
+    if (!x87ConstantControlShapeIsValid(
+            E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
+      llvm::report_fatal_error("invalid HighC x87 constant/control contract");
+    const std::string Word = MemoryIdentifiers.allocate("x87_control");
+    if (E.IntrinsicId == Intrinsic::X87ReadControl)
+      return "({ uint16_t " + Word +
+             "; __asm__ volatile(\"fnstcw %0\" : \"=m\"(" + Word +
+             ") :: \"memory\"); " + Word + "; })";
+    const unsigned Index = E.IntrinsicId == Intrinsic::X87LoadConstant ? 1 : 0;
+    const std::string Init = "({ uint16_t " + Word + " = (uint16_t)(" +
+                             exprStr(*E.Operands[Index]) + "); ";
+    if (E.IntrinsicId == Intrinsic::X87WriteControl)
+      return Init + "__asm__ volatile(\"fldcw %0\" :: \"m\"(" + Word +
+             ") : \"memory\"); })";
+    const std::string Value = MemoryIdentifiers.allocate("x87_constant");
+    return Init + "unsigned _BitInt(80) " + Value +
+           " = 0; __asm__ volatile(\"fldcw (%1)\\n\\t" +
+           X87ConstantMnemonics[E.Operands[0]->ConstVal] +
+           "\\n\\tfstpt (%0)\" :: \"r\"(&" + Value + "), \"r\"(&" + Word +
+           ") : \"st\", \"memory\"); " + Value + "; })";
+  }
   if (E.IntrinsicId == Intrinsic::CetRdSsp) {
     const auto Shape = x86ShadowStackReadHighShape(E, Opts.TheArch);
     if (!x86ShadowStackReadShapeIsValid(Shape))
@@ -1052,6 +1076,17 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (Number && Number->Kind == ExprKind::Const)
         LinuxSyscallArgs = linuxX64SyscallArgumentCount(Number->ConstVal);
     }
+    // A modeled supervisor call passes the number, then one operand per
+    // argument register; a verified syscall reads only its own arguments.
+    size_t FirstUnreadOperand = E.Operands.size();
+    if (const SyscallConvention *Syscall =
+            modeledSyscallConvention(E.IntrinsicId);
+        Syscall && !E.Operands.empty() && E.Operands[0])
+      if (const HighExpr *Number = unwrapIntegerView(E.Operands[0].get());
+          Number && Number->Kind == ExprKind::Const)
+        if (const auto Count =
+                linuxSyscallArgumentCount(Syscall->TheArch, Number->ConstVal))
+          FirstUnreadOperand = 1 + *Count;
     // An unconsumed register read is not part of the syscall's behavior. The
     // helper has a fixed six-register signature, so fill those positions with
     // zero only when the omitted expression cannot fault or have side effects.
@@ -1082,7 +1117,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
-      if (LinuxSyscallArgs == 1 && I >= 2 && CanOmit(CanOmit, Op.get(), 0)) {
+      if (((LinuxSyscallArgs == 1 && I >= 2) || I >= FirstUnreadOperand) &&
+          CanOmit(CanOmit, Op.get(), 0)) {
         OpStrs.push_back("0");
         continue;
       }
@@ -1425,9 +1461,17 @@ const HighExpr *HighCWriter::functionAddressArgument(const HighExpr &Arg) {
   }
   return Cur && Cur->Kind == ExprKind::Const &&
                  isAddressProvenance(Cur->ConstProvenance) &&
-                 FunctionAddressNames.count(Cur->ConstVal)
+                 FunctionAddressNames.count(functionAddressKey(*Cur))
              ? Cur
              : nullptr;
+}
+
+va_t HighCWriter::functionAddressKey(const HighExpr &Const) const {
+  return Const.ConstProvenance == ConstantAddressProvenance::CodeAddress &&
+                 Opts.Image
+             ? normalizeCodeAddress(Const.ConstVal, Opts.Image->Arch,
+                                    Opts.Image->Mode)
+             : Const.ConstVal;
 }
 
 const libc::LibCPrototype *
@@ -3761,6 +3805,23 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
       E = E->Operands[0].get();
       continue;
     }
+    // The low bytes of an extension, as wide as what it extends, are that
+    // value: i386 `SUBBYTES((i64)(esp - 12), 0)` is `esp - 12`.
+    if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+        E->Operands.size() == 2 && E->Operands[1] &&
+        E->Operands[1]->Kind == ExprKind::Const &&
+        E->Operands[1]->ConstVal == 0 && E->Type) {
+      const HighExpr *Extension = E->Operands[0].get();
+      if (Extension->Kind == ExprKind::UnaryOp &&
+          (Extension->Op == NdOp::INT_ZEXT ||
+           Extension->Op == NdOp::INT_SEXT) &&
+          !Extension->Operands.empty() && Extension->Operands[0] &&
+          Extension->Operands[0]->Type &&
+          Extension->Operands[0]->Type->Size == E->Type->Size) {
+        E = Extension->Operands[0].get();
+        continue;
+      }
+    }
     break;
   }
   return E;
@@ -3934,6 +3995,52 @@ HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
       return std::nullopt;
   }
   return std::nullopt;
+}
+
+bool HighCWriter::reachesFrameThroughIndex(const HighExpr &E) const {
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  // A choice between whole addresses (`csel x8, x9, x10, ne`, or a run-time
+  // mask `(p & m) | (&slot & ~m)`) reaches whichever it picks.  C takes a
+  // named slot's address for it; only a choice of other frame bytes is an
+  // index.
+  const auto ChoosesFrameBytes = [&](const ExprPtr &Operand) {
+    return Operand && certifiedFrameStorageDisplacement(*Operand) &&
+           !namedFrameSlot(*Operand);
+  };
+  if (E.Op == NdOp::SELECT)
+    return E.Operands.size() == 3 && (ChoosesFrameBytes(E.Operands[1]) ||
+                                      ChoosesFrameBytes(E.Operands[2]));
+  // A frame address plus a run-time index (`&buf[i]`), or one with the index
+  // inserted into its bits (AArch64 `bfi x10, x9, #2, #2` over `mov x10, sp`
+  // is `(sp & ~12) | i << 2`).
+  if ((E.Op != NdOp::INT_ADD && E.Op != NdOp::INT_SUB &&
+       E.Op != NdOp::INT_AND && E.Op != NdOp::INT_OR &&
+       E.Op != NdOp::INT_XOR) ||
+      E.Operands.size() != 2 || !E.Operands[0] || !E.Operands[1] ||
+      certifiedFrameStorageDisplacement(E))
+    return false;
+  if (E.Op == NdOp::INT_AND) {
+    bool ConstantMask = false;
+    for (const ExprPtr &Operand : E.Operands)
+      if (const HighExpr *Mask = unwrapIntegerView(Operand.get());
+          Mask && Mask->Kind == ExprKind::Const && E.Type && E.Type->Size) {
+        ConstantMask = true;
+        // A mask clearing only low bits aligns the address (`and rsp,
+        // -32`); it selects no frame bytes by a run-time value.
+        const uint64_t Width = E.Type->Size >= 8
+                                   ? UINT64_MAX
+                                   : (UINT64_C(1) << (8 * E.Type->Size)) - 1;
+        const uint64_t Cleared = ~Mask->ConstVal & Width;
+        if ((Cleared & (Cleared + 1)) == 0)
+          return false;
+      }
+    if (!ConstantMask)
+      return ChoosesFrameBytes(E.Operands[0]) ||
+             ChoosesFrameBytes(E.Operands[1]);
+  }
+  return certifiedFrameStorageDisplacement(*E.Operands[0]) ||
+         certifiedFrameStorageDisplacement(*E.Operands[1]);
 }
 
 std::optional<std::string>
@@ -4157,7 +4264,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // A function's address prints as the function, whose designator C
     // converts to its address; it keeps the integer type the machine moves.
     if (isAddressProvenance(E.ConstProvenance))
-      if (const auto Function = FunctionAddressNames.find(E.ConstVal);
+      if (const auto Function =
+              FunctionAddressNames.find(functionAddressKey(E));
           Function != FunctionAddressNames.end()) {
         if (PointerArgumentOperands.count(&E))
           return Function->second;
@@ -4818,7 +4926,7 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
     }
     if (Term->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Term->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        !isImageDataAddress(Term->ConstVal) || !sizedObjectAt(Term->ConstVal))
+        !isImageDataAddress(Term->ConstVal) || !indexedObjectAt(Term->ConstVal))
       continue;
     if (Base)
       return nullptr;
@@ -4840,6 +4948,32 @@ HighCWriter::sizedObjectAt(va_t Addr) const {
     if (Addr - SizedObjects[I - 1].first < SizedObjects[I - 1].second)
       Outermost = SizedObjects[I - 1];
   return Outermost;
+}
+
+std::optional<std::pair<va_t, uint64_t>>
+HighCWriter::indexedObjectAt(va_t Addr) const {
+  if (auto Object = sizedObjectAt(Addr))
+    return Object;
+  const Section *Sec = Opts.Image ? Opts.Image->getSectionFor(Addr) : nullptr;
+  if (!Sec || !Sec->isReadable() || Sec->isExecutable() || !Sec->Size ||
+      Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+    return std::nullopt;
+  va_t Begin = Sec->VA;
+  va_t End = Sec->VA + Sec->Size;
+  const auto After = llvm::upper_bound(
+      SizedObjects, Addr,
+      [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
+  if (After != SizedObjects.end() && After->first < End)
+    End = After->first;
+  if (After != SizedObjects.begin()) {
+    const va_t Reach = SizedObjectReach[After - SizedObjects.begin() - 1];
+    if (Reach > Begin)
+      Begin = Reach;
+  }
+  if (Begin > Addr || End <= Addr ||
+      End - Begin > limits::kMaxSingleGlobalEmbedLen)
+    return std::nullopt;
+  return std::pair{Begin, static_cast<uint64_t>(End - Begin)};
 }
 
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {

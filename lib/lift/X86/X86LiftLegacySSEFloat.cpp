@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86FPArithState.h"
+#include "X86FPComiState.h"
 #include "X86LiftDetail.h"
 #include "X86ScalarFPConversion.h"
 
@@ -96,52 +97,13 @@ bool liftLegacySSEFloat(X86Lifter &L, X86Lifter::LiftState &S,
     S.emit(NdOp::COPY, Dst, {Full});
     break;
   }
+  case X86_INS_COMISS:
+  case X86_INS_COMISD:
   case X86_INS_UCOMISS:
   case X86_INS_UCOMISD:
-  case X86_INS_COMISS:
-  case X86_INS_COMISD: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Lhs = L.operandRead(S, X86.operands[0]);
-    NdVar Rhs = L.operandRead(S, X86.operands[1]);
-    // COMISS/UCOMISS compare the low single (4B), COMISD/UCOMISD the low double
-    // (8B).  operandRead hands back the whole XMM for a register operand;
-    // extract the scalar so the float emitter infers the right precision — a
-    // *SS compare left 16B wide would read 8 bytes as a double (sign bit lands
-    // at bit 63), inverting the sign test.
-    unsigned ScalarSz =
-        (InsnId == X86_INS_UCOMISS || InsnId == X86_INS_COMISS) ? 4 : 8;
-    if (Lhs.Size > ScalarSz) {
-      NdVar T = S.makeTemp(ScalarSz);
-      S.emit(NdOp::SUBBYTES, T, {Lhs, NdVar::cst(0, 4)});
-      Lhs = T;
-    }
-    if (Rhs.Size > ScalarSz) {
-      NdVar T = S.makeTemp(ScalarSz);
-      S.emit(NdOp::SUBBYTES, T, {Rhs, NdVar::cst(0, 4)});
-      Rhs = T;
-    }
-    // An unordered (NaN) compare sets ZF=PF=CF=1.  Bare ordered relations leave
-    // ZF/CF 0 on NaN, which makes the SETA/SETAE ordered idioms (!CF&&!ZF /
-    // !CF) wrongly read true, so OR the unordered predicate into ZF and CF.
-    NdVar NanA = S.makeTemp(1);
-    NdVar NanB = S.makeTemp(1);
-    S.emit(NdOp::FLOAT_ISNAN, NanA, {Lhs});
-    S.emit(NdOp::FLOAT_ISNAN, NanB, {Rhs});
-    NdVar Unord = S.makeTemp(1);
-    S.emit(NdOp::BOOL_OR, Unord, {NanA, NanB});
-    NdVar Eq = S.makeTemp(1);
-    S.emit(NdOp::FLOAT_EQUAL, Eq, {Lhs, Rhs});
-    S.emit(NdOp::BOOL_OR, NdVar::reg(x86reg::ZF, 1), {Eq, Unord});
-    NdVar Lt = S.makeTemp(1);
-    S.emit(NdOp::FLOAT_LESS, Lt, {Lhs, Rhs});
-    S.emit(NdOp::BOOL_OR, NdVar::reg(x86reg::CF, 1), {Lt, Unord});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::PF, 1), {Unord});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::cst(0, 1)});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::SF, 1), {NdVar::cst(0, 1)});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::AF, 1), {NdVar::cst(0, 1)});
-    break;
-  }
+    return liftFPComiState(
+        L, S, Insn, X86, InsnId == X86_INS_COMISD || InsnId == X86_INS_UCOMISD,
+        InsnId == X86_INS_UCOMISS || InsnId == X86_INS_UCOMISD, false);
 
   // ========================================================================
   // SSE scalar float arithmetic

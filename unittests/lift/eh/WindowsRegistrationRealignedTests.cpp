@@ -14,6 +14,7 @@
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/high/X86RegistrationFrame.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/X86RegistrationCallback.h"
@@ -307,53 +308,79 @@ TEST(WindowsRegistrationRealigned, InputPE32RecoversTheCallbackContract) {
   EXPECT_TRUE(llvm::any_of(ThrowBlock->ExceptionalSuccs, [](const auto &Edge) {
     return Edge.Kind == ExceptionalEdgeKind::CxxCatch;
   }));
-  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
-    SCOPED_TRACE(Mutation);
-    auto Unproved = F;
-    if (Mutation < 5 || Mutation == 8) {
-      // LowIR already removes authenticated throw fallthroughs. Restore an
-      // ordinary predecessor to test MedIR's independent decision to remove
-      // it; mutating call effects alone cannot recreate a discarded edge.
-      auto Source = llvm::find_if(Unproved.Blocks, [&](const auto &B) {
-        return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
+  auto HasResumeFrame = [&](const MedFunc &Candidate) {
+    return llvm::any_of(Candidate.Blocks, [&](const auto &Block) {
+      return Block.StartAddr == State.CxxContinuations[0].TargetVA &&
+             llvm::any_of(Block.Ops, [](const auto &Op) {
+               return Op.RegistrationRoot ==
+                      MedOp::RegistrationRootKind::RealignedFramePointer;
+             });
+    });
+  };
+  const auto SourceThrow = llvm::find_if(F.Blocks, [&](const auto &Block) {
+    return Block.StartAddr <= Throw->Address && Throw->Address < Block.EndAddr;
+  });
+  ASSERT_NE(SourceThrow, F.Blocks.end());
+  const auto SourceBoundary =
+      llvm::find_if(SourceThrow->InstructionBoundaries, [&](const auto &Insn) {
+        return Insn.Address == Throw->Address;
       });
-      auto Resume = llvm::find_if(Unproved.Blocks, [&](const auto &B) {
-        return B.StartAddr == State.CxxContinuations[0].TargetVA;
-      });
-      ASSERT_NE(Source, Unproved.Blocks.end());
-      ASSERT_NE(Resume, Unproved.Blocks.end());
-      ASSERT_TRUE(Source->Succs.empty());
-      Source->Succs.push_back(Resume->Id);
-      Resume->Preds.push_back(Source->Id);
+  ASSERT_NE(SourceBoundary, SourceThrow->InstructionBoundaries.end());
+  ASSERT_TRUE(isUnconditionalNoReturn(*SourceBoundary));
+  ASSERT_TRUE(SourceThrow->Succs.empty());
+  const auto SourceResume = llvm::find_if(F.Blocks, [&](const auto &Block) {
+    return Block.StartAddr == State.CxxContinuations[0].TargetVA;
+  });
+  ASSERT_NE(SourceResume, F.Blocks.end());
+  ASSERT_EQ(SourceThrow->EndAddr, SourceResume->StartAddr);
+  ASSERT_TRUE(SourceResume->Preds.empty());
+  // CFG construction now proves the decoded throw's terminal edge itself.
+  // A missing memory-effect receipt cannot recreate its ordinary return.
+  // Also retain the older, still supported shape with a fallthrough, where
+  // MedIR must authenticate the exact registration call before removing it.
+  for (bool RetainedFallthrough : {false, true}) {
+    SCOPED_TRACE(RetainedFallthrough);
+    auto Input = F;
+    if (RetainedFallthrough) {
+      auto &Block = Input.Blocks[SourceThrow - F.Blocks.begin()];
+      auto &Boundary =
+          Block.InstructionBoundaries
+              [SourceBoundary - SourceThrow->InstructionBoundaries.begin()];
+      Boundary.ControlFlags = LowInstructionControlFlag(
+          uint16_t(Boundary.ControlFlags) &
+          ~uint16_t(LowInstructionControlFlag::NoReturn));
+      Block.Succs.push_back(SourceResume->Id);
+      Input.Blocks[SourceResume - F.Blocks.begin()].Preds.push_back(Block.Id);
     }
-    auto &Proof = *Unproved.RegistrationStates;
-    auto &Call = Proof.CallFrameEffects[Throw - State.CallFrameEffects.begin()];
-    if (Mutation == 0)
-      Proof.CallFrameEffectsComplete = false;
-    if (Mutation == 1)
-      Call.DoesNotReturn = false;
-    if (Mutation == 2)
-      Call.Target += 4;
-    if (Mutation == 3)
-      ++Call.EndAddress;
-    if (Mutation == 4)
-      Proof.CallFrameEffects.clear();
-    if (Mutation == 5)
-      Unproved.OrdinaryModuleAnalysisRoots.insert(
-          State.CxxContinuations[0].TargetVA);
-    if (Mutation == 6)
-      Proof.CxxContinuationsComplete = false;
-    if (Mutation == 7)
-      Unproved.RegistrationStates.reset();
-    const auto Other =
-        LowToMedConverter().convert(Unproved, Arch::X86, BinaryFormat::COFF);
-    bool RestoredFrame = false;
-    for (const auto &Block : Other.Blocks)
-      if (Block.StartAddr == State.CxxContinuations[0].TargetVA)
-        for (const auto &Op : Block.Ops)
-          RestoredFrame |= Op.RegistrationRoot ==
-                           MedOp::RegistrationRootKind::RealignedFramePointer;
-    EXPECT_EQ(RestoredFrame, Mutation == 8);
+    EXPECT_TRUE(HasResumeFrame(
+        LowToMedConverter().convert(Input, Arch::X86, BinaryFormat::COFF)));
+    for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      auto Unproved = Input;
+      auto &Proof = *Unproved.RegistrationStates;
+      auto &Call =
+          Proof.CallFrameEffects[Throw - State.CallFrameEffects.begin()];
+      if (Mutation == 0)
+        Proof.CallFrameEffectsComplete = false;
+      if (Mutation == 1)
+        Call.DoesNotReturn = false;
+      if (Mutation == 2)
+        Call.Target += 4;
+      if (Mutation == 3)
+        ++Call.EndAddress;
+      if (Mutation == 4)
+        Proof.CallFrameEffects.clear();
+      if (Mutation == 5)
+        Unproved.OrdinaryModuleAnalysisRoots.insert(
+            State.CxxContinuations[0].TargetVA);
+      if (Mutation == 6)
+        Proof.CxxContinuationsComplete = false;
+      if (Mutation == 7)
+        Unproved.RegistrationStates.reset();
+      const auto Other =
+          LowToMedConverter().convert(Unproved, Arch::X86, BinaryFormat::COFF);
+      EXPECT_EQ(HasResumeFrame(Other), !RetainedFallthrough && Mutation < 5);
+    }
   }
   const auto High = MedToHighConverter().convert(Med, Arch::X86);
   EXPECT_TRUE(registrationCallbackRegion(Med, Catch));

@@ -43,7 +43,18 @@ struct CxxCatchContext {
   auto operator<=>(const CxxCatchContext &) const = default;
 };
 
+/// SEH filters and finally handlers own distinct runtime invocations even
+/// when their decoded bodies share an epilogue. Searching and unwinding also
+/// have different dispatch rules. The default key retains the existing C++
+/// catch-stack domain and ordinary parent flow.
+struct SEHActivation {
+  std::optional<va_t> Entry;
+  bool SearchFilter = false;
+  auto operator<=>(const SEHActivation &) const = default;
+};
+
 struct Domain {
+  SEHActivation Activation;
   std::set<int32_t> Levels;
   FrameState Frame;
   FrameState RuntimeObject;
@@ -72,6 +83,11 @@ struct BlockFacts {
   bool InstalledAtExit = false;
   bool CxxContinuationAtExit = false;
   bool NoReturnAtExit = false;
+};
+
+struct ActivationState {
+  Domain Incoming;
+  BlockFacts Facts;
 };
 
 int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx);
@@ -116,27 +132,31 @@ private:
     std::optional<FrameValue> Result;
   };
   std::optional<CallTransfer> transferCall(size_t I, Domain &After,
-                                           const LowOp &Op);
+                                           const LowOp &Op,
+                                           const BlockFacts &Facts);
   bool transferInitializer(Domain &After,
                            const RegistrationCalleeFrameContract &Callee,
                            FrameValue &StackPointer, FrameValue &Object);
   std::optional<FrameValue> transferLocalUnwind(size_t I, Domain &After,
-                                                const LowOp &Op);
+                                                const LowOp &Op,
+                                                BlockFacts &Facts);
   bool runLocalFinally(va_t Target, FrameState &Parent);
   void
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
-                    const FrameTransfer &Transfer,
+                    const FrameTransfer &Transfer, const BlockFacts &Facts,
                     std::optional<RegistrationCxxContinuation> &CatchReturn);
   void resumeCxxCatch(const Domain &After,
                       const RegistrationCxxContinuation &Return);
   bool recordRuntimeMemory(size_t I, Domain &After, const LowOp &Op,
                            const FrameTransfer &Transfer,
-                           const FrameTransfer &RuntimeTransfer);
+                           const FrameTransfer &RuntimeTransfer,
+                           const BlockFacts &Facts);
   bool runtimeObjectIsLive(const Domain &State,
                            std::pair<uint32_t, uint32_t> Identity);
-  bool transferBlock(size_t I);
-  void dispatchBlock(size_t I, const Domain &Before);
-  std::vector<RegistrationCxxSearch> cxxSearches(size_t I, const Domain &State);
+  bool transferBlock(size_t I, const Domain &Before, BlockFacts &Facts);
+  void dispatchBlock(size_t I, const Domain &Before, const BlockFacts &Facts);
+  std::vector<RegistrationCxxSearch> cxxSearches(const Domain &State,
+                                                 bool Invalid);
   bool enterCxxCatch(Domain &Root, const Domain &Source, uint32_t TryIndex,
                      uint32_t CatchIndex);
   RegistrationStateAnalysis finish();
@@ -178,12 +198,12 @@ private:
 
   std::map<int, size_t> Index;
   std::map<va_t, size_t> Entries;
-  std::vector<BlockFacts> Facts;
+  std::vector<bool> InvalidBlocks;
   std::map<va_t, RegistrationTryLevelStore> Stores;
   std::set<int32_t> AllLevels;
-  std::vector<Domain> Incoming;
+  std::vector<std::map<SEHActivation, ActivationState>> States;
   std::vector<size_t> Order;
-  std::set<std::pair<size_t, size_t>> Work;
+  std::set<std::tuple<size_t, size_t, SEHActivation>> Work;
   size_t WorkUsed = 0;
   bool Exhausted = false;
   bool ProvenInstallation = false;

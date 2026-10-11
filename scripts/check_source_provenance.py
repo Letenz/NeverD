@@ -386,16 +386,38 @@ HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
         path="docs/web-claude-code-qualification.md",
         rule="private-path",
         commits=frozenset({
+            "4ccd8a4df593ffcfc8b4001f06b3e8df307a4207",
+            "8a1a303a0924fc4a0b918fd32b59d00b48d09e36",
+        }),
+        line="",
+        reason=(
+            "Reviewed historical qualification artifact paths. The current "
+            "document uses a local-recovery placeholder while retaining the "
+            "relative filenames, source hashes and observations. Exact line "
+            "digests acknowledge only these published commits without "
+            "republishing private prefixes or permitting future occurrences."
+        ),
+        line_sha256=frozenset({
+            "626ab8b1c1b594ca2508f7f8d082bb6691e8daa30a32515ff67859d24afaa17d",
+            "d37d85569c24cd796a4ff011da73c1d686836c3aba580a5234249e169092264b",
+        }),
+    ),
+    HistoryAllowance(
+        path="docs/web-claude-code-qualification.md",
+        rule="private-path",
+        commits=frozenset({
+            "500c51062c3aba4e2251b8f3c76569f058fd3ef7",
+            "ec58750a8ed49319af857f5cb1aa77670810e39e",
             "d729f6d64b3ee497f020a271176fe833b779b847",
             "9b4a32c6249a4f690394c6797c5f4dce9bc81ef9",
         }),
         line="",
         reason=(
-            "The imported qualification report included a local output prefix. "
-            "The cleanup preserves artifact directory names, measurements and "
-            "hashes while removing only that machine-specific location. Review "
-            "binds its exact line digest and publication/removal commits; it "
-            "permits no current or future path occurrence."
+            "Reviewed replacement of a developer-specific output directory "
+            "with its portable recovery-workspace location. Artifact names, "
+            "measurements and hashes are preserved. Only the exact original "
+            "and deletion commits and line digest are covered; current and "
+            "future private paths remain findings."
         ),
         line_sha256=frozenset({
             "c39893ef1f25d39cb6d25ade741abae3b95c601f77f3f228a02321667b4952f0",
@@ -758,14 +780,16 @@ def scan_worktree_patch(rules: Sequence[Rule] | None = None) -> list[str]:
     names = [
         entry
         for entry in _git_output(
-            ["diff", "--name-only", "--no-renames", "-z", "HEAD", "--"]
+            ["diff", "--name-only", "--no-renames", "--ignore-submodules=all",
+             "-z", "HEAD", "--"]
         ).split("\0")
         if entry
     ]
     return _scan_patch_set(
         names,
         _git_output(
-            ["diff", "--no-ext-diff", "--no-renames", "--unified=0", "HEAD", "--"]
+            ["diff", "--no-ext-diff", "--no-renames", "--ignore-submodules=all",
+             "--unified=0", "HEAD", "--"]
         ),
         "worktree-deletion",
         selected_rules,
@@ -807,6 +831,7 @@ def scan_recent_history(
                     "--no-commit-id",
                     "--name-only",
                     "--no-renames",
+                    "--ignore-submodules=all",
                     "-r",
                     "-z",
                     commit,
@@ -824,6 +849,7 @@ def scan_recent_history(
                         "--first-parent",
                         "--no-ext-diff",
                         "--no-renames",
+                        "--ignore-submodules=all",
                         "--unified=0",
                         commit,
                         "--",

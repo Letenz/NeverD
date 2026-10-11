@@ -18,3 +18,7 @@ C(Intrinsic::X86FPScalarConvertMemoryState,
 C(Intrinsic::X86FPPackedConvertState, "neverd_x86_packed_convert_state");
 C(Intrinsic::X86FPPackedConvertMemoryState,
   "neverd_x86_packed_convert_memory_state");
+
+C(Intrinsic::X86F16CState, "neverd_x86_f16c_state");
+C(Intrinsic::X86F16CReadState, "neverd_x86_f16c_read_state");
+C(Intrinsic::X86F16CStoreState, "neverd_x86_f16c_store_state");

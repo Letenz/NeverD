@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86F16CState.h"
 #include "X86FPPackedConvertState.h"
 #include "X86FPScalarConvertState.h"
 #include "X86LiftDetail.h"
@@ -1335,48 +1336,9 @@ bool liftSIMDAVXConvert(X86Lifter &L, X86Lifter::LiftState &S,
   case X86_INS_VCVTSD2SS:
     return liftScalarConvertToFPState(
         L, S, Insn, X86, false, InsnId == X86_INS_VCVTSS2SD ? 8 : 4, true);
-  // F16C has instruction-specific rounding and MXCSR exception semantics that
-  // cannot be represented by the generic float-width conversion opcode.
-  // Keep EVEX masked/SAE forms fail-closed until their merge/zero contracts are
-  // carried explicitly; the VEX register destinations below are exact.
-  case X86_INS_VCVTPH2PS: {
-    if (Insn->size < 3 || Insn->bytes[0] != 0xc4 ||
-        (Insn->bytes[2] & 0xf8) != 0x78 || X86.op_count != 2 ||
-        X86.operands[0].type != X86_OP_REG ||
-        (X86.operands[1].type != X86_OP_REG &&
-         X86.operands[1].type != X86_OP_MEM))
-      return false;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    const uint16_t RequiredSource = Dst.Size / 2;
-    if ((Dst.Size != 16 && Dst.Size != 32) || Src.Size < RequiredSource ||
-        Src.Size > 16)
-      return false;
-    S.emitIntrinsic(
-        Intrinsic::F16CConvert, Dst,
-        {NdVar::cst(static_cast<uint8_t>(F16CConvertKind::HalfToSingle), 1),
-         Src, NdVar::cst(0, 1)});
-    break;
-  }
-  case X86_INS_VCVTPS2PH: {
-    if (Insn->size < 3 || Insn->bytes[0] != 0xc4 ||
-        (Insn->bytes[2] & 0xf8) != 0x78 || X86.op_count != 3 ||
-        X86.operands[0].type != X86_OP_REG ||
-        X86.operands[1].type != X86_OP_REG ||
-        X86.operands[2].type != X86_OP_IMM)
-      return false;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[1]);
-    NdVar Immediate = L.operandRead(S, X86.operands[2]);
-    if (Dst.Size != 16 || (Src.Size != 16 && Src.Size != 32) ||
-        Immediate.Size != 1 || !Immediate.isConst())
-      return false;
-    S.emitIntrinsic(
-        Intrinsic::F16CConvert, Dst,
-        {NdVar::cst(static_cast<uint8_t>(F16CConvertKind::SingleToHalf), 1),
-         Src, Immediate});
-    break;
-  }
+  case X86_INS_VCVTPH2PS:
+  case X86_INS_VCVTPS2PH:
+    return liftF16CState(L, S, Insn, X86, InsnId == X86_INS_VCVTPS2PH);
 
   default:
     return false;

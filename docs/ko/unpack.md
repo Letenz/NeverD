@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | 실행 중 관찰 |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | 실행 중 관찰 |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v100`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL 입력은 `IMAGE_FILE_DLL`로 식별합니다. 모델링된 게스트 EXE가 `LoadLibraryA`, `FreeLibrary`를 호출하며 일반 의존성, TLS, `DllMain` 수명주기를 사용합니다. DLL 기본 진입점은 프로세스 연결 호출입니다. 임의의 내보내기 함수 인수를 추측하지 않습니다. 이름, 서수, 별칭, 데이터, 전달 내보내기를 보존하며 자체 내보내기 포인터는 자체 가져오기로 변환하지 않습니다. 헬퍼가 반환한 주소에도 같은 규칙을 적용합니다. 내부 주소가 반환되면 해당 위치의 이전 가져오기 복구 증거를 철회합니다.
 
@@ -32,8 +32,16 @@ PE32+ DLL 입력은 `IMAGE_FILE_DLL`로 식별합니다. 모델링된 게스트 
 
 `KeQueryPerformanceCounter`, `RDTSC`, `RDTSCP`를 통한 시계 읽기는 명시적인 드라이버 복구 의존성을 유지합니다. 캡처한 카운터와 주파수 값을 새 커널 환경에 다시 연결하는 계약은 아직 없습니다. 기본 복구는 `unsupported_state`를 반환하며 `snapshot_only`는 진단을 유지합니다.
 
+`runtime_state.additional_dependency_reasons`는 유지 중인 풀이나 MDL, 변경된 로더 객체, 커널 부작용, 진입 호출 컨텍스트 변경 등 드라이버 모델이 관찰한 이유를 나열합니다. 기본 거부와 명시적 스냅샷은 같은 이유를 보존합니다. 빈 목록은 `has_additional_dependencies`를 무효화하거나 복원 계약을 입증하지 않습니다.
+
+`ProcessView::runtimeState(include_backing)`은 중지된 드라이버에 `WindowsDriverState`를 제공합니다. 커널 소유자는 살아 있는 각 풀의 할당 API, 정확한 요청 크기, 태그, 유효한 기존 유형 또는 완전한 새 플래그를 보존합니다. 내용을 요청하면 해당 바이트만 독립적으로 복사하며, 메타데이터만 캡처하면 내용은 없습니다. 해제된 풀, 빌린 로더 객체, 장치 객체는 풀 레코드가 되지 않습니다. 이 캡처는 포인터 출처나 네이티브 초기화기를 제공하지 않으며, 기존 의존성 및 재배치 거부 조건은 계속 적용됩니다.
+
+`WindowsDriverState::Entry`는 최초 DriverEntry의 레지스터 기준값과 반환/shadow frame, 중지 시점의 정수/XMM/부동소수점 제어 레지스터 및 OS가 소유한 활성 스택 범위를 보존합니다. backing을 요청하면 활성 스택 전체를 복사합니다. 이후 디스패치와 언로드 호출도 원래 기준값을 유지하며 DriverEntry 외부 호출임을 명시합니다. 이 구체적인 관측은 포인터 출처나 새 호출자에 대한 바인딩을 증명하지 않습니다.
+
+풀이나 빌린 객체가 남지 않아도 커널 이미지 재배치는 별도의 로더 의존성입니다. 현재 작성기는 생성된 내용의 재배치 정보를 제거하므로 기본 드라이버 복원은 `unsupported_state`를 반환하며 출력 파일을 만들거나 잘라내지 않습니다. 명시적인 `snapshot_only`만 고정 주소 이미지를 출력하고 이 진단을 유지합니다. 원래 재배치 테이블만으로 생성된 포인터를 모두 포함한다고 증명할 수 없습니다.
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## 사용법

@@ -61,7 +61,9 @@ analyzePackageBehavior(const PackageAnalysis &P,
     ID(O.ParentArtifactID);
     ID(O.EvidenceID);
     if (O.Kind != "bun_source" && O.Kind != "bun_asset" &&
-        O.Kind != "sea_region")
+        O.Kind != "sea_region" && O.Kind != "nexe_member" &&
+        O.Kind != "nexe_bootstrap" && O.Kind != "pkg_member" &&
+        O.Kind != "pkg_prelude")
       throw Error("invalid_package_behavior_origin");
     if (!Parents.emplace(O.ArtifactID, &O).second)
       throw Error("ambiguous_package_behavior_origin");
@@ -112,6 +114,11 @@ analyzePackageBehavior(const PackageAnalysis &P,
     Row.BehaviorID = B.ID;
     Row.Status = B.Status;
     Row.Reason = B.Reason;
+    Row.SourceType = S.SourceType;
+    Row.SourceHash = S.BlobHash;
+    Row.SourceBytes = I.SourceBytes;
+    Row.OriginStatus = B.OriginStatus;
+    Row.ValueStatus = B.ValueStatus;
     Row.DeliveryArtifactID = S.ArtifactID;
     std::set<std::string_view> Seen;
     while (!Files.count(Row.DeliveryArtifactID)) {

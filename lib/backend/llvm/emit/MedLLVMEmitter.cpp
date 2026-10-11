@@ -874,6 +874,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         }
     }
   SegmentDataGlobals.clear();
+  SegmentDataBases.clear();
   WritableSegmentGlobals.clear();
   CodePtrTableGlobals.clear();
   PreparedFuncBlocks.clear();
@@ -1180,11 +1181,11 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         EmittedFuncNames[Address] = Name;
     }
 
+  // Authenticate retained entries before body emission, including omitted
+  // shard bodies. This identity does not grant a native parent EH contract.
   if (Img && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
     for (const auto &Func : Funcs) {
-      if (!Func.ExceptionMetadata ||
-          !coff_loader::getCheckedX86CxxPersonalityABI(*Img,
-                                                       *Func.ExceptionMetadata))
+      if (!Func.ExceptionMetadata || !Func.ExceptionMetadata->Registration)
         continue;
       resolveX86RegistrationHandlerReference(
           Func.ExceptionMetadata->PersonalityVA);

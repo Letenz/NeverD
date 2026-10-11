@@ -153,6 +153,8 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
     Result.ExitStatus = Event.Arguments[0] & 0xff;
     return std::optional<ServiceResult>();
   case ServiceKind::Poll:
+  case ServiceKind::Select:
+  case ServiceKind::Pselect:
   case ServiceKind::Write:
   case ServiceKind::Readv:
   case ServiceKind::Writev:

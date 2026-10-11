@@ -14,6 +14,7 @@
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -200,22 +201,23 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
       llvm::find_if(States.CallFrameEffects,
                     [](const auto &Call) { return Call.DoesNotReturn; });
   ASSERT_NE(Throw, States.CallFrameEffects.end());
-  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+  const auto SourceThrow = llvm::find_if(Low.Blocks, [&](const auto &Block) {
+    return Block.StartAddr <= Throw->Address && Throw->Address < Block.EndAddr;
+  });
+  ASSERT_NE(SourceThrow, Low.Blocks.end());
+  const auto Boundary =
+      llvm::find_if(SourceThrow->InstructionBoundaries, [&](const auto &Insn) {
+        return Insn.Address == Throw->Address;
+      });
+  ASSERT_NE(Boundary, SourceThrow->InstructionBoundaries.end());
+  ASSERT_TRUE(isUnconditionalNoReturn(*Boundary));
+  ASSERT_TRUE(SourceThrow->Succs.empty());
+  // The decoded call independently terminates this block. Withdrawing its
+  // memory-effect receipt cannot recreate an ordinary return. The separate
+  // RegistrationCallNoReturn tests cover receipt-dependent edge removal.
+  for (unsigned Mutation = 0; Mutation != 3; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Changed = Low;
-    // The source CFG already closed this throw. Supply an ordinary edge so
-    // this mutation still checks MedIR's exact call-effect binding.
-    auto Source = llvm::find_if(Changed.Blocks, [&](const auto &B) {
-      return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
-    });
-    auto Resume = llvm::find_if(Changed.Blocks, [&](const auto &B) {
-      return B.StartAddr == States.CxxContinuations[0].TargetVA;
-    });
-    ASSERT_NE(Source, Changed.Blocks.end());
-    ASSERT_NE(Resume, Changed.Blocks.end());
-    ASSERT_TRUE(Source->Succs.empty());
-    Source->Succs.push_back(Resume->Id);
-    Resume->Preds.push_back(Source->Id);
     auto &Proof = *Changed.RegistrationStates;
     auto &Call =
         Proof.CallFrameEffects[Throw - States.CallFrameEffects.begin()];
@@ -230,7 +232,12 @@ TEST(WindowsRegistrationMultipleCatch, InputPE32ReconstructsOrderedCatches) {
       return B.StartAddr <= Throw->Address && Throw->Address < B.EndAddr;
     });
     ASSERT_NE(Block, Unproved.Blocks.end());
-    EXPECT_EQ(Block->Succs.empty(), Mutation == 3);
+    EXPECT_TRUE(Block->Succs.empty());
+    EXPECT_EQ(Block->ExceptionalSuccs.size(), 3u);
+    EXPECT_TRUE(llvm::any_of(Block->Ops, [&](const auto &Op) {
+      return Op.Addr == Throw->Address && Op.OriginSeq == Throw->OpSeq &&
+             Op.Opcode == NdOp::CALL && Op.DoesNotReturn;
+    }));
   }
   unsigned TerminalCalls = 0;
   for (const auto &Block : Med.Blocks)

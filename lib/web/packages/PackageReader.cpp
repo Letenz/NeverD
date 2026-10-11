@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../JsonReader.h"
+#include "Paths.h"
 
 #include "neverd/web/Error.h"
 #include "neverd/web/Limits.h"
@@ -22,6 +23,7 @@ namespace neverd::web {
 namespace {
 using Object = llvm::json::Object;
 using Value = llvm::json::Value;
+using package_paths::confined;
 
 std::optional<std::string> text(const Object &O, llvm::StringRef Key) {
   const auto *V = O.get(Key);
@@ -67,27 +69,6 @@ std::vector<std::string> strings(const Object &O, llvm::StringRef Key) {
     std::sort(Result.begin(), Result.end());
   }
   return Result;
-}
-bool confined(std::string_view Path, bool Empty = false) {
-  if (Path.empty())
-    return Empty;
-  if (Path.size() > 4096 || Path.front() == '/' || Path.back() == '/' ||
-      Path.find_first_of("\\:") != std::string_view::npos)
-    return false;
-  unsigned Depth = 0;
-  for (unsigned char C : Path)
-    if (C < 32 || C == 127)
-      return false;
-  while (!Path.empty()) {
-    const auto End = Path.find('/');
-    const auto Part = Path.substr(0, End);
-    if (Part.empty() || Part == "." || Part == ".." || ++Depth > 64)
-      return false;
-    if (End == std::string_view::npos)
-      break;
-    Path.remove_prefix(End + 1);
-  }
-  return true;
 }
 bool packageName(std::string_view Name) {
   if (!confined(Name) || Name == "node_modules")

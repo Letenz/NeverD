@@ -18,8 +18,8 @@
 | [贡献指南](CONTRIBUTING.md) | 开发环境、构建配置、工作流、风格与 PR 要求 |
 | [架构](architecture.md) | IR 路径、组件边界、严格提升、支持深度与修改位置 |
 | [离线 Web 分析（英文）](../web-analysis.md) | C++ 制品、源码、绑定和映射检查，元数据策略、SDK 与当前验证范围 |
-| [JavaScript 基本值重写（英文）](../web-source-rewrite-profile.md) | 显式转换、局部替换检查、精确逆变换及绑定凭据的本地导出 |
-| [Bun 独立程序配置（英文）](../web-bun-profile.md) | 已验证的 x64/ARM64 ELF、单架构 Mach-O 与 PE 提取、原始范围和固定测试样本的来源 |
+| [JavaScript 基础重写（英文）](../web-source-rewrite-profile.md) | 显式处理步骤、局部替换检查、精确逆变换与受验证凭据约束的本地导出 |
+| [Bun 独立程序配置（英文）](../web-bun-profile.md) | 限定范围的 x64/ARM64 ELF、单架构 Mach-O 和 PE 提取、原始范围与固定测试样本的来源 |
 | [ASAR 提取配置（英文）](../web-asar-profile.md) | 包内与包外捕获关联、完整性状态、成员使用方及原生 Unicode 依赖 |
 | [Electron 证据配置（英文）](../web-electron-profile.md) | 捕获的入口路径、清单与源码范围、窗口和桥接证据及 IPC 通道候选 |
 | [HTML 源码配置（英文）](../web-html-profile.md) | 有界 C++ 脚本清单、捕获的本地引用与原始内联源码锚点 |

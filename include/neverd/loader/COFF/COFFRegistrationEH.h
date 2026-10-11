@@ -98,6 +98,13 @@ getCheckedX86RegistrationPointerRoles(const BinaryImage &Img);
 std::optional<std::pair<va_t, va_t>>
 getCheckedX86SafeSEHTablePointer(const BinaryImage &Img);
 
+/// Authenticate a retained PE32 handler entry by exact membership in the
+/// immutable SafeSEH table and its relocated load-config pointer. This proves
+/// source code identity only, not a language personality, callable ABI,
+/// callback ownership or permission to reconstruct native exception handling.
+bool isCheckedX86SafeSEHHandlerReference(const BinaryImage &Img,
+                                         va_t HandlerVA);
+
 /// Checked PE32 throw metadata with one directly catchable type,
 /// no forwarding callback and no pointer adjustment. The three
 /// metadata records must be immutable mapped data. TypeDescriptor is retained

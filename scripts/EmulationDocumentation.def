@@ -58,9 +58,17 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all41 other file routes closed before preflight")
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "59 current native-common cases")
+                           "all43 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "61 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "current live FD lower bound")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "read write exception / bit count across sets")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all copyins before all descriptor checks")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "partial outputs and overlaps unsupported before all output")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "792 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "group_membership_uid")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "4294967195")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "ordinary-queries-closed-groups")
@@ -665,9 +673,10 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "WDKDriverFixtures.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "build_wdk_driver_fixtures.py")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI, "DriverNativeOutcomes.def")
 NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
-                           "5068 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 "
-                           "wait sets + 12 driver UNPACK + 6 clock reads "
-                           "+ 4 image memory checks = 5452")
+                           "5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 "
+                           "wait sets + 18 driver UNPACK + 6 clock reads "
+                           "+ 4 image memory checks + 6 CPUID "
+                           "+ 6 kernel snapshots + 9 pool captures = 5493")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif
@@ -1864,3 +1873,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-values")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-unsupported")
 #endif
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "pselect394 / pselect_nocancel395")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "918 mixed controls and captures")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "complete nonnull mask unsupported")

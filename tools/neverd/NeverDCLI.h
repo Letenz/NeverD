@@ -211,13 +211,18 @@ extern llvm::cl::list<std::string> WebArguments;
 int runWeb();
 int runWebRewrite();
 int runWebBehavior();
+int runWebBehaviorDiff();
 int runWebPackages();
 int runWebArchive();
 int runWebDesktop();
 int runWebIntegrity();
+int runWebAdvisories();
+int runWebAttestation();
 int runWebInterfaces();
 int runWebStreams();
 int runWebSEA();
+int runWebNexe();
+int runWebPkg();
 
 extern llvm::cl::opt<bool> Devirtualize;
 extern llvm::cl::list<std::string> VMControlRegisters;

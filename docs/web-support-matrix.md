@@ -42,13 +42,17 @@ Other hosts require separate evidence.
 | Captured HTML | `html-utf8-script-candidates-v1` | Script/base inventory, captured local URL candidates and inline raw-byte sources/anchors; DOM and runtime activation remain unverified. [Profile](web-html-profile.md) |
 | HTML inline module files | `html-inline-module-file-candidates-v2` | Literal requests use explicit document/base evidence and exact captured members; early captured maps add scoped/prefix/null rules and private URL candidates; browser activation/history and full closure remain pending |
 | HTML import maps | `import-map-url-evidence-v1`, embedded Ada 4.0.0 | Bounded C++ JSON/URL processing and metadata pages remain available without JS parsing; absolute key origins, later/interleaved maps and order-dependent JSON remain explicit HTML-profile refusals |
-| npm metadata and supplied-directory diff | `node-package-evidence-v1` | npm lock v1/v2/v3, hidden locks, captured manifests, unresolved/conditional placements, exact file hashes and evidence coverage comparisons; [profile](web-package-profile.md). Advisory/provenance, dispositions and reports remain pending |
+| npm metadata and supplied-directory diff | `node-package-evidence-v1` | npm lock v1/v2/v3, hidden locks, captured manifests, unresolved/conditional placements, exact file hashes and evidence coverage comparisons; [profile](web-package-profile.md). Composed assessments, dispositions and reports remain pending |
+| Captured npm advisory declarations | `npm-osv-1.9.1-v1`, `offline-package-metadata-descriptor-v1` | Native captured OSV/name/version matching with explicit source/time/severity uncertainty and bounded sessions; [profile](web-package-advisory-profile.md), [actual public metadata qualification](web-package-advisory-qualification.md). Feed completeness, freshness, publisher authentication and exploitability remain unverified |
+| Captured signature and provenance metadata | `offline-package-attestation-metadata-v1` | Explicit npm registry/in-toto/DSSE/SLSA subsets and selected SHA-256/SHA-512 original-byte joins. [Profile](web-package-attestation-profile.md). Signature, publisher, trust-chain, transparency and SLSA-level authentication remain unverified |
 | Selected Node source/package behavior | `node-22.15-static-behavior-v1` | Fixed import-rooted process/filesystem/HTTP/native-load/Buffer call patterns, argument anchors and exact inventory/delivery joins. [Profile](web-node-behavior-profile.md). Install propagation, runtime API identity, reachability and verdicts remain unverified |
 | Package archives and original SRI | `ustar-pax-single-gzip-v1`, `npm-original-sri-v1` | Native tar/local-PAX/single-gzip, metadata-only links, shared source/package/Bun/native consumers and explicit registry/lock declaration checks over original bytes. [Profile and limits](web-package-archive-profile.md). Recursive archives, full tar dialects and publisher authentication are unsupported |
 | Passive interface evidence | `har-1.2-metadata-v1`, `fetch-websocket-xhr-syntax-v2`, `absolute-http-method-origin-path-v1` | HAR preview/commit, direct fetch/WebSocket and bounded XHR constructor/receiver/call/event syntax links; explicit fetch-only joins preserve evidence classes. Wrappers, response dataflow, dynamic URL resolution and WebSocket frames remain unsupported. [Profile](web-interface-profile.md) |
 | Passive stream/log records | Six explicitly selected JSONL/SSE/JSON-RPC/MCP-shape/recorded-envelope/log profiles | Bounded native framing, redaction preview/commit and recorded-context candidate joins; missing/ambiguous evidence refuses links. No complete MCP schema/negotiation, source correlation or live capture claim. [Profiles](web-stream-profile.md) |
 | Node SEA | Node 22.15.0 LE64 preparation blob and explicit ELF64/Mach-O64/PE32+ x64/ARM64 resource profiles | Separate C++ reader, stored JS/assets and opaque V8 cache/snapshot, shared consumers; [qualification and limits](web-sea-profile.md). Runtime activation/version and other versions/hosts are unverified |
-| Tauri/Wails/pkg/nexe | Research/profile qualification pending | Detection is insufficient; each named profile must extract known assets |
+| nexe | `nexe-4.0.0-rc.7-eof-resources-v1` | C++ stored-resource and bootstrap extraction, alias-aware hashes, private namespaces and shared consumers; three x64 producer outputs qualified. Opaque native prefix/signatures/runtime and ARM64 producer outputs remain unverified. [Profile](web-nexe-profile.md) |
+| pkg | `pkg-5.8.1-uncompressed-vfs-v1` | Independent C++ loader/prelude/VFS reader, typed stores and private namespaces; six Node 18.5.0 producer outputs cover Linux/macOS/Windows x64/ARM64. Compression, links, V8 semantics and native validation remain unsupported or unverified. [Profile](web-pkg-profile.md) |
+| Tauri/Wails | Research/profile qualification pending | Detection is insufficient; each named profile must extract known assets |
 | C++ worker | `web_` operations in protocol 1.1 | Real framed-process, direct-query parity, web/native revision isolation and private-output checks passed locally |
 | C++ MCP transport | `neverd-offline-web-mcp-v1`, MCP 2025-06-18 stdio | Shared worker/C API adapter, launch-configured input indices and capability-filtered tools; structural views only, no raw export/deep native analysis. [Profile and qualification limits](web-mcp-profile.md) |
 
@@ -110,6 +114,11 @@ closure remain outstanding.
 | Package archive members / depth / cached archives | 10,000 / 64 / 4 |
 | Package archive PAX/name/prefix metadata | 8 MiB |
 | SRI declaration bytes / tokens / cached verifications | 64 KiB / 256 / 16 |
+| Advisory or source/time descriptor JSON / depth / nodes | 1 MiB / 32 / 32,768 |
+| Advisory affected entries / severities / combined version-event selectors | 1,024 / 1,024 / 8,192 |
+| Retained advisory imports / descriptors / charged metadata across imports | 16 / 20 / 8 MiB |
+| Retained attestation imports / subject-digest receipts | 4 / 4; descriptors and 8 MiB metadata ceiling shared with advisories |
+| Advisory comparison records / matched-entry anchors / work / cached selections | 8,192 / 8,192 / 8,000,000 / 2 |
 | HAR original / observations / field records | 8 MiB / 4,096 / 32,768 |
 | Source interface records / correlation pairs | 4,096 / 32,768 |
 | HAR captures / pending previews / source analyses / correlations | 4 / 1 / 4 / 4 |
@@ -133,6 +142,13 @@ closure remain outstanding.
 | Bun private names total / one name | 1 MiB / 32 KiB |
 | SEA selected input / assets / cached extractions | 256 MiB / 4,096 / 4 |
 | SEA private names total / one name / page records | 1 MiB / 32 KiB / 128 |
+| nexe bootstrap / JSON index / members | 8 MiB / 1 MiB / 4,096 |
+| nexe private metadata per extraction / per session / cached results | 4 MiB / 8 MiB / 4 |
+| nexe reader steps / hash reads / page rows | 2,000,000 / at most twice captured length / 512 |
+| pkg prelude / final JSON / stat document | 8 MiB / 1 MiB / 4 KiB |
+| pkg paths / stores / links / aggregate JSON nodes | 4,096 / 16,384 / 4,096 / 100,000 |
+| pkg private metadata per extraction / per session / cached results | 4 MiB / 8 MiB / 4 |
+| pkg reader steps / scan and hash reads / page rows | 4,000,000 / each at most twice captured length / 512 |
 | Bun section / program headers | 4,096 / 1,024 |
 | Bun serialized map / decoded content total | 8 MiB / 8 MiB |
 | Bun decoded source / Zstd window | 4 MiB / 8 MiB |

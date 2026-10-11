@@ -4077,6 +4077,7 @@ TEST_P(DarwinFileTest, OwnerQueriesCloseEveryOtherDispatchedFileRoute) {
     ownerQueries();
     path("/data");
     const ServiceKind Closed[] = {
+        ServiceKind::Pselect,       ServiceKind::Select,
         ServiceKind::Poll,          ServiceKind::Truncate,
         ServiceKind::Ftruncate,     ServiceKind::Symlink,
         ServiceKind::Link,          ServiceKind::LinkAt,
@@ -4098,7 +4099,7 @@ TEST_P(DarwinFileTest, OwnerQueriesCloseEveryOtherDispatchedFileRoute) {
         ServiceKind::PathConf,      ServiceKind::FpathConf,
         ServiceKind::Stat64,        ServiceKind::Fstat64,
         ServiceKind::Lstat64};
-    static_assert(std::size(Closed) == 41);
+    static_assert(std::size(Closed) == 43);
     std::array<uint8_t, 64> Before, After;
     llvm::cantFail(Space->read(Base, Before));
     for (auto Service : Closed) {

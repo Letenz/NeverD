@@ -68,9 +68,37 @@ public:
                                      std::string_view ArtifactID,
                                      std::string_view DeclarationID,
                                      std::string_view PackageID);
+  std::string importPackageAdvisory(std::string_view ExpectedRevision,
+                                    std::string_view ArtifactID,
+                                    std::string_view DescriptorArtifactID);
+  std::string packageAdvisoryRecords(std::string_view ExpectedRevision,
+                                     std::string_view AdvisoryID,
+                                     std::string_view RecordKind,
+                                     uint64_t Offset, uint64_t Limit) const;
+  std::string matchPackageAdvisories(std::string_view ExpectedRevision,
+                                     std::string_view PackageAnalysisID,
+                                     std::string_view OptionsJSON);
+  std::string packageAdvisoryMatchRecords(std::string_view ExpectedRevision,
+                                          std::string_view MatchesID,
+                                          uint64_t Offset,
+                                          uint64_t Limit) const;
   std::string packageArchiveRecords(std::string_view ExpectedRevision,
                                     std::string_view ArchiveID, uint64_t Offset,
                                     uint64_t Limit) const;
+  std::string importPackageAttestation(std::string_view ExpectedRevision,
+                                       std::string_view ArtifactID,
+                                       std::string_view DescriptorArtifactID,
+                                       std::string_view InputKind);
+  std::string packageAttestationRecords(std::string_view ExpectedRevision,
+                                        std::string_view AttestationID,
+                                        std::string_view RecordKind,
+                                        uint64_t Offset, uint64_t Limit) const;
+  std::string matchPackageAttestationDigest(std::string_view ExpectedRevision,
+                                            std::string_view ArtifactID,
+                                            std::string_view AttestationID,
+                                            std::string_view DigestID);
+  std::string packageAttestationDigestResult(std::string_view ExpectedRevision,
+                                             std::string_view MatchID) const;
   std::string analyzePackages(std::string_view ExpectedRevision,
                               std::string_view ArtifactID,
                               std::string_view InputKind);
@@ -86,6 +114,20 @@ public:
                                      std::string_view BehaviorID,
                                      std::string_view RecordKind,
                                      uint64_t Offset, uint64_t Limit) const;
+  std::string comparePackageBehavior(std::string_view ExpectedRevision,
+                                     std::string_view PackageDiffID,
+                                     std::string_view OptionsJSON);
+  std::string packageBehaviorDiffRecords(std::string_view ExpectedRevision,
+                                         std::string_view DiffID,
+                                         std::string_view RecordKind,
+                                         uint64_t Offset, uint64_t Limit) const;
+  std::string analyzePackageInstall(std::string_view ExpectedRevision,
+                                    std::string_view PackageAnalysisID,
+                                    std::string_view OptionsJSON);
+  std::string packageInstallRecords(std::string_view ExpectedRevision,
+                                    std::string_view InstallID,
+                                    std::string_view RecordKind,
+                                    uint64_t Offset, uint64_t Limit) const;
   std::string packageRecords(std::string_view ExpectedRevision,
                              std::string_view AnalysisID,
                              std::string_view RecordKind, uint64_t Offset,
@@ -142,6 +184,19 @@ public:
   std::string seaRecords(std::string_view ExpectedRevision,
                          std::string_view ExtractionID, uint64_t Offset,
                          uint64_t Limit) const;
+  std::string extractPkg(std::string_view ExpectedRevision,
+                         std::string_view ArtifactID, std::string_view Profile);
+  std::string pkgRecords(std::string_view ExpectedRevision,
+                         std::string_view ExtractionID,
+                         std::string_view RecordKind, uint64_t Offset,
+                         uint64_t Limit) const;
+  std::string extractNexe(std::string_view ExpectedRevision,
+                          std::string_view ArtifactID,
+                          std::string_view Profile);
+  std::string nexeRecords(std::string_view ExpectedRevision,
+                          std::string_view ExtractionID,
+                          std::string_view RecordKind, uint64_t Offset,
+                          uint64_t Limit) const;
   /// Explicit local raw disclosure into a new directory. Fixed output names;
   /// captured names are manifest data only. Never overwrites or executes.
   std::string exportBun(std::string_view ExpectedRevision,

@@ -234,6 +234,8 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinMemoryTests.cpp
   DarwinFileTests.cpp
   DarwinPollTests.cpp
+  DarwinSelectTests.cpp
+  DarwinPselectTests.cpp
   DarwinVectorTests.cpp
   DarwinTimeTests.cpp
   DarwinSystemTests.cpp
@@ -1319,6 +1321,7 @@ add_neverd_unittest(NeverDNativeDriverTests
   NO_PRETTY_VALUES
   DriverNativeExecutionTests.cpp
   DriverTimestampTests.cpp
+  DriverCPUIDTests.cpp
   DriverImageMemoryTests.cpp
   DriverSchedulingTests.cpp
   DriverThreadPriorityTests.cpp
@@ -1334,6 +1337,15 @@ target_include_directories(NeverDNativeDriverTests PRIVATE
 target_compile_definitions(NeverDNativeDriverTests PRIVATE
   ${_driver_execution_fixture_definitions})
 add_dependencies(NeverDNativeDriverTests NeverDDriverFixtures)
+
+add_neverd_unittest(NeverDKernelSnapshotTests
+  NO_PRETTY_VALUES
+  KernelSnapshotTests.cpp
+  KernelUnpackStateTests.cpp
+  TIMEOUT 30
+  LINK_COMPONENTS Emulation)
+target_include_directories(NeverDKernelSnapshotTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDDriverGuardMetadataTests
   DriverDormantGuardTests.cpp

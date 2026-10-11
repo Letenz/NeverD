@@ -24,11 +24,11 @@ bool overlaps(int32_t Offset, uint16_t Width, int32_t Slot,
 
 } // namespace
 
-bool RegistrationStateSolver::transferBlock(size_t I) {
+bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
+                                            BlockFacts &Facts) {
   const LowBlock &Block = Function.Blocks[I];
-  if (!charge(Incoming[I].catchCellCount() + 1))
+  if (!charge(Before.catchCellCount() + 1))
     return true;
-  const Domain Before = Incoming[I];
   Domain After = Before;
   FrameTransfer Transfer(
       After.Frame, *Chain.RegistrationOffset, EH4 ? SecurityCookieVA : 0,
@@ -39,7 +39,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
   bool NoReturnAtExit = false;
   va_t NoReturnEnd = InvalidVA;
   auto Invalidate = [&] {
-    Facts[I].Invalid = true;
+    Facts.Invalid = true;
     After.Unknown = true;
     After.Levels.clear();
   };
@@ -80,15 +80,19 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
       for (unsigned Input = 0; Input != Op.NumInputs; ++Input)
         if (RuntimeTransfer.read(Op.Inputs[Input]).MayBeFrame)
           CompleteRuntimeObjects = false;
-    recordCatchReturn(I, After, Op, Transfer, CatchReturn);
+    recordCatchReturn(I, After, Op, Transfer, Facts, CatchReturn);
     if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN &&
         (!callbackCanReturn(After) || !callbackReturnInstruction(I, Op)))
       Invalidate();
-    if (Op.Seq >= 0 && Op.Output.Size != 0 && Value.MayBeFrame) {
+    // Different activations can execute the same source occurrence. Remember
+    // scalar/unknown observations too: a frame value in only one invocation
+    // cannot authorize an exact frame projection for the shared instruction.
+    if (Op.Seq >= 0 && Op.Output.Size != 0) {
       if (!charge(1))
         break;
       auto [It, New] =
-          FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq), Value);
+          FrameValues.emplace(std::make_pair(Op.Addr, Op.Seq),
+                              Value.MayBeFrame ? Value : FrameValue{});
       if (!New)
         It->second = registration_state::join(It->second, Value);
     }
@@ -108,7 +112,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     }
     bool RuntimeMemory = false;
     RuntimeMemory =
-        recordRuntimeMemory(I, After, Op, Transfer, RuntimeTransfer);
+        recordRuntimeMemory(I, After, Op, Transfer, RuntimeTransfer, Facts);
     if (Exhausted)
       break;
 
@@ -340,7 +344,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
                      Chain.RealignedFrame->SavedParentFrameOffset, 4))
           Invalidate();
         if (Address.Offset) {
-          if (!charge(After.Frame.memoryAccessWork(Address, Width) + 1))
+          if (!charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             break;
           After.Frame.store(*Address.Offset, Width, Stored);
           if (CheckCalls) {
@@ -360,7 +364,8 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
         } else if (Address.CallbackAddress) {
           if (!After.Frame.callbackMemoryIsPrivate(*Address.CallbackAddress,
                                                    Width) ||
-              !charge(After.Frame.memoryAccessWork(Address, Width) + Width + 1))
+              !charge(After.Frame.memoryAccessWork(Address, Width, true) +
+                      Width + 1))
             Invalidate();
           else
             After.Frame.storeCallback(Address.CallbackAddress->Offset, Width,
@@ -370,7 +375,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
           // the newly allocated frame. Do not guess aliases below it.
           if (*Address.EntryOffset < -12 ||
               int64_t(*Address.EntryOffset) + Width > 4 || After.Installed ||
-              !charge(After.Frame.memoryAccessWork(Address, Width) + 1))
+              !charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             Invalidate();
           else
             After.Frame.storeEntry(*Address.EntryOffset, Width, Stored);
@@ -392,7 +397,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     std::optional<FrameValue> CallSP;
     std::optional<FrameValue> CallResult;
     bool CheckedCall = false;
-    if (auto Call = transferCall(I, After, Op)) {
+    if (auto Call = transferCall(I, After, Op, Facts)) {
       CheckedCall = true;
       CallSP = Call->StackPointer;
       CallResult = Call->Result;
@@ -400,7 +405,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
       if (NoReturnAtExit)
         NoReturnEnd = Call->EndAddress;
     }
-    if (auto SP = transferLocalUnwind(I, After, Op))
+    if (auto SP = transferLocalUnwind(I, After, Op, Facts))
       CallSP = *SP;
     // The CFG's exact instruction already owns the no-return decision.
     // A missing memory-borrow contract cannot create an ordinary return from
@@ -496,11 +501,11 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
     if ((!NoReturnAtExit || It->first < NoReturnEnd) &&
         !ProvenStores.count(It->first))
       Invalidate();
-  if (Facts[I].Invalid)
+  if (Facts.Invalid)
     After.Unknown = true;
-  Facts[I].InstalledAtExit = After.Installed;
-  Facts[I].CxxContinuationAtExit = CatchReturn.has_value();
-  Facts[I].NoReturnAtExit = NoReturnAtExit;
+  Facts.InstalledAtExit = After.Installed;
+  Facts.CxxContinuationAtExit = CatchReturn.has_value();
+  Facts.NoReturnAtExit = NoReturnAtExit;
   if (!NoReturnAtExit) {
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
@@ -514,7 +519,7 @@ bool RegistrationStateSolver::transferBlock(size_t I) {
   }
   if (CatchReturn)
     resumeCxxCatch(After, *CatchReturn);
-  dispatchBlock(I, Before);
+  dispatchBlock(I, Before, Facts);
   return true;
 }
 
