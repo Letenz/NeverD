@@ -3426,6 +3426,12 @@ void Pipeline::buildLowIR(
   // Context keys snapshot the changing CFG protection sets; the immutable
   // indexes above outlive every worker and every graph retained here.
   auto X87Graphs = createX87CallGraphCache(&NoReturnCallees, &NoReturnTargets);
+  // A small selected-function batch runs inline. Give its independent call
+  // proofs the otherwise unused worker quota; parallel CFG batches and the
+  // extra-callee frontier keep their existing outer parallelism.
+  const unsigned X87ProofThreads = Total < limits::kMinParallelIRWorkItems
+                                       ? std::min(workerThreadCount(), 4u)
+                                       : 1;
 
   // Decode cost tracks a function's instruction count, which is unknown before
   // the recursive-descent build runs.  Candidates are address-sorted, so the
@@ -3453,6 +3459,7 @@ void Pipeline::buildLowIR(
     LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
     LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
     LocalCFG.setX87CallGraphCache(X87Graphs);
+    LocalCFG.setX87CallProofThreads(X87ProofThreads);
     for (size_t I; (I = Claim()) < N;) {
       AllLow[I] = LocalCFG.build(Img, LocalDec, Candidates[I].first,
                                  Candidates[I].second);
@@ -3509,6 +3516,7 @@ void Pipeline::buildLowIR(
       LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
       LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
       LocalCFG.setX87CallGraphCache(X87Graphs);
+      LocalCFG.setX87CallProofThreads(X87ProofThreads);
       LocalCFG.setProtectedJumpTableRelocationSlots(&ProtectedRelocationSlots);
       LocalCFG.setUnsafeJumpTableBranches(&UnsafeJumpTableBranches);
       LocalCFG.setPreservePotentialJumpTableBranches(

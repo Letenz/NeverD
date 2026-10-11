@@ -237,6 +237,11 @@ registered waiters before releasing it. They check one construction for matching
 inputs, independent proof budgets, exception and incomplete-lift wakeups,
 different contexts, and reentrant callbacks across threads and caches. These
 overlaps are coordinated by conditions rather than assumed from timing.
+Independent call-proof tests hold two distinct callee builds at their real
+no-return callbacks, require both to enter before release, and compare complete
+LowIR with a serial build on x86/x64 in ELF, COFF and Mach-O. Injected failures
+must return only after all workers join. An unregistered callback stays on its
+original thread even when the caller supplies a parallel quota.
 
 `X86_32_X87FPU.NativeAndLiftedCallLoopsReturnTheIndependentSum` compares native
 machine bytes, generated LLVM, HighC and a separately generated C caller linked

@@ -1812,6 +1812,16 @@ graphs or empty projection-refusal markers across its independent CFG builders,
 under an 8 MiB retained-payload allowance including the construction context.
 This bounds the shared cache, not active builders or their private graph
 references.
+When a selected-function batch runs inline, the pipeline can assign its unused
+worker quota to independent x87 call proofs. At least two targets and 4 KiB of
+known callee extent admit at most four workers. This is a scheduling hint, not a
+proof bound: each query retains its own complete allowance and recursion state.
+The builder collects the normalization walk's exact call/loaded-slot targets
+before rewriting any operations, joins every worker, then publishes answers or
+rethrows failures in instruction order. Parallel CFG batches and extra-callee
+frontiers keep serial inner proofs. Registered callback owners and an explicit
+caller quota are required; arbitrary callbacks and nested graph builds keep
+their original calling thread.
 Exact function-boundary and jump-table protection sets, no-return proof depth
 and index identities bind each graph to its construction context. Image bytes,
 ownership and relocation metadata remain unchanged while a cache is shared.

@@ -748,6 +748,12 @@ public:
   void setX87CallGraphCache(std::shared_ptr<X87CallGraphCache> Cache) {
     SharedX87CallGraphs = std::move(Cache);
   }
+  /// Allow independent x87 call proofs to use this many worker threads.
+  /// The caller must reserve this quota outside any parallel CFG batch and
+  /// provide thread-safe, registered no-return indexes. Defaults to serial.
+  void setX87CallProofThreads(unsigned Threads) {
+    X87CallProofThreads = Threads;
+  }
   /// Provide exception-metadata-proven continuation addresses owned by the
   /// function passed to build().  These are intentionally owner-scoped rather
   /// than image-global: build() revalidates each address against an exact
@@ -1124,6 +1130,7 @@ private:
   bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
                           const std::string &Name);
   bool SkipX87StackFixup = false;
+  unsigned X87CallProofThreads = 1;
   std::shared_ptr<X87CallEffectIndex> X87CallEffects;
   std::shared_ptr<X87CallGraphCache> SharedX87CallGraphs;
 
