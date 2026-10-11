@@ -1373,8 +1373,8 @@ Windows process execution coverage.
 `StateSource.*` checks contract rejection before mutation, exact pointer
 round trips, Windows x64/ARM64 ELF call reconstruction and unknown-site
 fallback. `StateSourceCompiled.*` compares the complete unaligned state bank,
-guest writes and nonzero statuses against independent gateway implementations
-at `-O0`/`-O2` with undefined-behavior traps. Partial-selector tests cover both
+guest writes, signed arguments/results and nonzero statuses against independent
+gateway implementations at `-O0`/`-O2` with undefined-behavior traps. Partial-selector tests cover both
 byte orders, byte/halfword/word slices and an intervening overwrite. These checks use synthetic inputs;
 they do not authenticate a producer's isolation or host-service assertions.
 The Python native integration suite checks static/callback producer parity,

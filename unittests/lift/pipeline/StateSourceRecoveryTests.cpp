@@ -271,7 +271,9 @@ TEST_F(StateSourceCompiled,
   auto Original = tmpFile("before.ll");
   std::ofstream(Original) << test::printHostCompilerFixture(*M);
   M->getFunction("before")->setName("after");
-  auto R = prepareStateSourceRecovery(*M, contract());
+  auto Contract = contract();
+  Contract.Gateways[0].Imports[0].Parameters = {StateSourceType::I32};
+  auto R = prepareStateSourceRecovery(*M, Contract);
   ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
   optimize(*M);
   const auto ProbeIR = cell_test::print(*M);
@@ -287,7 +289,7 @@ TEST_F(StateSourceCompiled,
   Options.UseUnalignedPointers = true;
   Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
   ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
-  EXPECT_NE(Source.find("int32_t example_query(uint64_t)"), std::string::npos);
+  EXPECT_NE(Source.find("int32_t example_query(int32_t)"), std::string::npos);
   auto After = tmpFile("after.c");
   std::ofstream(After) << Source;
   auto Harness = tmpFile("oracle.c");
@@ -298,7 +300,7 @@ extern uint64_t before(void *,void *), after(void *,void *);
 static uint64_t get(const void *s, unsigned o) { uint64_t v; memcpy(&v,(const char *)s+o,8);return v; }
 static void put(void *s,unsigned o,uint64_t v,unsigned n) { memcpy((char *)s+o,&v,n); }
 static uint32_t *active_guest;
-int32_t example_query(uint64_t x) { *active_guest += (uint32_t)x; return (int32_t)(x ^ 0x12345678U); }
+int32_t example_query(int32_t x) { *active_guest += (uint32_t)x; return (int32_t)(x ^ 0x12345678U); }
 uint64_t gateway(void *s,void *ctx) {
   (void)ctx;
   if ((uint32_t)get(s,32)!=7 || (uint32_t)get(s,56)!=1) return 19;
