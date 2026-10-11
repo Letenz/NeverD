@@ -1376,6 +1376,7 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/RegistrationEntryLayoutTests.cpp
   eh/RegistrationRealignedLayoutTests.cpp
   eh/RegistrationRuntimePointerTests.cpp
+  eh/RegistrationHandlerReferenceTests.cpp
   eh/RegistrationFrameTaintTests.cpp
   eh/RegistrationFrameStoresTests.cpp
   eh/RegistrationFrameBitsTests.cpp

@@ -1248,6 +1248,16 @@ scalar ranges and frame intervals consume one saturating budget, including
 nested queries. Interval regressions reject independent rootless cycles and
 mutually seeded recurrences that eventually grow into another stack slot;
 reversing PHI-arm order must preserve the result.
+Repeated reaching-store iterations and successor edges reuse an unbound alias
+proof only for the identical address and write width within that one reload
+query. Overlapping and differently sized writes retain their independent
+checks. Shared scalar LOAD/SELECT graphs also have deterministic expansion
+counts across all four architectures and ELF, Mach-O and COFF: completed scalar
+and exact frame reload proofs are reused without exhausting the path budget.
+Opaque loads of pointer width, address-owned arms and forbidden values remain
+rejected; recurrence and frame-memory assumptions cannot escape their scope.
+An earlier scalar load from a slot cannot authorize a later pointer load from
+that same slot, in either operand order.
 
 `NeverDLLVMCValueTests` additionally checks relocated bytes that resemble
 strings, generic builtins compiled for a different source ISA, and dead image
@@ -2708,10 +2718,30 @@ variadic veneers and lazy-binding source pages.
 `LocalUnwindTargetRequiresExclusiveSameFrameUses` includes decoded x64 calls
 whose SP save and load occupy different blocks, stale producer changes, opaque
 calls, partial writes, foreign address uses and invalid module/runtime facts.
+Its runtime-only continuation has no ordinary incoming edge; the test requires
+both the protected-scope proof and the exact established SP in shared SSA.
+An additional decoded 4096-NOP block checks that complete-CFG work does not
+consume the address-use receipt budget; an explicitly small frame budget still
+refuses the frame proof while preserving the separate address-use analysis.
 `LocalUnwindFrameProofIntersectsEveryPredecessor` checks diamonds, stable and
 changing loops, block ordering, independent/EH roots, expired temporaries,
 released stack storage, partial/atomic writes and exhausted budgets. No opaque
 callee memory preservation or mixed PE32 callback activation is implied.
+`LocalUnwindFrameProofInspectsCalleeWritesAndReturnPC` uses decoded caller/helper
+instructions to check a neighbouring parent-frame write, partial saved-SP
+overwrite, unknown write address, return-PC corruption, wrong return SP,
+nested calls, malformed/incomplete bodies, and missing or stale callee evidence.
+Two- and three-body call chains and repeated invocations retain a proved cell;
+opaque calls, direct/mutual recursion, callee-save register clobbers, nested
+one-arm writes and exhausted budgets do not. Both explicit writes and a
+stack-switched CALL must preserve every active return PC. Missing or changed
+inner bodies invalidate the entire receipt, and a repeated body is checked
+again with the second invocation's actual argument addresses.
+`LocalUnwindCalleeDepthAndWorkLimitsDoNotPublishPartialFacts` checks shallow
+chains, the 16-body limit, deeper chains and an explicitly exhausted budget.
+Missing instruction slices in either caller or callee, a symmetrically removed
+callee branch edge, and a wholly removed caller branch arm cannot hide the path
+that overwrites a saved cell. Complete caller diamonds retain their frame proof.
 
 CRT source regressions use synthetic tables and the pinned Windows corpus:
 
@@ -2910,6 +2940,11 @@ their destructor footprints.
 The state target also checks source-call identity, initialized ECX object
 borrows, registration/SavedESP separation, partial stores, pointer taint,
 conflicting predecessors and preserved catch resumption after a private throw.
+`ExactLocalAccessesDoNotRescanTheWholeFrame` proves installation and unlink
+after thousands of exact loads from a populated frame under the unchanged
+cumulative work limit. `IndexedFrameAccessesKeepPartialAndUnknownAliases`
+checks unaligned overlapping writes, unknown-address reads, disjoint cells and
+signed-offset endpoints in parent, entry and callback coordinates.
 `CanonicalNoReturnKeepsExceptionalFlowWithoutBorrowing` checks direct and
 indirect canonical no-return calls without a callee memory contract, retaining
 catch dispatch/resumption and rejecting conditional, unmarked, mismatched or
@@ -2938,6 +2973,15 @@ handlers under EH3 and EH4: restored and unbalanced stacks, changed EBP,
 return-pop immediates, conditional returns, trailing effects and missing or
 mismatched instruction identities. The C++ catch-return suite applies the
 same unconditional-return rule before publishing a continuation.
+`SharedSEHCallbackTailsKeepEachInvocationStack` checks distinct EH3/EH4 filter
+and finally entries sharing an epilogue, with reversed discovery order. Each
+invocation owns its initialized spills and restored EBP/ESP. Uninitialized
+storage in one invocation cannot borrow another's facts, and a shared source
+value that is scalar in one invocation cannot claim the other's exact frame
+offset. Return-PC writes, an unbalanced stack, return-pop immediates and an
+independent ordinary entry remain rejected.
+`SEHActivationsShareTheCumulativeWorkBudget` checks that many callback entries
+cannot restart the state budget; exhaustion publishes no block or frame facts.
 The native call target checks cumulative failed-proof budgets and fresh-image
 callee indices.
 Catch-return tests require the pre-dispatch SavedESP snapshot to survive catch
@@ -4614,6 +4658,8 @@ Memory-file reads cover empty ranges at the user limit and original-count signed
 
 `NeverDOwnInteriorCallTests` covers direct x86 and x86-64 calls to a label inside the caller's own unwind range, under a Microsoft x64 `.pdata` entry, a System V x86-64 DWARF FDE and an i386 DWARF FDE. A call made only for the return address it pushes is lifted as a push and a jump, and the emitted C for the straight and looped x86-64 cases runs at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. A target whose returns pop that call's own return address stays an ordinary call; a return after a stack switch or below the entry stack pointer is refused. A range recovered from an i386 registration chain does not bound the body, so its call stays a call.
 
+Return-slot checks reject overlapping, unknown, atomic and opaque-callee writes before treating a target as an ordinary subroutine. PE, ELF and Mach-O cases cover partial-width PC corruption and i386 widened memory addresses. Private writes, discarded return addresses and terminating branches remain valid.
+
 `NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
@@ -4831,3 +4877,13 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 The committed-write observer regressions verify visibility before the next instruction, exact instruction accounting without write logs, and propagation of observer failures. Both legacy and checked contracts are mandatory on matching KVM/WHP backends.
 
 `UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction`; `UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors`.
+
+`scripts/check_windows_nonlocal_finally.py` compiles and executes original MSVC x86/x64 programs at O0/O2 with GS enabled and disabled. Its six cases distinguish ordinary and unwinding finally invocations, conditional jumps to the parent, and returns that stop unwinding. Repeated observations check local guards and the x86 registration chain; a deliberately changed cleanup trace must fail the original oracle. The Windows EH fixture job retains the source/image hashes, compiler output, linker maps and runtime observations. Run it in the matching MSVC environment with `--arch x86` or `--arch x64` and `--output`. This supplies an original-runtime baseline, not evidence that NeverD supports these nonlocal transitions.
+
+`RegistrationTryLevel.EH4Publication*` and `EH4CookieStoresMustOwnDistinctPrivateBytes` check direct PE32 EH4 frames with ADD/SUB allocation, saved registers, pushed cookies and disp8/disp32 cookie stores. Changed sources, offsets, overlapping cookies and writes into saved registers or runtime administration must be rejected; shared LowIR independently verifies values and lifetime.
+
+`PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` checks optimized and unoptimized source projection across PE32, ELF and Mach-O on x86, x64 and AArch64. Single-function and sharded LLVM emission retain the same explicit incomplete native EH contract; binary rewriting still rejects it.
+
+`RegistrationCallNoReturn` rejects changed instruction extents, targets, operation ranges, conditional calls and foreign architecture/format use. The realigned PE32 probe checks both an independently terminal decoded call and a retained fallthrough requiring a current receipt; invalid memory evidence cannot recreate an already absent ordinary edge.
+
+`SafeSEHReference.*` checks immutable SafeSEH membership, malformed or ambiguous storage, relocations, foreign architectures/formats and declaration order across shards. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` uses `NEVERD_NONLOCAL_FINALLY_INPUTS` to test 32 LLVM combinations of the native MSVC x86/x64 O0/O2 and GS fixtures with source optimization enabled and disabled. It verifies LLVM and resolved call signatures while requiring unsupported x86 native EH reconstruction to remain rejected. The focused Windows EH job downloads the native fixture artifact and runs this matrix; without the input directory the test is explicitly skipped.

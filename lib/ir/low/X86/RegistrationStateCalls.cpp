@@ -10,8 +10,8 @@
 
 namespace neverd::registration_state {
 std::optional<RegistrationStateSolver::CallTransfer>
-RegistrationStateSolver::transferCall(size_t I, Domain &After,
-                                      const LowOp &Op) {
+RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
+                                      const BlockFacts &Facts) {
   if (!CheckCalls || (Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL))
     return std::nullopt;
   const LowBlock &Block = Function.Blocks[I];
@@ -24,7 +24,7 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After,
   const auto StackPointer =
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride];
   const auto SP = parentStackOffset(After);
-  bool Valid = !After.Unknown && !Facts[I].Invalid && Op.Seq >= 0 &&
+  bool Valid = !After.Unknown && !Facts.Invalid && Op.Seq >= 0 &&
                Boundary != Boundaries.end() &&
                Boundary->second.first == Block.Id &&
                Boundary->second.second.Control == LowInstructionControl::Call &&

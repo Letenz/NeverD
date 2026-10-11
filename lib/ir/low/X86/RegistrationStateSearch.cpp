@@ -85,12 +85,11 @@ bool RegistrationStateSolver::enterCxxCatch(Domain &Root, const Domain &Source,
 }
 
 std::vector<RegistrationCxxSearch>
-RegistrationStateSolver::cxxSearches(size_t I, const Domain &State) {
+RegistrationStateSolver::cxxSearches(const Domain &State, bool Invalid) {
   if (!EH.Cxx || !State.CanDispatch || !State.Installed)
     return {};
   const auto &Cxx = *EH.Cxx;
-  const auto &Levels =
-      State.Unknown || Facts[I].Invalid ? AllLevels : State.Levels;
+  const auto &Levels = State.Unknown || Invalid ? AllLevels : State.Levels;
   std::set<RegistrationCxxSearch> Searches;
   for (int32_t Level : Levels)
     for (uint32_t Index = 0; Index < Cxx.TryBlocks.size(); ++Index) {
