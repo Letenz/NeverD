@@ -1,5 +1,7 @@
 // AArch64 assembly mnemonics — included by intrinsics.cpp.
 // Only for intrinsics with NO standard C/ACLE builtin.
+// The names are aligned in a column, which clang-format would undo.
+// clang-format off
 
 A(Intrinsic::Svc,          "svc");
 A(Intrinsic::Hvc,          "hvc");
@@ -100,3 +102,4 @@ A(Intrinsic::A64_Ldsetpa,      "ldsetpa");
 A(Intrinsic::A64_Ldsetpal,     "ldsetpal");
 A(Intrinsic::A64_Ldsetpl,      "ldsetpl");
 A(Intrinsic::A64_SveIndex,     "index");
+A(Intrinsic::A64LinuxSyscall,  "svc");

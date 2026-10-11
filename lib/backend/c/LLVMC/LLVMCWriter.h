@@ -676,6 +676,8 @@ public:
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
+  /// The helper each modeled supervisor call in the unit prints through.
+  std::map<Intrinsic, std::string> SyscallHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
   /// Exact projected prototypes captured while rendering definitions. They
   /// include source presentation choices such as inferred void and sret.

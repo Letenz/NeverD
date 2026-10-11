@@ -21,6 +21,7 @@
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -1052,6 +1053,17 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (Number && Number->Kind == ExprKind::Const)
         LinuxSyscallArgs = linuxX64SyscallArgumentCount(Number->ConstVal);
     }
+    // A modeled supervisor call passes the number, then one operand per
+    // argument register; a verified syscall reads only its own arguments.
+    size_t FirstUnreadOperand = E.Operands.size();
+    if (const SyscallConvention *Syscall =
+            modeledSyscallConvention(E.IntrinsicId);
+        Syscall && !E.Operands.empty() && E.Operands[0])
+      if (const HighExpr *Number = unwrapIntegerView(E.Operands[0].get());
+          Number && Number->Kind == ExprKind::Const)
+        if (const auto Count =
+                linuxSyscallArgumentCount(Syscall->TheArch, Number->ConstVal))
+          FirstUnreadOperand = 1 + *Count;
     // An unconsumed register read is not part of the syscall's behavior. The
     // helper has a fixed six-register signature, so fill those positions with
     // zero only when the omitted expression cannot fault or have side effects.
@@ -1082,7 +1094,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
-      if (LinuxSyscallArgs == 1 && I >= 2 && CanOmit(CanOmit, Op.get(), 0)) {
+      if (((LinuxSyscallArgs == 1 && I >= 2) || I >= FirstUnreadOperand) &&
+          CanOmit(CanOmit, Op.get(), 0)) {
         OpStrs.push_back("0");
         continue;
       }

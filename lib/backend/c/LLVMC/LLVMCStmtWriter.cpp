@@ -3871,6 +3871,25 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
   if (!IA)
     return false;
 
+  // A modeled supervisor call prints through the helper that keeps each
+  // value in the register its kernel reads.
+  if (const SyscallConvention *Syscall =
+          modeledSyscallInlineAsm(Opts.TheArch, Call)) {
+    const auto Helper = SyscallHelperNames.find(Syscall->Modeled);
+    if (Helper == SyscallHelperNames.end())
+      llvm::report_fatal_error("uncollected supervisor call C helper");
+    std::string Expression = Helper->second + "(";
+    for (unsigned I = 0; I < Call.arg_size(); ++I)
+      Expression += (I ? ", " : "") + valueStr(Call.getArgOperand(I));
+    Expression += ")";
+    emitIndent(Indent);
+    if (!Call.use_empty())
+      OS << Name << " = " << Expression << ";\n";
+    else
+      OS << "(void)" << Expression << ";\n";
+    return true;
+  }
+
   if (auto Width = classifyX86ShadowStackReadAsm(Call)) {
     const unsigned Word = Call.getType()->getIntegerBitWidth() / 8;
     if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
