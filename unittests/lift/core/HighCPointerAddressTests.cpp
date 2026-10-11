@@ -44123,12 +44123,12 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 }
 
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
-/// C must compute in `long double` and return \p Expected.
+/// C must preserve the source x87 result and return \p Expected. Exact 80-bit
+/// storage may use integer bits rather than the host's long-double format.
 void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("long double"), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
