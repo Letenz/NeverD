@@ -76,6 +76,10 @@ struct API {
   WEB_API(neverd_web_package_advisory_records_json)
   WEB_API(neverd_web_package_advisories_match_json)
   WEB_API(neverd_web_package_advisories_match_records_json)
+  WEB_API(neverd_web_package_attestation_import_json)
+  WEB_API(neverd_web_package_attestation_records_json)
+  WEB_API(neverd_web_package_attestation_digest_match_json)
+  WEB_API(neverd_web_package_attestation_digest_result_json)
   WEB_API(neverd_web_har_preview_json)
   WEB_API(neverd_web_stream_preview_json)
   WEB_API(neverd_web_stream_commit_json)
@@ -420,6 +424,64 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         artifact.size(), format.data(), format.size()));
     analysisState_ = "partial";
     return value;
+  }
+  if (operation == "web_package_attestation_import") {
+    fields(p,
+           {"revision", "artifact_id", "descriptor_artifact_id", "input_kind"});
+    if (!api().neverd_web_package_attestation_import_json)
+      throw Error("capability_unavailable",
+                  "Package attestations are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto artifact = required(p, "artifact_id", 64);
+    const auto descriptor = required(p, "descriptor_artifact_id", 64);
+    const auto kind = required(p, "input_kind", 24);
+    auto value = result(api().neverd_web_package_attestation_import_json(
+        session_, revision.data(), revision.size(), artifact.data(),
+        artifact.size(), descriptor.data(), descriptor.size(), kind.data(),
+        kind.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_attestation_records") {
+    fields(p, {"revision", "package_attestation_id", "record_kind", "offset",
+               "limit"});
+    if (!api().neverd_web_package_attestation_records_json)
+      throw Error("capability_unavailable",
+                  "Package attestations are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_attestation_id", 64);
+    const auto kind = required(p, "record_kind", 16);
+    return result(api().neverd_web_package_attestation_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_package_attestation_digest_match") {
+    fields(p,
+           {"revision", "artifact_id", "package_attestation_id", "digest_id"});
+    if (!api().neverd_web_package_attestation_digest_match_json)
+      throw Error("capability_unavailable",
+                  "Attestation digest comparisons are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto artifact = required(p, "artifact_id", 64);
+    const auto id = required(p, "package_attestation_id", 64);
+    const auto digest = required(p, "digest_id", 64);
+    auto value = result(api().neverd_web_package_attestation_digest_match_json(
+        session_, revision.data(), revision.size(), artifact.data(),
+        artifact.size(), id.data(), id.size(), digest.data(), digest.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_attestation_digest_result") {
+    fields(p, {"revision", "package_attestation_digest_match_id"});
+    if (!api().neverd_web_package_attestation_digest_result_json)
+      throw Error("capability_unavailable",
+                  "Attestation digest comparisons are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_attestation_digest_match_id", 64);
+    return result(api().neverd_web_package_attestation_digest_result_json(
+        session_, revision.data(), revision.size(), id.data(), id.size()));
   }
   if (operation == "web_package_advisory_import") {
     fields(p, {"revision", "artifact_id", "descriptor_artifact_id"});

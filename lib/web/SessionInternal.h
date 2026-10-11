@@ -27,6 +27,7 @@
 #include "neverd/web/NodeBehavior.h"
 #include "neverd/web/PackageAdvisories.h"
 #include "neverd/web/PackageArchive.h"
+#include "neverd/web/PackageAttestations.h"
 #include "neverd/web/PackageBehaviorDiff.h"
 #include "neverd/web/PackageInstall.h"
 #include "neverd/web/PackageIntegrity.h"
@@ -96,6 +97,9 @@ struct Session::Impl {
   std::map<std::string, PackageEvidenceDescriptor> PackageEvidenceDescriptors;
   std::map<std::string, PackageAdvisory> PackageAdvisories;
   std::map<std::string, PackageAdvisoryMatches> PackageAdvisoryMatchResults;
+  std::map<std::string, PackageAttestation> PackageAttestations;
+  std::map<std::string, PackageAttestationDigestMatch>
+      PackageAttestationDigests;
   uint64_t PackageEvidenceBytes = 0;
   std::map<std::string, HARCapture> HARCaptures;
   std::map<std::string, StreamCapture> StreamCaptures;
@@ -140,8 +144,9 @@ struct Session::Impl {
                    ElectronManifests.empty() && DesktopManifests.empty() &&
                    HTMLDocuments.empty() && PackageAnalyses.empty() &&
                    PackageArchives.empty() && PackageIntegrity.empty() &&
-                   PackageAdvisories.empty() && HARCaptures.empty() &&
-                   InterfaceSources.empty() && StreamCaptures.empty()
+                   PackageAdvisories.empty() && PackageAttestations.empty() &&
+                   HARCaptures.empty() && InterfaceSources.empty() &&
+                   StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }

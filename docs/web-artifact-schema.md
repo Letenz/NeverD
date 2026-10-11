@@ -442,7 +442,23 @@ distinct from source byte offsets. Asset keys are not paths, and a selected
 package document supplies no neighboring-file inventory. Import revokes all
 extractions and selectors. See the [SEA contract](web-sea-profile.md).
 
-## Captured npm advisory declarations
+## Captured signature and provenance declarations
+
+Captured attestation metadata uses `package_attestation_import` with
+`artifact_id`, `descriptor_artifact_id` and explicit `input_kind`
+(`registry-dist`, `intoto-statement`, `dsse-intoto`).
+`package_attestation_records` pages `signatures`, `subjects` or `digests` for
+the returned `package_attestation_id`. Original subject/signature ordinals and
+canonical digest indices remain distinguishable. Private names, URIs, keys,
+signatures, payloads and declared digest values are omitted.
+`package_attestation_digest_match` selects that attestation, `digest_id` and
+one original `artifact_id`; the receipt is subsequently readable through
+`package_attestation_digest_result` and `package_attestation_digest_match_id`.
+It retains both original hashes and the existing integrity result ID without
+authenticating a publisher or binding a package inventory. See the
+[attestation profile](web-package-attestation-profile.md) for exact boundaries.
+
+## Captured npm advisory matching
 
 `package_advisory_import` selects `artifact_id` and `descriptor_artifact_id`
 in the current revision. The result binds both original hashes and returns
