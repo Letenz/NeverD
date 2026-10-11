@@ -176,6 +176,7 @@ llvm::Error RAMTransaction::commit() {
     Memory.recordRAMWrite(S.Physical, S.After.size());
     std::memcpy(Memory.physicalPointer(S.Physical), S.After.data(),
                 S.After.size());
+    Memory.recordRAMInitialization(S.Physical, S.After.size());
   }
   State = Phase::Committed;
   return llvm::Error::success();

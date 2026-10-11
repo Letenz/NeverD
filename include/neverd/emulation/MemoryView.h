@@ -55,6 +55,7 @@ public:
 
 private:
   friend class AddressSpace;
+  friend class RAMInitializationWatch;
   MemoryView(std::shared_ptr<PhysicalMemory> Memory,
              std::shared_ptr<const void> Space, uint64_t Size,
              std::vector<MemorySlice> Slices);

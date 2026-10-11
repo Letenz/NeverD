@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "core/ExecutionDiagnostics.h"
 #include "core/MemoryLayout.h"
+#include "core/RAMInitializationWatch.h"
 #include "core/RAMTransaction.h"
 #include "gtest/gtest.h"
 
@@ -203,6 +204,51 @@ TEST_F(RAMReservations, PublicWitnessIgnoresRejectedAndRolledBackWrites) {
   }
 }
 
+TEST_F(RAMReservations, InitializationRequiresCommittedPhysicalBytes) {
+  auto View = llvm::cantFail(Space->pinBacking(Data + 3, 16));
+  auto Mark = llvm::cantFail(RAMInitializationWatch::create(View));
+  auto Empty = RAMInitializationWatch::create(MemoryView{});
+  ASSERT_FALSE(bool(Empty));
+  llvm::consumeError(Empty.takeError());
+  auto Uninitialized = [&] {
+    for (uint64_t I = 0; I < 16; ++I)
+      EXPECT_FALSE(Mark->initialized(I)) << I;
+  };
+  Uninitialized();
+  start(RAMWriteTracking::Opaque);
+  stop();
+  Uninitialized();
+  start();
+  Memory->recordRAMWrite(Memory->mappings().at(Data).Physical + 3, 16);
+  stop();
+  Uninitialized();
+  for (bool Stage : {false, true}) {
+    start();
+    {
+      const RAMWriteRange W{Alias + 3, 16};
+      auto T = llvm::cantFail(RAMTransaction::create(*Memory, W, 16));
+      *Memory->physicalPointer(Memory->mappings().at(Data).Physical + 3) =
+          AfterByte;
+      if (Stage)
+        llvm::cantFail(T->stage());
+    }
+    stop();
+    Uninitialized();
+  }
+  llvm::cantFail(Space->writeInteger(Alias + 5, 0, 4));
+  for (uint64_t I = 0; I < 16; ++I)
+    EXPECT_EQ(Mark->initialized(I), I >= 2 && I < 6) << I;
+  start();
+  const RAMWriteRange W{Alias + 3, 16};
+  auto T = llvm::cantFail(RAMTransaction::create(*Memory, W, 16));
+  llvm::cantFail(T->stage());
+  llvm::cantFail(T->commit());
+  T.reset();
+  stop();
+  for (uint64_t I = 0; I < 16; ++I)
+    EXPECT_TRUE(Mark->initialized(I)) << I;
+}
+
 TEST_F(RAMReservations,
        FullGranuleIsObservedButUnrelatedWritesDoNotBreakProgress) {
   for (uint64_t Offset = 0; Offset < 2 * PairBytes; ++Offset) {
@@ -345,57 +391,71 @@ TEST_P(RAMReservationWriters,
        ScalarStringAndFaultingFrameWritesPublishInterference) {
   for (auto Bytes : {llvm::ArrayRef(StoreX64), llvm::ArrayRef(StringStoreX64),
                      llvm::ArrayRef(FaultingEnterX64)}) {
-    for (bool Cancel : {false, true}) {
-      auto Projection = llvm::cantFail(MemoryProjection::create(Limit));
-      auto Space = Projection->addressSpace();
-      llvm::cantFail(Space->map(Data, memory::PageSize, Read | Write));
-      llvm::cantFail(
-          Space->map(Code, memory::PageSize, Read | Write | Execute));
-      llvm::cantFail(Space->write(Code, Bytes));
-      auto Created = createExecutionBackend(GetParam().Backend,
-                                            ExecutionContract::CheckedX64,
-                                            Space, GuestArchitecture::X64);
-      if (!Created) {
-        auto E = Created.takeError();
-        bool Unavailable = E.isA<BackendUnavailableError>();
-        auto Text = llvm::toString(std::move(E));
-        if (Unavailable)
-          GTEST_SKIP() << Text;
-        FAIL() << Text;
+    for (auto Contract :
+         {ExecutionContract::CheckedX64, ExecutionContract::Legacy}) {
+      if (Contract == ExecutionContract::Legacy &&
+          GetParam().Backend != ExecutionBackendKind::Unicorn)
+        continue;
+      for (bool Cancel : {false, true}) {
+        auto Projection = llvm::cantFail(MemoryProjection::create(Limit));
+        auto Space = Projection->addressSpace();
+        llvm::cantFail(Space->map(Data, memory::PageSize, Read | Write));
+        llvm::cantFail(
+            Space->map(Code, memory::PageSize, Read | Write | Execute));
+        llvm::cantFail(Space->write(Code, Bytes));
+        auto Created = createExecutionBackend(GetParam().Backend, Contract,
+                                              Space, GuestArchitecture::X64);
+        if (!Created) {
+          auto E = Created.takeError();
+          bool Unavailable = E.isA<BackendUnavailableError>();
+          auto Text = llvm::toString(std::move(E));
+          if (Unavailable)
+            GTEST_SKIP() << Text;
+          FAIL() << Text;
+        }
+        auto &CPU = *Created->CPU;
+        llvm::cantFail(CPU.setReg(X64Register::CX, Data));
+        llvm::cantFail(CPU.setReg(X64Register::DI, Data));
+        llvm::cantFail(CPU.setReg(X64Register::SP, Data + WordBytes));
+        llvm::cantFail(CPU.setReg(X64Register::BP, Unmapped + WordBytes));
+        llvm::cantFail(CPU.setReg(X64Register::AX, BeforeWord));
+        llvm::cantFail(Projection->beginRun(RAMWriteTracking::Declared));
+        auto Reservation =
+            llvm::cantFail(Projection->reserveRAM(Data, WordBytes, PairBytes));
+        Projection->endRun();
+        auto Witness = llvm::cantFail(
+            llvm::cantFail(Space->pinBacking(Data, WordBytes)).watchWrites());
+        auto Initialization = llvm::cantFail(RAMInitializationWatch::create(
+            llvm::cantFail(Space->pinBacking(Data, WordBytes))));
+        BackendHooks Hooks;
+        Hooks.Instruction = [&](uint64_t PC, uint32_t) {
+          if (PC != Code)
+            CPU.stop();
+        };
+        Hooks.Write = [&](uint64_t, uint32_t, uint64_t) {
+          if (Cancel)
+            CPU.stop();
+        };
+        llvm::cantFail(CPU.installHooks(std::move(Hooks)));
+        auto Exit = llvm::cantFail(CPU.runUntilExit(Code, Timeout));
+        EXPECT_EQ(Exit.Kind,
+                  !Cancel && Bytes == llvm::ArrayRef(FaultingEnterX64)
+                      ? ExecutionExitKind::GuestFault
+                      : ExecutionExitKind::Stopped)
+            << Exit.Diagnostic;
+        if (Contract == ExecutionContract::CheckedX64)
+          EXPECT_EQ(llvm::cantFail(Witness.intact()), Cancel);
+        else
+          EXPECT_FALSE(
+              llvm::cantFail(Witness.intact())); // Opaque stays opaque.
+        for (uint64_t I = 0; I < WordBytes; ++I)
+          EXPECT_EQ(Initialization->initialized(I), !Cancel) << I;
+        llvm::cantFail(Projection->beginRun(RAMWriteTracking::Declared));
+        EXPECT_EQ(llvm::cantFail(Projection->reservationMatches(
+                      Reservation, Data, WordBytes)),
+                  Contract == ExecutionContract::CheckedX64 && Cancel);
+        Projection->endRun();
       }
-      auto &CPU = *Created->CPU;
-      llvm::cantFail(CPU.setReg(X64Register::CX, Data));
-      llvm::cantFail(CPU.setReg(X64Register::DI, Data));
-      llvm::cantFail(CPU.setReg(X64Register::SP, Data + WordBytes));
-      llvm::cantFail(CPU.setReg(X64Register::BP, Unmapped + WordBytes));
-      llvm::cantFail(CPU.setReg(X64Register::AX, BeforeWord));
-      llvm::cantFail(Projection->beginRun(RAMWriteTracking::Declared));
-      auto Reservation =
-          llvm::cantFail(Projection->reserveRAM(Data, WordBytes, PairBytes));
-      Projection->endRun();
-      auto Witness = llvm::cantFail(
-          llvm::cantFail(Space->pinBacking(Data, WordBytes)).watchWrites());
-      BackendHooks Hooks;
-      Hooks.Instruction = [&](uint64_t PC, uint32_t) {
-        if (PC != Code)
-          CPU.stop();
-      };
-      Hooks.Write = [&](uint64_t, uint32_t, uint64_t) {
-        if (Cancel)
-          CPU.stop();
-      };
-      llvm::cantFail(CPU.installHooks(std::move(Hooks)));
-      auto Exit = llvm::cantFail(CPU.runUntilExit(Code, Timeout));
-      EXPECT_EQ(Exit.Kind, !Cancel && Bytes == llvm::ArrayRef(FaultingEnterX64)
-                               ? ExecutionExitKind::GuestFault
-                               : ExecutionExitKind::Stopped)
-          << Exit.Diagnostic;
-      EXPECT_EQ(llvm::cantFail(Witness.intact()), Cancel);
-      llvm::cantFail(Projection->beginRun(RAMWriteTracking::Declared));
-      EXPECT_EQ(llvm::cantFail(Projection->reservationMatches(Reservation, Data,
-                                                              WordBytes)),
-                Cancel);
-      Projection->endRun();
     }
   }
 }

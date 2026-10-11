@@ -173,6 +173,9 @@ llvm::Error MemoryView::write(uint64_t Offset,
                                    Slice.Region->Offset + Slice.Offset + Offset,
                                Count);
     std::memcpy(Backing, Bytes.data(), Count);
+    RAM.recordInitialization(memory::ProjectionReserve + Slice.Region->Offset +
+                                 Slice.Offset + Offset,
+                             Count);
     Bytes = Bytes.drop_front(Count);
     Offset = 0;
   }

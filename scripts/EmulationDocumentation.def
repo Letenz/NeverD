@@ -676,7 +676,7 @@ NEVERD_EMULATION_DOC_TOKEN(NativeDriverCI,
                            "5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 "
                            "wait sets + 21 driver UNPACK + 6 clock reads "
                            "+ 4 image memory checks + 6 CPUID "
-                           "+ 6 kernel snapshots + 9 pool captures = 5496")
+                           "+ 7 kernel snapshots + 9 pool captures = 5497")
 NEVERD_EMULATION_DOC_TOKEN(Overview, "FOP/FIP/FDP")
 NEVERD_EMULATION_DOC_TOKEN(X64Startup, "FOP/FIP/FDP")
 #endif

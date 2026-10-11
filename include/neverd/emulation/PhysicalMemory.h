@@ -33,6 +33,7 @@ private:
   friend class AddressSpace;
   friend class MemoryView;
   friend class MemoryWriteWitness;
+  friend class RAMInitializationWatch;
   friend class MemoryProjection;
   friend class MemoryRegion;
   struct Impl;
@@ -54,6 +55,7 @@ private:
   friend class AddressSpace;
   friend class MemoryView;
   friend class MemoryProjection;
+  friend class RAMInitializationWatch;
   MemoryRegion(std::shared_ptr<PhysicalMemory> Owner, uint64_t Offset,
                uint64_t Size);
   std::shared_ptr<PhysicalMemory> Owner;
