@@ -8,6 +8,25 @@ This guide describes the production boundaries a contributor needs in order to
 change NeverD safely. It intentionally covers NeverD-owned code only; the LLVM,
 Capstone, and Unicorn submodules keep their own internal architecture.
 
+## Source and object replacement boundary
+
+`SourcePatchCompiler` owns compiler identity, target arguments and artifact
+selection. `bindSourcePatch` authenticates explicit IR entry mappings;
+`PatchObject` instead owns native section/symbol/relocation and FDE-range
+evidence. Objects never receive fabricated LLVM MC function-owner identities.
+Both producers share original binding validation, ELF storage/relocation/unwind
+registration and the `publishSourcePatch` transaction. That transaction requires
+an exact receipt for every requested entry, checks the candidate again, and
+publishes exclusively. Lifted/full rewrites keep their separate source-provenance
+and preserve-original/no-op policies. See [source patches](source-patching.md).
+
+`COFFSourceImage` owns installation of compiler-produced PE x64 source output:
+separate code/state/metadata permissions, retained original runtime rows,
+new base relocations, exact compiler function/funclet ranges and bounded FH3
+graphs. It rereads installed bytes and permissions before publication. These
+new-program contracts do not assert equivalence to the original Windows EH
+graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -30,6 +49,24 @@ route's ARM mode, exception-handler discovery and analysis-scope checks without
 emitting C. Source, IR and CFG views consume that prepared pipeline. Older
 engines retain the decompiler-based preparation fallback. A failed switch
 clears the worker's prepared-entry marker before another view can reuse it.
+
+Consecutive restricted x64 analyses may share a session-owned
+`PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
+relocation-root and executable-owner indexes borrowed by the bounded raw x87
+graph and call-register body caches. Each selection still builds its output
+IR, replays the ordinary proof obligations and recomputes caller-dependent
+register/argument summaries. Exact candidate and verified-entry inventories
+bind reuse; selection cannot silently change a cached function's boundaries.
+No-return proof and lazy-name memo entries are cleared between runs, so they
+do not accumulate across navigation. Image indexes scale with the loaded
+metadata; the existing graph/body payload allowances remain unchanged.
+Reload, function edits, signature matching and analysis-policy changes retire
+the cache while its image/debug owners are alive. Feature generations are
+checked even after navigation cleared the preceding pipeline result. COFF
+handler discovery conservatively retires facts before expanding metadata.
+Other architectures and whole-image analyses retain run-local ownership.
+Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
+before input or policy mutation; image pointers alone do not establish validity.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -681,6 +718,17 @@ bounded encoding, explicit subject-digest selection and publication.
 advisory imports and keeps four independent original-byte receipts. No metadata
 reader fetches a key or treats subject equality as signature authentication or
 package-inventory binding. See the [attestation profile](web-package-attestation-profile.md).
+`packages/assessment/Compose` owns the immutable selection identity and resource
+budgets. `Integrity` owns cross-result declaration/namespace relationships;
+`Metadata` and `Behavior` consume authoritative owner states without repeating
+their analyses. `Disposition` validates the entire bounded caller-assertion
+chain and prepares an immutable replacement. `Publication` and `Report` expose
+only fixed metadata, admitted times and opaque anchors. `SessionPackageAssessments`
+selects retained models, serializes before publication and owns two assessments
+with one shared 256-event/256-KiB review allowance. Review-head checks cover all
+finding, history and report pages. Consumers do not reinterpret an original
+digest as installed-tree proof or an analyst disposition as analyzer confidence.
+See the [assessment profile](web-package-assessment-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
@@ -1395,6 +1443,14 @@ image indexes and the existing synchronized no-return cache may be shared.
 Summary publication and format-call collection retain the original order,
 depth and count limits. `NEVERD_THREADS=1` restricts this phase to one worker.
 
+Restricted pipeline runs may reuse machine blocks constructed for an x87 callee
+proof as `CallRegisterBody` inputs. This type contains only blocks and coverage
+facts; it is not a `LowFunc` and cannot become SSA or emitted code. Register,
+stack-argument and formatted-call analyses read the same block view for cold
+and reused bodies. Format-derived call reads are still collected at ordered
+publication, so overlapping call sites cannot inherit a different contract
+because a worker completed earlier.
+
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
@@ -1846,9 +1902,10 @@ and index identities bind each graph to its construction context. Image bytes,
 ownership and relocation metadata remain unchanged while a cache is shared.
 The pipeline's final additive `CodeRefTargets` publication may retain these raw
 graphs with its existing memoized no-return indexes: raw graph builders skip
-stack/tag normalization and do not consume that inventory. Every ordinary CFG
-still computes its tag-entry seeds against the new references; normalized CFGs
-and caller-dependent effect answers are never retained. Cache locks cover lookup
+stack/tag normalization and do not consume that inventory. Ordinary x87
+normalization still computes its tag-entry seeds against the new references;
+normalized output CFGs and caller-dependent effect answers are never retained.
+Cache locks cover lookup
 and publication, while graph construction runs outside the lock. Each query
 still independently bounds and pays for its complete call closure and dataflow
 work; caller-dependent answers are not shared. A completely lifted, nontruncated
@@ -1862,6 +1919,33 @@ without reading an empty slot. Cycles in the call graph, incomplete lifting,
 environment restores, tag changes, unknown intrinsics and exceptional edges
 supply no summary. Loader-authenticated imports use the existing ABI tables;
 an internal function's spelling supplies no effect.
+
+Call-register body retention is a separate opt-in inventory of at most 128
+entries and 32 MiB, including its frozen construction context, block/vector
+capacities and dependency receipts. Active readers may keep evicted immutable
+entries alive; the allowance bounds retained cache payload rather than total
+RSS. Image bytes and metadata must remain unchanged for the operation, with
+the same exception for additive `CodeRefTargets` publication as raw graphs.
+Only complete, nontruncated x64 bodies with registered callback owners qualify.
+Every skipped normalization stage, including speculative CFGs and build
+retries, records local stack use and exact direct/loaded-slot call targets.
+Any local ST/MMX alias, TOP change/reset or FXAM rejects retention. Each of the
+two dependency inventories is limited to 4096 entries; exhaustion retains the
+ordinary build.
+
+Reuse requires the exact entry/protection inventories and borrowed index
+identities of a default ordinary extra-callee build. Each depth-sensitive
+no-return answer is replayed at ordinary depth zero; disagreement requests a
+cold build. Each observed call target is then checked with its own ordinary
+x87 proof allowance. A proven floating return also requests a cold build,
+because it changes the call's output register. Zero or unknown effects preserve
+the original normalization's unchanged-call behavior; unknown does not become
+a proved zero effect. Thus normalization could change no operation at any
+recorded stage, even when the compact x87 projection itself refused exceptional
+edges. Lookup/publication alone holds the cache mutex; replay runs outside it.
+Synchronous replay reentry requests an ordinary build, and exception unwinding
+restores that guard before another request. Whole-module runs retain only the
+compact x87 graph inventory.
 
 Concurrent requests for an identical x87 graph may join one construction. The
 pending inventory is separately bounded to 32 entries and 1 MiB of retained

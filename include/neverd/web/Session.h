@@ -99,6 +99,26 @@ public:
                                             std::string_view DigestID);
   std::string packageAttestationDigestResult(std::string_view ExpectedRevision,
                                              std::string_view MatchID) const;
+  std::string assessPackage(std::string_view ExpectedRevision,
+                            std::string_view PackageAnalysisID,
+                            std::string_view SelectionJSON);
+  std::string packageAssessmentFindings(std::string_view ExpectedRevision,
+                                        std::string_view AssessmentID,
+                                        std::string_view ReviewHead,
+                                        uint64_t Offset, uint64_t Limit) const;
+  std::string reviewPackageFinding(std::string_view ExpectedRevision,
+                                   std::string_view AssessmentID,
+                                   std::string_view ExpectedHead,
+                                   std::string_view FindingID,
+                                   std::string_view Disposition);
+  std::string packageReviewDecisions(std::string_view ExpectedRevision,
+                                     std::string_view AssessmentID,
+                                     std::string_view ReviewHead,
+                                     uint64_t Offset, uint64_t Limit) const;
+  std::string packageAssessmentReport(std::string_view ExpectedRevision,
+                                      std::string_view AssessmentID,
+                                      std::string_view ReviewHead,
+                                      uint64_t Offset, uint64_t Limit) const;
   std::string analyzePackages(std::string_view ExpectedRevision,
                               std::string_view ArtifactID,
                               std::string_view InputKind);

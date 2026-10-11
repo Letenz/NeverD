@@ -578,8 +578,7 @@ provenNextEntrySpan(uint64_t OrigVA, uint64_t TextStartVA, uint64_t TextEndVA,
   return Found ? Next - OrigVA : 0;
 }
 
-static bool sourceEntryCanHostTrampoline(const BinaryImage &Image,
-                                         va_t OriginalVA) {
+bool sourceEntryCanHostTrampoline(const BinaryImage &Image, va_t OriginalVA) {
   const auto Mode = Image.instructionModeAt(OriginalVA);
   if (!Mode)
     return false;
@@ -618,7 +617,8 @@ static bool sourceEntryCanHostTrampoline(const BinaryImage &Image,
 
 bool BinaryPatcher::prepareSourceFunctionsForPatch(
     llvm::Module &Module, const BinaryImage *Image,
-    SourceFunctionPreparation &Preparation, std::string &Detail) {
+    SourceFunctionPreparation &Preparation, std::string &Detail,
+    RewriteInputKind InputKind) {
   Preparation = SourceFunctionPreparation{};
   Detail.clear();
 
@@ -627,7 +627,9 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
   // closure while every body and every named-table row is still intact; a
   // later planner must never be asked to infer whether a declaration used to
   // be a valid source definition.
-  if (Image && Image->Format == BinaryFormat::COFF) {
+  const bool LiftedCOFF = Image && Image->Format == BinaryFormat::COFF &&
+                          InputKind == RewriteInputKind::LiftedIR;
+  if (LiftedCOFF) {
     if (llvm::Error Error =
             validateCOFFExceptionSourceIdentityClosure(Module, *Image)) {
       Detail = llvm::toString(std::move(Error));
@@ -715,7 +717,7 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
     (void)FunctionName;
     ReplaceableEntries.push_back(OriginalVA);
   }
-  if (Image && Image->Format == BinaryFormat::COFF) {
+  if (LiftedCOFF) {
     if (llvm::Error Error = validateCOFFCxxGroupReplacementClosure(
             Module, *Image, ReplaceableEntries)) {
       Detail = llvm::toString(std::move(Error));
@@ -786,7 +788,7 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
     }
   }
 
-  if (Image && Image->Format == BinaryFormat::COFF) {
+  if (LiftedCOFF) {
     if (llvm::Error Error = retainCOFFCxxGroupRewriteContractsForReplacement(
             Module, *Image, ReplaceableEntries)) {
       Detail = llvm::toString(std::move(Error));

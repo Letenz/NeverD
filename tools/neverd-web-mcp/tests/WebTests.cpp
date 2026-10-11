@@ -314,6 +314,86 @@ void archives(Harness &H, bool HasParser) {
           {"record_kind", "scripts"}});
 }
 
+void offlineAssessments() {
+  Fixture F;
+  F.write("a.package", R"({"name":"CANARY","version":"1.0.0"})");
+  F.write("b.registry", R"({"name":"CANARY","version":"1.0.0","dist":{
+    "integrity":"sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
+    "signatures":[{"keyid":"CANARY_KEY","sig":"YWJj"}]}})");
+  F.write("c.descriptor", R"({"schema_version":1,"source":"CANARY_SOURCE",
+    "retrieved_at":"2026-10-11T12:00:00Z"})");
+  F.write("d.original", "abc");
+  Harness H({F.Root.string()});
+  H.import(0, 5);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto &Items = Artifacts.at("items");
+  const auto P = H.same("web_packages_analyze",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[1].at("artifact_id")},
+                         {"input_kind", "package-json"}});
+  const auto T = H.same("web_package_attestation_import",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[2].at("artifact_id")},
+                         {"descriptor_artifact_id", Items[3].at("artifact_id")},
+                         {"input_kind", "registry-dist"}});
+  const auto I = H.same("web_package_integrity_verify",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[4].at("artifact_id")},
+                         {"declaration_id", Items[2].at("artifact_id")}});
+  Json Selection{
+      {"revision", H.Revision},
+      {"package_analysis_id", P.at("package_analysis_id")},
+      {"integrity_ids", Json::array({I.at("integrity_id")})},
+      {"attestation_ids", Json::array({T.at("package_attestation_id")})}};
+  const auto A = H.same("web_package_assessment_create", Selection);
+  require(A.at("safety_verdict") == "not_assessed" &&
+              A.at("publisher_authenticated") == false &&
+              A.at("installed_tree_verified") == false,
+          "MCP assessment upgraded a selected digest into trust");
+  const auto ID = A.at("package_assessment_id"), Root = A.at("review_head_id");
+  Json Page{{"revision", H.Revision},
+            {"package_assessment_id", ID},
+            {"review_head", Root}};
+  const auto Findings = H.same("web_package_assessment_findings", Page);
+  require(Findings.at("items")[0].at("disposition_source") == "not_reviewed",
+          "MCP invented an analyst disposition");
+  const auto Finding = Findings.at("items")[0].at("finding_id");
+  Json Review{{"revision", H.Revision},
+              {"package_assessment_id", ID},
+              {"expected_review_head", Root},
+              {"finding_id", Finding},
+              {"disposition", "needs_review"}};
+  const auto U = H.same("web_package_review_append", Review);
+  require(U.at("decision_count") == 1 && U.at("replayed") == false,
+          "MCP lost the first immutable review decision");
+  require(H.same("web_package_review_append", Review).at("replayed") == true,
+          "MCP double-charged a last-request replay");
+  H.fail("web_package_assessment_findings", Page, "stale_package_review_head");
+  Page["review_head"] = U.at("review_head_id");
+  const auto Updated = H.same("web_package_assessment_findings", Page);
+  require(Updated.at("items")[0].at("finding_id") == Finding &&
+              Updated.at("items")[0].at("disposition") == "needs_review",
+          "MCP changed the evidence finding when reviewing it");
+  const auto Decisions = H.same("web_package_review_decisions", Page);
+  require(Decisions.at("items").size() == 1 &&
+              Decisions.at("items")[0].at("assertion_source") == "caller",
+          "MCP upgraded an analyst assertion into analyzer proof");
+  const auto Report = H.same("web_package_assessment_report", Page);
+  redacted(Report);
+  require(Report.at("report_format") == "markdown" &&
+              Report.at("report_markdown").get<std::string>().find("YWJj") ==
+                  std::string::npos,
+          "MCP report disclosed a private signature");
+  Selection["notes"] = "CANARY";
+  invalid([&] { H.get("web_package_assessment_create", Selection); });
+  Review["disposition"] = "safe";
+  invalid([&] { H.get("web_package_review_append", Review); });
+  H.import(0, 5);
+  H.fail("web_package_assessment_report", Page, "stale_revision");
+  Page["revision"] = H.Revision;
+  H.fail("web_package_review_decisions", Page, "unknown_package_assessment");
+}
+
 void offlineAdvisories() {
   Fixture F;
   F.write("a.advisory",
@@ -776,6 +856,7 @@ int main() {
     }
     offlineAdvisories();
     offlineAttestations();
+    offlineAssessments();
     passiveInputs(H);
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&
