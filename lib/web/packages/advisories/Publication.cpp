@@ -11,14 +11,11 @@
 
 #include "Publication.h"
 
+#include "../evidence/Publication.h"
+
 namespace neverd::web::package_advisories {
 namespace {
-llvm::json::Object time(const PackageEvidenceTime &T) {
-  return llvm::json::Object{{"status", T.Status},
-                            {"value", T.Status == "valid_utc_timestamp"
-                                          ? llvm::json::Value(T.Value)
-                                          : llvm::json::Value(nullptr)}};
-}
+using package_evidence::time;
 llvm::json::Array anchors(const std::vector<std::string> &IDs) {
   llvm::json::Array Values;
   for (const auto &ID : IDs)
@@ -59,16 +56,7 @@ llvm::json::Object summary(const PackageAdvisory &A, uint64_t Revision) {
   R["modified"] = time(A.Modified);
   R["published"] = time(A.Published);
   R["withdrawn"] = time(A.Withdrawn);
-  R["descriptor"] =
-      llvm::json::Object{{"descriptor_id", A.Descriptor.ID},
-                         {"artifact_id", A.Descriptor.ArtifactID},
-                         {"blob_sha256", A.Descriptor.BlobHash},
-                         {"profile", std::string(PackageEvidenceProfile)},
-                         {"validation", A.Descriptor.Status},
-                         {"source_present", !A.Descriptor.Source.empty()},
-                         {"source_label_redacted", true},
-                         {"retrieved_at", time(A.Descriptor.RetrievedAt)},
-                         {"as_of", time(A.Descriptor.AsOf)}};
+  R["descriptor"] = package_evidence::descriptor(A.Descriptor);
   R["affected_entry_count"] = A.Affected.size();
   R["severity_count"] = A.Severities.size();
   R["retained_metadata_bytes"] = A.RetainedBytes;

@@ -56,18 +56,49 @@ void capabilitySubset() {
   refuses([&] { Import.payload({{"path", "CANARY_PATH"}}); });
 }
 void closedArguments() {
-  Catalog C(
-      capabilities({"source_view_preview", "source_view_chunk", "import_commit",
-                    "electron_ipc_analyze", "source_rewrite_analyze",
-                    "source_rewrite_records", "node_behavior_analyze",
-                    "node_behavior_records", "package_behavior_analyze",
-                    "package_behavior_records", "package_install_analyze",
-                    "package_install_records", "package_behavior_diff_analyze",
-                    "package_behavior_diff_records", "package_advisory_import",
-                    "package_advisory_records", "package_advisories_match",
-                    "package_advisories_match_records"}),
-      0);
+  Catalog C(capabilities({"source_view_preview",
+                          "source_view_chunk",
+                          "import_commit",
+                          "electron_ipc_analyze",
+                          "source_rewrite_analyze",
+                          "source_rewrite_records",
+                          "node_behavior_analyze",
+                          "node_behavior_records",
+                          "package_behavior_analyze",
+                          "package_behavior_records",
+                          "package_install_analyze",
+                          "package_install_records",
+                          "package_behavior_diff_analyze",
+                          "package_behavior_diff_records",
+                          "package_advisory_import",
+                          "package_advisory_records",
+                          "package_advisories_match",
+                          "package_advisories_match_records",
+                          "package_attestation_import",
+                          "package_attestation_records",
+                          "package_attestation_digest_match",
+                          "package_attestation_digest_result"}),
+            0);
   const auto &View = C.find("neverd_web_source_view_preview");
+  const auto &Attestation = C.find("neverd_web_package_attestation_import");
+  const Json AttestationArgs{{"revision", "1"},
+                             {"artifact_id", "a"},
+                             {"descriptor_artifact_id", "d"},
+                             {"input_kind", "registry-dist"}};
+  Attestation.payload(AttestationArgs);
+  for (const auto *Field : {"fetch", "key_path", "verify", "raw", "url"}) {
+    auto Invalid = AttestationArgs;
+    Invalid[Field] = "CANARY";
+    refuses([&] { Attestation.payload(Invalid); });
+  }
+  auto MissingKind = AttestationArgs;
+  MissingKind.erase("input_kind");
+  refuses([&] { Attestation.payload(MissingKind); });
+  const auto &Digest = C.find("neverd_web_package_attestation_digest_match");
+  Digest.payload({{"revision", "1"},
+                  {"artifact_id", "a"},
+                  {"package_attestation_id", "d"},
+                  {"digest_id", "s"}});
   const auto &Advisory = C.find("neverd_web_package_advisory_import");
   const Json ImportArgs{
       {"revision", "1"}, {"artifact_id", "a"}, {"descriptor_artifact_id", "d"}};

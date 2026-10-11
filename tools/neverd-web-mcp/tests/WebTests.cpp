@@ -383,6 +383,91 @@ void offlineAdvisories() {
          "unknown_package_advisory");
 }
 
+void offlineAttestations() {
+  Fixture F;
+  F.write("a.statement", R"({"_type":"https://in-toto.io/Statement/v1",
+    "subject":[{"name":"CANARY","digest":{"sha256":
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}}],
+    "predicateType":"CANARY_PREDICATE"})");
+  F.write("b.descriptor", R"({"schema_version":1,"source":"CANARY"})");
+  F.write("c.original", "abc");
+  F.write("d.registry", R"({"name":"CANARY","version":"1.0.0",
+    "dist":{"signatures":[{"sig":"Zm9v","keyid":"CANARY"}]}})");
+  F.write("e.envelope", R"({"payloadType":"application/vnd.in-toto+json",
+    "payload":"Zh==","signatures":[]})");
+  Harness H({F.Root.string()});
+  H.import(0, 6);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto Items = Artifacts.at("items");
+  Json Import{{"revision", H.Revision},
+              {"artifact_id", Items[1].at("artifact_id")},
+              {"descriptor_artifact_id", Items[2].at("artifact_id")},
+              {"input_kind", "intoto-statement"}};
+  const auto A = H.same("web_package_attestation_import", Import);
+  require(A.at("signature_verification") == "not_performed" &&
+              A.at("publisher_authenticated") == false &&
+              A.at("slsa_level_verified") == false,
+          "MCP authenticated unverified metadata");
+  const auto ID = A.at("package_attestation_id");
+  Json Digests;
+  for (const auto *Kind : {"signatures", "subjects", "digests"}) {
+    const auto Page = H.same("web_package_attestation_records",
+                             {{"revision", H.Revision},
+                              {"package_attestation_id", ID},
+                              {"record_kind", Kind}});
+    if (std::string_view(Kind) == "digests")
+      Digests = Page;
+  }
+  const auto M =
+      H.same("web_package_attestation_digest_match",
+             {{"revision", H.Revision},
+              {"artifact_id", Items[3].at("artifact_id")},
+              {"package_attestation_id", ID},
+              {"digest_id", Digests.at("items")[0].at("digest_id")}});
+  require(
+      M.at("integrity_status") == "match" &&
+          M.at("package_inventory_bound") == false &&
+          M.at("publisher_authenticated") == false,
+      "MCP changed an original digest comparison into package authentication");
+  H.same("web_package_attestation_digest_result",
+         {{"revision", H.Revision},
+          {"package_attestation_digest_match_id",
+           M.at("package_attestation_digest_match_id")}});
+  Import["artifact_id"] = Items[4].at("artifact_id");
+  Import["input_kind"] = "registry-dist";
+  const auto Registry = H.same("web_package_attestation_import", Import);
+  const auto Signatures =
+      H.same("web_package_attestation_records",
+             {{"revision", H.Revision},
+              {"package_attestation_id", Registry.at("package_attestation_id")},
+              {"record_kind", "signatures"}});
+  require(Signatures.at("items")[0].at("encoding_status") ==
+                  "admitted_standard_base64" &&
+              Signatures.at("items")[0].at("signature_verification") ==
+                  "not_performed",
+          "MCP changed registry signature admission");
+  Import["artifact_id"] = Items[5].at("artifact_id");
+  Import["input_kind"] = "dsse-intoto";
+  require(
+      H.same("web_package_attestation_import", Import).at("payload_status") ==
+          "invalid_base64",
+      "MCP accepted nonzero Base64 residual bits");
+  Import["verify"] = true;
+  invalid([&] { H.get("web_package_attestation_import", Import); });
+  const auto Old = H.Revision;
+  H.import(0, 6);
+  H.fail("web_package_attestation_records",
+         {{"revision", Old},
+          {"package_attestation_id", ID},
+          {"record_kind", "subjects"}},
+         "stale_revision");
+  H.fail("web_package_attestation_digest_result",
+         {{"revision", H.Revision},
+          {"package_attestation_digest_match_id",
+           M.at("package_attestation_digest_match_id")}},
+         "unknown_package_attestation_digest_match");
+}
+
 void passiveInputs(Harness &H) {
   auto Artifact = H.import(4);
   const auto Preview = H.same(
@@ -690,6 +775,7 @@ int main() {
       }
     }
     offlineAdvisories();
+    offlineAttestations();
     passiveInputs(H);
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&
