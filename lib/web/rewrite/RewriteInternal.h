@@ -1,16 +1,17 @@
-//===- RewriteInternal.h - Primitive rewrite implementation boundary ----===//
+//===- RewriteInternal.h - Local rewrite implementation boundary --------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Shared work accounting and closed primitive replacement validation.
+/// Shared work accounting, primitive replacement and lexical validation.
 ///
 //===----------------------------------------------------------------------===//
 
 #pragma once
 
+#include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceValues.h"
 
@@ -24,5 +25,9 @@ bool sameValue(const SourcePrimitive &Left, const SourcePrimitive &Right,
 void apply(SourceRewrite &Result, std::string_view Original);
 void validate(SourceRewrite &Result, const SourceAnalysis &Original,
               const SourceValueAnalysis &Values);
+void planRename(SourceRewrite &Result, const SourceAnalysis &Original,
+                const SourceBindingAnalysis &Bindings, std::string_view Bytes);
+void validateRename(SourceRewrite &Result, const SourceAnalysis &Original,
+                    const SourceBindingAnalysis &Bindings);
 
 } // namespace neverd::web::rewrite

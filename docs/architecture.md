@@ -537,13 +537,20 @@ Views use owned parser token/comment spans and never claim semantic rewrites.
 explicit primitive passes using the existing binding/value/effect owners;
 `Primitive` emits closed values, `Validate` checks SameValue and the complete
 unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`Rename` selects complete function-local bindings and collision-free names;
+`RenameValidate` reparses and compares all syntax, scope ownership, declarations
+and reference resolution using the same lexical owner. Non-simple parameter
+environments and name-sensitive declarations remain excluded. Pass/profile
+selection has one shared authority; primitive identities and serialized receipts
+remain unchanged. Rename evidence does not borrow primitive SameValue claims.
 `SessionRewrite` retains at most two private results and publishes metadata.
 Its raw local export requires a pass/source/revision-bound receipt;
 `rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
 This transaction does not change Bun export's retained-partial-evidence policy.
 Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
 claim source-reflection or whole-program equivalence. See the
-[primitive rewrite profile](web-source-rewrite-profile.md).
+[primitive rewrite profile](web-source-rewrite-profile.md) and
+[lexical rename profile](web-scope-rename-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -556,6 +563,20 @@ JS/assets through `ArtifactView`. Caches and snapshots remain opaque; native
 activation/version authentication are not inferred. Asset keys never establish
 a filesystem namespace. Package analysis of an explicitly selected asset uses
 one document with no directory inventory. See the [SEA profile](web-sea-profile.md).
+`nexe/Reader` owns explicit EOF envelope framing and complete byte partitions;
+`nexe/Index` owns bounded first-shim JSON, private portable paths and deduplicated
+range hashing. `SessionNexe` publishes immutable occurrences only after complete
+admission. `ArtifactView` composes nested coordinates and retains one namespace
+per extraction; typed package ancestry establishes outer delivery only. The
+opaque prefix has no implicit native/signature/runtime validation. See the
+[nexe profile](web-nexe-profile.md).
+`pkg/Locator` independently owns fixed loader declarations, `pkg/Index` owns
+typed VFS/stat admission and private snapshot paths, and `pkg/Reader` owns
+complete partitions and deduplicated store hashing. `SessionPkg` publishes
+only admitted occurrences. Content, opaque V8 caches and private metadata have
+distinct roles; source/cache equivalence and symlink resolution remain unknown.
+`ArtifactView` retains occurrence namespaces and nested coordinates for shared
+consumers. See the [pkg profile](web-pkg-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -563,7 +584,7 @@ comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
 `packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
 consumes shared bindings/module origins/values, and `Package` owns exact
-inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+inventory and retained Bun/SEA/nexe/pkg delivery joins. `Publication` emits metadata;
 the two behavior session adapters own selection, cache and revision boundaries.
 Source ownership, delivery package and declared entry remain distinct.
 `SourceModel::indexSourceDeclarations` supplies the order-independent unique
@@ -797,9 +818,18 @@ retain one successful graph with an owned instruction snapshot. Reuse requires
 exact instruction facts, LowOps, effective edges, block starts, proof roots,
 conditional roots and storage-owner inputs. Hits pay the complete original
 graph-construction charge. The graph may also retain up to 64 query outcomes
-under a separate 8 MiB retained-payload allowance. Exact ordered query
-fields, proof limits, output shape, function context and both relocation
-occurrence inventories bind each result. Hits pay the complete cold value
+under a separate 8 MiB retained-payload allowance. Within one read-only target
+role, load-address role or mask-domain invocation, a local scope can reuse its
+validated graph without recopying the instruction snapshot. It is bound to its
+builder and cannot cross instruction, block or storage-owner mutations.
+Each query still compares roots and owned effective edge overrides, including
+temporary and empty overrides, and pays the original snapshot and graph work.
+One scope retains one bounded graph and at most 64 KiB of override keys;
+oversized keys keep the ordinary validation path. Nested queries own separate
+leases, and a new invocation validates its graph in full.
+Exact ordered query fields, proof limits, output shape, function context and
+both relocation occurrence inventories bind each retained value result.
+Hits pay the complete cold value
 charge; a smaller budget runs the normal path. Fixed reconstruction-depth and
 match-work refusals may be retained with the exact result, completion flag and
 feasible mask of each query. A local depth refusal does not suppress independent

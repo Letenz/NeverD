@@ -484,6 +484,9 @@ public:
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
+  /// Whether \p E combines a certified frame address with a run-time value,
+  /// so it reaches whichever frame bytes that value selects.
+  bool reachesFrameThroughIndex(const HighExpr &E) const;
   /// The C lvalue for the frame slot at \p E.  When \p Access is narrower
   /// than the slot, the access goes through the slot's address so it
   /// changes only those bytes.
@@ -851,6 +854,10 @@ public:
     TypeRef CallType;
     bool AddressTaken = false;
     bool UsedAsMemory = false;
+    /// A run-time choice (`(p & m) | (&slot & ~m)`, `csel` between slots)
+    /// picks this slot's address for accesses of the slot's width: it stays a
+    /// named local whose address the choice takes, and its writes are kept.
+    bool Chosen = false;
     /// For a slot that shares bytes with others: the name of the storage that
     /// holds them all, this slot's byte offset in it, and its access through
     /// it, `(*(T *)((char *)&outer + k))`.
@@ -991,13 +998,17 @@ public:
   /// The exact C constant for the float with bits \p Value.
   std::optional<std::string> floatConstantText(uint64_t Value,
                                                const TypeRef &Type) const;
-  /// The address constant of a sized image object that \p Address indexes
-  /// by a variable byte offset (`i + &table`), or null.  The constant may
-  /// point into the object (`i + &table[2]`).
+  /// The address constant of an image object (indexedObjectAt) that
+  /// \p Address indexes by a variable byte offset (`i + &table`), or null.
+  /// The constant may point into the object (`i + &table[2]`).
   const HighExpr *indexedImageBase(const HighExpr &Address) const;
   /// The address and size of the outermost data object, sized by its
   /// symbol, that holds \p Addr.
   std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
+  /// The object code indexes at \p Addr: one a symbol sizes, else the
+  /// stretch of its data section between the sized objects around it (a
+  /// table a compiler emits under an assembler-local label).
+  std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
   /// The image's sized data objects by address, each as large as the
   /// largest symbol there, and the furthest end of any object up to each.
   std::vector<std::pair<va_t, uint64_t>> SizedObjects;

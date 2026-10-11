@@ -300,6 +300,40 @@ neverd_web_sea_records_json(neverd_web_session_t Session,
                             const char *ExtractionID, size_t ExtractionIDSize,
                             uint64_t Offset, uint64_t Limit);
 
+/// Read a nexe resource envelope under an explicit listed profile. Prefix,
+/// producer, runtime and signature validation are separate, unchecked states.
+NEVERD_API const char *
+neverd_web_nexe_extract_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ArtifactID, size_t ArtifactIDSize,
+                             const char *Profile, size_t ProfileSize);
+/// RecordKind is regions/members; Limit is 1..512. Metadata only. Member and
+/// bootstrap selection IDs feed existing consumers; paths/payloads stay
+/// private.
+NEVERD_API const char *
+neverd_web_nexe_records_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *RecordKind, size_t RecordKindSize,
+                             uint64_t Offset, uint64_t Limit);
+
+/// Read a pkg VFS under an explicit listed profile without executing its
+/// loader/prelude or interpreting V8 caches. Native validation is separate.
+NEVERD_API const char *
+neverd_web_pkg_extract_json(neverd_web_session_t Session,
+                            const char *ExpectedRevision, size_t RevisionSize,
+                            const char *ArtifactID, size_t ArtifactIDSize,
+                            const char *Profile, size_t ProfileSize);
+/// RecordKind is regions/members/links; Limit is 1..512. Only non-private
+/// stored content and the prelude expose selections. Paths, links and per-store
+/// metadata hashes stay private; source/cache equivalence remains unchecked.
+NEVERD_API const char *
+neverd_web_pkg_records_json(neverd_web_session_t Session,
+                            const char *ExpectedRevision, size_t RevisionSize,
+                            const char *ExtractionID, size_t ExtractionIDSize,
+                            const char *RecordKind, size_t RecordKindSize,
+                            uint64_t Offset, uint64_t Limit);
+
 /// Extract the explicitly qualified Bun container layout from admitted bytes.
 /// No execution or external tools; version/producer authentication is not
 /// implied. Source maps and JSC caches retain their original byte ranges.
@@ -383,9 +417,9 @@ NEVERD_API const char *neverd_web_node_behavior_records_json(
     size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
     uint64_t Offset, uint64_t Limit);
 /// Options is {"schema_version":1,"source_ids":[...]} with 1..16 retained
-/// source IDs. Joins exact package files and stored Bun/SEA delivery ancestry
-/// only; unknown package ownership and unavailable source results remain
-/// explicit.
+/// source IDs. Joins exact package files and stored Bun/SEA/nexe delivery
+/// ancestry only; unknown package ownership and unavailable source results
+/// remain explicit.
 NEVERD_API const char *neverd_web_package_behavior_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *PackageAnalysisID,
@@ -398,8 +432,9 @@ NEVERD_API const char *neverd_web_package_behavior_records_json(
     const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
     uint64_t Limit);
 
-/// Verify local primitive substitutions for an explicit string_recovery or
-/// constant_folding pass. Returns metadata and a raw-local-export receipt;
+/// Verify local substitutions for an explicit string_recovery,
+/// constant_folding or scope_renaming pass. Returns profile-specific evidence
+/// and a raw-local-export receipt;
 /// original/candidate text and individual replacement hashes remain private.
 /// These receipts do not establish whole-program or source-reflection equality.
 NEVERD_API const char *neverd_web_source_rewrite_analyze_json(

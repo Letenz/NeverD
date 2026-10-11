@@ -592,6 +592,32 @@ require worker protocol/Web and affected mock transport regressions. These
 MCP suites own catalog qualification separately from the existing Python
 native capability checker. See the [profile](web-mcp-profile.md).
 
+`WebNexe.*` covers pinned EOF framing, strict first-shim JSON, malformed binary64
+lengths, first-sentinel window boundaries, private paths, overlap/alias coverage
+and independent member/work/private-metadata budgets. `WebNexeSDK.*` exercises
+publication and cache atomicity, stored/deflate ZIP nonzero source coordinates,
+two identical occurrences with isolated package namespaces, outer delivery-only
+joins, source/bootstrap/native consumers and CLI operation with an unusable
+PATH. Set `NEVERD_NEXE_4RC7_CORPUS` for three optional producer-built full images;
+missing samples explicitly skip and tests never generate/download/execute them.
+Worker/MCP suites verify both operations through the shared C API. Check
+parser-off extraction and backend-off ABI/discovery, then restore both options.
+See the [nexe profile](web-nexe-profile.md).
+
+`WebPkg.*` independently builds fixed loader/prelude envelopes and covers LF/
+CRLF framing, snapshot roots, aliases, partial overlaps, opaque caches, private
+metadata, every truncated prefix, compressed-profile refusal and independent
+byte/node/count/work budgets. `WebPkgSDK.*` covers root namespace uniqueness,
+source/cache and symlink uncertainty, metadata-alias privacy through consumers,
+cache/revision atomicity, stored/deflate ZIP source coordinates, package/native
+handoff and CLI operation without external tools. Set `NEVERD_PKG_581_CORPUS`
+to the pinned six-platform corpus root, including the supplemental
+`outputs-stripped` and `stripped-inputs` directories. Tests verify original
+container/input hashes and separately preserved BOM/shebang storage evidence;
+they never build/download/execute samples. Worker/MCP tests own
+direct/framed parity. Check parser-off extraction and backend-off ABI/discovery,
+then restore both options. See the [pkg profile](web-pkg-profile.md).
+
 `WebSEA.*` covers independent Node SEA serialization, x64/ARM64 ELF/Mach-O/PE
 resource location, malformed names/tables, duplicate mappings, cumulative work,
 opaque V8 evidence and exact compiler-generated blobs. `WebSEASDK.*` and
@@ -676,6 +702,17 @@ failure rollback, foreign files, symlinks and renamed/replaced output paths.
 immutable captured bytes and receipt-bound CLI export with an unusable PATH.
 Worker/MCP tests compare both passes and record pages against the shared API;
 MCP excludes raw export and arbitrary output paths.
+`WebSourceRename` checks whole-binding replacement, shadowing/closures, decoded
+identifier collisions, unchanged property keys/labels, name inference, shorthand,
+non-simple parameter environments, writes, global/module names, dynamic scope,
+budgets and inverse tampering. Its optional pinned Claude case uses original
+Bun modules: module 1 retains excluded rest parameters and exports while module
+228 refuses the record ceiling without publishing a partial candidate.
+`WebRenameSDK` checks the distinct lexical profile, private original/generated
+names, shared cache limits, revision-bound receipts and CLI export without an
+external-tool PATH. Worker/MCP check the same profile and record evidence.
+`WebRewriteSDK.PrimitiveV1ReceiptsRemainExactlyCompatible` compares both older
+passes against fixed pre-rename export bytes, IDs, tokens and SHA-256 hashes.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative
@@ -1074,6 +1111,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverQueryScope.*` compares scoped and ordinary queries at every small-fixture
+budget boundary, including completion flags and masks. It covers owned temporary
+overrides, equal-sized edge changes, roots, different builders, nested leases,
+new invocations after instruction/storage changes, depth refusals, oversized
+keys and the legacy null-budget path.
 `ResolverConditionQueryCache.*` checks shared value/control graph ownership,
 ordered control queries, temporary certified edges, roots and storage-owner
 changes, and every small-fixture budget boundary. An independent graph-walk
@@ -1625,6 +1667,17 @@ HighIR when CFG threading leaves a sole successor without a branch operation.
 Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
+
+The same suite checks shared-expression liveness with independent return-value
+oracles, multiple branch definitions, dead cycles and nested observable effects.
+Calls, stores, ordered memory and non-default address spaces remain observable
+even when several assignments share an expression. Cyclic expression graphs
+exercise effect propagation in both encounter orders; cleanup must terminate
+without dropping an effect or its inputs.
+
+`CProjectionIdentifiers.*` in `NeverDHighControlFlowTests` checks first-free
+source names after dense and explicit suffix collisions, canonicalization,
+writer copies, moves and resets. Both C emitters share this allocator.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 

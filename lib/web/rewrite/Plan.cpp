@@ -1,11 +1,11 @@
-//===- Plan.cpp - Bounded primitive rewrite selection -------------------===//
+//===- Plan.cpp - Bounded source rewrite selection ----------------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Preserve unknown expressions and comments; select local pure substitutions.
+/// Select explicit profiles and retain unknown expressions and original bytes.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -161,7 +161,8 @@ SourceRewrite rewriteJavaScript(std::string_view ArtifactID,
                                 std::string_view Pass) {
   SourceRewrite A;
   try {
-    if (Pass != "string_recovery" && Pass != "constant_folding")
+    const auto Profile = sourceRewriteProfile(Pass);
+    if (Profile.empty())
       throw Error("unknown_source_rewrite_pass");
     if (Bytes.size() > MaxSourceRewriteBytes)
       throw Error("source_rewrite_byte_budget_exceeded");
@@ -180,18 +181,27 @@ SourceRewrite rewriteJavaScript(std::string_view ArtifactID,
     if (S.LexemeStatus != "ok")
       throw Error("source_rewrite_lexemes_unavailable");
     const auto B = analyzeSourceBindings(S);
-    const auto V = analyzeSourceValues(S);
-    const auto E = analyzeSourceEffects(S, B, V);
     A.BindingID = B.ID;
-    A.ValueID = V.ID;
-    A.EffectID = E.ID;
-    A.ID = identity("source-rewrite",
-                    {S.ID, SourceRewriteProfile, Pass, B.ID, V.ID, E.ID});
-    Planner{S, B, V, E, Bytes, A}.run();
-    rewrite::apply(A, Bytes);
-    rewrite::validate(A, S, V);
+    if (Pass == "scope_renaming") {
+      A.ID = identity("source-rewrite",
+                      {S.ID, Profile, Pass, B.ID, A.ValueID, A.EffectID});
+      rewrite::planRename(A, S, B, Bytes);
+      rewrite::apply(A, Bytes);
+      rewrite::validateRename(A, S, B);
+      A.Reason = "complete_lexical_binding_projection_only";
+    } else {
+      const auto V = analyzeSourceValues(S);
+      const auto E = analyzeSourceEffects(S, B, V);
+      A.ValueID = V.ID;
+      A.EffectID = E.ID;
+      A.ID =
+          identity("source-rewrite", {S.ID, Profile, Pass, B.ID, V.ID, E.ID});
+      Planner{S, B, V, E, Bytes, A}.run();
+      rewrite::apply(A, Bytes);
+      rewrite::validate(A, S, V);
+      A.Reason = "local_primitive_evaluation_only";
+    }
     A.Status = A.Accepted ? "verified_local_rewrites" : "no_eligible_rewrites";
-    A.Reason = "local_primitive_evaluation_only";
     // The inverse is checked before any candidate bytes are published.
     if (undoSourceRewrite(A, A.Text) != Bytes)
       throw Error("source_rewrite_inverse_mismatch");

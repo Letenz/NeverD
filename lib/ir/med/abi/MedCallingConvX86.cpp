@@ -827,22 +827,21 @@ std::optional<StackMemoryRead> stackMemoryRead(const MedOp &Op) {
     return std::nullopt;
   if (Id == Intrinsic::X86F16CStoreState)
     return std::nullopt;
-  if (Id == Intrinsic::X86F16CReadState)
-    return StackMemoryRead{1, x86F16CSourceBytes(Shape.Control), false};
-  if (Id == Intrinsic::X86FPPackedConvertMemoryState)
-    return StackMemoryRead{1, x86FPPackedConvertSourceBytes(Shape.Control),
-                           false};
+  const unsigned Bytes =
+      x86FPStateMemoryBytes(Id, Shape.OutputSize, Shape.Control);
+  if (Id == Intrinsic::X86F16CReadState ||
+      Id == Intrinsic::X86FPPackedConvertMemoryState)
+    return StackMemoryRead{1, Bytes, false};
   if (Id == Intrinsic::X86FPScalarConvertMemoryState)
     // This denotes an eligible scalar completion source, including raw integer
     // bits. Its own conversion contract retains the source's numerical type.
-    return StackMemoryRead{1, x86FPScalarConvertSourceBytes(Shape.Control),
-                           true};
-  const bool Approx = Id == Intrinsic::X86FPApprox12MemoryState;
-  const bool Scalar = Approx ? x86FPApprox12IsScalar(Shape.Control)
+    return StackMemoryRead{1, Bytes, true};
+  const bool Scalar = Id == Intrinsic::X86FPApprox12MemoryState
+                          ? x86FPApprox12IsScalar(Shape.Control)
                       : Id == Intrinsic::X86FPRoundMemoryState
                           ? x86FPRoundStateIsScalar(Shape.Control)
                           : x86FPArithStateIsScalar(Shape.Control);
-  return StackMemoryRead{1, Shape.OutputSize - (Approx ? 0 : 4), Scalar};
+  return StackMemoryRead{1, Bytes, Scalar};
 }
 
 void preserveFPStackHomes(
@@ -886,11 +885,16 @@ void recoverFPStackReads(
     const std::set<int64_t> &MutableSlots) {
   if (Architecture != Arch::X86 && Architecture != Arch::X64)
     return;
+  // MedIR numbers registers, temporaries and stack values from one counter,
+  // and HighIR keys them by {Id, SSAVer} alone: a new temporary takes an id
+  // above every value's, or it aliases a register's (`t30` read as EAX.30).
   int NextTemp = 0;
   const auto Observe = [&](const MedVar &V) {
-    if (V.Kind == MedVar::Temp)
+    if (!V.isConst())
       NextTemp = std::max(NextTemp, V.Id + 1);
   };
+  for (const auto &Parameter : Func.Params)
+    Observe(Parameter);
   for (const auto &Block : Func.Blocks) {
     for (const auto &Phi : Block.Phis) {
       Observe(Phi.Output);

@@ -479,6 +479,18 @@ TEST(F16CContract, ShapesPreserveRoleIndicesAndRawPackedCarriers) {
           x86FPStateShapeIsValid(Id, x86FPStateHighShape(*Call, Arch::X64)));
     }
 }
+// A widening memory form reads only its half-precision source, not the
+// single-precision width of its result; a narrowing store reads nothing.
+TEST(F16CContract, MemoryFormsReadOnlyTheirHalfSource) {
+  for (unsigned Control : {0U, 2U})
+    EXPECT_EQ(x86FPStateMemoryBytes(Intrinsic::X86F16CReadState,
+                                    x86F16CDestinationBytes(Control) + 4,
+                                    Control),
+              Control ? 16U : 8U);
+  for (unsigned Control : {1U, 3U})
+    EXPECT_EQ(x86FPStateMemoryBytes(Intrinsic::X86F16CStoreState, 4, Control),
+              0U);
+}
 TEST(F16CContract, RawEncodingAndDecodedMetadataAgreeForAllImmediateBytes) {
   for (unsigned Width : {16U, 32U})
     for (bool Memory : {false, true})

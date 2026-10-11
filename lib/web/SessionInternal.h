@@ -23,10 +23,12 @@
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
 #include "neverd/web/Interfaces.h"
+#include "neverd/web/Nexe.h"
 #include "neverd/web/NodeBehavior.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
+#include "neverd/web/Pkg.h"
 #include "neverd/web/SEA.h"
 #include "neverd/web/Session.h"
 #include "neverd/web/Source.h"
@@ -70,6 +72,8 @@ struct Session::Impl {
   std::map<std::string, SourceBundleAnalysis> Bundles;
   std::map<std::string, BunExtraction> BunExtractions;
   std::map<std::string, SEAExtraction> SEAExtractions;
+  std::map<std::string, NexeExtraction> NexeExtractions;
+  std::map<std::string, PkgExtraction> PkgExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
   std::map<std::string, ElectronManifest> ElectronManifests;
   std::map<std::pair<std::string, std::string>, DesktopManifest>
@@ -121,7 +125,8 @@ struct Session::Impl {
 
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
-                   SEAExtractions.empty() && AsarExtractions.empty() &&
+                   SEAExtractions.empty() && NexeExtractions.empty() &&
+                   PkgExtractions.empty() && AsarExtractions.empty() &&
                    ElectronManifests.empty() && DesktopManifests.empty() &&
                    HTMLDocuments.empty() && PackageAnalyses.empty() &&
                    PackageArchives.empty() && PackageIntegrity.empty() &&

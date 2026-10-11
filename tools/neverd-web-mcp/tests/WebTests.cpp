@@ -10,6 +10,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../unittests/web/BunFixture.h"
+#include "../../../unittests/web/NexeFixture.h"
+#include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
@@ -197,6 +199,39 @@ void sourceAndMaps(Harness &H) {
   const Json MapArgs{{"revision", H.Revision}, {"map_id", Map.at("map_id")}};
   H.same("web_source_map_sources", MapArgs);
   H.same("web_source_map_segments", MapArgs);
+}
+
+void scopeRename(Harness &H) {
+  const auto Artifact = H.import(0);
+  const auto Source = H.same("web_source_analyze", {{"revision", H.Revision},
+                                                    {"artifact_id", Artifact},
+                                                    {"source_type", "script"}});
+  const Json Args{{"revision", H.Revision},
+                  {"source_id", Source.at("source_id")},
+                  {"pass", "scope_renaming"}};
+  const auto A = H.same("web_source_rewrite_analyze", Args);
+  require(A.at("profile") == "javascript-scope-rename-v1" &&
+              A.at("analysis_status") == "verified_local_rewrites" &&
+              A.at("accepted_count") == 4 &&
+              A.at("value_verification") == "not_applicable" &&
+              A.at("value_analysis_id").is_null() &&
+              A.at("binding_verification") ==
+                  "same_scopes_declarations_and_reference_resolution" &&
+              A.at("original_name_recovery") == false,
+          "MCP changed lexical rename evidence");
+  const auto Page =
+      H.same("web_source_rewrite_records",
+             {{"revision", H.Revision}, {"rewrite_id", A.at("rewrite_id")}});
+  require(Page.at("items").size() == 5, "Rename records missing");
+  for (const auto &R : Page.at("items"))
+    require(R.contains("binding_id") && R.contains("identifier_role") &&
+                !R.contains("before") && !R.contains("after"),
+            "Rename records lost their private evidence boundary");
+  redacted(A);
+  redacted(Page);
+  require(Page.dump().find("neverd_arg_") == std::string::npos &&
+              Page.dump().find("neverd_local_") == std::string::npos,
+          "MCP exposed generated names");
 }
 
 void archives(Harness &H, bool HasParser) {
@@ -407,11 +442,90 @@ int main() {
     const auto &Ops = Backend.at("operations");
     const bool HasParser =
         std::find(Ops.begin(), Ops.end(), "source_analyze") != Ops.end();
-    if (HasParser)
+    if (HasParser) {
       sourceAndMaps(H);
-    else
+      F.write("source", "function CANARY_NAME(CANARY_ARG){"
+                        "const CANARY_LOCAL=CANARY_ARG;return CANARY_LOCAL;}");
+      scopeRename(H);
+    } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);
+    if (std::find(Ops.begin(), Ops.end(), "nexe_extract") != Ops.end()) {
+      F.write("sea",
+              neverd::web::nexe_test::bundle(
+                  {{"CANARY.js", "const x='CANARY';"}, {"data", "CANARY"}}));
+      const auto A = H.import(1);
+      const Json Args{{"revision", H.Revision},
+                      {"artifact_id", A},
+                      {"profile", "nexe-4.0.0-rc.7-eof-resources-v1"}};
+      const auto E = H.same("web_nexe_extract", Args);
+      require(E.at("member_count") == 2 &&
+                  E.at("signature_status") == "not_checked",
+              "nexe evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto M = H.same("web_nexe_records", Page);
+      require(M.at("next_offset") == 1, "nexe pages lost continuation");
+      H.fail("web_nexe_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "unknown"}},
+             "invalid_record_kind");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_nexe_extract", Invalid); });
+      if (HasParser) {
+        const auto Source =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "commonjs"}});
+        H.same("web_source_anchor", {{"revision", H.Revision},
+                                     {"source_id", Source.at("source_id")},
+                                     {"byte_offset", "6"},
+                                     {"byte_length", "1"}});
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "pkg_extract") != Ops.end()) {
+      F.write("sea",
+              neverd::web::pkg_test::bundle(
+                  {{"CANARY.js", "const x='CANARY';"}, {"data", "CANARY"}}));
+      const auto A = H.import(1);
+      const Json Args{{"revision", H.Revision},
+                      {"artifact_id", A},
+                      {"profile", "pkg-5.8.1-uncompressed-vfs-v1"}};
+      const auto E = H.same("web_pkg_extract", Args);
+      require(E.at("member_count") == 4 &&
+                  E.at("signature_status") == "not_checked",
+              "pkg evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto M = H.same("web_pkg_records", Page);
+      require(M.at("next_offset") == 1, "pkg pages lost continuation");
+      H.fail("web_pkg_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "unknown"}},
+             "invalid_record_kind");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_pkg_extract", Invalid); });
+      if (HasParser) {
+        const auto Source =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "commonjs"}});
+        H.same("web_source_anchor", {{"revision", H.Revision},
+                                     {"source_id", Source.at("source_id")},
+                                     {"byte_offset", "6"},
+                                     {"byte_length", "1"}});
+      }
+    }
     passiveInputs(H);
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&
