@@ -1,4 +1,6 @@
 // ARM32 assembly mnemonics — included by intrinsics.cpp.
+// The names are aligned in a column, which clang-format would undo.
+// clang-format off
 
 A(Intrinsic::ArmSvc,       "svc");
 A(Intrinsic::ArmHvc,       "hvc");
@@ -93,3 +95,4 @@ A(Intrinsic::ArmLdc2,      "ldc2");
 A(Intrinsic::ArmLdc2l,     "ldc2l");
 A(Intrinsic::ArmStc2,      "stc2");
 A(Intrinsic::ArmStc2l,     "stc2l");
+A(Intrinsic::ArmLinuxSyscall, "svc");

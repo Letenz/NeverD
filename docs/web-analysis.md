@@ -35,6 +35,10 @@ neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
 neverd web archive ./extension.vsix zip
+neverd web package-install ./package.json 0 package-json
+neverd web archive-package-install ./package.tgz tgz 0 3 package-json 0:commonjs 1:commonjs
+neverd web package-behavior-diff ./capture 6 3 package-json before:5:commonjs after:2:commonjs
+neverd web archive-package-behavior-diff ./archives tgz 2 3 1 3 package-json before:0:commonjs after:0:commonjs
 neverd web desktop-manifest ./captured-app nwjs 2
 neverd web desktop-manifest ./package.json vsix
 neverd web archive-desktop ./extension.vsix zip 0 3 vsix
@@ -99,6 +103,16 @@ complete admitted binding relationships; generated names are not original names.
 The [Boolean branch profile](web-boolean-branches-profile.md) selects proven
 Boolean expression operands with forced GetValue and retained binding checks;
 it preserves chosen effects and does not transform statements.
+
+The [installation trace profile](web-package-install-profile.md) connects a
+literal lifecycle command to exact captured files and selected Node behavior
+records. It retains unsupported commands and unknown source coverage. Its
+candidate module chains do not establish activation or runtime reachability.
+The [selected behavior comparison](web-package-behavior-diff-profile.md) counts
+recognized syntax patterns per exact file candidate, preserves all original
+occurrence anchors and reports missing/degraded coverage as incomparable.
+Argument changes, runtime behavior and release provenance are not inferred
+from equal or different pattern counts.
 
 All new analysis and adapter code is C++. JavaScript parsing embeds a pinned
 Hermes parser/AST subset. There is no JavaScript VM, target evaluation, package

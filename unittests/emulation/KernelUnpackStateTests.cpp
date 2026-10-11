@@ -78,6 +78,7 @@ TEST_F(KernelUnpackState, RequiresAnOwnershipBaseline) {
   const auto State = take(Model->captureUnpackRuntime(true));
   EXPECT_EQ(State.Profile, ProcessRuntimeState::Kind::WindowsDriverX64);
   EXPECT_TRUE(State.Pools.empty());
+  EXPECT_FALSE(State.Entry);
   EXPECT_TRUE(State.Reasons.empty());
   EXPECT_FALSE(State.hasAdditionalDependencies());
 }

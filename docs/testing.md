@@ -591,6 +591,36 @@ that shared boundary require the owning Web directory, worker/MCP parity and
 parser/backend omission checks, followed by restoration of the enabled build.
 See the [Node behavior profile](web-node-behavior-profile.md).
 
+`WebPackageInstall.*` covers command grammar and reserved Node dispatch, exact
+entries, mixed namespaces/selections, deferred code, ESM/CJS chains and cycles,
+shadowed or written require, unknown sources, independent package ownership,
+embedded delivery and atomic budgets. Tar symlinks, encrypted/unsupported ZIP
+members and absent files preserve the same honest unavailable boundary.
+`WebPackageInstallReal.*` selects the two JS members from the original pinned
+Claude npm archive and checks six entry-associated calls against the existing
+behavior records. `WebNodeBehaviorSDK.*` also covers optional selection, 512-row
+trace paging, canaries, cache/revision invalidation and directory/archive CLI
+compositions with an unusable PATH. Worker/MCP test the same metadata; MCP also
+checks manifest-only and lock-only coverage. Follow shared-boundary changes with
+complete owning Web regression and both omission profiles, then restore ON.
+See the [installation trace profile](web-package-install-profile.md).
+
+`WebPackageBehaviorDiff.*` checks changed arguments with equal pattern counts,
+per-file deltas that cannot cancel, original occurrence anchors, absent and
+unselected sources, parse failure, source modes, root/platform context, embedded
+delivery and aggregate limits. The unchanged Buffer call plus the existing
+value-budget fixture must produce incomparable coverage, never a fake encoding
+delta. `WebPackageBehaviorDiffSDK.*` repeats that counterexample through the
+public API, resolves records with an empty independent Node behavior cache,
+pages 600 occurrences, checks cache/revision invalidation and the shared
+16-source limit, and runs directory/archive CLI composition with an unusable
+PATH. Worker/MCP check shared summary/page equality and strict schemas.
+`NEVERD_CLAUDE_CODE_BEHAVIOR_DIFF_DIR` optionally supplies the two hash-pinned
+`claude-code-2.1.295.tgz` and `claude-code-2.1.296.tgz` wrappers for
+`WebPackageBehaviorDiffReal.*`. Follow with complete Web regression, parser and
+backend omission checks and restoration ON. See the
+[comparison profile](web-package-behavior-diff-profile.md).
+
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
 and independent metadata/work bounds. `WebDesktopSDK.*` checks distinct profile
@@ -4194,7 +4224,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 15 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5490`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 

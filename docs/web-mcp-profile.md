@@ -49,12 +49,26 @@ Tools use `neverd_web_` names and schema version 1; `schema_version` defaults to
 bindings, primitive semantics and primitive/lexical rewrite receipts,
 modules/bundles/navigation, structural views,
 anchors, Bun/SEA/nexe/pkg/ASAR extraction, package/archive/integrity/diff evidence,
-selected Node source/package behavior metadata,
+selected Node source/package behavior metadata and installation traces,
 Electron/HTML, passive HAR/streams/interfaces and native loader metadata.
 Published IDs, decimal-string revisions/coordinates, evidence classes and
 backend pagination fields remain unchanged. Tool responses contain the same
 evidence object in `structuredContent` and equivalent JSON in one text block.
 Clients should discover schemas rather than assume disabled capabilities.
+
+`neverd_web_package_install_analyze` requires revision and package analysis ID;
+the matching package behavior ID is optional. No source selection is needed to
+report manifest-only or lock-only coverage gaps. Its records tool pages
+`scripts`, `sources`, `requests` and `associations`; all retain the backend's
+static confidence and privacy limits. See the
+[installation profile](web-package-install-profile.md).
+
+`neverd_web_package_behavior_diff_analyze` selects a retained `package_diff_id`
+and optional `before_package_behavior_id` / `after_package_behavior_id` from
+its exact analyses. Its records tool pages `pairs`, `patterns` and `occurrences`.
+Missing or degraded source coverage remains incomparable; pattern counts do
+not establish call correspondence or a safety verdict. See the
+[comparison profile](web-package-behavior-diff-profile.md).
 
 MCP does not expose source review options or raw export. Structural source
 views replace private identifiers/literals/comments according to the shared

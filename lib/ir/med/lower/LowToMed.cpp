@@ -18,12 +18,14 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedConstantPropagation.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/ir/med/X86RegistrationEntry.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
@@ -203,6 +205,32 @@ void splitEntryLoopHeader(MedFunc &Func) {
   Entry.EndAddr = InvalidVA;
   Entry.Succs.push_back(1);
   Func.Blocks.insert(Func.Blocks.begin(), std::move(Entry));
+}
+
+/// The constant register \p Offset of \p Size holds before Ops[End], when
+/// the block sets it to one there (`mov w8, #93` writes w8, then extends it
+/// into x8).  A write this cannot follow leaves the value unknown.
+std::optional<uint64_t> blockRegisterConstant(const std::vector<LowOp> &Ops,
+                                              size_t End, uint64_t Offset,
+                                              uint16_t Size) {
+  for (size_t K = End; K-- > 0;) {
+    const LowOp &Op = Ops[K];
+    if (!Op.Output.isReg() || Op.Output.Offset >= Offset + Size ||
+        Offset >= Op.Output.Offset + Op.Output.Size)
+      continue;
+    if (Op.Output.Offset != Offset || Op.Output.Size != Size ||
+        Op.NumInputs != 1)
+      return std::nullopt;
+    if (Op.Opcode == NdOp::COPY && Op.Inputs[0].isConst())
+      return Size >= 8
+                 ? Op.Inputs[0].Offset
+                 : Op.Inputs[0].Offset & ((uint64_t{1} << (8 * Size)) - 1);
+    if (Op.Opcode != NdOp::INT_ZEXT || !Op.Inputs[0].isReg() ||
+        Op.Inputs[0].Offset != Offset || Op.Inputs[0].Size >= Size)
+      return std::nullopt;
+    Size = Op.Inputs[0].Size;
+  }
+  return std::nullopt;
 }
 
 } // namespace
@@ -795,6 +823,34 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
         for (uint8_t I = 0; I < LOp.NumInputs; ++I)
           MOp.addInput(ndVarToMedVar(LOp.Inputs[I]));
       }
+      // A supervisor call under a known operating system's ABI reads its
+      // number and argument registers and writes its result register.
+      if (Image && LOp.Opcode == NdOp::INTRINSIC && LOp.NumInputs == 2 &&
+          LOp.Inputs[0].isConst() && LOp.Inputs[1].isConst())
+        if (const SyscallConvention *Syscall = syscallConvention(
+                *Image, TheArch, static_cast<Intrinsic>(LOp.Inputs[0].Offset),
+                LOp.Inputs[1].Offset)) {
+          MedVar Id = MOp.Inputs[0];
+          Id.ConstVal = static_cast<uint64_t>(Syscall->Modeled);
+          const uint16_t Size = Syscall->RegisterSize;
+          // A syscall the block numbers just before the call, and whose
+          // arity is verified, reads only its own argument registers.
+          std::optional<unsigned> Read;
+          if (const auto Number = blockRegisterConstant(
+                  LB.Ops, LowOpIndex, Syscall->NumberRegister, Size))
+            Read = linuxSyscallArgumentCount(TheArch, *Number);
+          MOp.NumInputs = 0;
+          MOp.addInput(Id);
+          MOp.addInput(
+              ndVarToMedVar(NdVar::reg(Syscall->NumberRegister, Size)));
+          for (uint8_t I = 0; I < Syscall->ArgumentCount; ++I)
+            MOp.addInput(Read && I >= *Read
+                             ? MedVar::makeConst(
+                                   0, Size, ConstantAddressProvenance::Scalar)
+                             : ndVarToMedVar(NdVar::reg(
+                                   Syscall->ArgumentRegisters[I], Size)));
+          MOp.Output = ndVarToMedVar(NdVar::reg(Syscall->ResultRegister, Size));
+        }
       DispatchCallDefinedArgs = DispatchDefined;
       // A register an indirect call goes through, loaded from an import's
       // slot, names that import as the slot would (`mov rax, [rip+slot];

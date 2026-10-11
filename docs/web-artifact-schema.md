@@ -78,6 +78,11 @@ Domain labels and field order are defined in
 | Module inventory | Source ID, binding analysis ID and module-evidence profile |
 | Module occurrence | Module inventory ID, fixed kind, syntax node ID and traversal ordinal |
 | Admitted module-file comparison | Module inventory ID, snapshot ID and file-comparison profile |
+| Node module-file comparison | Module inventory, origin model, snapshot and separate Node candidate profile |
+| Package installation trace | Install profile, package analysis, exact namespace, optional package-behavior selection ID (empty means no selection) and shared binding/module/origin/Node-link profiles |
+| Selected package behavior diff | Comparison profile, base package diff, optional before/after package-behavior IDs (empty means no selection) and Node behavior profile; source mode and semantic profiles remain transitively bound by selected source behavior IDs |
+| Install declaration / presence | Trace ID plus original script ID and status, or package ID for lock-only presence |
+| Install request / association | Trace, module-link, original request and fixed selection status; associations bind script trace, behavior record and ordered request trace IDs |
 | Bundle analysis | Source ID, binding analysis ID and structural bundle profile |
 | Bundle/partition/dependency/region occurrence | Bundle analysis ID, fixed record kind, original node ID and ordinal |
 | Source map | Artifact occurrence, map blob hash, decoder profile |

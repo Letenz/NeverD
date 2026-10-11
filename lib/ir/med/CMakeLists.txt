@@ -22,6 +22,8 @@ add_neverd_component_library(NeverDIRMed
   abi/MedCallConventionWin64.cpp
   abi/MedCallingConv.cpp
   abi/MedCallingConvX86.cpp
+  abi/MedSyscallConvention.cpp
+  abi/MedSyscallConventionLinux.cpp
   abi/MedVariadic.cpp
   abi/MedVariadicAArch64.cpp
   abi/MedVariadicARM.cpp

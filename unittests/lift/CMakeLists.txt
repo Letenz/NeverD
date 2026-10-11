@@ -60,6 +60,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_PipelineE2ETests.cpp
   arm32/ARM32_PredicatedStackTests.cpp
   arm32/ARM32_ShiftTests.cpp
+  arm32/ARM32_ThumbPCTests.cpp
   x86_32/X86_32_ArithTests.cpp
   x86_32/X86_32_BitOpsTests.cpp
   x86_32/X86_32_CallAbiTests.cpp
@@ -140,6 +141,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ExecutableCodeOwnerIndexTests.cpp
   core/LowInstructionBoundaryTests.cpp
   core/LiftCommonTests.cpp
+  core/LinuxSyscallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
@@ -2345,6 +2347,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_extern_calls_nopic_a64.c
   aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
+  aarch64/test_linux_svc_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s
@@ -2390,6 +2393,8 @@ set(ARM32_TEST_SOURCES
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
   arm32/test_arm_relocation_free_literal.s
+  arm32/test_linux_svc_arm.s
+  arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
   arm32/test_arith_arm.c

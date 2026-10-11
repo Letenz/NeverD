@@ -36,6 +36,8 @@ PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLi
 
 `ProcessView::runtimeState(include_backing)` 為暫停的驅動程式提供 `WindowsDriverState`。核心擁有者保存每個存活集區的配置 API、精確請求大小、標籤，以及有效的舊式類型或完整的新式 flags。要求內容時獨立複製恰好這些位元組；僅擷取中繼資料時不包含內容。已釋放的集區、借用的載入器物件以及裝置物件不會成為集區記錄。此擷取不提供指標來源或原生初始化器，既有相依性和重定位拒絕條件繼續有效。
 
+`WindowsDriverState::Entry` 保留最初 DriverEntry 的暫存器基線與返回／shadow frame、停止時的整數／XMM／浮點控制暫存器，以及目前 OS 擁有的堆疊範圍。請求 backing 時複製完整活動堆疊。後續分派和卸載呼叫仍保留原基線，並明確標記為 DriverEntry 之外的呼叫。這些具體觀測不構成指標來源或新呼叫者繫結證明。
+
 即使沒有殘留集區或借用物件，核心映像重定位仍是獨立的載入器相依性。目前重建器移除生成內容的重定位，因此預設驅動程式復原會傳回 `unsupported_state`，不會建立或截斷輸出。僅明確指定 `snapshot_only` 才輸出固定基址快照並保留此診斷。原始重定位表不能證明其涵蓋生成的指標。
 
 ```bash
