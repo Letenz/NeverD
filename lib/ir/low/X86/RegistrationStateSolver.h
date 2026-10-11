@@ -137,6 +137,10 @@ private:
   std::optional<CallTransfer> transferCall(size_t I, Domain &After,
                                            const LowOp &Op,
                                            const BlockFacts &Facts);
+  bool transferScalarArguments(Domain &After,
+                               const RegistrationCalleeFrameContract &Callee,
+                               FrameValue &StackPointer,
+                               std::optional<int32_t> Object);
   bool transferInitializer(Domain &After,
                            const RegistrationCalleeFrameContract &Callee,
                            FrameValue &StackPointer, FrameValue &Object);

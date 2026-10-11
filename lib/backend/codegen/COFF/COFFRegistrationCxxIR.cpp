@@ -393,11 +393,12 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
     const bool Initializer = Receipt.Contract.isInitializer();
     bool DiscardResult = false;
     if (!Throw && !Receipt.Cleanup && !Initializer) {
-      const auto Fresh = getCheckedX86RegistrationObjectCalleeABI(
+      const auto Fresh = getCheckedX86RegistrationMemberCalleeABI(
           Image, Receipt.Contract.Target, &CallResultWork,
           RegistrationLeafResult::Discarded);
-      if (!Fresh || Fresh->HasIndependentScalarReturn !=
-                        Receipt.Contract.HasIndependentScalarReturn)
+      if (!Fresh || Fresh->StackPopBytes != Receipt.Contract.StackPopBytes ||
+          Fresh->HasIndependentScalarReturn !=
+              Receipt.Contract.HasIndependentScalarReturn)
         return rejectIR("C++ returning call lost its current object contract");
       DiscardResult = !Fresh->HasIndependentScalarReturn;
       const auto SourceCall = SourceCallEffects.find(Call);
@@ -407,7 +408,7 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
         return rejectIR("C++ void call discarded an observed source result");
     }
     const unsigned ScalarWords =
-        Initializer ? Receipt.Contract.StackPopBytes / 4 : 0;
+        Throw || Receipt.Cleanup ? 0 : Receipt.Contract.StackPopBytes / 4;
     if (RuntimeThrow != Receipt.RuntimeThrow.has_value() || !Callee ||
         !Callee->isDeclaration() || !Callee->hasExternalLinkage() ||
         Callee->isVarArg() || Call->isInlineAsm() || Call->isTailCall() ||
@@ -427,10 +428,10 @@ getCheckedCxxControlIRProof(const llvm::Function &Function,
         (Receipt.Cleanup && !Call->doesNotThrow()) ||
         (!Receipt.Cleanup && Call->doesNotThrow()))
       return rejectIR("C++ preserved callee changed its physical call ABI");
-    if (Initializer)
+    if (Borrow)
       for (unsigned I = 1; I < Call->arg_size(); ++I)
         if (!Call->getArgOperand(I)->getType()->isIntegerTy(32))
-          return rejectIR("C++ constructor changed a scalar stack argument");
+          return rejectIR("C++ member changed a scalar stack argument");
     if (!hasExactCxxCallAttributes(*Call, Receipt))
       return rejectIR("C++ preserved callee changed its proved effects");
     if (RuntimeThrow) {

@@ -441,6 +441,21 @@ ancestry. Runtime-object writes grant no parent-frame initialization. The
 reference-member corpus consumes the returned value before normal completion
 or rethrow and retains the same destruction order/content oracle across both
 rewrite generations.
+Ordinary member roots may consume independently checked 32-bit scalar stack
+words, including members on live reference catches. Source state proves every
+argument byte written in the parent frame or the active callback private stack,
+rejects frame and exception-object pointers, and retires popped storage before
+later argument and private-stack checks. Fresh callee decoding binds the exact
+cleanup and argument count;
+LLVM emission and independent installation recheck the actual defined scalar
+arguments. This does not change the CRT destructor callback ABI. The separate
+member-argument corpus uses a nonzero argument and repeats the lifetime oracle
+across both reconstruction generations.
+Callback ownership can cross a padding-derived boundary inside an ordinary
+branch only after a bounded, closed instruction graph disproves that boundary.
+The proof rejects overlapping decoding, escaping or indirect branches, in-range
+callees and incomplete paths; symbols, exports, other handlers and cleanup
+entries retain their independent boundaries.
 An ordinary call without an independent result can be
 lowered as void only when current SSA proves that copies, extensions and PHIs
 carry no observed result, and its LLVM uses end exclusively in exact

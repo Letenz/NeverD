@@ -13,6 +13,7 @@ add_neverd_component_library(NeverDIRLowValidation
 add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationState.cpp
   X86/RegistrationStateCalls.cpp
+  X86/RegistrationStateCallArguments.cpp
   X86/RegistrationStateInitializer.cpp
   X86/RegistrationStateCxx.cpp
   X86/RegistrationStateObject.cpp
@@ -61,6 +62,7 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCopyABI.cpp
   X86/RegistrationInitializerABI.cpp
   X86/RegistrationObjectCallbackABI.cpp
+  X86/RegistrationMemberCalleeABI.cpp
   X86/RegistrationInitializerCall.cpp
   X86/RegistrationBorrowedObjectCall.cpp
   X86/RegistrationThrowImportABI.cpp

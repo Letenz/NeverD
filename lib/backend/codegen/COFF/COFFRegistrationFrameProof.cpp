@@ -633,7 +633,7 @@ llvm::Error validateFramePrivacy(
                 if (Runtime != RuntimeObjects.end() &&
                     (!Runtime->second->Reference || Checked.Initializer ||
                      Checked.ThrowInfoVA || !Checked.Initialized.empty() ||
-                     Checked.ScalarStackWords || !Catch ||
+                     !Catch ||
                      !isActiveCxxCatch(Runtime->second->Catch, Catch->Catch)))
                   return Reject("callee borrows an inactive runtime object");
                 const bool Throw = Checked.ThrowInfoVA != 0;
@@ -651,15 +651,14 @@ llvm::Error validateFramePrivacy(
                      CallbackStacks.at(Root) != Catch))
                   return Reject(
                       "callee borrow changed its source frame object");
-                if (Checked.Initializer)
+                if (Checked.ScalarStackWords)
                   for (unsigned Index = 1; Index < Call->arg_size(); ++Index) {
                     const auto *Argument = Call->getArgOperand(Index);
                     if (!Argument->getType()->isIntegerTy(32) ||
                         IsAddress(Argument) ||
                         llvm::isa<llvm::UndefValue, llvm::PoisonValue>(
                             Argument))
-                      return Reject(
-                          "constructor argument is not a defined scalar");
+                      return Reject("member argument is not a defined scalar");
                   }
                 if (Throw) {
                   const auto Table = Locate(Call->getArgOperand(1), 0);

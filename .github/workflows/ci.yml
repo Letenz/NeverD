@@ -2204,8 +2204,18 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
             install --yes --no-install-recommends lld wine wine32:i386
+      - name: Initialize the isolated PE32 Wine service
+        timeout-minutes: 5
+        env:
+          WINEARCH: win32
+          WINEDEBUG: '-all'
+        run: |
+          export WINEPREFIX="$RUNNER_TEMP/neverd-wine32"
+          install -d -m 700 "$WINEPREFIX"
+          wineserver -p
+          wine wineboot --init
       - name: Verify runtime evidence admission
-        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_destructor_graphs scripts.tests.test_windows_registration_destructor_results scripts.tests.test_windows_registration_reference_members scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
+        run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_destructors scripts.tests.test_windows_registration_destructor_graphs scripts.tests.test_windows_registration_destructor_results scripts.tests.test_windows_registration_reference_members scripts.tests.test_windows_registration_member_arguments scripts.tests.test_windows_registration_copies scripts.tests.test_windows_registration_initializers scripts.tests.test_windows_registration_delegating scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
       - name: Fetch genuine MSVC C++ source inputs
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         uses: actions/download-artifact@v4
@@ -2310,7 +2320,7 @@ jobs:
             --gtest_filter=RegistrationRethrowHighC.*:RegistrationThrowHighC.*:RegistrationObject.RequiresOneTrivialIdentityCopy \
             --gtest_output=xml:build-windows-eh/evidence/rethrow-source.xml
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
-            --gtest_filter=RegistrationPHICopy.*:SafeSEHReference.* \
+            --gtest_filter=RegistrationPHICopy.*:RegistrationStackCopy.*:SafeSEHReference.* \
             --gtest_output=xml:build-windows-eh/evidence/callback-copy.xml
           build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
             --gtest_filter='RegistrationThrowObject.*-RegistrationThrowObject.InputPE32*' \
@@ -2331,11 +2341,16 @@ jobs:
             --gtest_filter='WindowsSEHFallback.*' \
             --gtest_output=xml:build-windows-eh/evidence/native-dispatch-views.xml
           build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
-            --gtest_filter='RegistrationInitializerFrame.*' \
+            --gtest_filter='RegistrationInitializerFrame.*:RegistrationRuntimeMemberFrame.*' \
             --gtest_output=xml:build-windows-eh/evidence/initializer-frame.xml
           build-windows-eh/bin/NeverDSourceDialectTests \
             --gtest_filter='SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions:SourceDialect.CxxAlignmentUsesStandardSyntaxAndPreservesStorage:SourceDialect.Navigation*:SourceDialect.PlainC*' \
             --gtest_output=xml:build-windows-eh/evidence/source-dialect.xml
+      - name: Verify independently checked scalar member arguments
+        run: |
+          build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
+            --gtest_filter='RegistrationMemberCallee.*' \
+            --gtest_output=xml:build-windows-eh/evidence/member-contracts.xml
       - name: Verify source LLVM against native MSVC finally inputs
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2452,6 +2467,17 @@ jobs:
             --patch-binary build-windows-eh/bin/neverd \
             --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
             --output build-windows-eh/evidence/reference-member-rewrite
+      - name: Reconstruct x86 scalar stack arguments on live reference members
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          WINEARCH: win32
+        run: |
+          WINEPREFIX="$RUNNER_TEMP/neverd-wine32" \
+          python scripts/check_windows_registration_nested_try.py --profile member-arguments \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationRealignedTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --runtime-libs build-windows-eh/cxx-source-inputs/runtime-libs \
+            --output build-windows-eh/evidence/member-argument-rewrite
       - name: Reconstruct x86 exception objects with checked copy construction
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2551,6 +2577,17 @@ jobs:
             --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
             --patch-binary build-windows-eh/bin/neverd \
             --output build-windows-eh/evidence/reference-member-relift
+      - name: Re-lift x86 scalar stack arguments on live reference members
+        if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
+        env:
+          WINEARCH: win32
+        run: |
+          WINEPREFIX="$RUNNER_TEMP/neverd-wine32" \
+          python scripts/check_windows_registration_relift.py --profile member-arguments \
+            --input-root build-windows-eh/evidence/member-argument-rewrite \
+            --test-binary build-windows-eh/bin/NeverDWindowsRegistrationNativeTests \
+            --patch-binary build-windows-eh/bin/neverd \
+            --output build-windows-eh/evidence/member-argument-relift
       - name: Re-lift exception objects with checked copy construction
         if: ${{ inputs.windows_eh_llvm_artifact_run != '' }}
         env:
@@ -2655,7 +2692,7 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           root = Path('build-windows-eh/evidence')
-          for name in ('state', 'registration', 'stack', 'dead-slots', 'noreturn', 'frame', 'metadata', 'planner', 'rethrow-source', 'callback-copy', 'destructor-contracts', 'copy-contracts', 'initializer-contracts', 'initializer-frame', 'source-dialect', 'ir-pe', 'corpus'):
+          for name in ('state', 'registration', 'stack', 'dead-slots', 'noreturn', 'frame', 'metadata', 'planner', 'rethrow-source', 'callback-copy', 'destructor-contracts', 'copy-contracts', 'initializer-contracts', 'initializer-frame', 'member-contracts', 'source-dialect', 'ir-pe', 'corpus'):
               result = ET.parse(root / (name + '.xml')).getroot()
               assert int(result.get('tests', '0')) > 0, name
               assert not result.findall('.//skipped'), name
@@ -2767,6 +2804,10 @@ jobs:
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/reference-member-rewrite --output build-windows-eh/native-reference-member-replay.json
 
+      - name: Replay identical scalar member arguments with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/member-argument-rewrite --output build-windows-eh/native-member-argument-replay.json
+
       - name: Replay identical exception object construction with the Windows CRT
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_nested_try.py --evidence-root build-windows-eh/evidence/copy-rewrite --output build-windows-eh/native-copy-replay.json
@@ -2810,6 +2851,10 @@ jobs:
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/reference-member-relift --output build-windows-eh/native-reference-member-relift-replay.json
 
+      - name: Replay both scalar member argument generations with the Windows CRT
+        if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
+        run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/member-argument-relift --output build-windows-eh/native-member-argument-relift-replay.json
+
       - name: Replay both copy constructor generations with the Windows CRT
         if: ${{ inputs.windows_eh_replay_artifact_run == '' && !inputs.windows_eh_cxx_frame_only }}
         run: python scripts/replay_windows_registration_relift.py --evidence-root build-windows-eh/evidence/copy-relift --output build-windows-eh/native-copy-relift-replay.json
@@ -2844,6 +2889,8 @@ jobs:
             build-windows-eh/native-destructor-result-relift-replay.json
             build-windows-eh/native-reference-member-replay.json
             build-windows-eh/native-reference-member-relift-replay.json
+            build-windows-eh/native-member-argument-replay.json
+            build-windows-eh/native-member-argument-relift-replay.json
             build-windows-eh/native-destructor-relift-replay.json
             build-windows-eh/native-copy-replay.json
             build-windows-eh/native-copy-relift-replay.json

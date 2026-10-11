@@ -51,7 +51,13 @@ void recoverRegistrationCallbackRanges(ExceptionFunction &F,
   for (va_t Address : Callbacks) {
     if (!isExecutableAddress(Img, Address) || Cleanups.count(Address))
       continue;
-    const auto Range = Functions.find(Img, Address, true);
+    va_t Limit = InvalidVA;
+    if (const auto Next = Callbacks.upper_bound(Address);
+        Next != Callbacks.end())
+      Limit = std::min(Limit, *Next);
+    if (const auto Next = Cleanups.upper_bound(Address); Next != Cleanups.end())
+      Limit = std::min(Limit, *Next);
+    const auto Range = Functions.findCallback(Img, Address, Limit);
     if (!Range ||
         (Address < F.CodeRange.Begin && Range->End >= F.CodeRange.Begin))
       continue;

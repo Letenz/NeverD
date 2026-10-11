@@ -82,6 +82,15 @@ getCheckedX86RegistrationObjectCalleeABI(
     const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
     RegistrationLeafResult Result = RegistrationLeafResult::Observed);
 
+/// An ordinary ECX member may additionally consume bounded, callee-popped
+/// scalar stack words. Each source occurrence must prove those outgoing bytes
+/// initialized and pointer-free, separate from its live object borrow. CRT
+/// destructor and cleanup callers retain the zero-argument API above.
+std::optional<RegistrationLeafCalleeABI>
+getCheckedX86RegistrationMemberCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
+    RegistrationLeafResult Result = RegistrationLeafResult::Observed);
+
 /// A CRT copy constructor borrows two separate objects: destination ECX and
 /// the source pointer in its one callee-popped stack word. Every destination
 /// byte is initialized on every return, and source storage is read-only.

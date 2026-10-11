@@ -27,6 +27,7 @@ llvm::Error bindCxxRuntimeObjectBorrow(const CxxIRControlProof &Proof,
   RegistrationFrameBorrow Borrow{Object.Offset, Checked.Contract.ECXReads,
                                  Checked.Contract.ECXWrites};
   Borrow.Root = Found->second.Pad;
+  Borrow.ScalarStackWords = Checked.Contract.StackPopBytes / 4;
   if (!Contract.Borrows.emplace(&Call, std::move(Borrow)).second)
     return rejectIR("C++ runtime member borrow has duplicate source ownership");
   return llvm::Error::success();

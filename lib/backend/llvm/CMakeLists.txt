@@ -17,6 +17,7 @@ add_neverd_component_library(NeverDWindowsRegistrationFrame
   X86/WindowsRegistrationABI.cpp
   X86/WindowsRegistrationCallbackPlan.cpp
   X86/WindowsRegistrationCallbackStack.cpp
+  X86/WindowsRegistrationStackCopies.cpp
   X86/WindowsRegistrationCatchStack.cpp
   X86/WindowsRegistrationFrame.cpp
 

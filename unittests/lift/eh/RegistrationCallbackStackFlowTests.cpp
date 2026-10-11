@@ -17,7 +17,7 @@
 namespace {
 using namespace neverd;
 TEST(RegistrationCallbackStackFlow, RequiresAReachingDefinitionOnEveryPath) {
-  for (unsigned Mutation = 0; Mutation != 8; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
     SCOPED_TRACE(Mutation);
     llvm::LLVMContext Context;
     llvm::Module Module("callback-stack-flow", Context);
@@ -64,6 +64,8 @@ TEST(RegistrationCallbackStackFlow, RequiresAReachingDefinitionOnEveryPath) {
     if (Suspended) {
       B.CreateRetVoid();
       B.SetInsertPoint(Suspended);
+      if (Mutation == 8)
+        B.CreateStore(Address, Copy);
       B.CreateRetVoid();
     } else
       B.CreateBr(Use);
@@ -95,7 +97,8 @@ TEST(RegistrationCallbackStackFlow, RequiresAReachingDefinitionOnEveryPath) {
     std::string Detail;
     if (!Result)
       Detail = llvm::toString(Result.takeError());
-    EXPECT_EQ(Accepted, Mutation == 0 || Mutation == 2 || Mutation == 7)
+    EXPECT_EQ(Accepted,
+              Mutation == 0 || Mutation == 2 || Mutation == 3 || Mutation == 7)
         << Detail;
     if (Accepted)
       EXPECT_EQ(*Result, 16u);

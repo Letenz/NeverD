@@ -57,7 +57,7 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
         Contract->ImageReads = std::move(Object.ImageReads);
         Contract->ImageWrites = std::move(Object.ImageWrites);
         Contract->CodeRanges = std::move(Object.CodeRanges);
-      } else if (auto Leaf = getCheckedX86RegistrationObjectCalleeABI(
+      } else if (auto Leaf = getCheckedX86RegistrationMemberCalleeABI(
                      Image, Target, &Work, RegistrationLeafResult::Discarded)) {
         Contract.emplace();
         Contract->Target = Target;

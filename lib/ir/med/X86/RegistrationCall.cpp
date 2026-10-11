@@ -35,7 +35,9 @@ std::optional<uint32_t> registrationCallStackPop(const LowFunc &Func,
       !Func.ExceptionMetadata->ownsCode({Call.Addr, Effect->EndAddress}))
     return std::nullopt;
   const auto &Callee = States.CalleeContracts[Effect->CalleeIndex];
-  if (!Callee.isInitializer() || Callee.Target != Effect->Target ||
+  if ((Callee.CalleeKind != RegistrationCalleeFrameContract::Kind::Leaf &&
+       !Callee.isInitializer()) ||
+      Callee.Target != Effect->Target ||
       Callee.StackPopBytes != Effect->StackPopBytes ||
       Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4)
     return std::nullopt;
@@ -78,15 +80,15 @@ std::optional<RegistrationCallABI> registrationCallABI(const MedFunc &Func,
   const auto &Callee = State.CalleeContracts[Effect->CalleeIndex];
   if (Callee.Target != Effect->Target ||
       Callee.StackPopBytes != Effect->StackPopBytes ||
-      (Callee.isInitializer()
-           ? Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4 ||
-                 Callee.StackPopBytes / 4 >= limits::kMaxCallArgs
-           : Callee.StackPopBytes != 0) ||
+      Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4 ||
+      Callee.StackPopBytes / 4 >= limits::kMaxCallArgs ||
+      (Callee.isThrow() && Callee.StackPopBytes) ||
       Callee.isRuntimeThrow() != Effect->RuntimeThrow.has_value() ||
       Callee.DoesNotReturn != Effect->DoesNotReturn)
     return std::nullopt;
   const bool Borrow = !Callee.ECXReads.empty() || !Callee.ECXWrites.empty();
-  if ((Effect->ECXFrameOffset && Effect->ECXRuntimeObject) ||
+  if ((Callee.StackPopBytes && !Borrow) ||
+      (Effect->ECXFrameOffset && Effect->ECXRuntimeObject) ||
       (Effect->ECXRuntimeObject &&
        Callee.CalleeKind != RegistrationCalleeFrameContract::Kind::Leaf) ||
       Borrow != (Effect->ECXFrameOffset.has_value() ||

@@ -3619,6 +3619,16 @@ execute against an independent C callee where the physical ABIs agree. Darwin
 AArch64 executes the C view and checks the C++ view's promoted IR types, because
 its fully variadic and fixed C ABIs differ. The provider uses the exact assembler
 label on Mach-O. The source ellipsis does not grant a native variadic ABI contract.
+The `member-arguments` profile adds a nonzero 32-bit stack argument to those
+member calls and separately authenticates its source, type and scalar-word proof.
+`RegistrationMemberCallee.*` keeps CRT callback and ordinary member policies
+separate; `RegistrationMemberArgumentState.*` checks one through three words in
+parent, value-catch and reference-catch contexts, including missing, partial,
+pointer-bearing, unbalanced and retired storage.
+`RegistrationRuntimeMemberFrame.RechecksDefinedScalarStackWords` and authentic
+source mutants reject pointer, undef and poison arguments after LLVM emission.
+Capture, replay and a second reconstruction cover both optimizations, negative
+controls, both patch modes, rebasing and lifetime count/order/content.
 
 `WindowsSEHFallback.*` checks complete native clause annotations, narrow state
 stores, pure and side-effecting filters, refusal to discard an unbound handler
@@ -5124,3 +5134,5 @@ The committed-write observer regressions verify visibility before the next instr
 `RegistrationCallNoReturn` rejects changed instruction extents, targets, operation ranges, conditional calls and foreign architecture/format use. The realigned PE32 probe checks both an independently terminal decoded call and a retained fallthrough requiring a current receipt; invalid memory evidence cannot recreate an already absent ordinary edge.
 
 `SafeSEHReference.*` checks immutable SafeSEH membership, malformed or ambiguous storage, relocations, foreign architectures/formats and declaration order across shards. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` uses `NEVERD_NONLOCAL_FINALLY_INPUTS` to test 32 LLVM combinations of the native MSVC x86/x64 O0/O2 and GS fixtures with source optimization enabled and disabled. It verifies LLVM and resolved call signatures while requiring unsupported x86 native EH reconstruction to remain rejected. The focused Windows EH job downloads the native fixture artifact and runs this matrix; without the input directory the test is explicitly skipped.
+
+`RegistrationStackCopy.*` authenticates equal-displacement copies from both callback predecessors and rejects changed displacements, unknown or undefined sources, missing paths, external definitions, reads before definition, volatile stores and uninitialized self-copies.

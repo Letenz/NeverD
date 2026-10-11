@@ -90,11 +90,16 @@ RegistrationStateSolver::transferCall(size_t I, Domain &After, const LowOp &Op,
       Valid = transferInitializer(After, Contract, StackPointer, Object);
       if (Valid)
         CallResult = Object;
-    } else if (Valid && Contract.HasIndependentScalarReturn &&
-               hasX86ScalarCallOutput(Op)) {
-      // The exact result has no frame provenance. Keep every other volatile
-      // register unknown and grant neither returned-this nor must-writes.
-      CallResult = FrameValue{};
+    } else {
+      if (Valid && Contract.StackPopBytes)
+        Valid = transferScalarArguments(After, Contract, StackPointer,
+                                        Effect.ECXFrameOffset);
+      if (Valid && Contract.HasIndependentScalarReturn &&
+          hasX86ScalarCallOutput(Op)) {
+        // The exact result has no frame provenance. Keep every other volatile
+        // register unknown and grant neither returned-this nor must-writes.
+        CallResult = FrameValue{};
+      }
     }
   }
   if (Valid && !InvalidCalls.count(Identity)) {

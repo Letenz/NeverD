@@ -654,7 +654,7 @@ bool MedLLVMEmitter::emitNativeX86RegistrationCxx(
       Args.push_back(B.CreateInBoundsGEP(
           I8, FrameAlloca,
           B.getInt32(Layout->Establisher + *Plan.Effect->ECXFrameOffset)));
-    if (Plan.ABI.Initializer)
+    if (Plan.ABI.Initializer || Plan.Effect->StackPopBytes)
       for (unsigned I = 1; I < Old->arg_size(); ++I)
         Args.push_back(Old->getArgOperand(I));
     const int32_t Level =

@@ -145,6 +145,12 @@ def source_profile(name):
         else:
             from windows_registration_reference_members import profile
         return profile(validate_decompilation)
+    if name == "member-arguments":
+        if __package__:
+            from .windows_registration_member_arguments import profile
+        else:
+            from windows_registration_member_arguments import profile
+        return profile(validate_decompilation)
     if name == "copies":
         if __package__:
             from .windows_registration_copies import profile
@@ -168,7 +174,7 @@ def source_profile(name):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "destructor-graphs", "destructor-results", "reference-members", "copies", "initializers", "delegating"), default="nested")
+    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "destructor-graphs", "destructor-results", "reference-members", "member-arguments", "copies", "initializers", "delegating"), default="nested")
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--runtime-libs", type=Path, required=True)

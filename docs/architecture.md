@@ -438,6 +438,12 @@ receiver's live source contexts before retaining the actual LLVM argument.
 checked reference catchpad. The shared LLVM frame-privacy owner then locates
 the edited argument, checks its active catch ancestry and bounds, and keeps CRT
 object initialization separate from private-frame must-writes.
+`RegistrationMemberCalleeABI` owns ordinary scalar member stack arguments
+without changing the zero-pop CRT callback policy. `RegistrationStateCallArguments`
+checks initialized, pointer-free parent or callback-private words and retires
+callee-popped storage. Initializers share this scalar-word transfer and retain
+their separate normal-return must-writes. Native LLVM and COFF independently
+redecode the member ABI and check actual scalar arguments alongside the receiver.
 `COFFRegistrationEHRange` recovers contiguous and disjoint table-owned callback
 chunks without claiming intervening cleanup relays. Canonical metadata schema
 11 and semantic-token schema 2 bind all code ranges. Cleanup relays retain their
@@ -5052,3 +5058,5 @@ Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an 
 DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.
 
 `isCheckedX86SafeSEHHandlerReference` authenticates a retained PE32 handler entry through the existing SafeSEH decoder, immutable table/header bytes and the relocated load-config pointer. LLVM declares that source identity before emitting any body, including omitted shards. Table membership establishes neither a language personality nor a callable ABI or native EH reconstruction permission; those consumers keep their independent checks.
+
+`WindowsRegistrationStackCopies` separately checks emitter-private ESP copies at PHI joins. All defining values must retain the same independently derived displacement, and every load needs a definition on every predecessor or a checked callback-entry definition. Missing paths, unknown values, changed offsets and unproved resumes remain rejected.

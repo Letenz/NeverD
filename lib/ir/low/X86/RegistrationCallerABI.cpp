@@ -49,6 +49,7 @@ bool hasRegistrationCallFrameABI(
         return false;
   }
   std::set<va_t> Targets;
+  std::map<va_t, uint32_t> ScalarMemberPops;
   for (const auto &Block : Function.Blocks) {
     const RegistrationBlockState *State = nullptr;
     if (UseReachability) {
@@ -107,6 +108,19 @@ bool hasRegistrationCallFrameABI(
             Call->CalleeIndex < States->CalleeContracts.size()
                 ? &States->CalleeContracts[Call->CalleeIndex]
                 : nullptr;
+        if (Contract && Contract->StackPopBytes &&
+            Contract->CalleeKind ==
+                RegistrationCalleeFrameContract::Kind::Leaf) {
+          if (Contract->Target != Call->Target ||
+              Contract->StackPopBytes != Call->StackPopBytes ||
+              (!Call->ECXFrameOffset && !Call->ECXRuntimeObject) ||
+              (Call->ECXFrameOffset && Call->ECXRuntimeObject))
+            return false;
+          const auto [It, Added] =
+              ScalarMemberPops.emplace(Call->Target, Call->StackPopBytes);
+          if (!Added && It->second != Call->StackPopBytes)
+            return false;
+        }
         if (Contract && Contract->isRuntimeThrow()) {
           // A noreturn CRT dispatch has no return cleanup. Its two stack
           // arguments and object or active catch are owned by the source proof.
@@ -196,9 +210,11 @@ bool hasRegistrationCallFrameABI(
         continue;
       }
     if (UseReachability)
-      if (const auto Leaf = getCheckedX86RegistrationObjectCalleeABI(
+      if (const auto Leaf = getCheckedX86RegistrationMemberCalleeABI(
               Image, Target, &Work, RegistrationLeafResult::Discarded)) {
-        if (Leaf->StackPopBytes)
+        if (Leaf->StackPopBytes &&
+            (!ScalarMemberPops.count(Target) ||
+             ScalarMemberPops.at(Target) != Leaf->StackPopBytes))
           return false;
         if (!chargeCalleeWork(Work, Leaf->ImageReads.size() +
                                         Leaf->ImageWrites.size() +

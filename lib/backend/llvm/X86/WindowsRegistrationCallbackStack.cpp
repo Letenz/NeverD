@@ -95,43 +95,7 @@ llvm::Error checkPrivateStack(
            Size.getFixedValue() <= uint64_t(-Offset) && Align.value() <= 16 &&
            (int64_t(*Frame.StackPointerOffset) + Offset) % Align.value() == 0;
   };
-  // Callback roots are disconnected before native lowering, so the parent
-  // function's dominator tree cannot prove these copies. Check every ordinary
-  // predecessor within this callback and treat runtime resumes as new roots.
-  auto Dominates = [&](llvm::StoreInst *Store, llvm::LoadInst *Load) {
-    if (Store->getParent() == Load->getParent())
-      return Store->comesBefore(Load);
-    // A checked runtime resume continues the same callback invocation.
-    if (Store->getParent() == &Entry)
-      return true;
-    std::vector<llvm::BasicBlock *> Pending{Load->getParent()};
-    std::set<llvm::BasicBlock *> Seen;
-    bool Found = false;
-    while (!Pending.empty()) {
-      if (!Charge(1))
-        return false;
-      auto *Block = Pending.back();
-      Pending.pop_back();
-      if (!Seen.insert(Block).second)
-        continue;
-      if (Block == Store->getParent()) {
-        Found = true;
-        continue;
-      }
-      if (Block == &Entry || !Body.count(Block) || llvm::pred_empty(Block))
-        return false;
-      for (const auto &Resume : Resumes) {
-        if (!Charge(1) || Block == Resume.Seed->getParent())
-          return false;
-      }
-      for (auto *Pred : llvm::predecessors(Block)) {
-        if (!Charge(1))
-          return false;
-        Pending.push_back(Pred);
-      }
-    }
-    return Found;
-  };
+  std::map<llvm::AllocaInst *, RegistrationStackCopy> Copies;
   while (!Work.empty() && !Invalid && !Exhausted) {
     if (!Charge(1))
       break;
@@ -233,17 +197,36 @@ llvm::Error checkPrivateStack(
             Store->getValueOperand()->getType() != Slot->getAllocatedType() ||
             Store->isVolatile() || Store->isAtomic())
           return reject("private callback stack address is stored externally");
+        const auto [Copy, Added] = Copies.try_emplace(Slot);
+        if (!Added) {
+          if (Copy->second.Offset != Offset)
+            return reject("private callback stack copy changed its offset");
+          continue;
+        }
+        Copy->second.Offset = Offset;
         for (llvm::User *SlotUser : Slot->users()) {
           if (!Charge(1))
             return reject(
                 "private callback stack SSA uses exceed the work budget");
-          auto *Load = llvm::dyn_cast<llvm::LoadInst>(SlotUser);
-          if (SlotUser == Store || isPrivateSlotInitializer(SlotUser, *Slot))
+          if (isPrivateSlotInitializer(SlotUser, *Slot))
             continue;
+          if (auto *Definition = llvm::dyn_cast<llvm::StoreInst>(SlotUser)) {
+            if (Definition->getPointerOperand() != Slot ||
+                Definition->getValueOperand()->getType() !=
+                    Slot->getAllocatedType() ||
+                !Body.count(Definition->getParent()) ||
+                Definition->isVolatile() || Definition->isAtomic())
+              return reject(
+                  "private callback stack copy has an unproved definition");
+            Copy->second.Definitions.insert(Definition);
+            continue;
+          }
+          auto *Load = llvm::dyn_cast<llvm::LoadInst>(SlotUser);
           if (!Load || Load->getType() != Slot->getAllocatedType() ||
               !Body.count(Load->getParent()) || Load->isVolatile() ||
-              Load->isAtomic() || !Dominates(Store, Load))
+              Load->isAtomic())
             return reject("private callback stack SSA copy has unproved uses");
+          Copy->second.Loads.insert(Load);
           Add(Load, Offset);
         }
         PrivateSlots.insert(Slot);
@@ -252,6 +235,9 @@ llvm::Error checkPrivateStack(
       return reject("private callback stack address has an observable use");
     }
   }
+  if (auto Error = validateRegistrationStackCopies(Entry, Body, Copies, Offsets,
+                                                   WorkUsed, Resumes))
+    return Error;
   if (Exhausted)
     return reject("private callback stack values exceed the work budget");
   if (Invalid)

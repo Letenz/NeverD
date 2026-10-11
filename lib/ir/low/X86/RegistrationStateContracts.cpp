@@ -50,9 +50,14 @@ bool RegistrationStateSolver::initializeContracts() {
           Callee.CalleeKind == RegistrationCalleeFrameContract::Kind::Leaf;
       const bool Throw = Callee.isThrow();
       const bool Initializer = Callee.isInitializer();
+      const bool Member =
+          Leaf && (!Callee.ECXReads.empty() || !Callee.ECXWrites.empty()) &&
+          Callee.CallerPCWrites.empty();
       if (!charge(1) || !Callee.Target || Callee.Target > UINT32_MAX ||
-          (Initializer
-               ? Callee.StackPopBytes > UINT16_MAX || Callee.StackPopBytes % 4
+          (Initializer || Member
+               ? Callee.StackPopBytes > UINT16_MAX ||
+                     Callee.StackPopBytes % 4 ||
+                     (Leaf && Callee.StackPopBytes / 4 >= limits::kMaxCallArgs)
                : Callee.StackPopBytes != 0) ||
           (!Leaf && !Throw && !Initializer) || Callee.DoesNotReturn != Throw ||
           (Callee.HasIndependentScalarReturn && !Leaf) ||

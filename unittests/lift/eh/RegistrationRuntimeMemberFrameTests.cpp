@@ -17,14 +17,19 @@ namespace {
 using namespace neverd;
 using namespace neverd::coff_registration;
 
-TEST(RegistrationRuntimeMemberFrame, RechecksTheActualAllocationAndLifetime) {
+void checkRuntimeMember(unsigned Words) {
   const char *Mutations[] = {
       "checked receiver",  "shifted receiver",      "parent frame",
       "constant receiver", "changed source offset", "out of bounds",
       "value catch",       "constructor authority", "runtime throw authority",
-      "scalar stack word", "ended catch",           "partial pointer"};
+      "scalar stack word", "ended catch",           "partial pointer",
+      "frame argument",    "runtime argument",      "undefined argument",
+      "poison argument",   "missing argument proof"};
   for (unsigned Mutation = 0; Mutation != std::size(Mutations); ++Mutation) {
+    if (!Words && Mutation >= 12)
+      continue;
     SCOPED_TRACE(Mutations[Mutation]);
+    SCOPED_TRACE(Words);
     llvm::LLVMContext Context;
     llvm::Module Module("runtime-member", Context);
     Module.setDataLayout("e-m:x-p:32:32-i64:64-n8:16:32-S32");
@@ -36,9 +41,10 @@ TEST(RegistrationRuntimeMemberFrame, RechecksTheActualAllocationAndLifetime) {
         "__CxxFrameHandler3", llvm::FunctionType::get(B.getInt32Ty(), true));
     Function->setPersonalityFn(
         llvm::cast<llvm::Constant>(Personality.getCallee()));
+    std::vector<llvm::Type *> Parameters{B.getPtrTy()};
+    Parameters.insert(Parameters.end(), Words, B.getInt32Ty());
     auto Member = Module.getOrInsertFunction(
-        "member",
-        llvm::FunctionType::get(B.getInt32Ty(), {B.getPtrTy()}, false));
+        "member", llvm::FunctionType::get(B.getInt32Ty(), Parameters, false));
     llvm::cast<llvm::Function>(Member.getCallee())
         ->setCallingConv(llvm::CallingConv::X86_ThisCall);
     auto Trigger = Module.getOrInsertFunction(
@@ -74,16 +80,27 @@ TEST(RegistrationRuntimeMemberFrame, RechecksTheActualAllocationAndLifetime) {
     if (Mutation == 11)
       Object =
           B.CreateIntToPtr(B.CreateTrunc(Bits, B.getInt16Ty()), B.getPtrTy());
+    std::vector<llvm::Value *> Arguments{Object};
+    for (unsigned I = 0; I != Words; ++I)
+      Arguments.push_back(B.getInt32(I + 7));
+    if (Mutation == 12)
+      Arguments.back() = B.CreatePtrToInt(Frame, B.getInt32Ty());
+    if (Mutation == 13)
+      Arguments.back() = B.CreatePtrToInt(Object, B.getInt32Ty());
+    if (Mutation == 14)
+      Arguments.back() = llvm::UndefValue::get(B.getInt32Ty());
+    if (Mutation == 15)
+      Arguments.back() = llvm::PoisonValue::get(B.getInt32Ty());
     llvm::CallInst *Call = nullptr;
     if (Mutation != 10) {
-      Call = B.CreateCall(Member, {Object},
+      Call = B.CreateCall(Member, Arguments,
                           {llvm::OperandBundleDef("funclet", Pad)});
       Call->setCallingConv(llvm::CallingConv::X86_ThisCall);
     }
     B.CreateCatchRet(Pad, Exit);
     B.SetInsertPoint(Exit);
     if (Mutation == 10) {
-      Call = B.CreateCall(Member, {Object});
+      Call = B.CreateCall(Member, Arguments);
       Call->setCallingConv(llvm::CallingConv::X86_ThisCall);
     }
     B.CreateRet(B.getInt32(0));
@@ -98,6 +115,7 @@ TEST(RegistrationRuntimeMemberFrame, RechecksTheActualAllocationAndLifetime) {
     Catch.CallbackBlocks = {Handler};
     auto &Borrow = Contract.Borrows[Call];
     Borrow.Root = Pad;
+    Borrow.ScalarStackWords = Mutation == 16 ? 0 : Words;
     Borrow.Offset = Mutation == 4 ? 4 : 0;
     Borrow.Reads = {{0, 4}};
     Borrow.Writes = Mutation == 5
@@ -110,12 +128,20 @@ TEST(RegistrationRuntimeMemberFrame, RechecksTheActualAllocationAndLifetime) {
     if (Mutation == 8)
       Borrow.ThrowInfoVA = 0x4000;
     if (Mutation == 9)
-      Borrow.ScalarStackWords = 1;
+      Borrow.ScalarStackWords = Words + 1;
     auto Error = validateFramePrivacy(*Function, {}, Frame, {}, {}, {}, {}, 0,
                                       {}, &Contract);
     const bool Failed = bool(Error);
     const auto Message = llvm::toString(std::move(Error));
     EXPECT_EQ(Failed, Mutation != 0) << Message;
   }
+}
+TEST(RegistrationRuntimeMemberFrame, RechecksTheActualAllocationAndLifetime) {
+  checkRuntimeMember(0);
+}
+
+TEST(RegistrationRuntimeMemberFrame, RechecksDefinedScalarStackWords) {
+  for (unsigned Words : {1u, 3u})
+    checkRuntimeMember(Words);
 }
 } // namespace

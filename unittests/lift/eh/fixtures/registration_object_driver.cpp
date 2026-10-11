@@ -69,8 +69,14 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
       Object.Head += 11;
       Object.Tail += 3;
 #ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER
+#ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER_ARGUMENTS
+      const unsigned Bias = unsigned(callback_choice) * 13u;
+      const unsigned Event = Object.destructionEvent(Bias);
+#else
+      const unsigned Bias = 0;
       const unsigned Event = Object.destructionEvent();
-      if (Event != 665u)
+#endif
+      if (Event != 665u + Bias)
         return -4;
 #endif
 #if defined(RETHROW_SEARCH) || defined(SECONDARY_SEARCH)
@@ -89,7 +95,7 @@ __declspec(dllexport) __declspec(noinline) int callback_parent() {
 #ifdef NEVERD_REGISTRATION_REFERENCE_MEMBER
       return Object.Head + Object.Tail - 4 +
              int(Event -
-                 (0x200u + Object.Head * 7u + Object.Tail + Object.Tag));
+                 (0x200u + Object.Head * 7u + Object.Tail + Object.Tag + Bias));
 #else
       return Object.Head + Object.Tail - 4;
 #endif

@@ -54,6 +54,12 @@ std::optional<va_t> addSignedOffset(va_t Base, int64_t Displacement);
 bool disprovesCallbackBoundary(const BinaryImage &Img, va_t Entry,
                                va_t Boundary, size_t &Work);
 
+/// Extend an exact padding guess only through a closed, unambiguous callback
+/// graph with a prior ordinary branch and no independent callee in the range.
+std::optional<va_t> checkedCallbackRangeEnd(const BinaryImage &Img, va_t Entry,
+                                            va_t Boundary, va_t Limit,
+                                            size_t &Work);
+
 template <typename T>
 std::optional<T> readScalar(const BinaryImage &Img, va_t Address) {
   const uint8_t *P = Img.readVA(Address, sizeof(T));
@@ -139,6 +145,34 @@ public:
     if (End <= Begin || Address >= End)
       return std::nullopt;
     return ExceptionAddressRange{Begin, End};
+  }
+
+  /// A language table authenticates this callback entry. A closed instruction
+  /// graph can additionally disprove a padding guess within a local branch;
+  /// stated entries and the other table-owned callbacks remain boundaries.
+  std::optional<ExceptionAddressRange>
+  findCallback(const BinaryImage &Img, va_t Address, va_t TableLimit) const {
+    auto Range = find(Img, Address, true);
+    if (!Range)
+      return std::nullopt;
+    const auto *Segment = Img.getSegmentFor(Address);
+    if (!Segment || !Segment->isExecutable())
+      return Range;
+    const uint64_t Size =
+        std::min<uint64_t>(Segment->Size, Segment->Data.size());
+    if (Size > InvalidVA - Segment->VA)
+      return Range;
+    va_t Limit = std::min(TableLimit, Segment->VA + Size);
+    auto It = std::upper_bound(Starts.begin(), Starts.end(), Address);
+    while (It != Starts.end() && Guesses.count(*It))
+      ++It;
+    if (It != Starts.end())
+      Limit = std::min(Limit, *It);
+    if (Range->End < Limit)
+      if (const auto End = checkedCallbackRangeEnd(Img, Address, Range->End,
+                                                   Limit, CallbackWork))
+        Range->End = *End;
+    return Range;
   }
 
 private:

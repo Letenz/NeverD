@@ -1498,3 +1498,7 @@ DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；Da
 DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码，并拒绝未建模的信号状态操作。Select 与 Pselect 共享 immediateSelect，统一处理位图、容量下界、提供方和按序复制；timeval 与 timespec 保留各自的字段宽度和边界。完整的非空掩码需要后续的信号状态模型。
 
 `isCheckedX86SafeSEHHandlerReference` 使用现有 SafeSEH 解码器、不可变的表及头部字节、带重定位的 load-config 指针，认证保留的 PE32 处理器入口。LLVM 在发射任何函数体前声明该源码身份，包括被分片省略的函数体。表成员资格不证明语言 personality、可调用 ABI 或原生 EH 重建权限；这些使用方仍执行独立校验。
+
+`RegistrationMemberCalleeABI` 负责普通成员调用的标量栈参数，不改变 CRT 析构回调的零弹栈策略。`RegistrationStateCallArguments` 统一检查父栈帧或当前 catch 私有栈中完整初始化、无指针来源的参数字，并在被调用者弹栈后撤销存储权限。初始化函数复用这一参数检查，正常返回后的必写集合仍由独立规则管理。LLVM 发射和 COFF 安装分别重新解码当前成员 ABI，并检查实际标量参数及接收者。
+
+`WindowsRegistrationStackCopies` 独立检查 PHI 合流中的发射器私有 ESP 副本。所有定义必须保留同一已推导位移；每次读取必须在所有前驱上已有定义，或由已检查的回调入口定义覆盖。缺失路径、未知值、不同位移和未证明的恢复入口均被拒绝。
