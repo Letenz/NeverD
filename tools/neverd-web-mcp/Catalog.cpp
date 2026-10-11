@@ -208,6 +208,17 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Extract a Node SEA resource under an explicit supported layout profile.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_sea_records", "extraction_id", false, 128);
+  Add("web_nexe_extract",
+      "Read an explicitly selected nexe EOF resource profile without "
+      "execution. "
+      "Native prefix and producer identity remain unverified.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_nexe_records", "extraction_id", true);
+  Add("web_pkg_extract",
+      "Read an explicit uncompressed pkg VFS profile without execution. "
+      "Native identity and source/cache equivalence remain unverified.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_pkg_records", "extraction_id", true);
   Add("web_asar_extract",
       "Extract admitted ASAR members with an optional captured unpacked "
       "directory.",
@@ -309,10 +320,13 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
     Page(Operation, "source_id", true);
   Page("web_source_semantic_records", "source_id");
   Add("web_source_rewrite_analyze",
-      "Verify an explicit local primitive rewrite pass; return metadata only, "
+      "Verify an explicit primitive, lexical rename or Boolean branch pass; "
+      "return "
+      "metadata only, "
       "without source execution or whole-program equivalence claims.",
       {decimal("revision"), text("source_id"),
-       choice("pass", {"string_recovery", "constant_folding"})});
+       choice("pass", {"string_recovery", "constant_folding", "scope_renaming",
+                       "boolean_branches"})});
   Page("web_source_rewrite_records", "rewrite_id");
   Add("web_source_anchor",
       "Resolve a source byte span to original immutable storage and optional "

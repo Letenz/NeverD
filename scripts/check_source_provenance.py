@@ -295,6 +295,14 @@ class Allowance:
 
 ALLOWED: tuple[Allowance, ...] = (
     Allowance(
+        path="LICENSES/node/LICENSE",
+        rule="provenance-phrase",
+        reason=(
+            "The upstream Node license names SES/Caja, Google and Agoric "
+            "in its required freeze_intrinsics.js attribution."
+        ),
+    ),
+    Allowance(
         path="LICENSES/bun/LICENSE.md",
         rule="provenance-phrase",
         reason=(
@@ -374,6 +382,19 @@ class HistoryAllowance:
 
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
+    HistoryAllowance(
+        path='docs/web-claude-code-qualification.md',
+        rule="private-path",
+        commits=frozenset({'8a1a303a0924fc4a0b918fd32b59d00b48d09e36', '4ccd8a4df593ffcfc8b4001f06b3e8df307a4207'}),
+        line="",
+        reason=(
+            "Reviewed upstream qualification paths removed from the current "
+            "document. Exact original commit and line digests preserve only "
+            "those published snapshots; current and future paths remain "
+            "checked and external policy is unchanged."
+        ),
+        line_sha256=frozenset({'d37d85569c24cd796a4ff011da73c1d686836c3aba580a5234249e169092264b', '626ab8b1c1b594ca2508f7f8d082bb6691e8daa30a32515ff67859d24afaa17d'}),
+    ),
     HistoryAllowance(
         path="docs/web-claude-code-qualification.md",
         rule="private-path",

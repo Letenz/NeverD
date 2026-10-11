@@ -1,5 +1,79 @@
 # Claude Code 2.1.296: offline NeverD qualification
 
+## Reversible Boolean branch selection — 2026-10-11
+
+NeverD's native C++ CLI extracted original Bun module 1047 from the same
+hash-pinned standalone ELF and applied `boolean_branches` with a module parse
+goal. Preview and receipt-bound export used `PATH=/neverd-no-external-tools`.
+
+| Evidence | Result |
+| --- | --- |
+| Original decoded source | 6,309 bytes; SHA-256 `faa820c7d6f239d9404d70278eb294ab926bc9c1ad4a32993b047d33baa62a91` |
+| Profile | `javascript-boolean-branches-v1` |
+| Accepted / refused expressions | 1 / 6 |
+| Candidate | 6,309 bytes; SHA-256 `e15ee77e5296c38f3d1065a46d9f7a7023340f7adaca86f3b6b8b6da2f20561d` |
+| Rewrite ID | `9a333c1bfdcecedfc7f46404d5b39a934519725b7543d71f763306f9ef7544aa` |
+| Exported receipt SHA-256 | `bb700e0774af697b5185391faacaa5c4a9019d3e107b9e877423b7c469fed5d7` |
+
+The candidate passed complete retained-tree/GetValue-scaffolding checks,
+surviving lexical-reference projection and exact inverse validation. The
+exported original also matched recovered `m01047.js` byte-for-byte. Local
+`original.js`, `candidate.js` and `receipt.json` are retained under
+`boolean-branches/module-01047/`.
+No target was executed and no sample source is committed.
+
+The same profile on module 1897 retained all 1,007 candidates, with zero
+accepted changes. Its 156,255-byte candidate remained exactly the original,
+SHA-256 `1be18858dfe6863b48e9e0c25e25f9d04b22221935cb1a9e286cbd992d70f722`.
+Module 1613 was refused before rewriting with `source_byte_budget_exceeded`.
+The optional C++ regression extracts all three selections through NeverD and
+retains these outcomes without raising limits. Selection does not imply that
+all bundled code can be simplified or that selected effects disappear.
+
+Use `neverd web bun-rewrite <binary> 1047 module boolean_branches`, then
+`neverd web bun-rewrite-export <binary> 1047 module boolean_branches <export_receipt> <new-directory>`.
+See the [profile](web-boolean-branches-profile.md) for exclusions. Local evidence
+is `/tmp/neverd-branch-claude-{1047,1047-export,1613,1897}.jsonl`.
+
+## Reversible lexical renaming — 2026-10-11
+
+The native C++ CLI selected original Bun module 1 from the pinned standalone
+ELF below, using `scope_renaming` with the `module` parse goal. Both preview
+and receipt-bound local export ran with `PATH=/neverd-no-external-tools`.
+No target, external formatter or JavaScript runtime was executed.
+
+| Evidence | Result |
+| --- | --- |
+| Original decoded source | 1,362 bytes; SHA-256 `e8dacd18472cc93ede5f22396d1d86545754a2a9cfc6cbe6a9ba07dbb0b8cc55` |
+| Profile | `javascript-scope-rename-v1` |
+| Accepted identifier occurrences | 46 |
+| Refused explicit binding declarations | 17 |
+| Candidate | 1,908 bytes; SHA-256 `858a4f1f64ec90f02a650eae0e79c6a3967508bdfe4caa81e22211d598895cae` |
+| Rewrite ID | `a1b685aca498eb7d5d34345d97f79a12f0195429e665b6262536c28fca1805a2` |
+| Exported receipt SHA-256 | `119aa0e1c34c97d9669791e64740f295a1cfb0c5a9aa7410f8a3c5fcce4d11a6` |
+
+Complete reparse, retained syntax and lexical-graph comparison, and exact
+inverse verification passed. Rest parameters and exported function names
+remain unchanged. The exported original also matches the earlier recovered
+`m00001.js` byte-for-byte. Local files are in
+`scope-renaming/module-00001/`:
+`original.js`, `candidate.js` and `receipt.json`. Sample source is not committed.
+
+The same command on module 228, 245,964 bytes with SHA-256
+`4285cc2ba53ddf1faa24373004ecfb63041d48048bd9733a18c5025d213befd9`,
+reached the existing 4,096-record ceiling. It returned
+`source_rewrite_record_budget_exceeded`, with no candidate, records or export
+receipt published. This real refusal is retained in the optional C++ regression;
+the budget was not raised and no partially renamed source was substituted.
+
+Use `neverd web bun-rewrite <binary> 1 module scope_renaming`, then
+`neverd web bun-rewrite-export <binary> 1 module scope_renaming <export_receipt> <new-directory>`
+with that preview's receipt. Ordinary metadata keeps both original and generated
+names private. Generated names do not recover the publisher's original names;
+graph preservation does not establish source-reflection or whole-program
+equivalence. See the [lexical rename profile](web-scope-rename-profile.md).
+Local evidence is in `/tmp/neverd-rename-claude-{preview,export,228}.jsonl`.
+
 ## Selected Node source behavior — 2026-10-11
 
 The native C++ archive/package/source pipeline selected the two JavaScript

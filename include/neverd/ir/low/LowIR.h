@@ -256,7 +256,13 @@ inline X86FPStateShape x86FPStateLowShape(const LowOp &Op, Arch TargetArch) {
   const bool Arithmetic =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPArithStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset));
-  const unsigned ControlIndex = Memory ? 2 : 1;
+  const bool ScalarConvert =
+      Op.NumInputs && Op.Inputs[0].isConst() &&
+      (isX86FPScalarConvertStateIntrinsic(
+           static_cast<Intrinsic>(Op.Inputs[0].Offset)) ||
+       isX86FPPackedConvertStateIntrinsic(
+           static_cast<Intrinsic>(Op.Inputs[0].Offset)));
+  const unsigned ControlIndex = Memory || ScalarConvert ? 2 : 1;
   const bool Fma =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPFmaStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset));
@@ -663,6 +669,12 @@ enum class RelocatedInstructionAddressProofKind : uint8_t {
   /// the exact final register-writing LowOp occurrence and republishes it only
   /// while that source instruction remains in the final reachable CFG.
   X86PCRelativeCodeAddress,
+  /// An A32 `ldr rT, [pc, #k]` literal of a relocatable ELF object that no
+  /// relocation writes, added to the architectural PC by `add rD, pc, rT`:
+  /// the assembler resolved a difference within the ADD's own section.  The
+  /// literal LOAD is the seed, LiteralVA names the word it read, and the CFG
+  /// builder proves that LOAD's value reaches the exact ADD output.
+  ARMRelocationFreeLiteral,
 };
 
 /// One exact full-width arithmetic step in a relocation-free AArch64 address
@@ -736,6 +748,9 @@ struct RelocatedInstructionAddressOccurrence {
   NdOp DereferenceOpcode = NdOp::NOP;
   NdVar DereferenceAddressWitness = {};
   uint16_t DereferenceAccessSize = 0;
+  /// The unrelocated literal word an ARMRelocationFreeLiteral seed read.  It
+  /// is not a loader field, so FieldVA stays invalid.
+  va_t LiteralVA = InvalidVA;
 
   bool operator==(const RelocatedInstructionAddressOccurrence &Other) const =
       default;
