@@ -782,6 +782,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
 
+同一受检 x64 指令清单支持 16/32/64 位 `BSF` 和 `BSR`。所选处理器执行原始指令，包括零源值；ISA 层不会为架构未定义的目标值编造可移植结果。寄存器和普通 RAM 源沿用完整范围访问检查及效果发生前的观察器；设备操作数和非法 LOCK 形式在回调或数据效果前拒绝。
+
 `X64BitInstructions.def` 支持 16/32/64 位寄存器及普通 RAM 的 `BT/BTS/BTR/BTC`。寄存器位索引按操作数宽度解释为有符号数并选中完整数据字；立即数索引限制在基址的数据字内。地址宽度截断先于 FS/GS 基址相加。CF 与写入值由处理器提供；`RAMTransaction` 在观察回调接受前保留私有执行结果。完整范围权限检查覆盖独立页面分配和别名。停止、回调失败或页面权限不足均保留原始 CPU 和 RAM。LOCK 要求自然对齐；修改型 MMIO 操作要求明确的预备原子事务提供方。`X64BitStringTests.cpp` 使用独立编码与 x64 本机实际执行对照，检查负索引、宽度截断、跨页访问、取消及非法 LOCK 形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
 `X64StringInstructions.def` 统一管理普通 RAM 上 8/16/32/64 位的 `MOVS/STOS/LODS`；`CLD/STD` 只改变方向标志。每个 REP 元素在观察回调前验证整个操作数，并在一个可恢复边界提交。后续故障保留此前完成的元素；取消或回调异常不改变当前元素。FS/GS 仅作用于源地址，且在地址宽度截断之后相加。AL/AX 加载保留高位，EAX 加载零扩展。32 位地址模式的零次 REP 要求计数高位为零，MOVS/STOS 还要求参与的地址寄存器高位为零，否则不同真实 CPU 实现会产生不同结果。MOVS/STOS/LODS 的 REPNE 形式及 STOS/LODS 设备操作数仍不支持。`X64StringTransferTests.cpp` 用独立的主机指令对照宽度、方向、重叠和零次数，并分别检查权限、别名、回绕、故障和恢复。原创 WDK 资源驱动通过 `driver_resource_strings.def` 执行四种宽度的 STOS/LODS。
@@ -1494,3 +1496,5 @@ DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；Da
 普通 RAM 的 `XCHG` 支持未对齐的 8/16/32/64 位操作数，包含显式 LOCK 前缀与隐式加锁两种形式。共享 RAM 事务保留入口有效地址、串行发布结果，并丢弃取消或故障时的写入；处理器执行原始交换指令。`X64Address` 覆盖地址与寄存器重叠、部分寄存器写入、缓存行与页面跨界、观察回调及缺页故障。MMIO 交换仍要求提供者契约和自然对齐，其他 LOCK 指令族沿用现有准入规则。
 
 DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码，并拒绝未建模的信号状态操作。Select 与 Pselect 共享 immediateSelect，统一处理位图、容量下界、提供方和按序复制；timeval 与 timespec 保留各自的字段宽度和边界。完整的非空掩码需要后续的信号状态模型。
+
+`isCheckedX86SafeSEHHandlerReference` 使用现有 SafeSEH 解码器、不可变的表及头部字节、带重定位的 load-config 指针，认证保留的 PE32 处理器入口。LLVM 在发射任何函数体前声明该源码身份，包括被分片省略的函数体。表成员资格不证明语言 personality、可调用 ABI 或原生 EH 重建权限；这些使用方仍执行独立校验。

@@ -14,6 +14,31 @@
 
 namespace neverd::x86_registration {
 
+bool hasNoReturnCallEffect(const LowFunc &Low, const LowBlock &Block,
+                           size_t OpIndex,
+                           const LowInstructionBoundary &Boundary) {
+  if (!Low.RegistrationStates || OpIndex >= Block.Ops.size() ||
+      Boundary.Control != LowInstructionControl::Call ||
+      hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                   LowInstructionControlFlag::Conditional) ||
+      !Boundary.Size || Boundary.Address < Block.StartAddr ||
+      Boundary.Address >= Block.EndAddr ||
+      Boundary.Size > Block.EndAddr - Boundary.Address ||
+      Boundary.FirstOp > OpIndex ||
+      Boundary.OpCount > Block.Ops.size() - Boundary.FirstOp ||
+      OpIndex - Boundary.FirstOp >= Boundary.OpCount)
+    return false;
+  const auto &Op = Block.Ops[OpIndex];
+  if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || Op.Seq < 0 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
+      Boundary.Address != Op.Addr || Boundary.Immediate != Op.Inputs[0].Offset)
+    return false;
+  const auto *Effect = Low.RegistrationStates->callFrameEffect(Op.Addr, Op.Seq);
+  return Effect && Effect->DoesNotReturn &&
+         Effect->Target == Op.Inputs[0].Offset &&
+         Effect->EndAddress == Boundary.Address + Boundary.Size;
+}
+
 RegistrationRoots::RegistrationRoots(const LowFunc &Low, Arch Architecture,
                                      BinaryFormat Format)
     : Low(Low) {
@@ -77,18 +102,17 @@ void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
       if (Op.Opcode != NdOp::CALL || !Op.DoesNotReturn || Op.NumInputs != 1 ||
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
         continue;
-      const auto *Effect =
-          Low.RegistrationStates->callFrameEffect(Op.Addr, Op.OriginSeq);
       const auto Boundary =
           llvm::find_if(Source.InstructionBoundaries,
                         [&](const auto &B) { return B.Address == Op.Addr; });
-      if (!Effect || !Effect->DoesNotReturn ||
-          Effect->Target != Op.Inputs[0].ConstVal ||
-          Boundary == Source.InstructionBoundaries.end() ||
-          Boundary->Control != LowInstructionControl::Call ||
-          Boundary->Immediate != Effect->Target ||
-          Effect->EndAddress != Boundary->Address + Boundary->Size ||
-          Effect->EndAddress <= Op.Addr || Effect->EndAddress > Block.EndAddr ||
+      const auto SourceOp = llvm::find_if(Source.Ops, [&](const auto &LowOp) {
+        return LowOp.Addr == Op.Addr && LowOp.Seq == Op.OriginSeq;
+      });
+      if (Boundary == Source.InstructionBoundaries.end() ||
+          SourceOp == Source.Ops.end() ||
+          !hasNoReturnCallEffect(Low, Source, SourceOp - Source.Ops.begin(),
+                                 *Boundary) ||
+          SourceOp->Inputs[0].Offset != Op.Inputs[0].ConstVal ||
           llvm::any_of(Block.Succs, [&](int Succ) {
             return Succ < 0 || size_t(Succ) >= Func.Blocks.size();
           }))

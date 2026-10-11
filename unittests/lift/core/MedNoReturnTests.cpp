@@ -272,7 +272,7 @@ TEST(MedNoReturn, CallFollowedByTrapDoesNotInventCalleeNoReturn) {
 }
 
 TEST(RegistrationCallNoReturn, LowToMedRequiresCurrentCallIdentityAndTarget) {
-  for (unsigned Mutation = 0; Mutation < 6; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation < 21; ++Mutation) {
     LowFunc Low;
     Low.Entry = 0x1000;
     Low.Name = "checked_source_call";
@@ -286,6 +286,7 @@ TEST(RegistrationCallNoReturn, LowToMedRequiresCurrentCallIdentityAndTarget) {
     Boundary.Address = 0x1000;
     Boundary.Size = 5;
     Boundary.Control = LowInstructionControl::Call;
+    Boundary.Immediate = 0x2100;
     Boundary.FirstOp = 0;
     Boundary.OpCount = 1;
     B.InstructionBoundaries.push_back(Boundary);
@@ -329,8 +330,50 @@ TEST(RegistrationCallNoReturn, LowToMedRequiresCurrentCallIdentityAndTarget) {
     case 5:
       B.Ops[0].Opcode = NdOp::INDIR_CALL;
       break;
+    case 6:
+      ++Low.RegistrationStates->CallFrameEffects[0].EndAddress;
+      break;
+    case 7:
+      B.InstructionBoundaries[0].Immediate = 0x2200;
+      break;
+    case 8:
+      B.InstructionBoundaries[0].Control = LowInstructionControl::Branch;
+      break;
+    case 9:
+      B.InstructionBoundaries[0].ControlFlags =
+          LowInstructionControlFlag::Conditional;
+      break;
+    case 10:
+      B.InstructionBoundaries[0].FirstOp = 1;
+      break;
+    case 11:
+      B.InstructionBoundaries[0].OpCount = 0;
+      break;
+    case 12:
+      B.InstructionBoundaries[0].OpCount = 2;
+      break;
+    case 13:
+      B.InstructionBoundaries[0].Size = 6;
+      break;
+    case 14:
+      B.InstructionBoundaries[0].Size = 0;
+      break;
+    case 15:
+      B.InstructionBoundaries.clear();
+      break;
+    case 16:
+      ++B.InstructionBoundaries[0].Address;
+      break;
+    case 17:
+      Low.RegistrationStates->CallFrameEffects[0].DoesNotReturn = false;
+      break;
+    case 18:
+      B.Ops[0].Seq = Low.RegistrationStates->CallFrameEffects[0].OpSeq = -1;
+      break;
     }
-    auto Med = LowToMedConverter().convert(Low, Arch::X86, BinaryFormat::COFF);
+    auto Med = LowToMedConverter().convert(
+        Low, Mutation == 20 ? Arch::X64 : Arch::X86,
+        Mutation == 19 ? BinaryFormat::ELF : BinaryFormat::COFF);
     unsigned Calls = 0;
     for (const auto &Block : Med.Blocks)
       for (const auto &Op : Block.Ops)

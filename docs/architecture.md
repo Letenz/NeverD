@@ -284,6 +284,12 @@ destinations after an ordinary no-return call.
 Registration-state transfer also consumes the exact unconditional no-return
 instruction boundary. Missing call-frame effects still refuse memory borrows,
 but cannot recreate that call's ordinary continuation or suppress its handlers.
+Exact registration-frame accesses search the ordered cell map only for
+overlapping four-byte cells. The cumulative work budget charges the bounded
+lookup and possible insertions; it does not charge unrelated local slots for
+every access. Unknown addresses still inspect all possible frame coordinates.
+Partial writes retain pointer taint in untouched bytes, and releasing or
+merging a frame still processes its full state.
 PE32 EH3 local unwinds have a separate runtime contract. Current strong
 `_local_unwind2` imports and immutable IAT veneers identify the protocol; the
 state solver binds its actual registration pointer and target level at the
@@ -295,6 +301,20 @@ SEH filter and finally entries share the private invocation-stack coordinate
 used by C++ catches. A finally may save registers and allocate locals below
 its runtime return PC; loads require initialized bytes in the current
 allocation, and releasing stack storage invalidates its saved identities.
+SEH state propagation keeps the callback entry and search/unwind mode as an
+activation key. Different callbacks can share decoded tail blocks without
+merging their private stacks. Every activation must restore its own stack and
+parent EBP; shared source-value projections intersect observations from all
+activations, including scalar and unknown observations. Publication unions
+reaching levels only after those independent transfers. An ordinary parent
+entry into callback code still requires a separate invocation-exit contract;
+moving ESP alone does not provide one. All activations share the original
+cumulative work budget.
+Registration no-return annotations and ordinary-edge removal bind the same
+current call occurrence, target, instruction extent and operation range. A
+conditional or malformed instruction cannot reuse that receipt. A separate
+decoded no-return boundary remains authoritative when memory-effect evidence
+is unavailable; it does not grant a restored-frame or native-output proof.
 Only established parent addresses can modify parent locals, so a callback
 stack pointer cannot escape there or alias a parent slot at the same offset.
 SEH and C++ share the check for a final, decoded, unconditional callback
@@ -770,10 +790,17 @@ For a single absolute consumer, a relocation-backed physical run may contain
 unused pointers to other functions. Validate target ownership for every
 admitted selector coordinate before graph growth; an excluded prefix slot
 neither truncates the selector proof nor becomes a local successor.
-The LLVM scalar-offset proof may retry a depth-limited recursive walk with its
-independent closed-value-graph proof. That proof still checks every initializer,
-address provenance, forbidden value and memory source, with its own 512-level
-and 8192-node limits; reaching the first limit is never itself a certificate.
+The LLVM scalar-offset proof reuses completed scalar subgraphs only when no
+step borrowed an active recurrence or frame-memory assumption. Independently
+proven scalar loads qualify, including exact frame reloads whose complete
+sources are independently numeric. An active frame slot/domain or a skipped
+path-local backedge invalidates reuse for every enclosing expression; bounded
+numeric-mask proofs remain a separate cache partition. Recursive paths restore
+their own visited, frame-slot and PHI entries at scope exit, avoiding full path
+copies while keeping sibling operands independent. A depth- or node-limited
+walk may still retry its independent closed-value-graph proof, which checks every
+initializer, address provenance, forbidden value and memory source with its own
+512-level and 8192-node limits. Exhaustion never certifies a result.
 The LLVM backend accepts a sparse table's logical address origin separately
 from its owned runtime slots. Eliding its target load still requires the exact
 operation witness, complete mapped slot and relocation ownership, and exclusive
@@ -854,6 +881,18 @@ reuse dense block visitation storage while preserving walk order and logical
 work charges. Value and memory reconstruction split their ordered memo indexes
 by block ID, retaining full keys, stable recursive references and the original
 global entry counts used by evidence accounting.
+Affine frame equations are independent of value-query matching modes. A mode
+change retires value and memory results while retaining completed frame facts
+within the same frozen batch. Incomplete reconstruction still clears frame
+equations before the next independent query.
+
+Load-address validation first tries an exact instruction-local ADD producer
+when the LOAD's base is not a SELECT or mask blend. The ordinary value matcher
+must prove its base and index, and the existing copy-chain proof must connect
+its output to the exact LOAD. Only a completed positive proof avoids searching
+unrelated ADDs. Missing or failed local proofs fall back to full-function
+discovery; all queries share the candidate's evidence allowance. Final address,
+selector-coordinate and transactional publication checks remain in place.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -1799,11 +1838,35 @@ prove a saved frame value. `LowSEHFrameProof` owns the all-predecessor
 intersection, including stable loops, independent roots and released stack
 storage. A digest binds every operation, instruction boundary, root and CFG
 edge in that function; changing an earlier block invalidates the receipt.
-The analysis runs once per queried function, within the module evidence budget.
-Shared SSA then checks the call occurrence, parent
-unwind allocation, decoded prologue, converted SP effects and every relevant
-predecessor path. The initial contract requires an ordinary-reachable target;
-cross-funclet frame borrowing and saved frames surviving opaque calls remain
+Caller and callee proofs share one check for complete instruction boundaries,
+nonoverlapping blocks and actual taken/fallthrough successors. Removing both
+sides of an edge or dropping a whole write-containing block cannot turn an
+incomplete graph into a frame proof. Indirect branches require a separate proof
+and remain outside this bounded frame analysis.
+Complete decoded callees can retain saved cells when their concrete
+argument values bound every store and all returns restore the invocation SP
+without changing its physical return PC. The analysis intersects all returning
+paths, validates complete instruction boundaries and both decoded branch
+successors, and discards private callee storage at return. Nested direct calls
+share the same budget and protect every active return PC, including the write
+made by CALL itself. Recursion, more than 16 nested bodies, opaque calls,
+unknown writes, exceptional transfers and independent callee roots refuse the
+proof. A preserved register keeps a frame identity only when both its ABI and
+the inspected return states preserve it. A receipt names all inspected callees,
+including transitive dependencies; shared SSA requires their current
+operation/CFG digests before accepting the frame. Source signatures grant no
+memory effects.
+The analysis runs once per queried function, with a cumulative module work cap
+separate from the address-use receipt limit. Transfers charge the tracked
+register/cell facts as well as operations; joins and dependency hashing also
+consume this cap. Frame-proof exhaustion retains independent roots without
+discarding otherwise complete address-use evidence.
+Shared SSA then checks the call occurrence, parent unwind allocation, decoded
+prologue, converted SP effects and every relevant predecessor path. Certified
+runtime transfers participate in frame-proof reachability even when no ordinary
+edge reaches their target. Such a root receives the established SP and unknown
+volatile registers, with the same offset required by every certified source.
+Cross-funclet frame borrowing and saved frames surviving opaque calls remain
 unsupported until their memory and activation lifetimes can be proved.
 
 LLVMC preserves relocatable constant address arithmetic, and constant
@@ -3196,6 +3259,8 @@ Native `FOP/FIP/FDP` follow the host’s x87 save/restore rules. AMD may clear t
 The shared `encodeX64XsaveState` / `decodeX64XsaveState` codec owns standard/compacted FP/SSE packets, physical TOP rotation, absent-component init state and atomic validation. WHP uses complete XSAVE APIs, preferring `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` with the older XSAVE APIs as a compatibility path. Legacy individual x87 registers cannot replace complete packets. Non-initial extended components, malformed headers, invalid controls and truncated captures fail explicitly. WHP mapping failures retain HRESULT, GPA and size for diagnosis.
 
 `CheckedX64Instructions.def` admits unsigned `MUL` at 8/16/32/64 bits and `CBW/CWDE/CDQE/CWD/CDQ/CQO` through the existing processor transport. `NeverDX64IntegerTests` uses independent `X64IntegerCases.def` encodings and expected values at both privilege levels: partial-register preservation, 32-bit zero extension, both product halves, defined CF/OF results and unchanged flags for sign extension. Ordinary-RAM multiplication retains whole-span permission checks and read observers; a fault or observer stop preserves implicit output registers and PC. Device operands remain unsupported. These cases also run on checked Unicorn; unavailable native transports skip explicitly.
+
+The same checked x64 instruction inventory admits 16/32/64-bit `BSF` and `BSR`. The selected processor executes the original instruction, including zero-source cases; the ISA layer does not invent a portable destination for an architecturally undefined result. Register and ordinary-RAM sources use the existing full-span access checks and pre-effect observers. Device operands and invalid LOCK forms remain rejected before callbacks or data effects.
 
 `X64BitInstructions.def` admits register and ordinary-RAM `BT/BTS/BTR/BTC` at 16/32/64 bits. A register bit index is signed at the operand width and selects a complete word; an immediate stays within the base word. Address-size wrapping occurs before FS/GS base addition. The processor supplies CF and written values; `RAMTransaction` keeps the result private until observers accept it. Whole-span permission checks cover separate page allocations and aliases. Stops, callback failures and denied pages preserve the original CPU and RAM. LOCK requires natural alignment; modifying MMIO forms require an explicit prepared-atomic provider. `X64BitStringTests.cpp` compares independent encodings with actual x64 host execution and checks negative indices, width truncation, cross-page accesses, cancellation and invalid LOCK forms. See the [Intel instruction reference](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html).
 
@@ -4839,3 +4904,5 @@ When a recovered DLL entry differs from its original PE entry, the writer emits 
 Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an explicit LOCK prefix. The shared RAM transaction retains the original effective address, serializes publication and discards cancelled or faulted writes; the processor executes the original exchange. `X64Address` tests cover address/register overlap, partial register writes, cache-line and page crossings, observers and missing-page faults. MMIO exchanges retain their provider and natural-alignment requirements; other locked instruction families retain their existing admission rules.
 
 DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.
+
+`isCheckedX86SafeSEHHandlerReference` authenticates a retained PE32 handler entry through the existing SafeSEH decoder, immutable table/header bytes and the relocated load-config pointer. LLVM declares that source identity before emitting any body, including omitted shards. Table membership establishes neither a language personality nor a callable ABI or native EH reconstruction permission; those consumers keep their independent checks.

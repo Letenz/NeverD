@@ -28,6 +28,7 @@
 
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/GuestMemory.h"
+#include "neverd/emulation/WindowsDriverState.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -70,8 +71,10 @@ public:
   /// A stopped DriverEntry can be rebuilt only when borrowed loader objects
   /// retain their initial state and every retained kernel effect is known.
   llvm::Error captureUnpackBaseline();
-  void recordUnpackClockRead();
-  llvm::Expected<bool> hasUnpackDependencies() const;
+  void recordUnpackEnvironmentRead();
+  llvm::Expected<std::vector<std::string>> unpackDependencies() const;
+  llvm::Expected<WindowsDriverState>
+  captureUnpackRuntime(bool IncludeBacking) const;
   std::map<uint64_t, uint64_t> unpackAllocations() const;
   uint64_t driverObject() const { return DriverObject; }
   uint64_t registryPath() const { return RegistryPath; }
@@ -827,6 +830,8 @@ private:
     uint64_t Size;
     uint32_t Tag;
     bool NonPaged;
+    WindowsDriverState::PoolAPI API;
+    uint64_t TypeOrFlags;
   };
   std::map<uint64_t, PoolAllocation> Allocations;
   std::map<uint64_t, uint64_t> ArenaAllocations;
@@ -1286,8 +1291,13 @@ private:
   llvm::Error retireDeviceIfUnreferenced(uint64_t Address);
   llvm::Expected<uint64_t> topAttachedDevice(uint64_t Base) const;
   llvm::Expected<std::vector<uint64_t>> deviceStack(uint64_t Top) const;
-  llvm::Error validateDeviceTopology() const;
-  llvm::Expected<std::vector<uint64_t>> driverDeviceInventory() const;
+  enum class ObjectRead { Execution, Snapshot };
+  llvm::Expected<uint64_t> readObjectField(uint64_t Address, unsigned Width,
+                                           ObjectRead Mode) const;
+  llvm::Error
+  validateDeviceTopology(ObjectRead Mode = ObjectRead::Execution) const;
+  llvm::Expected<std::vector<uint64_t>>
+  driverDeviceInventory(ObjectRead Mode = ObjectRead::Execution) const;
   llvm::Expected<uint64_t> attachDevice(uint64_t Source, uint64_t Target);
   llvm::Error detachDevice(uint64_t Lower);
   llvm::Error retainDevice(uint64_t Device);

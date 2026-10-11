@@ -135,20 +135,20 @@ TEST(ScalarConvertContract, PackedNarrowingKeepsTinyAndNormalLanesIndependent) {
               Op.addInput(NdVar::tmp(1, 16));
               Op.addInput(NdVar::cst(Mask, 1));
               ASSERT_TRUE(E.step(Op));
-              ASSERT_TRUE(E.getRegisterBytes(2));
-              const auto &Result = *E.getRegisterBytes(2);
+              const auto Result = E.getRegisterBytes(2);
+              ASSERT_TRUE(Result);
               uint32_t ExpectedState = State;
               for (unsigned Lane = 0; Lane < 2; ++Lane) {
                 const auto Expected = (Swap != bool(Lane)) ? One : Tiny;
                 uint32_t Actual = 0;
-                std::memcpy(&Actual, Result.data() + Lane * 4, 4);
+                std::memcpy(&Actual, Result->data() + Lane * 4, 4);
                 EXPECT_EQ(Actual, (Mask & (1U << Lane)) ? Expected.first : 0);
                 if (!SAE && (Mask & (1U << Lane)))
                   ExpectedState |= Expected.second;
               }
               EXPECT_EQ(E.getMXCSR(), ExpectedState);
               for (unsigned Byte = 8; Byte < 16; ++Byte)
-                EXPECT_EQ(Result[Byte], 0);
+                EXPECT_EQ((*Result)[Byte], 0);
             }
         }
 #else

@@ -77,6 +77,58 @@ TEST(RegistrationState, DeadFrameValuesDoNotAccumulateAcrossJoins) {
   }
 }
 
+TEST(RegistrationState, IndexedFrameAccessesKeepPartialAndUnknownAliases) {
+  using registration_state::FrameState;
+  using registration_state::FrameValue;
+  for (unsigned Space = 0; Space != 3; ++Space) {
+    for (int32_t Base : {INT32_MIN + 16, -4096, 0, INT32_MAX - 32}) {
+      SCOPED_TRACE(Space);
+      SCOPED_TRACE(Base);
+      FrameState State;
+      auto Store = [&](int32_t Offset, uint16_t Width, FrameValue Value) {
+        if (Space == 0)
+          State.store(Offset, Width, Value);
+        else if (Space == 1)
+          State.storeEntry(Offset, Width, Value);
+        else
+          State.storeCallback(Offset, Width, Value);
+      };
+      auto Load = [&](int32_t Offset, uint16_t Width) {
+        return Space == 0   ? State.load(Offset, Width)
+               : Space == 1 ? State.loadEntry(Offset, Width)
+                            : State.loadCallback(Offset, Width);
+      };
+      Store(Base - 8, 4, FrameValue::constant(11));
+      Store(Base, 4, FrameValue::frame(-128));
+      Store(Base + 4, 4, FrameValue::frame(-256));
+      Store(Base + 16, 4, FrameValue::constant(29));
+      // One unaligned scalar store overlaps both pointers but replaces
+      // neither whole cell. Untouched bytes still carry possible aliases.
+      Store(Base + 2, 4, FrameValue::constant(7));
+      EXPECT_TRUE(Load(Base, 1).MayBeFrame);
+      EXPECT_TRUE(Load(Base + 6, 1).MayBeFrame);
+      EXPECT_EQ(Load(Base + 2, 4), FrameValue::constant(7));
+      EXPECT_FALSE(Load(Base, 4).Offset);
+      EXPECT_TRUE(State.load(std::nullopt, 1).MayBeFrame);
+      EXPECT_EQ(Load(Base - 8, 4), FrameValue::constant(11));
+      EXPECT_EQ(Load(Base + 16, 4), FrameValue::constant(29));
+      Store(Base - 1, 10, {});
+      EXPECT_FALSE(Load(Base, 8).MayBeFrame);
+      EXPECT_FALSE(State.load(std::nullopt, 1).MayBeFrame);
+      EXPECT_EQ(Load(Base - 8, 4), FrameValue::constant(11));
+      EXPECT_EQ(Load(Base + 16, 4), FrameValue::constant(29));
+      Store(INT32_MIN, 4, FrameValue::frame(-64));
+      EXPECT_TRUE(Load(INT32_MIN, 1).MayBeFrame);
+      Store(INT32_MIN, 1, {});
+      EXPECT_TRUE(Load(INT32_MIN + 3, 1).MayBeFrame);
+      Store(INT32_MAX - 3, 4, FrameValue::frame(-96));
+      EXPECT_TRUE(Load(INT32_MAX, 1).MayBeFrame);
+      Store(INT32_MAX, 1, {});
+      EXPECT_TRUE(Load(INT32_MAX - 3, 1).MayBeFrame);
+    }
+  }
+}
+
 LowFunc makeCookieFrame(bool GS = false) {
   auto F = makeBranchingFrame();
   auto &EH = *F.ExceptionMetadata;
@@ -1346,6 +1398,167 @@ TEST(RegistrationState, SEHCallbacksMustReturnToTheirCurrentInvocation) {
   }
 }
 
+TEST(RegistrationState, SharedSEHCallbackTailsKeepEachInvocationStack) {
+  for (bool EH4 : {false, true}) {
+    for (bool Finally : {false, true}) {
+      for (unsigned Mutation = 0; Mutation != 7; ++Mutation) {
+        for (bool Reverse : {false, true}) {
+          SCOPED_TRACE(EH4);
+          SCOPED_TRACE(Finally);
+          SCOPED_TRACE(Mutation);
+          SCOPED_TRACE(Reverse);
+          auto F = EH4 ? makeCookieFrame() : makeBranchingFrame();
+          auto &Chain = *F.ExceptionMetadata->Registration;
+          const int32_t Outside = EH4 ? -2 : -1;
+          Chain.Scopes = {{Outside, Finally ? 0u : 0x1800u,
+                           Finally ? 0x1800u : 0x1900u, Finally},
+                          {0, Finally ? 0u : 0x1820u,
+                           Finally ? 0x1820u : 0x1900u, Finally}};
+          if (Reverse) {
+            std::swap(Chain.Scopes[0].FilterVA, Chain.Scopes[1].FilterVA);
+            std::swap(Chain.Scopes[0].HandlerVA, Chain.Scopes[1].HandlerVA);
+          }
+          Chain.TryLevelStores.front().Level = 1;
+          F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(1, 4);
+          F.Blocks[0].Succs = {1};
+          const auto SP = NdVar::reg(x86reg::RSP, 4);
+          const auto BP = NdVar::reg(x86reg::RBP, 4);
+          for (unsigned Entry = 0; Entry != 2; ++Entry) {
+            LowBlock Callback;
+            Callback.Id = 4 + Entry;
+            Callback.StartAddr = 0x1800 + Entry * 0x20;
+            va_t Address = Callback.StartAddr;
+            auto Emit = [&](NdOp Opcode, NdVar Output,
+                            std::initializer_list<NdVar> Inputs) {
+              const size_t First = Callback.Ops.size();
+              emitOp(Callback, Address, Opcode, Output, Inputs);
+              Callback.InstructionBoundaries.push_back(
+                  {Address++, 1, First, 1});
+            };
+            Emit(NdOp::INT_SUB, SP,
+                 {SP, NdVar::cst(Entry && Mutation == 1 ? 8 : 4, 4)});
+            if (!(Entry && Mutation == 3))
+              Emit(NdOp::STORE, {}, {SP, BP});
+            if (Entry && Mutation == 2) {
+              Emit(NdOp::INT_ADD, NdVar::reg(x86reg::RCX, 4),
+                   {SP, NdVar::cst(4, 4)});
+              Emit(NdOp::STORE, {},
+                   {NdVar::reg(x86reg::RCX, 4), NdVar::cst(0, 4)});
+            }
+            Emit(NdOp::COPY, NdVar::reg(x86reg::RAX, 4),
+                 {Entry ? NdVar::cst(0, 4) : BP});
+            if (Entry && Mutation == 5)
+              Emit(NdOp::COPY, BP, {SP});
+            Emit(NdOp::BRANCH, {}, {NdVar::cst(0x1840, 4)});
+            Callback.InstructionBoundaries.back().Control =
+                LowInstructionControl::Branch;
+            Callback.EndAddr = Address;
+            Callback.Succs = {6};
+            F.Blocks.push_back(std::move(Callback));
+          }
+          LowBlock Tail;
+          Tail.Id = 6;
+          Tail.StartAddr = 0x1840;
+          Tail.EndAddr = 0x1844;
+          Tail.Preds = {4, 5};
+          emitOp(Tail, 0x1840, NdOp::COPY, NdVar::reg(x86reg::RCX, 4),
+                 {NdVar::reg(x86reg::RAX, 4)});
+          emitOp(Tail, 0x1841, NdOp::LOAD, BP, {SP});
+          emitOp(Tail, 0x1842, NdOp::INT_ADD, SP, {SP, NdVar::cst(4, 4)});
+          emitOp(Tail, 0x1843, NdOp::RETURN, {}, {});
+          Tail.InstructionBoundaries = {{0x1840, 1, 0, 1},
+                                        {0x1841, 1, 1, 1},
+                                        {0x1842, 1, 2, 1},
+                                        {0x1843, 1, 3, 1}};
+          Tail.InstructionBoundaries.back().Control =
+              LowInstructionControl::Return;
+          if (Mutation == 6)
+            Tail.InstructionBoundaries.back().Immediate = 4;
+          if (Mutation == 4) {
+            F.Blocks[3].Succs = {6};
+            Tail.Preds.push_back(3);
+          }
+          F.Blocks.push_back(std::move(Tail));
+          if (Reverse)
+            std::swap(F.Blocks[4], F.Blocks[5]);
+          const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+          EXPECT_EQ(A.Complete, Mutation != 4);
+          EXPECT_EQ(A.CallbackStatesComplete, Mutation == 0 || Mutation == 5);
+          ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+          EXPECT_TRUE(A.Blocks.back().Reached);
+          EXPECT_EQ(A.Blocks.back().CallbackOnly, Mutation != 4);
+          EXPECT_EQ(A.Blocks.back().Unknown, Mutation != 0 && Mutation != 5);
+          if (Mutation == 0 || Mutation == 5) {
+            // A clobbered BP is restored from this invocation's private slot.
+            // No callback may borrow another entry's stack initialization.
+            const auto Restored =
+                llvm::find_if(A.FrameValues, [](const auto &V) {
+                  return V.Address == 0x1841 && V.OpSeq == 1;
+                });
+            ASSERT_NE(Restored, A.FrameValues.end());
+            EXPECT_EQ(Restored->EstablishedFrameOffset, 0);
+            const auto Mixed = llvm::find_if(A.FrameValues, [](const auto &V) {
+              return V.Address == 0x1840 && V.OpSeq == 0;
+            });
+            ASSERT_NE(Mixed, A.FrameValues.end());
+            EXPECT_FALSE(Mixed->EstablishedFrameOffset);
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
+  for (unsigned Count : {2u, 512u}) {
+    SCOPED_TRACE(Count);
+    auto F = makeBranchingFrame();
+    F.ExceptionMetadata->CodeRange.End = 0x40000;
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    Chain.Scopes.clear();
+    Chain.TryLevelStores.front().Level = Count - 1;
+    F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(Count - 1, 4);
+    F.Blocks[0].Succs = {1};
+    const int TailId = 4 + Count;
+    for (unsigned Entry = 0; Entry != Count; ++Entry) {
+      const va_t Address = 0x1800 + Entry * 4;
+      Chain.Scopes.push_back({int32_t(Entry) - 1, 0, Address, true});
+      LowBlock Callback;
+      Callback.Id = 4 + Entry;
+      Callback.StartAddr = Address;
+      Callback.EndAddr = Address + 1;
+      emitOp(Callback, Address, NdOp::BRANCH, {}, {NdVar::cst(0x30000, 4)});
+      Callback.InstructionBoundaries = {{Address, 1, 0, 1}};
+      Callback.InstructionBoundaries.back().Control =
+          LowInstructionControl::Branch;
+      Callback.Succs = {TailId};
+      F.Blocks.push_back(std::move(Callback));
+    }
+    LowBlock Tail;
+    Tail.Id = TailId;
+    Tail.StartAddr = 0x30000;
+    Tail.EndAddr = 0x30001;
+    emitOp(Tail, 0x30000, NdOp::RETURN, {}, {});
+    Tail.InstructionBoundaries = {{0x30000, 1, 0, 1}};
+    Tail.InstructionBoundaries.back().Control = LowInstructionControl::Return;
+    for (unsigned Entry = 0; Entry != Count; ++Entry)
+      Tail.Preds.push_back(4 + Entry);
+    F.Blocks.push_back(std::move(Tail));
+    const auto A = analyzeRegistrationStates(F);
+    if (Count == 2) {
+      EXPECT_TRUE(A.Complete);
+      EXPECT_TRUE(A.CallbackStatesComplete);
+    } else {
+      EXPECT_FALSE(A.Complete);
+      EXPECT_TRUE(A.Blocks.empty());
+      EXPECT_TRUE(A.FrameValues.empty());
+      EXPECT_TRUE(llvm::any_of(A.Diagnostics, [](const auto &D) {
+        return D.find("budget exhausted") != std::string::npos;
+      }));
+    }
+  }
+}
+
 TEST(RegistrationState, FreedOrOpaqueFrameBytesCannotAuthorizeObjectReads) {
   for (bool Opaque : {false, true}) {
     auto F = makeCxxObjectCall();
@@ -1552,6 +1765,59 @@ TEST(RegistrationState, UnlinkEndsTheLiveRegistration) {
   EXPECT_EQ(Result.ChainAccesses[2].OpSeq, F.Blocks[3].Ops.back().Seq);
   EXPECT_TRUE(Result.Blocks.back().Levels.empty());
   EXPECT_FALSE(Result.Blocks.back().CanDispatch);
+}
+
+LowFunc makePopulatedFrame(bool Exact) {
+  auto F = makeUnlinkedFrame();
+  F.ExceptionMetadata->CodeRange.End = 0x10000;
+  LowBlock Body;
+  Body.Id = F.Blocks.size();
+  Body.StartAddr = 0x2000;
+  Body.Succs = F.Blocks.front().Succs;
+  F.Blocks.front().Succs = {Body.Id};
+  va_t Address = Body.StartAddr;
+  auto Emit = [&](NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs) {
+    const unsigned First = Body.Ops.size();
+    emitOp(Body, Address, Opcode, Output, Inputs);
+    Body.InstructionBoundaries.push_back({Address++, 1, First, 1});
+  };
+  const auto SP = NdVar::reg(x86reg::RSP, 4);
+  const auto Slot = NdVar::reg(x86reg::RDI, 4);
+  Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(4096, 4)});
+  for (int32_t I = 0; I != 512; ++I) {
+    Emit(NdOp::INT_ADD, Slot,
+         {NdVar::reg(x86reg::RBP, 4), NdVar::cst(uint32_t(-32 - I * 4), 4)});
+    Emit(NdOp::STORE, {}, {Slot, NdVar::cst(uint32_t(I), 4)});
+  }
+  // Thousands of exact accesses to a populated frame must leave enough of
+  // the same cumulative budget to prove the subsequent registration unlink.
+  // Each load still reads the current cell, including the last overwrite.
+  for (unsigned I = 0; I != 4096; ++I)
+    Emit(NdOp::LOAD, NdVar::reg(x86reg::RAX, 4),
+         {Exact ? Slot : NdVar::reg(x86reg::RCX, 4)});
+  Emit(NdOp::INT_ADD, SP, {SP, NdVar::cst(4096, 4)});
+  Body.EndAddr = Address;
+  F.Blocks.push_back(std::move(Body));
+  return F;
+}
+
+TEST(RegistrationState, ExactLocalAccessesDoNotRescanTheWholeFrame) {
+  const auto Result = analyzeRegistrationStates(makePopulatedFrame(true));
+  EXPECT_TRUE(Result.Complete);
+  EXPECT_TRUE(Result.RegistrationLifetimeComplete);
+  EXPECT_TRUE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.Diagnostics.empty());
+}
+
+TEST(RegistrationState, UnknownLocalAccessesRetainTheWholeFrameWorkLimit) {
+  const auto Result = analyzeRegistrationStates(makePopulatedFrame(false));
+  EXPECT_FALSE(Result.Complete);
+  EXPECT_FALSE(Result.ChainOperationsComplete);
+  EXPECT_TRUE(Result.FrameValues.empty());
+  EXPECT_NE(std::find(Result.Diagnostics.begin(), Result.Diagnostics.end(),
+                      "registration-state propagation budget exhausted"),
+            Result.Diagnostics.end());
 }
 
 TEST(RegistrationState, MissingLifetimeCannotAuthorizeChainReplacement) {

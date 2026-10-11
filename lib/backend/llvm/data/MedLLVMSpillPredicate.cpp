@@ -1422,6 +1422,11 @@ bool MedLLVMEmitter::collectFrameReloadSourcesUncached(
       addUnique(Dst.Values, Value);
     return !sameState(Before, Dst);
   };
+  // The reload is fixed for this query. Reaching values and edge bindings
+  // change during iteration, but the unbound alias proof for an exact write
+  // footprint does not. Keep this cache within the enclosing immutable CFG
+  // transaction; a reentrant or invalidated query cannot publish its result.
+  std::map<std::pair<AddressProvenanceVarKey, uint16_t>, bool> DisjointWrites;
   auto transfer = [&](const FrameReloadBlock &Block, std::size_t Boundary,
                       ReachingState State,
                       const ControlValueBindings *Bindings = nullptr) {
@@ -1446,10 +1451,16 @@ bool MedLLVMEmitter::collectFrameReloadSourcesUncached(
       // unmodelled stack adjustment. Keep the state poisoned until a later
       // exact full-width STORE definitely overwrites the target slot.
       if (!WriteKey || WriteKey->first != Target->first) {
-        const bool ProvenDisjoint =
-            !WriteKey &&
-            frameAccessesProvenDisjoint(WriteAddr, WriteSize, Load.Inputs[0],
-                                        Load.Output.Size);
+        bool ProvenDisjoint = false;
+        if (!WriteKey) {
+          const auto Footprint =
+              std::make_pair(addressProvenanceVarKey(WriteAddr), WriteSize);
+          auto [It, Inserted] = DisjointWrites.try_emplace(Footprint, false);
+          if (Inserted)
+            It->second = frameAccessesProvenDisjoint(
+                WriteAddr, WriteSize, Load.Inputs[0], Load.Output.Size);
+          ProvenDisjoint = It->second;
+        }
         if (ProvenDisjoint)
           continue;
         State.Invalid = true;

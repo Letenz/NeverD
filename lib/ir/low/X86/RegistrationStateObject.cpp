@@ -76,7 +76,7 @@ bool RegistrationStateSolver::runtimeObjectIsLive(
 
 bool RegistrationStateSolver::recordRuntimeMemory(
     size_t I, Domain &After, const LowOp &Op, const FrameTransfer &Transfer,
-    const FrameTransfer &RuntimeTransfer) {
+    const FrameTransfer &RuntimeTransfer, const BlockFacts &Facts) {
   const auto Memory = lowMemoryOperands(Op);
   if (!CheckRuntimeObjects || !Memory.Address)
     return false;
@@ -93,7 +93,7 @@ bool RegistrationStateSolver::recordRuntimeMemory(
         Memory.Complete &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) &&
-        !After.Unknown && !Facts[I].Invalid && Object != CatchObjects.end() &&
+        !After.Unknown && !Facts.Invalid && Object != CatchObjects.end() &&
         runtimeObjectIsLive(After, Object->first) && RuntimeAddress.Offset &&
         *RuntimeAddress.Offset >= 0 && Op.Seq >= 0 &&
         Boundary != Boundaries.end() && Boundary->second.first == Block.Id &&
@@ -127,8 +127,8 @@ bool RegistrationStateSolver::recordRuntimeMemory(
     const auto Stored = RuntimeTransfer.read(*Memory.StoredValue);
     const auto PrivateAddress = Transfer.read(*Memory.Address);
     if (PrivateAddress.Offset && !RuntimeAddress.MayBeFrame) {
-      if (!charge(After.RuntimeObject.memoryAccessWork(PrivateAddress,
-                                                       Memory.AccessSize) +
+      if (!charge(After.RuntimeObject.memoryAccessWork(
+                      PrivateAddress, Memory.AccessSize, true) +
                   (Memory.AccessSize + 3) / 4 + 1))
         return false;
       After.RuntimeObject.store(*PrivateAddress.Offset, Memory.AccessSize,
