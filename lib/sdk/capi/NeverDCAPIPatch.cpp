@@ -29,8 +29,6 @@ using namespace neverd::sdk;
 
 namespace {
 
-
-
 // Apply the session's enabled obfuscation passes to \p Mod in the canonical
 // patch order (Pipeline::runObfuscationPasses) and record the per-pass counts
 // back on the session.  Shared by all three patch entry points so the toggle

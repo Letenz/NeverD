@@ -60,8 +60,8 @@ struct PLTDisplacements {
             !Fixup.SubtractSymbol.empty() ||
             !rangeInBounds(Fixup.Offset, 4, Section.Size))
           return false;
-        const auto Displacement = readLE<int32_t>(
-            Image.Bytes.data() + Section.Offset + Fixup.Offset);
+        const auto Displacement =
+            readLE<int32_t>(Image.Bytes.data() + Section.Offset + Fixup.Offset);
         if (Section.VA + Fixup.Offset + 4 + Displacement !=
             Target->second + static_cast<uint64_t>(Fixup.Addend)) {
           llvm::WithColor::error()
@@ -85,8 +85,8 @@ struct PatchSymbolResolvers {
     if (Contextual) {
       ContextualPatchSymbolResolver Resolver = Contextual;
       Model.resolveWithContext =
-          [Resolver, PLT](
-              const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
+          [Resolver,
+           PLT](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
             auto Address = Resolver(Request);
             if (PLT && Address && Request.SpecifierName == "PLT" &&
                 !Request.IsSubtrahend)
@@ -378,7 +378,8 @@ static CompiledImage compileImageForPatchImpl(
   PLTDisplacements *PLTCheck =
       TargetArch == Arch::X64 && Fmt == BinaryFormat::ELF &&
               InputKind == RewriteInputKind::ReplacementIR
-          ? &PLT : nullptr;
+          ? &PLT
+          : nullptr;
   CompiledImage Out;
   Out.InputKind = InputKind;
   Out.BaseVA = BaseVA;

@@ -176,18 +176,19 @@ its preloader to be disabled and the Linux ELF loader to be invoked explicitly.
 
 ### LLVM dependency correction
 
-The pinned `neverd-llvm-v23.0.0-r3` address-model backend interprets the x64 PLT
-specifier as an AArch64 page modifier. Late compiler calls such as
+The address-model backend in the r3 and pinned r4 LLVM releases interprets the
+x64 PLT specifier as an AArch64 page modifier. Late compiler calls such as
 `_Unwind_Resume` can therefore receive a wrong displacement. NeverD checks these
 encoded source-patch references and refuses an invalid image.
 
 The scoped backend correction is included in
 [`cmake/patches/llvm-aarch64-specifier-scope.patch`](../cmake/patches/llvm-aarch64-specifier-scope.patch).
-Until the fork revision and prebuilt release incorporate it, apply it once to
-the pinned source checkout and use an integrated build:
+The integrated build applies this correction to a build-directory copy of the
+single LLVM source file. It preserves the submodule checkout and revision, and
+accepts an already corrected source. An unrecognized source fails configuration
+instead of silently skipping the correction. Use an integrated build:
 
 ```sh
-git -C third_party/llvm-project apply ../../cmake/patches/llvm-aarch64-specifier-scope.patch
 cmake -S . -B build-source -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=OFF \
   -DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=/path/to/clang
@@ -195,11 +196,12 @@ cmake --build build-source --target neverd NeverDSourcePatchTests \
   NeverDNativeExceptionRewriteContractTests --parallel 4
 ```
 
-A checkout already containing the correction does not need the patch reapplied.
 Point the test compiler setting at a compatible Clang (22.1.6 was verified),
 which may differ from the system compiler used to build NeverD itself.
-The shared prebuilt cache is not rewritten. The native object route does not
-recompile through this LLVM MC path.
+The shared prebuilt cache is not rewritten. Its r3/r4 backend remains subject to
+the displacement check and may refuse an IR patch. The native object route does
+not recompile through this LLVM MC path. The standalone patch can also be applied
+when building the LLVM fork outside NeverD.
 
 ## SDK and transaction behavior
 

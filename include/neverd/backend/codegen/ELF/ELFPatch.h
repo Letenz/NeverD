@@ -54,7 +54,6 @@ private:
   };
 
   bool parseLayout(const std::vector<uint8_t> &Data, PatchLayout &Layout);
-
 };
 
 } // namespace neverd

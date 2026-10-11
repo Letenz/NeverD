@@ -5017,9 +5017,9 @@ ctest --test-dir build-source -L \
 Use the corrected LLVM source described in [source patches](source-patching.md)
 for x64 PLT capability validation, with `NEVERD_TEST_REQUIRE_FIXED_LLVM=1`.
 Without this environment variable the regression probes the backend separately
-and requires an exact branch or fail-closed refusal. A refusal with the r3
+and requires an exact branch or fail-closed refusal. A refusal with the r3/r4
 prebuilt is a passing safety test, not a passing runtime capability test.
-The ELF IR exception-runtime case is skipped with the known r3 prebuilt unless
+The ELF IR exception-runtime case is skipped with the known r3/r4 prebuilt unless
 that capability-validation variable is set; native-object cases do not need
 this LLVM correction.
 The exception fixture's original target may throw, so the original compiler
