@@ -130,21 +130,26 @@ protected:
     // Save a nonvolatile register, move the stack, retain the two arguments,
     // and alter an XMM register and the caller's shadow space. Restore the
     // required incoming state after the first stop; R8 deliberately stays 42.
-    const uint8_t Code[] = {0x55,                         // push rbp
-                            0x48, 0x83, 0xec, 0x20,       // sub rsp,32
-                            0x48, 0x8d, 0x6c, 0x24, 0x20, // lea rbp,[rsp+32]
-                            0x48, 0x89, 0x0c, 0x24,       // mov [rsp],rcx
-                            0x48, 0x89, 0x54, 0x24, 0x08, // mov [rsp+8],rdx
-                            0x49, 0xc7, 0xc0, 0x2a, 0,    0, 0, // mov r8,42
-                            0x66, 0x48, 0x0f, 0x6e, 0xf1,       // movq xmm6,rcx
-                            0x48, 0x89, 0x4c, 0x24, 0x30, // mov [rsp+48],rcx
-                            0x48, 0xc7, 0x44, 0x24, 0x30, 0, 0,
-                            0,    0,                // mov qword [rsp+48],0
-                            0x66, 0x0f, 0xef, 0xf6, // pxor xmm6,xmm6
-                            0x48, 0x83, 0xc4, 0x20, // add rsp,32
-                            0x5d,                   // pop rbp
-                            0x90, 0xc3};            // nop; ret
-    if (!Program || Program->FileSize < sizeof(Code)) {
+    std::vector<uint8_t> Code;
+    auto Emit = [&](std::initializer_list<uint8_t> Bytes) {
+      Code.insert(Code.end(), Bytes.begin(), Bytes.end());
+    };
+    Emit({0x55});                               // push rbp
+    Emit({0x48, 0x83, 0xec, 0x20});             // sub rsp,32
+    Emit({0x48, 0x8d, 0x6c, 0x24, 0x20});       // lea rbp,[rsp+32]
+    Emit({0x48, 0x89, 0x0c, 0x24});             // mov [rsp],rcx
+    Emit({0x48, 0x89, 0x54, 0x24, 0x08});       // mov [rsp+8],rdx
+    Emit({0xf3, 0x0f, 0x7f, 0x74, 0x24, 0x10}); // movdqu [rsp+16],xmm6
+    Emit({0x49, 0xc7, 0xc0, 0x2a, 0, 0, 0});    // mov r8,42
+    Emit({0x66, 0x48, 0x0f, 0x6e, 0xf1});       // movq xmm6,rcx
+    Emit({0x48, 0x8b, 0x44, 0x24, 0x30});       // mov rax,[rsp+48]
+    Emit({0x48, 0x89, 0x4c, 0x24, 0x30});       // mov [rsp+48],rcx
+    Emit({0x48, 0x89, 0x44, 0x24, 0x30});       // mov [rsp+48],rax
+    Emit({0xf3, 0x0f, 0x6f, 0x74, 0x24, 0x10}); // movdqu xmm6,[rsp+16]
+    Emit({0x48, 0x83, 0xc4, 0x20});             // add rsp,32
+    Emit({0x5d});                               // pop rbp
+    Emit({0x90, 0xc3});                         // nop; ret
+    if (!Program || Program->FileSize < Code.size()) {
       ADD_FAILURE() << "driver context control has no code storage";
       return {};
     }
@@ -589,11 +594,11 @@ TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
     SCOPED_TRACE(int(Contract));
     auto D = scenario();
     D.Contract = Contract;
-    DriverContextObserver Observer({Original.section(".prog")->RVA + 36});
+    DriverContextObserver Observer({Original.section(".prog")->RVA + 47});
     auto Run = observeDriver(Input, D, Observer);
     ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
     ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
-    EXPECT_EQ(Run->Instructions, 8u);
+    EXPECT_EQ(Run->Instructions, 10u);
     ASSERT_TRUE(Observer.Initial);
     const auto &Initial =
         static_cast<const WindowsDriverState &>(*Observer.Initial);
@@ -656,12 +661,12 @@ TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
 TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   const auto Input = entryContextInput();
   ASSERT_FALSE(HasFailure());
-  DriverContextObserver Observer({Original.section(".prog")->RVA + 36,
-                                  Original.section(".prog")->RVA + 54});
+  DriverContextObserver Observer({Original.section(".prog")->RVA + 47,
+                                  Original.section(".prog")->RVA + 63});
   auto Run = observeDriver(Input, scenario(), Observer);
   ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
   ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
-  EXPECT_EQ(Run->Instructions, 12u);
+  EXPECT_EQ(Run->Instructions, 14u);
   ASSERT_EQ(Observer.Contents.size(), 2u);
   const auto &Before =
       static_cast<const WindowsDriverState &>(*Observer.Contents[0]);
