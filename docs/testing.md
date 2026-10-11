@@ -1535,6 +1535,17 @@ Its edge copies and transfer must run before any unrelated source-order block.
 
 `HighControlFlowSemantics.*` checks that moving loop exits or tails preserves labels reached by other jumps. The entered head/tail exits and break replacement execute generated C at O0/O2 against independent return-value oracles.
 
+The same suite checks shared-expression liveness with independent return-value
+oracles, multiple branch definitions, dead cycles and nested observable effects.
+Calls, stores, ordered memory and non-default address spaces remain observable
+even when several assignments share an expression. Cyclic expression graphs
+exercise effect propagation in both encounter orders; cleanup must terminate
+without dropping an effect or its inputs.
+
+`CProjectionIdentifiers.*` in `NeverDHighControlFlowTests` checks first-free
+source names after dense and explicit suffix collisions, canonicalization,
+writer copies, moves and resets. Both C emitters share this allocator.
+
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` checks that inferred required register arguments retain unknown trailing slots. Evaluating an unknown required argument or condition must trap explicitly; omitted, null and nested operands must not silently become zero. Known values and proven unread extra operands remain executable. A trap is a diagnostic boundary, not evidence of equivalent recovered behavior.
 
 ## CPU execution checks
