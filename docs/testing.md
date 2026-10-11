@@ -5024,3 +5024,5 @@ The committed-write observer regressions verify visibility before the next instr
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` bounds repeated positive and negative query work across x86, x64, ARM and AArch64. The context tests retain bound-value, entry-SP, width and zero-budget refusals, and discard answers across provisional/rebuilt feasible graphs and function changes.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` also checks early stopping below a bound, sentinel exits, enclosing links that skip the requested index and joins with distinct stopping levels. Missing finally bodies must still be rejected when actually traversed; a skipped cleanup must not lend a frame-write effect.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` also covers constant bounds outside the table, the high unsigned half and -2. No-op exits retain the original level and frame-memory facts; dynamic bounds and invalid current levels still reject.

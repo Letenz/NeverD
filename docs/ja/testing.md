@@ -1699,3 +1699,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` は x86、x64、ARM、AArch64 で肯定・否定照会の反復作業量を制限します。コンテキストのテストは束縛値、入口 SP、幅、予算ゼロの拒否を維持し、暫定・再構築された実行可能グラフや関数の変更後に古い回答を破棄します。
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は境界より下での早期停止、番兵での終了、要求インデックスを飛ばす親リンク、異なる停止階層の結合も検証します。実際に通過する finally 本体が欠けている場合は引き続き拒否し、飛ばしたクリーンアップからフレーム書き込み効果を得ることはありません。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は、表外の定数上限、符号なし値の上半分、-2 も検証します。反復なしの終了は元のレベルとフレームメモリの事実を保持し、動的な上限と無効な現在レベルは引き続き拒否します。

@@ -1814,3 +1814,5 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` borne le travail des requêtes positives et négatives répétées sur x86, x64, ARM et AArch64. Les tests de contexte conservent les refus pour valeurs liées, SP d’entrée, largeur et budget nul, et abandonnent les réponses après un graphe possible provisoire ou reconstruit et un changement de fonction.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` vérifie aussi les arrêts sous une borne, les sorties sentinelles, les liens parents sautant l’indice demandé et les réunions de niveaux d’arrêt distincts. Un corps finally absent reste refusé lorsqu’il est parcouru ; un nettoyage sauté ne fournit aucun effet d’écriture de frame.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` couvre aussi les bornes constantes hors de la table, la moitié haute des valeurs non signées et -2. Les sorties sans itération conservent le niveau initial et les faits mémoire du cadre ; les bornes dynamiques et les niveaux courants invalides restent refusés.

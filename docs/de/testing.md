@@ -1815,3 +1815,5 @@ Die Schreibbeobachter-Regressionen prüfen Sichtbarkeit vor der nächsten Anweis
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` begrenzt wiederholte positive und negative Abfragen auf x86, x64, ARM und AArch64. Kontexttests erhalten Ablehnungen für gebundene Werte, Eintritts-SP, Breite und Nullbudget und verwerfen Antworten nach vorläufigen oder neu aufgebauten Erreichbarkeitsgraphen und Funktionswechseln.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` prüft auch frühe Abbrüche unterhalb einer Grenze, Sentinel-Ausgänge, übersprungene Zielindizes und unterschiedliche Endzustände beim Zusammenführen. Fehlende finally-Rümpfe werden beim tatsächlichen Durchlaufen weiter abgewiesen; übersprungene Bereinigungen liefern keinen Frame-Schreibeffekt.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` prüft auch konstante Schranken außerhalb der Tabelle, die obere Hälfte vorzeichenloser Werte und -2. Ausstiege ohne Iteration behalten die ursprüngliche Ebene und die Fakten zum Rahmenspeicher; dynamische Schranken und ungültige aktuelle Ebenen werden weiterhin abgelehnt.

@@ -1689,3 +1689,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork`는 x86, x64, ARM, AArch64에서 반복된 긍정 및 부정 질의의 작업량을 제한합니다. 문맥 테스트는 바인딩 값, 진입 SP, 폭 및 예산 0의 거부를 유지하고, 임시 또는 재구축된 실행 가능 그래프와 함수 변경 후 이전 답을 폐기합니다.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects`는 경계 아래의 조기 중단, 센티널 종료, 요청 인덱스를 건너뛰는 부모 링크, 서로 다른 중단 단계의 병합도 검사합니다. 실제로 통과해야 하는 finally 본문이 없으면 계속 거부하며, 건너뛴 정리는 프레임 쓰기 효과를 제공하지 않습니다.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects`는 테이블 밖의 상수 상한, 부호 없는 값의 상위 절반과 -2도 검사합니다. 반복 없는 종료는 원래 단계와 프레임 메모리 사실을 유지하며, 동적 상한과 유효하지 않은 현재 단계는 계속 거부합니다.

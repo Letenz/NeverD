@@ -1795,3 +1795,5 @@ Le regressioni dell’osservatore delle scritture verificano la visibilità prim
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` limita il lavoro ripetuto delle query positive e negative su x86, x64, ARM e AArch64. I test di contesto mantengono i rifiuti per valori vincolati, SP di ingresso, larghezza e budget nullo e scartano le risposte dopo grafi fattibili provvisori o ricostruiti e cambi di funzione.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` verifica anche arresti sotto il limite, uscite sentinella, collegamenti che saltano l’indice richiesto e unioni con livelli finali distinti. I corpi finally mancanti restano rifiutati quando devono essere attraversati; una pulizia saltata non fornisce effetti di scrittura del frame.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` copre anche limiti costanti fuori dalla tabella, la metà superiore senza segno e -2. Le uscite senza iterazioni conservano il livello originale e i fatti della memoria del frame; i limiti dinamici e i livelli correnti non validi restano rifiutati.

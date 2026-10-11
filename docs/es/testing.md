@@ -1800,3 +1800,5 @@ Las regresiones del observador de escrituras verifican la visibilidad antes de l
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` limita el trabajo repetido de consultas positivas y negativas en x86, x64, ARM y AArch64. Las pruebas de contexto mantienen los rechazos por valores vinculados, SP de entrada, ancho y presupuesto cero, y descartan respuestas tras grafos factibles provisionales o reconstruidos y cambios de función.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` también comprueba paradas por debajo del límite, salidas por centinela, enlaces padres que omiten el índice solicitado y uniones con distintos niveles finales. Se siguen rechazando los cuerpos finally ausentes que deban recorrerse; una limpieza omitida no aporta efectos de escritura del marco.
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` también cubre límites constantes fuera de la tabla, la mitad superior sin signo y -2. Las salidas sin iteraciones conservan el nivel original y los hechos de memoria del marco; los límites dinámicos y los niveles actuales no válidos siguen rechazándose.

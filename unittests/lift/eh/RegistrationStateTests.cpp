@@ -1063,7 +1063,7 @@ TEST(RegistrationState, CanonicalNoReturnKeepsExceptionalFlowWithoutBorrowing) {
 }
 
 TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
-  for (unsigned Mutation = 0; Mutation != 25; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 30; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto F = makeBranchingFrame();
     auto &Chain = *F.ExceptionMetadata->Registration;
@@ -1081,10 +1081,13 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
       // _local_unwind2 stops at the sentinel or any level at/below its
       // unsigned threshold. It need not encounter that exact scope index.
       Chain.Scopes.push_back({-1, 0, 0x1800, true});
-      const int32_t From = Mutation == 21 ? 1 : Mutation == 22 ? -1 : 0;
+      const int32_t From = Mutation == 29                     ? 99
+                           : Mutation == 21                   ? 1
+                           : Mutation == 22 || Mutation == 27 ? -1
+                                                              : 0;
       Chain.TryLevelStores.front().Level = From;
       F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(From), 4);
-      if (Mutation == 23) {
+      if (Mutation == 23 || Mutation == 28) {
         Chain.Scopes.push_back({0, 0, 0x1800, true});
         Chain.TryLevelStores.front().Level = 2;
         F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(2, 4);
@@ -1113,9 +1116,14 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     Call.Succs = {2};
     emitOp(Call, 0x1100, NdOp::INT_SUB, NdVar::reg(x86reg::RSP, 4),
            {NdVar::reg(x86reg::RSP, 4), NdVar::cst(4, 4)});
+    // The stopping bound is a numeric comparison operand, not a table index.
+    // Mutation 29 keeps the independent rejection of an invalid current level.
     const auto Level =
-        Mutation == 3   ? NdVar::reg(x86reg::RAX, 4)
-        : Mutation == 2 ? NdVar::cst(99, 4)
+        Mutation == 3                      ? NdVar::reg(x86reg::RAX, 4)
+        : Mutation == 2                    ? NdVar::cst(99, 4)
+        : Mutation == 25                   ? NdVar::cst(0x80000000u, 4)
+        : Mutation == 26 || Mutation == 27 ? NdVar::cst(UINT32_MAX - 1, 4)
+        : Mutation == 28                   ? NdVar::cst(0x7fffffffu, 4)
         : Mutation == 9 || Mutation == 21 || Mutation == 22 || Mutation == 24
             ? NdVar::cst(0, 4)
         : Mutation >= 20 ? NdVar::cst(1, 4)
@@ -1237,7 +1245,8 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
     const std::vector<RegistrationLocalUnwindContract> Calls{{0x2100, false}};
     const auto A =
         analyzeRegistrationStates(F, 0, 0, nullptr, nullptr, nullptr, &Calls);
-    const bool Valid = Mutation == 0 || Mutation == 9 || Mutation >= 18;
+    const bool Valid = Mutation == 0 || Mutation == 2 || Mutation == 9 ||
+                       (Mutation >= 18 && Mutation != 29);
     EXPECT_EQ(A.Complete, Valid);
     EXPECT_FALSE(A.CallFrameEffectsComplete);
     EXPECT_TRUE(A.CallFrameEffects.empty());
@@ -1249,7 +1258,11 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
         if (A.Blocks[2].Levels.size() != 1)
           continue;
         const int32_t ExpectedLevel =
-            Mutation == 9 || Mutation == 20 || Mutation == 23 ? 0 : -1;
+            Mutation == 28 ? 2
+            : Mutation == 2 || Mutation == 9 || Mutation == 20 ||
+                    Mutation == 23 || Mutation == 25 || Mutation == 26
+                ? 0
+                : -1;
         EXPECT_EQ(A.Blocks[2].Levels.front(), ExpectedLevel);
       }
       bool FoundSP = false;
@@ -1270,8 +1283,9 @@ TEST(RegistrationState, LocalUnwindRetiresLevelsAfterCheckedFinallyEffects) {
       EXPECT_TRUE(FoundSP);
       // A zero-step unwind must not inherit the separately analyzed runtime
       // callback's writes; a traversed finally must publish its actual effect.
-      EXPECT_EQ(FoundFinallyWrite,
-                Mutation != 9 && Mutation != 20 && Mutation != 22);
+      EXPECT_EQ(FoundFinallyWrite, Mutation != 2 && Mutation != 9 &&
+                                       Mutation != 20 && Mutation != 22 &&
+                                       Mutation < 25);
     }
   }
 }

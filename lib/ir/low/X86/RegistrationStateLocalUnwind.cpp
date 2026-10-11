@@ -173,8 +173,11 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
       Insn.FirstOp > Block.Ops.size() ||
       Insn.OpCount > Block.Ops.size() - Insn.FirstOp)
     return Refuse();
-  const auto Level = After.Frame.load(*SP.Offset + 4, 4).Constant;
-  if (!Level || !validLevel(int32_t(*Level)) || After.Levels.empty())
+  const auto Bound = After.Frame.load(*SP.Offset + 4, 4).Constant;
+  // Only the current level indexes the scope table. The requested bound may
+  // be any constant uint32_t; rejecting an out-of-table bound changes no-op
+  // unwinds that the runtime accepts. Dynamic bounds remain unproved.
+  if (!Bound || After.Levels.empty())
     return Refuse();
   std::optional<FrameState> Joined;
   std::set<int32_t> StoppedLevels;
@@ -187,7 +190,7 @@ std::optional<FrameValue> RegistrationStateSolver::transferLocalUnwind(
     // EH3's runtime stops at -1, or at any unsigned level not above the
     // requested bound. An enclosing link can skip that bound entirely, and
     // an already retired registration must not execute another finally.
-    while (Walk != -1 && (*Level == UINT32_MAX || uint32_t(Walk) > *Level)) {
+    while (Walk != -1 && (*Bound == UINT32_MAX || uint32_t(Walk) > *Bound)) {
       if (!charge(1) || Walk < 0 || size_t(Walk) >= Chain.Scopes.size() ||
           ++Steps > Chain.Scopes.size())
         return Refuse();

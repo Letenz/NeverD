@@ -1645,3 +1645,5 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` 在 x86、x64、ARM 與 AArch64 上限制重複肯定及否定查詢的工作量。上下文測試保留繫結值、入口 SP、位寬與零預算的拒絕，並在暫時或重建的可行圖及函式切換後捨棄舊答案。
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 也檢查低於邊界的提前停止、哨兵退出、父層級跳過請求索引，以及不同停止層級的合併。實際經過的 finally 函式本體缺失時仍須拒絕；跳過的清理不能提供堆疊框架寫入效果。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 亦涵蓋表外常數上界、無符號高半區及 -2。零步退出保留原層級與框架記憶體事實；動態上界及無效目前層級仍遭拒絕。
