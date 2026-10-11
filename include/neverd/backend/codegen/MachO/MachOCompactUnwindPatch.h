@@ -101,6 +101,13 @@ struct MachOCompactUnwindRegion {
 llvm::Expected<std::optional<MachOCompactUnwindRegion>>
 findMachOCompactUnwindRegion(llvm::ArrayRef<uint8_t> Binary);
 
+/// Explicitly enlarge the declared unwind section into adjacent zero padding
+/// owned by the same mapped segment. Refuses any other section, nonzero byte,
+/// or mapping boundary. Only the section size changes, transactionally; the
+/// ordinary installer still requires declared storage and revalidates it.
+llvm::Error reserveMachOCompactUnwindStorage(std::vector<uint8_t> &Binary,
+                                             uint64_t RequiredSize);
+
 /// Stable failure categories for generated compact-unwind validation.
 enum class MachOCompactUnwindParseFailure : uint8_t {
   InvalidCompiledImage = 0,
@@ -297,6 +304,7 @@ bindMachOCompactUnwindDwarfFDEs(const MachOCompactUnwindRecords &Generated,
 enum class MachOCompactUnwindRangeMode : uint8_t {
   NewSegment = 0,
   SameVAInPlace = 1,
+  AddedFunction = 2,
 };
 
 static_assert(
@@ -312,6 +320,7 @@ static_assert(
 /// still names an exact recipe and requires equal source/destination starts,
 /// but permits the generated range to be shorter than the replaced source
 /// range; the merger then emits an absence boundary when required.
+/// AddedFunction has zero source endpoints and preserves every original row.
 struct MachOCompactUnwindRangeMapping {
   uint64_t SourceVA = 0;
   uint64_t SourceEndVA = 0;
@@ -380,7 +389,8 @@ buildMachOCompactUnwindRangeMappings(
     llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
     const MachOCompactUnwindRecords &Generated,
     llvm::ArrayRef<PatchedFunctionEntry> InstalledTrampolines,
-    llvm::endianness ByteOrder);
+    llvm::endianness ByteOrder,
+    const CompiledImage *SourceCompilation = nullptr);
 
 /// Provenance retained for diagnostics and semantic round-trip validation.
 enum class MachOCompactUnwindRecordOrigin : uint8_t {

@@ -43,6 +43,11 @@ public:
   std::optional<size_t> function(const llvm::Function &Function);
   std::string begin(size_t Event) const;
   std::string end(size_t Event) const;
+  /// \p Text without this recorder's delimiters, held in \p Storage when it
+  /// has any: what the ordinary render prints. An emitter that chooses a
+  /// spelling from operand text must read this, or the delimiters change the
+  /// source it reproduces.
+  llvm::StringRef plain(llvm::StringRef Text, std::string &Storage) const;
   /// A delimiter where a top-level function definition begins.
   std::string definition(std::optional<va_t> Entry);
   std::string definition(const llvm::Function &Function);

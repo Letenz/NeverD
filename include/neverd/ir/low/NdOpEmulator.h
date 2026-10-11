@@ -242,6 +242,8 @@ private:
   std::optional<uint64_t> resolveMemoryAddress(const LowOp &Op,
                                                uint64_t Offset) const;
   bool isX86CanonicalMemoryRange(uint64_t Address, uint64_t Size) const;
+  std::optional<uint64_t> checkX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
+                                                unsigned Alignment, bool Write);
   std::optional<std::vector<uint8_t>>
   loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes, unsigned Alignment);
   void writeOutput(const NdVar &Output, uint64_t Value);

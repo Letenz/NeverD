@@ -457,6 +457,7 @@ TEST(ELFPatch, AppendsAValidatedExecutableSegmentAtThePlannedAddress) {
   const uint64_t NewLoadOff = NewPhOff + 2 * kPhEnt;
   EXPECT_EQ(getU32(Binary, NewLoadOff), llvm::ELF::PT_LOAD);
   EXPECT_EQ(getU32(Binary, NewLoadOff + 4), llvm::ELF::PF_R | llvm::ELF::PF_X);
+  EXPECT_EQ(getU64(Binary, NewLoadOff + 32), getU64(Binary, NewLoadOff + 40));
   EXPECT_EQ(getU64(Binary, NewLoadOff + 16) + 3 * kPhEnt, Planned);
   ASSERT_LE(NewPhOff + 3 * kPhEnt + Code.size(), Binary.size());
   EXPECT_TRUE(std::equal(Code.begin(), Code.end(),

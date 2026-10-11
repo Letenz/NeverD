@@ -121,17 +121,30 @@ struct TargetCodegenInfo {
         !rangeInBounds(FromOff, TrampolineSize, Data.size()))
       return false;
     if (TheArch == Arch::X64 || TheArch == Arch::X86) {
-      int32_t Disp =
-          static_cast<int32_t>(TargetVA - (FromVA + x86::kJmpRel32Len));
+      if (TheArch == Arch::X86 &&
+          (FromVA > UINT32_MAX || TargetVA > UINT32_MAX))
+        return false;
+      if (FromVA > UINT64_MAX - x86::kJmpRel32Len)
+        return false;
+      const uint64_t NextVA = FromVA + x86::kJmpRel32Len;
+      if (TheArch == Arch::X64 &&
+          ((TargetVA >= NextVA && TargetVA - NextVA > INT32_MAX) ||
+           (TargetVA < NextVA && NextVA - TargetVA > uint64_t(INT32_MAX) + 1)))
+        return false;
+      int32_t Disp = static_cast<int32_t>(TargetVA - NextVA);
       Data[FromOff] = x86::kJmpRel32;
       writeLE<int32_t>(Data.data() + FromOff + 1, Disp);
       return true;
     }
     if (TheArch == Arch::AArch64) {
-      int64_t Diff =
-          static_cast<int64_t>(TargetVA) - static_cast<int64_t>(FromVA);
-      if (Diff < -aarch64::kBranchRange || Diff >= aarch64::kBranchRange)
+      if ((FromVA & 3) || (TargetVA & 3))
         return false;
+      const bool Forward = TargetVA >= FromVA;
+      const uint64_t Distance = Forward ? TargetVA - FromVA : FromVA - TargetVA;
+      if ((Forward && Distance >= uint64_t(aarch64::kBranchRange)) ||
+          (!Forward && Distance > uint64_t(aarch64::kBranchRange)))
+        return false;
+      const int64_t Diff = Forward ? int64_t(Distance) : -int64_t(Distance);
       uint32_t Imm26 = static_cast<uint32_t>((Diff >> 2) & aarch64::kImm26Mask);
       writeLE<uint32_t>(Data.data() + FromOff, aarch64::kB_Op | Imm26);
       return true;

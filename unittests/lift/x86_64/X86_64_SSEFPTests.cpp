@@ -59,46 +59,37 @@ TEST_F(X86_64_SSE_FP, AllStagesPass) {
 TEST_F(X86_64_SSE_FP, NoUnlifted) { verifyNoUnlifted(testObj()); }
 
 TEST_F(X86_64_SSE_FP, AddsdHasFloatAdd) {
-  verifyScalarFPState(testObj(), "test_addsd",
-                      neverd::Intrinsic::X86FPAddState);
+  verifyFPState(testObj(), "test_addsd", neverd::Intrinsic::X86FPAddState);
 }
 
 TEST_F(X86_64_SSE_FP, SubsdHasFloatSub) {
-  verifyScalarFPState(testObj(), "test_subsd",
-                      neverd::Intrinsic::X86FPSubState);
+  verifyFPState(testObj(), "test_subsd", neverd::Intrinsic::X86FPSubState);
 }
 
 TEST_F(X86_64_SSE_FP, MulsdHasFloatMult) {
-  verifyScalarFPState(testObj(), "test_mulsd",
-                      neverd::Intrinsic::X86FPMulState);
+  verifyFPState(testObj(), "test_mulsd", neverd::Intrinsic::X86FPMulState);
 }
 
 TEST_F(X86_64_SSE_FP, DivsdHasFloatDiv) {
-  verifyScalarFPState(testObj(), "test_divsd",
-                      neverd::Intrinsic::X86FPDivState);
+  verifyFPState(testObj(), "test_divsd", neverd::Intrinsic::X86FPDivState);
 }
 
 TEST_F(X86_64_SSE_FP, AddssHasFloatAdd) {
-  verifyScalarFPState(testObj(), "test_addss",
-                      neverd::Intrinsic::X86FPAddState);
+  verifyFPState(testObj(), "test_addss", neverd::Intrinsic::X86FPAddState);
 }
 
 TEST_F(X86_64_SSE_FP, MulssHasFloatMult) {
-  verifyScalarFPState(testObj(), "test_mulss",
-                      neverd::Intrinsic::X86FPMulState);
+  verifyFPState(testObj(), "test_mulss", neverd::Intrinsic::X86FPMulState);
 }
 
 TEST_F(X86_64_SSE_FP, Cvtsd2siHasTrunc) {
-  verifyScalarFPState(testObj(), "test_cvtsd2si",
-                      neverd::Intrinsic::X86FPCvtToIntState);
+  verifyFPState(testObj(), "test_cvtsd2si",
+                neverd::Intrinsic::X86FPCvtToIntState);
 }
 
-TEST_F(X86_64_SSE_FP, Cvtsi2sdHasInt2Float) {
-  auto r = liftToLowIR(testObj());
-  ASSERT_EQ(r.exitCode, 0);
-  EXPECT_TRUE(r.out.find("FLOAT_INT2FLOAT") != std::string::npos ||
-              r.out.find("INT2FLOAT") != std::string::npos)
-      << "CVTSI2SD should convert int to float";
+TEST_F(X86_64_SSE_FP, Cvtsi2sdRetainsNumericalAndMxcsrCompletion) {
+  verifyFPState(testObj(), "test_cvtsi2sd",
+                neverd::Intrinsic::X86FPScalarConvertState, 5);
 }
 
 TEST_F(X86_64_SSE_FP, NoUnreachableInFunctions) {

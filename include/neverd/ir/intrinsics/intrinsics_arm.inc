@@ -81,3 +81,7 @@ ArmStc, ArmStc2, ArmStc2l,
 
 // The unsigned fixed-point estimates on u32 lanes (VRECPE.U32, VRSQRTE.U32).
 ArmUrecpe, ArmUrsqrte,
+
+// A Linux EABI supervisor call: the number in r7, the arguments in r0-r6 and
+// the result in r0 (MedSyscallConvention.h).
+ArmLinuxSyscall,

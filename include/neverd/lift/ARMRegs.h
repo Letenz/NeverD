@@ -76,6 +76,21 @@ constexpr uint64_t GEFLAG(unsigned N) { return GE0FLAG + N; }
 
 /// Upper bound (exclusive) of the combined GPR+flag offset range.
 constexpr uint64_t RegSpaceEnd = GE3FLAG + 1;
+
+/// The value an instruction at \p Addr reads from PC: its address plus 8 in
+/// A32 and plus 4 in T32, also for a 32-bit T32 instruction that begins at
+/// the second halfword of a word.
+inline uint32_t pcReadValue(va_t Addr, InstructionMode Mode) {
+  return static_cast<uint32_t>(Addr) +
+         (Mode == InstructionMode::Thumb ? 4u : 8u);
+}
+
+/// The base a PC-relative literal access (LDR literal, ADR, VLDR, PLD) adds
+/// its offset to: the PC value aligned down to a word, which differs from it
+/// only in T32.
+inline uint32_t literalBase(va_t Addr, InstructionMode Mode) {
+  return pcReadValue(Addr, Mode) & ~uint32_t{3};
+}
 } // namespace armreg
 
 RegInfo mapCapstoneReg(arm_reg Reg);

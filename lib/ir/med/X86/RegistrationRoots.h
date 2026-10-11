@@ -14,6 +14,12 @@
 
 namespace neverd::x86_registration {
 
+/// Bind a registration no-return receipt to the current decoded call. This
+/// does not grant a memory-effect or restored-frame projection.
+bool hasNoReturnCallEffect(const LowFunc &Low, const LowBlock &Block,
+                           size_t OpIndex,
+                           const LowInstructionBoundary &Boundary);
+
 /// Classification and source-proved runtime coordinates for SSA live-ins.
 /// Ordinary module entries retain their independent calling convention.
 class RegistrationRoots {
@@ -26,17 +32,19 @@ public:
   /// call. Keep exceptional edges and continuation blocks for SSA rooting.
   void disconnectNoReturnFallthroughs(MedFunc &Func) const;
   bool isCxxHandler(const MedBlock &Block) const;
-  std::optional<int32_t> restoredStackOffset(const MedBlock &Block) const;
+  std::optional<std::pair<va_t, int32_t>>
+  restoredStack(const MedBlock &Block) const;
   void initialize(MedOp &Op, bool RuntimeRoot, bool Callback,
-                  std::optional<int32_t> RestoredSP) const;
+                  std::optional<std::pair<va_t, int32_t>> RestoredSP) const;
 
 private:
+  void removeUnreachedBlocks(MedFunc &Func) const;
   const LowFunc &Low;
   bool HasSEHFrame = false;
   bool HasCxxFrame = false;
   bool Direct = false;
   bool Realigned = false;
-  std::map<va_t, std::optional<int32_t>> RestoredStacks;
+  std::map<va_t, std::optional<std::pair<va_t, int32_t>>> RestoredStacks;
 };
 
 } // namespace neverd::x86_registration

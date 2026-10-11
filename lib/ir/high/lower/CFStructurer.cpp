@@ -35,9 +35,14 @@ std::vector<HighStmt>
 MedToHighConverter::phiCopiesForEdge(int From, int To, va_t At,
                                      const PhiCopyMap &PhiCopies) {
   std::vector<HighStmt> Copies;
+  // A shared dispatch's selector, which no PHI reads, is set last.
+  const auto Selector = DispatchSelectorCopies.find({From, To});
   auto It = PhiCopies.find({From, To});
-  if (It == PhiCopies.end())
+  if (It == PhiCopies.end()) {
+    if (Selector != DispatchSelectorCopies.end())
+      Copies = Selector->second;
     return Copies;
+  }
   VarKeySet Destinations;
   for (const auto &[Output, Argument] : It->second)
     Destinations.insert(varKey(Output));
@@ -83,6 +88,9 @@ MedToHighConverter::phiCopiesForEdge(int From, int To, va_t At,
     Writes.push_back(std::move(Copy));
   }
   Copies.insert(Copies.end(), Writes.begin(), Writes.end());
+  if (Selector != DispatchSelectorCopies.end())
+    Copies.insert(Copies.end(), Selector->second.begin(),
+                  Selector->second.end());
   return Copies;
 }
 
@@ -639,6 +647,8 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
       Regions.push_back(
           {EntryOf(Med.Blocks[Tree.Default.To]), Tree.Default.Region});
   }
+
+  planDispatchSelectors(Med);
 
   std::set<int> Dispatched = TreeInterior;
   for (const auto &[Root, Tree] : TreeAt)
