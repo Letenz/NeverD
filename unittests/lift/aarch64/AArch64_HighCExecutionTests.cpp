@@ -34,3 +34,25 @@ int lane(int a) {
 )C",
                        "lane", {"lane"});
 }
+
+// The writer's pointer arrives in x0, which it never writes, and its caller
+// reads nothing it returns: it returns no value.
+TEST_F(AArch64_HighCExecution, AWriterThroughItsPointerReturnsNoValue) {
+  expectRunsLikeSource(R"C(
+void upd4(long *s, int n) __attribute__((noinline));
+int structptr(int x) {
+  long s[4] = {x, x + 1, x + 2, x + 3};
+  upd4(s, 12);
+  return (int)(s[0] ^ s[1] ^ s[2] ^ s[3]);
+}
+void upd4(long *s, int n) {
+  for (int i = 0; i < n; i++) {
+    s[0] = s[0] * 3 + s[1];
+    s[1] ^= s[0];
+    s[2] += s[0];
+    s[3] -= s[1];
+  }
+}
+)C",
+                       "structptr", {"structptr", "upd4"});
+}
