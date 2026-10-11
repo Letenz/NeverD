@@ -1988,7 +1988,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all41 other file routes and direct/file-backed mappings closed / typed streams only
+all42 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -2031,9 +2031,9 @@ native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 
 Raw BSD `poll` (230) and `poll_nocancel` (417) support timeout low int32=0. The descriptor owner decodes nfds as uint32. Counts above OPEN_MAX10240 return EINVAL22 before pointers. Positive counts require explicit `darwin_system.resource_limits` resource8 Current; omission is unknown. Above Current, counts over FD_SETSIZE1024 return EINVAL; smaller counts require the original explicit effective UID, with nonzero returning EINVAL and zero admitted. This root exception is source/model evidence only. DescriptorLimit, kern.maxfilesperproc, FD numeric value and execution budgets do not supply this observation. Zero count touches no array pointer. Nonzero timeout is unsupported after count admission.
 
-The constructive virtual regular-file provider explicitly represents nonrevoked descriptions with successful ordinary read/write filter attachment and no MAC/provider refusal. A regular native vnode kind alone does not establish registration success. Under this premise, IN/RDNORM and OUT/WRBAND are ready even at EOF or through read-only opens; remaining bytes, access flags, O_NONBLOCK and write grants do not determine readiness. Filter keys are numeric FD plus read/write kind: each keeps its last requesting row independently; distinct dup aliases do not coalesce. HUP alone registers a read filter without a ready bit. Negative FDs and ignored-only requests yield zero; closed registrations yield POLLNVAL32 per row. Live OOB/vnode requests and stream/directory/symbolic providers stop unsupported before any output. The entire eight-byte-record input is snapshotted; incomplete input or whole unwritable output returns EFAULT14, while partial output is refused without copying a prefix. Whole copyout preserves fd/events and replaces all revents. Both static permission-query modes close Poll before preflight, including zero count; their shared inventory now has41 closed file routes.
+The constructive virtual regular-file provider explicitly represents nonrevoked descriptions with successful ordinary read/write filter attachment and no MAC/provider refusal. A regular native vnode kind alone does not establish registration success. Under this premise, IN/RDNORM and OUT/WRBAND are ready even at EOF or through read-only opens; remaining bytes, access flags, O_NONBLOCK and write grants do not determine readiness. Filter keys are numeric FD plus read/write kind: each keeps its last requesting row independently; distinct dup aliases do not coalesce. HUP alone registers a read filter without a ready bit. Negative FDs and ignored-only requests yield zero; closed registrations yield POLLNVAL32 per row. Live OOB/vnode requests and stream/directory/symbolic providers stop unsupported before any output. The entire eight-byte-record input is snapshotted; incomplete input or whole unwritable output returns EFAULT14, while partial output is refused without copying a prefix. Whole copyout preserves fd/events and replaces all revents. Both static permission-query modes close Poll before preflight, including zero count; their shared inventory now has42 closed file routes.
 
-The SDK-free immediate-poll workload covers86 events across five software profiles and three mandatory ARM64 HVF profiles, with C/CLI and Python checks and one new common native reference, bringing the current common inventory to59. The independent O0/O1/O2 ARM64 probe retains582 mixed literal ABI/error controls and regular-provider captures; these are not universal readiness constants. Older58-case proofs retain their original source identity. Failed source-download and initial native-timeout attempts remain preserved; deadlines were not enlarged. Native Intel HVF, physical iOS, revoked/MAC/refused vnode registration, select, blocking waits, asynchronous providers, networking, advancing clocks, real Mach IPC/threads, dyld/TLS and complete frameworks remain unverified or unfinished.
+The SDK-free immediate-poll workload retains86 events; its original common inventory was59, and immediate-select adds one case for60 current native-common cases. The independent ARM64 O0/O1/O2 poll582 and select792 observations remain separate mixed literal ABI/error controls and provider captures, never universal provider constants. Earlier58/59 proofs retain their original source identities, failed attempts and deadlines. Native Intel HVF and physical iOS remain unverified. Revocation/MAC/refused providers, waiting, pselect, asynchronous readiness, networking, advancing clocks, real Mach IPC/threads, dyld/TLS and full frameworks remain unfinished.
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -2043,10 +2043,33 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all41 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all42 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-59 current native-common cases / prior58 source identity preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / waits select revoked-MAC-provider failures networking unfinished
+60 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## Immediate ordinary-file select
+
+Raw BSD `select`93 and `select_nocancel`407 admit only a supplied zero timeval and a nonnegative signed low32 count. Pointers remain full64. The LP64 timeval is16 bytes: signed64 seconds at0, signed32 microseconds at8 and ignored padding at12. Seconds must be0..100000000 and microseconds0..999999. Timeval import and validation precede negative-count EINVAL22; incomplete import returns EFAULT14. Null or positive timeouts stop unsupported. Count0 accesses no set pointer. A current live FD proves only an `fd_nfiles` lower bound: positive count cannot exceed the largest live key plus1. Closing a high FD narrows this proof without claiming native allocation shrinks. NOFILE, model budgets and vnode kind do not supply capacity or provider facts.
+
+Each set contains little-endian32-bit masks, rounded to whole words. All nonnull sets are snapshotted before any selected-FD check, and every selected FD is checked before any provider interpretation. A missing FD yields EBADF9; selected streams, directories and symbolic descriptions are unsupported. Constructive ordinary descriptions declare a pure, nonrefusing select provider returning nonzero for read, write and exception. This is separate from poll filter readiness. Count selected bits across sets and distinct dup numbers, including readonly/nonblocking descriptions at EOF, without changing offset, flags, bytes or metadata. Clear unused tail bits within copied words and preserve every byte outside them.
+
+Output ranges must be disjoint from one another and the16-byte timeval. Check every output's complete permissions before any write. Partial output, including an unwritable prefix with a writable tail, is unsupported before all copyouts. A zero writable prefix alone does not prove an entirely unwritable range. For admitted whole ranges, attempt read/write/exception copyout in order: an entirely unwritable set yields EFAULT14, later writable sets still change, and the first error is retained. Both static permission-query modes close Select before preflight; their shared inventory has42 closed routes. The SDK-free workload checks115 ordered events through five software and three required ARM64 HVF profiles, C, CLI and Python. Its full guard objects check unused words as well as copied bits. Waiting, `pselect`, asynchronous providers and full OS compatibility remain incomplete.
+
+```text
+select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
+current live FD lower bound / no guessed fd_nfiles allocation or NOFILE capacity
+read write exception / bit count across sets / distinct dup numbers
+all copyins before all descriptor checks / all checks before provider interpretation
+partial outputs and overlaps unsupported before all output / zero prefix is not whole unwritable
+ordered read write exception copyout / first EFAULT14 after later whole writable copies
+792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
+immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
+60 current native-common cases / 75 mandatory workloads per platform / ARM64225 / Intel150 unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).

@@ -2648,6 +2648,90 @@ TEST_P(DarwinProcess,
   EXPECT_FALSE(Missing->Services.back().Error);
 }
 
+TEST_P(DarwinProcess,
+       ImmediateSelectPreservesBitmapsCopiesAndProviderPremises) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinFiles.emplace().Files["/data"] = {'a', 'b', 0, 0xff, 'e', 'f'};
+  Options.Arguments[2] = "/data";
+  const bool X64 = GetParam().ISA == GuestArchitecture::X64;
+  const uint64_t Class = X64 ? 0x2000000 : 0;
+  constexpr uint64_t Expected[] = {0,  3,  6,  3,  6,  9,  9, 12,
+                                   22, 14, 22, 22, 14, 14, 9};
+  constexpr uint32_t Counts[] = {0, 4,          5,          31, 32, 33, 64, 65,
+                                 0, UINT32_MAX, UINT32_MAX, 0,  4,  6,  6};
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("immediate-select");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, "s");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 115u);
+    for (unsigned I = 0; I != 3; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | (I ? 41 : 5));
+      EXPECT_EQ(R->Services[I].Result, 3u + I);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned I = 0; I != 3; ++I) {
+      EXPECT_EQ(R->Services[4 + I].Number, Class | 92);
+      EXPECT_EQ(R->Services[4 + I].Result, I == 0 ? 31u : I == 1 ? 32u : 64u);
+    }
+    EXPECT_EQ(R->Services[7].Number, Class | 199);
+    EXPECT_EQ(R->Services[7].Result, 6u);
+    EXPECT_EQ(R->Services[7].Arguments[2], 2u);
+    for (unsigned API = 0; API != 2; ++API)
+      for (unsigned H = 0; H != 3; ++H)
+        for (unsigned I = 0; I != 15; ++I) {
+          const auto &E = R->Services[9 + (API * 3 + H) * 15 + I];
+          EXPECT_EQ(E.Number, High[H] | Class | (API ? 407 : 93));
+          EXPECT_EQ(E.Result, Expected[I]);
+          EXPECT_EQ(E.Error, I >= 8);
+          EXPECT_EQ(E.Arguments[0], High[H] | Counts[I]);
+          EXPECT_EQ(E.Arguments[5], UINT64_MAX);
+          if (I == 9)
+            EXPECT_EQ(E.Arguments[4], UINT64_MAX);
+          else
+            EXPECT_NE(E.Arguments[4], 0u);
+        }
+    EXPECT_EQ(R->Services[99].Number, Class | 199);
+    EXPECT_EQ(R->Services[99].Result, 6u);
+    EXPECT_EQ(R->Services[100].Number, Class | 92);
+    EXPECT_EQ(R->Services[100].Result, 4u);
+    for (unsigned I = 0; I != 4; ++I) {
+      const auto &E = R->Services[102 + I];
+      EXPECT_EQ(E.Number, Class | (I < 2 ? 93 : 407));
+      EXPECT_EQ(E.Result, I % 2 ? 3u : 9u);
+      EXPECT_EQ(E.Error, !(I % 2));
+    }
+    EXPECT_EQ(R->Services[106].Number, Class | 5);
+    EXPECT_EQ(R->Services[106].Result, 3u);
+    EXPECT_EQ(R->Services[107].Result, 0u);
+    EXPECT_EQ(R->Services[108].Result, 6u);
+  }
+  for (bool Capacity : {false, true}) {
+    auto R =
+        run(Capacity ? "immediate-select-capacity" : "immediate-select-wait");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic,
+              Capacity
+                  ? "Darwin select descriptor table capacity is not modeled"
+                  : "Darwin select waiting is not implemented");
+    EXPECT_EQ(R->StandardOutput, "!");
+    EXPECT_TRUE(R->StandardError.empty());
+    ASSERT_EQ(R->Services.size(), 2u);
+    const auto &E = R->Services.back();
+    EXPECT_EQ(E.Number, Class | (Capacity ? 407 : 93));
+    EXPECT_EQ(E.Arguments[0], Capacity ? 4u : 0u);
+    EXPECT_EQ(E.Arguments[1], UINT64_MAX);
+    EXPECT_FALSE(E.Result);
+    EXPECT_FALSE(E.Error);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(Transports, DarwinProcess,
                          testing::ValuesIn(profiles()),
                          [](const testing::TestParamInfo<Profile> &P) {

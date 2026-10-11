@@ -134,3 +134,5 @@ NEVERD_NATIVE_DARWIN_CASE(
 
 NEVERD_NATIVE_DARWIN_CASE(
     ImmediatePollPreservesFiltersCopiesAndExplicitResourceKnowledge)
+NEVERD_NATIVE_DARWIN_CASE(
+    ImmediateSelectPreservesBitmapsCopiesAndProviderPremises)

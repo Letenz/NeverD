@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: c5503091e713c63aa7b08a8cbd5fab1b5cc3c8d8950bb7da4fe754dbe5787137 -->
+<!-- i18n-source: a768f2f08717e9ceca01159b9afedc4a83151c3a67ebc993ee4d132d1eaae44f -->
 
 [← 文件索引](README.md)
 
@@ -1126,7 +1126,7 @@ owner bits / whole-mask group-world outcomes / EACCES13
 credentials.groups / in-credential16 / EffectiveGID index0 / duplicates retained
 real credential copy / first supplementary match / displacement disables memberd
 missing membership usually unknown / original NONE or displaced real plus complete list proves negatives
-all41 other file routes and direct/file-backed mappings closed / typed streams only
+all42 other file routes and direct/file-backed mappings closed / typed streams only
 ordinary-queries / ordinary-query-unknown / ordinary-query-open / ordinary-query-map
 OrdinaryQueriesPreserveGroupKnowledgeAndSelectedSearch
 73 mandatory workloads per platform / ARM64 219 / Intel 146 unverified
@@ -1169,9 +1169,9 @@ native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 
 原始 BSD poll(230) 與 poll_nocancel(417) 支援 timeout 的 low int32=0。描述元所有者把 nfds 解碼為 uint32；超過 OPEN_MAX10240 先傳回 EINVAL22，不存取指標。正數項目需要明確 darwin_system.resource_limits 資源8 Current，省略代表未知。超過 Current 時，項目數大於 FD_SETSIZE1024 傳回 EINVAL；較小項目數需要原始明確有效 UID，非零傳回 EINVAL，零允許繼續。root 例外只有原始碼/模型證據。DescriptorLimit、kern.maxfilesperproc、FD 數值與執行預算不提供此觀測。零項目不存取陣列；非零逾時在項目准入後報告不支援。
 
-建構的虛擬一般檔案明確採用未撤銷、一般讀寫過濾器註冊成功、沒有 MAC 或提供方拒絕的契約；原生 vnode 類型本身不能證明註冊成功。此前提下 IN/RDNORM、OUT/WRBAND 在 EOF 或唯讀開啟時也就緒，不由剩餘位元組、存取旗標、O_NONBLOCK 或寫入授權推斷。過濾器依數字 FD 與讀/寫類別各自保留最後請求位置，不合併 dup 的不同 FD。單獨 HUP 登記讀過濾器但不輸出就緒位元。負 FD 與僅忽略位元為零；關閉 FD 的有效登記逐項回傳 POLLNVAL32。活動 OOB/vnode、串流、目錄和符號連結提供方在任何輸出前拒絕。先完整快照八位元組記錄；輸入不完整或輸出完全不可寫回傳 EFAULT14，部分輸出拒絕且不複製前綴。完整複製保留 fd/events，替換全部 revents。兩種靜態權限查詢模式於預檢前關閉 Poll，包含零項目；共享清單現有41條關閉路由。
+建構的虛擬一般檔案明確採用未撤銷、一般讀寫過濾器註冊成功、沒有 MAC 或提供方拒絕的契約；原生 vnode 類型本身不能證明註冊成功。此前提下 IN/RDNORM、OUT/WRBAND 在 EOF 或唯讀開啟時也就緒，不由剩餘位元組、存取旗標、O_NONBLOCK 或寫入授權推斷。過濾器依數字 FD 與讀/寫類別各自保留最後請求位置，不合併 dup 的不同 FD。單獨 HUP 登記讀過濾器但不輸出就緒位元。負 FD 與僅忽略位元為零；關閉 FD 的有效登記逐項回傳 POLLNVAL32。活動 OOB/vnode、串流、目錄和符號連結提供方在任何輸出前拒絕。先完整快照八位元組記錄；輸入不完整或輸出完全不可寫回傳 EFAULT14，部分輸出拒絕且不複製前綴。完整複製保留 fd/events，替換全部 revents。兩種靜態權限查詢模式於預檢前關閉 Poll，包含零項目；共享清單現有42條關閉路由。
 
-無 SDK 的 immediate-poll 工作負載涵蓋86事件、五個軟體設定和三個必需 ARM64 HVF 設定，含 C/CLI/Python 檢查，新增一個共同原生參考，使目前清單成為59例。獨立 O0/O1/O2 ARM64 探針保留582次混合字面 ABI/錯誤控制及一般提供方觀測，不是通用就緒常數。舊58例證明保留原始碼身分；下載失敗與首次原生逾時亦保留，未延長時限。原生 Intel HVF、實體 iOS、撤銷/MAC/註冊拒絕、select、阻塞等待、非同步提供方、網路、推進時鐘、真實 Mach IPC/執行緒、dyld/TLS 和完整框架仍未驗證或未完成。
+無 SDK 的 immediate-poll 保留86個事件；原清單為59例，immediate-select 新增一例，現有公共原生清單為60例。獨立 ARM64 O0/O1/O2 poll582次及 select792次觀測分別保留字面 ABI/錯誤控制與提供方捕獲，不是通用常數。舊58/59例證明保留原始碼身分、失敗嘗試與原時限。原生 Intel HVF、實體 iOS 未驗證；撤銷/MAC/提供方拒絕、等待、pselect、非同步就緒、網路、推進時鐘、真實 Mach IPC/執行緒、dyld/TLS 與完整框架未完成。
 
 ```text
 poll230 / poll_nocancel417 / timeout low int32=0 / nfds uint32
@@ -1181,10 +1181,33 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all41 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all42 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-59 current native-common cases / prior58 source identity preserved / 582 mixed controls and captures
-native Intel and physical iOS unverified / waits select revoked-MAC-provider failures networking unfinished
+60 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+native Intel and physical iOS unverified / select waits pselect revoked-MAC-provider failures networking unfinished
 ```
 
 [XNU poll ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/poll.h), [poll registration and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [vnode registration and regular filters](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).
+
+## 普通檔案的即時 select
+
+原始 BSD `select`93 與 `select_nocancel`407 僅接受明確零 timeval 與非負的有號低32位數量；指標保留完整64位。LP64 timeval 為16位元組：偏移0為有號64位秒，偏移8為有號32位微秒，偏移12填補忽略且不改寫。秒範圍0..100000000，微秒範圍0..999999。先匯入及驗證 timeval，再處理負數的 EINVAL22；不完整匯入為 EFAULT14。空指標或正逾時明確不支援，數量0不存取位圖。最高活動 FD 加1僅證明 `fd_nfiles` 下界；關閉高 FD 縮小此證明，並非原生分配容量縮小。NOFILE、預算及 vnode 類型不提供容量或提供方事實。
+
+小端32位遮罩向完整字取整。先快照全部非空輸入，再檢查所有選中 FD，最後解讀提供方；缺少 FD 為 EBADF9，選中的串流、目錄及符號描述符不支援。構造的普通描述符明確宣告純粹且不會拒絕的 select 提供方，對讀、寫、例外均回傳非零；此規則獨立於 poll。跨三組及不同 dup 編號逐位計數，包含唯讀、非阻塞與 EOF，不改變偏移、旗標、內容及中繼資料。清除複製字內尾位，保留外部全部位元組。
+
+輸出之間及輸出與16位元組 timeval 不得重疊。寫入前檢查所有完整輸出權限；部分可寫，包括不可寫前綴後有可寫尾部，皆在全部複製前拒絕。可寫前綴為0不足以證明整段不可寫。整段依讀、寫、例外順序嘗試複製；完全不可寫的組回傳 EFAULT14，後方可寫組仍更新並保留首個錯誤。兩種靜態查詢模式於預檢前關閉 Select，共42條關閉路由。無 SDK 樣例由五個軟體、三個必要 ARM64 HVF 設定與 C、CLI、Python 檢查115個有序事件及完整保護物件。等待、`pselect`、非同步提供方與完整作業系統仍未完成。
+
+```text
+select93 / select_nocancel407 / zero supplied user64_timeval16 / signed low32 count
+current live FD lower bound / no guessed fd_nfiles allocation or NOFILE capacity
+read write exception / bit count across sets / distinct dup numbers
+all copyins before all descriptor checks / all checks before provider interpretation
+partial outputs and overlaps unsupported before all output / zero prefix is not whole unwritable
+ordered read write exception copyout / first EFAULT14 after later whole writable copies
+792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
+immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
+60 current native-common cases / 75 mandatory workloads per platform / ARM64225 / Intel150 unverified
+native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
+```
+
+[XNU select and copy order](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/sys_generic.c), [FD mask ABI](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/_types/_fd_def.h), [user64 timeval](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/time.h), [ordinary select provider](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_vnops.c).

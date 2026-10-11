@@ -299,6 +299,8 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   poll(const ProcessServiceEvent &Event,
        const std::optional<DarwinSystemOptions> &System, ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  select(const ProcessServiceEvent &Event, ProcessResult &Result);
   std::optional<ServiceResult> pathconf(const Description &File, uint32_t Name,
                                         ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
