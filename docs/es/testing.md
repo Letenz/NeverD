@@ -1804,3 +1804,5 @@ Las regresiones del observador de escrituras verifican la visibilidad antes de l
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` también comprueba paradas por debajo del límite, salidas por centinela, enlaces padres que omiten el índice solicitado y uniones con distintos niveles finales. Se siguen rechazando los cuerpos finally ausentes que deban recorrerse; una limpieza omitida no aporta efectos de escritura del marco.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` también cubre límites constantes fuera de la tabla, la mitad superior sin signo y -2. Las salidas sin iteraciones conservan el nivel original y los hechos de memoria del marco; los límites dinámicos y los niveles actuales no válidos siguen rechazándose.
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` comprueba centinelas incorrectos, ciclos, enlaces futuros/fuera de rango, niveles iniciales y roles de manejador/filtro pese a un estado de análisis completo. Los controles de ámbito inicial activo y tabla vacía conservan los centinelas válidos EH3/EH4.

@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/lift/X86Regs.h"
+#include "neverd/loader/RegistrationScopeGraph.h"
 
 #include <algorithm>
 #include <utility>
@@ -133,6 +134,16 @@ bool RegistrationStateSolver::initialize() {
       Result.Diagnostics.push_back("C++ registration state graph is invalid");
       return false;
     }
+  }
+  if (!KnownCxx) {
+    if (!charge(StateCount + 1) ||
+        !hasValidRegistrationScopeGraph(Chain, EH4)) {
+      Result.Diagnostics.push_back("invalid SEH registration scope graph");
+      return false;
+    }
+    // The frame sentinel remains a valid state even if installation starts
+    // directly in a checked active scope.
+    AllLevels.insert(registrationOutsideTryLevel(EH4));
   }
   AllLevels.insert(*Chain.SeededTryLevel);
   for (size_t I = 0; I < StateCount; ++I)

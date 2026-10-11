@@ -533,6 +533,78 @@ RegistrationCalleeFrameContract objectLeafContract() {
   C.ImageWrites = {{0x3000, 0x3004}};
   return C;
 }
+
+TEST(RegistrationState, MalformedSEHScopeGraphsPublishNoStateFacts) {
+  for (bool EH4 : {false, true}) {
+    const auto Base = EH4 ? makeCookieFrame() : makeBranchingFrame();
+    ASSERT_TRUE(analyzeRegistrationStates(Base, EH4 ? 0x4000 : 0).Complete);
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+      SCOPED_TRACE(EH4);
+      SCOPED_TRACE(Mutation);
+      auto F = Base;
+      auto &Chain = *F.ExceptionMetadata->Registration;
+      const int32_t InvalidLevels[] = {EH4 ? -1 : -2, -3, 0, 1, 99};
+      if (Mutation < 5)
+        Chain.Scopes[0].EnclosingLevel = InvalidLevels[Mutation];
+      else if (Mutation == 5)
+        Chain.Scopes[0].HandlerVA = 0;
+      else if (Mutation == 6)
+        Chain.Scopes[0].IsFinally = !Chain.Scopes[0].IsFinally;
+      else if (Mutation == 7)
+        Chain.SeededTryLevel = EH4 ? -1 : -2;
+      else if (Mutation == 8)
+        Chain.SeededTryLevel = 1;
+      else
+        Chain.Scopes[0].HandlerVA = InvalidVA;
+      const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+      EXPECT_FALSE(A.Complete);
+      EXPECT_FALSE(A.RegistrationLifetimeComplete);
+      EXPECT_TRUE(A.Blocks.empty());
+      EXPECT_TRUE(A.FrameValues.empty());
+      EXPECT_TRUE(std::any_of(
+          A.Diagnostics.begin(), A.Diagnostics.end(), [](const std::string &D) {
+            return D.find("scope graph") != std::string::npos;
+          }));
+    }
+  }
+}
+
+TEST(RegistrationState, InitialActiveSEHScopeRetainsItsFrameSentinel) {
+  for (bool EH4 : {false, true}) {
+    auto F = EH4 ? makeCookieFrame() : makeBranchingFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    const int32_t Outside = EH4 ? -2 : -1;
+    Chain.SeededTryLevel = 0;
+    for (auto &Op : F.Blocks[0].Ops)
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+          Op.Inputs[1].isConst() && Op.Inputs[1].Size == 4 &&
+          Op.Inputs[1].Offset == uint32_t(Outside))
+        Op.Inputs[1] = NdVar::cst(0, 4);
+    const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+    ASSERT_TRUE(A.Complete);
+    ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside, 0}));
+    if (EH4)
+      EXPECT_TRUE(A.SecurityCookiesComplete);
+  }
+}
+
+TEST(RegistrationState, EmptySEHScopeTableKeepsItsOutsideState) {
+  for (bool EH4 : {false, true}) {
+    auto F = EH4 ? makeCookieFrame() : makeBranchingFrame();
+    auto &Chain = *F.ExceptionMetadata->Registration;
+    const int32_t Outside = EH4 ? -2 : -1;
+    Chain.Scopes.clear();
+    Chain.TryLevelStores[0].Level = Outside;
+    F.Blocks[1].Ops.back().Inputs[1] = NdVar::cst(uint32_t(Outside), 4);
+    const auto A = analyzeRegistrationStates(F, EH4 ? 0x4000 : 0);
+    ASSERT_TRUE(A.Complete);
+    ASSERT_EQ(A.Blocks.size(), F.Blocks.size());
+    EXPECT_EQ(A.Blocks.back().Levels, (std::vector<int32_t>{Outside}));
+  }
+}
+
 } // namespace
 
 TEST(RegistrationState, ProjectsTheInitializedObjectAtTheExactSourceCall) {

@@ -1799,3 +1799,5 @@ Le regressioni dell’osservatore delle scritture verificano la visibilità prim
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` verifica anche arresti sotto il limite, uscite sentinella, collegamenti che saltano l’indice richiesto e unioni con livelli finali distinti. I corpi finally mancanti restano rifiutati quando devono essere attraversati; una pulizia saltata non fornisce effetti di scrittura del frame.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` copre anche limiti costanti fuori dalla tabella, la metà superiore senza segno e -2. Le uscite senza iterazioni conservano il livello originale e i fatti della memoria del frame; i limiti dinamici e i livelli correnti non validi restano rifiutati.
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` verifica sentinelle errate, cicli, collegamenti futuri/fuori intervallo, livelli iniziali e ruoli handler/filtro nonostante il parsing completo. I controlli con ambito iniziale attivo e tabella vuota conservano le sentinelle valide EH3/EH4.

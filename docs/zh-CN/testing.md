@@ -1611,3 +1611,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 还检查低于边界的提前停止、哨兵退出、父层级跳过请求索引，以及不同停止层级的合并。实际经过的 finally 函数体缺失时仍须拒绝；跳过的清理不能提供栈帧写入效果。
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 还覆盖表外常量上界、无符号高半区和 -2。零步退出保留原层级和帧内存事实；动态上界及无效当前层级仍被拒绝。
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 检查解析状态已完成但包含错误哨兵、循环、前向或越界链接、无效初始层级及处理器/过滤器角色的记录。初始活动作用域和空表对照用例验证 EH3/EH4 合法帧哨兵仍被保留。

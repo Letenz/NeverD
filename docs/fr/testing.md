@@ -1818,3 +1818,5 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` vérifie aussi les arrêts sous une borne, les sorties sentinelles, les liens parents sautant l’indice demandé et les réunions de niveaux d’arrêt distincts. Un corps finally absent reste refusé lorsqu’il est parcouru ; un nettoyage sauté ne fournit aucun effet d’écriture de frame.
 
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` couvre aussi les bornes constantes hors de la table, la moitié haute des valeurs non signées et -2. Les sorties sans itération conservent le niveau initial et les faits mémoire du cadre ; les bornes dynamiques et les niveaux courants invalides restent refusés.
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` vérifie les mauvaises sentinelles, cycles, liens futurs/hors limites, niveaux initiaux et rôles handler/filtre malgré une analyse syntaxique complète. Les contrôles d’état initial actif et de table vide préservent les sentinelles valides EH3/EH4.
