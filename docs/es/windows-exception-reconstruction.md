@@ -87,12 +87,19 @@ forzadas. La vida útil general de objetos y las conversiones de tipos siguen pe
 
 Los objetos PE32 con copia trivial admiten catch por valor o referencia, throw directo y relanzamiento.
 El ThrowInfo inmutable debe contener un solo tipo sin ajustes de dirección, constructor de copia,
-destructor ni callback de reenvío. Se prueba la inicialización de cada byte y que no escapen punteros
+ni callback de reenvío. Se prueba la inicialización de cada byte y que no escapen punteros
 del marco privado. Los casos O0/O1 verifican estructuras de 8 y 12 bytes, cambios de campos, ramas
 del catch, ambos modos CLI y reubicación con Microsoft CRT. Las copias PHI conservan su arista CFG
 y callback; la validación independiente rechaza llamadas adicionales, alias y destinos alterados.
 RTTI no proporciona el diseño de miembros: las pruebas sintácticas C++ usan las declaraciones reales
 del ejemplo; la salida conserva offsets nativos y llamadas throw de agregados desconocidos.
+
+Un destructor opcional requiere una prueba LowIR independiente: una función hoja que
+retorna, con pila privada y accesos ECX limitados al objeto. Su código y sus efectos en
+memoria forman parte del contrato preservado. Los casos O0/O1 comprueban cantidad, orden
+y contenido de los objetos destruidos, incluidos relanzamientos y dos reconstrucciones.
+Siguen sin admitirse constructores de copia no triviales, conversiones ni grafos generales
+de llamadas de destructores.
 
 ## Contrato IR
 

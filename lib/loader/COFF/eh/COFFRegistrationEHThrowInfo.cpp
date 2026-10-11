@@ -12,12 +12,12 @@
 
 namespace neverd::coff_loader {
 
-std::optional<X86SimpleCxxThrowInfo>
-getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address) {
+std::optional<X86IdentityCxxThrowInfo>
+getCheckedX86IdentityCxxThrowInfo(const BinaryImage &Img, va_t Address) {
   if (Img.Arch != Arch::X86 || Img.Bits != Bitness::Bits32 ||
       Img.Format != BinaryFormat::COFF)
     return std::nullopt;
-  X86SimpleCxxThrowInfo Result;
+  X86IdentityCxxThrowInfo Result;
   Result.Address = Address;
   auto ReadImmutable = [&](va_t VA, uint32_t Size) -> const uint8_t * {
     if (!VA || VA > UINT32_MAX || Size > uint64_t(UINT32_MAX) + 1 - VA)
@@ -31,10 +31,12 @@ getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address) {
     return Bytes;
   };
   const auto *Throw = ReadImmutable(Address, 16);
-  if (!Throw || (readLE<uint32_t>(Throw) & ~7u) ||
-      readLE<uint32_t>(Throw + 4) || readLE<uint32_t>(Throw + 8))
+  if (!Throw || (readLE<uint32_t>(Throw) & ~7u) || readLE<uint32_t>(Throw + 8))
     return std::nullopt;
   Result.Attributes = readLE<uint32_t>(Throw);
+  Result.DestructorVA = readLE<uint32_t>(Throw + 4);
+  if (Result.DestructorVA && !Img.isCodeAddress(Result.DestructorVA))
+    return std::nullopt;
   const auto *Array = ReadImmutable(readLE<uint32_t>(Throw + 12), 8);
   if (!Array || readLE<uint32_t>(Array) != 1)
     return std::nullopt;
@@ -88,6 +90,12 @@ getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address) {
     if (Range.overlaps(Result.TypeDescriptorRange))
       return std::nullopt;
   return Result;
+}
+
+std::optional<X86SimpleCxxThrowInfo>
+getCheckedX86SimpleCxxThrowInfo(const BinaryImage &Img, va_t Address) {
+  auto Info = getCheckedX86IdentityCxxThrowInfo(Img, Address);
+  return Info && !Info->DestructorVA ? Info : std::nullopt;
 }
 
 } // namespace neverd::coff_loader

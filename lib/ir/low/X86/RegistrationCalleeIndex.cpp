@@ -87,15 +87,27 @@ RegistrationCallCalleeIndex::contracts(const LowFunc &Function) {
     }
   }
   if (llvm::any_of(Result, [](const auto &C) { return C.isRuntimeThrow(); })) {
+    registration_abi::ImageFrameEffects Effects;
+    std::set<std::pair<va_t, va_t>> RuntimeCode;
     auto Infos = registration_abi::collectRegistrationRuntimeThrowInfos(
-        Function, Image, Work);
+        Function, Image, Work, Effects, RuntimeCode);
     if (!Infos)
       return std::nullopt;
     for (auto &Contract : Result)
       if (Contract.isRuntimeThrow()) {
-        if (!chargeCalleeWork(Work, Infos->size()))
+        if (!chargeCalleeWork(Work, Infos->size() + Effects.Reads.size() +
+                                        Effects.Writes.size() +
+                                        RuntimeCode.size() +
+                                        Contract.CodeRanges.size()))
           return std::nullopt;
         Contract.RuntimeThrowInfos = *Infos;
+        registration_abi::copyExtents(Effects.Reads, Contract.ImageReads);
+        registration_abi::copyExtents(Effects.Writes, Contract.ImageWrites);
+        auto Code = RuntimeCode;
+        for (const auto &Range : Contract.CodeRanges)
+          Code.emplace(Range.Begin, Range.End);
+        Contract.CodeRanges.clear();
+        registration_abi::copyExtents(Code, Contract.CodeRanges);
       }
   }
   return Result;

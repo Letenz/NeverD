@@ -86,12 +86,19 @@ Patch-Modi und erzwungene Basisadressen. Allgemeine Objektlebenszeiten und Typko
 
 Trivial kopierte PE32-Ausnahmeobjekte unterstützen Wert- und Referenz-catches, direkte throws
 und erneutes Werfen. Unveränderliches ThrowInfo muss genau einen Typ ohne Adressanpassung,
-Kopierkonstruktor, Destruktor oder Weiterleitungs-Callback beschreiben. Jedes Byte muss initialisiert
+Kopierkonstruktor oder Weiterleitungs-Callback beschreiben. Jedes Byte muss initialisiert
 sein; private Frame-Zeiger dürfen nicht entweichen. O0/O1 prüfen Strukturen mit 8 und 12 Bytes,
 Feldänderungen, catch-Verzweigungen, beide CLI-Modi und Relokation mit Microsoft CRT. PHI-Kopien
 behalten ihre CFG-Kante und Callback-Zuordnung. Die unabhängige Prüfung lehnt zusätzliche Aufrufe,
 Speicheraliasse und geänderte Ziele ab. RTTI liefert kein Memberlayout: C++-Syntaxprüfungen nutzen
 die echten Testdeklarationen; native Offsets und unbekannte Aggregat-throw-Aufrufe bleiben erhalten.
+
+Ein optionaler Destruktor benötigt einen unabhängigen LowIR-Nachweis als zurückkehrende
+Blattfunktion mit privatem Stack und begrenzten ECX-Objektzugriffen. Seine Codebereiche und
+Speichereffekte bleiben Teil des erhaltenen Aufrufvertrags. Die O0/O1-Tests prüfen Anzahl,
+Reihenfolge und Objektinhalt bei Zerstörung, erneutem Werfen und zwei Rekonstruktionen.
+Nichttriviale Kopierkonstruktoren, Typumwandlungen und allgemeine Destruktor-Aufrufgraphen
+bleiben ausgeschlossen.
 
 ## IR-Vertrag
 

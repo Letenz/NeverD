@@ -53,6 +53,12 @@ def get_profile(name="entry"):
         else:
             from windows_registration_objects_relift import profile
         return profile()
+    if name == "destructors":
+        if __package__:
+            from .windows_registration_destructors_relift import profile
+        else:
+            from windows_registration_destructors_relift import profile
+        return profile()
     if name != "catch-cleanup":
         raise ValueError("unknown re-lift evidence profile")
     if __package__:
@@ -64,7 +70,7 @@ def get_profile(name="entry"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("entry", "catch-cleanup", "objects"), default="entry")
+    parser.add_argument("--profile", choices=("entry", "catch-cleanup", "objects", "destructors"), default="entry")
     parser.add_argument("--input-root", type=Path, required=True)
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)

@@ -130,6 +130,17 @@ bool hasRegistrationCallFrameABI(
   std::deque<va_t> Pending(Targets.begin(), Targets.end());
   std::set<va_t> Examined;
   ImageFrameEffects Effects;
+  if (UseReachability)
+    for (const auto &Contract : States->CalleeContracts)
+      if (Contract.isRuntimeThrow()) {
+        if (!chargeCalleeWork(Work, Contract.ImageReads.size() +
+                                        Contract.ImageWrites.size()))
+          return false;
+        for (const auto &Read : Contract.ImageReads)
+          Effects.Reads.emplace(Read.Begin, Read.End);
+        for (const auto &Write : Contract.ImageWrites)
+          Effects.Writes.emplace(Write.Begin, Write.End);
+      }
   while (!Pending.empty()) {
     const va_t Target = Pending.front();
     Pending.pop_front();

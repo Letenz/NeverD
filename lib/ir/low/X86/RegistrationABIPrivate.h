@@ -36,7 +36,9 @@ void copyExtents(const Set &From, Vector &To) {
 
 std::optional<std::vector<RegistrationRuntimeThrowInfo>>
 collectRegistrationRuntimeThrowInfos(const LowFunc &Function,
-                                     const BinaryImage &Image, size_t &Work);
+                                     const BinaryImage &Image, size_t &Work,
+                                     ImageFrameEffects &Effects,
+                                     std::set<std::pair<va_t, va_t>> &Code);
 
 bool chargeDecodedCallee(size_t &Work, const LowFunc &Function);
 bool collectCalleeCodeRanges(const LowFunc &Function, const BinaryImage &Image,
@@ -66,7 +68,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
                            bool BorrowECX = false,
                            RegistrationThrowCalleeABI *ThrowProof = nullptr,
-                           bool *IndependentScalarReturn = nullptr);
+                           bool *IndependentScalarReturn = nullptr,
+                           bool DiscardReturnValue = false);
 
 } // namespace neverd::registration_abi
 

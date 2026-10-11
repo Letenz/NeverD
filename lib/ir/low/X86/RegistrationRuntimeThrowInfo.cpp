@@ -14,7 +14,9 @@
 namespace neverd::registration_abi {
 std::optional<std::vector<RegistrationRuntimeThrowInfo>>
 collectRegistrationRuntimeThrowInfos(const LowFunc &Function,
-                                     const BinaryImage &Image, size_t &Work) {
+                                     const BinaryImage &Image, size_t &Work,
+                                     ImageFrameEffects &Effects,
+                                     std::set<std::pair<va_t, va_t>> &Code) {
   std::set<va_t> Candidates;
   for (const auto &Block : Function.Blocks)
     for (const auto &Op : Block.Ops) {
@@ -33,14 +35,25 @@ collectRegistrationRuntimeThrowInfos(const LowFunc &Function,
     if (!Owner || !Owner->isReadable() || Owner->isWritable() ||
         Owner->isExecutable() || !Image.readVA(Address, 16))
       continue;
-    // The trivial-copy decoder reads three fixed records and at most 4096 name
-    // bytes. Charge its full bound even when the candidate fails early.
-    if (!chargeCalleeWork(Work, 16 + 8 + 28 + 4096))
+    if (const auto Object =
+            getCheckedX86RegistrationThrowObjectABI(Image, Address, &Work)) {
+      const auto &Info = Object->Info;
+      Result.push_back({Info.Address, Info.TypeDescriptorVA, Info.ObjectSize});
+      if (const auto &Destructor = Object->Destructor) {
+        if (!chargeCalleeWork(Work, Destructor->ImageReads.size() +
+                                        Destructor->ImageWrites.size() +
+                                        Destructor->CodeRanges.size()))
+          return std::nullopt;
+        for (const auto &Range : Destructor->ImageReads)
+          Effects.Reads.emplace(Range.Begin, Range.End);
+        for (const auto &Range : Destructor->ImageWrites)
+          Effects.Writes.emplace(Range.Begin, Range.End);
+        for (const auto &Range : Destructor->CodeRanges)
+          Code.emplace(Range.Begin, Range.End);
+      }
+    }
+    if (!chargeCalleeWork(Work, 1))
       return std::nullopt;
-    if (const auto Info =
-            coff_loader::getCheckedX86SimpleCxxThrowInfo(Image, Address))
-      Result.push_back(
-          {Info->Address, Info->TypeDescriptorVA, Info->ObjectSize});
   }
   return Result;
 }

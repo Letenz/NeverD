@@ -215,7 +215,8 @@ bool retainLeafEntryBlocks(LowFunc &Function, size_t &Work) {
 
 std::optional<RegistrationLeafCalleeABI>
 getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
-                                       size_t *CumulativeWork) {
+                                       size_t *CumulativeWork,
+                                       RegistrationLeafResult ResultKind) {
   if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
       Image.Format != BinaryFormat::COFF || Target > UINT32_MAX ||
       !Image.isCodeAddress(Target) ||
@@ -245,7 +246,8 @@ getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
   ImageFrameEffects Effects;
   bool IndependentScalarReturn = false;
   if (!hasPrivateCallerFrame(Callee, Image, Work, Effects, true, nullptr,
-                             &IndependentScalarReturn))
+                             &IndependentScalarReturn,
+                             ResultKind == RegistrationLeafResult::Discarded))
     return std::nullopt;
   if (!callerPCIsNotReadBack(Effects))
     return std::nullopt;

@@ -27,13 +27,14 @@ llvm::Error bindCxxRuntimeThrow(const CxxIRControlProof &Proof,
   const auto &Throw = *Checked.RuntimeThrow;
   if (Throw.isRethrow())
     return llvm::Error::success();
-  const auto Info =
-      coff_loader::getCheckedX86SimpleCxxThrowInfo(Image, Throw.ThrowInfoVA);
-  if (!Info || Info->ObjectSize != Throw.ObjectSize)
+  const auto Object =
+      getCheckedX86RegistrationThrowObjectABI(Image, Throw.ThrowInfoVA, &Work);
+  if (!Object || Object->Info.ObjectSize != Throw.ObjectSize)
     return rejectIR("C++ direct throw lost its checked scalar type");
-  Immutable.insert(Immutable.end(), Info->ReadOnlyRanges.begin(),
-                   Info->ReadOnlyRanges.end());
-  Immutable.push_back(Info->TypeDescriptorRange);
+  const auto &Info = Object->Info;
+  Immutable.insert(Immutable.end(), Info.ReadOnlyRanges.begin(),
+                   Info.ReadOnlyRanges.end());
+  Immutable.push_back(Info.TypeDescriptorRange);
   RegistrationFrameBorrow Borrow;
   Borrow.Offset = int64_t(Proof.Frame.Establisher) + Throw.ObjectOffset;
   Borrow.Reads.push_back({0, int32_t(Throw.ObjectSize)});

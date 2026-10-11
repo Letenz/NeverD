@@ -54,13 +54,31 @@ struct RegistrationLeafCalleeABI {
   std::vector<ExceptionAddressRange> CodeRanges;
 };
 
+enum class RegistrationLeafResult { Observed, Discarded };
+
 /// Prove a complete returning PE32 leaf with a private stack, preserved
 /// nonvolatile registers and nonescaping ECX object access. This describes
 /// the callee only: each caller must still prove object bounds, initialization
 /// and separation from its registration fields before using the projection.
-std::optional<RegistrationLeafCalleeABI>
-getCheckedX86RegistrationLeafCalleeABI(const BinaryImage &Image, va_t Target,
-                                       size_t *CumulativeWork = nullptr);
+/// Discarded requires an independently known void invocation, such as the
+/// CRT destructor or an authenticated unwind relay; it does not recover a
+/// source call's return type or relax memory/stack/nonvolatile preservation.
+std::optional<RegistrationLeafCalleeABI> getCheckedX86RegistrationLeafCalleeABI(
+    const BinaryImage &Image, va_t Target, size_t *CumulativeWork = nullptr,
+    RegistrationLeafResult Result = RegistrationLeafResult::Observed);
+
+/// A single identity-copy object and its optional preserved destructor. The
+/// destructor must be a private, returning leaf with bounded ECX accesses and
+/// no observation of the CRT caller PC. Metadata decoding alone cannot prove
+/// these effects or authorize a runtime callback.
+struct RegistrationThrowObjectABI {
+  coff_loader::X86IdentityCxxThrowInfo Info;
+  std::optional<RegistrationLeafCalleeABI> Destructor;
+};
+
+std::optional<RegistrationThrowObjectABI>
+getCheckedX86RegistrationThrowObjectABI(const BinaryImage &Image, va_t Address,
+                                        size_t *CumulativeWork = nullptr);
 
 struct RegistrationCleanupCallABI {
   int32_t ObjectFrameOffset = 0;
@@ -115,7 +133,7 @@ struct RegistrationThrowCalleeABI {
   /// Exactly two null arguments reuse the active CRT exception. No new object
   /// or ThrowInfo is supplied, and the caller must prove an active catch.
   bool IsRethrow = false;
-  coff_loader::X86SimpleCxxThrowInfo ThrowInfo;
+  coff_loader::X86IdentityCxxThrowInfo ThrowInfo;
   std::vector<ExceptionAddressRange> ImageReads;
   std::vector<ExceptionAddressRange> ImageWrites;
   std::vector<ExceptionAddressRange> CallerPCWrites;

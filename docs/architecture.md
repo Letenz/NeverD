@@ -3451,8 +3451,15 @@ The x86 adapter assigns a copy block only when both source endpoints belong to
 the same proved invocation. COFF installation independently recognizes the
 actual single-edge block and private scalar spill accesses; names and emitter
 receipts cannot authorize added calls, aliased memory or altered CFG targets.
-The COFF ThrowInfo decoder owns trivial-copy eligibility. State analysis still
-proves complete initialization and pointer privacy for every object byte;
+The COFF ThrowInfo decoder owns identity-copy eligibility and the optional
+destructor address. `RegistrationThrowObjectABI.cpp` owns the independent LowIR
+proof of bounded runtime destruction: a returning private leaf, nonescaping ECX
+accesses within the object, immutable code and checked image effects. Private
+throw helpers, direct runtime calls, LLVM lowering and COFF installation consume
+that same contract. Destructor effects and code join the preserved call closure.
+Only independently authenticated void invocations can discard a leaf's return
+register; ordinary calls retain return-value privacy checks. State analysis
+still proves complete initialization and pointer privacy for every object byte;
 RTTI remains a type identity, not a recovered member layout.
 
 The PE32 registration solver schedules ordinary blocks in reverse postorder per

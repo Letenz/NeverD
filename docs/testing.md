@@ -3205,6 +3205,23 @@ generations, Microsoft CRT identity, field effects and throw caller ranges are
 mandatory evidence. Second-generation direct throws run the normal call ABI
 recovery pass before native LLVM emission.
 
+The `destructors` profile uses the same sixteen O0/O1 source/control cases with
+observable exception-object and catch-copy destructors. Each execution checks
+twelve destructions and a rolling trace of their order and object contents,
+alongside catch results, reference effects, caller ownership and FS:[0]. Negative
+controls change only the expected destruction count. The shared source driver,
+record declarations and independent destructor proof are hashed into admission.
+Both `check_windows_registration_nested_try.py --profile destructors` and
+`check_windows_registration_relift.py --profile destructors` produce 128 images;
+their replay tools validate the identical files with Wine or native Windows.
+`RegistrationThrowObject.*` rejects out-of-bounds effects, escapes, CRT caller
+observations, mutable code, metadata writes, unchecked calls and exhausted
+budgets. It also retains helper and destructor code in either address order.
+`SourceDialect.CxxUnknownExternalParametersKeepDefaultPromotions` compiles and
+executes the C/C++ views against an independent C callee: a C declaration with
+unknown parameters cannot become a zero-argument C++ prototype. Its C++ ellipsis
+preserves default promotions and does not grant a native variadic ABI contract.
+
 ### Language exception models
 
 Everything that is not the Windows table model lives in one focused target.

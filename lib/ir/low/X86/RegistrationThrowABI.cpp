@@ -105,11 +105,14 @@ getCheckedX86RegistrationThrowCalleeABI(const BinaryImage &Image, va_t Target,
           return std::nullopt;
     }
   }
-  if (!collectCalleeCodeRanges(Callee, Image, Work, Result.CodeRanges) ||
-      !chargeCalleeWork(Work, 1))
+  std::vector<ExceptionAddressRange> CalleeCode;
+  if (!collectCalleeCodeRanges(Callee, Image, Work, CalleeCode) ||
+      !chargeCalleeWork(Work, Result.CodeRanges.size() + CalleeCode.size() + 1))
     return std::nullopt;
   std::set<std::pair<va_t, va_t>> Code;
   for (const auto &Range : Result.CodeRanges)
+    Code.emplace(Range.Begin, Range.End);
+  for (const auto &Range : CalleeCode)
     Code.emplace(Range.Begin, Range.End);
   Code.emplace(Result.ImportVA, Result.ImportVA + 6);
   Result.CodeRanges.clear();

@@ -85,11 +85,11 @@ std::optional<RegistrationCxxCallABI> getCheckedRegistrationCxxCallABI(
         }
       } else {
         const auto &Throw = *Effect.RuntimeThrow;
-        const auto Info = coff_loader::getCheckedX86SimpleCxxThrowInfo(
-            Image, Throw.ThrowInfoVA);
+        const auto Object = getCheckedX86RegistrationThrowObjectABI(
+            Image, Throw.ThrowInfoVA, &Work);
         const auto Table = throwInfoAddress(Call.getArgOperand(1),
                                             Call.getModule()->getDataLayout());
-        if (!Info || Info->ObjectSize != Throw.ObjectSize || !Table ||
+        if (!Object || Object->Info.ObjectSize != Throw.ObjectSize || !Table ||
             *Table != Throw.ThrowInfoVA ||
             llvm::isa<llvm::Constant>(Call.getArgOperand(0)))
           return std::nullopt;

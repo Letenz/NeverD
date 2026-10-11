@@ -14,6 +14,7 @@ from scripts import replay_windows_registration_relift as replay
 from scripts.tests import test_check_windows_registration_entry as first_fixture
 from scripts.tests import test_check_windows_registration_nested_try as nested_fixture
 from scripts.tests import test_windows_registration_objects as object_fixture
+from scripts.tests import test_windows_registration_destructors as destructor_fixture
 from scripts import check_windows_registration_multiple_catch as catches
 
 
@@ -24,6 +25,7 @@ class ReliftEvidenceTests(unittest.TestCase):
         first_root.mkdir()
         first = (first_fixture.EntryEvidenceTests().capture(first_root) if profile_name == "entry"
                  else object_fixture.ObjectEvidenceTests().capture(first_root) if profile_name == "objects"
+                 else destructor_fixture.DestructorEvidenceTests().capture(first_root) if profile_name == "destructors"
                  else nested_fixture.NestedTryEvidenceTests().capture(first_root))
         first_path = first_root / profile.first_capture
         first_path.write_text(json.dumps(first))
@@ -54,7 +56,7 @@ class ReliftEvidenceTests(unittest.TestCase):
             if profile_name == "catch-cleanup":
                 receipt.update(entry_registers=0, entry_pop=0, incoming_reads=0, incoming_writes=0,
                                cleanup_actions=2 if "-o0-" in name else 1, cleanup_calls=2)
-            elif profile_name == "objects":
+            elif profile_name in ("objects", "destructors"):
                 receipt.update(entry_registers=0, entry_pop=0, incoming_reads=0, incoming_writes=0,
                                cleanup_actions=0, cleanup_calls=0)
             (parent / "contract.json").write_text(json.dumps(receipt))
@@ -73,6 +75,22 @@ class ReliftEvidenceTests(unittest.TestCase):
                                              "sha256": runner.file_digest(path)})
             result["cases"].append(record)
         return result
+
+    def test_destructor_relift_cannot_reuse_a_trivial_object_capture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = self.capture(root, "destructors")
+            self.assertEqual(len(replay.validate_capture(root, capture)), 128)
+            for wrong in ("objects", "entry", "catch-cleanup", "unknown"):
+                with self.subTest(profile=wrong), self.assertRaises(ValueError):
+                    replay.validate_capture(root, capture | {"profile": wrong})
+            first_path = root / "first" / "nested-try-rewrite.json"
+            first = json.loads(first_path.read_text())
+            first["source_dependencies_sha256"] = {}
+            first_path.write_text(json.dumps(first))
+            capture["first_capture_sha256"] = runner.file_digest(first_path)
+            with self.assertRaises(ValueError):
+                replay.validate_capture(root, capture)
 
     def test_object_relift_requires_original_byte_proofs_and_both_generations(self):
         with tempfile.TemporaryDirectory() as directory:

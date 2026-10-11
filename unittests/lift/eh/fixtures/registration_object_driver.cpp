@@ -9,7 +9,10 @@ extern "C" void *_ReturnAddress();
 #pragma intrinsic(__readfsdword)
 #pragma intrinsic(_ReturnAddress)
 
-#include "registration_object_types.h"
+#ifndef NEVERD_REGISTRATION_OBJECT_TYPES
+#define NEVERD_REGISTRATION_OBJECT_TYPES "registration_object_types.h"
+#endif
+#include NEVERD_REGISTRATION_OBJECT_TYPES
 
 extern "C" {
 __declspec(dllexport) volatile unsigned callback_caller = 0;
@@ -166,5 +169,10 @@ extern "C" __declspec(noreturn) void mainCRTStartup() {
   unsigned Written = 0;
   WriteFile(GetStdHandle(unsigned(-11)), Message, sizeof(Message) - 1, &Written,
             nullptr);
+#ifdef NEVERD_REGISTRATION_OBJECT_FINISH
+  NEVERD_REGISTRATION_OBJECT_FINISH(Passed && Restored &&
+                                    Written == sizeof(Message) - 1);
+#else
   ExitProcess(Passed && Restored && Written == sizeof(Message) - 1 ? 0 : 1);
+#endif
 }

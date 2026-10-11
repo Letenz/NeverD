@@ -47,7 +47,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
                            size_t &Work, ImageFrameEffects &Effects,
                            bool BorrowECX,
                            RegistrationThrowCalleeABI *ThrowProof,
-                           bool *IndependentScalarReturn) {
+                           bool *IndependentScalarReturn,
+                           bool DiscardReturnValue) {
   if (IndependentScalarReturn)
     *IndependentScalarReturn = true;
   using namespace registration_state;
@@ -239,12 +240,13 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           if (!Object.Offset || Object.ReturnPC || Object.FrameOnlyFromCall ||
               !Table.Constant || Table.MayBeFrame)
             return false;
-          auto Info = coff_loader::getCheckedX86SimpleCxxThrowInfo(
-              Image, *Table.Constant);
-          if (!Info ||
-              !Charge(4096 + Info->ObjectSize + State.Frame.Cells.size()))
+          auto ObjectABI = getCheckedX86RegistrationThrowObjectABI(
+              Image, *Table.Constant, &Work);
+          if (!ObjectABI ||
+              !Charge(ObjectABI->Info.ObjectSize + State.Frame.Cells.size()))
             return false;
-          const int64_t End = int64_t(*Object.Offset) + Info->ObjectSize;
+          const auto &Info = ObjectABI->Info;
+          const int64_t End = int64_t(*Object.Offset) + Info.ObjectSize;
           if (*Object.Offset < *SP + 8 || End > 4)
             return false;
           for (int64_t Byte = *Object.Offset; Byte != End; ++Byte)
@@ -254,12 +256,25 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             if (Value.MayBeFrame && int64_t(Cell) < End &&
                 int64_t(*Object.Offset) < int64_t(Cell) + 4)
               return false;
-          for (const auto &Range : Info->ReadOnlyRanges)
+          for (const auto &Range : Info.ReadOnlyRanges)
             Effects.Reads.emplace(Range.Begin, Range.End);
-          Effects.Reads.emplace(Info->TypeDescriptorRange.Begin,
-                                Info->TypeDescriptorRange.End);
+          Effects.Reads.emplace(Info.TypeDescriptorRange.Begin,
+                                Info.TypeDescriptorRange.End);
+          if (const auto &Destructor = ObjectABI->Destructor) {
+            if (!Charge(Destructor->ImageReads.size() +
+                        Destructor->ImageWrites.size() +
+                        Destructor->CodeRanges.size()))
+              return false;
+            for (const auto &Range : Destructor->ImageReads)
+              Effects.Reads.emplace(Range.Begin, Range.End);
+            for (const auto &Range : Destructor->ImageWrites)
+              Effects.Writes.emplace(Range.Begin, Range.End);
+            ThrowProof->CodeRanges.insert(ThrowProof->CodeRanges.end(),
+                                          Destructor->CodeRanges.begin(),
+                                          Destructor->CodeRanges.end());
+          }
           ThrowProof->ObjectOffset = *Object.Offset;
-          ThrowProof->ThrowInfo = std::move(*Info);
+          ThrowProof->ThrowInfo = std::move(ObjectABI->Info);
           Threw = true;
           break;
         }
@@ -311,7 +326,8 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             ++It;
       }
       if (Op.Opcode == NdOp::COND_BR || Op.Opcode == NdOp::INDIR_BR ||
-          Op.Opcode == NdOp::RETURN || Op.Opcode == NdOp::INTRINSIC)
+          (Op.Opcode == NdOp::RETURN && !DiscardReturnValue) ||
+          Op.Opcode == NdOp::INTRINSIC)
         for (unsigned Index = 0; Index != Op.NumInputs; ++Index) {
           const auto Value = Transfer.read(Op.Inputs[Index]);
           if (BorrowTransfer.read(Op.Inputs[Index]).MayBeFrame)
