@@ -168,6 +168,24 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86ComiStateTests` compares the sixteen legacy/VEX COMISS/UCOMISS and
+COMISD/UCOMISD register/memory forms with Codegen, HighC and LLVMC at
+default/NoOpt and C O0/O2. Observers retain all defined arithmetic flags,
+MXCSR, both complete source YMM values and output guards. Signed zeros,
+subnormals, infinities and quiet/signaling NaNs exercise all RC/DAZ/FTZ/sticky
+combinations. The concrete matrix additionally checks invalid/denormal mask
+controls; normally completing states execute on hardware, while faulting
+controls use masked native exception classification and separate fault children.
+Native children retain exact outgoing exception status and uncommitted output.
+Protected page ends distinguish complete scalar reads from partial faults;
+Windows private GS sources retain the actual base. Contract checks cover raw
+physical XMM roles, metadata mutations, Low/Med/High shapes, owned assembly,
+memory permissions, canonical addresses and unknown state. The accompanying
+`MedCallingConvFPStack` test covers immutable scalar homes in ELF/Mach-O/COFF.
+These native observers require x64/Clang/AVX; fault contexts use Windows/Linux,
+and the native GS observer requires Windows x64. They do not certify x86-32
+native, EVEX COMI/SAE, enabled alignment checking or CPU-feature faults.
+
 `NeverDX86X87ConstantTests` compares all seven x87 constant-load encodings
 with native Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Each form
 checks the ten raw binary80 bytes, complete destination guards and the outgoing

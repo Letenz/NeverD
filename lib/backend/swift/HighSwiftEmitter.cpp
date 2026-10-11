@@ -519,6 +519,7 @@ class Writer {
           isX86FPConversionStateIntrinsic(E->IntrinsicId) ||
           isX86FPScalarConvertStateIntrinsic(E->IntrinsicId) ||
           isX86F16CStateIntrinsic(E->IntrinsicId) ||
+          isX86FPComiStateIntrinsic(E->IntrinsicId) ||
           isX86FPPackedConvertStateIntrinsic(E->IntrinsicId) ||
           isX86FPRoundStateIntrinsic(E->IntrinsicId) ||
           isX86FPApprox12Intrinsic(E->IntrinsicId) ||

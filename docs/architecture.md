@@ -1903,6 +1903,19 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
+`ir/X86FPComiState.h` owns legacy/VEX COMI and UCOMI flag/MXCSR completion.
+One raw aggregate carries LAHF's defined status byte below outgoing MXCSR;
+it never acquires scalar floating provenance. Source reads and actual compare
+instructions remain inside the native completion scope. Low/Med/High validation,
+LLVM and both C routes retain operand roles, signaling mode and memory spaces.
+Scalar stack-home recovery retains both numerical inputs and the same CSR when
+it replaces an immutable memory source. `ir/X86FPComparison.h` owns each active
+lane's NaN, denormal, DAZ and relation classification for both COMI and existing
+EVEX predicates. Concrete unmasked exceptions publish state but no flag result;
+failed reads publish neither. EVEX COMI/SAE, enabled alignment checking and
+unavailable-feature faults remain outside this completion surface. Swift
+refuses it until it has an equivalent lowering.
+
 `ir/X87Constant.h` owns binary80 constant-ROM values and the bounded explicit
 control-word contracts. `X87ReadControl` imports the actual word at each read;
 `X87WriteControl` commits it, and `X87LoadConstant` retains its selector and
