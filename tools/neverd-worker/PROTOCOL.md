@@ -200,14 +200,26 @@ Heartbeat retains its native fields and adds
 | `web_asar_extract` | Exact `revision`, original `artifact_id`, optional captured `unpacked_directory_id`; no host companion lookup, member integrity/availability explicit |
 | `web_asar_records` | Exact `revision`, `extraction_id`, optional page fields; private names, actual storage identities/ranges, usable `member_id` selections |
 | `web_bun_extract` | Exact `revision`, original `artifact_id`; explicit qualified Bun ELF/thin Mach-O/PE profiles; no execution or producer authentication |
+| `web_nexe_extract` | Exact `revision`, original or available member `artifact_id`, and explicit `profile`; bounded resource envelope, unverified opaque native prefix/signatures/runtime |
+| `web_nexe_records` | Exact `revision`, `extraction_id`, `record_kind:regions/members`, optional `offset:0,limit:128` (max 512); private paths/payloads omitted, explicit selection IDs for shared consumers |
+| `web_pkg_extract` | Exact `revision`, original or available member `artifact_id`, explicit `profile`; typed uncompressed VFS stores, opaque caches and unverified native/runtime evidence |
+| `web_pkg_records` | Exact `revision`, `extraction_id`, `record_kind:regions/members/links`, optional `offset:0,limit:128` (max 512); private paths/metadata digests omitted, only stored content/prelude selections available |
 | `web_bun_records` | Exact `revision`, `extraction_id`, `record_kind: modules/regions`, optional page fields; original offsets/hashes and private decoded source IDs |
 | `web_source_analyze` | Exact `revision`, `artifact_id`, explicit `source_type` |
 | `web_source_nodes` | Exact `revision`, `source_id`, optional page fields |
+| `web_package_behavior_diff_analyze` | Exact `revision`, retained `package_diff_id`, optional matching `before_package_behavior_id` / `after_package_behavior_id`; missing/degraded coverage cannot become zero behavior |
+| `web_package_behavior_diff_records` | Exact `revision`, `package_behavior_diff_id`, `record_kind:pairs/patterns/occurrences`, optional page fields (max 512); original occurrence anchors and fixed syntax counts per file candidate |
+| `web_package_install_analyze` | Exact `revision`, `package_analysis_id`, optional matching `package_behavior_id`; captured lifecycle entry and selected module/behavior candidates, with explicit absent evidence and no execution |
+| `web_package_install_records` | Exact `revision`, `package_install_id`, `record_kind:scripts/sources/requests/associations`, optional `offset:0,limit:128` (max 512); command byte offsets and opaque evidence chains, no command/path/argument disclosure |
+| `web_package_advisory_import` | Exact `revision`, `artifact_id` and `descriptor_artifact_id`; captured OSV/source/time declarations only, no feed retrieval |
+| `web_package_advisory_records` | Exact `revision`, `package_advisory_id`, `record_kind:affected/severities`, optional page fields (max 512); original anchors and fixed coverage, no private name/score/source label |
+| `web_package_advisories_match` | Exact `revision`, `package_analysis_id`, optional `advisory_ids` (0..16); exact declared npm identity and admitted version selectors; unknown coverage is explicit |
+| `web_package_advisories_match_records` | Exact `revision`, `package_advisory_matches_id`, optional page fields (max 512); original package/affected-entry anchors, no installed-content or exploitability proof |
 | `web_source_bindings_analyze` | Exact `revision`, analyzed `source_id`; returns lexical-binding status and counts |
 | `web_source_binding_records` | Exact `revision`, `source_id`, `record_kind: scopes/bindings/declarations/references`, optional page fields |
 | `web_source_semantics_analyze` | Exact `revision`, `source_id`; returns bounded primitive/effect analysis status and counts |
 | `web_source_semantic_records` | Exact `revision`, `source_id`, optional page fields; private value kinds/status and immediate/deferred effect categories only |
-| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding`; private candidate and metadata-only local evaluation receipt |
+| `web_source_rewrite_analyze` | Exact `revision`, `source_id`, explicit `pass: string_recovery/constant_folding/scope_renaming/boolean_branches`; private candidate and metadata-only profile-specific receipt |
 | `web_source_rewrite_records` | Exact `revision`, `rewrite_id`, optional page fields; fixed reasons and original/candidate ranges, no literal bytes or per-patch hashes |
 | `web_source_modules_analyze` | Exact `revision`, `source_id`; module inventory and admitted-file comparison; derived HTML inline sources retain explicit document/script/base context, without runtime resolution |
 | `web_source_module_records` | Exact `revision`, `source_id`, `record_kind: requests/imports/exports/attributes`, optional page fields; reported link profile/context and nullable URL presence flags, no specifier/name/path values |
@@ -245,10 +257,12 @@ Original regions require `locally_reviewed:true` and exact `reviewed_ranges` in
 the preview's options, followed by commit. This is a local caller assertion,
 not authorization for network/model disclosure. Replacing a source's policy
 revokes its prior view; import commit clears all projections. View operations
-do not authorize semantic rewrites. The separate primitive rewrite operations
-apply additional complete-lexer, local value/effect, outer-tree and inverse
-checks; they publish metadata only and make no whole-program or source-reflection
-equivalence claim. Raw rewrite export remains local C API/CLI only.
+do not authorize semantic rewrites. The separate rewrite operations apply
+profile-specific complete-lexer, local value/effect or lexical-binding checks,
+retained-tree validation and exact inversion. Boolean expression selection
+retains chosen effects and adds explicit GetValue scaffolding. All profiles
+publish metadata only and make no whole-program or source-reflection equivalence
+claim. Raw rewrite export remains local C API/CLI only.
 Ordinary semantic results explicitly deny rewrite permission. An unavailable effect
 record is null rather than an empty list. These additive entry points are
 resolved optionally, so an older web-capable engine still supports its existing

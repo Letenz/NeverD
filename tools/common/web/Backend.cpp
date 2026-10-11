@@ -64,10 +64,18 @@ struct API {
   WEB_API(neverd_web_bun_records_json)
   WEB_API(neverd_web_sea_extract_json)
   WEB_API(neverd_web_sea_records_json)
+  WEB_API(neverd_web_nexe_extract_json)
+  WEB_API(neverd_web_nexe_records_json)
+  WEB_API(neverd_web_pkg_extract_json)
+  WEB_API(neverd_web_pkg_records_json)
   WEB_API(neverd_web_packages_analyze_json)
   WEB_API(neverd_web_package_archive_extract_json)
   WEB_API(neverd_web_package_archive_records_json)
   WEB_API(neverd_web_package_integrity_verify_json)
+  WEB_API(neverd_web_package_advisory_import_json)
+  WEB_API(neverd_web_package_advisory_records_json)
+  WEB_API(neverd_web_package_advisories_match_json)
+  WEB_API(neverd_web_package_advisories_match_records_json)
   WEB_API(neverd_web_har_preview_json)
   WEB_API(neverd_web_stream_preview_json)
   WEB_API(neverd_web_stream_commit_json)
@@ -85,6 +93,10 @@ struct API {
   WEB_API(neverd_web_node_behavior_records_json)
   WEB_API(neverd_web_package_behavior_analyze_json)
   WEB_API(neverd_web_package_behavior_records_json)
+  WEB_API(neverd_web_package_behavior_diff_analyze_json)
+  WEB_API(neverd_web_package_behavior_diff_records_json)
+  WEB_API(neverd_web_package_install_analyze_json)
+  WEB_API(neverd_web_package_install_records_json)
   WEB_API(neverd_web_asar_extract_json)
   WEB_API(neverd_web_electron_manifest_analyze_json)
   WEB_API(neverd_web_desktop_manifest_analyze_json)
@@ -409,6 +421,71 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     analysisState_ = "partial";
     return value;
   }
+  if (operation == "web_package_advisory_import") {
+    fields(p, {"revision", "artifact_id", "descriptor_artifact_id"});
+    if (!api().neverd_web_package_advisory_import_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto artifact = required(p, "artifact_id", 64);
+    const auto descriptor = required(p, "descriptor_artifact_id", 64);
+    auto value = result(api().neverd_web_package_advisory_import_json(
+        session_, revision.data(), revision.size(), artifact.data(),
+        artifact.size(), descriptor.data(), descriptor.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_advisory_records") {
+    fields(p, {"revision", "package_advisory_id", "record_kind", "offset",
+               "limit"});
+    if (!api().neverd_web_package_advisory_records_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_advisory_id", 64);
+    const auto kind = required(p, "record_kind", 16);
+    return result(api().neverd_web_package_advisory_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_package_advisories_match") {
+    fields(p, {"revision", "package_analysis_id", "advisory_ids"});
+    if (!api().neverd_web_package_advisories_match_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_analysis_id", 64);
+    Json options{{"schema_version", 1}};
+    if (const auto selected = p.find("advisory_ids"); selected != p.end()) {
+      if (!selected->is_array() || selected->size() > 16)
+        throw Error("invalid_request", "Invalid advisory selection");
+      for (const auto &advisory : *selected)
+        if (!advisory.is_string() ||
+            advisory.get_ref<const std::string &>().size() != 64)
+          throw Error("invalid_request", "Invalid advisory selection");
+      options["advisory_ids"] = *selected;
+    }
+    const auto encoded = options.dump();
+    auto value = result(api().neverd_web_package_advisories_match_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_advisories_match_records") {
+    fields(p, {"revision", "package_advisory_matches_id", "offset", "limit"});
+    if (!api().neverd_web_package_advisories_match_records_json)
+      throw Error("capability_unavailable",
+                  "Package advisories are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_advisory_matches_id", 64);
+    return result(api().neverd_web_package_advisories_match_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
   if (operation == "web_package_integrity_verify") {
     fields(p, {"revision", "artifact_id", "declaration_id", "package_id"});
     if (!api().neverd_web_package_integrity_verify_json)
@@ -564,19 +641,64 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     analysisState_ = "partial";
     return value;
   }
+  if (operation == "web_package_behavior_diff_analyze") {
+    fields(p, {"revision", "package_diff_id", "before_package_behavior_id",
+               "after_package_behavior_id"});
+    if (!api().neverd_web_package_behavior_diff_analyze_json)
+      throw Error("capability_unavailable",
+                  "Behavior comparison is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_diff_id", 64);
+    Json options{{"schema_version", 1}};
+    for (const auto *key :
+         {"before_package_behavior_id", "after_package_behavior_id"})
+      if (p.contains(key))
+        options[key] = required(p, key, 64);
+    const auto encoded = options.dump();
+    auto value = result(api().neverd_web_package_behavior_diff_analyze_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_install_analyze") {
+    fields(p, {"revision", "package_analysis_id", "package_behavior_id"});
+    if (!api().neverd_web_package_install_analyze_json)
+      throw Error("capability_unavailable",
+                  "Installation evidence is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_analysis_id", 64);
+    Json options{{"schema_version", 1}};
+    if (p.contains("package_behavior_id"))
+      options["package_behavior_id"] = required(p, "package_behavior_id", 64);
+    const auto encoded = options.dump();
+    auto value = result(api().neverd_web_package_install_analyze_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
   if (operation == "web_electron_ipc_records" ||
       operation == "web_electron_entry_records" ||
-      operation == "web_package_behavior_records") {
+      operation == "web_package_behavior_records" ||
+      operation == "web_package_behavior_diff_records" ||
+      operation == "web_package_install_records") {
     const bool ipc = operation == "web_electron_ipc_records";
     const bool package = operation == "web_package_behavior_records";
-    const auto idField = package ? "package_behavior_id"
-                         : ipc   ? "electron_ipc_id"
-                                 : "electron_entries_id";
+    const bool install = operation == "web_package_install_records";
+    const bool diff = operation == "web_package_behavior_diff_records";
+    const auto idField = diff      ? "package_behavior_diff_id"
+                         : install ? "package_install_id"
+                         : package ? "package_behavior_id"
+                         : ipc     ? "electron_ipc_id"
+                                   : "electron_entries_id";
     fields(p, {"revision", idField, "record_kind", "offset", "limit"});
-    const auto records = package
-                             ? api().neverd_web_package_behavior_records_json
-                         : ipc ? api().neverd_web_electron_ipc_records_json
-                               : api().neverd_web_electron_entry_records_json;
+    const auto records =
+        diff      ? api().neverd_web_package_behavior_diff_records_json
+        : install ? api().neverd_web_package_install_records_json
+        : package ? api().neverd_web_package_behavior_records_json
+        : ipc     ? api().neverd_web_electron_ipc_records_json
+                  : api().neverd_web_electron_entry_records_json;
     if (!records)
       throw Error("capability_unavailable",
                   "Selected source evidence is unavailable");
@@ -660,6 +782,58 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         session_, revision.data(), revision.size(), id.data(), id.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
         sizeField(p, "limit", 128, 128)));
+  }
+  if (operation == "web_nexe_extract") {
+    fields(p, {"revision", "artifact_id", "profile"});
+    if (!api().neverd_web_nexe_extract_json)
+      throw Error("capability_unavailable", "nexe extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto profile = required(p, "profile", 64);
+    auto value = result(api().neverd_web_nexe_extract_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        profile.data(), profile.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_nexe_records") {
+    fields(p, {"revision", "extraction_id", "record_kind", "offset", "limit"});
+    if (!api().neverd_web_nexe_records_json)
+      throw Error("capability_unavailable", "nexe extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "extraction_id", 64);
+    const auto kind = required(p, "record_kind", 16);
+    return result(api().neverd_web_nexe_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_pkg_extract") {
+    fields(p, {"revision", "artifact_id", "profile"});
+    if (!api().neverd_web_pkg_extract_json)
+      throw Error("capability_unavailable", "pkg extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto profile = required(p, "profile", 64);
+    auto value = result(api().neverd_web_pkg_extract_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        profile.data(), profile.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_pkg_records") {
+    fields(p, {"revision", "extraction_id", "record_kind", "offset", "limit"});
+    if (!api().neverd_web_pkg_records_json)
+      throw Error("capability_unavailable", "pkg extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "extraction_id", 64);
+    const auto kind = required(p, "record_kind", 16);
+    return result(api().neverd_web_pkg_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_bun_extract") {
     fields(p, {"revision", "artifact_id"});

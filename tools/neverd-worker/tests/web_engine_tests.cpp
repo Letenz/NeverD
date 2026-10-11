@@ -13,7 +13,9 @@
 #include "../../../unittests/web/BunFixture.h"
 #include "../../../unittests/web/BunSourceMapFixture.h"
 #include "../../../unittests/web/NativeFixture.h"
+#include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PackageArchiveFixture.h"
+#include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "WebEngine.h"
@@ -1287,7 +1289,7 @@ int main(int argc, char **argv) {
     fs::create_directories(packageRoot / "before");
     fs::create_directories(packageRoot / "after");
     std::ofstream(packageRoot / "before/package.json")
-        << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
+        << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"node z.js SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
     std::ofstream(packageRoot / "after/package.json")
         << R"({"name":"SECRET_WEB_PACKAGE","version":"2","optionalDependencies":{"SECRET_WEB_DEP":"2"}})";
     std::ofstream(packageRoot / "before/z.js")
@@ -1296,6 +1298,15 @@ int main(int argc, char **argv) {
     std::ofstream(packageRoot / "z.original") << "abc";
     std::ofstream(packageRoot / "zz.registry")
         << R"({"name":"SECRET_WEB","dist":{"integrity":"sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="}})";
+    std::ofstream(packageRoot / "zzza.advisory")
+        << R"({"id":"SECRET_WEB_GHSA","modified":"2026-10-10T00:00:00Z",
+          "affected":[{"package":{"ecosystem":"npm","name":"SECRET_WEB"},
+          "versions":["1.0.0"]}]})";
+    std::ofstream(packageRoot / "zzzb.descriptor")
+        << R"({"schema_version":1,"source":"SECRET_WEB_FEED",
+          "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})";
+    std::ofstream(packageRoot / "zzzc.package")
+        << R"({"name":"SECRET_WEB","version":"1.0.0"})";
     const Json packagePreview{{"schema_version", 1},
                               {"path", packageRoot.string()}};
     preview = web.execute("web_import_preview", packagePreview);
@@ -1389,6 +1400,36 @@ int main(int argc, char **argv) {
       check(reply["payload"] == aggregate && aggregate["record_count"] == 1 &&
                 aggregate["selection_complete"] == false,
             "Package behavior differs or claims complete selection");
+      Json installArgs{{"schema_version", 1},
+                       {"revision", packageRevision},
+                       {"package_analysis_id", packageIDs[0]}};
+      const auto noSources =
+          web.execute("web_package_install_analyze", installArgs);
+      reply = process.call("web_package_install_analyze", installArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == noSources && noSources["source_count"] == 0,
+            "Worker installation traces require source selection");
+      installArgs["package_behavior_id"] = aggregate["package_behavior_id"];
+      const auto trace =
+          web.execute("web_package_install_analyze", installArgs);
+      reply = process.call("web_package_install_analyze", installArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == trace && trace["association_count"] == 1 &&
+                trace["reachability_verified"] == false,
+            "Worker installation trace differs or upgrades evidence");
+      for (const auto *kind :
+           {"scripts", "sources", "requests", "associations"}) {
+        const Json rowArgs{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_install_id", trace["package_install_id"]},
+                           {"record_kind", kind}};
+        const auto rows = web.execute("web_package_install_records", rowArgs);
+        reply = process.call("web_package_install_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker installation traces differ or disclose command text");
+      }
       for (const auto *kind : {"sources", "records"}) {
         const Json rowArgs{
             {"schema_version", 1},
@@ -1403,6 +1444,53 @@ int main(int argc, char **argv) {
               "Package behavior rows differ or expose private values");
       }
       auto bad = selection;
+      const Json baseArgs{{"schema_version", 1},
+                          {"revision", packageRevision},
+                          {"before_id", packageIDs[0]},
+                          {"after_id", packageIDs[0]}};
+      const auto base = web.execute("web_packages_compare", baseArgs);
+      reply = process.call("web_packages_compare", baseArgs, packageRevision,
+                           packageProject);
+      check(reply["payload"] == base, "Worker comparison base differs");
+      Json diffArgs{{"schema_version", 1},
+                    {"revision", packageRevision},
+                    {"package_diff_id", base["package_diff_id"]}};
+      const auto emptyDiff =
+          web.execute("web_package_behavior_diff_analyze", diffArgs);
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == emptyDiff &&
+                emptyDiff["source_pair_count"] == 0,
+            "Worker invented selected source comparison coverage");
+      diffArgs["before_package_behavior_id"] = aggregate["package_behavior_id"];
+      diffArgs["after_package_behavior_id"] = aggregate["package_behavior_id"];
+      const auto behaviorDiff =
+          web.execute("web_package_behavior_diff_analyze", diffArgs);
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == behaviorDiff &&
+                behaviorDiff["occurrence_count"] == 2 &&
+                behaviorDiff["call_correspondence_verified"] == false,
+            "Worker changed recognized pattern evidence");
+      for (const auto *kind : {"pairs", "patterns", "occurrences"}) {
+        const Json rowArgs{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_behavior_diff_id",
+                            behaviorDiff["package_behavior_diff_id"]},
+                           {"record_kind", kind}};
+        const auto rows =
+            web.execute("web_package_behavior_diff_records", rowArgs);
+        reply = process.call("web_package_behavior_diff_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker behavior comparison differs or discloses private data");
+      }
+      diffArgs["execute"] = false;
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["error"]["code"] == "invalid_request",
+            "Worker accepted execution metadata");
       bad["origin"] = Json::object();
       reply = process.call("web_package_behavior_analyze", bad, packageRevision,
                            packageProject);
@@ -1450,6 +1538,80 @@ int main(int argc, char **argv) {
                          packageRevision, packageProject);
     check(reply["error"]["code"] == "invalid_request",
           "Worker integrity accepted an execution flag");
+    const Json advisoryImport{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][8]["artifact_id"]},
+        {"descriptor_artifact_id",
+         packageArtifacts["items"][9]["artifact_id"]}};
+    const auto advisory =
+        web.execute("web_package_advisory_import", advisoryImport);
+    reply = process.call("web_package_advisory_import", advisoryImport,
+                         packageRevision, packageProject);
+    check(reply["payload"] == advisory &&
+              advisory["publisher_authenticated"] == false &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker changed advisory source evidence or disclosed private "
+          "declarations");
+    for (const auto *kind : {"affected", "severities"}) {
+      const Json args{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"package_advisory_id", advisory["package_advisory_id"]},
+                      {"record_kind", kind}};
+      const auto direct = web.execute("web_package_advisory_records", args);
+      reply = process.call("web_package_advisory_records", args,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed or disclosed captured advisory records");
+    }
+    const Json advisoryPackageArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"artifact_id", packageArtifacts["items"][10]["artifact_id"]},
+        {"input_kind", "package-json"}};
+    const auto advisoryPackage =
+        web.execute("web_packages_analyze", advisoryPackageArgs);
+    reply = process.call("web_packages_analyze", advisoryPackageArgs,
+                         packageRevision, packageProject);
+    check(reply["payload"] == advisoryPackage,
+          "Advisory package inventory differs");
+    Json advisoryMatchArgs{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_analysis_id", advisoryPackage["package_analysis_id"]}};
+    for (const bool selected : {false, true}) {
+      if (selected)
+        advisoryMatchArgs["advisory_ids"] =
+            Json::array({advisory["package_advisory_id"]});
+      const auto matched =
+          web.execute("web_package_advisories_match", advisoryMatchArgs);
+      reply = process.call("web_package_advisories_match", advisoryMatchArgs,
+                           packageRevision, packageProject);
+      check(
+          reply["payload"] == matched &&
+              matched["declared_version_match_count"] == (selected ? 1 : 0) &&
+              matched["exploitability_verified"] == false &&
+              reply.dump().find("SECRET_WEB") == std::string::npos,
+          "Worker upgraded selected version evidence into an execution claim");
+      const Json page{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"package_advisory_matches_id",
+                       matched["package_advisory_matches_id"]}};
+      const auto direct =
+          web.execute("web_package_advisories_match_records", page);
+      reply = process.call("web_package_advisories_match_records", page,
+                           packageRevision, packageProject);
+      check(reply["payload"] == direct &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed original advisory match anchors");
+    }
+    auto invalidAdvisory = advisoryImport;
+    invalidAdvisory["fetch"] = true;
+    reply = process.call("web_package_advisory_import", invalidAdvisory,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted remote metadata fetching");
     for (const auto &a : caps["analysis"])
       if (a["kind"] == "package_archive") {
         hasArchive = a["available"];
@@ -1730,6 +1892,125 @@ int main(int argc, char **argv) {
       }
     }
     {
+      if (hasBindings) {
+        const auto Input = fixture.root / "rename.js";
+        std::ofstream(Input) << "function SECRET_WEB_NAME(SECRET_WEB_ARG){"
+                                "const SECRET_WEB_LOCAL=SECRET_WEB_ARG;return "
+                                "SECRET_WEB_LOCAL;}";
+        const auto Before = web.revision(), PreviousProject = web.projectId();
+        const Json Import{{"schema_version", 1}, {"path", Input.string()}};
+        const auto Preview = web.execute("web_import_preview", Import);
+        const auto Commit = web.execute(
+            "web_import_commit", {{"schema_version", 1},
+                                  {"preview_token", Preview["preview_token"]}});
+        reply =
+            process.call("web_import_preview", Import, Before, PreviousProject);
+        reply =
+            process.call("web_import_commit",
+                         {{"schema_version", 1},
+                          {"preview_token", reply["payload"]["preview_token"]}},
+                         Before, PreviousProject);
+        check(reply["payload"] == Commit, "Rename import differs");
+        const auto Revision = web.revision(), Project = web.projectId();
+        const auto Items = web.execute(
+            "web_artifacts", {{"schema_version", 1}, {"revision", Revision}});
+        const Json SourceArgs{{"schema_version", 1},
+                              {"revision", Revision},
+                              {"artifact_id", Items["items"][0]["artifact_id"]},
+                              {"source_type", "script"}};
+        const auto Source = web.execute("web_source_analyze", SourceArgs);
+        reply =
+            process.call("web_source_analyze", SourceArgs, Revision, Project);
+        check(reply["payload"] == Source, "Rename source differs");
+        const Json Args{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"source_id", Source["source_id"]},
+                        {"pass", "scope_renaming"}};
+        const auto Analysis = web.execute("web_source_rewrite_analyze", Args);
+        reply =
+            process.call("web_source_rewrite_analyze", Args, Revision, Project);
+        check(reply["payload"] == Analysis &&
+                  Analysis["profile"] == "javascript-scope-rename-v1" &&
+                  Analysis["analysis_status"] == "verified_local_rewrites" &&
+                  Analysis["accepted_count"] == 4 &&
+                  Analysis["value_verification"] == "not_applicable" &&
+                  Analysis["value_analysis_id"].is_null() &&
+                  Analysis["binding_verification"] ==
+                      "same_scopes_declarations_and_reference_resolution" &&
+                  Analysis["original_name_recovery"] == false,
+              "Worker changed lexical rename evidence");
+        const Json Page{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"rewrite_id", Analysis["rewrite_id"]}};
+        const auto Records = web.execute("web_source_rewrite_records", Page);
+        reply =
+            process.call("web_source_rewrite_records", Page, Revision, Project);
+        check(reply["payload"] == Records && Records["items"].size() == 5 &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos &&
+                  reply.dump().find("neverd_arg_") == std::string::npos &&
+                  reply.dump().find("neverd_local_") == std::string::npos,
+              "Worker rename records differ or expose names");
+      }
+      if (hasBindings) {
+        const auto Input = fixture.root / "branches.js";
+        std::ofstream(Input) << "function SECRET_WEB_NAME(SECRET_WEB_ARG){"
+                                "return true ? SECRET_WEB_ARG.method() : "
+                                "SECRET_WEB_UNUSED;}";
+        const auto Before = web.revision(), PreviousProject = web.projectId();
+        const Json Import{{"schema_version", 1}, {"path", Input.string()}};
+        const auto Preview = web.execute("web_import_preview", Import);
+        const auto Commit = web.execute(
+            "web_import_commit", {{"schema_version", 1},
+                                  {"preview_token", Preview["preview_token"]}});
+        reply =
+            process.call("web_import_preview", Import, Before, PreviousProject);
+        reply =
+            process.call("web_import_commit",
+                         {{"schema_version", 1},
+                          {"preview_token", reply["payload"]["preview_token"]}},
+                         Before, PreviousProject);
+        check(reply["payload"] == Commit, "Branch import differs");
+        const auto Revision = web.revision(), Project = web.projectId();
+        const auto Items = web.execute(
+            "web_artifacts", {{"schema_version", 1}, {"revision", Revision}});
+        const Json SourceArgs{{"schema_version", 1},
+                              {"revision", Revision},
+                              {"artifact_id", Items["items"][0]["artifact_id"]},
+                              {"source_type", "script"}};
+        const auto Source = web.execute("web_source_analyze", SourceArgs);
+        reply =
+            process.call("web_source_analyze", SourceArgs, Revision, Project);
+        check(reply["payload"] == Source, "Branch source differs");
+        const Json Args{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"source_id", Source["source_id"]},
+                        {"pass", "boolean_branches"}};
+        const auto A = web.execute("web_source_rewrite_analyze", Args);
+        reply =
+            process.call("web_source_rewrite_analyze", Args, Revision, Project);
+        check(reply["payload"] == A &&
+                  A["profile"] == "javascript-boolean-branches-v1" &&
+                  A["analysis_status"] == "verified_local_rewrites" &&
+                  A["accepted_count"] == 1 &&
+                  A["value_verification"] ==
+                      "constant_boolean_condition_only" &&
+                  A["binding_verification"] ==
+                      "same_scopes_declarations_and_retained_references" &&
+                  A["retained_expression_effects"] ==
+                      "preserved_not_assumed_absent" &&
+                  A["statements_rewritten"] == false,
+              "Worker changed Boolean branch evidence");
+        const Json Page{{"schema_version", 1},
+                        {"revision", Revision},
+                        {"rewrite_id", A["rewrite_id"]}};
+        const auto Records = web.execute("web_source_rewrite_records", Page);
+        reply =
+            process.call("web_source_rewrite_records", Page, Revision, Project);
+        check(reply["payload"] == Records && Records["items"].size() == 1 &&
+                  Records["items"][0]["selected_operand"] == "consequent" &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker branch records differ or expose source");
+      }
       const auto streamRoot = fixture.root / "streams";
       fs::create_directory(streamRoot);
       std::ofstream(streamRoot / "a.jsonl")
@@ -1834,6 +2115,96 @@ int main(int argc, char **argv) {
       reply = process.call("web_sea_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "SEA accepted target execution");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "nexe_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "nexe";
+      std::ofstream(path, std::ios::binary)
+          << neverd::web::nexe_test::bundle({{"CANARY.js", "var x='CANARY';"}});
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "nexe capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{{"schema_version", 1},
+                      {"revision", revision},
+                      {"artifact_id", items["items"][0]["artifact_id"]},
+                      {"profile", "nexe-4.0.0-rc.7-eof-resources-v1"}};
+      const auto extracted = web.execute("web_nexe_extract", args);
+      reply = process.call("web_nexe_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 1,
+            "nexe extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto records = web.execute("web_nexe_records", page);
+      reply = process.call("web_nexe_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "nexe pages differ or reveal private evidence");
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_nexe_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "nexe accepted execution option");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "pkg_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "pkg";
+      std::ofstream(path, std::ios::binary)
+          << neverd::web::pkg_test::bundle({{"CANARY.js", "var x='CANARY';"}});
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "pkg capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{{"schema_version", 1},
+                      {"revision", revision},
+                      {"artifact_id", items["items"][0]["artifact_id"]},
+                      {"profile", "pkg-5.8.1-uncompressed-vfs-v1"}};
+      const auto extracted = web.execute("web_pkg_extract", args);
+      reply = process.call("web_pkg_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 2,
+            "pkg extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"record_kind", "members"},
+                      {"limit", 1}};
+      const auto records = web.execute("web_pkg_records", page);
+      reply = process.call("web_pkg_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "pkg pages differ or reveal private evidence");
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_pkg_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "pkg accepted execution option");
     }
     process.stop();
     std::ifstream errors(fixture.root / "stderr");

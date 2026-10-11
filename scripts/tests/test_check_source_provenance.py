@@ -318,6 +318,15 @@ class ProvenanceScanTests(unittest.TestCase):
         rule = self.term_rule("foreign-project", "example-engine")
         self.assertEqual(self.scan("a.png", "example-engine\n", (rule,)), [])
 
+    def test_node_license_attribution_stays_scoped_to_the_notice(self) -> None:
+        line = "Adapted from SES/Caja - Copyright (C) 2011 Google Inc.\n"
+        self.assertEqual(self.scan("LICENSES/node/LICENSE", line), [])
+        for path in ("lib/node.cpp", "LICENSES/other/LICENSE"):
+            self.assertEqual(len(self.scan(path, line)), 1)
+        self.assertEqual(
+            len(self.scan("LICENSES/node/LICENSE", "/Users/someone\n")), 1
+        )
+
     def test_exempts_itself_and_its_own_tests(self) -> None:
         # Both files necessarily contain examples of what is being looked for,
         # so a check that scanned them could never pass.
@@ -541,6 +550,13 @@ class ReviewedFpremHistoryTests(unittest.TestCase):
 
 
 class ProvenanceOfThisRepositoryTests(unittest.TestCase):
+    def test_node_license_credit_does_not_exempt_implementation_claims(self) -> None:
+        line = "Adapted from SES/Caja - Copyright (C) 2011 Google Inc."
+        self.assertEqual(provenance._scan_text(
+            "LICENSES/node/LICENSE", line, provenance.RULES), [])
+        self.assertTrue(provenance._scan_text(
+            "lib/node.cpp", line, provenance.RULES))
+
     @staticmethod
     def commit(root: Path, message: str) -> None:
         subprocess.run(

@@ -72,9 +72,17 @@ Domain labels and field order are defined in
 | Syntax node | Source ID, syntax kind, original byte start/length, traversal ordinal |
 | Primitive value analysis | Source ID and fixed primitive-evaluator profile |
 | Effect analysis | Source ID, binding/value analysis IDs and fixed effect profile |
+| Source rewrite | Source ID, explicitly selected pass/profile and binding/value/effect identities; lexical renaming has no value/effect identities |
+| Rename occurrence | Rewrite ID, original binding ID, node ID, declaration/reference role and fixed status/reason; no standalone name hash |
+| Boolean branch occurrence | Rewrite ID, original expression/condition/retained node identities and indices, selected operand, fixed status/reason; no operand bytes or individual value hashes |
 | Module inventory | Source ID, binding analysis ID and module-evidence profile |
 | Module occurrence | Module inventory ID, fixed kind, syntax node ID and traversal ordinal |
 | Admitted module-file comparison | Module inventory ID, snapshot ID and file-comparison profile |
+| Node module-file comparison | Module inventory, origin model, snapshot and separate Node candidate profile |
+| Package installation trace | Install profile, package analysis, exact namespace, optional package-behavior selection ID (empty means no selection) and shared binding/module/origin/Node-link profiles |
+| Selected package behavior diff | Comparison profile, base package diff, optional before/after package-behavior IDs (empty means no selection) and Node behavior profile; source mode and semantic profiles remain transitively bound by selected source behavior IDs |
+| Install declaration / presence | Trace ID plus original script ID and status, or package ID for lock-only presence |
+| Install request / association | Trace, module-link, original request and fixed selection status; associations bind script trace, behavior record and ordered request trace IDs |
 | Bundle analysis | Source ID, binding analysis ID and structural bundle profile |
 | Bundle/partition/dependency/region occurrence | Bundle analysis ID, fixed record kind, original node ID and ordinal |
 | Source map | Artifact occurrence, map blob hash, decoder profile |
@@ -433,6 +441,24 @@ identity and direct or expanded byte coordinates; compressed frames remain
 distinct from source byte offsets. Asset keys are not paths, and a selected
 package document supplies no neighboring-file inventory. Import revokes all
 extractions and selectors. See the [SEA contract](web-sea-profile.md).
+
+## Captured npm advisory declarations
+
+`package_advisory_import` selects `artifact_id` and `descriptor_artifact_id`
+in the current revision. The result binds both original hashes and returns
+`package_advisory_id`, source/time validation, severity coverage and declared
+timestamps. `package_advisory_records` selects `affected` or `severities`,
+preserving original array indices and opaque anchors without private strings.
+
+`package_advisories_match` takes `package_analysis_id` and optional
+`advisory_ids` (0..16). `package_advisories_match_records` pages the resulting
+`package_advisory_matches_id`. Original package and affected-entry IDs resolve
+through their retained owners. Empty selection is `not_supplied`; unknown
+coverage is not a negative match. Every result remains partial with no
+freshness, feed completeness, publisher, installed-content or exploitability
+verification. Existing package snapshots are not rewritten by this consumer.
+See the [profile](web-package-advisory-profile.md) for exact statuses, identity,
+source/time declarations, atomic budgets and reset semantics.
 
 ## Package archives and original integrity
 

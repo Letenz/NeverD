@@ -46,14 +46,36 @@ when the embedded parser is disabled. No-input launches omit import preview.
 
 Tools use `neverd_web_` names and schema version 1; `schema_version` defaults to
 1 when omitted. The catalog covers import, metadata, artifacts, source/maps,
-bindings, primitive semantics/rewrite receipts, modules/bundles/navigation, structural views,
-anchors, Bun/SEA/ASAR extraction, package/archive/integrity/diff evidence,
-selected Node source/package behavior metadata,
+bindings, primitive semantics and primitive/lexical rewrite receipts,
+modules/bundles/navigation, structural views,
+anchors, Bun/SEA/nexe/pkg/ASAR extraction, package/archive/integrity/diff evidence,
+selected Node source/package behavior metadata and installation traces,
 Electron/HTML, passive HAR/streams/interfaces and native loader metadata.
 Published IDs, decimal-string revisions/coordinates, evidence classes and
 backend pagination fields remain unchanged. Tool responses contain the same
 evidence object in `structuredContent` and equivalent JSON in one text block.
 Clients should discover schemas rather than assume disabled capabilities.
+
+`neverd_web_package_install_analyze` requires revision and package analysis ID;
+the matching package behavior ID is optional. No source selection is needed to
+report manifest-only or lock-only coverage gaps. Its records tool pages
+`scripts`, `sources`, `requests` and `associations`; all retain the backend's
+static confidence and privacy limits. See the
+[installation profile](web-package-install-profile.md).
+
+`neverd_web_package_behavior_diff_analyze` selects a retained `package_diff_id`
+and optional `before_package_behavior_id` / `after_package_behavior_id` from
+its exact analyses. Its records tool pages `pairs`, `patterns` and `occurrences`.
+Missing or degraded source coverage remains incomparable; pattern counts do
+not establish call correspondence or a safety verdict. See the
+[comparison profile](web-package-behavior-diff-profile.md).
+
+The four package advisory tools import captured OSV/source/time artifacts,
+page affected/severity declarations, match explicit advisory IDs to an existing
+package analysis and page original match anchors. They remain available with
+JavaScript parsing omitted. Missing or unsupported evidence remains explicit;
+the tools never fetch a feed, validate a publisher or infer exploitability.
+See the [advisory profile](web-package-advisory-profile.md).
 
 MCP does not expose source review options or raw export. Structural source
 views replace private identifiers/literals/comments according to the shared
@@ -63,8 +85,12 @@ loader metadata; `native_analyze` is omitted. HAR/stream tools never replay
 traffic or access the network. Source inference and recorded observations keep
 their separate evidence classes. Tool annotations mark metadata reads as
 read-only; analyses and publication can mutate process-local caches.
-Primitive rewrite tools expose the explicitly selected pass and paged
-evaluation receipts only. Original/replacement text and per-patch literal
+Rewrite tools expose the explicitly selected `string_recovery`,
+`constant_folding`, `scope_renaming` or `boolean_branches` pass and paged
+profile-specific receipts. Lexical graph validation and Boolean-condition
+selection stay distinct from primitive SameValue evidence. Chosen branch
+effects remain in the candidate and are not assumed absent.
+Original/replacement text and per-patch literal
 hashes stay private; `source_rewrite_export` is local C API/CLI only.
 
 ## Resource bounds and ownership

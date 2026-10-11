@@ -39,14 +39,14 @@ their existing scope; no Python support for web APIs is claimed.
 | P1 artifact store and safe input | 12 identity/input, eight blob/storage and five JSON admission tests passed on macOS arm64 Release; 512 MiB disk-backed snapshot qualified | Broader host qualification and redaction/export remain; Windows pending |
 | P2 SDK/CLI/worker | Thirty-four SDK/CLI tests passed, including navigation/storage/view anchors and direct Bun navigation/view/anchor commands; C++ worker adapter/framed-process and all nine worker regressions passed | Broader host, cancellation/resource and distribution qualification remain |
 | P3 C++ JS parser/scope/query/maps | Nine parser/model, thirteen binding, eleven primitive-value, ten effect, eleven module, eight bundle, nine source-view, five navigation, nine standard coordinate/map and six Bun map tests passed | Full syntax matrix, feature-specific navigation/attribution, runtime dataflow, foreign export linking, broader bundle profiles and verified map association remain |
-| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions and independent pkg/nexe adapters remain; Node SEA is qualified separately in P7 and JSC caches stay opaque |
+| P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI and selected source behavior/inventory joins implemented; two official Claude Code npm packages qualify original digest and payload evidence | Install-entry propagation, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
+| P4C package graph/diff | Versioned npm graph/diff, bounded tar/local-PAX/single-gzip members, original SRI, selected source behavior/inventory joins, literal lifecycle entry/request chains and selected behavior comparison implemented; official Claude Code packages qualify original digest, payload and two-version wrapper evidence | Broader lifecycle/loader profiles, advisory/provenance, dispositions, readable reports and broader archive/host profiles remain |
 | P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
-| P5 reversible source projections | Reviewed display, original/projected ranges and explicit primitive rewrites with pass-bound receipts, local semantic checks, exact inverse and refusal tests implemented | Scope renaming, branch/control-flow transforms and broader qualification remain |
+| P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
-| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader and stored-source/asset consumers implemented; qualification below | Tauri/Wails bridges/assets, pkg/nexe, other SEA layouts and host qualification remain |
+| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader, nexe 4.0.0-rc.7 EOF reader and pkg 5.8.1 uncompressed VFS reader; shared source/asset consumers and producer qualification below | Tauri/Wails bridges/assets and broader host/producer qualification remain; other Node-family layouts stay unsupported |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
 | P9 full acceptance audit | Pending | Issue-by-issue fixture and cross-platform evidence, documented gaps |
 
@@ -1716,3 +1716,454 @@ propagation, source-behavior comparison, external advisory/provenance imports,
 analyst dispositions, readable reports, other runtime/desktop adapters and
 the rest of the acceptance matrix remain outstanding. The five epics are
 not complete.
+
+## Independent nexe resource extraction — 2026-10-11
+
+`nexe-4.0.0-rc.7-eof-resources-v1` adds a separate C++ EOF envelope reader,
+strict first-shim JSON index, portable private namespaces and immutable resource
+occurrences. Reader, index and session ownership remain separate. SDK, CLI,
+worker and MCP use the same core results; bootstrap and stored members feed
+the existing source, package, HTML, storage-anchor and native consumers. The
+native prefix, signatures, runtime activation and producer version remain
+unverified. See the [profile](web-nexe-profile.md).
+
+Independent plan review required exact first-sentinel window semantics,
+deduplicated hashing of range aliases, nested nonzero storage coordinates and
+namespace isolation for identical images. The C++ checks cover those cases,
+all truncated prefixes, invalid binary64 sizes, malformed JSON, hostile paths,
+overlaps, independent limits, revision revocation and failure atomicity. Two
+boundary failures found during implementation were repaired in their owners:
+the JSON node allowance omitted the resources key, and the stricter nexe
+metadata subtraction could underflow after shared path-index accounting crossed
+its threshold. Dedicated count, deep-path and aggregate-cache tests now cover
+both boundaries without raising the published limits.
+
+Controlled nexe 4.0.0-rc.7 producer outputs used the original Node 14.15.3 bases
+for Linux x64, macOS x64 and Windows x64. NeverD extracted all three with an
+unusable external-tool PATH and matched four independently preserved inputs
+byte-for-byte and hash-for-hash; source/bootstrap parsing and package-manifest
+consumers also passed. The manual fixture-input writer is C++; producer setup
+and packaging are separate development activities, never analyzer or test
+dependencies. No target was executed. Exact hashes and reproduction evidence
+are recorded in the [fixture manifest](../unittests/web/fixtures/nexe/manifest.json).
+Six inert ELF/PE/Mach-O x64/ARM64 prefixes additionally check preservation; they
+do not qualify ARM64 producer outputs, native loading or runtime behavior.
+
+The enabled owning Web run registered 511 cases: 504 passed and seven skipped
+(six require unavailable LLVM Zstd; one applies only when the ASAR namespace
+policy is absent). All supplied Bun, SEA, nexe, npm and VSIX artifacts were
+enabled, including six-platform Bun containers and recovery/reparse of every
+one of the 2,345 Claude Code JavaScript modules. The separate real Claude MCP
+process case passed. Worker protocol/Web and eight shared worker suites, four
+general MCP suites and enabled ABI availability also passed; the ABI case
+specific to backend omission skipped as expected. Logs:
+`/tmp/neverd-nexe-full-web.log`, `/tmp/neverd-nexe-mcp-claude.log`,
+`/tmp/neverd-nexe-worker-{all,shared}.log`, `/tmp/neverd-nexe-mcp-tests.log` and
+`/tmp/neverd-nexe-api-tests.log`.
+
+Remote `dev` through `54c3fcff0` was integrated without changing its native
+pipeline work. The capability manifest now includes both nexe APIs and the
+previous Node-behavior and source-rewrite entry points; the existing manifest
+checker passed with 23 capabilities. Public nexe member IDs were also changed
+to use sorted ordinals and range identity, keeping private path text out of
+independently enumerable member-identity inputs.
+
+With the parser disabled, all 13 nexe core cases and five SDK cases passed;
+three source-dependent SDK cases skipped explicitly. All three real producer
+images were supplied to the core test. ABI availability, worker Web and the
+four general MCP suites passed; the backend-omission-only ABI case skipped.
+With the entire backend disabled, both ABI cases and four general MCP suites
+passed; worker Web and optional Claude MCP explicitly skipped. Logs:
+`/tmp/neverd-nexe-nojs-{sdk-core,api,worker,mcp}.log` and
+`/tmp/neverd-nexe-disabled-{api,worker,mcp}.log`.
+
+After restoring the backend and parser, the integrated build again passed
+504 of 511 owning Web cases, with the same seven explicit skips and every
+supplied real artifact enabled. Worker Web, all four general MCP suites and
+enabled ABI availability passed. The separate real Claude MCP case also
+passed. Logs:
+`/tmp/neverd-nexe-restored-{web,worker,mcp,api,claude}.log`.
+
+This advances #718 with a qualified, independent nexe profile. The separate
+pkg adapter and the remaining acceptance items across #714–#718 are still
+in progress; these results do not mark the five epics complete.
+
+The later remote `dev` update through `8591189db` was integrated, including its
+recorded Capstone revision. After rebuilding the affected native/SDK targets,
+all 30 nexe/core/SDK/native cases passed with producer fixtures supplied, as did
+worker Web, all five MCP suites including real Claude, and enabled ABI
+availability. The backend-omission-only ABI case skipped. The capability checker
+passed. Logs: `/tmp/neverd-nexe-latest-integration-{build,web,api,worker,mcp}.log`.
+
+## Independent pkg virtual filesystem extraction — 2026-10-11
+
+`pkg-5.8.1-uncompressed-vfs-v1` adds independent C++ locator, index and partition
+owners. The bounded streaming locator accepts fixed-width LF/CRLF declarations;
+the fixed prelude wrapper frames strict JSON VFS, entry and link declarations.
+Compression, ambiguous locators, malformed ranges, unknown store types and
+portable path conflicts refuse. Prefix, payload, prelude and trailer preserve
+every byte; exact store aliases share hashing and stat parsing work. Source,
+opaque V8 cache, directory-list and stat records have separate selection rules.
+See the [profile](web-pkg-profile.md).
+
+Independent plan review required metadata digest redaction, unresolved
+source/cache equivalence, ancestor-link uncertainty, exactly one namespace root
+and qualification against packaged outputs rather than unchanged native bases.
+Consumer review additionally excludes content aliases of metadata from source
+and package selection, including private metadata digests through region pages.
+Stat sizes remain separate declarations: producer BOM/shebang stripping changes
+stored source lengths without changing the original stat size. Cache-only entry
+declarations report cache presence
+without inventing source. Session, SDK, CLI, worker and MCP consume one core
+model. The existing nexe and new pkg selections share checked nested storage
+coordinate construction; package ancestry retains delivery-only semantics.
+
+Six controlled pkg 5.8.1 outputs use the pinned pkg-fetch 3.4.2 Node 18.5.0
+bases for Linux, macOS and Windows, each x64 and ARM64. Their inputs, base and
+container hashes, npm producer identity and retained dependency lock are in the
+[manifest](../unittests/web/fixtures/pkg/manifest.json). Four independent inputs
+were packaged with bytecode/native building disabled. The C++ core matched all
+six containers and every stored input byte/hash. Windows CRLF/snapshot paths
+and macOS appended signing bytes are covered without claiming native identity,
+signature validation or runtime activation. No target was executed. Producer
+setup remains a separate development activity, never a test/analyzer dependency.
+
+A supplemental producer output independently qualifies BOM/shebang processing:
+original source lengths are 78/22 and stored lengths are 56/19. The C++ fixture
+pins the complete container and checks separate original/stored byte and hash
+oracles. See its [manifest](../unittests/web/fixtures/pkg/stripped-manifest.json).
+All six canonical outputs also passed actual extraction and source CLI commands
+with an unusable external-tool PATH. No target or embedded runtime was invoked.
+
+Enabled verification on the nexe integration base passed 534 of 541 Web cases,
+including 30 pkg cases, all supplied native producer corpora, npm/VSIX evidence
+and the complete 2,345-unit Claude Code source recovery. Seven expected skips
+were six unavailable LLVM Zstd map cases and the inapplicable ASAR-policy
+omission case. The shared worker protocol/Web/transport checks passed, as did
+seven additional worker regressions and all five MCP suites including real
+Claude Code. The capability inventory passed after correcting the canonical
+order of the two new public names. ABI capability discovery passed; its
+backend-omission-only case was inapplicable. Logs are
+`/tmp/neverd-pkg-full-web.log`, `/tmp/neverd-pkg-worker.log`,
+`/tmp/neverd-pkg-worker-shared.log`, `/tmp/neverd-pkg-mcp.log`,
+`/tmp/neverd-pkg-abi.log` and `/tmp/neverd-pkg-capabilities.log`.
+
+With JavaScript parsing disabled, 45 of 51 pkg/nexe cases passed; six source-only
+cases explicitly skipped. Core extraction still checked all supplied producer
+images and the preprocessing variant. ABI discovery, actual Web worker and four
+MCP suites passed; the source-dependent MCP Claude case explicitly skipped.
+See `/tmp/neverd-pkg-nojs-{web,api,worker,mcp}.log`. With the entire backend
+disabled, both C ABI tests passed, including all public stubs; four MCP suites
+passed and the backend-dependent Web worker/Claude cases explicitly skipped.
+See `/tmp/neverd-pkg-off-{api,worker,mcp}.log`.
+These bounded profiles do not complete the remaining #714–#718 work.
+
+The increment was rebased onto remote `dev` at `0f1accd2f`, preserving its
+native graph/C projection updates. Both Web flags were restored to ON; the
+235-step integrated rebuild completed. All 541 Web cases repeated with the
+same 534 passes/seven explicit skips, including complete Claude Code recovery.
+ABI discovery and ten worker suites passed. Logs:
+`/tmp/neverd-pkg-restored-build.log` and
+`/tmp/neverd-pkg-restored-{web,api,worker}.log`.
+
+The first concurrent MCP run had four passes and one 15-second initialization
+response timeout in the Claude case, before any sample-analysis tool call.
+Other newly linked SDK/worker processes also had slow startup in that run;
+the exact startup cause is not established. The unchanged isolated Claude case
+passed in 3.55 seconds. A subsequent five-suite MCP run overlapped complete
+Claude source recovery and the full Bun/pkg producer corpora: all eight selected
+checks passed, with the MCP Claude case taking 3.61 seconds. The response limit
+was not increased and no product change was made to mask the failure. Preserve
+this intermittent startup limitation rather than treating retries as a fix.
+Logs: `/tmp/neverd-pkg-restored-mcp.log`,
+`/tmp/neverd-pkg-restored-mcp-claude-isolated.log`,
+`/tmp/neverd-pkg-restored-mcp-repeat.log` and
+`/tmp/neverd-pkg-restored-overlap-repeat.log`.
+
+The later integration with remote `dev` at `3fbb86447` rebuilt the affected
+native/SDK/transport targets and owning core tests. All 60 pkg/nexe/native
+cases passed with producer corpora supplied, as did worker Web, all five MCP
+suites including real Claude, ABI discovery and the 23-capability manifest
+check. The backend-omission-only ABI case skipped as expected. Logs:
+`/tmp/neverd-pkg-final-sync-{build,core-build,web,worker,mcp,api,capabilities}.log`.
+The [combined matrix](web-native-javascript-matrix.md) now records independent
+runtime/platform/map/cache contracts and explicit per-sample cross-track
+statuses; it does not promote partial navigation or absent protocol captures
+to completed acceptance.
+
+## Reversible lexical renaming — 2026-10-11
+
+`javascript-scope-rename-v1` adds an explicit `scope_renaming` pass using the
+C++ parser and lexical binding model. Independent planning review excluded all
+bindings owned by functions with non-simple parameters: their implicit
+parameter-to-variable value copies are outside the current lexical graph.
+Other exclusions cover dynamic scope, root bindings, function/class names,
+inferred names, writes, shorthand and unsupported declaration forms. Accepted
+bindings use deterministic collision-free names and complete identifier sets.
+The candidate is reparsed; complete AST, scopes, declarations, bindings,
+references and per-node scope ownership are compared before exact inversion.
+See the [profile](web-scope-rename-profile.md).
+
+Core planning and validation are separate rewrite components. Session, SDK,
+CLI, worker and MCP use the existing shared cache and receipt-bound local
+export. Rename metadata has binding evidence and no primitive-value claim;
+private names stay out of previews. Fixed pre-change primitive receipts prove
+that both older passes retain exact IDs, export tokens, bytes and SHA-256.
+The initial CLI test exposed a reused test-output file retaining trailing
+bytes; explicitly truncating the harness files fixed it without a product
+change. The focused SDK and compatibility tests then passed.
+
+Actual NeverD CLI extraction and rewriting of original Claude Code 2.1.296 Bun
+module 1 accepted 46 identifier occurrences and refused 17 binding declarations.
+The exported original exactly matched the earlier recovered member; the
+1,908-byte candidate reparsed and restored its 1,362-byte original exactly.
+Module 228 instead exceeded the unchanged 4,096-record ceiling and published
+no candidate, partial records or export receipt. Both outcomes are exercised
+from the original hash-pinned binary in the C++ core test. The
+[qualification record](web-claude-code-qualification.md) pins the hashes and
+local output; no target or runtime was executed and no sample source is
+committed.
+
+Enabled Web verification passed 550 of 557 cases with every existing producer
+corpus and the complete 2,345-unit Claude recovery supplied. Seven explicit
+skips cover six unavailable LLVM Zstd map cases and the ASAR-policy omission
+case. All ten worker regressions, all five MCP suites including real Claude,
+and enabled ABI discovery passed. Logs:
+`/tmp/neverd-rename-full-web.log`, `/tmp/neverd-rename-worker-all.log`,
+`/tmp/neverd-rename-mcp.log` and
+`/tmp/neverd-rename-availability-enabled.log`.
+
+With JS parsing disabled, ABI discovery, worker Web and four MCP suites passed;
+the source-dependent Claude MCP test skipped. With the whole Web backend
+disabled, both ABI discovery/stub cases and four MCP suites passed; Web worker
+and Claude MCP cases explicitly skipped. The new pass reports
+`capability_unavailable` through the existing API when its owner is absent.
+Logs: `/tmp/neverd-rename-nojs-{api,worker,mcp}.log` and
+`/tmp/neverd-rename-off-{api,worker,mcp}.log`.
+
+Both Web flags were restored to ON. The owning rebuild and all 31 rewrite
+core/SDK tests, ten worker suites, five MCP suites, ABI discovery and the
+23-capability manifest check passed on `1d9652797`. Logs:
+`/tmp/neverd-rename-restored-{build,web,worker,mcp,api}.log` and
+`/tmp/neverd-rename-capabilities.log`. This increment does not complete general
+control-flow simplification or the remaining four tracks.
+
+## Reversible Boolean branch expressions — 2026-10-11
+
+`javascript-boolean-branches-v1` adds explicit `boolean_branches` selection
+through the shared C++ binding/value/effect models. The independently reviewed
+plan required two corrections: retain module asynchrony by refusing every
+candidate containing await, even in an unreachable branch; and use
+`(0,(<selected bytes>))` so a chosen sequence remains one operand and GetValue
+semantics survive calls, typeof, delete and indirect eval. No statement
+transformation or duplicate truthiness/binding analysis was introduced.
+
+`rewrite/Branches.cpp` owns bounded candidate selection and syntax barriers;
+`BranchValidate.cpp` owns exact GetValue scaffolding and retained AST/reference
+projection. Complete scope/declaration ownership survives. Chosen side effects
+and possible exceptions are retained, never assumed absent. Exact inversion
+and the existing private export transaction precede publication. Session,
+SDK/CLI, worker and MCP share the new profile and two-result cache. The older
+primitive goldens and a pre-change rename golden retain their entire serialized
+receipt bytes, hashes, IDs and export tokens.
+
+The actual NeverD Bun CLI selected Claude module 1047, accepting one branch and
+refusing six; its exported original exactly matches the earlier recovered
+member and its candidate passes reparse, graph projection and inverse checks.
+Module 1897 retains all 1,007 candidates unchanged. Module 1613 refuses the
+source-byte ceiling before rewriting. C++ tests extract all three from the
+original hash-pinned executable. See the
+[qualification](web-claude-code-qualification.md) and
+[profile](web-boolean-branches-profile.md). No target was executed or sample
+source committed; budgets were unchanged.
+
+All 50 focused core/SDK tests passed, including work exhaustion, old raw
+receipts, private canaries and unusable-PATH CLI export. Enabled ABI discovery,
+the actual worker Web transport and all five MCP suites passed. After adding
+the three-member real test, complete Web regression passed 570 of 577 cases,
+including all supplied runtime/package corpora and all 2,345 Claude JS units.
+Seven explicit skips remain the six unavailable LLVM Zstd map cases and the
+ASAR-policy omission case. All ten worker regressions and the 23-capability
+manifest check passed. Logs: `/tmp/neverd-branch-{focused,full-web,api,mcp,worker-all,capabilities}.log`.
+
+With JS parsing disabled, ABI discovery, worker Web and four MCP suites passed;
+the source-dependent Claude MCP case skipped. With the whole backend disabled,
+both ABI/stub cases and four MCP suites passed; worker Web and Claude MCP
+explicitly skipped. Both flags were restored to ON, then all 51 focused rewrite
+core/SDK cases, ten worker suites, five MCP suites and ABI discovery passed.
+The backend-omission-only ABI case skipped in the enabled profile. Logs:
+`/tmp/neverd-branch-nojs-{api,worker,mcp}.log`,
+`/tmp/neverd-branch-off-{api,worker,mcp}.log` and
+`/tmp/neverd-branch-restored-{build,web,api,worker,mcp}.log`.
+
+## Offline installation entry traces — 2026-10-11
+
+The independently reviewed `node-install-entry-traces-v1` plan corrected three
+counterexamples before implementation: manifest/lock-only evidence must work
+without a fake source selection; Node's bare `inspect` is a reserved command;
+and readable archive namespaces cannot distinguish missing members from omitted
+symlinks or encrypted/unsupported content. Commands, entries, source coverage,
+requests and associations preserve these boundaries in C++ metadata.
+
+`packages/install/Command`, `Trace` and `Publication` separate literal admission,
+bounded evidence joins and metadata serialization. The package owner retains
+its exact namespace, and entry validation shares `packages/Paths`. A separate
+Node adapter in the module-link owner consumes authoritative source origins
+without changing older ESM behavior or upgrading external/caller-selected
+CommonJS evidence. Result identities bind the shared semantic profiles as well
+as package, namespace and selected behavior. The session, SDK, CLI, worker and
+MCP retain the same paged, revision-bound result with no runtime invocation.
+See the [profile](web-package-install-profile.md).
+
+Actual NeverD CLI analysis of the original hash-pinned Claude Code 2.1.296 npm
+wrapper selected both JS members and retained two lifecycle declarations. One
+admitted entry associates six existing behavior records in its own file; the
+other command refuses. The remaining two selected source behavior records are
+not attached to that entry. All 13 module requests retain unresolved boundaries.
+The [qualification record](web-claude-code-qualification.md) pins the original
+archive, result identity and saved metadata report hash. No package script,
+sample JS or external analyzer ran.
+
+The first core run passed all nine cases. Expanded owner regression passed
+41 cases, including the original-archive entry/record checks. The first paging
+fixture incorrectly repeated a const declaration and was correctly rejected by
+the parser; replacing it with independent call statements produced the intended
+300 records and 600 associations. All eight then-existing Node SDK/CLI cases,
+worker Web, five MCP suites and enabled ABI discovery passed. Initial complete
+Web regression passed 588 of 595 cases, with six unavailable LLVM Zstd map cases
+and the ASAR-policy omission case explicitly skipped. A subsequent independent
+1,000-call/nine-hook fixture passed the 8,192-association failure check: no result
+or cached chain is published and a source-free trace remains usable.
+
+Logs: `/tmp/neverd-install-{core,sdk,atomic,worker,mcp,api,full-web}.log`.
+The surface manifest was updated for both new C APIs and the 23-capability
+manifest check passed. The optional build-identity audit could not run because
+this existing build lacks a CMake File API index; it is not reported as a
+successful audit. Logs: `/tmp/neverd-install-capabilities-manifest.log` and
+`/tmp/neverd-install-capabilities.log`.
+
+JS-disabled ABI discovery, worker Web and four MCP suites passed; the
+source-dependent Claude MCP case skipped. With the backend disabled, both
+ABI/stub cases and four MCP suites passed, with worker Web and Claude MCP
+explicitly skipped. After restoring both flags, complete Web regression passed
+589 of 596 cases with the same seven expected skips; all ten worker suites,
+five MCP suites and enabled ABI discovery passed. Logs:
+`/tmp/neverd-install-{nojs,off,restored}-{build,api,worker,mcp}.log` and
+`/tmp/neverd-install-restored-web.log`.
+
+Installation associations additionally preserve the original fixed API/kind,
+origin class and node/byte-span anchors. The CLI report remains readable when
+package behavior was created from temporary Node models and the independent
+Node behavior cache is empty; the SDK regression resolves each copied anchor
+against the retained package behavior records.
+All 23 affected core/SDK cases passed after this publication addition, including
+the association-budget failure. The actual wrapper rerun retained six
+associations and the same analysis identity. Logs:
+`/tmp/neverd-install-anchors-{build,tests}.log` and
+`/tmp/neverd-install-claude-anchors.jsonl`.
+
+## Selected package behavior comparison — 2026-10-11
+
+The independently reviewed `node-selected-behavior-diff-v1` plan identified
+three necessary counterexamples. A value-budget failure can change a Buffer
+classification while Node behavior remains partial; comparison must retain
+the original upstream coverage and refuse that source pair. Original records
+must resolve through package behavior even when independent Node behavior was
+never cached. Pattern groups must bind to source pairs so independent per-file
+changes cannot cancel.
+
+`packages/behavior/Package` retains source mode/hash/size and upstream coverage
+from its original typed inputs without changing older publication or IDs.
+`Diff` validates the retained selections, pairs exact inventory-relative files
+and groups existing records. `DiffPublication`, `SessionPackageBehaviorDiff`
+and thin C API/CLI/worker/MCP consumers preserve coverage and original anchors.
+The [profile](web-package-behavior-diff-profile.md) defines unknown selection,
+embedded delivery, incomparable context and resource ceilings.
+
+The first core run exposed a negative fixture that used identical
+content-addressed captures as if their owner IDs differed. An unrelated owner
+ID corrects that fixture. The combined run then passed all 41 affected core
+cases and 15 of 16 SDK cases; the archive CLI fixture exposed an LLVM redirect
+that preserved the tail of an earlier longer reply. Explicitly truncating the
+test's output files fixed it, and all seven new SDK/CLI cases passed. The
+3,000-call-per-side work-budget failure publishes no partial or cached result.
+Logs: `/tmp/neverd-behavior-diff-{focused,sdk}-tests.log`.
+
+The actual CLI compared both original Claude wrappers with an unusable
+external-tool PATH: two comparable source pairs have identical supplied bytes,
+six source-specific pattern groups retain equal counts and 16 original call
+anchors remain resolvable. The original integrity owner independently verified
+the 2.1.295 wrapper against its captured registry SHA-512 declaration. The
+[qualification](web-claude-code-qualification.md) pins original archives,
+metadata, result IDs and the saved report. No package or external analyzer ran.
+
+After rebasing the installation increment onto dev and rebuilding the owning
+targets, complete Web regression passed 607 of 614 cases, including all supplied
+runtime/package corpora and all 2,345 Claude JS units. Seven explicit skips are
+the six unavailable LLVM Zstd map cases and the ASAR-policy omission case.
+All ten worker suites, five MCP suites and enabled ABI discovery passed. The
+23-capability manifest check passed. Logs:
+`/tmp/neverd-behavior-diff-{final-build,full-web,worker,mcp,api,capabilities}.log`.
+
+With JavaScript parsing disabled, ABI discovery, worker Web and all five MCP
+suites passed, including real Bun extraction, which does not need the parser.
+With the backend disabled, both ABI/stub cases and four MCP suites passed;
+worker Web and the actual Claude extraction case explicitly skipped. Logs:
+`/tmp/neverd-behavior-diff-{nojs,off}-{config,build,api,worker,mcp}.log`.
+After restoring both flags to ON, all 57 focused core/SDK cases, ten worker
+suites, five MCP suites and enabled ABI discovery passed. Logs:
+`/tmp/neverd-behavior-diff-restored-{config,build,focused,worker,mcp,api}.log`.
+The subsequent dev synchronization preserves upstream archive-capability guards
+and portable documentation paths. Its 777-step integration rebuild passed;
+complete Web regression again passed 607 of 614 cases with the same seven
+explicit skips. All ten worker suites, five MCP suites and enabled ABI discovery
+passed. The 23-capability manifest and tracked-source provenance checks passed;
+the latter also passed the 16-commit history scan after the unpublished work was
+consolidated without machine-specific documentation paths. Logs:
+`/tmp/neverd-behavior-diff-dev-{build,full-web,worker,mcp,api,capabilities,provenance}.log`
+and `/tmp/neverd-package-triage-dev-history.log`.
+
+## Captured npm advisory declarations — 2026-10-11
+
+The independently reviewed offline-assessment plan requires source/time
+descriptors, unknown-selector coverage and separately bounded uncomposed
+imports. `packages/evidence/Descriptor` owns timestamp/source admission;
+`packages/advisories/{Reader,SemVer,Match,Publication}` own declarations,
+version semantics, comparison and fixed metadata. The session caches imports
+and canonical selections atomically. Four C APIs and thin CLI/worker/MCP
+consumers share these owners without JavaScript or runtime dependencies.
+See the [profile](web-package-advisory-profile.md).
+
+The first compilation found a use of `size()` on LLVM's JSON `ObjectKey`;
+the explicit `StringRef` view corrects that boundary. All 15 core cases then
+passed, including the pinned public OSV record. The first expanded run passed
+23 of 24 cases; CLI output stopped after the existing inventory page because
+that older API uses a null continuation without `page_complete`. The adapter
+now consumes the common `next_offset` contract. All nine SDK/CLI cases passed
+after repair, including 600-entry pages, uncomposed import capacity, shared
+retained-byte and aggregate matching-work failures with unchanged caches.
+Logs: `/tmp/neverd-advisory-{core-build,core-tests,focused-tests}.log` and
+`/tmp/neverd-advisory-{cli-repair-build,sdk-repaired-tests}.log`.
+
+Actual NeverD CLI commands compared the original public OSV declaration against
+captured official npm metadata for lodash 4.17.18 and 4.17.19 with an unusable
+external-tool PATH. The reports retain one declared match and one selected-range
+non-match respectively, original anchors and explicit unverified exploitability.
+The [qualification](web-package-advisory-qualification.md) pins input, descriptor
+and report hashes. Originals and reports are preserved locally.
+
+Complete Web regression passed 631 of 638 cases; the six unavailable LLVM Zstd
+map cases and ASAR-policy omission case explicitly skipped. All ten worker
+suites, five MCP suites and enabled ABI discovery passed. Logs:
+`/tmp/neverd-advisory-{full-web,worker,mcp,api}.log`.
+With JavaScript disabled, all 24 advisory core/SDK cases, worker Web, five MCP
+suites and enabled ABI discovery passed. Replaying the preserved real capture
+produced the byte-identical CLI report. Logs:
+`/tmp/neverd-advisory-nojs-{config,build,focused,worker,mcp,api}.log`.
+The 23-capability manifest and 7,267-file tracked-source provenance check,
+including 16 history commits, passed. With the backend disabled, both ABI/stub
+cases and four MCP suites passed; worker Web and actual Claude extraction
+explicitly skipped. After restoring both options, all 24 advisory cases, ten
+worker suites, five MCP suites and enabled ABI discovery passed. Logs:
+`/tmp/neverd-advisory-{off,restored}-{config,build,api,worker,mcp}.log` and
+`/tmp/neverd-advisory-restored-focused.log`.

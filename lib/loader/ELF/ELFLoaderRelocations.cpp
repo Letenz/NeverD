@@ -49,72 +49,27 @@ struct ObjectRelocationWriterFootprint {
   bool Exact = true;
 };
 
-ObjectRelocationWriterFootprint i386RelocationWriterFootprint(uint32_t Type) {
-  using namespace llvm::ELF;
-  switch (Type) {
-  case R_386_NONE:
-    return {0, 0};
-  case R_386_8:
-  case R_386_PC8:
-    return {0, 1};
-  case R_386_16:
-  case R_386_PC16:
-    return {0, 2};
-  case R_386_TLS_DESC:
-    // The relocation record identifies the first word of the two-word TLS
-    // descriptor, but the linker's value write lands in the second word.
-    return {4, 4};
-  case R_386_32:
-  case R_386_PC32:
-  case R_386_GOT32:
-  case R_386_PLT32:
-  case R_386_GLOB_DAT:
-  case R_386_JUMP_SLOT:
-  case R_386_RELATIVE:
-  case R_386_GOTOFF:
-  case R_386_GOTPC:
-  case R_386_32PLT:
-  case R_386_GOT32X:
-    return {0, 4};
-  default:
-    // Unknown/legacy i386 records conservatively claim one full word.  This
-    // may suppress exact provenance but can never manufacture it.
-    return {0, 4, false};
-  }
-}
-
 ObjectRelocationWriterFootprint objectRelocationWriterFootprint(Arch Target,
                                                                 uint32_t Type) {
   using namespace llvm::ELF;
-  if (Target == Arch::X86)
-    return i386RelocationWriterFootprint(Type);
-  if (Target == Arch::AArch64) {
-    switch (Type) {
-    case R_AARCH64_NONE:
-      return {0, 0};
-    case R_AARCH64_ABS64:
-    case R_AARCH64_PREL64:
-      return {0, 8};
-    case R_AARCH64_ABS16:
-    case R_AARCH64_PREL16:
-      return {0, 2};
-    case R_AARCH64_ABS32:
-    case R_AARCH64_PREL32:
-    case R_AARCH64_CALL26:
-    case R_AARCH64_JUMP26:
-    case R_AARCH64_ADR_PREL_PG_HI21:
-    case R_AARCH64_ADD_ABS_LO12_NC:
-    case R_AARCH64_LDST64_ABS_LO12_NC:
-    case R_AARCH64_LDST128_ABS_LO12_NC:
-    case R_AARCH64_LDST32_ABS_LO12_NC:
-    case R_AARCH64_LDST16_ABS_LO12_NC:
-    case R_AARCH64_LDST8_ABS_LO12_NC:
-      return {0, 4};
-    default:
-      return {0, 4, false};
-    }
-  }
+#define NEVERD_ELF_OBJECT_RELOCATION_WRITER(TargetArch, Kind, OffsetBias,      \
+                                            Width)                             \
+  if (Target == Arch::TargetArch && Type == Kind)                              \
+    return {OffsetBias, Width};
+#include "ELFObjectRelocationWriters.def"
+  // An unlisted record conservatively claims one full word.  This may
+  // suppress exact provenance but can never manufacture it.
   return {0, 4, false};
+}
+
+/// True when the writer table describes \p Target's object relocations.
+bool hasObjectRelocationWriters(Arch Target) {
+#define NEVERD_ELF_OBJECT_RELOCATION_WRITER(TargetArch, Kind, OffsetBias,      \
+                                            Width)                             \
+  if (Target == Arch::TargetArch)                                              \
+    return true;
+#include "ELFObjectRelocationWriters.def"
+  return false;
 }
 
 std::optional<va_t> addSignedOffsetBias(va_t Offset, int64_t Bias) {
@@ -518,7 +473,7 @@ llvm::Error applyRelocations(const llvm::object::ELFFile<ELFT> &ELF,
   // composition rules for such inputs. The same scan certifies the complete
   // write footprint for supported ELF object architectures. An unknown writer
   // disables that certificate, so absence cannot be mistaken for scalar proof.
-  if (Img.Arch == Arch::X86 || Img.Arch == Arch::AArch64) {
+  if (hasObjectRelocationWriters(Img.Arch)) {
     if (IsRelocatable || Img.Arch == Arch::X86) {
       Img.ObjectRelocationWriteBytes.reset();
       if (IsRelocatable)

@@ -26,6 +26,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_FAMinMaxTests.cpp
   aarch64/AArch64_FPTests.cpp
   aarch64/AArch64_FunctionDiscoveryTests.cpp
+  aarch64/AArch64_HighCExecutionTests.cpp
   aarch64/AArch64_HighCIntrinsicSpellingTests.cpp
   aarch64/AArch64_IntrinsicsTests.cpp
   aarch64/AArch64_LogicTests.cpp
@@ -59,6 +60,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_PipelineE2ETests.cpp
   arm32/ARM32_PredicatedStackTests.cpp
   arm32/ARM32_ShiftTests.cpp
+  arm32/ARM32_ThumbPCTests.cpp
   x86_32/X86_32_ArithTests.cpp
   x86_32/X86_32_BitOpsTests.cpp
   x86_32/X86_32_CallAbiTests.cpp
@@ -69,6 +71,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_DShiftTests.cpp
   x86_32/X86_32_FlagsTests.cpp
   x86_32/X86_32_FPTests.cpp
+  x86_32/X86_32_HighCDataTests.cpp
   x86_32/X86_32_HighCSignednessTests.cpp
   x86_32/X86_32_LodsMiscTests.cpp
   x86_32/X86_32_LoopTests.cpp
@@ -138,6 +141,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ExecutableCodeOwnerIndexTests.cpp
   core/LowInstructionBoundaryTests.cpp
   core/LiftCommonTests.cpp
+  core/LinuxSyscallTests.cpp
   core/TargetRegInfoSubRegTests.cpp
   core/MedSSAMultiRootTests.cpp
   core/ObjCSourceTypeHintTests.cpp
@@ -1187,6 +1191,7 @@ target_include_directories(NeverDI386CallContractTests PRIVATE
 # Exercise shared source control-flow and SSA invariants independently of the
 # aggregate lift inventory when fixing mobile source reconstruction.
 add_neverd_unittest(NeverDHighControlFlowTests
+  core/CProjectionIdentifierTests.cpp
   core/HighControlFlowSemanticsTests.cpp
   core/HighFrameStoreForwardingTests.cpp
   core/HighSwitchFollowTests.cpp
@@ -1301,9 +1306,15 @@ add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationCxxSearchTests.cpp
+  eh/RegistrationCatchContextTests.cpp
+  eh/RegistrationCatchStackTests.cpp
+  eh/RegistrationRethrowStateTests.cpp
+  eh/RegistrationRuntimeThrowStateTests.cpp
   eh/RegistrationRealignedStateTests.cpp
   eh/RegistrationRealignedTestUtils.cpp
   eh/RegistrationCallbackStateTests.cpp
+  eh/RegistrationFrameMemoryTests.cpp
+  eh/RegistrationIncomingAliasTests.cpp
 
   LINK_COMPONENTS
   IRRegistrationState
@@ -1333,7 +1344,14 @@ add_neverd_unittest(NeverDWindowsRegistrationRealignedTests
   eh/WindowsRegistrationRealignedNativeTests.cpp
   eh/WindowsRegistrationMultipleCatchTests.cpp
   eh/WindowsRegistrationNestedTryTests.cpp
+  eh/RegistrationObjectTests.cpp
+  eh/WindowsRegistrationCatchContextTests.cpp
+  eh/RegistrationSourceReceiptTestUtils.cpp
+  eh/RegistrationCleanupTestUtils.cpp
   eh/RegistrationNestedTryTestUtils.cpp
+  eh/RegistrationRethrowTestUtils.cpp
+  eh/RegistrationDirectThrowTestUtils.cpp
+  eh/RegistrationThrowHighCTests.cpp
   eh/RegistrationMultipleCatchTestUtils.cpp
   eh/WindowsRegistrationFixedTests.cpp
   eh/WindowsRegistrationDirectNativeTests.cpp
@@ -1354,6 +1372,22 @@ add_neverd_unittest(NeverDWindowsRegistrationNativeTests
   eh/WindowsRegistrationNativeTests.cpp
   eh/RegistrationCxxContinuationTestUtils.cpp
   eh/RegistrationCallTests.cpp
+  eh/RegistrationCleanupABITests.cpp
+  eh/RegistrationRealignedCleanupABITests.cpp
+  eh/RegistrationEntryABITests.cpp
+  eh/RegistrationEntryLayoutTests.cpp
+  eh/RegistrationRealignedLayoutTests.cpp
+  eh/RegistrationRuntimePointerTests.cpp
+  eh/RegistrationHandlerReferenceTests.cpp
+  eh/RegistrationFrameTaintTests.cpp
+  eh/RegistrationFrameStoresTests.cpp
+  eh/RegistrationFrameBitsTests.cpp
+  eh/RegistrationPHICopyTests.cpp
+  eh/COFFTrampolineRegionTests.cpp
+  eh/RegistrationReliftTests.cpp
+  eh/RegistrationSourceReceiptTestUtils.cpp
+  eh/RegistrationCodeRangeTests.cpp
+  eh/RegistrationRethrowTests.cpp
 
   LINK_COMPONENTS
   BackendLLVM
@@ -1398,6 +1432,14 @@ endif()
 add_neverd_unittest(NeverDLLVMMemoryAlignmentTests
   core/MedLLVMMemoryAlignmentTests.cpp
   LINK_COMPONENTS BackendLLVM
+)
+
+add_neverd_unittest(NeverDMedLLVMDeadSlotsTests
+  core/MedLLVMDeadSlotsTests.cpp
+  LINK_COMPONENTS BackendLLVM
+)
+target_include_directories(NeverDMedLLVMDeadSlotsTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/backend/llvm/emit
 )
 
 target_include_directories(NeverDLLVMMemoryAlignmentTests PRIVATE
@@ -1653,6 +1695,11 @@ add_neverd_unittest(NeverDMachOPointerRelocationBoundaryTests
   Loader
   Pipeline
 )
+
+if(MSVC)
+  # Release builds of the pointer-boundary cases exceed standard COFF sections.
+  target_compile_options(NeverDMachOPointerRelocationBoundaryTests PRIVATE /bigobj)
+endif()
 
 target_include_directories(NeverDMachOPointerRelocationBoundaryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
@@ -2300,6 +2347,7 @@ set(AARCH64_TEST_SOURCES
   aarch64/test_extern_calls_nopic_a64.c
   aarch64/test_return_join_a64.c
   aarch64/test_param_phi_a64.s
+  aarch64/test_linux_svc_a64.s
   aarch64/test_jumptable_index_identity_a64.s
   aarch64/test_pageoff_wrong_base_a64.s
   aarch64/test_pageoff_reaching_a64.s
@@ -2344,6 +2392,9 @@ set(ARM32_TEST_SOURCES
   arm32/test_frame_pointer_void_arm.s
   arm32/test_arm_rel32_reaching.s
   arm32/test_arm_rel32_multiple_sources.s
+  arm32/test_arm_relocation_free_literal.s
+  arm32/test_linux_svc_arm.s
+  arm32/test_thumb_pc_reads.s
   arm32/test_module_predicated_escape_arm.s
   format/test_elf_pointer_reloc_arm32.s
   arm32/test_arith_arm.c
@@ -3717,6 +3768,33 @@ add_neverd_unittest(NeverDX86FPConversionAccuracyTests
   x86_64/X86_64_FPConversionAccuracyTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86FPConversionAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPScalarConvertStateTests
+  x86_64/X86_64_FPScalarConvertStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPScalarConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86FPPackedConvertStateTests
+  x86_64/X86_64_FPPackedConvertStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86FPPackedConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86F16CStateTests
+  x86_64/X86_64_F16CStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86F16CStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86X87ConstantTests
+  x86_64/X86_64_X87ConstantTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87ConstantTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86ComiStateTests
+  x86_64/X86_64_ComiStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86ComiStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp

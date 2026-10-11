@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | 執行期觀察 |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | 執行期觀察 |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLibraryA`、`FreeLibrary`，沿用一般相依、TLS 與 `DllMain` 生命週期。DLL 預設入口是其程序附加呼叫；不替任意匯出猜測參數。重建保留匯出名稱、序號、別名、資料及轉送器；指向自身匯出的指標保持為內部指標，不產生自身匯入。輔助常式傳回的位址也遵循此規則：內部結果會撤銷該位置先前的匯入修復證據。
 
@@ -26,8 +26,22 @@ PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLi
 
 恢復會檢查入口參數、返回／影子堆疊框架、非揮發性暫存器、方向旗標、浮點控制與核心物件所有權。殘留記憶體池、借用核心指標、已修改的載入器物件或未計入的核心效果會回傳 `unsupported_state`；明確的 `snapshot_only` 保留診斷。核心狀態尚無 `restore_runtime` 實作。匯入重建使用核心匯出身分，驗證原始匯出表並重算 PE 檢查碼。固定基底產物不代表已通過 Windows 核心載入、簽章驗證或未執行路徑的驗收。
 
+使用 `backend: "unicorn"` 和 `execution_contract: "driver-strict"` 時，x64 驅動程式恢復支援停止狀態的指令解碼，以及跨實體別名的已提交 RAM 寫入監視。此契約使用 Unicorn 的指令語義；`checked-x64-v1` 提供執行前的指令准入檢查。
+
+載入器擁有的映像頁上，暫時 MDL 的全部別名解除、全部鎖釋放且全部描述元釋放後，不再額外阻止還原。此契約允許未指定位址的核心模式快取別名。存活 MDL、其他所有權或對映類型，以及客體對實體 PFN 身分的讀取仍保留還原相依性；模型化的複製、移動和比較服務讀取也計入。
+
+透過 `KeQueryPerformanceCounter`、`RDTSC` 或 `RDTSCP` 讀取時鐘會保留明確的驅動程式恢復相依性。擷取的計數器與頻率值尚無面向新核心環境的重新繫結契約。預設恢復傳回 `unsupported_state`；`snapshot_only` 保留此診斷。
+
+`runtime_state.additional_dependency_reasons` 列出驅動模型觀察到的原因，包括存活的池或 MDL、被修改的載入器物件、核心副作用及入口呼叫上下文變化。預設拒絕與明確快照保留相同原因。空清單不會覆寫 `has_additional_dependencies`，也不證明存在恢復契約。
+
+`ProcessView::runtimeState(include_backing)` 為暫停的驅動程式提供 `WindowsDriverState`。核心擁有者保存每個存活集區的配置 API、精確請求大小、標籤，以及有效的舊式類型或完整的新式 flags。要求內容時獨立複製恰好這些位元組；僅擷取中繼資料時不包含內容。已釋放的集區、借用的載入器物件以及裝置物件不會成為集區記錄。此擷取不提供指標來源或原生初始化器，既有相依性和重定位拒絕條件繼續有效。
+
+`WindowsDriverState::Entry` 保留最初 DriverEntry 的暫存器基線與返回／shadow frame、停止時的整數／XMM／浮點控制暫存器，以及目前 OS 擁有的堆疊範圍。請求 backing 時複製完整活動堆疊。後續分派和卸載呼叫仍保留原基線，並明確標記為 DriverEntry 之外的呼叫。這些具體觀測不構成指標來源或新呼叫者繫結證明。
+
+即使沒有殘留集區或借用物件，核心映像重定位仍是獨立的載入器相依性。目前重建器移除生成內容的重定位，因此預設驅動程式復原會傳回 `unsupported_state`，不會建立或截斷輸出。僅明確指定 `snapshot_only` 才輸出固定基址快照並保留此診斷。原始重定位表不能證明其涵蓋生成的指標。
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## 用法

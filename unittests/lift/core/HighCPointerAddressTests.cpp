@@ -42623,7 +42623,13 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
       << HighC;
-  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+  // Both conversions complete MXCSR state, so the rounding path prints as
+  // the state helpers rather than as a bare C cast.
+  const auto ToInteger =
+      HighC.find("neverd_x86_fp_cvt_to_int_state_f64_i64(arg0, ");
+  ASSERT_NE(ToInteger, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64(", ToInteger),
+            std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))

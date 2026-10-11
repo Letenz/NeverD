@@ -4,6 +4,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   PackageArchiveTests.cpp
   ZipTests.cpp
   PackageIntegrityTests.cpp
+  PackageAdvisoryTests.cpp
   InterfaceTests.cpp
   StreamTests.cpp
   AsarTests.cpp
@@ -14,6 +15,8 @@ add_neverd_unittest(NeverDWebArtifactTests
   BlobStoreTests.cpp
   BunTests.cpp
   SEATests.cpp
+  NexeTests.cpp
+  PkgTests.cpp
   JsonReaderTests.cpp
   LINK_COMPONENTS Web
 )
@@ -31,6 +34,9 @@ target_include_directories(NeverDWebZipWithoutDeflateTests PRIVATE "${CMAKE_SOUR
 # Manual, development-only recorder; no production or test dependency on it.
 add_executable(neverd-web-bun-fixture-record EXCLUDE_FROM_ALL fixtures/bun/Record.cpp)
 add_executable(neverd-web-sea-fixture-record EXCLUDE_FROM_ALL fixtures/sea/Record.cpp)
+add_executable(neverd-web-nexe-fixture-inputs EXCLUDE_FROM_ALL fixtures/nexe/WriteInputs.cpp)
+target_include_directories(neverd-web-nexe-fixture-inputs PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(neverd-web-nexe-fixture-inputs PRIVATE LLVMSupport)
 target_include_directories(neverd-web-sea-fixture-record PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(neverd-web-sea-fixture-record PRIVATE LLVMSupport)
 target_include_directories(neverd-web-bun-fixture-record PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -50,6 +56,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   add_neverd_unittest(NeverDWebSourceTests
     NodeBehaviorTests.cpp
     PackageBehaviorTests.cpp
+    PackageBehaviorDiffTests.cpp
+    PackageInstallTests.cpp
     SourceInterfaceTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
@@ -59,6 +67,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceTests.cpp
     SourceRecoveryTests.cpp
     SourceRewriteTests.cpp
+    SourceRenameTests.cpp
+    SourceBranchTests.cpp
     RewriteExportTests.cpp
     SourceBindingTests.cpp
     SourceDeclarationIndexTests.cpp
@@ -86,13 +96,19 @@ if(TARGET neverd_shared)
   add_neverd_unittest(NeverDWebSDKTests
     SDKTests.cpp
     RewriteSDKTests.cpp
+    RenameSDKTests.cpp
+    BranchSDKTests.cpp
     NodeBehaviorSDKTests.cpp
+    PackageBehaviorDiffSDKTests.cpp
     PackageSDKTests.cpp
     PackageArchiveSDKTests.cpp
     PackageIntegritySDKTests.cpp
+    PackageAdvisorySDKTests.cpp
     InterfaceSDKTests.cpp
     StreamSDKTests.cpp
     SEASDKTests.cpp
+    NexeSDKTests.cpp
+    PkgSDKTests.cpp
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     DesktopSDKTests.cpp
