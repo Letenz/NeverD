@@ -422,7 +422,11 @@ patch modes, forced bases and a second reconstruction. A separate destructor-gra
 fixture retains two out-of-line member calls and checks those same lifetime
 observations. Ordinary observed graph calls additionally require an independently
 computed scalar return; discarding a runtime result cannot authorize its use
-at an ordinary call. An ordinary call without an independent result can be
+at an ordinary call. A child result may be consumed only when every child return
+independently proves a 32-bit scalar; borrowed pointers and unproved return
+paths remain unknown. The separate scalar-result destructor corpus checks
+those values through the same lifetime order and content oracle.
+An ordinary call without an independent result can be
 lowered as void only when current SSA proves that copies, extensions and PHIs
 carry no observed result, and its LLVM uses end exclusively in exact
 emitter-private store-only slots. Both native emission and independent COFF

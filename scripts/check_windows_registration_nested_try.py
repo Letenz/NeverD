@@ -133,6 +133,12 @@ def source_profile(name):
         else:
             from windows_registration_destructor_graphs import profile
         return profile(validate_decompilation)
+    if name == "destructor-results":
+        if __package__:
+            from .windows_registration_destructor_results import profile
+        else:
+            from windows_registration_destructor_results import profile
+        return profile(validate_decompilation)
     if name == "copies":
         if __package__:
             from .windows_registration_copies import profile
@@ -156,7 +162,7 @@ def source_profile(name):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "destructor-graphs", "copies", "initializers", "delegating"), default="nested")
+    parser.add_argument("--profile", choices=("nested", "objects", "destructors", "destructor-graphs", "destructor-results", "copies", "initializers", "delegating"), default="nested")
     parser.add_argument("--test-binary", type=Path, required=True)
     parser.add_argument("--patch-binary", type=Path, required=True)
     parser.add_argument("--runtime-libs", type=Path, required=True)

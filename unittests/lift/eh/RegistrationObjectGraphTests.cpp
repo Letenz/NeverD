@@ -191,6 +191,45 @@ TEST(RegistrationObjectGraph, DoesNotTreatDiscardedChildResultAsAValue) {
   }
 }
 
+TEST(RegistrationObjectGraph, ComposesAProvedScalarChildResult) {
+  ObjectGraphImage F;
+  F.install(1,
+            {0x8b, 0x01, 0xc3}); // Return an object field, never its address.
+  F.install(0, F.wrapper(0, {1}, {}, {0xa3, 0, 0, 9, 0}));
+  const auto Proof = F.prove();
+  ASSERT_TRUE(Proof);
+  EXPECT_TRUE(Proof->Destructor->HasIndependentScalarReturn);
+  EXPECT_EQ(Proof->Destructor->ECXReads,
+            (std::vector<RegistrationObjectExtent>{{0, 4}}));
+  ASSERT_EQ(Proof->Destructor->ImageWrites.size(), 1u);
+  EXPECT_EQ(Proof->Destructor->ImageWrites.front().Begin, F.DataVA);
+  EXPECT_TRUE(getCheckedX86RegistrationObjectCalleeABI(F.Image, F.Image.Entry));
+  EXPECT_FALSE(getCheckedX86RegistrationLeafCalleeABI(F.Image, F.Image.Entry));
+}
+
+TEST(RegistrationObjectGraph, ScalarChildResultMustHoldOnEveryReturn) {
+  ObjectGraphImage F;
+  F.install(0, F.wrapper(0, {1}, {}, {0xa3, 0, 0, 9, 0}));
+  for (const auto &Code :
+       {std::vector<uint8_t>{0x89, 0xc8, 0xc3}, // Borrowed this pointer.
+        std::vector<uint8_t>{0x83, 0x39, 0, 0x74, 6, 0xb8, 7, 0, 0, 0, 0xc3,
+                             0xc3}}) { // One path retains entry EAX.
+    F.install(1, Code);
+    EXPECT_FALSE(F.prove());
+  }
+}
+
+TEST(RegistrationObjectGraph, ScalarChildResultRetainsItsArgumentProof) {
+  ObjectGraphImage F;
+  F.install(0, F.wrapper(0, {1}, {0x6a, 7}, {0xa3, 0, 0, 9, 0}));
+  F.install(1, {0x8b, 0x44, 0x24, 4, 0xc2, 4, 0});
+  const auto Proof = F.prove();
+  ASSERT_TRUE(Proof);
+  EXPECT_TRUE(Proof->Destructor->HasIndependentScalarReturn);
+  F.install(0, F.wrapper(0, {1}, {0x54}, {0xa3, 0, 0, 9, 0})); // Private ESP.
+  EXPECT_FALSE(F.prove());
+}
+
 TEST(RegistrationObjectGraph, ObservedRootNeedsAnIndependentScalarResult) {
   ObjectGraphImage F;
   F.leaf(1);

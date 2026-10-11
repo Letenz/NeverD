@@ -70,8 +70,9 @@ std::optional<RegistrationLeafCalleeABI> getCheckedX86RegistrationLeafCalleeABI(
 
 /// Extend the returning leaf contract to a bounded acyclic object call graph.
 /// Direct children borrow the same ECX object or a nonnegative subobject and
-/// consume only initialized private scalar arguments. Their results remain
-/// unproved; an observed graph result requires an independent 32-bit scalar.
+/// consume only initialized private scalar arguments. A child result remains
+/// unknown unless every return proves an independent 32-bit scalar. Observed
+/// graph results require this same independent result proof at the root.
 /// Transitive code, object and image effects belong to this invocation's proof.
 /// Each caller still owns object extent, contents, lifetime and return usage.
 /// The public root has no stack arguments or callee cleanup; scalar child

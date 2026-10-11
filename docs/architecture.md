@@ -3742,8 +3742,10 @@ call graphs. Each query owns success, failure and in-progress cache entries;
 depth 32, 256 distinct callees and one cumulative work budget bound the proof.
 Children borrow the same object or a nonnegative subobject and take only
 initialized private scalar words. Exact callee cleanup cannot consume saved
-registers or caller storage. Child return values remain unknown in every frame
-domain; a source-observed root needs its own independent scalar result.
+registers or caller storage. A child result remains unknown unless every return
+independently proves a 32-bit scalar. Only that result loses frame, object and
+copy-source taint; it grants no constructor identity or initialized bytes.
+A source-observed root needs its own independent scalar result.
 Transitive code and image effects join the same closure at source analysis,
 LLVM emission and independent COFF installation. Runtime destruction has no
 constructor return-this or must-initialization authority.

@@ -3578,6 +3578,12 @@ code writes, recursion, depth, distinct-node and work exhaustion, and changed
 transitive code. The input-PE32 test requires complete runtime object and cleanup
 state, both destructor identities, two actual child calls and closure of their
 code ranges in the parent's current contracts.
+The separate `destructor-results` profile consumes a returned object-field
+calculation when updating the same independent lifetime trace. Its sixteen
+O0/O1 cases and controls produce 128 images per generation, with identical-file
+replay on Wine and native Windows. Pure graph tests require an independent
+scalar on every return, reject borrowed pointers and entry-EAX alternatives,
+and retain the private scalar-argument proof when a child returns an argument.
 `NeverDRegistrationCallResultTests` independently checks source result-use
 proofs and LLVM deletion plans. SSA copies, extensions and PHIs may transport
 an unused result; returns, branches, source stores, implicit call arguments,

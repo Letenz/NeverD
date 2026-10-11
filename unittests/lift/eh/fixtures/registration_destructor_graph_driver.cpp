@@ -8,7 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 extern "C" __declspec(noreturn) void registration_destructor_finish(bool);
+#ifndef NEVERD_REGISTRATION_OBJECT_TYPES
 #define NEVERD_REGISTRATION_OBJECT_TYPES "registration_destructor_graph_types.h"
+#endif
 #define NEVERD_REGISTRATION_OBJECT_FINISH registration_destructor_finish
 #include "registration_object_driver.cpp"
 

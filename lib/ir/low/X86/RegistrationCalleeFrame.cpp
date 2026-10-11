@@ -280,6 +280,7 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       std::optional<int32_t> AfterCallSP;
       std::optional<FrameValue> AfterCallResult;
       std::optional<FrameValue> AfterCallObject;
+      bool AfterCallScalar = false;
       if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
         if (BorrowECX && !Initializer && !ObjectCallbacks)
           return false;
@@ -318,8 +319,11 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
           if (!Call)
             return false;
           AfterCallSP = Call->StackOffset;
-          // No constructor identity or child result accompanies this call.
-          // FrameTransfer retains unknown volatile values until overwritten.
+          // A checked scalar result grants no object identity or initialized
+          // bytes. Every other volatile result remains unknown.
+          AfterCallScalar = It->second.HasIndependentScalarReturn;
+          if (AfterCallScalar && Op.Output.Size != 4)
+            return false;
         } else if (ThrowProof) {
           const auto SP =
               State.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
@@ -499,6 +503,16 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
             FrameValue::frame(*AfterCallSP);
       if (AfterCallSP && ObjectCallbacks)
         State.Borrow.Registers[x86reg::RSP / x86reg::GeneralRegStride] = {};
+      if (AfterCallScalar) {
+        LowOp Result;
+        Result.Opcode = NdOp::COPY;
+        Result.Output = Op.Output;
+        for (auto *Domain : {&State.Frame, &State.Borrow, &State.CopySource})
+          Domain->Registers[x86reg::RAX / x86reg::GeneralRegStride] = {};
+        Transfer.write(Result, {});
+        BorrowTransfer.write(Result, {});
+        CopySourceTransfer.write(Result, {});
+      }
       if (AfterCallResult) {
         State.Frame.Registers[x86reg::RAX / x86reg::GeneralRegStride] =
             *AfterCallResult;
