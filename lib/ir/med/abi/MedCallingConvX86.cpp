@@ -953,6 +953,14 @@ void recoverFPStackReads(
         R.Value.Inputs[0] =
             MedVar::makeConst(unsigned(Intrinsic::X86FPScalarConvertState), 2);
         R.Value.Inputs[1] = Source;
+      } else if (Id == Intrinsic::X86FPFmaMemoryState) {
+        R.Value.Inputs[0] =
+            MedVar::makeConst(unsigned(Intrinsic::X86FPFmaState), 2);
+        R.Value.Inputs[1] =
+            MedVar::makeConst(Op.Inputs[2].ConstVal & ~UINT64_C(32), 2);
+        R.Value.Inputs[2] = Op.Inputs[3];
+        R.Value.Inputs[3] = Op.Inputs[4];
+        R.Value.Inputs[4] = Source;
       } else if (Id == Intrinsic::X86FPArithMemoryState) {
         R.Value.Inputs[0] =
             MedVar::makeConst(unsigned(Intrinsic::X86FPArithState), 2);

@@ -26,6 +26,7 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
   const bool Arithmetic = isX86FPArithStateIntrinsic(Call.IntrinsicId);
   const bool ScalarConvert =
       isX86FPScalarConvertStateIntrinsic(Call.IntrinsicId);
+  const bool Fma = isX86FPFmaStateIntrinsic(Call.IntrinsicId);
   const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
   const unsigned ControlIndex = Memory || ScalarConvert ? 1 : 0;
   const bool HasControl =
@@ -43,7 +44,8 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
       const uint64_t Control =
           HasControl ? Call.Operands[ControlIndex]->ConstVal : 0;
       ScalarOperands &=
-          (Memory ? Index == 2 : Index == 1 || Index == 2) &&
+          ((Memory ? Index == 2 : Index == 1 || Index == 2) ||
+           (Fma && Index == 3)) &&
           x86FPArithStateIsScalar(Control) &&
           Operand->Type->Size == x86FPArithStateElementBytes(Control);
     }
@@ -78,6 +80,7 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           .LeftSize = PointerAddress ? 8 : Size(0),
           .RightSize = Size(1),
           .ThirdSize = Size(2),
+          .FourthSize = Size(3),
           .ArithmeticLeftIsZero =
               Call.Operands.size() > (Memory ? 2U : 1U) &&
               Call.Operands[Memory ? 2 : 1] &&
@@ -85,7 +88,7 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
               Call.Operands[Memory ? 2 : 1]->Type->Kind == NdTypeKind::Int &&
               Call.Operands[Memory ? 2 : 1]->Kind == ExprKind::Const &&
               Call.Operands[Memory ? 2 : 1]->ConstVal == 0,
-          .StateSize = Size(Round || Arithmetic ? 3
+          .StateSize = Size(Round || Arithmetic ? (Fma ? 4 : 3)
                             : Conversion        ? 1
                                                 : 2),
           .HasAuxiliaryOutputs = !Call.IntrinsicOutputs.empty(),
