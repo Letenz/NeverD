@@ -166,6 +166,42 @@ protected:
     test::writeFile(Path, Bytes);
     return Path;
   }
+  void expectSameOpaqueSnapshot(const UnpackResult &Opaque,
+                                const UnpackResult &Checked) {
+    // Opaque software execution cannot retain loader-field provenance. Compare
+    // every input section and the existing import metadata byte for byte while
+    // checking the independently decoded relocation difference explicitly.
+    const auto A = test::readImage(Opaque.Image);
+    const auto B = test::readImage(Checked.Image);
+    EXPECT_EQ(A.Base, B.Base);
+    EXPECT_EQ(A.Entry, B.Entry);
+    EXPECT_EQ(A.DLLCharacteristics, B.DLLCharacteristics);
+    EXPECT_EQ(A.FileCharacteristics & ~llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED,
+              B.FileCharacteristics & ~llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED);
+    EXPECT_EQ(A.Imports, B.Imports);
+    EXPECT_EQ(A.Exports, B.Exports);
+    for (const auto &S : Original.Sections) {
+      SCOPED_TRACE(S.Name);
+      const uint64_t Size = std::max(S.VirtualSize, S.FileSize);
+      ASSERT_LE(uint64_t(S.RVA) + Size, A.Mapped.size());
+      ASSERT_LE(uint64_t(S.RVA) + Size, B.Mapped.size());
+      EXPECT_EQ(llvm::ArrayRef(A.Mapped).slice(S.RVA, Size),
+                llvm::ArrayRef(B.Mapped).slice(S.RVA, Size));
+    }
+    const auto AD = A.directory(llvm::COFF::BASE_RELOCATION_TABLE);
+    const auto BD = B.directory(llvm::COFF::BASE_RELOCATION_TABLE);
+    EXPECT_EQ(AD.Size, 0u);
+    EXPECT_GT(BD.Size, 0u);
+    const auto *Metadata = A.section(".neverd");
+    ASSERT_NE(Metadata, nullptr);
+    ASSERT_NE(B.section(".neverd"), nullptr);
+    EXPECT_EQ(Metadata->RVA, B.section(".neverd")->RVA);
+    EXPECT_EQ(
+        llvm::ArrayRef(A.Mapped).slice(Metadata->RVA, Metadata->VirtualSize),
+        llvm::ArrayRef(B.Mapped).slice(Metadata->RVA, Metadata->VirtualSize));
+    EXPECT_GE(BD.RelativeVirtualAddress, Metadata->RVA + Metadata->VirtualSize);
+    EXPECT_EQ(Opaque.Diagnostic, Checked.Diagnostic);
+  }
   DriverOptions scenario() const {
     DriverOptions D;
     D.Backend = GetParam().Kind;
@@ -414,7 +450,7 @@ TEST_P(UnpackDriver, RecoversAfterReleasingTransientImageMDLs) {
     ASSERT_TRUE(bool(Legacy)) << llvm::toString(Legacy.takeError());
     ASSERT_EQ(Legacy->Outcome, UnpackOutcome::Snapshot) << Legacy->Diagnostic;
     EXPECT_EQ(Legacy->EntryRVA, Result->EntryRVA);
-    EXPECT_EQ(Legacy->Image, Result->Image);
+    expectSameOpaqueSnapshot(*Legacy, *Result);
   }
 }
 
@@ -1233,7 +1269,10 @@ TEST_P(UnpackDriver, SchedulingSlicesPreserveInvocationAndTransferIdentity) {
   ASSERT_TRUE(bool(Legacy)) << llvm::toString(Legacy.takeError());
   ASSERT_EQ(Legacy->Outcome, UnpackOutcome::Snapshot) << Legacy->Diagnostic;
   EXPECT_EQ(Legacy->EntryRVA, Unscheduled->EntryRVA);
-  EXPECT_EQ(Legacy->Image, Unscheduled->Image);
+  if (GetParam().Kind == ExecutionBackendKind::Unicorn)
+    expectSameOpaqueSnapshot(*Legacy, *Unscheduled);
+  else
+    EXPECT_EQ(Legacy->Image, Unscheduled->Image);
 }
 
 TEST_P(UnpackDriver, ObserverFailuresAreAPIErrors) {
