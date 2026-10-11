@@ -618,6 +618,25 @@ binding projection for origins, paths, navigation and bundles; valid class
 outer/inner declarations preserve ambiguity without poisoning other nodes.
 The full binding declaration model stays authoritative. See the
 [Node behavior profile](web-node-behavior-profile.md).
+`packages/install/Command` owns the complete literal Node command subset;
+`Trace` joins the exact package namespace and selected source/behavior models
+and chooses bounded candidate request chains. `Publication` emits fixed metadata.
+`SessionPackageInstall` owns optional selection, paging and its independent
+two-result cache. `SessionPackages` retains the original namespace alongside
+each package result; imports revoke both. Package entry paths share
+`packages/Paths`, while `SourceModules` owns both original ESM links and the
+separate Node candidate adapter using authoritative `SourceOrigins`. No layer
+infers execution or a dependency edge from file association. See the
+[installation trace profile](web-package-install-profile.md).
+`packages/behavior/Diff` owns exact inventory-relative source pairing and
+per-pair syntax-pattern counts; `DiffPublication` emits coverage and original
+occurrence anchors. `Package` retains a bounded internal copy of source
+mode/hash/size and upstream origin/value status from its original typed inputs.
+Comparison neither recomputes source semantics nor assumes the independent
+Node behavior cache exists. `SessionPackageBehaviorDiff` joins exact retained
+before/after selections to the existing package diff and atomically caches
+two results. All adapters use this owner; absent or degraded coverage prevents
+count comparison. See the [comparison profile](web-package-behavior-diff-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.

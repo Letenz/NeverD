@@ -377,6 +377,38 @@ std::string Session::capabilities() {
   Operations.emplace_back("node_behavior_records");
   Operations.emplace_back("package_behavior_analyze");
   Operations.emplace_back("package_behavior_records");
+  Operations.emplace_back("package_behavior_diff_analyze");
+  Operations.emplace_back("package_behavior_diff_records");
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "node_selected_behavior_diff"},
+                         {"profile", std::string(PackageBehaviorDiffProfile)},
+                         {"max_sources_per_side", MaxPackageBehaviorSources},
+                         {"max_records_per_side", MaxPackageBehaviorRecords},
+                         {"max_pairs", MaxPackageBehaviorDiffPairs},
+                         {"max_occurrences", MaxPackageBehaviorDiffOccurrences},
+                         {"max_steps", MaxPackageBehaviorDiffSteps},
+                         {"max_cached", MaxCachedPackageBehaviorDiffs},
+                         {"shares_session_source_cache", true},
+                         {"selection_complete", false},
+                         {"call_correspondence_verified", false},
+                         {"executes_input", false}});
+  Operations.emplace_back("package_install_analyze");
+  Operations.emplace_back("package_install_records");
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "node_install_entry_traces"},
+                         {"profile", std::string(PackageInstallProfile)},
+                         {"max_scripts", MaxPackageInstallScripts},
+                         {"max_requests", MaxPackageInstallRequests},
+                         {"max_associations", MaxPackageInstallAssociations},
+                         {"max_depth", MaxPackageInstallDepth},
+                         {"max_steps", MaxPackageInstallSteps},
+                         {"max_cached", MaxCachedPackageInstalls},
+                         {"max_selected_sources", MaxPackageBehaviorSources},
+                         {"max_selected_bytes", MaxPackageBehaviorBytes},
+                         {"max_selected_nodes", MaxPackageBehaviorNodes},
+                         {"runtime_resolution_verified", false},
+                         {"reachability_verified", false},
+                         {"executes_input", false}});
   Analyses.emplace_back(
       llvm::json::Object{{"kind", "node_source_behavior"},
                          {"profile", std::string(NodeBehaviorProfile)},
@@ -669,8 +701,11 @@ std::string Session::commit(std::string_view Token) {
   State->ElectronIPCs.clear();
   State->ElectronEntryAnalyses.clear();
   State->PackageAnalyses.clear();
+  State->PackageNamespaces.clear();
+  State->PackageInstalls.clear();
   State->NodeBehaviors.clear();
   State->PackageBehaviors.clear();
+  State->PackageBehaviorDiffs.clear();
   State->PackageArchives.clear();
   State->PackageIntegrity.clear();
   State->HARCaptures.clear();
@@ -730,6 +765,8 @@ std::string Session::metadata() const {
       {"source_rewrite_count", State->SourceRewrites.size()},
       {"node_behavior_count", State->NodeBehaviors.size()},
       {"package_behavior_count", State->PackageBehaviors.size()},
+      {"package_behavior_diff_count", State->PackageBehaviorDiffs.size()},
+      {"package_install_count", State->PackageInstalls.size()},
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},

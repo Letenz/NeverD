@@ -55,6 +55,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   add_neverd_unittest(NeverDWebSourceTests
     NodeBehaviorTests.cpp
     PackageBehaviorTests.cpp
+    PackageBehaviorDiffTests.cpp
+    PackageInstallTests.cpp
     SourceInterfaceTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
@@ -96,6 +98,7 @@ if(TARGET neverd_shared)
     RenameSDKTests.cpp
     BranchSDKTests.cpp
     NodeBehaviorSDKTests.cpp
+    PackageBehaviorDiffSDKTests.cpp
     PackageSDKTests.cpp
     PackageArchiveSDKTests.cpp
     PackageIntegritySDKTests.cpp

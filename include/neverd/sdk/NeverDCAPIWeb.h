@@ -432,6 +432,35 @@ NEVERD_API const char *neverd_web_package_behavior_records_json(
     const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
     uint64_t Limit);
 
+/// Compare selected syntax evidence under an existing package diff. Options:
+/// schema_version=1 and optional before_package_behavior_id and
+/// after_package_behavior_id from that diff's exact package analyses.
+NEVERD_API const char *neverd_web_package_behavior_diff_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageDiffID, size_t PackageDiffIDSize,
+    const char *OptionsJSON, size_t OptionsSize);
+/// Page pairs, patterns or occurrences; missing coverage never becomes zero.
+NEVERD_API const char *neverd_web_package_behavior_diff_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *DiffID, size_t DiffIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
+/// Options is {"schema_version":1} with optional package_behavior_id from
+/// this package analysis. Absence selects no sources but retains declarations
+/// and coverage gaps. No shell, runtime resolution or reachability inference.
+NEVERD_API const char *neverd_web_package_install_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// RecordKind is scripts, sources, requests or associations. Limit is 1..512.
+/// Fixed metadata and opaque evidence anchors only; commands stay private.
+NEVERD_API const char *neverd_web_package_install_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *InstallID, size_t InstallIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
 /// Verify local substitutions for an explicit string_recovery,
 /// constant_folding, scope_renaming or boolean_branches pass. Returns
 /// profile-specific evidence and a raw-local-export receipt;

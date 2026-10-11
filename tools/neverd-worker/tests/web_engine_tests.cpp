@@ -1289,7 +1289,7 @@ int main(int argc, char **argv) {
     fs::create_directories(packageRoot / "before");
     fs::create_directories(packageRoot / "after");
     std::ofstream(packageRoot / "before/package.json")
-        << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
+        << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"node z.js SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
     std::ofstream(packageRoot / "after/package.json")
         << R"({"name":"SECRET_WEB_PACKAGE","version":"2","optionalDependencies":{"SECRET_WEB_DEP":"2"}})";
     std::ofstream(packageRoot / "before/z.js")
@@ -1391,6 +1391,36 @@ int main(int argc, char **argv) {
       check(reply["payload"] == aggregate && aggregate["record_count"] == 1 &&
                 aggregate["selection_complete"] == false,
             "Package behavior differs or claims complete selection");
+      Json installArgs{{"schema_version", 1},
+                       {"revision", packageRevision},
+                       {"package_analysis_id", packageIDs[0]}};
+      const auto noSources =
+          web.execute("web_package_install_analyze", installArgs);
+      reply = process.call("web_package_install_analyze", installArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == noSources && noSources["source_count"] == 0,
+            "Worker installation traces require source selection");
+      installArgs["package_behavior_id"] = aggregate["package_behavior_id"];
+      const auto trace =
+          web.execute("web_package_install_analyze", installArgs);
+      reply = process.call("web_package_install_analyze", installArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == trace && trace["association_count"] == 1 &&
+                trace["reachability_verified"] == false,
+            "Worker installation trace differs or upgrades evidence");
+      for (const auto *kind :
+           {"scripts", "sources", "requests", "associations"}) {
+        const Json rowArgs{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_install_id", trace["package_install_id"]},
+                           {"record_kind", kind}};
+        const auto rows = web.execute("web_package_install_records", rowArgs);
+        reply = process.call("web_package_install_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker installation traces differ or disclose command text");
+      }
       for (const auto *kind : {"sources", "records"}) {
         const Json rowArgs{
             {"schema_version", 1},
@@ -1405,6 +1435,53 @@ int main(int argc, char **argv) {
               "Package behavior rows differ or expose private values");
       }
       auto bad = selection;
+      const Json baseArgs{{"schema_version", 1},
+                          {"revision", packageRevision},
+                          {"before_id", packageIDs[0]},
+                          {"after_id", packageIDs[0]}};
+      const auto base = web.execute("web_packages_compare", baseArgs);
+      reply = process.call("web_packages_compare", baseArgs, packageRevision,
+                           packageProject);
+      check(reply["payload"] == base, "Worker comparison base differs");
+      Json diffArgs{{"schema_version", 1},
+                    {"revision", packageRevision},
+                    {"package_diff_id", base["package_diff_id"]}};
+      const auto emptyDiff =
+          web.execute("web_package_behavior_diff_analyze", diffArgs);
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == emptyDiff &&
+                emptyDiff["source_pair_count"] == 0,
+            "Worker invented selected source comparison coverage");
+      diffArgs["before_package_behavior_id"] = aggregate["package_behavior_id"];
+      diffArgs["after_package_behavior_id"] = aggregate["package_behavior_id"];
+      const auto behaviorDiff =
+          web.execute("web_package_behavior_diff_analyze", diffArgs);
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["payload"] == behaviorDiff &&
+                behaviorDiff["occurrence_count"] == 2 &&
+                behaviorDiff["call_correspondence_verified"] == false,
+            "Worker changed recognized pattern evidence");
+      for (const auto *kind : {"pairs", "patterns", "occurrences"}) {
+        const Json rowArgs{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_behavior_diff_id",
+                            behaviorDiff["package_behavior_diff_id"]},
+                           {"record_kind", kind}};
+        const auto rows =
+            web.execute("web_package_behavior_diff_records", rowArgs);
+        reply = process.call("web_package_behavior_diff_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Worker behavior comparison differs or discloses private data");
+      }
+      diffArgs["execute"] = false;
+      reply = process.call("web_package_behavior_diff_analyze", diffArgs,
+                           packageRevision, packageProject);
+      check(reply["error"]["code"] == "invalid_request",
+            "Worker accepted execution metadata");
       bad["origin"] = Json::object();
       reply = process.call("web_package_behavior_analyze", bad, packageRevision,
                            packageProject);
