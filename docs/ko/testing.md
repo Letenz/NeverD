@@ -1657,3 +1657,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 ## 불투명 상태 검사
 
 `X86PreservedState.*`는 새 스칼라 형식, 정확한 별칭, 엄격한 초기화, 오래된 바이트/연산 구간/버전 거부를 검사한다. `OriginalBinaryUndefinedIndependence.*Opaque*`는 분기, 내부 호출, 완전한 간접 대상, 정확한 프로필, 독립 디코딩으로 계산한 메타데이터 예산의 정확/1 부족 경계를 다룬다. `BinaryLowIR*.*Opaque*`는 증인과 임의 미정의 선택, 여러 귀납 소스, 후반 순위/예산 실패, 실제 진입 스칼라 보존, LowIR이 같은 후속 소스 바이트 변경의 실행 해시 변경을 검사한다. `NativeUndefinedIndependence.*Opaque*`와 `NativeStackControl.*FreshMemoryCall*`는 그룹 내부, 절단점 전 경계, 오래된 기록, 스택 변경 전 대상 평가를 검사한다. `NeverDInterpreterLLVMRefinementTests`를 포함한 영향받는 메타데이터 사용자를 재빌드하고, sanitizer 및 컴파일한 결함 주입 결과는 일반 테스트와 별도로 보고한다.
+
+`scripts/check_windows_nonlocal_finally.py`는 MSVC x86/x64 프로그램을 O0/O2 및 GS 활성·비활성 설정으로 컴파일하고 네이티브 실행합니다. 여섯 사례는 일반 호출과 예외 해제 중의 finally, 부모 함수로의 조건부 점프, 해제를 중단하는 return을 구분합니다. 반복 실행은 로컬 보호 영역과 x86 등록 체인을 검사하며, 정리 순서를 변경한 음성 대조군은 원래 기대값에서 거부되어야 합니다. Windows EH fixture 작업은 소스·이미지 해시, 컴파일러 출력, 링크 맵과 실행 관찰을 보존합니다. 해당 MSVC 환경에서 `--arch x86` 또는 `--arch x64`와 `--output`을 지정합니다. 이는 원본 런타임 기준이며 NeverD의 비지역 전이 지원을 입증하지 않습니다.

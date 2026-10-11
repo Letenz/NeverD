@@ -1575,3 +1575,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 ## 原生不透明状态检查
 
 `X86PreservedState.*` 检查新鲜标量形式、精确寄存器别名、严格重置及字节/操作段/版本陈旧拒绝。`OriginalBinaryUndefinedIndependence.*Opaque*` 覆盖分支、内部调用、完整间接目标、精确配置及独立解码的元数据预算恰好够用/少一单位边界。`BinaryLowIR*.*Opaque*` 覆盖选择见证与任意未定义选择、多归纳源、后期秩/预算拒绝、真实入口标量保持，以及 LowIR 不变但后续源段字节改变时执行摘要必须变化。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 检查分组内部、切点前边界、陈旧记录及栈修改前的目标求值。重建受影响的元数据消费者，包括 `NeverDInterpreterLLVMRefinementTests`；分别报告 sanitizer、编译故障注入与普通测试结果。
+
+`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 编译并原生执行 x86/x64 程序，覆盖 O0/O2 与 GS 开关。六种情况区分普通调用和异常展开中的 finally、条件跳回父函数，以及中止展开的 return。重复执行检查局部保护区和 x86 注册链；故意改变清理轨迹的负对照必须被原始预期拒绝。Windows EH fixture 作业保存源文件及映像哈希、编译器输出、链接映射和运行观察。请在对应 MSVC 环境中指定 `--arch x86` 或 `--arch x64` 与 `--output`。这些结果仅提供原生运行基准，不代表 NeverD 已支持这些非局部转移。
