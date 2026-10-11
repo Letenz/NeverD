@@ -310,6 +310,11 @@ reaching levels only after those independent transfers. An ordinary parent
 entry into callback code still requires a separate invocation-exit contract;
 moving ESP alone does not provide one. All activations share the original
 cumulative work budget.
+Registration no-return annotations and ordinary-edge removal bind the same
+current call occurrence, target, instruction extent and operation range. A
+conditional or malformed instruction cannot reuse that receipt. A separate
+decoded no-return boundary remains authoritative when memory-effect evidence
+is unavailable; it does not grant a restored-frame or native-output proof.
 Only established parent addresses can modify parent locals, so a callback
 stack pointer cannot escape there or alias a parent slot at the same offset.
 SEH and C++ share the check for a final, decoded, unconditional callback
