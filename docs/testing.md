@@ -322,6 +322,29 @@ cmake --build build-release --target NeverDX86FPRoundAccuracyTests --parallel 4
 ctest --test-dir build-release -L '^NeverDX86FPRoundAccuracyTests$' --output-on-failure
 ```
 
+`NeverDX86FPScalarConvertStateTests` compares 24 original legacy/VEX
+CVTSI2SS/SD and CVTSS2SD/CVTSD2SS register/memory forms with SDK Codegen and
+HighC/LLVMC, at default/NoOpt and C O0/O2. Full YMM/MXCSR observations cover
+integer boundaries, precision narrowing, NaNs, all rounding/DAZ/FTZ modes and
+sticky flags. Discarded results retain state completion and complete faulting
+reads; native exception contexts verify untouched output and flag priority.
+Additional probes cover unaligned sources, source/destination/merge aliases,
+GS addressing, typed scalar precision returns and declared stack source ABI.
+The concrete suite compares
+raw bits and MXCSR with native instructions, and separately checks exception
+atomicity, active masks, SAE status suppression and independent FTZ lanes in
+the shared conversion evaluator. Low/Med/High shapes, LLVM assembly ownership
+and changed decode metadata have negative controls. `MedCallingConvFPStack`
+checks source extents and preserved controls/state across x64 ELF/Mach-O/COFF.
+Native tests require x64; full YMM probes also require OS-enabled AVX.
+These tests do not certify native x86-32, AVX-512/EVEX, F16C, MMX, x87,
+enabled alignment checking or unavailable-feature faults.
+
+```sh
+cmake --build build-release --target NeverDX86FPScalarConvertStateTests
+ctest --test-dir build-release -L '^NeverDX86FPScalarConvertStateTests$' --output-on-failure
+```
+
 `NeverDX86FPRoundAccuracyTests` compares original legacy/VEX scalar and packed
 ROUND bytes with actual SDK Codegen and HighC/LLVMC at default/NoOpt and O0/O2.
 Directed controls cover all immediate rounding selectors, ignored high bits,

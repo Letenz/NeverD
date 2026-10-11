@@ -10,3 +10,5 @@ X86ReadMXCSR, X86WriteMXCSR, X86FPAddState, X86FPSubState, X86FPMulState,
     X86FPApprox12State, X86FPApprox12MemoryState,
     // Legacy/VEX elementwise arithmetic completes numerical bits and MXCSR.
     X86FPArithState, X86FPArithMemoryState,
+    // Append-only: signed integer/precision conversion to scalar FP + MXCSR.
+    X86FPScalarConvertState, X86FPScalarConvertMemoryState,

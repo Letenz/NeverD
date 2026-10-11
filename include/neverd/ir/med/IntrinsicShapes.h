@@ -89,7 +89,10 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
   const bool Arithmetic =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPArithStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
-  const unsigned ControlIndex = Memory ? 2 : 1;
+  const bool ScalarConvert = Op.NumInputs && Op.Inputs[0].isConst() &&
+                             isX86FPScalarConvertStateIntrinsic(
+                                 static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
+  const unsigned ControlIndex = Memory || ScalarConvert ? 2 : 1;
   const bool Conversion = Op.NumInputs && Op.Inputs[0].isConst() &&
                           isX86FPConversionStateIntrinsic(
                               static_cast<Intrinsic>(Op.Inputs[0].ConstVal));

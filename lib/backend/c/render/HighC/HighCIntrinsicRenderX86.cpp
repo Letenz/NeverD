@@ -1542,11 +1542,14 @@ std::string renderX86TypedIntrinsicCall(
     const bool Round = isX86FPRoundStateIntrinsic(Call.IntrinsicId);
     const bool Approx12 = isX86FPApprox12Intrinsic(Call.IntrinsicId);
     const bool Arithmetic = isX86FPArithStateIntrinsic(Call.IntrinsicId);
+    const bool ScalarConvert =
+        isX86FPScalarConvertStateIntrinsic(Call.IntrinsicId);
     const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
     const unsigned Operands =
         Arithmetic ? 3
         : Approx12 ? 1
-        : Round || isX86FPConversionStateIntrinsic(Call.IntrinsicId)
+        : Round || ScalarConvert ||
+                isX86FPConversionStateIntrinsic(Call.IntrinsicId)
             ? 2
             : Call.Operands.size();
     for (unsigned Index = 0; Index < Operands; ++Index) {
@@ -1556,9 +1559,10 @@ std::string renderX86TypedIntrinsicCall(
           *Call.Operands[Arithmetic ? (Index == 2 ? 3
                                                   : (Memory ? Index == 0 ? 0 : 2
                                                             : Index + 1))
-                         : Approx12 ? (Memory ? 0 : 1)
-                         : Round    ? (Index == 0 ? (Memory ? 0 : 1) : 3)
-                                    : Index];
+                         : ScalarConvert ? (Index == 0 ? 0 : 2)
+                         : Approx12      ? (Memory ? 0 : 1)
+                         : Round         ? (Index == 0 ? (Memory ? 0 : 1) : 3)
+                                         : Index];
       const auto Text = ExprFn(Operand);
       if (Memory && Index == 0)
         Result += "(void *)(uintptr_t)(" + Text + ")";

@@ -24,8 +24,10 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
   const bool Conversion = isX86FPConversionStateIntrinsic(Call.IntrinsicId);
   const bool Round = isX86FPRoundStateIntrinsic(Call.IntrinsicId);
   const bool Arithmetic = isX86FPArithStateIntrinsic(Call.IntrinsicId);
+  const bool ScalarConvert =
+      isX86FPScalarConvertStateIntrinsic(Call.IntrinsicId);
   const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
-  const unsigned ControlIndex = Memory ? 1 : 0;
+  const unsigned ControlIndex = Memory || ScalarConvert ? 1 : 0;
   const bool HasControl =
       Call.Operands.size() > ControlIndex && Call.Operands[ControlIndex];
   bool ScalarOperands = true;
@@ -45,6 +47,13 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           x86FPArithStateIsScalar(Control) &&
           Operand->Type->Size == x86FPArithStateElementBytes(Control);
     }
+    if (ScalarConvert && Operand && Operand->Type &&
+        Operand->Type->Kind == NdTypeKind::Float) {
+      const uint64_t Control = HasControl ? Call.Operands[1]->ConstVal : 0;
+      ScalarOperands &=
+          !Memory && Index == 0 && !x86FPScalarConvertIsInteger(Control) &&
+          Operand->Type->Size == x86FPScalarConvertSourceBytes(Control);
+    }
   }
   const bool PointerAddress = Memory && !Call.Operands.empty() &&
                               Call.Operands[0] && Call.Operands[0]->Type &&
@@ -58,12 +67,12 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           .IdIsConst = true,
           .IdSize = 2,
           .IdValue = static_cast<unsigned>(Call.IntrinsicId),
-          .OutputIsWritable =
-              Call.Type && Call.Type->Kind == NdTypeKind::Int &&
-              Call.Type->Size > 0 &&
-              (!(isX86FPApprox12Intrinsic(Call.IntrinsicId) || Arithmetic) ||
-               (!Call.IsIndirectCall && !Call.IndirectTarget &&
-                !Call.SourceCallHint && !Call.DoesNotReturn)),
+          .OutputIsWritable = Call.Type && Call.Type->Kind == NdTypeKind::Int &&
+                              Call.Type->Size > 0 &&
+                              (!(isX86FPApprox12Intrinsic(Call.IntrinsicId) ||
+                                 Arithmetic || ScalarConvert) ||
+                               (!Call.IsIndirectCall && !Call.IndirectTarget &&
+                                !Call.SourceCallHint && !Call.DoesNotReturn)),
           .OutputSize = Call.Type ? Call.Type->Size : 0U,
           .OperandsAreScalar = ScalarOperands,
           .LeftSize = PointerAddress ? 8 : Size(0),

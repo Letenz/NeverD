@@ -222,7 +222,78 @@ writeX86FPArithStateCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
        << Bytes * 8 << ");\n}\n\n";
 }
 
+inline std::string x86FPScalarConvertCHelperName(Intrinsic Id,
+                                                 unsigned Layout) {
+  const unsigned Control = (Layout >> 8) & 0xff;
+  std::string Name = "neverd_x86_" + x86FPScalarConvertMnemonic(Control) +
+                     "_source" +
+                     std::to_string(x86FPStateSourceBytes(Layout) * 8);
+  if (Id == Intrinsic::X86FPScalarConvertMemoryState) {
+    const auto Space = x86FPRoundStateAddressSpace(Layout);
+    Name += Space == NdMemoryAddressSpace::X86FS   ? "_memory_fs"
+            : Space == NdMemoryAddressSpace::X86GS ? "_memory_gs"
+                                                   : "_memory";
+  }
+  return Name;
+}
+
+template <typename Stream>
+inline void
+writeX86FPScalarConvertCHelper(Stream &OS, Intrinsic Id, unsigned Layout,
+                               const std::string &Name, bool StateAddress) {
+  const unsigned Control = (Layout >> 8) & 0xff;
+  const unsigned SourceBytes = x86FPScalarConvertSourceBytes(Control);
+  const unsigned Bytes = x86FPScalarConvertDestinationBytes(Control);
+  const bool Memory = Id == Intrinsic::X86FPScalarConvertMemoryState;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const auto Raw = x86FPStateRawCType(Bytes);
+  const auto Result = StateAddress ? Raw : x86FPStateRawCType(Bytes + 4);
+  OS << "/* Scalar conversion bits and MXCSR complete together. */\n"
+     << "static inline ";
+  if (Control & 8)
+    OS << "__attribute__((target(\"avx\"))) ";
+  OS << Result << " " << Name << "("
+     << (Memory ? "void *address" : x86FPStateRawCType(SourceBytes) + " bits")
+     << ", " << (StateAddress ? "void *state_address" : "uint32_t state")
+     << ") {\n";
+  if (StateAddress)
+    OS << "    uint32_t state;\n"
+       << "    __builtin_memcpy(&state, state_address, 4);\n";
+  OS << "    " << ((Control & 4) ? "double" : "float") << " converted = 0;\n"
+     << "    " << Raw << " result;\n";
+  if (!Memory) {
+    OS << "    "
+       << (x86FPScalarConvertIsInteger(Control)
+               ? (SourceBytes == 8 ? "int64_t" : "int32_t")
+               : (SourceBytes == 8 ? "double" : "float"))
+       << " value;\n    __builtin_memcpy(&value, &bits, " << SourceBytes
+       << ");\n";
+  }
+  OS << "    __asm__ volatile(\"ldmxcsr %1\\n\\t"
+     << x86FPScalarConvertAsmMnemonic(Control) << " ";
+  if (Memory)
+    OS << (Space == NdMemoryAddressSpace::X86FS   ? "%%fs:"
+           : Space == NdMemoryAddressSpace::X86GS ? "%%gs:"
+                                                  : "")
+       << "(%2)";
+  else
+    OS << "%2";
+  OS << ((Control & 8) ? ",%0" : "") << ",%0\\n\\tstmxcsr %1\"\n"
+     << "        : \"+x\"(converted), \"+m\"(state) : "
+     << (Memory || x86FPScalarConvertIsInteger(Control) ? "\"r\"" : "\"x\"")
+     << "(" << (Memory ? "address" : "value") << ") : \"memory\");\n"
+     << "    __builtin_memcpy(&result, &converted, " << Bytes << ");\n";
+  if (StateAddress)
+    OS << "    __builtin_memcpy(state_address, &state, 4);\n    return "
+          "result;\n}\n\n";
+  else
+    OS << "    return (" << Result << ")result | ((" << Result << ")state << "
+       << Bytes * 8 << ");\n}\n\n";
+}
+
 inline std::string x86FPScalarValueCHelper(Intrinsic Id, unsigned Bytes) {
+  if (isX86FPScalarConvertStateIntrinsic(Id))
+    return x86FPScalarConvertCHelperName(Id, Bytes) + "_value";
   if (isX86FPArithStateIntrinsic(Id))
     return x86FPArithStateCHelperName(Id, Bytes) + "_value";
   if (isX86FPApprox12Intrinsic(Id))
@@ -243,6 +314,10 @@ inline void writeX86FPScalarValueCHelpers(Stream &OS,
                                           const X86FPStateCHelperNames &Used) {
   for (const auto &[Shape, Name] : Used) {
     const auto [Id, Bytes] = Shape;
+    if (isX86FPScalarConvertStateIntrinsic(Id)) {
+      writeX86FPScalarConvertCHelper(OS, Id, Bytes, Name, true);
+      continue;
+    }
     if (isX86FPArithStateIntrinsic(Id)) {
       writeX86FPArithStateCHelper(OS, Id, Bytes, Name, true);
       continue;
@@ -299,6 +374,8 @@ inline void writeX86FPScalarValueCHelpers(Stream &OS,
 }
 
 inline std::string x86FPStateCHelper(Intrinsic Id, unsigned ScalarBytes) {
+  if (isX86FPScalarConvertStateIntrinsic(Id))
+    return x86FPScalarConvertCHelperName(Id, ScalarBytes);
   if (isX86FPArithStateIntrinsic(Id))
     return x86FPArithStateCHelperName(Id, ScalarBytes);
   if (isX86FPApprox12Intrinsic(Id))
@@ -319,6 +396,10 @@ inline void writeX86FPStateCHelpers(llvm::raw_ostream &OS,
                                     const X86FPStateCHelperNames &Used) {
   for (const auto &[Shape, Name] : Used) {
     const auto [Id, Bytes] = Shape;
+    if (isX86FPScalarConvertStateIntrinsic(Id)) {
+      writeX86FPScalarConvertCHelper(OS, Id, Bytes, Name, false);
+      continue;
+    }
     if (isX86FPArithStateIntrinsic(Id)) {
       writeX86FPArithStateCHelper(OS, Id, Bytes, Name, false);
       continue;

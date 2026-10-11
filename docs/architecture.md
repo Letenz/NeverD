@@ -1720,6 +1720,23 @@ EVEX/SAE, enabled alignment checking and unavailable CPU-feature faults retain
 their separate contracts. Swift explicitly refuses this new completion surface
 until it has an equivalent lowering.
 
+Legacy/VEX CVTSI2SS/SD and CVTSS2SD/CVTSD2SS use
+`X86FPScalarConvertState` and `X86FPScalarConvertMemoryState`. One aggregate
+contains the destination's raw scalar bytes followed by MXCSR. Its control
+byte owns signed-integer versus precision conversion, source/destination width
+and VEX identity; it admits neither SAE nor embedded rounding. Memory access
+uses the source width, inside the state completion scope, including Default/FS/GS.
+The lifter authenticates raw bytes against operand metadata before emitting
+effects and owns legacy/VEX lane merging. Only the exact numerical slice gains
+floating type provenance. LLVM and both readable C routes retain the actual
+conversion instruction even for discarded results. The concrete adapter reuses
+the shared SIMD converter: input exceptions precede newly raised result
+exceptions, and unsuccessful completion leaves numerical output untouched.
+IEEE bit arithmetic supplements APFloat's narrowing status for directed finite
+overflow and SSE tininess before denormalization; FTZ remains per active lane.
+Unsigned, packed, EVEX, F16C and x87 conversions retain their separate contracts.
+Swift refuses this completion surface until it has an equivalent lowering.
+
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects
 MXCSR rounding, and bit 3 suppresses precision only. Packed results complete
@@ -1736,7 +1753,9 @@ segment bases. Unknown context refuses; known memory faults retain incoming
 CSR and publish no numerical result. This does not extend EVEX/SAE coverage.
 
 Stack-argument recovery consumes the authenticated source address and byte
-extent of arithmetic, ROUND and APPROX12 memory contracts. A proven immutable
+extent of arithmetic, scalar conversion, ROUND and APPROX12 memory contracts.
+Scalar conversion uses source bytes independently of destination width.
+A proven immutable
 scalar incoming argument can supply the corresponding value contract without
 changing numerical/MXCSR completion. A two-slot i386 scalar uses explicit byte
 composition. Packed, straddling, written or escaped sources keep their original

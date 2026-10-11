@@ -10,6 +10,7 @@
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/ir/X86FPState.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -121,6 +122,32 @@ inline std::string x86FPStateBinaryAsm(Intrinsic Id, unsigned ScalarSize) {
          (ScalarSize == 4 ? "ss" : "sd") + " $2,$0\n\tstmxcsr ($3)";
 }
 
+inline llvm::Type *x86FPScalarConvertResultType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  return (Control & 4) ? llvm::Type::getDoubleTy(C) : llvm::Type::getFloatTy(C);
+}
+inline llvm::Type *x86FPScalarConvertSourceType(llvm::LLVMContext &C,
+                                                unsigned Control) {
+  if (x86FPScalarConvertIsInteger(Control))
+    return llvm::Type::getIntNTy(C, x86FPScalarConvertSourceBytes(Control) * 8);
+  return (Control & 2) ? llvm::Type::getDoubleTy(C) : llvm::Type::getFloatTy(C);
+}
+inline const char *x86FPScalarConvertConstraints(unsigned Control,
+                                                 bool Memory) {
+  return Memory || x86FPScalarConvertIsInteger(Control) ? "=&x,0,r,r,~{memory}"
+                                                        : "=&x,0,x,r,~{memory}";
+}
+inline std::string x86FPScalarConvertAsm(unsigned Layout, bool Memory) {
+  const unsigned Control = (Layout >> 8) & 0xff;
+  const auto Space = x86FPRoundStateAddressSpace(Layout);
+  const char *Segment = Space == NdMemoryAddressSpace::X86FS   ? "%fs:"
+                        : Space == NdMemoryAddressSpace::X86GS ? "%gs:"
+                                                               : "";
+  return "ldmxcsr ($3)\n\t" + x86FPScalarConvertAsmMnemonic(Control) + " " +
+         (Memory ? std::string(Segment) + "($2)" : "$2") +
+         ((Control & 8) ? ",$1" : "") + ",$0\n\tstmxcsr ($3)";
+}
+
 /// Only owned, fully typed assembly contracts may acquire FP state source
 /// helpers. A mnemonic alone cannot prove the operand roles or completion.
 inline std::optional<std::pair<Intrinsic, unsigned>>
@@ -135,6 +162,40 @@ classifyX86FPStateAsm(const llvm::CallInst &Call) {
     return Value->getType()->isPointerTy() &&
            Value->getType()->getPointerAddressSpace() == 0;
   };
+  if (Call.arg_size() == 3)
+    for (unsigned Control = 0; Control < 16; ++Control) {
+      if (!x86FPScalarConvertControlIsValid(Control))
+        continue;
+      auto *Type = x86FPScalarConvertResultType(Call.getContext(), Control);
+      auto *SourceType =
+          x86FPScalarConvertSourceType(Call.getContext(), Control);
+      const auto *Seed =
+          llvm::dyn_cast<llvm::ConstantFP>(Call.getArgOperand(0));
+      if (Call.getType() != Type || !Seed || Seed->getType() != Type ||
+          !Seed->getValueAPF().isZero() || Seed->getValueAPF().isNegative() ||
+          !PointerIsDefault(Call.getArgOperand(2)))
+        continue;
+      for (bool Memory : {false, true})
+        for (auto Space :
+             {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
+              NdMemoryAddressSpace::X86GS}) {
+          if (!Memory && Space != NdMemoryAddressSpace::Default)
+            continue;
+          const unsigned Layout = x86FPRoundStateLayout(
+              x86FPScalarConvertSourceBytes(Control), Control, 0, Space);
+          const auto *Input = Call.getArgOperand(1)->getType();
+          if ((Memory ? Input->isPointerTy() &&
+                            Input->getPointerAddressSpace() ==
+                                llvmX86MemoryAddressSpace(Space)
+                      : Input == SourceType) &&
+              Asm->getConstraintString() ==
+                  x86FPScalarConvertConstraints(Control, Memory) &&
+              Asm->getAsmString() == x86FPScalarConvertAsm(Layout, Memory))
+            return std::pair{Memory ? Intrinsic::X86FPScalarConvertMemoryState
+                                    : Intrinsic::X86FPScalarConvertState,
+                             Layout};
+        }
+    }
   if (Call.getType()->isVoidTy() && Call.arg_size() == 1 &&
       PointerIsDefault(Call.getArgOperand(0)) &&
       Asm->getConstraintString() == X86FPStateTransferConstraints) {

@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FPScalarConvertState.h"
 #include "X86LiftDetail.h"
 #include "X86ScalarFPConversion.h"
 
@@ -1285,13 +1286,12 @@ bool liftSIMDAVXConvert(X86Lifter &L, X86Lifter::LiftState &S,
     S.emit(NdOp::COPY, Dst, {Acc});
     break;
   }
-  // Scalar VEX int->FP `vcvtsi2ss/sd xmm1, xmm2, r/m`: the converted scalar
-  // goes in the low element (float or double) and the upper bits come from
-  // xmm2.  The result temp must be the real FP width, otherwise the emitter
-  // infers the type from the wide destination and produces a double for a
-  // single-precision convert.
+  // Scalar VEX signed conversions complete the scalar and MXCSR together;
+  // their authenticated helper also preserves the source1 upper lanes.
   case X86_INS_VCVTSI2SS:
   case X86_INS_VCVTSI2SD:
+    return liftScalarConvertToFPState(
+        L, S, Insn, X86, true, InsnId == X86_INS_VCVTSI2SD ? 8 : 4, true);
   case X86_INS_VCVTUSI2SS:
   case X86_INS_VCVTUSI2SD: {
     if (X86.op_count < 2)
@@ -1366,38 +1366,12 @@ bool liftSIMDAVXConvert(X86Lifter &L, X86Lifter::LiftState &S,
     break;
   }
 
-  // Scalar VEX precision convert `vcvtXX2YY xmm1, xmm2, xmm3/m`: the converted
-  // scalar goes in the low element and the upper bits come from xmm2.  Narrow
-  // the convert source to its real FP width so the emitter does not mis-infer
-  // the type from the full vector and pick the wrong direction.
+  // Scalar VEX precision conversion and MXCSR share one completion; upper
+  // lanes come from source1, independently of the numerical source.
   case X86_INS_VCVTSS2SD:
-  case X86_INS_VCVTSD2SS: {
-    if (X86.op_count < 2)
-      break;
-    bool ToDouble = (Insn->id == X86_INS_VCVTSS2SD);
-    unsigned SrcFPSz = ToDouble ? 4 : 8;
-    unsigned DstFPSz = ToDouble ? 8 : 4;
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar Src = L.operandRead(S, X86.operands[X86.op_count - 1]);
-    NdVar Upper = (X86.op_count >= 3) ? L.operandRead(S, X86.operands[1]) : Dst;
-    if (Src.Size > SrcFPSz) {
-      NdVar N = S.makeTemp(SrcFPSz);
-      S.emit(NdOp::SUBBYTES, N, {Src, NdVar::cst(0, 4)});
-      Src = N;
-    }
-    NdVar Tmp = S.makeTemp(DstFPSz);
-    S.emit(NdOp::FLOAT_FLOAT2FLOAT, Tmp, {Src});
-    if (X86.operands[0].type == X86_OP_MEM) {
-      S.storeToMem(X86.operands[0], Tmp);
-    } else if (Dst.Size > DstFPSz) {
-      NdVar Hi = S.makeTemp(Dst.Size - DstFPSz);
-      S.emit(NdOp::SUBBYTES, Hi, {Upper, NdVar::cst(DstFPSz, 4)});
-      S.emit(NdOp::CONCAT, Dst, {Hi, Tmp});
-    } else {
-      S.emit(NdOp::COPY, Dst, {Tmp});
-    }
-    break;
-  }
+  case X86_INS_VCVTSD2SS:
+    return liftScalarConvertToFPState(
+        L, S, Insn, X86, false, InsnId == X86_INS_VCVTSS2SD ? 8 : 4, true);
   // Packed widen single->double (per dst lane); reads the low single lanes.
   case X86_INS_VCVTPS2PD: {
     if (X86.op_count < 2)
