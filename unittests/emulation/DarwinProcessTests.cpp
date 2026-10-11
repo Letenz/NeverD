@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
+#include "DarwinModeTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
 #include "DarwinTimeTestData.h"
@@ -2730,6 +2731,76 @@ TEST_P(DarwinProcess,
     EXPECT_FALSE(E.Result);
     EXPECT_FALSE(E.Error);
   }
+}
+
+TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::modeOptions();
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  constexpr uint64_t High[] = {0, 0x1234567800000000ULL, 0xffffffff00000000ULL};
+  constexpr uint64_t Numbers[] = {15, 124, 467};
+  constexpr uint64_t Modes[] = {0000, 0640, 0604};
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("ordinary-mode-mutations");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 37);
+    EXPECT_EQ(R->StandardOutput, "M");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 54u);
+    constexpr uint64_t PrefixNumbers[] = {5, 41, 199, 339};
+    constexpr uint64_t PrefixResults[] = {3, 4, 2, 0};
+    for (unsigned I = 0; I != 4; ++I) {
+      EXPECT_EQ(R->Services[I].Number, Class | PrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result, PrefixResults[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    for (unsigned API = 0; API != 3; ++API)
+      for (unsigned H = 0; H != 3; ++H) {
+        const unsigned Start = 4 + (API * 3 + H) * 4;
+        const auto &E = R->Services[Start];
+        EXPECT_EQ(E.Number, Class | High[H] | Numbers[API]);
+        EXPECT_EQ(E.Result, 0u);
+        EXPECT_EQ(E.Error, false);
+        EXPECT_EQ(E.Arguments[API == 2 ? 2 : 1],
+                  High[H] | 0x7fff0000 | Modes[H]);
+        for (unsigned I = 1; I != 4; ++I) {
+          EXPECT_EQ(R->Services[Start + I].Number,
+                    Class | (I == 2 ? 338 : 339));
+          EXPECT_EQ(R->Services[Start + I].Result, 0u);
+          EXPECT_EQ(R->Services[Start + I].Error, false);
+        }
+      }
+    constexpr uint64_t TailNumbers[] = {15,  124, 467, 467, 339, 467, 339,
+                                        199, 6,   124, 124, 339, 6,   4};
+    constexpr uint64_t TailResults[] = {14, 9, 22, 9, 0, 0, 0,
+                                        2,  0, 9,  0, 0, 0, 1};
+    for (unsigned I = 0; I != 14; ++I) {
+      EXPECT_EQ(R->Services[40 + I].Number, Class | TailNumbers[I]);
+      EXPECT_EQ(R->Services[40 + I].Result, TailResults[I]);
+      EXPECT_EQ(R->Services[40 + I].Error, I < 4 || I == 9);
+    }
+    EXPECT_EQ(R->ReturnValue, 37u);
+    EXPECT_EQ(R->Services.back().Number, Class | 4);
+    EXPECT_EQ(Options.DarwinFiles->Metadata.at("/data").Mode, 0100600);
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+  }
+  Options.DarwinFiles->ModeMutations->Objects.clear();
+  auto Unknown = run("ordinary-mode-mutations");
+  ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
+  EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(Unknown->Diagnostic,
+            "Darwin regular-object mode provider is not configured");
+  ASSERT_EQ(Unknown->Services.size(), 5u);
+  EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
+  EXPECT_FALSE(Unknown->Services.back().Result);
+  EXPECT_FALSE(Unknown->Services.back().Error);
 }
 
 TEST_P(DarwinProcess, ImmediatePselectPreservesTimespecMasksAndSharedBitmaps) {

@@ -1,6 +1,6 @@
 **Langues**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
+<!-- i18n-source: 5ca35b61a4758fedf3ed3aa633f3224317a326813f3b1745a184187792b3c6ab -->
 
 [← Index de la documentation](README.md)
 
@@ -1179,9 +1179,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all46 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+62 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -1204,7 +1204,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+62 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -1220,3 +1220,37 @@ complete nonnull mask unsupported / no guessed signal state
 shared select bitmap capacity provider output owner
 918 mixed controls and captures / 729 literal controls and 189 provider captures
 ```
+
+## Modes ordinaires des fichiers explicitement déclarés
+
+chmod15, fchmod124 et fchmodat467 utilisent les objets réguliers initiaux et le ctime virtuel fixe de mode_mutations. Un tableau objects vide déclare seulement l'environnement ; l'omission reste inconnue. Les deux environnements de requêtes statiques sont incompatibles. Le contrat exclut ACL, MAC, écouteurs supplémentaires, privilèges de contournement, révocation, leases de fichiers/répertoires et attentes ou notifications avant modification. Les leases VM et les autres autorisations restent indépendants.
+
+L'unique autorisateur compare les permissions demandées au stat courant complet avec les identifiants effectifs explicites non root. Un non-propriétaire reçoit EPERM pour un mode différent ; un mode identique ne peut être refusé pour la seule propriété, mais exige toujours le grant provider de l'objet. Chaque répertoire réellement traversé exige SEARCH courant ; EACCES précède un nom absent. Groupes, identifiants ou métadonnées inconnus restent non pris en charge. Un FD en lecture seule évite SEARCH par chemin. Seuls permissions et ctime changent ; octets, autres champs, curseurs, attributs, stockage et vie VM sont préservés. Le grant suit dup, liens, rename et unlink retenu, jamais un nouvel objet ou nom réutilisé ; il ne restaure aucun stat invalidé.
+
+Les flags bas32 invalides donnent EINVAL avant pointeur/FD ; les erreurs indépendantes et le contournement dirfd des chemins absolus gardent l'ordre commun. NOFOLLOW retient le lien final ; ANY interdit les expansions antérieures. Répertoires, liens, modes spéciaux et root sélectionné restent non pris en charge.Le modèle enregistre54 appels natifs et vérifie31 stat protégés. Le retour37 de main ne produit aucun événement exit brut. Les450 observations propriétaires ne prouvent pas le cas non-propriétaire natif. Les listes62/77 et231 identités ARM64 correspondantes exigent un succès réel. Intel natif, iOS physique, autorisation générale et OS/frameworks complets restent inachevés.
+
+```text
+chmod15 / fchmod124 / fchmodat467 / low32 mode & ALLPERMS07777
+mode_mutations / objects / path / time / fixed virtual ctime
+effective explicit credential / actual current directory SEARCH
+ordinary security attributes / no ACL MAC file-directory leases or lifecycle effects
+same current permissions: no WRITE_SECURITY / nonowner not denied solely for ownership
+different current permissions: WRITE_SECURITY / nonroot nonowner EPERM1
+object provider grant still required for every success / no grant inference
+stat current-validity owner / invalidated records never restored
+type bytes offsets xattrs storage and VM mapping leases preserved
+AT_SYMLINK_NOFOLLOW0x20 / AT_SYMLINK_NOFOLLOW_ANY0x800
+flags EINVAL22 before path EFAULT14 / relative bad FD EBADF9 / absolute FD bypass
+empty declaration supplies environment without object provider grants
+missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
+SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
+OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
+62 current native-common cases / 77 mandatory workloads per platform
+ARM64 matching native mandatory231 / native Intel and physical iOS unverified
+450 original owner observations / 414 literal controls and 36 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all46 other file routes closed before preflight / static query declarations incompatible
+native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
+```
+
+[XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).

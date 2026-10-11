@@ -7641,6 +7641,109 @@ static int immediate_pselect_unsupported(unsigned mode) {
   return 251;
 }
 
+/* Original SDK-free regular mode controls; complete stat records are captured
+ * before the first change. Native ctime is never treated as a constant. */
+union mode_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int mode_result(u64 number, u64 object, u64 a1, u64 a2, u64 a3,
+                       u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, a1, a2, a3, 0, 0, &error);
+  if (value != expected || error != !!expected)
+    return 210;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? a2 : 0))
+#endif
+    return 211;
+  return 0;
+}
+static int mode_status(u64 number, u64 object, union mode_stat_guard *record,
+                       unsigned mode, const union mode_stat_guard *initial) {
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 212;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL)
+    return 213;
+  const u64 actual = little_integer(record->bytes + 12, 2);
+  if ((actual & 0170000) != 0100000 || (actual & 07000) ||
+      (mode != 0xffffffffu && (actual & 0777) != mode) ||
+      little_integer(record->bytes + 80, 8) >= 1000000000UL)
+    return 214;
+  if (initial)
+    for (unsigned i = 1; i != 19; ++i) {
+      if (i == 9 || i == 10) /* ctime seconds/nanoseconds */
+        continue;
+      const u64 mask = i == 1 ? ~(07777UL << 32) : -1UL;
+      if (((record->words[i] ^ initial->words[i]) & mask) != 0)
+        return 215;
+    }
+  return 0;
+}
+static int ordinary_mode_mutations(const char *path) {
+  unsigned error;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 216;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd ||
+      call(199, fd, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 217;
+  union mode_stat_guard initial, a, b, c;
+  if (mode_status(339, copy, &initial, 0xffffffffu, 0))
+    return 218;
+  const u64 numbers[] = {15, 124, 467};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const unsigned modes[] = {0, 0640, 0604};
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 mode = high[h] | 0x7fff0000UL | modes[h];
+      const u64 number = high[h] | numbers[api];
+      const u64 object = api == 0 ? (u64)path : high[h] | fd;
+      const u64 a1 = api == 2 ? (u64)path : mode;
+      if (mode_result(number, object, a1, api == 2 ? mode : 0, 0, 0))
+        return 219;
+      if (mode_status(339, fd, &a, modes[h], &initial) ||
+          mode_status(338, (u64)path, &b, modes[h], &initial) ||
+          mode_status(339, copy, &c, modes[h], &initial))
+        return 220;
+      for (unsigned i = 0; i != 20; ++i)
+        if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+          return 221;
+    }
+  union mode_stat_guard before_failures;
+  for (unsigned i = 0; i != 20; ++i)
+    before_failures.words[i] = c.words[i];
+  if (mode_result(15, -1UL, 07000, 0, 0, 14) ||
+      mode_result(124, -1UL, 07000, 0, 0, 9) ||
+      mode_result(467, -1UL, -1UL, 07000, 8, 22) ||
+      mode_result(467, -1UL, (u64) "data", 07000, 0, 9) ||
+      mode_status(339, copy, &a, 0604, &initial))
+    return 222;
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != before_failures.words[i])
+      return 223;
+  /* Absolute path bypasses the invalid dirfd. Same-mode success may change
+   * ctime, so only the other complete metadata fields are compared. */
+  if (mode_result(467, -1UL, (u64)path, 0604, 0, 0) ||
+      mode_status(339, copy, &a, 0604, &initial) ||
+      call(199, copy, 0, 1, 0, 0, 0, &error) != 2 || error || secondary ||
+      mode_result(6, fd, 0, 0, 0, 0) || mode_result(124, fd, 07000, 0, 0, 9) ||
+      mode_result(124, copy, 0604, 0, 0, 0) ||
+      mode_status(339, copy, &a, 0604, &initial) ||
+      mode_result(6, copy, 0, 0, 0, 0))
+    return 224;
+  const char mark = 'M';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 225;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -7687,6 +7790,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "ordinary-mode-mutations")) {
+    const int status = argc < 3 ? 209 : ordinary_mode_mutations(argv[2]);
+    return status ? status : 37;
+  }
   if (equal(argv[1], "immediate-pselect")) {
     const int status = immediate_pselect(argc < 3 ? "/data" : argv[2]);
     return status ? status : 37;

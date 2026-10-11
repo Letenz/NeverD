@@ -138,3 +138,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     ImmediateSelectPreservesBitmapsCopiesAndProviderPremises)
 NEVERD_NATIVE_DARWIN_CASE(
     ImmediatePselectPreservesTimespecMasksAndSharedBitmaps)
+NEVERD_NATIVE_DARWIN_CASE(
+    OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState)

@@ -196,6 +196,9 @@ NEVERD_DARWIN_SERVICE(GetEUID, 25, UInt)
 NEVERD_DARWIN_SERVICE(GetPPID, 39, Int)
 NEVERD_DARWIN_SERVICE(Access, 33, Int)
 NEVERD_DARWIN_SERVICE(FaccessAt, 466, Int)
+NEVERD_DARWIN_SERVICE(Chmod, 15, Int)
+NEVERD_DARWIN_SERVICE(Fchmod, 124, Int)
+NEVERD_DARWIN_SERVICE(FchmodAt, 467, Int)
 NEVERD_DARWIN_SERVICE(Dup, 41, Int)
 NEVERD_DARWIN_SERVICE(GetEGID, 43, UInt)
 NEVERD_DARWIN_SERVICE(GetGID, 47, UInt)
@@ -473,6 +476,22 @@ NEVERD_DARWIN_DIAGNOSTIC(
     FileOrdinaryAuthorizationGroups,
     "Darwin ordinary authorization requires known group membership")
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeOption,
+    "Darwin mode grants require unique initial ordinary regular metadata and "
+    "a valid fixed ctime")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeEnvironment,
+    "Darwin ordinary mode mutation environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeSecurityAttributes,
+    "Darwin mode authorization requires current ordinary security attributes")
+NEVERD_DARWIN_DIAGNOSTIC(FileModePermissions,
+                         "Darwin special mode mutation is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeTarget, "Darwin mode mutation requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileModeProvider, "Darwin regular-object mode provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")
 NEVERD_DARWIN_DIAGNOSTIC(

@@ -58,8 +58,8 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all43 other file routes closed before preflight")
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "61 current native-common cases")
+                           "all46 other file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "62 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "current live FD lower bound")
@@ -1869,3 +1869,22 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-unsupported")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "pselect394 / pselect_nocancel395")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "918 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "complete nonnull mask unsupported")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "chmod15 / fchmod124 / fchmodat467")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "mode_mutations / objects / path / time")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "same current permissions: no WRITE_SECURITY")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "object provider grant still required for every success")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "invalidated records never restored")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "77 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free54 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "nonowner authorization is source/model evidence")

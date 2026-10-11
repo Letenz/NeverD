@@ -2,6 +2,7 @@ add_neverd_component_library(NeverDEmulationDarwinKernel
   DarwinServices.cpp
   DarwinMemory.cpp
   DarwinFiles.cpp
+  DarwinModes.cpp
   DarwinPoll.cpp
   DarwinSelect.cpp
   DarwinFileIO.cpp

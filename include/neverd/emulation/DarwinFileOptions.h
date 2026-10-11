@@ -187,6 +187,23 @@ enum class DarwinFileAuthorization {
   StaticOrdinaryQueries
 };
 
+/// Operation-specific ordinary local mode environment: no ACL, MAC, extra
+/// listener, privilege bypass, revocation, file/directory leases or pre-setattr
+/// lifecycle effects; a writable nonopaque mount with ownership enabled.
+/// Current complete ordinary metadata supplies supported security attributes.
+/// Other virtual mutations retain their independent contracts; this does not
+/// grant general DAC enforcement, data writes or namespace authority.
+struct DarwinModeMutationOptions {
+  /// Initial regular-object provider grants and fixed resulting ctime. Empty
+  /// declares the environment without a provider grant. Objects retain grants
+  /// through dup, rename and runtime links; created/reused names do not
+  /// inherit. Success changes only ordinary permission bits and ctime,
+  /// including when permissions were already equal. Native lease premises do
+  /// not remove VM mapping leases. Invalidated complete metadata cannot be
+  /// restored.
+  std::map<std::string, DarwinFileTime> Objects;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -201,6 +218,9 @@ struct DarwinFileOptions {
   /// Absence retains existence-only queries without permission enforcement.
   /// This declaration never infers missing credentials or metadata.
   std::optional<DarwinFileAuthorization> Authorization;
+  /// Independent chmod/fchmod/fchmodat authority. Absence is unknown;
+  /// incompatible with either immutable query environment, even when empty.
+  std::optional<DarwinModeMutationOptions> ModeMutations;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

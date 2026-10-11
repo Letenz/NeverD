@@ -1104,6 +1104,11 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
   for (const auto &Test : Cases) {
     SCOPED_TRACE(Test.Mode);
     auto CaseInput = Input;
+    if (llvm::StringRef(Test.Mode) == "ordinary-mode-mutations") {
+      const auto Catalogue = Root / Test.Mode;
+      ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
+      CaseInput = (Catalogue / "data").string();
+    }
     if (llvm::StringRef(Test.Mode) == "common-attributes" ||
         llvm::StringRef(Test.Mode) == "extended-attributes" ||
         llvm::StringRef(Test.Mode) == "attribute-names" ||

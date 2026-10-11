@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: b3bd2a5ad29930b12eb5d1925da192cb6a9a5df79f0048dfc3e3841b200bb189 -->
+<!-- i18n-source: 5ca35b61a4758fedf3ed3aa633f3224317a326813f3b1745a184187792b3c6ab -->
 
 [← 文件索引](README.md)
 
@@ -1181,9 +1181,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all46 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+62 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -1206,7 +1206,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+62 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -1222,3 +1222,37 @@ complete nonnull mask unsupported / no guessed signal state
 shared select bitmap capacity provider output owner
 918 mixed controls and captures / 729 literal controls and 189 provider captures
 ```
+
+## 顯式普通檔案權限修改
+
+原始 chmod15、fchmod124、fchmodat467 使用 mode_mutations 中獨立宣告的初始普通檔案物件及固定虛擬 ctime。空 objects 只宣告普通環境，不提供 provider 成功；省略表示未知，且與兩種靜態查詢環境不相容。契約排除 ACL、MAC、額外監聽器、特權繞過、撤銷、檔案/目錄 lease 與修改前等待及通知；VM 映射 lease 與其他操作的授權保持獨立。
+
+唯一授權層比較請求和目前完整 stat 權限，採用明確非 root 有效憑證。非所有者要求不同權限得到 EPERM；相同權限不能僅因所有權遭拒，但每次成功仍需物件 provider grant。路徑依實際目前目錄逐一檢查 SEARCH；EACCES 先於缺失名稱，未知群組、憑證或紀錄保持不支援。唯讀 FD 無需路徑 SEARCH。成功只更改普通權限與 ctime，保留其他欄位、位元組、游標、屬性、儲存及映射生命週期；grant 隨 dup、硬連結、重新命名及持有的已刪物件保留，新物件或重用名稱不繼承，失效紀錄不能恢復。
+
+低32旗標錯誤先回傳 EINVAL；獨立指標、空路徑和 FD 錯誤保持共同匯入順序，絕對路徑略過 dirfd。NOFOLLOW 保留最終連結，ANY 禁止先前展開；目錄、連結、特殊權限及所選 root 修改仍不支援。工作負載記錄54次原始呼叫事件，並檢查31份保護完整紀錄；main回傳37不追加原始exit事件。450份所有者觀測不能充當非所有者原生證明；62/77清單及231個匹配 ARM64 身分仍需實際成功。Intel 原生、實體 iOS、一般授權與完整系統/框架仍未完成。
+
+```text
+chmod15 / fchmod124 / fchmodat467 / low32 mode & ALLPERMS07777
+mode_mutations / objects / path / time / fixed virtual ctime
+effective explicit credential / actual current directory SEARCH
+ordinary security attributes / no ACL MAC file-directory leases or lifecycle effects
+same current permissions: no WRITE_SECURITY / nonowner not denied solely for ownership
+different current permissions: WRITE_SECURITY / nonroot nonowner EPERM1
+object provider grant still required for every success / no grant inference
+stat current-validity owner / invalidated records never restored
+type bytes offsets xattrs storage and VM mapping leases preserved
+AT_SYMLINK_NOFOLLOW0x20 / AT_SYMLINK_NOFOLLOW_ANY0x800
+flags EINVAL22 before path EFAULT14 / relative bad FD EBADF9 / absolute FD bypass
+empty declaration supplies environment without object provider grants
+missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
+SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
+OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
+62 current native-common cases / 77 mandatory workloads per platform
+ARM64 matching native mandatory231 / native Intel and physical iOS unverified
+450 original owner observations / 414 literal controls and 36 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all46 other file routes closed before preflight / static query declarations incompatible
+native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
+```
+
+[XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).

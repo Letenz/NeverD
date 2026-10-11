@@ -2031,7 +2031,7 @@ native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 
 Raw BSD `poll` (230) and `poll_nocancel` (417) support timeout low int32=0. The descriptor owner decodes nfds as uint32. Counts above OPEN_MAX10240 return EINVAL22 before pointers. Positive counts require explicit `darwin_system.resource_limits` resource8 Current; omission is unknown. Above Current, counts over FD_SETSIZE1024 return EINVAL; smaller counts require the original explicit effective UID, with nonzero returning EINVAL and zero admitted. This root exception is source/model evidence only. DescriptorLimit, kern.maxfilesperproc, FD numeric value and execution budgets do not supply this observation. Zero count touches no array pointer. Nonzero timeout is unsupported after count admission.
 
-The constructive virtual regular-file provider explicitly represents nonrevoked descriptions with successful ordinary read/write filter attachment and no MAC/provider refusal. A regular native vnode kind alone does not establish registration success. Under this premise, IN/RDNORM and OUT/WRBAND are ready even at EOF or through read-only opens; remaining bytes, access flags, O_NONBLOCK and write grants do not determine readiness. Filter keys are numeric FD plus read/write kind: each keeps its last requesting row independently; distinct dup aliases do not coalesce. HUP alone registers a read filter without a ready bit. Negative FDs and ignored-only requests yield zero; closed registrations yield POLLNVAL32 per row. Live OOB/vnode requests and stream/directory/symbolic providers stop unsupported before any output. The entire eight-byte-record input is snapshotted; incomplete input or whole unwritable output returns EFAULT14, while partial output is refused without copying a prefix. Whole copyout preserves fd/events and replaces all revents. Both static permission-query modes close Poll before preflight, including zero count; their shared inventory now has42 closed file routes.
+The constructive virtual regular-file provider explicitly represents nonrevoked descriptions with successful ordinary read/write filter attachment and no MAC/provider refusal. A regular native vnode kind alone does not establish registration success. Under this premise, IN/RDNORM and OUT/WRBAND are ready even at EOF or through read-only opens; remaining bytes, access flags, O_NONBLOCK and write grants do not determine readiness. Filter keys are numeric FD plus read/write kind: each keeps its last requesting row independently; distinct dup aliases do not coalesce. HUP alone registers a read filter without a ready bit. Negative FDs and ignored-only requests yield zero; closed registrations yield POLLNVAL32 per row. Live OOB/vnode requests and stream/directory/symbolic providers stop unsupported before any output. The entire eight-byte-record input is snapshotted; incomplete input or whole unwritable output returns EFAULT14, while partial output is refused without copying a prefix. Whole copyout preserves fd/events and replaces all revents. Both static permission-query modes close Poll before preflight, including zero count; their shared inventory current shared inventory has46 closed file routes.
 
 The SDK-free immediate-poll workload retains86 events; its original common inventory was59, and immediate-select adds one case for60 select-era native-common cases. The independent ARM64 O0/O1/O2 poll582 and select792 observations remain separate mixed literal ABI/error controls and provider captures, never universal provider constants. Earlier58/59 proofs retain their original source identities, failed attempts and deadlines. Native Intel HVF and physical iOS remain unverified. Revocation/MAC/refused providers, waiting, pselect signal-mask changes, asynchronous readiness, networking, advancing clocks, real Mach IPC/threads, dyld/TLS and full frameworks remain unfinished.
 
@@ -2043,9 +2043,9 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all43 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all46 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
-61 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
+62 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
 ```
 
@@ -2068,7 +2068,7 @@ partial outputs and overlaps unsupported before all output / zero prefix is not 
 ordered read write exception copyout / first EFAULT14 after later whole writable copies
 792 mixed controls and captures / 540 literal controls and 252 provider captures / 225 provider projections
 immediate-select115 events / five software + three required ARM64 HVF / C CLI Python
-61 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
+62 current native-common cases / 76 mandatory workloads per platform / ARM64228 / Intel152 unverified
 native5s / compile120s / guest-Python5,000,000us / quantum1024 / public10s
 ```
 
@@ -2084,3 +2084,41 @@ complete nonnull mask unsupported / no guessed signal state
 shared select bitmap capacity provider output owner
 918 mixed controls and captures / 729 literal controls and 189 provider captures
 ```
+
+## Explicit ordinary regular-file modes
+
+Raw BSD chmod15, fchmod124 and fchmodat467 use one operation-specific mode environment, supplied as DarwinFileOptions::ModeMutations or strict darwin_files.mode_mutations. Its objects array contains {path,time} grants for initial regular objects with complete ordinary metadata, flags=0, link_count=1 and no initial inode alias. Each time has signed64 seconds and nanoseconds in [0,1e9); each path+NUL uses the existing catalogue byte owner. An empty declaration supplies the environment without provider grants; omission leaves it unknown. Neither immutable static query declaration can coexist with it, including when empty.
+
+This explicit virtual environment has no ACL, MAC, extra listener, entitlement/privilege bypass, revocation, file/directory lease, lease-break wait/notification or other unmodeled pre-setattr lifecycle effects; the ordinary writable nonopaque mount has ownership enabled. Current complete ordinary records supply supported security attributes. Actual authorization requires the canonical explicit nonroot effective credential. Path operations authorize SEARCH at every actual traversed directory using its current complete stat, including dots, relative/CWD paths and link expansion. Denied SEARCH yields EACCES before missing children; unknown credentials, metadata or group membership stop unsupported. FD mode changes need no pathname SEARCH and work on readonly opens.
+
+The sole authorizer derives WRITE_SECURITY from the ALLPERMS-filtered request and current permission bits. A known nonroot owner can change ordinary permissions even from mode0000. A known nonowner requesting different permissions gets EPERM; requesting equal permissions cannot be denied solely for nonownership. Every success, including same-mode, still requires the object's separately declared provider grant. It assigns the fixed virtual ctime and changes only permissions, preserving type, every other metadata field, bytes, cursors, xattrs, names, storage accounting and VM mapping leases. Grants follow retained objects across dup, independent opens, hardlinks, rename and held unlink, while created objects and reused names do not inherit them. Existing data/namespace metadata policies remain independently necessary; mode grants never restore invalidated complete records.
+
+Low32 flags admit NOFOLLOW0x20 and ANY0x800; other flags yield EINVAL before pointer/FD import. Independently known bad-pointer, empty-path and descriptor errors remain EFAULT14, ENOENT2 and EBADF9 before unknown authority, respecting the shared prefix/import order and absolute-path dirfd bypass. A nonempty missing name requires every actual SEARCH decision first. Default lookup follows final links; NOFOLLOW retains them and ANY forbids earlier expansion. Directory, symbolic, special-mode and selected-root mutations remain unsupported; no provider result is invented for them.
+
+The SDK-free workload has54 authored raw calls,54 recorded service events and31 guarded full stat records. Its main returns37 through the authenticated return gate, which does not append a raw exit service event. Literal private tests cover both page sizes, owner/nonowner same/different modes, absent/empty declarations, stale metadata, current SEARCH, group knowledge and retained mapping lifetime. The current common/mandatory inventories are62/77; all matching mandatory ARM64 HVF/native identities require actual successful execution, and counts or skips alone do not qualify. The original ARM64 O0/O1/O2 owner probes retain450 observations (414 literal controls,36 link-provider captures), actual native ctime and their original source identity. Nonowner authorization is pinned XNU/source and model evidence; those owner captures do not qualify it natively. Intel native HVF, physical iOS, broader vnode/DAC enforcement, ownership/fsync/flock/signals/sockets/kqueue, dyld and Apple frameworks remain incomplete or unverified.
+
+```text
+chmod15 / fchmod124 / fchmodat467 / low32 mode & ALLPERMS07777
+mode_mutations / objects / path / time / fixed virtual ctime
+effective explicit credential / actual current directory SEARCH
+ordinary security attributes / no ACL MAC file-directory leases or lifecycle effects
+same current permissions: no WRITE_SECURITY / nonowner not denied solely for ownership
+different current permissions: WRITE_SECURITY / nonroot nonowner EPERM1
+object provider grant still required for every success / no grant inference
+stat current-validity owner / invalidated records never restored
+type bytes offsets xattrs storage and VM mapping leases preserved
+AT_SYMLINK_NOFOLLOW0x20 / AT_SYMLINK_NOFOLLOW_ANY0x800
+flags EINVAL22 before path EFAULT14 / relative bad FD EBADF9 / absolute FD bypass
+empty declaration supplies environment without object provider grants
+missing names ENOENT2 only after all required SEARCH / denied SEARCH EACCES13
+SDK-free54 service records / 54 native calls / 31 guarded stat records / main return is not a raw exit event
+OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
+62 current native-common cases / 77 mandatory workloads per platform
+ARM64 matching native mandatory231 / native Intel and physical iOS unverified
+450 original owner observations / 414 literal controls and 36 final-link provider captures
+nonowner authorization is source/model evidence, not owner-native evidence
+all46 other file routes closed before preflight / static query declarations incompatible
+native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
+```
+
+[XNU chmod/fchmodat/fchmod](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU current-mode authorization and lease lifecycle](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c).

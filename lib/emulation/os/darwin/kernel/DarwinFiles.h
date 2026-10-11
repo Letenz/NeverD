@@ -65,6 +65,8 @@ private:
     RenameDirectoryTarget
   };
   enum class Subject { Real, Effective };
+  enum class AuthorizationPurpose { Query, ModeSearch, ModeChange };
+  enum class LookupAuthorization { Query, Mode };
   using Authorization = std::variant<std::monostate, uint32_t, const char *>;
   // Retaining a terminal link and refusing required expansion are separate
   // namei policies. AT_SYMLINK_NOFOLLOW_ANY uses both; ordinary open uses only
@@ -160,6 +162,7 @@ private:
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
     const DarwinFileMutationPolicy *Policy = nullptr;
+    const DarwinFileTime *ModeTime = nullptr;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;
@@ -282,13 +285,18 @@ private:
   bool queryEnvironment() const;
   const char *authorizationScope() const;
   std::optional<bool> groupMembership(uint32_t GID, Subject User) const;
-  Authorization authorize(const DarwinFileMetadata *Metadata, uint32_t Actions,
-                          Subject User) const;
-  llvm::Expected<Lookup> resolvePath(uint64_t Address, uint32_t DirectoryFD,
-                                     LookupMode Mode = LookupMode::Existing,
-                                     LinkPolicy Links = {true, false},
-                                     bool CheckDirectoryPrefix = true,
-                                     Subject User = Subject::Real);
+  Authorization
+  authorize(const DarwinFileMetadata *Metadata, uint32_t Request, Subject User,
+            AuthorizationPurpose Purpose = AuthorizationPurpose::Query) const;
+  llvm::Expected<Lookup>
+  resolvePath(uint64_t Address, uint32_t DirectoryFD,
+              LookupMode Mode = LookupMode::Existing,
+              LinkPolicy Links = {true, false},
+              bool CheckDirectoryPrefix = true, Subject User = Subject::Real,
+              LookupAuthorization Scope = LookupAuthorization::Query);
+  llvm::Expected<std::optional<ServiceResult>>
+  changeMode(ServiceKind Service, const ProcessServiceEvent &Event,
+             ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   open(uint64_t Address, uint32_t Flags, uint32_t DirectoryFD, uint32_t Mode,
        ProcessResult &Result);
