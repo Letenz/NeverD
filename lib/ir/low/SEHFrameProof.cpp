@@ -9,6 +9,8 @@
 
 #include "neverd/ir/low/SEHFrameProof.h"
 
+#include "SEHFrameProofDetail.h"
+
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
@@ -73,16 +75,43 @@ struct State {
 };
 
 bool consume(size_t &Remaining, size_t Amount = 1) {
-  if (Amount > Remaining)
+  if (Amount > Remaining) {
+    Remaining = 0;
     return false;
+  }
   Remaining -= Amount;
+  return true;
+}
+
+bool chargeFrameMetadata(const LowFunc &F, size_t &Remaining) {
+  if (!consume(Remaining, F.CxxContinuationEntries.size() + 1))
+    return false;
+  if (!F.ExceptionMetadata)
+    return true;
+  const auto &EH = *F.ExceptionMetadata;
+  if (!consume(Remaining, EH.FragmentRanges.size() +
+                              EH.UnwindOperations.size() +
+                              (EH.SEH ? EH.SEH->Scopes.size() : 0) + 1))
+    return false;
+  if (!EH.Cxx)
+    return true;
+  const auto &Cxx = *EH.Cxx;
+  if (!consume(Remaining, Cxx.UnwindMap.size() + Cxx.IPMap.size() +
+                              Cxx.TryBlocks.size() + 1))
+    return false;
+  for (const auto &Try : Cxx.TryBlocks)
+    if (!consume(Remaining, Try.Handlers.size() + 1))
+      return false;
   return true;
 }
 
 // Both sides of a call need the complete decoded paths. A symmetric graph
 // alone can omit a branch arm that overwrites the saved frame pointer.
-bool completeFrameCFG(const LowFunc &F, const std::map<int, size_t> &Positions,
-                      size_t &Remaining) {
+} // namespace
+
+bool completeLowSEHFrameCFG(const LowFunc &F,
+                            const std::map<int, size_t> &Positions,
+                            size_t &Remaining) {
   std::map<va_t, va_t> Ranges;
   for (const auto &B : F.Blocks) {
     if (!consume(Remaining, B.Preds.size() + B.Succs.size() + B.Ops.size() +
@@ -150,6 +179,8 @@ bool completeFrameCFG(const LowFunc &F, const std::map<int, size_t> &Positions,
   }
   return true;
 }
+
+namespace {
 
 struct CallContext {
   const std::map<va_t, const LowFunc *> *Callees = nullptr;
@@ -377,7 +408,7 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
       Entry = I;
   }
   if (!Entry || !F.Blocks[*Entry].Preds.empty() ||
-      !completeFrameCFG(F, Positions, Remaining))
+      !completeLowSEHFrameCFG(F, Positions, Remaining))
     return std::nullopt;
   for (const auto *Roots :
        {&F.ModuleAnalysisRoots, &F.OrdinaryModuleAnalysisRoots})
@@ -476,7 +507,7 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
 
 std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
   llvm::SHA256 Hash;
-  Hash.update("neverd-low-seh-frame-cfg-v2");
+  Hash.update("neverd-low-seh-frame-cfg-v3");
   const auto Word = [&](uint64_t Value) {
     uint8_t Bytes[8];
     for (unsigned I = 0; I != 8; ++I)
@@ -493,6 +524,84 @@ std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
   Word(F.ExceptionMetadata &&
        (F.ExceptionMetadata->SEH || F.ExceptionMetadata->Cxx ||
         F.ExceptionMetadata->Registration));
+  Word(F.ExceptionMetadata.has_value());
+  if (F.ExceptionMetadata) {
+    const auto &EH = *F.ExceptionMetadata;
+    Word(EH.CodeRange.Begin);
+    Word(EH.CodeRange.End);
+    Word(static_cast<unsigned>(EH.Kind));
+    Word(static_cast<unsigned>(EH.Encoding));
+    Word(static_cast<unsigned>(EH.ParseStatus));
+    Word(EH.UnwindVersion);
+    Word(EH.UnwindFlags);
+    Word(EH.PrologueSize);
+    Word(EH.FrameRegister);
+    Word(EH.FrameOffset);
+    Word(EH.PrimaryFunctionIndex.has_value());
+    if (EH.PrimaryFunctionIndex)
+      Word(*EH.PrimaryFunctionIndex);
+    Word(EH.ChainedPrimaryRange.has_value());
+    if (EH.ChainedPrimaryRange) {
+      Word(EH.ChainedPrimaryRange->Begin);
+      Word(EH.ChainedPrimaryRange->End);
+    }
+    Word(EH.ChainedUnwindInfoRVA);
+    Word(EH.FragmentRanges.size());
+    for (const auto &Range : EH.FragmentRanges) {
+      Word(Range.Begin);
+      Word(Range.End);
+    }
+    Word(EH.UnwindOperations.size());
+    for (const auto &Op : EH.UnwindOperations) {
+      Word(static_cast<unsigned>(Op.Kind));
+      Word(Op.CodeOffset);
+      Word(Op.StackOffset);
+    }
+    Word(EH.SEH.has_value());
+    if (EH.SEH) {
+      Word(EH.SEH->Scopes.size());
+      for (const auto &Scope : EH.SEH->Scopes) {
+        Word(Scope.GuardedRange.Begin);
+        Word(Scope.GuardedRange.End);
+        Word(static_cast<unsigned>(Scope.Kind));
+        Word(static_cast<unsigned>(Scope.ParseStatus));
+        Word(Scope.HandlerVA);
+        Word(Scope.FilterOrFinallyVA);
+        Word(Scope.ContinuationVA);
+      }
+    }
+    Word(EH.Cxx.has_value());
+    if (EH.Cxx) {
+      const auto &Cxx = *EH.Cxx;
+      Word(Cxx.MaxState);
+      Word(Cxx.HasDynamicStackAlignment);
+      Word(Cxx.IsSynchronous);
+      Word(Cxx.UnwindMap.size());
+      for (const auto &Action : Cxx.UnwindMap)
+        Word(Action.ToState);
+      Word(Cxx.IPMap.size());
+      for (const auto &State : Cxx.IPMap) {
+        Word(State.IP);
+        Word(State.State);
+      }
+      Word(Cxx.TryBlocks.size());
+      for (const auto &Try : Cxx.TryBlocks) {
+        Word(Try.TryLow);
+        Word(Try.TryHigh);
+        Word(Try.CatchHigh);
+        Word(Try.Handlers.size());
+        for (const auto &Handler : Try.Handlers)
+          Word(Handler.HandlerVA);
+      }
+    }
+  }
+  Word(F.CxxContinuationEntries.size());
+  for (const auto &Entry : F.CxxContinuationEntries) {
+    Word(Entry.Target);
+    Word(Entry.SourceEntry);
+    Word(Entry.ReturnAddr);
+    Word(Entry.ReturnSeq);
+  }
   Word(F.hasCompleteLiftCoverage());
   Words(F.ModuleAnalysisRoots);
   Words(F.OrdinaryModuleAnalysisRoots);
@@ -510,11 +619,19 @@ std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
     Words(Block.Preds);
     Words(Block.Succs);
     Word(Block.ExceptionalPreds.size());
-    for (const auto &Edge : Block.ExceptionalPreds)
+    const auto EdgeWords = [&](const ExceptionalEdge &Edge) {
       Word(Edge.BlockId);
+      Word(Edge.TargetVA);
+      Word(static_cast<unsigned>(Edge.Kind));
+      Word(Edge.RegionIndex);
+      Word(Edge.State);
+      Word(Edge.SourceVA);
+    };
+    for (const auto &Edge : Block.ExceptionalPreds)
+      EdgeWords(Edge);
     Word(Block.ExceptionalSuccs.size());
     for (const auto &Edge : Block.ExceptionalSuccs)
-      Word(Edge.BlockId);
+      EdgeWords(Edge);
     Word(Block.InstructionBoundaries.size());
     for (const auto &Boundary : Block.InstructionBoundaries) {
       Word(Boundary.Address);
@@ -550,7 +667,8 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
         !Positions.emplace(F.Blocks[I].Id, I).second ||
         !Starts.insert(F.Blocks[I].StartAddr).second)
       return {};
-  if (!Starts.count(F.Entry) || !completeFrameCFG(F, Positions, Remaining))
+  if (!Starts.count(F.Entry) ||
+      !completeLowSEHFrameCFG(F, Positions, Remaining))
     return {};
   for (const auto *Roots :
        {&F.ModuleAnalysisRoots, &F.OrdinaryModuleAnalysisRoots})
@@ -558,6 +676,82 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
       if (!consume(Remaining) || !Starts.count(Root))
         return {};
   std::vector<State> Inputs(N), Outputs(N);
+  // An in-function SEH body enters with the protected parent's established
+  // SP. Reuse the same decoded frame proof as SSA; storage sizing or the mere
+  // presence of an exceptional edge cannot supply this coordinate. Only SP
+  // is restored here: no saved memory cell receives a runtime-preservation
+  // contract from frame establishment.
+  std::map<va_t, int64_t> HandlerSP;
+  if (F.ExceptionMetadata && F.ExceptionMetadata->SEH) {
+    std::map<va_t, std::set<uint32_t>> DeclaredHandlers;
+    for (size_t I = 0; I < F.ExceptionMetadata->SEH->Scopes.size(); ++I) {
+      const auto &Scope = F.ExceptionMetadata->SEH->Scopes[I];
+      if (!consume(Remaining))
+        return {};
+      if (Scope.Kind != SEHScopeKind::Finally)
+        DeclaredHandlers[Scope.HandlerVA].insert(static_cast<uint32_t>(I));
+    }
+    std::set<va_t> Dependencies;
+    for (const auto &Entry : F.SEHLocalUnwindContinuations)
+      Dependencies.insert(Entry.CalleeDependencies.begin(),
+                          Entry.CalleeDependencies.end());
+    const std::vector<va_t> FrameDependencies(Dependencies.begin(),
+                                              Dependencies.end());
+    std::string FrameDigest;
+    if (!F.SEHLocalUnwindContinuations.empty()) {
+      if (!chargeFrameMetadata(F, Remaining))
+        return {};
+      FrameDigest = lowSEHFrameDependencyDigest(F, FrameDependencies, Callees);
+    }
+    for (const auto &Block : F.Blocks) {
+      if (!consume(Remaining))
+        return {};
+      if (Block.ExceptionalPreds.empty() ||
+          F.OrdinaryModuleAnalysisRoots.count(Block.StartAddr) ||
+          !DeclaredHandlers.count(Block.StartAddr))
+        continue;
+      bool CheckedEdges = true;
+      for (const auto &Edge : Block.ExceptionalPreds) {
+        if (!consume(Remaining))
+          return {};
+        const auto Position = Positions.find(Edge.BlockId);
+        if (Edge.Kind != ExceptionalEdgeKind::SEHHandler ||
+            Edge.TargetVA != Block.StartAddr || Edge.SourceVA != InvalidVA ||
+            !DeclaredHandlers.at(Block.StartAddr).count(Edge.RegionIndex) ||
+            Position == Positions.end()) {
+          CheckedEdges = false;
+          break;
+        }
+        const auto &Scope = F.ExceptionMetadata->SEH->Scopes[Edge.RegionIndex];
+        const auto Range =
+            getSemanticSEHGuardedRange(Scope, Arch::X64, *F.ExceptionMetadata);
+        const auto &Source = F.Blocks[Position->second];
+        auto Forward = Edge;
+        Forward.BlockId = Block.Id;
+        if (!consume(Remaining, Source.ExceptionalSuccs.size() + 1))
+          return {};
+        if (!Range || Scope.ParseStatus != ExceptionParseStatus::Complete ||
+            Source.StartAddr >= Range->End || Source.EndAddr <= Range->Begin ||
+            !llvm::is_contained(Source.ExceptionalSuccs, Forward)) {
+          CheckedEdges = false;
+          break;
+        }
+      }
+      if (!CheckedEdges)
+        continue;
+      auto Frame = proveLowSEHEstablisherFrame(F, Block.StartAddr, TRI,
+                                               !Block.Preds.empty(), Remaining,
+                                               FrameDigest);
+      if (!Frame) {
+        llvm::consumeError(Frame.takeError());
+        if (Remaining == 0)
+          return {};
+        continue;
+      }
+      if (!Frame->DynamicSP && Frame->FrameBytes <= uint64_t(INT64_MAX))
+        HandlerSP.emplace(Block.StartAddr, -int64_t(Frame->FrameBytes));
+    }
+  }
   std::vector<bool> Roots(N), Visited(N), Queued(N);
   std::deque<size_t> Queue;
   const auto Enqueue = [&](size_t I) {
@@ -587,6 +781,8 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
       Input.emplace();
       if (Block.StartAddr == F.Entry && Block.ExceptionalPreds.empty())
         Input->Values[key(NdVar::reg(TRI.StackPointer, 8))] = 0;
+      else if (auto It = HandlerSP.find(Block.StartAddr); It != HandlerSP.end())
+        Input->Values[key(NdVar::reg(TRI.StackPointer, 8))] = It->second;
     }
     for (int Id : Block.Preds) {
       const size_t P = Positions.at(Id);
@@ -619,17 +815,22 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
         !transfer(F.Blocks[I], Inputs[I], TRI, Remaining, &Result, &Calls))
       return {};
   if (!Result.Calls.empty()) {
+    if (!chargeFrameMetadata(F, Remaining))
+      return {};
     for (const auto &Block : F.Blocks)
       if (!consume(Remaining, Block.Ops.size() +
                                   Block.InstructionBoundaries.size() +
                                   Block.Preds.size() + Block.Succs.size() + 1))
         return {};
-    for (va_t Dependency : Calls.Dependencies)
+    for (va_t Dependency : Calls.Dependencies) {
+      if (!chargeFrameMetadata(*Callees->at(Dependency), Remaining))
+        return {};
       for (const auto &Block : Callees->at(Dependency)->Blocks)
         if (!consume(Remaining,
                      Block.Ops.size() + Block.InstructionBoundaries.size() +
                          Block.Preds.size() + Block.Succs.size() + 1))
           return {};
+    }
     Result.CalleeDependencies.assign(Calls.Dependencies.begin(),
                                      Calls.Dependencies.end());
     Result.DependencyDigest =

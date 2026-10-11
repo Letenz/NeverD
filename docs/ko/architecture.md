@@ -1485,3 +1485,5 @@ DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 �
 DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를 읽고 모델링되지 않은 신호 상태 작업을 거부합니다. Select와 Pselect는 immediateSelect에서 비트맵, 용량 하한, 공급자 및 순서대로 복사를 공유하며 timeval과 timespec은 각 필드 폭과 경계를 유지합니다. 완전한 NULL이 아닌 마스크에는 향후 신호 상태 모델이 필요합니다.
 
 `isCheckedX86SafeSEHHandlerReference`는 기존 SafeSEH 디코더, 변경 불가능한 테이블과 헤더 바이트, 재배치된 load-config 포인터로 보존할 PE32 처리기 진입점을 인증합니다. LLVM은 분할 과정에서 생략된 본문을 포함해 모든 본문을 출력하기 전에 이 소스 식별자를 선언합니다. 테이블 소속은 언어 personality, 호출 ABI 또는 네이티브 EH 재구성 권한을 증명하지 않으며 각 소비자의 독립 검사는 유지됩니다.
+
+`proveLowSEHEstablisherFrame`은 LowIR과 SSA가 공유하는 Windows x64 부모 프레임 증명의 소유자입니다. 제한된 분석에서 정규화된 해제 동작, 완전한 명령 및 CFG 출처, 도달하는 모든 보호 구간 앞부분을 확인하며 SSA는 변환된 ABI 효과도 검사합니다. 인증된 처리기 진입은 고정 SP 좌표만 제공하며 저장된 메모리 사실을 복원하지 않습니다. 일반 catch 반환 분석은 기존 진입 영역을 유지하고 별도의 로컬 해제 주소 조사는 예외 간선으로 레지스터 값을 전달하지 않고 선언된 실행 루트를 방문합니다. 런타임 식별, 정확한 연속 주소 사용 및 전체 모듈 배타성은 별도의 게시 요건입니다.

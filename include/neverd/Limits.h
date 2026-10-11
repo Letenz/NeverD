@@ -457,6 +457,9 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// indirect-tail frame guard. Exhaustion retains the original indirect branch.
 constexpr size_t kMaxIndirectTailFrameWork = 262144;
 
+/// Cumulative decoded-prologue and protected-prefix work for one SEH query.
+constexpr size_t kMaxSEHEstablisherFrameWork = 1048576;
+
 /// Joins at one block after which a stack-offset bound that is still moving
 /// (a stack pointer that drifts around a loop) becomes unbounded.
 constexpr unsigned kStackOffsetWideningJoins = 8;

@@ -483,6 +483,10 @@ struct LocalUnwindContinuationEvidence {
 enum class ModuleAddressEdgeTraversal : uint8_t {
   OrdinaryAndExceptional,
   OrdinaryOnly,
+  // Inventory each declared activation separately, without forwarding values
+  // across a personality-defined exceptional edge. This mode never produces
+  // an ordinary returned-continuation certificate.
+  IndependentlyRootedOrdinaryOnly,
 };
 
 struct ModuleEvidenceBudget {
@@ -1546,26 +1550,24 @@ bool collectLowAddressUses(
                       LocalUnwind->CompleteByFunction[FuncIndex] = false;
                     else {
                       LocalUnwind->TargetsByFunction[FuncIndex].insert(Target);
-                      const auto Frame = factsFor(
-                          NdVar::reg(TRI.Win64ParamRegs[0], TRI.PointerSize));
-                      const auto SP = factsFor(
-                          NdVar::reg(TRI.StackPointer, TRI.PointerSize));
                       const llvm::StringRef Module = Imported->Module;
                       const bool KnownRuntime =
                           Module.equals_insensitive("vcruntime140.dll") ||
                           Module.equals_insensitive("vcruntime140d.dll") ||
                           Module.equals_insensitive("msvcrt.dll") ||
                           Module.equals_insensitive("msvcrtd.dll");
-                      if (KnownRuntime && Frame.isPrivateFrameOnly() &&
-                          SP.isPrivateFrameOnly() &&
-                          Frame.FrameOffsets == SP.FrameOffsets) {
+                      if (KnownRuntime) {
+                        // The complete decoded LowIR proof owns equality of
+                        // the physical SP and the frame argument. The address
+                        // inventory owns only continuation identity and uses;
+                        // its independently rooted frame lattice cannot veto
+                        // or replace a checked runtime-activation coordinate.
                         if (!SEHFrameProof)
                           SEHFrameProof = proveLowSEHFrames(
                               Func, TRI, SEHFrameWorkRemaining, &SEHCallees);
                         const auto Proof =
                             SEHFrameProof->Calls.find({Op.Addr, Op.Seq});
-                        if (Proof != SEHFrameProof->Calls.end() &&
-                            Proof->second == *Frame.FrameOffsets.begin())
+                        if (Proof != SEHFrameProof->Calls.end())
                           LocalUnwind->SameFrameCallsByFunction[FuncIndex]
                               .push_back({Target, Op.Addr, Op.Seq, CalleeVA,
                                           Proof->second,
@@ -2248,15 +2250,25 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
   std::vector<ModuleAddressUse> IgnoredUses;
   const std::vector<ModuleJumpTableOwner> NoTableOwners;
   ModuleEvidenceBudget Budget(TestBudget);
-  // An exceptional edge enters with personality-defined register/frame state;
-  // it is not a value-preserving predecessor of an ordinary machine RETURN.
-  // Catch funclets are independently rooted at their real entry, so following
-  // only ordinary edges proves the returned continuation without letting an
-  // unwind self-cycle grow a fictitious stack epoch until the budget expires.
-  if (!collectLowAddressUses(Img, Funcs, NoTableOwners, IgnoredUses, Budget,
-                             TestBudget, &CandidateTargets, &Returned,
-                             ModuleAddressEdgeTraversal::OrdinaryOnly,
-                             &LocalUnwind)) {
+  // Ordinary catch returns and local-unwind call uses have different entry
+  // domains. Preserve the ordinary-only returned-value proof. A separate
+  // address inventory visits runtime activation roots from unknown state and
+  // follows only ordinary edges; frame equality still comes from LowIR's
+  // decoded-frame authority, never from this inventory or the runtime name.
+  if (HasFH3CatchSource) {
+    std::vector<ModuleAddressUse> ReturnedUses;
+    if (!collectLowAddressUses(Img, Funcs, NoTableOwners, ReturnedUses, Budget,
+                               TestBudget, &CandidateTargets, &Returned,
+                               ModuleAddressEdgeTraversal::OrdinaryOnly)) {
+      Result.AnalysisComplete = false;
+      return Result;
+    }
+  }
+  if (!collectLowAddressUses(
+          Img, Funcs, NoTableOwners, IgnoredUses, Budget, TestBudget,
+          &CandidateTargets, nullptr,
+          ModuleAddressEdgeTraversal::IndependentlyRootedOrdinaryOnly,
+          &LocalUnwind)) {
     Result.AnalysisComplete = false;
     return Result;
   }
