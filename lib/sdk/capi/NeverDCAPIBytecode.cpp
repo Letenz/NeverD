@@ -97,6 +97,9 @@ const char *recover(const unsigned char *Code, size_t CodeSize,
         {"with_context", Result->WithContext},
         {"mapped_observations", Result->MappedObservations},
         {"unmapped_observations", Result->UnmappedObservations},
+        {"reconstructed_calls", Result->ReconstructedCalls},
+        {"guarded_contract_calls", Result->GuardedContractCalls},
+        {"unresolved_contract_calls", Result->UnresolvedContractCalls},
         {"source", std::move(Result->Source)}});
   } catch (const std::exception &Error) {
     // Do not let an allocation failure while reporting another exception

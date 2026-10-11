@@ -207,6 +207,85 @@ automatically to host function pointers. Native callbacks, suspension/resume
 behavior, pointer relocation and original high-level argument recovery remain
 the producer's responsibility.
 
+## Reconstructing calls with explicit source contracts
+
+`--llvm --optimize --source-contracts contracts.json` additionally exposes an
+isolated register bank and replaces statically resolved gateway calls with typed
+source calls. The C request and both Python recovery functions accept the same
+`source_contracts` object. This option cannot be combined with observation
+annotations: a sampled name or return value does not establish a call contract.
+
+The producer must assert that state addresses cannot escape, guest/context
+memory is disjoint from the bank, and callbacks cannot retain bank addresses.
+For each declared import, a normally returning gateway must return **zero
+status**, perform the listed fixed bank writes before the imported operation,
+and write its result to the declared destination afterwards. Selector, arguments
+and result-channel descriptors are captured on entry, before the fixed writes. Other bank bytes
+are preserved. The imported operation may modify arbitrary guest memory and
+may fail to return. Nonzero statuses from unresolved gateways and internal
+state calls still propagate unchanged. An API's error result is separate from
+the gateway's status.
+
+For example, a caller-defined 64-byte bank can describe one service as follows:
+
+```json
+{
+  "schemaVersion": 1,
+  "state_bytes": 64,
+  "isolated_bank": true,
+  "zero_status_gateways": true,
+  "gateways": [{
+    "name": "runtime_service",
+    "selector": {"offset": 32, "bytes": 4},
+    "argument_count": {"offset": 56, "bytes": 4},
+    "arguments": [{"offset": 8, "bytes": 8}],
+    "result_offset": {"offset": 40, "bytes": 8},
+    "result_bytes": {"offset": 48, "bytes": 8},
+    "writes": [{"slot": {"offset": 56, "bytes": 8}, "value": 0}],
+    "imports": [{"selector": 7, "name": "example_query",
+                 "parameters": ["u64"], "result": "i32"}]
+  }]
+}
+```
+
+`result_offset` and `result_bytes` identify slots containing the destination
+byte offset and write width, not the destination itself. Each slot has a byte
+width of 1, 2, 4 or 8. All accesses must fit the declared bank. A missing
+`selector` means selector zero; a missing `argument_count` means the number of
+argument slots. The selector, result offset and width must be constants
+proven at the actual call site by the shared optimizer. A dynamic argument count
+gets a runtime comparison: the matching arm uses the imported call and the other
+arm retains the original gateway and status. Dynamic or unlisted selectors,
+incompatible constant counts and invalid destinations keep the original state
+gateway. A signed result is extended before the exact-width
+bank write; a void result writes zero. Supported source types are `u32`, `u64`,
+`i32`, `i64`, `pointer`, and result-only `void`. Varargs, exceptional call edges,
+observable state addresses and unbounded bank addressing are unsupported.
+This route currently requires integral 64-bit pointers and indices.
+
+A bounded refinement exposes narrow bank reads at the original wide-load point
+when only low bytes feed a selector. Both byte orders keep the same snapshot,
+including intervening writes. Unknown upper bytes are retained for wider uses.
+The shared optimizer remains responsible for forwarding and simplification.
+Explicit signed import types are preserved in C declarations through source
+spelling attributes, without adding machine-ABI extension attributes.
+
+The function's public state/context ABI and all bank bytes at returns and
+unknown call boundaries remain intact. Scoped bank/guest alias facts, ordinary LLVM
+scalar optimizations and direct call results can remove intermediate register
+traffic and reduce flag tests to comparisons. Internal state functions retain
+their boundaries; this does not infer their original parameters or object types.
+The output header and C/Python reports count `reconstructed_calls` and
+`unresolved_contract_calls`, with `guarded_contract_calls` identifying the
+subset of reconstructed calls that need an arity guard. The unresolved count covers only unresolved calls to
+**declared** gateways, not every remaining opaque call in the program.
+
+The format-independent `StateSourceRecovery` owner accepts the same layout and
+signatures for LLVM state functions on ELF or Windows x64 targets. The bytecode
+adapter supplies validation and orchestration only. Native PE import/string
+recovery is a separate producer; this option does not infer imports from a PE
+or make runtime observations unconditional.
+
 ## C and Python plugin API
 
 Include `neverd/sdk/NeverDCAPI.h` and call:

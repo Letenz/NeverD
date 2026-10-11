@@ -79,6 +79,51 @@ class BytecodeIntegrationTests(unittest.TestCase):
                     self.assertIn("runtime_service", static.source)
                     self.assertIn("context", static.source)
 
+    def test_state_source_contract_reconstructs_only_proven_calls(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}
+        def operand(space, size, value):
+            return {"space": space, "size": size, "value": {"addend": value}}
+        copies = [{"op": "COPY", "output": operand("reg", 8, offset),
+                   "inputs": [operand("const", 8, value)]}
+                  for offset, value in ((8, 7), (16, 32), (24, 4), (40, 99))]
+        recipes = {
+            0x41: {"size": 1, "operations": copies + [{"op": "CALL", "inputs": [
+                operand("const", 8, 8192)]}]},
+            0xfe: {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]},
+        }
+        profile = dict(layout, encodings=[dict(recipe, match=[{"offset": 0, "value": op}])
+                                         for op, recipe in recipes.items()])
+        slot = lambda offset: {"offset": offset, "bytes": 8}
+        contract = {"schemaVersion": 1, "state_bytes": 48, "isolated_bank": True,
+                    "zero_status_gateways": True, "gateways": [{
+                        "name": "runtime_service", "selector": slot(8),
+                        "arguments": [slot(40)], "result_offset": slot(16),
+                        "result_bytes": slot(24), "writes": [], "imports": [{
+                            "selector": 7, "name": "example_query",
+                            "parameters": ["u64"], "result": "i32"}]}]}
+        options = dict(bindings=[{"address": 8192, "name": "runtime_service"}],
+                       output="llvmc", optimize=True, source_contracts=contract, api=api)
+        functions = [{"entry": 0, "end": 2, "name": "source_query"}]
+        static = recover_bytecode(b"A\xfe", profile, functions, **options)
+        dynamic = recover_bytecode_with_decoder(b"A\xfe", layout, functions,
+                                                lambda data, pc: recipes[data[0]], **options)
+        self.assertEqual(static, dynamic)
+        self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls), (1, 0))
+        self.assertIn("example_query(99)", static.source)
+        self.assertNotIn("__neverd_state_probe", static.source)
+        for change in ({"isolated_bank": False}, {"state_bytes": 47}, {"unknown": 1}):
+            with self.assertRaisesRegex(NeverDError, "source_contracts"):
+                recover_bytecode(b"A\xfe", profile, functions,
+                                 **dict(options, source_contracts=dict(contract, **change)))
+        for change in ({"output": "highc"}, {"optimize": False}, {"observations": {}}):
+            with self.assertRaisesRegex(NeverDError, "source_contracts"):
+                recover_bytecode(b"A\xfe", profile, functions, **dict(options, **change))
+        contract["gateways"][0]["imports"][0]["selector"] = 8
+        unknown = recover_bytecode(b"A\xfe", profile, functions, **options)
+        self.assertEqual((unknown.reconstructed_calls, unknown.unresolved_contract_calls), (0, 1))
+        self.assertIn("runtime_service(state)", unknown.source)
+
     def test_callback_pc_context_reentrancy_and_concurrent_recovery(self):
         api = self.load_api()
         layout = {"version": 1, "register_bytes": 8, "byte_order": "little"}

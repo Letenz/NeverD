@@ -115,6 +115,22 @@ class BytecodeTests(unittest.TestCase):
                 recover_bytecode(b'abc', {}, [], observations=report,
                                  api=HostAPI(library))
 
+    def test_source_contracts_require_explicit_coverage(self):
+        contract = {'schemaVersion': 1, 'gateways': []}
+        response = dict(self.success(), reconstructed_calls=3, unresolved_contract_calls=2, guarded_contract_calls=1)
+        library = Library(response)
+        result = recover_bytecode(b'abc', {}, [], source_contracts=contract,
+                                  output='llvmc', optimize=True, api=HostAPI(library))
+        self.assertEqual(library.request['source_contracts'], contract)
+        self.assertEqual((result.reconstructed_calls, result.unresolved_contract_calls), (3, 2))
+        for response in (self.success(), dict(response, reconstructed_calls=True),
+                         dict(response, unresolved_contract_calls=-1)):
+            library = Library(response)
+            with self.assertRaisesRegex(NeverDError, 'contract coverage'):
+                recover_bytecode(b'abc', {}, [], source_contracts=contract,
+                                 api=HostAPI(library))
+            self.assertEqual(len(library.freed), 1)
+
     def test_nonfinite_rules_are_not_serialized_to_nonstandard_json(self):
         with self.assertRaises(ValueError):
             recover_bytecode(b"a", {"value": float("nan")}, [])

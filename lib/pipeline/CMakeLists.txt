@@ -1,6 +1,8 @@
 add_neverd_component_library(NeverDPipeline
   BytecodeRecovery.cpp
   BytecodeSourceEvidence.cpp
+  BytecodeStateSourceContract.cpp
+  StateSourceRecovery.cpp
   Pipeline.cpp
   NativeSourceHints.cpp
   NativeSourcePreservation.cpp

@@ -771,6 +771,20 @@ while runtime signature discovery from native images retains its format gates.
 This source-only path does not authenticate native instruction boundaries or
 authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
 
+`pipeline/StateSourceRecovery` owns explicit isolated-bank source contracts,
+independently of instruction language, OS and API names. It validates bounded
+bank addressing, attaches scoped alias facts without relocating the bank, and
+passes explicit gateway operands through temporary probes to the shared LLVM
+optimizer. Only proven site constants and caller-declared signatures authorize
+a direct call and exact-width result write. Unknown arity gets a runtime guard
+and original-call fallback. Unknown targets retain the original
+gateway and status. The bytecode JSON adapter owns schema parsing; observers
+remain conditional evidence and cannot supply these assertions implicitly.
+Bounded low-byte load slices preserve the original read point and byte order;
+the shared optimizer forwards their exact writers. `LLVMSourceTypeHints.h` owns
+the spelling attributes that carry explicit signed import declarations across
+signless LLVM integers without asserting native extension attributes.
+
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive
 finite-domain proof as a relative table. The physical pointer run supplies a

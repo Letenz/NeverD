@@ -32,6 +32,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
@@ -987,7 +988,14 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     }
 
     auto *FT = Fn.getFunctionType();
-    OS << typeToCLLVM(FT->getReturnType()) << " " << Name << "(";
+    auto SourceScalar = [&](llvm::Type *T, bool Signed) {
+      if (Signed && (T->isIntegerTy(32) || T->isIntegerTy(64)))
+        return std::string(T->isIntegerTy(32) ? "int32_t" : "int64_t");
+      return typeToCLLVM(T);
+    };
+    OS << SourceScalar(FT->getReturnType(),
+                       Fn.hasFnAttribute(LLVMSourceSignedResult))
+       << " " << Name << "(";
     if (FT->getNumParams() == 0 && !FT->isVarArg()) {
       OS << "void";
     } else if (FT->getNumParams() == 0 && FT->isVarArg()) {
@@ -999,7 +1007,9 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
       for (unsigned I = 0; I < FT->getNumParams(); ++I) {
         if (I > 0)
           OS << ", ";
-        OS << typeToCLLVM(FT->getParamType(I));
+        OS << SourceScalar(
+            FT->getParamType(I),
+            Fn.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
       }
       if (FT->isVarArg())
         OS << ", ...";

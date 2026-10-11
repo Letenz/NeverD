@@ -1,0 +1,636 @@
+//===- StateSourceRecovery.cpp - Project explicit state ABI contracts -----===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Keep unknown boundaries intact while exposing proven scalar source calls.
+
+#include "neverd/pipeline/StateSourceRecovery.h"
+
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
+#include "neverd/pipeline/Pipeline.h"
+
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/Support/Errc.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+
+#include <map>
+#include <set>
+
+namespace neverd {
+namespace {
+constexpr llvm::StringLiteral ProbePrefix = "__neverd_state_probe_";
+llvm::Error invalid(llvm::StringRef Message) {
+  return llvm::createStringError(llvm::errc::invalid_argument,
+                                 "state source contract: " + Message);
+}
+llvm::Type *type(llvm::LLVMContext &C, StateSourceType T) {
+  switch (T) {
+  case StateSourceType::Void:
+    return llvm::Type::getVoidTy(C);
+  case StateSourceType::U32:
+  case StateSourceType::I32:
+    return llvm::Type::getInt32Ty(C);
+  case StateSourceType::U64:
+  case StateSourceType::I64:
+    return llvm::Type::getInt64Ty(C);
+  case StateSourceType::Pointer:
+    return llvm::PointerType::getUnqual(C);
+  }
+  llvm_unreachable("invalid source type");
+}
+bool signedType(StateSourceType T) {
+  return T == StateSourceType::I32 || T == StateSourceType::I64;
+}
+bool identifier(llvm::StringRef Name) {
+  return !Name.empty() && Name.size() <= 128 && llvm::isAlpha(Name.front()) &&
+         llvm::all_of(Name,
+                      [](char C) { return llvm::isAlnum(C) || C == '_'; }) &&
+         !llvm::StringSwitch<bool>(Name)
+              .Cases(
+                  {"auto",         "break",         "case",         "char",
+                   "const",        "continue",      "default",      "do",
+                   "double",       "else",          "enum",         "extern",
+                   "float",        "for",           "goto",         "if",
+                   "inline",       "int",           "long",         "register",
+                   "restrict",     "return",        "short",        "signed",
+                   "sizeof",       "static",        "struct",       "switch",
+                   "typedef",      "union",         "unsigned",     "void",
+                   "volatile",     "while",         "alignas",      "alignof",
+                   "bool",         "constexpr",     "nullptr",      "false",
+                   "true",         "static_assert", "thread_local", "typeof",
+                   "typeof_unqual"},
+                  true)
+              .Default(false);
+}
+llvm::FunctionType *signature(llvm::LLVMContext &C,
+                              const StateSourceImport &I) {
+  std::vector<llvm::Type *> Parameters;
+  for (auto T : I.Parameters)
+    Parameters.push_back(type(C, T));
+  return llvm::FunctionType::get(type(C, I.Result), Parameters, false);
+}
+
+// Exact pointer-sized arithmetic only. Loading a pointer from the bank is a
+// guest access, not an address of the bank. Never chase that load as a base.
+struct Offsets {
+  std::vector<int64_t> Bank;
+  bool Guest = false;
+};
+std::optional<Offsets> bankOffsets(llvm::Value *V, llvm::Value *Base,
+                                   const llvm::DataLayout &DL,
+                                   unsigned &Budget) {
+  if (!Budget)
+    return {};
+  --Budget;
+  if (V == Base)
+    return Offsets{{0}, false};
+  if (llvm::isa<llvm::LoadInst, llvm::Argument, llvm::Constant>(V))
+    return Offsets{{}, true};
+  auto Next = [&](llvm::Value *X) { return bankOffsets(X, Base, DL, Budget); };
+  if (auto *C = llvm::dyn_cast<llvm::CastInst>(V)) {
+    if (C->getOpcode() == llvm::Instruction::BitCast)
+      return Next(C->getOperand(0));
+    if (C->getOpcode() == llvm::Instruction::PtrToInt &&
+        C->getType()->getIntegerBitWidth() == DL.getPointerSizeInBits(0))
+      return Next(C->getOperand(0));
+    if (C->getOpcode() == llvm::Instruction::IntToPtr &&
+        C->getType()->getPointerAddressSpace() == 0 &&
+        C->getOperand(0)->getType()->getIntegerBitWidth() ==
+            DL.getPointerSizeInBits(0))
+      return Next(C->getOperand(0));
+    return {};
+  }
+  auto Shift = [](std::optional<Offsets> Values, int64_t Amount) {
+    if (Values)
+      for (auto &O : Values->Bank)
+        O += Amount;
+    return Values;
+  };
+  if (auto *G = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
+    llvm::APInt Offset(DL.getIndexSizeInBits(0), 0);
+    if (G->getAddressSpace() == 0 && G->accumulateConstantOffset(DL, Offset) &&
+        Offset.getSignificantBits() <= 32)
+      return Shift(Next(G->getPointerOperand()), Offset.getSExtValue());
+    return {};
+  }
+  if (auto *B = llvm::dyn_cast<llvm::BinaryOperator>(V)) {
+    if (B->getOpcode() != llvm::Instruction::Add &&
+        B->getOpcode() != llvm::Instruction::Sub)
+      return {};
+    auto *K = llvm::dyn_cast<llvm::ConstantInt>(B->getOperand(1));
+    auto *Source = B->getOperand(0);
+    if (!K && B->getOpcode() == llvm::Instruction::Add) {
+      K = llvm::dyn_cast<llvm::ConstantInt>(B->getOperand(0));
+      Source = B->getOperand(1);
+    }
+    if (K && K->getValue().getSignificantBits() <= 32)
+      return Shift(Next(Source), B->getOpcode() == llvm::Instruction::Sub
+                                     ? -K->getSExtValue()
+                                     : K->getSExtValue());
+    return {};
+  }
+  std::vector<llvm::Value *> Arms;
+  if (auto *P = llvm::dyn_cast<llvm::PHINode>(V))
+    for (auto &A : P->incoming_values())
+      Arms.push_back(A.get());
+  if (auto *S = llvm::dyn_cast<llvm::SelectInst>(V))
+    Arms = {S->getTrueValue(), S->getFalseValue()};
+  if (Arms.empty())
+    return {};
+  Offsets Result;
+  for (auto *A : Arms) {
+    auto Values = Next(A);
+    if (!Values)
+      return {};
+    Result.Guest |= Values->Guest;
+    for (auto O : Values->Bank)
+      if (!llvm::is_contained(Result.Bank, O))
+        Result.Bank.push_back(O);
+    if (Result.Bank.size() > 32)
+      return {};
+  }
+  return Result;
+}
+std::optional<Offsets> bankOffsets(llvm::Value *V, llvm::Value *Base,
+                                   const llvm::DataLayout &DL) {
+  unsigned Budget = 128;
+  return bankOffsets(V, Base, DL, Budget);
+}
+std::optional<int64_t> displacement(llvm::Value *V, llvm::Value *Base,
+                                    const llvm::DataLayout &DL) {
+  auto Values = bankOffsets(V, Base, DL);
+  if (Values && !Values->Guest && Values->Bank.size() == 1)
+    return Values->Bank.front();
+  return {};
+}
+llvm::Value *slot(llvm::IRBuilder<> &B, llvm::Value *Bank, unsigned Offset) {
+  return B.CreateConstGEP1_64(B.getInt8Ty(), Bank, Offset, "state_slot");
+}
+llvm::Value *read(llvm::IRBuilder<> &B, llvm::Value *Bank, StateSourceSlot S,
+                  llvm::MDNode *Scope) {
+  auto *V = B.CreateAlignedLoad(B.getIntNTy(S.Bytes * 8),
+                                slot(B, Bank, S.Offset), llvm::Align(1));
+  V->setMetadata(llvm::LLVMContext::MD_alias_scope, Scope);
+  return B.CreateZExtOrTrunc(V, B.getInt64Ty());
+}
+void write(llvm::IRBuilder<> &B, llvm::Value *Bank, StateSourceSlot S,
+           llvm::Value *V, llvm::MDNode *Scope) {
+  V = B.CreateZExtOrTrunc(V, B.getIntNTy(S.Bytes * 8));
+  B.CreateAlignedStore(V, slot(B, Bank, S.Offset), llvm::Align(1))
+      ->setMetadata(llvm::LLVMContext::MD_alias_scope, Scope);
+}
+llvm::MDNode *bankScope(llvm::Function &F) {
+  llvm::MDBuilder B(F.getContext());
+  auto *Domain = B.createAnonymousAliasScopeDomain("source register bank");
+  return llvm::MDNode::get(F.getContext(), B.createAnonymousAliasScope(Domain));
+}
+
+// Admit bounded bank accesses before attaching isolation facts. Address
+// observation or escape must not turn an ambiguous access into guest memory.
+llvm::Error validateBank(llvm::Function &F, unsigned Bytes) {
+  auto *Base = F.getArg(0);
+  const auto &DL = F.getParent()->getDataLayout();
+  std::vector<llvm::Value *> Work{Base};
+  std::set<llvm::Value *> Seen{Base};
+  while (!Work.empty()) {
+    auto *V = Work.back();
+    Work.pop_back();
+    for (auto &Use : V->uses()) {
+      auto *I = llvm::dyn_cast<llvm::Instruction>(Use.getUser());
+      if (!I)
+        return invalid("bank address escapes the function");
+      llvm::Type *T = nullptr;
+      if (auto *L = llvm::dyn_cast<llvm::LoadInst>(I)) {
+        if (L->isVolatile() || L->isAtomic())
+          return invalid("ordered bank access");
+        T = L->getType();
+      } else if (auto *S = llvm::dyn_cast<llvm::StoreInst>(I)) {
+        if (Use.getOperandNo() != 1 || S->isVolatile() || S->isAtomic())
+          return invalid("bank address escapes or has ordered access");
+        T = S->getValueOperand()->getType();
+      } else if (auto *Call = llvm::dyn_cast<llvm::CallInst>(I)) {
+        auto Offset = displacement(V, Base, DL);
+        if (Use.getOperandNo() != 0 || Offset != 0 ||
+            !V->getType()->isPointerTy() || !Call->getType()->isIntegerTy(64) ||
+            Call->isMustTailCall() || Call->hasOperandBundles() ||
+            Call->getCallingConv() != llvm::CallingConv::C ||
+            Call->getFunctionType()->isVarArg())
+          return invalid("unsupported bank call boundary");
+        if (auto *Callee = Call->getCalledFunction())
+          if (Callee->getFunctionType() != Call->getFunctionType())
+            return invalid("inconsistent gateway ABI");
+        continue;
+      } else if (bankOffsets(I, Base, DL)) {
+        if (Seen.insert(I).second)
+          Work.push_back(I);
+        continue;
+      } else {
+        std::string Detail;
+        llvm::raw_string_ostream OS(Detail);
+        OS << "bank address is observed or has a dynamic offset in "
+           << F.getName() << ": ";
+        I->print(OS);
+        return invalid(Detail);
+      }
+      auto Offsets = bankOffsets(V, Base, DL);
+      if (!Offsets || DL.getTypeStoreSize(T).isScalable())
+        return invalid("bank access has an unbounded address or width");
+      for (auto Offset : Offsets->Bank)
+        if (Offset < 0 || uint64_t(Offset) > Bytes ||
+            DL.getTypeStoreSize(T).getFixedValue() > Bytes - Offset)
+          return invalid("bank access outside declared storage");
+    }
+  }
+  return llvm::Error::success();
+}
+
+// A wide load may preserve unknown upper bytes for another state store, while
+// an import selector uses only its low word. GVN cannot discard the wide use.
+// Expose a separate narrow load at the ORIGINAL read, never at its later use:
+// the ordinary memory optimizer can then forward an exact partial writer.
+bool exposeBankLoadSlices(llvm::Module &M) {
+  struct Slice {
+    llvm::Instruction *Use;
+    llvm::LoadInst *Load;
+    unsigned Bits;
+  };
+  std::vector<Slice> Slices;
+  for (auto &F : M) {
+    if (F.isDeclaration() || F.arg_empty() ||
+        !F.getArg(0)->getType()->isPointerTy())
+      continue;
+    for (auto &I : llvm::instructions(F)) {
+      llvm::LoadInst *L = nullptr;
+      unsigned Bits = 0;
+      if (auto *T = llvm::dyn_cast<llvm::TruncInst>(&I)) {
+        L = llvm::dyn_cast<llvm::LoadInst>(T->getOperand(0));
+        if (T->getType()->isIntegerTy())
+          Bits = T->getType()->getIntegerBitWidth();
+      } else if (I.getOpcode() == llvm::Instruction::And) {
+        for (unsigned Side : {0u, 1u}) {
+          auto *Mask =
+              llvm::dyn_cast<llvm::ConstantInt>(I.getOperand(1 - Side));
+          if (Mask && Mask->getValue().isMask()) {
+            L = llvm::dyn_cast<llvm::LoadInst>(I.getOperand(Side));
+            Bits = Mask->getValue().getActiveBits();
+            break;
+          }
+        }
+      }
+      if (!L || L->isVolatile() || L->isAtomic() ||
+          !L->getType()->isIntegerTy() ||
+          L->getType()->getIntegerBitWidth() > 64 || !Bits || Bits % 8 ||
+          Bits >= L->getType()->getIntegerBitWidth() ||
+          !displacement(L->getPointerOperand(), F.getArg(0), M.getDataLayout()))
+        continue;
+      if (Slices.size() < 4096)
+        Slices.push_back({&I, L, Bits});
+    }
+  }
+  for (auto [Use, L, Bits] : Slices) {
+    llvm::IRBuilder<> B(L);
+    auto *Pointer = L->getPointerOperand();
+    if (M.getDataLayout().isBigEndian())
+      Pointer =
+          slot(B, Pointer, (L->getType()->getIntegerBitWidth() - Bits) / 8);
+    auto *Narrow = B.CreateAlignedLoad(B.getIntNTy(Bits), Pointer,
+                                       llvm::Align(1), "state_value");
+    Narrow->setMetadata(llvm::LLVMContext::MD_alias_scope,
+                        L->getMetadata(llvm::LLVMContext::MD_alias_scope));
+    Narrow->setMetadata(llvm::LLVMContext::MD_noalias,
+                        L->getMetadata(llvm::LLVMContext::MD_noalias));
+    Use->replaceAllUsesWith(B.CreateZExtOrTrunc(Narrow, Use->getType()));
+    Use->eraseFromParent();
+  }
+  return !Slices.empty();
+}
+
+} // namespace
+
+llvm::Expected<StateSourceRecovery>
+prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
+  if (!C.IsolatedBank || (!C.Gateways.empty() && !C.ZeroStatusGateways) ||
+      !C.StateBytes || C.StateBytes > 65536 || C.Gateways.size() > 256)
+    return invalid(
+        "requires a bounded isolated bank and explicit zero-status gateways");
+  if (llvm::verifyModule(M, &llvm::errs()))
+    return invalid("invalid input IR");
+  const auto &DL = M.getDataLayout();
+  if (DL.getPointerSizeInBits(0) != 64 || DL.getIndexSizeInBits(0) != 64 ||
+      DL.isNonIntegralAddressSpace(0))
+    return invalid("requires integral 64-bit pointers and indices");
+  auto ValidSlot = [&](StateSourceSlot S) {
+    return (S.Bytes == 1 || S.Bytes == 2 || S.Bytes == 4 || S.Bytes == 8) &&
+           S.Offset <= C.StateBytes && S.Bytes <= C.StateBytes - S.Offset;
+  };
+  std::map<std::string, const StateSourceImport *> Names;
+  std::map<std::string, size_t> Gateways;
+  for (size_t Index = 0; Index < C.Gateways.size(); ++Index) {
+    const auto &G = C.Gateways[Index];
+    if (!Gateways.emplace(G.Name, Index).second || !identifier(G.Name) ||
+        G.Arguments.size() > 16 || G.Imports.size() > 4096 ||
+        !ValidSlot(G.ResultOffset) || !ValidSlot(G.ResultBytes) ||
+        (G.Selector && !ValidSlot(*G.Selector)) ||
+        (G.ArgumentCount && !ValidSlot(*G.ArgumentCount)))
+      return invalid("invalid gateway layout");
+    for (auto A : G.Arguments)
+      if (!ValidSlot(A))
+        return invalid("argument outside bank");
+    if (G.Writes.size() > 128)
+      return invalid("too many fixed writes");
+    for (auto W : G.Writes)
+      if (!ValidSlot(W.Slot))
+        return invalid("write outside bank");
+    auto ValidType = [](StateSourceType T) {
+      return unsigned(T) <= unsigned(StateSourceType::Pointer);
+    };
+    std::set<uint64_t> Selectors;
+    for (const auto &I : G.Imports) {
+      if (!identifier(I.Name) || Gateways.count(I.Name) ||
+          !Selectors.insert(I.Selector).second || (!G.Selector && I.Selector) ||
+          I.Parameters.size() > G.Arguments.size() || !ValidType(I.Result) ||
+          !llvm::all_of(I.Parameters, ValidType) ||
+          llvm::is_contained(I.Parameters, StateSourceType::Void))
+        return invalid("invalid import identity or parameters");
+      auto *T = signature(M.getContext(), I);
+      auto [At, Added] = Names.emplace(I.Name, &I);
+      if ((!Added && (At->second->Parameters != I.Parameters ||
+                      At->second->Result != I.Result)) ||
+          (M.getNamedValue(I.Name) &&
+           (!M.getFunction(I.Name) ||
+            M.getFunction(I.Name)->getFunctionType() != T ||
+            !M.getFunction(I.Name)->isDeclaration())))
+        return invalid("conflicting import declaration");
+    }
+  }
+  for (auto &[Name, Index] : Gateways)
+    if (Names.count(Name))
+      return invalid("import is also a gateway");
+  for (auto &F : M) {
+    if (F.getName().starts_with(ProbePrefix))
+      return invalid("reserved probe name is present");
+    if (F.isDeclaration())
+      continue;
+    if (F.isVarArg() || F.arg_empty() ||
+        !F.getArg(0)->getType()->isPointerTy() ||
+        F.getArg(0)->getType()->getPointerAddressSpace() != 0 ||
+        !F.getReturnType()->isIntegerTy(64))
+      return invalid("incompatible state function ABI");
+    for (auto &I : llvm::instructions(F))
+      if (llvm::isa<llvm::InvokeInst, llvm::CallBrInst>(I))
+        return invalid("exceptional state call is unsupported");
+    if (auto Error = validateBank(F, C.StateBytes))
+      return Error;
+  }
+  StateSourceRecovery R;
+  R.Contract = C;
+  R.Probes.resize(C.Gateways.size());
+  std::vector<llvm::Function *> Functions;
+  for (auto &F : M)
+    if (!F.isDeclaration())
+      Functions.push_back(&F);
+  for (auto *F : Functions) {
+    ++R.Functions;
+    // Source reconstruction keeps the input's function boundaries. Module
+    // inlining obscures the bank interface and can multiply source size.
+    F->removeFnAttr(llvm::Attribute::AlwaysInline);
+    F->addFnAttr(llvm::Attribute::NoInline);
+    auto *Original = F->getArg(0);
+    auto *Bank = Original;
+    auto *Scope = bankScope(*F);
+    std::vector<llvm::CallInst *> Calls;
+    for (auto &I : llvm::instructions(F)) {
+      if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&I)) {
+        if (!Call->arg_empty() &&
+            displacement(Call->getArgOperand(0), Bank, M.getDataLayout()) == 0)
+          Calls.push_back(Call);
+        else
+          Call->setMetadata(llvm::LLVMContext::MD_noalias, Scope);
+      }
+      llvm::Value *P = nullptr;
+      llvm::Type *T = nullptr;
+      if (auto *L = llvm::dyn_cast<llvm::LoadInst>(&I)) {
+        P = L->getPointerOperand();
+        T = L->getType();
+      }
+      if (auto *S = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+        P = S->getPointerOperand();
+        T = S->getValueOperand()->getType();
+      }
+      if (P) {
+        auto Addresses = bankOffsets(P, Bank, M.getDataLayout());
+        if (!Addresses || Addresses->Bank.empty())
+          I.setMetadata(llvm::LLVMContext::MD_noalias, Scope);
+        else if (!Addresses->Guest)
+          I.setMetadata(llvm::LLVMContext::MD_alias_scope, Scope);
+      }
+      auto Offset = P ? displacement(P, Bank, M.getDataLayout()) : std::nullopt;
+      if (!Offset || *Offset < 0 || uint64_t(*Offset) > C.StateBytes ||
+          M.getDataLayout().getTypeStoreSize(T).isScalable() ||
+          M.getDataLayout().getTypeStoreSize(T).getFixedValue() >
+              C.StateBytes - *Offset)
+        continue;
+      llvm::IRBuilder<> B(&I);
+      auto *New = slot(B, Bank, *Offset);
+      if (auto *L = llvm::dyn_cast<llvm::LoadInst>(&I))
+        L->setOperand(0, New);
+      else
+        llvm::cast<llvm::StoreInst>(I).setOperand(1, New);
+      I.setMetadata(llvm::LLVMContext::MD_alias_scope, Scope);
+    }
+    for (auto *Call : Calls) {
+      llvm::IRBuilder<> B(Call);
+      auto *Callee = Call->getCalledFunction();
+      auto At =
+          Callee ? Gateways.find(Callee->getName().str()) : Gateways.end();
+      std::vector<llvm::Value *> Args;
+      for (auto &A : Call->args())
+        Args.push_back(A.get());
+      Args[0] = Original;
+      if (At != Gateways.end()) {
+        const auto &G = C.Gateways[At->second];
+        for (auto S :
+             {G.Selector, G.ArgumentCount, std::optional(G.ResultOffset),
+              std::optional(G.ResultBytes)})
+          Args.push_back(S ? read(B, Bank, *S, Scope) : B.getInt64(0));
+        if (!G.ArgumentCount)
+          Args[Call->arg_size() + 1] = B.getInt64(G.Arguments.size());
+        for (auto S : G.Arguments)
+          Args.push_back(read(B, Bank, S, Scope));
+        std::vector<llvm::Type *> Types;
+        for (auto *V : Args)
+          Types.push_back(V->getType());
+        auto *FT = llvm::FunctionType::get(Call->getType(), Types, false);
+        auto &Name = R.Probes[At->second];
+        if (Name.empty())
+          Name =
+              llvm::Function::Create(FT, llvm::GlobalValue::ExternalLinkage,
+                                     ProbePrefix + llvm::Twine(At->second), M)
+                  ->getName()
+                  .str();
+        if (M.getFunction(Name)->getFunctionType() != FT)
+          return invalid("inconsistent gateway ABI");
+        auto *Replacement =
+            B.CreateCall(M.getFunction(Name), Args, "state_call");
+        Replacement->setMetadata("neverd.state.scope", Scope);
+        Replacement->setMetadata(
+            "neverd.state.original_argc",
+            llvm::MDNode::get(
+                M.getContext(),
+                llvm::ConstantAsMetadata::get(B.getInt32(Call->arg_size()))));
+        Call->replaceAllUsesWith(Replacement);
+        Call->eraseFromParent();
+        Call = Replacement;
+      } else
+        Call->setArgOperand(0, Original);
+    }
+  }
+  return R;
+}
+
+llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
+  for (unsigned Round = 0; Round < 3 && exposeBankLoadSlices(M); ++Round) {
+    Pipeline::OptimizationOptions Policy;
+    Policy.Strength = Pipeline::OptStrength::Deep;
+    Policy.LLVMLevel = llvm::OptimizationLevel::O2;
+    auto Result = Pipeline::optimizeModule(M, Policy);
+    if (Result.Stop == OptimizationStopReason::InputInvalid ||
+        Result.Stop == OptimizationStopReason::VerificationFailed)
+      return invalid("bank slice optimization failed");
+  }
+  for (size_t Index = 0; Index < R.Probes.size(); ++Index) {
+    if (R.Probes[Index].empty())
+      continue;
+    auto *Probe = M.getFunction(R.Probes[Index]);
+    if (!Probe)
+      continue; // The optimizer may delete every unreachable use and
+                // declaration.
+    const auto &G = R.Contract.Gateways[Index];
+    std::vector<llvm::CallInst *> Calls;
+    for (auto *U : Probe->users()) {
+      auto *Call = llvm::dyn_cast<llvm::CallInst>(U);
+      if (!Call || Call->getCalledFunction() != Probe)
+        return invalid("probe escaped");
+      Calls.push_back(Call);
+    }
+    for (auto *Call : Calls) {
+      auto *MD = Call->getMetadata("neverd.state.original_argc");
+      auto *Count =
+          MD ? llvm::mdconst::dyn_extract<llvm::ConstantInt>(MD->getOperand(0))
+             : nullptr;
+      if (!Count)
+        return invalid("lost call ABI metadata");
+      unsigned N = Count->getZExtValue();
+      if (Call->arg_size() != N + 4 + G.Arguments.size())
+        return invalid("changed probe arity");
+      auto Constant = [&](unsigned Arg) -> std::optional<uint64_t> {
+        if (auto *V =
+                llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(N + Arg)))
+          return V->getZExtValue();
+        return {};
+      };
+      auto Selector = Constant(0), Arity = Constant(1), Offset = Constant(2),
+           Bytes = Constant(3);
+      const StateSourceImport *Import = nullptr;
+      if (Selector && Offset && Bytes &&
+          (*Bytes == 1 || *Bytes == 2 || *Bytes == 4 || *Bytes == 8) &&
+          *Offset <= R.Contract.StateBytes &&
+          *Bytes <= R.Contract.StateBytes - *Offset)
+        for (const auto &I : G.Imports)
+          if (I.Selector == *Selector &&
+              (!Arity || I.Parameters.size() == *Arity))
+            Import = &I;
+      llvm::IRBuilder<> B(Call);
+      auto OriginalCall = [&](llvm::IRBuilder<> &B) {
+        std::vector<llvm::Value *> Args;
+        std::vector<llvm::Type *> Types;
+        for (unsigned I = 0; I < N; ++I)
+          Args.push_back(Call->getArgOperand(I));
+        for (auto *A : Args)
+          Types.push_back(A->getType());
+        // O1 can prune the now-unused original declaration. The probe retains
+        // its exact original parameter types, including an optional context.
+        auto Original = M.getOrInsertFunction(
+            G.Name, llvm::FunctionType::get(Call->getType(), Types, false));
+        return B.CreateCall(Original, Args, "unresolved_state_call");
+      };
+      auto NativeCall = [&](llvm::IRBuilder<> &B) {
+        std::vector<llvm::Value *> Args;
+        for (size_t I = 0; I < Import->Parameters.size(); ++I) {
+          auto *V = Call->getArgOperand(N + 4 + I);
+          auto *T = type(M.getContext(), Import->Parameters[I]);
+          Args.push_back(T->isPointerTy() ? B.CreateIntToPtr(V, T)
+                                          : B.CreateZExtOrTrunc(V, T));
+        }
+        auto *Scope = Call->getMetadata("neverd.state.scope");
+        // Fixed bank writes occur before the imported operation, matching the
+        // declared gateway contract. Guest effects cannot observe this bank.
+        for (auto W : G.Writes)
+          write(B, Call->getArgOperand(0), W.Slot, B.getInt64(W.Value), Scope);
+        auto Target = M.getOrInsertFunction(Import->Name,
+                                            signature(M.getContext(), *Import));
+        auto *Declaration = llvm::cast<llvm::Function>(Target.getCallee());
+        if (signedType(Import->Result))
+          Declaration->addFnAttr(LLVMSourceSignedResult);
+        for (unsigned I = 0; I < Import->Parameters.size(); ++I)
+          if (signedType(Import->Parameters[I]))
+            Declaration->addParamAttr(
+                I, llvm::Attribute::get(M.getContext(),
+                                        LLVMSourceSignedParameter));
+        auto *Native = B.CreateCall(Target, Args,
+                                    Import->Result == StateSourceType::Void
+                                        ? ""
+                                        : Import->Name + "_result");
+        Native->setMetadata(llvm::LLVMContext::MD_noalias, Scope);
+        llvm::Value *Result = B.getInt64(0);
+        if (Native->getType()->isPointerTy())
+          Result = B.CreatePtrToInt(Native, B.getInt64Ty());
+        else if (!Native->getType()->isVoidTy())
+          Result = B.CreateIntCast(Native, B.getInt64Ty(),
+                                   signedType(Import->Result));
+        write(B, Call->getArgOperand(0), {unsigned(*Offset), unsigned(*Bytes)},
+              Result, Scope);
+      };
+      if (!Import) {
+        Call->replaceAllUsesWith(OriginalCall(B));
+        ++R.UnresolvedCalls;
+      } else if (Arity) {
+        NativeCall(B);
+        Call->replaceAllUsesWith(B.getInt64(0));
+        ++R.RewrittenCalls;
+      } else {
+        auto *Matches = B.CreateICmpEQ(Call->getArgOperand(N + 1),
+                                       B.getInt64(Import->Parameters.size()),
+                                       "argument_count_matches");
+        llvm::Instruction *Then, *Else;
+        llvm::SplitBlockAndInsertIfThenElse(Matches, Call->getIterator(), &Then,
+                                            &Else);
+        llvm::IRBuilder<> Known(Then), Unknown(Else);
+        NativeCall(Known);
+        auto *Status = OriginalCall(Unknown);
+        auto *Merged = llvm::PHINode::Create(B.getInt64Ty(), 2, "call_status",
+                                             Call->getIterator());
+        Merged->addIncoming(B.getInt64(0), Then->getParent());
+        Merged->addIncoming(Status, Else->getParent());
+        Call->replaceAllUsesWith(Merged);
+        ++R.RewrittenCalls;
+        ++R.GuardedCalls;
+      }
+      Call->eraseFromParent();
+    }
+    Probe->eraseFromParent();
+  }
+  if (llvm::verifyModule(M, &llvm::errs()))
+    return invalid("source projection failed verification");
+  return llvm::Error::success();
+}
+} // namespace neverd

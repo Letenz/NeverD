@@ -7,6 +7,7 @@
 #include "neverd/pipeline/BytecodeRecovery.h"
 
 #include "BytecodeSourceEvidence.h"
+#include "BytecodeStateSourceContract.h"
 
 #include "neverd/analysis/BytecodeDecoder.h"
 #include "neverd/analysis/BytecodeSource.h"
@@ -81,7 +82,8 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     if (Key != "schemaVersion" && Key != "profile" && Key != "layout" &&
         Key != "functions" && Key != "bindings" && Key != "base" &&
         Key != "output" && Key != "optimize" && Key != "unaligned_pointers" &&
-        Key != "with_context" && Key != "observations")
+        Key != "with_context" && Key != "observations" &&
+        Key != "source_contracts")
       return invalid(llvm::Twine("unknown bytecode recovery key: ") +
                      llvm::StringRef(Key));
   if (Root->get(Decode ? "profile" : "layout"))
@@ -122,6 +124,10 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
       Root->getBoolean("unaligned_pointers").value_or(false);
   bool WithContext = Root->getBoolean("with_context").value_or(false);
   const auto *Observations = Root->get("observations");
+  const auto *SourceContracts = Root->get("source_contracts");
+  if (SourceContracts && (!LLVMRoute || !Optimize || Observations))
+    return invalid("source_contracts require optimized LLVM C without "
+                   "observation overlays");
   if (Observations && (Check || Decode))
     return invalid("observations require source emission and a static profile");
   if (Optimize && !LLVMRoute)
@@ -133,6 +139,14 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
                   : readBytecodeProfile(ProfileJSON);
   if (!P)
     return P.takeError();
+  std::optional<StateSourceContract> StateContract;
+  if (SourceContracts) {
+    auto Contract =
+        readBytecodeStateSourceContract(*SourceContracts, P->RegisterBytes);
+    if (!Contract)
+      return Contract.takeError();
+    StateContract = std::move(*Contract);
+  }
   auto Decoder =
       Decode ? BytecodeDecoder::createExternal(std::move(*P), std::move(Decode))
              : BytecodeDecoder::create(std::move(*P));
@@ -290,18 +304,53 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
                                {}, nullptr, BinaryFormat::ELF, false, &Bodies);
     if (!Module || llvm::verifyModule(*Module, &llvm::errs()))
       return invalid("LLVM verification failed");
+    std::optional<StateSourceRecovery> StateRecovery;
+    if (StateContract) {
+      // Normalize the emitter's temporary/physical-register scaffolding before
+      // checking address escape. Dead call-register PHIs are not state uses.
+      Pipeline::OptimizationOptions Normalization;
+      Normalization.Strength = Pipeline::OptStrength::Thin;
+      auto Normalized = Pipeline::optimizeModule(*Module, Normalization);
+      if (Normalized.Stop == OptimizationStopReason::InputInvalid ||
+          Normalized.Stop == OptimizationStopReason::VerificationFailed)
+        return invalid("state source normalization failed");
+      auto Prepared = prepareStateSourceRecovery(*Module, *StateContract);
+      if (!Prepared)
+        return Prepared.takeError();
+      StateRecovery = std::move(*Prepared);
+    }
     if (Optimize) {
       Pipeline::OptimizationOptions Policy;
-      // Source recovery benefits from scalar simplification while retaining
-      // function boundaries. Use the shared thin policy rather than a second
-      // pass list or module-wide inlining/speculative loop transforms.
-      Policy.Strength = Pipeline::OptStrength::Thin;
+      // Explicit bank contracts need memory forwarding across mixed-width
+      // state views. The shared O2 policy supplies it; preparation retains
+      // function boundaries. The ordinary source route stays thin.
+      Policy.Strength = StateRecovery ? Pipeline::OptStrength::Deep
+                                      : Pipeline::OptStrength::Thin;
+      Policy.LLVMLevel = llvm::OptimizationLevel::O2;
       Policy.SourceMap = Observations ? &LLVMSources : nullptr;
-      auto Result = Pipeline::optimizeModule(*Module, Policy);
-      if (Result.Stop == OptimizationStopReason::InputInvalid ||
-          Result.Stop == OptimizationStopReason::VerificationFailed)
+      auto Optimized = Pipeline::optimizeModule(*Module, Policy);
+      if (Optimized.Stop == OptimizationStopReason::InputInvalid ||
+          Optimized.Stop == OptimizationStopReason::VerificationFailed)
         return invalid(llvm::Twine("LLVM source optimization failed: ") +
-                       optimizationStopReasonName(Result.Stop));
+                       optimizationStopReasonName(Optimized.Stop));
+      if (StateRecovery) {
+        if (auto Error = finishStateSourceRecovery(*Module, *StateRecovery))
+          return Error;
+        Policy.Strength = Pipeline::OptStrength::Deep;
+        Policy.LLVMLevel = llvm::OptimizationLevel::O2;
+        auto Refined = Pipeline::optimizeModule(*Module, Policy);
+        if (Refined.Stop == OptimizationStopReason::InputInvalid ||
+            Refined.Stop == OptimizationStopReason::VerificationFailed)
+          return invalid("contracted source optimization failed");
+        Result.ReconstructedCalls = StateRecovery->RewrittenCalls;
+        Result.GuardedContractCalls = StateRecovery->GuardedCalls;
+        Result.UnresolvedContractCalls = StateRecovery->UnresolvedCalls;
+        OS << "/* Explicit isolated-state source contract: "
+           << StateRecovery->RewrittenCalls << " calls reconstructed ("
+           << StateRecovery->GuardedCalls << " guarded), "
+           << StateRecovery->UnresolvedCalls
+           << " declared gateway calls unresolved. */\n";
+      }
     } else {
       Pipeline::promoteScaffoldingAllocas(*Module);
     }
