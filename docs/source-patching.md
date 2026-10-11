@@ -234,7 +234,8 @@ adapter. Selected compilers never silently fall back to another executable.
 
 ## Validation record (2026-10-12)
 
-The focused source/native-exception/COFF suites ran 313 checks: 311 passed and
+Before integration with the refreshed `dev`, the focused
+source/native-exception/COFF suites ran 313 checks: 311 passed and
 two Linux-only checks were skipped on the development Mac. The integrated build
 with the corrected LLVM dependency ran 29,577 registered checks: 29,480 passed,
 31 were skipped, 64 failed and two timed out. All 66 failures/timeouts were also
@@ -246,3 +247,30 @@ The Python SDK checks against the built shared library ran 154 tests: 109 passed
 and 45 lacked the required platform or fixture. The ABI audit and mypy passed.
 Runtime evidence and its platform limits are described above; skipped coverage
 and reproduced baseline failures are not counted as passes.
+
+The integration checkpoint at `ce298f758` uses the pinned r4 LLVM with the
+build-directory correction. Its source, native-exception, COFF and
+plugin suites ran 475 registered test executions: 473 passed and two Linux-only
+checks were skipped on the Mac. There are 330 distinct test names; shared
+checks run in both the lift and focused exception binaries. The required exact
+PLT producer check passed with `NEVERD_TEST_REQUIRE_FIXED_LLVM=1`. Another 364
+format and shared IR checks passed, including the newly integrated return-proof
+and cleanup regressions.
+
+All 3,216 composed semantic cases across four architectures and three formats
+passed at this checkpoint, with no skips. These checks cover the shared rewrite
+pipeline and do not extend the runtime-verified source profiles.
+
+The final CLI's Clang IR and GCC object replacements each passed seven Linux
+C++ exception scenarios in Docker. The GCC input retains stack protection.
+The PE FH3 runtime test passed its seven scenarios under Wine. These remain
+emulated/runtime evidence with the platform limits above. The final shared
+library's Python SDK run passed 110 of 165 tests, with 55 explicit skips. ABI
+audit, mypy, formatting and documentation checks passed.
+
+Two additional upstream source tests could not pass in this local profile:
+`AArch64_HighCExecution.FMaxAndFMinPropagateANaN` needs a Clang supporting
+`__builtin_elementwise_minimum/maximum`; the configured system Clang lacks
+them. `HighCPointerAddresses.AnX87StoreWritesItsTenBytes` tries to compile x87
+assembly with the ARM64 host compiler. These environment failures are recorded
+separately and are not counted as passes.
