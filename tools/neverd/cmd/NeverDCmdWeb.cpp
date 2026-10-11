@@ -42,6 +42,16 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() && (WebArguments[0] == "node-behavior" ||
+                                WebArguments[0] == "bun-node-behavior" ||
+                                WebArguments[0] == "package-behavior" ||
+                                WebArguments[0] == "archive-package-behavior"))
+    return runWebBehavior();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "rewrite" || WebArguments[0] == "rewrite-export" ||
+       WebArguments[0] == "bun-rewrite" ||
+       WebArguments[0] == "bun-rewrite-export"))
+    return runWebRewrite();
   if (!WebArguments.empty() && WebArguments[0] == "desktop-manifest")
     return runWebDesktop();
   if (!WebArguments.empty() &&
