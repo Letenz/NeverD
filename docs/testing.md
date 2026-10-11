@@ -168,6 +168,39 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86ComiStateTests` compares the sixteen legacy/VEX COMISS/UCOMISS and
+COMISD/UCOMISD register/memory forms with Codegen, HighC and LLVMC at
+default/NoOpt and C O0/O2. Observers retain all defined arithmetic flags,
+MXCSR, both complete source YMM values and output guards. Signed zeros,
+subnormals, infinities and quiet/signaling NaNs exercise all RC/DAZ/FTZ/sticky
+combinations. The concrete matrix additionally checks invalid/denormal mask
+controls; normally completing states execute on hardware, while faulting
+controls use masked native exception classification and separate fault children.
+Native children retain exact outgoing exception status and uncommitted output.
+Protected page ends distinguish complete scalar reads from partial faults;
+Windows private GS sources retain the actual base. Contract checks cover raw
+physical XMM roles, metadata mutations, Low/Med/High shapes, owned assembly,
+memory permissions, canonical addresses and unknown state. The accompanying
+`MedCallingConvFPStack` test covers immutable scalar homes in ELF/Mach-O/COFF.
+These native observers require x64/Clang/AVX; fault contexts use Windows/Linux,
+and the native GS observer requires Windows x64. They do not certify x86-32
+native, EVEX COMI/SAE, enabled alignment checking or CPU-feature faults.
+
+`NeverDX86X87ConstantTests` compares all seven x87 constant-load encodings
+with native Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Each form
+checks the ten raw binary80 bytes, complete destination guards and the outgoing
+control word for every RC, defined PC and exception-mask combination. Separate
+incoming and internally loaded controls detect lost FLDCW commits. The concrete
+matrix uses independent original-byte instructions, including masked sticky
+precision; malformed shapes, unknown control and pending waiting boundaries
+refuse without publishing a result. Owned assembly retains exact selectors,
+pointer types, side effects and clobbers. C uses raw eighty-bit storage even
+where the host long double is only binary64. This is numerical/control-word
+coverage, not complete source TOP, tags, condition codes, exception delivery or
+pending-exception versus source-memory-fault ordering. Native checks require
+x64 and Clang; x86-32 has contract checks only.
+
+
 `X87CallStack` tests call/consume loops and forwarding chains on x86/x64 in
 ELF, COFF and Mach-O. Negative cases cover inconsistent returns, recursion,
 depth exhaustion, uninitialized/popped slots, resets, tag invalidation and
@@ -544,6 +577,29 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebPackageSemVer.*`, `WebPackageEvidenceTime.*`, `WebPackageEvidence.*` and
+`WebPackageAdvisories.*` cover strict arbitrary-width precedence, source/time
+admission, OSV union/order/endpoints, wildcard and PURL identity, unsupported
+coverage and bounded matching. Set `NEVERD_OSV_NPM_ADVISORY` to the hash-pinned
+public record in the [qualification](web-package-advisory-qualification.md).
+`WebPackageAdvisorySDK.*` checks original anchors, 600-entry paging, uncomposed
+import capacity, aggregate retained bytes and work, atomic failures, cache and
+revision invalidation, private canaries and CLI parity with an unusable PATH.
+Run the complete owning Web directory and worker/MCP suites after changes to
+the session boundary; verify advisory core/SDK/transport checks with JS omitted
+and all C stubs with the backend omitted, then restore both flags to ON.
+
+`WebAttestationEncoding.*`, `WebPackageAttestations.*` and
+`WebPackageAttestationSDK.*` cover independent Base64 vectors, exact DSSE bytes,
+registry conflicts, SLSA chronology, unsupported digests, known SHA-256/SHA-512
+byte comparisons, private publication, import/result ceilings, shared descriptor
+accounting, canonical digest pages, reset and CLI operation with unusable PATH.
+`NEVERD_CLAUDE_CODE_21295_REGISTRY` selects the previously captured metadata
+SHA-256 `5b08bcfe0bd28ab796d40388a360e8f5b5d5db672376106887972e0715109578`;
+the test verifies two separately retained signature declarations, never their
+cryptographic validity. Worker/MCP compare the same metadata and digest receipts
+and reject key/verification fields. Use the same omission/restoration matrix.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
@@ -557,6 +613,36 @@ cases in origins/paths cover the shared declaration projection. Changes to
 that shared boundary require the owning Web directory, worker/MCP parity and
 parser/backend omission checks, followed by restoration of the enabled build.
 See the [Node behavior profile](web-node-behavior-profile.md).
+
+`WebPackageInstall.*` covers command grammar and reserved Node dispatch, exact
+entries, mixed namespaces/selections, deferred code, ESM/CJS chains and cycles,
+shadowed or written require, unknown sources, independent package ownership,
+embedded delivery and atomic budgets. Tar symlinks, encrypted/unsupported ZIP
+members and absent files preserve the same honest unavailable boundary.
+`WebPackageInstallReal.*` selects the two JS members from the original pinned
+Claude npm archive and checks six entry-associated calls against the existing
+behavior records. `WebNodeBehaviorSDK.*` also covers optional selection, 512-row
+trace paging, canaries, cache/revision invalidation and directory/archive CLI
+compositions with an unusable PATH. Worker/MCP test the same metadata; MCP also
+checks manifest-only and lock-only coverage. Follow shared-boundary changes with
+complete owning Web regression and both omission profiles, then restore ON.
+See the [installation trace profile](web-package-install-profile.md).
+
+`WebPackageBehaviorDiff.*` checks changed arguments with equal pattern counts,
+per-file deltas that cannot cancel, original occurrence anchors, absent and
+unselected sources, parse failure, source modes, root/platform context, embedded
+delivery and aggregate limits. The unchanged Buffer call plus the existing
+value-budget fixture must produce incomparable coverage, never a fake encoding
+delta. `WebPackageBehaviorDiffSDK.*` repeats that counterexample through the
+public API, resolves records with an empty independent Node behavior cache,
+pages 600 occurrences, checks cache/revision invalidation and the shared
+16-source limit, and runs directory/archive CLI composition with an unusable
+PATH. Worker/MCP check shared summary/page equality and strict schemas.
+`NEVERD_CLAUDE_CODE_BEHAVIOR_DIFF_DIR` optionally supplies the two hash-pinned
+`claude-code-2.1.295.tgz` and `claude-code-2.1.296.tgz` wrappers for
+`WebPackageBehaviorDiffReal.*`. Follow with complete Web regression, parser and
+backend omission checks and restoration ON. See the
+[comparison profile](web-package-behavior-diff-profile.md).
 
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON

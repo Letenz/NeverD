@@ -2,6 +2,7 @@
 //------------===//
 #include "neverd/backend/swift/HighSwiftEmitter.h"
 
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/high/X86FPStateShape.h"
 
 #include <algorithm>
@@ -505,6 +506,8 @@ class Writer {
   }
 
   std::string call(const ExprPtr &E, unsigned Depth, bool Statement = false) {
+    if (E && isX87ConstantControlIntrinsic(E->IntrinsicId))
+      throw Unsupported("Swift x87 constant/control completion is unsupported");
     if (E && E->IntrinsicId == Intrinsic::CetRdSsp)
       throw Unsupported(
           "Swift shadow stack reads require a caller-scoped contract");
@@ -516,6 +519,7 @@ class Writer {
           isX86FPConversionStateIntrinsic(E->IntrinsicId) ||
           isX86FPScalarConvertStateIntrinsic(E->IntrinsicId) ||
           isX86F16CStateIntrinsic(E->IntrinsicId) ||
+          isX86FPComiStateIntrinsic(E->IntrinsicId) ||
           isX86FPPackedConvertStateIntrinsic(E->IntrinsicId) ||
           isX86FPRoundStateIntrinsic(E->IntrinsicId) ||
           isX86FPApprox12Intrinsic(E->IntrinsicId) ||

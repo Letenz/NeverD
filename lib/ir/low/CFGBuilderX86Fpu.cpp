@@ -25,6 +25,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/LowNoReturn.h"
@@ -570,6 +571,9 @@ class X87CallEffectIndex {
     // pushes. Environment restores, tag changes and unknown intrinsics have
     // additional state effects and cannot acquire a net-stack summary here.
     switch (static_cast<Intrinsic>(Op.Inputs[0].Offset)) {
+    case Intrinsic::X87ReadControl:
+    case Intrinsic::X87WriteControl:
+    case Intrinsic::X87LoadConstant:
     case Intrinsic::X87Fsin:
     case Intrinsic::X87Fcos:
     case Intrinsic::X87F2xm1:
@@ -1093,7 +1097,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
               } else if (Kind != Intrinsic::X87Fincstp &&
                          Kind != Intrinsic::X87Fnclex &&
                          Kind != Intrinsic::X87Wait &&
-                         Kind != Intrinsic::X87ReadStatus) {
+                         Kind != Intrinsic::X87ReadStatus &&
+                         !isX87ConstantControlIntrinsic(Kind)) {
                 // Restores, resumable traps and unknown extensions may replace
                 // tags. A subsequent explicit definition can recover a slot.
                 State = {};

@@ -35,6 +35,12 @@ neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
 neverd web archive ./extension.vsix zip
+neverd web package-install ./package.json 0 package-json
+neverd web package-advisories ./metadata-capture 3 package-json 1:2
+neverd web package-attestation ./metadata-capture 1 2 registry-dist
+neverd web archive-package-install ./package.tgz tgz 0 3 package-json 0:commonjs 1:commonjs
+neverd web package-behavior-diff ./capture 6 3 package-json before:5:commonjs after:2:commonjs
+neverd web archive-package-behavior-diff ./archives tgz 2 3 1 3 package-json before:0:commonjs after:0:commonjs
 neverd web desktop-manifest ./captured-app nwjs 2
 neverd web desktop-manifest ./package.json vsix
 neverd web archive-desktop ./extension.vsix zip 0 3 vsix
@@ -100,6 +106,16 @@ The [Boolean branch profile](web-boolean-branches-profile.md) selects proven
 Boolean expression operands with forced GetValue and retained binding checks;
 it preserves chosen effects and does not transform statements.
 
+The [installation trace profile](web-package-install-profile.md) connects a
+literal lifecycle command to exact captured files and selected Node behavior
+records. It retains unsupported commands and unknown source coverage. Its
+candidate module chains do not establish activation or runtime reachability.
+The [selected behavior comparison](web-package-behavior-diff-profile.md) counts
+recognized syntax patterns per exact file candidate, preserves all original
+occurrence anchors and reports missing/degraded coverage as incomparable.
+Argument changes, runtime behavior and release provenance are not inferred
+from equal or different pattern counts.
+
 All new analysis and adapter code is C++. JavaScript parsing embeds a pinned
 Hermes parser/AST subset. There is no JavaScript VM, target evaluation, package
 installation, plugin loading, subprocess analyzer or automatic network/file
@@ -111,6 +127,20 @@ npm v1/v2/v3 lockfile and manifest inspection, bounded graph pages and compariso
 of two supplied roots. Placement candidates, integrity declarations, missing
 evidence and version/platform uncertainty remain separate; it neither installs
 packages nor issues a benignness verdict.
+The [offline advisory profile](web-package-advisory-profile.md) compares
+explicitly selected captured OSV declarations with supplied npm name/version
+metadata. It retains source/time/severity uncertainty and original anchors,
+works without the JavaScript parser, and makes no freshness, publisher,
+reachability or safety claim. See the
+[actual public metadata qualification](web-package-advisory-qualification.md).
+Composed review reports and analyst dispositions remain separate work.
+
+The [attestation metadata profile](web-package-attestation-profile.md) reads
+captured npm signature declarations, in-toto statements, DSSE envelopes and
+SLSA build metadata. Explicit subject digest comparisons reuse original-byte
+integrity verification. Signature encoding, byte equality, source chronology
+and publisher authentication remain separate evidence states.
+
 The [archive and integrity profiles](web-package-archive-profile.md) admit
 bounded tar/local-PAX/single-gzip members and compare explicitly selected
 original artifacts with captured registry or npm-lock SRI declarations.

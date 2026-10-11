@@ -42,7 +42,9 @@ Other hosts require separate evidence.
 | Captured HTML | `html-utf8-script-candidates-v1` | Script/base inventory, captured local URL candidates and inline raw-byte sources/anchors; DOM and runtime activation remain unverified. [Profile](web-html-profile.md) |
 | HTML inline module files | `html-inline-module-file-candidates-v2` | Literal requests use explicit document/base evidence and exact captured members; early captured maps add scoped/prefix/null rules and private URL candidates; browser activation/history and full closure remain pending |
 | HTML import maps | `import-map-url-evidence-v1`, embedded Ada 4.0.0 | Bounded C++ JSON/URL processing and metadata pages remain available without JS parsing; absolute key origins, later/interleaved maps and order-dependent JSON remain explicit HTML-profile refusals |
-| npm metadata and supplied-directory diff | `node-package-evidence-v1` | npm lock v1/v2/v3, hidden locks, captured manifests, unresolved/conditional placements, exact file hashes and evidence coverage comparisons; [profile](web-package-profile.md). Advisory/provenance, dispositions and reports remain pending |
+| npm metadata and supplied-directory diff | `node-package-evidence-v1` | npm lock v1/v2/v3, hidden locks, captured manifests, unresolved/conditional placements, exact file hashes and evidence coverage comparisons; [profile](web-package-profile.md). Composed assessments, dispositions and reports remain pending |
+| Captured npm advisory declarations | `npm-osv-1.9.1-v1`, `offline-package-metadata-descriptor-v1` | Native captured OSV/name/version matching with explicit source/time/severity uncertainty and bounded sessions; [profile](web-package-advisory-profile.md), [actual public metadata qualification](web-package-advisory-qualification.md). Feed completeness, freshness, publisher authentication and exploitability remain unverified |
+| Captured signature and provenance metadata | `offline-package-attestation-metadata-v1` | Explicit npm registry/in-toto/DSSE/SLSA subsets and selected SHA-256/SHA-512 original-byte joins. [Profile](web-package-attestation-profile.md). Signature, publisher, trust-chain, transparency and SLSA-level authentication remain unverified |
 | Selected Node source/package behavior | `node-22.15-static-behavior-v1` | Fixed import-rooted process/filesystem/HTTP/native-load/Buffer call patterns, argument anchors and exact inventory/delivery joins. [Profile](web-node-behavior-profile.md). Install propagation, runtime API identity, reachability and verdicts remain unverified |
 | Package archives and original SRI | `ustar-pax-single-gzip-v1`, `npm-original-sri-v1` | Native tar/local-PAX/single-gzip, metadata-only links, shared source/package/Bun/native consumers and explicit registry/lock declaration checks over original bytes. [Profile and limits](web-package-archive-profile.md). Recursive archives, full tar dialects and publisher authentication are unsupported |
 | Passive interface evidence | `har-1.2-metadata-v1`, `fetch-websocket-xhr-syntax-v2`, `absolute-http-method-origin-path-v1` | HAR preview/commit, direct fetch/WebSocket and bounded XHR constructor/receiver/call/event syntax links; explicit fetch-only joins preserve evidence classes. Wrappers, response dataflow, dynamic URL resolution and WebSocket frames remain unsupported. [Profile](web-interface-profile.md) |
@@ -112,6 +114,11 @@ closure remain outstanding.
 | Package archive members / depth / cached archives | 10,000 / 64 / 4 |
 | Package archive PAX/name/prefix metadata | 8 MiB |
 | SRI declaration bytes / tokens / cached verifications | 64 KiB / 256 / 16 |
+| Advisory or source/time descriptor JSON / depth / nodes | 1 MiB / 32 / 32,768 |
+| Advisory affected entries / severities / combined version-event selectors | 1,024 / 1,024 / 8,192 |
+| Retained advisory imports / descriptors / charged metadata across imports | 16 / 20 / 8 MiB |
+| Retained attestation imports / subject-digest receipts | 4 / 4; descriptors and 8 MiB metadata ceiling shared with advisories |
+| Advisory comparison records / matched-entry anchors / work / cached selections | 8,192 / 8,192 / 8,000,000 / 2 |
 | HAR original / observations / field records | 8 MiB / 4,096 / 32,768 |
 | Source interface records / correlation pairs | 4,096 / 32,768 |
 | HAR captures / pending previews / source analyses / correlations | 4 / 1 / 4 / 4 |

@@ -27,8 +27,8 @@ std::vector<size_t> selected(const SourceRewrite &A, uint64_t &Steps) {
     if (A.Records[I].Status == "accepted")
       Order.push_back(I);
   }
+  rewrite::charge(Steps, rewrite::sortSteps(Order.size()));
   std::sort(Order.begin(), Order.end(), [&](auto X, auto Y) {
-    rewrite::charge(Steps);
     return A.Records[X].SourceStart < A.Records[Y].SourceStart;
   });
   if (Order.size() != A.Accepted)

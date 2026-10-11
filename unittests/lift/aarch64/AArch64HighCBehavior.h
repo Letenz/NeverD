@@ -40,7 +40,7 @@ protected:
     // IR loads/stores. No behavioral stubs replace the instructions under test.
     auto Compile =
         exec(NEVERD_TEST_CLANG,
-             {"-target", "aarch64-none-elf", "-march=" + March, "-std=gnu11",
+             {"-target", "aarch64-linux-gnu", "-march=" + March, "-std=gnu11",
               "-O2", "-S", "-emit-llvm", "-I", Include.string(), "-include",
               std::string(TEST_SOURCE_DIR) + "/aarch64/HostClangBuiltins.h",
               Source.string(), "-o", IR.string()});

@@ -1,6 +1,7 @@
 //===- NdOpEmulatorX86FPArith.cpp - Exact x86 SIMD FP arithmetic --------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/X86FPComparison.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 
@@ -634,6 +635,33 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
   for (unsigned Index = 1; Index < Op.NumInputs; ++Index)
     if (!Op.Inputs[Index].isConst() && !getRegister(Op.Inputs[Index].Offset))
       return false;
+  if (isX86FPComiStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPComiMemoryState;
+    const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;
+    const unsigned Bytes = x86FPComiElementBytes(Control);
+    const uint32_t Incoming = readOperand(Op.Inputs[4]);
+    if (!MXCSRKnown || Incoming != MXCSR)
+      return false;
+    std::vector<uint8_t> Right = Memory ? loadX86FPStateMemory(Op, Bytes, 1)
+                                              .value_or(std::vector<uint8_t>{})
+                                        : readOperandBytes(Op.Inputs[3]);
+    if (Right.size() != Bytes)
+      return false;
+    uint64_t RightBits = 0;
+    for (unsigned I = 0; I < Bytes; ++I)
+      RightBits |= uint64_t(Right[I]) << (I * 8);
+    const auto Compared =
+        evaluateX86FPComparison(readOperand(Op.Inputs[Memory ? 3 : 2]),
+                                RightBits, Bytes, !(Control & 1), Incoming);
+    if (!Compared)
+      return false;
+    MXCSR = Incoming | Compared->Raised;
+    if (Compared->Raised & ~(Incoming >> 7) & 0x3f)
+      return false;
+    writeOutput(Op.Output, uint64_t(x86FPComiFlags(Compared->Relation)) |
+                               (uint64_t(MXCSR) << 32));
+    return true;
+  }
   if (Id == Intrinsic::X86ReadMXCSR) {
     if (!MXCSRKnown)
       return false;

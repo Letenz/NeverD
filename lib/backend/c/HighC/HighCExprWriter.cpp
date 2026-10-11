@@ -20,7 +20,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
+#include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -996,6 +998,28 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
+    if (!x87ConstantControlShapeIsValid(
+            E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
+      llvm::report_fatal_error("invalid HighC x87 constant/control contract");
+    const std::string Word = MemoryIdentifiers.allocate("x87_control");
+    if (E.IntrinsicId == Intrinsic::X87ReadControl)
+      return "({ uint16_t " + Word +
+             "; __asm__ volatile(\"fnstcw %0\" : \"=m\"(" + Word +
+             ") :: \"memory\"); " + Word + "; })";
+    const unsigned Index = E.IntrinsicId == Intrinsic::X87LoadConstant ? 1 : 0;
+    const std::string Init = "({ uint16_t " + Word + " = (uint16_t)(" +
+                             exprStr(*E.Operands[Index]) + "); ";
+    if (E.IntrinsicId == Intrinsic::X87WriteControl)
+      return Init + "__asm__ volatile(\"fldcw %0\" :: \"m\"(" + Word +
+             ") : \"memory\"); })";
+    const std::string Value = MemoryIdentifiers.allocate("x87_constant");
+    return Init + "unsigned _BitInt(80) " + Value +
+           " = 0; __asm__ volatile(\"fldcw (%1)\\n\\t" +
+           X87ConstantMnemonics[E.Operands[0]->ConstVal] +
+           "\\n\\tfstpt (%0)\" :: \"r\"(&" + Value + "), \"r\"(&" + Word +
+           ") : \"st\", \"memory\"); " + Value + "; })";
+  }
   if (E.IntrinsicId == Intrinsic::CetRdSsp) {
     const auto Shape = x86ShadowStackReadHighShape(E, Opts.TheArch);
     if (!x86ShadowStackReadShapeIsValid(Shape))
@@ -1052,6 +1076,17 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (Number && Number->Kind == ExprKind::Const)
         LinuxSyscallArgs = linuxX64SyscallArgumentCount(Number->ConstVal);
     }
+    // A modeled supervisor call passes the number, then one operand per
+    // argument register; a verified syscall reads only its own arguments.
+    size_t FirstUnreadOperand = E.Operands.size();
+    if (const SyscallConvention *Syscall =
+            modeledSyscallConvention(E.IntrinsicId);
+        Syscall && !E.Operands.empty() && E.Operands[0])
+      if (const HighExpr *Number = unwrapIntegerView(E.Operands[0].get());
+          Number && Number->Kind == ExprKind::Const)
+        if (const auto Count =
+                linuxSyscallArgumentCount(Syscall->TheArch, Number->ConstVal))
+          FirstUnreadOperand = 1 + *Count;
     // An unconsumed register read is not part of the syscall's behavior. The
     // helper has a fixed six-register signature, so fill those positions with
     // zero only when the omitted expression cannot fault or have side effects.
@@ -1082,7 +1117,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
-      if (LinuxSyscallArgs == 1 && I >= 2 && CanOmit(CanOmit, Op.get(), 0)) {
+      if (((LinuxSyscallArgs == 1 && I >= 2) || I >= FirstUnreadOperand) &&
+          CanOmit(CanOmit, Op.get(), 0)) {
         OpStrs.push_back("0");
         continue;
       }
@@ -1425,9 +1461,17 @@ const HighExpr *HighCWriter::functionAddressArgument(const HighExpr &Arg) {
   }
   return Cur && Cur->Kind == ExprKind::Const &&
                  isAddressProvenance(Cur->ConstProvenance) &&
-                 FunctionAddressNames.count(Cur->ConstVal)
+                 FunctionAddressNames.count(functionAddressKey(*Cur))
              ? Cur
              : nullptr;
+}
+
+va_t HighCWriter::functionAddressKey(const HighExpr &Const) const {
+  return Const.ConstProvenance == ConstantAddressProvenance::CodeAddress &&
+                 Opts.Image
+             ? normalizeCodeAddress(Const.ConstVal, Opts.Image->Arch,
+                                    Opts.Image->Mode)
+             : Const.ConstVal;
 }
 
 const libc::LibCPrototype *
@@ -4220,7 +4264,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // A function's address prints as the function, whose designator C
     // converts to its address; it keeps the integer type the machine moves.
     if (isAddressProvenance(E.ConstProvenance))
-      if (const auto Function = FunctionAddressNames.find(E.ConstVal);
+      if (const auto Function =
+              FunctionAddressNames.find(functionAddressKey(E));
           Function != FunctionAddressNames.end()) {
         if (PointerArgumentOperands.count(&E))
           return Function->second;
