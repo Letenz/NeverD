@@ -703,6 +703,7 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
         return {};
       FrameDigest = lowSEHFrameDependencyDigest(F, FrameDependencies, Callees);
     }
+    std::vector<va_t> CheckedHandlers;
     for (const auto &Block : F.Blocks) {
       if (!consume(Remaining))
         return {};
@@ -739,18 +740,15 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
       }
       if (!CheckedEdges)
         continue;
-      auto Frame = proveLowSEHEstablisherFrame(F, Block.StartAddr, TRI,
-                                               !Block.Preds.empty(), Remaining,
-                                               FrameDigest);
-      if (!Frame) {
-        llvm::consumeError(Frame.takeError());
-        if (Remaining == 0)
-          return {};
-        continue;
-      }
-      if (!Frame->DynamicSP && Frame->FrameBytes <= uint64_t(INT64_MAX))
-        HandlerSP.emplace(Block.StartAddr, -int64_t(Frame->FrameBytes));
+      CheckedHandlers.push_back(Block.StartAddr);
     }
+    auto Frames = proveLowSEHHandlerFrames(F, CheckedHandlers, TRI, Remaining,
+                                           FrameDigest);
+    if (!Remaining)
+      return {};
+    for (const auto &[Handler, Frame] : Frames)
+      if (!Frame.DynamicSP && Frame.FrameBytes <= uint64_t(INT64_MAX))
+        HandlerSP.emplace(Handler, -int64_t(Frame.FrameBytes));
   }
   std::vector<bool> Roots(N), Visited(N), Queued(N);
   std::deque<size_t> Queue;

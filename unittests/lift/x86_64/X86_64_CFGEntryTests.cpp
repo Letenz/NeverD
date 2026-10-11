@@ -2654,15 +2654,19 @@ TEST(CFGBuilderCoverage,
       Copy(4, {0x48, 0x83, 0xec, 8});
       Relative(8, 0xe9, Entry + 0xa0);
     }
+    if (Mutation == 23)
+      for (unsigned I = 1; I != 40; ++I)
+        Relative(0xc0 + I * 8, 0xe9, Entry + 0xa0);
     Img.Segments.push_back(std::move(Text));
-    Img.Symbols.push_back(Symbol::makeFunc(Entry, 0xe0));
+    Img.Symbols.push_back(
+        Symbol::makeFunc(Entry, Mutation == 23 ? 0x200 : 0xe0));
     Import Runtime;
     Runtime.Name = "_local_unwind";
     Runtime.Module = Mutation == 9 ? "untrusted.dll" : "VCRUNTIME140.dll";
     Img.Imports.push_back(std::move(Runtime));
     EXPECT_TRUE(Img.recordImportStub(Stub, 0));
     ExceptionFunction EH;
-    EH.CodeRange = {Entry, Entry + 0xe0};
+    EH.CodeRange = {Entry, Entry + (Mutation == 23 ? 0x200 : 0xe0)};
     EH.Encoding = ExceptionEncoding::X64UnwindV1;
     EH.UnwindVersion = 1;
     EH.UnwindFlags = 1;
@@ -2682,6 +2686,20 @@ TEST(CFGBuilderCoverage,
     Scope.GuardedRange = {Target, Target + 1};
     Scope.HandlerVA = Entry + 0xc0;
     EH.SEH->Scopes.push_back(Scope);
+    // Many handlers share one immutable CFG under a small fixed budget.
+    if (Mutation == 23) {
+      Scope.GuardedRange = {Entry + 4, Entry + 5};
+      for (unsigned I = 1; I != 40; ++I) {
+        Scope.HandlerVA = Entry + 0xc0 + I * 8;
+        EH.SEH->Scopes.push_back(Scope);
+      }
+    }
+    // Unrelated cold scopes must not pay for a whole-function scan.
+    if (Mutation == 22) {
+      Scope.GuardedRange = {Entry + 0xb0, Entry + 0xb1};
+      for (unsigned I = 0; I != 2048; ++I)
+        EH.SEH->Scopes.push_back(Scope);
+    }
     if (Mutation == 7)
       EH.ParseStatus = ExceptionParseStatus::Partial;
     Img.ExceptionMetadata.Functions.push_back(std::move(EH));
@@ -2699,7 +2717,7 @@ TEST(CFGBuilderCoverage,
     }
     return Img;
   };
-  for (unsigned Mutation = 0; Mutation != 22; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 24; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Img = Make(Mutation);
     Decoder Dec;
@@ -2748,12 +2766,21 @@ TEST(CFGBuilderCoverage,
                       [&](const auto &E) { return E.TargetVA == Handler; });
     if (Mutation == 21)
       Low.Blocks.front().InstructionBoundaries.clear();
+    if (Mutation == 22) {
+      size_t FrameWork = 4096;
+      auto ParentFrame = proveLowSEHEstablisherFrame(
+          Low, Handler, getTargetRegInfo(Arch::X64), false, FrameWork);
+      ASSERT_TRUE(bool(ParentFrame)) << llvm::toString(ParentFrame.takeError());
+      EXPECT_EQ(ParentFrame->FrameBytes, 40u);
+    }
     size_t Work = Mutation == 14   ? 0
                   : Mutation == 15 ? 1
+                  : Mutation == 23 ? 16384
                                    : limits::kMaxSEHEstablisherFrameWork;
     auto Proof = proveLowSEHFrames(Low, getTargetRegInfo(Arch::X64), Work);
     const bool FrameValid = Mutation == 0 || Mutation == 9 || Mutation == 10 ||
-                            Mutation == 11 || Mutation == 18;
+                            Mutation == 11 || Mutation == 18 ||
+                            Mutation == 22 || Mutation == 23;
     if (FrameValid) {
       ASSERT_EQ(Proof.Calls.size(), 1u);
       EXPECT_EQ(Proof.Calls.begin()->second, -40);

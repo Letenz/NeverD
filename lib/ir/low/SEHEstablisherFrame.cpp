@@ -16,8 +16,19 @@
 #include "llvm/Support/Errc.h"
 
 #include <limits>
+#include <optional>
 
 namespace neverd {
+namespace {
+// Lifetime is one immutable function query. Never retained on a LowFunc or
+// shared with a later, potentially changed snapshot.
+struct FrameCFG {
+  std::vector<std::vector<int>> Preds;
+  std::map<va_t, int> Starts;
+  std::map<va_t, std::vector<size_t>> HandlerScopes;
+  std::map<size_t, std::vector<int>> GuardedBlocks;
+};
+} // namespace
 
 /// Windows resumes an in-function __except body with its establisher SP, not
 /// with the entry SP used for an independent ordinary machine-code root.
@@ -29,10 +40,11 @@ namespace neverd {
 /// outside the protected range; its frame is then established from the
 /// frame register, and the handler resumes with the SP the range holds,
 /// which no protected block may write. That case has no fixed-SP seed.
-llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
-    const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
-    bool OrdinaryEntry, size_t &WorkRemaining,
-    llvm::StringRef LocalUnwindDigest, bool CxxContinuation) {
+static llvm::Expected<LowSEHEstablisherFrame>
+proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
+                bool OrdinaryEntry, size_t &WorkRemaining,
+                llvm::StringRef LocalUnwindDigest, bool CxxContinuation,
+                std::optional<FrameCFG> &CachedCFG) {
   auto Fail = [](const std::string &Why) {
     return llvm::createStringError(llvm::errc::not_supported, Why);
   };
@@ -85,33 +97,45 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
     return Fail("nonlinear prologue is not certified");
 
   const size_t N = Low.Blocks.size();
-  std::map<int, size_t> Positions;
-  for (size_t B = 0; B < N; ++B) {
-    if (!Charge())
-      return Fail("frame propagation budget exhausted");
-    if (Low.Blocks[B].Id != static_cast<int>(B))
-      return Fail("noncanonical frame CFG block identity");
-    Positions.emplace(Low.Blocks[B].Id, B);
+  if (!CachedCFG) {
+    std::map<int, size_t> Positions;
+    for (size_t B = 0; B < N; ++B) {
+      if (!Charge())
+        return Fail("frame propagation budget exhausted");
+      if (Low.Blocks[B].Id != static_cast<int>(B))
+        return Fail("noncanonical frame CFG block identity");
+      Positions.emplace(Low.Blocks[B].Id, B);
+    }
+    if (!completeLowSEHFrameCFG(Low, Positions, WorkRemaining))
+      return Fail("incomplete decoded frame CFG");
+    FrameCFG CFG;
+    CFG.Preds.resize(N);
+    for (size_t B = 0; B < N; ++B) {
+      if (!Charge(Low.Blocks[B].Succs.size() + 1))
+        return Fail("frame propagation budget exhausted");
+      CFG.Starts.emplace(Low.Blocks[B].StartAddr, static_cast<int>(B));
+      for (int S : Low.Blocks[B].Succs) {
+        if (S < 0 || static_cast<size_t>(S) >= N)
+          return Fail("invalid ordinary CFG");
+        CFG.Preds[S].push_back(static_cast<int>(B));
+      }
+    }
+    if (EH.SEH)
+      for (size_t I = 0; I < EH.SEH->Scopes.size(); ++I) {
+        if (!Charge())
+          return Fail("frame propagation budget exhausted");
+        CFG.HandlerScopes[EH.SEH->Scopes[I].HandlerVA].push_back(I);
+      }
+    CachedCFG = std::move(CFG);
   }
-  if (!completeLowSEHFrameCFG(Low, Positions, WorkRemaining))
-    return Fail("incomplete decoded frame CFG");
-  if (!Charge(N + Low.CxxContinuationEntries.size()))
+  if (!Charge(N + Low.CxxContinuationEntries.size() + 1))
     return Fail("frame propagation budget exhausted");
   const bool SynchronousCxx = CxxContinuation && EH.Cxx->IsSynchronous;
   std::map<int, std::set<va_t>> Calls;
-  std::vector<std::vector<int>> Preds(N);
-  int HandlerId = -1;
-  for (size_t B = 0; B < N; ++B) {
-    if (Low.Blocks[B].StartAddr == Handler)
-      HandlerId = static_cast<int>(B);
-    if (!Charge(Low.Blocks[B].Succs.size() + 1))
-      return Fail("frame propagation budget exhausted");
-    for (int S : Low.Blocks[B].Succs) {
-      if (S < 0 || static_cast<size_t>(S) >= N)
-        return Fail("invalid ordinary CFG");
-      Preds[S].push_back(static_cast<int>(B));
-    }
-  }
+  const auto &Preds = CachedCFG->Preds;
+  const auto HandlerPosition = CachedCFG->Starts.find(Handler);
+  const int HandlerId =
+      HandlerPosition == CachedCFG->Starts.end() ? -1 : HandlerPosition->second;
   if (!Preds[0].empty())
     return Fail("ordinary control flow re-enters the prologue");
   if (HandlerId <= 0 || (!OrdinaryEntry && !Preds[HandlerId].empty()))
@@ -233,23 +257,37 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
       }
       return Work.size() != Before;
     }
-    for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
-      if (!Charge(N + 1))
+    const auto Scopes = CachedCFG->HandlerScopes.find(ScopeHandler);
+    if (Scopes == CachedCFG->HandlerScopes.end())
+      return false;
+    for (size_t Index : Scopes->second) {
+      if (!Charge())
         return Fail("frame propagation budget exhausted");
-      if (Scope.HandlerVA != ScopeHandler)
-        continue;
+      const SEHScopeRecord &Scope = EH.SEH->Scopes[Index];
       // A cold fragment can sit below the entry; only the prologue itself
       // is out of bounds.
       auto Range = getSemanticSEHGuardedRange(Scope, Arch::X64, EH);
       if (Scope.ParseStatus != ExceptionParseStatus::Complete || !Range ||
           (Range->Begin < PrologueEnd && Range->End > Low.Entry))
         return Fail("protected scope overlaps an incomplete prologue");
-      for (size_t B = 0; B < N; ++B)
-        if (Low.Blocks[B].StartAddr < Range->End &&
-            Low.Blocks[B].EndAddr > Range->Begin) {
-          Work.push_back(static_cast<int>(B));
-          ProtectedBlock[B] = true;
-        }
+      auto Guarded = CachedCFG->GuardedBlocks.find(Index);
+      if (Guarded == CachedCFG->GuardedBlocks.end()) {
+        if (!Charge(N))
+          return Fail("frame propagation budget exhausted");
+        std::vector<int> Blocks;
+        for (size_t B = 0; B < N; ++B)
+          if (Low.Blocks[B].StartAddr < Range->End &&
+              Low.Blocks[B].EndAddr > Range->Begin)
+            Blocks.push_back(static_cast<int>(B));
+        Guarded =
+            CachedCFG->GuardedBlocks.emplace(Index, std::move(Blocks)).first;
+      }
+      if (!Charge(Guarded->second.size()))
+        return Fail("frame propagation budget exhausted");
+      for (int B : Guarded->second) {
+        Work.push_back(B);
+        ProtectedBlock[B] = true;
+      }
     }
     return Work.size() != Before;
   };
@@ -259,9 +297,7 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
       return B != 0 && Preds[B].empty() && IsCxxContinuation(Start);
     return B != 0 && Preds[B].empty() &&
            !Low.OrdinaryModuleAnalysisRoots.count(Start) &&
-           llvm::any_of(EH.SEH->Scopes, [&](const SEHScopeRecord &Scope) {
-             return Scope.HandlerVA == Start;
-           });
+           CachedCFG->HandlerScopes.count(Start);
   };
   auto Added = AddProtectedBlocks(Handler);
   if (!Added)
@@ -287,8 +323,10 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
     if (auto It = LocalUnwindSources.find(B); It != LocalUnwindSources.end())
       for (const auto &[Source, Offset] : It->second)
         Work.push_back(Source);
-    if (!Charge(Low.CxxContinuationEntries.size() +
-                (EH.SEH ? EH.SEH->Scopes.size() : 0) + 1))
+    const bool IsIndependentSource = B != 0 && Preds[B].empty();
+    if (!Charge(1 + (IsIndependentSource && CxxContinuation
+                         ? Low.CxxContinuationEntries.size()
+                         : 0)))
       return Fail("frame propagation budget exhausted");
     if (IsHandlerSource(B)) {
       Sources.push_back(B);
@@ -522,6 +560,44 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
   Result.CheckedEnd = std::move(CheckedEnd);
   Result.DecodedAdjustments = std::move(DecodedAdjustments);
   return Result;
+}
+
+llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
+    const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
+    bool OrdinaryEntry, size_t &WorkRemaining,
+    llvm::StringRef LocalUnwindDigest, bool CxxContinuation) {
+  std::optional<FrameCFG> CFG;
+  return proveInFrameCFG(Low, Handler, TRI, OrdinaryEntry, WorkRemaining,
+                         LocalUnwindDigest, CxxContinuation, CFG);
+}
+
+std::map<va_t, LowSEHEstablisherFrame>
+proveLowSEHHandlerFrames(const LowFunc &Low, llvm::ArrayRef<va_t> Handlers,
+                         const TargetRegInfo &TRI, size_t &WorkRemaining,
+                         llvm::StringRef LocalUnwindDigest) {
+  std::optional<FrameCFG> CFG;
+  std::map<va_t, LowSEHEstablisherFrame> Results;
+  for (va_t Handler : Handlers) {
+    if (Low.Blocks.size() > WorkRemaining) {
+      WorkRemaining = 0;
+      return {};
+    }
+    WorkRemaining -= Low.Blocks.size();
+    const auto Block = llvm::find_if(
+        Low.Blocks, [&](const LowBlock &B) { return B.StartAddr == Handler; });
+    if (Block == Low.Blocks.end())
+      continue;
+    auto Frame = proveInFrameCFG(Low, Handler, TRI, !Block->Preds.empty(),
+                                 WorkRemaining, LocalUnwindDigest, false, CFG);
+    if (!Frame) {
+      llvm::consumeError(Frame.takeError());
+      if (!WorkRemaining)
+        return {};
+      continue;
+    }
+    Results.emplace(Handler, std::move(*Frame));
+  }
+  return Results;
 }
 
 } // namespace neverd
