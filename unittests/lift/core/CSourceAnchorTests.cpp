@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/CSourceEvidence.h"
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -12,6 +13,113 @@
 #include "llvm/Support/raw_ostream.h"
 
 using namespace neverd;
+
+TEST(CSourceEvidence, RuntimeNamesAreOccurrenceBoundOnWindowsAndELF) {
+  for (const char *Name : {"GetProcAddress", "dlsym"}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Diagnostic;
+    auto Module = llvm::parseAssemblyString(
+        std::string("@saved = global ptr null\ndeclare ptr @") + Name +
+            R"((ptr, ptr)
+define ptr @resolve(ptr %module, ptr %name) {
+entry:
+  %result = call ptr @)" +
+            Name + R"((ptr %module, ptr %name)
+  store ptr %result, ptr @saved
+  ret ptr %result
+})",
+        Diagnostic, Context);
+    ASSERT_TRUE(Module) << Diagnostic.getMessage().str();
+    Module->setTargetTriple(llvm::Triple(Name[0] == 'G'
+                                             ? "x86_64-pc-windows-msvc"
+                                             : "aarch64-unknown-linux-gnu"));
+    auto *F = Module->getFunction("resolve");
+    auto *Call = llvm::cast<llvm::CallInst>(&F->getEntryBlock().front());
+    LLVMSourceMap Sources;
+    Sources.Functions[0x1000] = F;
+    Sources.Observations.push_back({0x1000, {0x1010, 7}, Call});
+    CSourceEvidence E{0x1000,
+                      {0x1010, 7},
+                      std::string(Name) + "(module, \"example_api\")",
+                      "example_api_result"};
+    auto *Type = Call->getFunctionType();
+    auto *Callee = Call->getCalledOperand();
+    nameLLVMSourceEvidence(Sources, {E});
+    EXPECT_EQ(Call->getFunctionType(), Type);
+    EXPECT_EQ(Call->getCalledOperand(), Callee);
+    CSourceMap Map;
+    Map.RecordCallExpressions = true;
+    Map.LLVMSources = &Sources;
+    CEmitterOptions Options;
+    Options.TheArch = Name[0] == 'G' ? Arch::X64 : Arch::AArch64;
+    Options.Format = Name[0] == 'G' ? BinaryFormat::COFF : BinaryFormat::ELF;
+    Options.SourceMap = &Map;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(LLVMCEmitter().emit(*Module, OS, Options));
+    auto Result = annotateCSourceEvidence(Source, Map, {E});
+    EXPECT_EQ(Result.Mapped, 1u);
+    EXPECT_EQ(Result.Unmapped, 0u);
+    EXPECT_NE(Result.Source.find("observed_example_api_result"),
+              std::string::npos);
+    EXPECT_NE(Result.Source.find(E.Text), std::string::npos);
+    E.Function = 0x2000;
+    auto Wrong = annotateCSourceEvidence(Source, Map, {E});
+    EXPECT_EQ(Wrong.Source, Source);
+    EXPECT_EQ(Wrong.Unmapped, 1u);
+  }
+}
+
+TEST(CSourceEvidence, AmbiguousSpansAndHostileTextNeverAcquireCodeAuthority) {
+  std::string Source = "left();\nright();\n";
+  CSourceMap Map;
+  Map.Anchors = {{1, {0, 7}, {{2, 3}}}};
+  CSourceEvidence E{1, {2, 3}, "name*/\n#error injected\\\n", ""};
+  auto Result = annotateCSourceEvidence(Source, Map, {E});
+  EXPECT_EQ(Result.Mapped, 1u);
+  EXPECT_EQ(Result.Source.find("name*/"), std::string::npos);
+  EXPECT_EQ(Result.Source.find("\n#error"), std::string::npos);
+  EXPECT_EQ(Result.Source.find("\\\n"), std::string::npos);
+  EXPECT_EQ(Result.Source.find(" \n"), std::string::npos);
+  EXPECT_TRUE(llvm::StringRef(Result.Source).ends_with(Source));
+  Map.Anchors.push_back({1, {8, 16}, {{2, 3}}});
+  Result = annotateCSourceEvidence(Source, Map, {E});
+  EXPECT_EQ(Result.Mapped, 0u);
+  EXPECT_EQ(Result.Unmapped, 1u);
+  EXPECT_EQ(Result.Source, Source);
+}
+
+TEST(CSourceEvidence, HighCallExpressionRequiresSurvivingIdentityAndKind) {
+  HighFunc Function;
+  Function.Name = "resolve";
+  Function.Entry = 0x1000;
+  Function.ReturnType = NdType::makeInt(8, false);
+  auto Call = HighExpr::makeCall("resolver", 0x2000, {});
+  Call->Type = Function.ReturnType;
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.Addr = 0x1020;
+  Return.RetVal = Call;
+  Function.Body = {Return};
+  HighSourceMap Sources = {
+      {Function.Entry, {0x1010, 3}, Call, HighSourceKind::CallExpression, {}}};
+  CSourceMap Map;
+  Map.HighSources = &Sources;
+  CEmitterOptions Options;
+  Options.SourceMap = &Map;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  CSourceEvidence Evidence{
+      Function.Entry, {0x1010, 3}, "resolver(\"example\")", ""};
+  auto Result = annotateCSourceEvidence(Source, Map, {Evidence});
+  EXPECT_EQ(Result.Mapped, 1u);
+  Call->Kind = ExprKind::Const;
+  Call->ConstVal = 7;
+  Source.clear();
+  ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  EXPECT_TRUE(Map.Anchors.empty());
+}
 
 TEST(CSourceAnchors, HighStatementRequiresObservedAddressAndKind) {
   HighFunc Function;

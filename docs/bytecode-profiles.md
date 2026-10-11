@@ -246,7 +246,8 @@ used by the CLI, including binding declarations supplied in check mode.
 
 Every non-null response is owned, including errors. Success contains
 `schemaVersion: 1`, `ok: true`, `functions`, `blocks`, `decoded_instructions`,
-`decoded_bytes`, `input_bytes`, `scope`, `with_context`, and `source`. The boolean
+`decoded_bytes`, `input_bytes`, `scope`, `with_context`, `source`,
+`mapped_observations`, and `unmapped_observations`. The boolean
 `with_context` reports the selected ABI even in check mode, without claiming
 source conversion or execution was verified. Scope is `cfg` for check
 mode, whose source is empty, or `state-c` for source emission. Failure contains
@@ -402,11 +403,61 @@ neverd-bytecode-observe code.bin profile.json functions.json inputs.json observa
 neverd-bytecode-observe --annotate-c source.c observations.json annotated.c
 ```
 
-The annotation mode adds function comments to ordinary `uint64_t` state-function
+The legacy `--annotate-c` mode adds function comments to ordinary `uint64_t` state-function
 C output. It leaves function bodies unchanged. Reported calls and strings are
 observations under the supplied contracts, not a reconstruction of every path.
 Comments name abstracted calls; consult JSON for budgets, path constraints and
 stop reasons. Time or path exhaustion does not prove a function is understood.
+
+To associate evidence with the actual emitted calls and stored resolver
+results, pass a fresh report back into recovery:
+
+```sh
+neverd-bytecode code.bin --profile profile.json --functions functions.json \
+  --bindings bindings.json --llvm --optimize --observations observations.json \
+  -o observed.c
+```
+
+The CLI and recovery JSON request accept the optional `observations` report.
+Its input and canonical profile SHA-256 must match. Each function/address/target
+is checked against the current call IR; stores additionally carry the original
+instruction operation index. The shared source recorder follows those exact
+occurrences through optimization into HighC or LLVMC. Deleted or ambiguous
+occurrences stay unmapped, with counts in the response and output header. It
+never matches generated variable names or attaches a missing call to a whole
+function. `--check` and callback decoders reject this option.
+
+Both routes print conditional API names, observed arguments and strings at the
+corresponding expressions/statements. LLVMC also names call-status and stored
+pointer values, for example `observed_dlsym_example_status` and
+`observed_example_value`. These names preserve the state ABI: the former is
+the gateway status, not the resolver's returned pointer. No observed string
+becomes an unconditional literal operand, no external gateway is replaced by
+a guessed native prototype, and no pointer is replaced with a host address.
+Removing comments and changing local identifiers back leaves the executable
+operations intact. This is a symbol-aware source view, not original-source
+reconstruction or a proof that every path has the observed target.
+
+An explicit resolver contract can set `result_identity` to `"symbol"` or
+`"module"`. It requires `continuation: "register_effects"`,
+`memory_effect: "none"`, an observed `string`, and a fresh 4- or 8-byte result.
+The result can use `result_register` directly (native register ABIs) or
+`result_offset_register` (state gateways); they are mutually exclusive.
+`result_value` cannot be combined with identity. The symbolic value remains
+unknown and nullable. Complete register/memory forwarding retains its identity;
+arithmetic, partial overwrites, unknown aliases and havoc do not confer it on
+other values. `callee_register` and optional `callee_bytes` observe a later
+indirect target. Optional `module_register` (or `module_offset_register` for an
+indirect register offset) records a previously resolved
+module handle. Reports include `result_identity`, `resolved_target`, and
+`symbol_flows`, separately from the program's actual numeric values.
+
+The underlying identity and source-evidence models contain no bytecode dialect,
+architecture, resolver name, OS service table, or sample string. Native PE/COFF
+producers can use the same model for runtime symbol lookup. Existing
+loader-authenticated imports retain their separate native ABI machinery;
+conditional runtime observations do not acquire that authority. Windows/ELF
+source tests exercise the shared projection, not execution of a Windows process.
 
 The input object accepts `registers` (`offset`, `bytes`, `value`), `memory`
 (`address`, `path`), optional selected `entries`, and bounded `max_steps`,

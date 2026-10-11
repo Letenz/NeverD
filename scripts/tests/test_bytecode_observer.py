@@ -6,8 +6,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
 
 ENGINE = str(Path(sys.argv.pop(1)).resolve())
+RECOVER = str(Path(ENGINE).with_name('neverd-bytecode'))
 
 
 def operand(space, offset, size=8):
@@ -101,6 +103,159 @@ class Observation(unittest.TestCase):
         for function in result['functions']:
             for call in function['calls']:
                 self.assertNotIn('string', call['arguments'][0])
+
+    def symbol_program(self, width=8, resolver='dlsym', name=b'readlink'):
+        r = lambda n, size=width: operand('reg', n, size)
+        c = lambda n, size=width: operand('const', n, size)
+        instructions = [
+            [operation('COPY', [c(0x2000, 8)], r(0, 8)),
+             operation('CALL', [c(0x10000, 8)])],
+            [operation('STORE', [r(24, 8), r(8)])],
+            [operation('LOAD', [r(24, 8)], r(16)),
+             operation('CALL', [c(0x10001, 8)])],
+            [operation('RETURN')],
+            [operation('STORE', [r(24, 8), c(0xff, 1)])],
+            [operation('CALL', [c(0x10002, 8)])],
+        ]
+        self.language = {'version': 1, 'register_bytes': 32,
+                         'byte_order': 'little', 'encodings': [
+                             {'size': 1, 'match': [{'offset': 0, 'value': i}],
+                              'operations': ops}
+                             for i, ops in enumerate(instructions, 1)]}
+        self.code = bytes([1, 2, 3, 4])
+        self.functions = [{'entry': 0, 'end': len(self.code), 'name': 'symbol_user'}]
+        (self.root / 'left').write_bytes(name + b'\0')
+        self.inputs['registers'] = [{'offset': 24, 'bytes': 8, 'value': 0x4000}]
+        self.inputs['calls'] = [
+            {'target': 0x10000, 'name': resolver, 'string': {'pointer_register': 0},
+             'result_register': 8, 'result_bytes': width, 'result_identity': 'symbol',
+             'continuation': 'register_effects', 'memory_effect': 'none'},
+            {'target': 0x10001, 'name': 'indirect_gateway',
+             'callee_register': 16, 'callee_bytes': width},
+            {'target': 0x10002, 'name': 'opaque', 'continuation': 'havoc',
+             'preserve_registers': [{'offset': 24, 'bytes': 8}]},
+        ]
+        # String pointers can be 32 or 64 bits independently of the host.
+        if width == 4:
+            self.inputs['registers'].append({'offset': 4, 'bytes': 4, 'value': 0})
+
+    def test_symbol_identity_survives_memory_but_not_overwrite_or_havoc(self):
+        for width, resolver, name in ((8, 'dlsym', b'readlink'),
+                                      (4, 'GetProcAddress', b'GetTickCount')):
+            with self.subTest(width=width):
+                self.symbol_program(width, resolver, name)
+                f = self.run_engine()['functions'][0]
+                self.assertEqual(f['calls'][1]['resolved_target']['name'], name.decode())
+                self.assertTrue(f['calls'][1]['resolved_target']['may_be_null'])
+                self.assertEqual(f['symbol_flows'][0]['identity']['resolver'], resolver)
+                for middle in (5, 6):
+                    self.code = bytes([1, 2, middle, 3, 4])
+                    self.functions[0]['end'] = len(self.code)
+                    calls = self.run_engine()['functions'][0]['calls']
+                    self.assertNotIn('resolved_target', calls[-1])
+
+    def test_source_evidence_maps_calls_and_pointer_stores_without_changing_execution(self):
+        self.symbol_program()
+        report = self.run_engine()
+        bindings = [{'address': 0x10000, 'name': 'resolve_gateway'},
+                    {'address': 0x10001, 'name': 'invoke_gateway'}]
+        (self.root / 'bindings').write_text(json.dumps(bindings))
+        output = self.root / 'mapped.c'
+        args = [RECOVER, str(self.root / 'code'), '--profile', str(self.root / 'profile'),
+                '--functions', str(self.root / 'functions'),
+                '--bindings', str(self.root / 'bindings'),
+                '--observations', str(self.root / 'result'), '-o', str(output)]
+        for route in ([], ['--llvm'], ['--llvm', '--optimize']):
+            p = subprocess.run(args + route, capture_output=True, text=True, timeout=60)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            source = output.read_text()
+            body = source[source.index('symbol_user('):]
+            self.assertIn('dlsym("readlink")', body)
+            self.assertIn('store resolver result "readlink"', body)
+            self.assertIn('indirect readlink()', body)
+            self.assertIn('0 unmapped', source)
+            if route:
+                self.assertIn('observed_dlsym_readlink_status', source)
+                self.assertIn('observed_readlink_value', source)
+            clang = shutil.which('clang')
+            self.assertIsNotNone(clang, 'Clang is required for source execution coverage')
+            output.write_text(source + r'''
+#include <string.h>
+static unsigned calls, fail;
+uint64_t resolve_gateway(void *state) {
+  uint64_t result = 0x123456789abcdef0ULL;
+  memcpy((char *)state + 8, &result, 8);
+  ++calls;
+  return fail ? 17 : 0;
+}
+uint64_t invoke_gateway(void *state) {
+  uint64_t value;
+  memcpy(&value, (char *)state + 16, 8);
+  ++calls;
+  return value == 0x123456789abcdef0ULL ? 0 : 23;
+}
+int main(void) {
+  for (fail = 0; fail < 2; ++fail) {
+    uint64_t slot = 9;
+    uint64_t state[4] = {0, 0, 0, (uintptr_t)&slot};
+    calls = 0;
+    uint64_t result = symbol_user(state);
+    if (result != (fail ? 17 : 0) || calls != (fail ? 1 : 2) ||
+        slot != (fail ? 9 : 0x123456789abcdef0ULL)) return 1;
+  }
+  return 0;
+}
+''')
+            exe = self.root / 'run'
+            p = subprocess.run([clang, '-std=c11', '-O2', '-Werror', str(output),
+                                '-o', str(exe)], capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertEqual(subprocess.run([str(exe)]).returncode, 0)
+        # A report from another input, or a forged call address, is not mapped.
+        for case in ('hash', 'pc', 'target'):
+            bad = json.loads(json.dumps(report))
+            if case == 'hash':
+                bad['input_sha256'] = '0' * 64
+            else:
+                bad['functions'][0]['calls'][0][case] = '0xdead'
+            (self.root / 'result').write_text(json.dumps(bad))
+            output.write_text('keep existing output')
+            p = subprocess.run(args + ['--llvm'], capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(p.returncode, 0)
+            self.assertEqual(output.read_text(), 'keep existing output')
+
+    def test_symbol_stores_in_one_instruction_keep_distinct_occurrences(self):
+        self.symbol_program()
+        stores = self.language['encodings'][1]['operations']
+        stores.append(json.loads(json.dumps(stores[0])))
+        flows = self.run_engine()['functions'][0]['symbol_flows']
+        self.assertEqual(len(flows), 2)
+        self.assertEqual(flows[0]['pc'], flows[1]['pc'])
+        self.assertNotEqual(flows[0]['instruction_operation'],
+                            flows[1]['instruction_operation'])
+
+    def test_module_identity_is_kept_separate_from_symbol_and_numeric_value(self):
+        self.symbol_program(resolver='GetProcAddress', name=b'example_api')
+        (self.root / 'right').write_bytes(b'example.dll\0')
+        self.language['encodings'].append({
+            'size': 1, 'match': [{'offset': 0, 'value': 7}], 'operations': [
+                operation('COPY', [operand('const', 0x3000)], operand('reg', 0)),
+                operation('CALL', [operand('const', 0x10003)])]})
+        self.code = bytes([7, 1, 2, 3, 4])
+        self.functions[0]['end'] = len(self.code)
+        self.inputs['calls'][0]['module_register'] = 16
+        self.inputs['calls'].append({
+            'target': 0x10003, 'name': 'LoadLibraryA',
+            'string': {'pointer_register': 0}, 'result_register': 16,
+            'result_identity': 'module', 'continuation': 'register_effects',
+            'memory_effect': 'none'})
+        calls = self.run_engine()['functions'][0]['calls']
+        self.assertEqual(calls[0]['result_identity']['kind'], 'module')
+        self.assertEqual(calls[1]['result_identity']['module'], 'example.dll')
+        self.assertEqual(calls[2]['resolved_target']['name'], 'example_api')
+        self.assertEqual(calls[2]['resolved_target']['module'], 'example.dll')
+        self.inputs['calls'][0]['result_value'] = 0
+        self.run_engine(False)
 
     def test_explicit_effects_and_default_havoc(self):
         self.code = bytes([7, 8, 5])

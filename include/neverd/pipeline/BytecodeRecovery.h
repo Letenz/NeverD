@@ -26,6 +26,8 @@ struct BytecodeRecoveryResult {
   bool CheckedOnly = false;
   std::string Source;
   bool WithContext = false;
+  uint64_t MappedObservations = 0;
+  uint64_t UnmappedObservations = 0;
 };
 
 /// Recover externally specified bytecode using JSON request schema version 1.

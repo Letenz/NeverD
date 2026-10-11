@@ -99,6 +99,22 @@ class BytecodeTests(unittest.TestCase):
                     recover_bytecode(b"abc", {}, [], api=HostAPI(library))
                 self.assertEqual(library.freed, [ctypes.addressof(library.buffer)])
 
+    def test_observations_are_forwarded_with_explicit_mapping_coverage(self):
+        report = {'schemaVersion': 1, 'functions': []}
+        response = dict(self.success(), mapped_observations=2, unmapped_observations=1)
+        library = Library(response)
+        result = recover_bytecode(b'abc', {}, [], observations=report,
+                                  api=HostAPI(library))
+        self.assertEqual(library.request['observations'], report)
+        self.assertEqual((result.mapped_observations, result.unmapped_observations), (2, 1))
+        for response in (self.success(),
+                         dict(self.success(), mapped_observations=True,
+                              unmapped_observations=0)):
+            library = Library(response)
+            with self.assertRaisesRegex(NeverDError, 'evidence coverage'):
+                recover_bytecode(b'abc', {}, [], observations=report,
+                                 api=HostAPI(library))
+
     def test_nonfinite_rules_are_not_serialized_to_nonstandard_json(self):
         with self.assertRaises(ValueError):
             recover_bytecode(b"a", {"value": float("nan")}, [])

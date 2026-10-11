@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDBackendC
   CSourceRecorder.cpp
+  CSourceEvidence.cpp
   dialect/CDialect.cpp
   dialect/CSyntaxLexer.cpp
   dialect/CSyntaxParser.cpp

@@ -12,10 +12,13 @@
 #include "neverd/analysis/BytecodeDecoder.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExec.h"
+#include "neverd/symbolic/SymValueIdentity.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
@@ -80,6 +83,36 @@ void validateCall(const J::Object &O, unsigned Depth = 0) {
     throw std::runtime_error("nested selector cases are unsupported");
   arrayFields(O, {"argument_registers", "indirect_argument_registers",
                   "preserve_registers", "register_writes"});
+  if (O.get("result_register") && O.get("result_offset_register"))
+    throw std::runtime_error(
+        "result register and indirect result are exclusive");
+  if (O.get("module_register") && O.get("module_offset_register"))
+    throw std::runtime_error(
+        "module register and indirect module are exclusive");
+  if (O.get("result_identity")) {
+    auto Kind = O.getString("result_identity");
+    if (!Kind || (*Kind != "symbol" && *Kind != "module") ||
+        (!O.get("result_register") && !O.get("result_offset_register")) ||
+        O.get("result_value") ||
+        O.getString("continuation") != "register_effects")
+      throw std::runtime_error(
+          "identity requires a fresh symbol/module result");
+    if (const auto *Writes = O.getArray("register_writes"))
+      for (const auto &Write : *Writes) {
+        const auto &W = object(Write);
+        auto Begin = field(W, "offset"), Bytes = field(W, "bytes");
+        if (!Bytes || Begin > UINT64_MAX - Bytes)
+          throw std::runtime_error("invalid identity contract write");
+        for (auto Key : {"result_offset_register", "result_width_register"})
+          if (O.get(Key)) {
+            auto Offset = field(O, Key);
+            if (Offset > UINT64_MAX - 8 ||
+                (Begin < Offset + 8 && Offset < Begin + Bytes))
+              throw std::runtime_error(
+                  "identity contract overwrites result channel metadata");
+          }
+      }
+  }
   for (auto K : {"string", "selector_names", "selector_cases"})
     if (O.get(K) && !O.getObject(K))
       throw std::runtime_error(std::string("expected object: ") + K);
@@ -117,6 +150,7 @@ struct Frame {
 };
 struct Path {
   SymState State;
+  SymValueIdentities Identities;
   uint64_t PC, Function;
   SymRef Predicate;
   std::vector<Frame> Frames;
@@ -139,6 +173,8 @@ class Observer {
   uint64_t MaxSteps = 50000, MaxPaths = 32, MaxVisits = 64;
   uint64_t MaxMilliseconds = 10000;
   unsigned Queries = 0;
+  std::string InputSHA256;
+  std::string ProfileSHA256;
   const J::Object &config() const { return *Configuration.getAsObject(); }
   uint64_t registerWidth(const J::Object &O, llvm::StringRef Key) const {
     auto *V = O.get(Key);
@@ -258,6 +294,11 @@ class Observer {
                     {"path_constraints_satisfiable", P.Feasible}};
     if (Spec) {
       Event["name"] = Spec->getString("name").value_or("external").str();
+      if (auto *R = Spec->get("callee_register"))
+        if (auto *Identity = P.Identities.lookup(readRegister(
+                P, number(*R), registerWidth(*Spec, "callee_bytes"))))
+          if (Identity->TheKind == SymValueIdentity::Kind::Symbol)
+            Event["resolved_target"] = identityJSON(*Identity);
       if (auto *Selector = Spec->get("selector_register")) {
         Event["selector"] =
             describe(C, readRegister(P, number(*Selector),
@@ -335,6 +376,62 @@ class Observer {
     return Event;
   }
 
+  J::Object identityJSON(const SymValueIdentity &I) const {
+    return J::Object{{"kind", I.TheKind == SymValueIdentity::Kind::Symbol
+                                  ? "symbol"
+                                  : "module"},
+                     {"name", I.Name},
+                     {"module", I.Module},
+                     {"resolver", I.Resolver},
+                     {"function", hex(I.Function)},
+                     {"pc", hex(I.Address)},
+                     {"may_be_null", true}};
+  }
+
+  std::optional<uint64_t> resultOffset(Path &P, const J::Object &Spec) {
+    if (auto *R = Spec.get("result_register"))
+      return number(*R);
+    if (auto *R = Spec.get("result_offset_register"))
+      return value(P.State.context(), readRegister(P, number(*R)));
+    return {};
+  }
+
+  void identifyResult(Path &P, const J::Object &Spec, J::Object &Event) {
+    auto Kind = Spec.getString("result_identity");
+    auto Name = Event.getString("string");
+    if (!Kind || !Name || Name->empty())
+      return;
+    auto Offset = resultOffset(P, Spec);
+    if (!Offset)
+      return;
+    auto Width = registerWidth(Spec, "result_bytes");
+    if (auto *R = Spec.get("result_width_register")) {
+      auto N = value(P.State.context(), readRegister(P, number(*R)));
+      if (!N)
+        return;
+      Width = *N;
+    }
+    if (Width != 4 && Width != 8)
+      throw std::runtime_error(
+          "symbol identity requires a pointer-width result");
+    SymValueIdentity Identity;
+    Identity.TheKind = *Kind == "symbol" ? SymValueIdentity::Kind::Symbol
+                                         : SymValueIdentity::Kind::Module;
+    Identity.Name = Name->str();
+    Identity.Resolver = Spec.getString("name").value_or("external").str();
+    Identity.Function = P.Function;
+    Identity.Address = P.PC;
+    // A module argument is captured before applying the result effects.
+    Identity.Module = Event.getString("module_identity").value_or("").str();
+    auto Result = readRegister(P, *Offset, Width);
+    if (value(P.State.context(), Result))
+      return;
+    if (P.Identities.bind(P.State.context(), Result, Identity)) {
+      Event["result_identity"] = identityJSON(Identity);
+      Event["result_register"] = hex(*Offset);
+    }
+  }
+
   // An opt-in caller contract, never an inferred effect of an unknown call.
   // This is useful for read-only queries whose only visible result is written
   // back into an explicit VM state channel. Such paths remain conditional on
@@ -348,8 +445,8 @@ class Observer {
   }
   void applyResult(Path &P, const J::Object &Spec, SymRef Override = {}) {
     auto &C = P.State.context();
-    if (auto *R = Spec.get("result_offset_register")) {
-      auto Offset = value(C, readRegister(P, number(*R)));
+    if (Spec.get("result_offset_register") || Spec.get("result_register")) {
+      auto Offset = resultOffset(P, Spec);
       auto Bytes = registerWidth(Spec, "result_bytes");
       if (auto *W = Spec.get("result_width_register")) {
         auto Width = value(C, readRegister(P, number(*W)));
@@ -447,6 +544,11 @@ public:
   Observer(std::string Bytes, llvm::StringRef Profile, J::Value F,
            J::Value Options)
       : Code(std::move(Bytes)), Configuration(std::move(Options)) {
+    std::string CanonicalProfile;
+    llvm::raw_string_ostream(CanonicalProfile) << parse(Profile);
+    ProfileSHA256 = llvm::toHex(
+        llvm::SHA256::hash(llvm::arrayRefFromStringRef(CanonicalProfile)),
+        true);
     auto P = readBytecodeProfile(Profile);
     if (!P)
       throw std::runtime_error(llvm::toString(P.takeError()));
@@ -524,6 +626,8 @@ public:
   }
 
   void run() {
+    InputSHA256 = llvm::toHex(
+        llvm::SHA256::hash(llvm::arrayRefFromStringRef(Code)), true);
     for (const auto &[Entry, F] : Functions) {
       if (auto *Selected = config().getArray("entries")) {
         bool Found = false;
@@ -537,7 +641,8 @@ public:
       Path Initial(C, Entry, Decoder->profile().ByteOrder);
       initialize(Initial);
       Work.push_back(std::move(Initial));
-      J::Array Events, Stops, Strings;
+      J::Array Events, Stops, Strings, SymbolFlows;
+      std::set<std::string> SeenSymbolFlows;
       std::set<std::pair<uint64_t, std::string>> SeenStrings;
       unsigned Paths = 0, Steps = 0;
       auto Deadline = std::chrono::steady_clock::now() +
@@ -598,6 +703,19 @@ public:
                       if (auto *Selected = Cases->getObject(hex(*Selector)))
                         Spec = Selected;
                 auto Event = observeCall(P, Spec, *Target, PathID);
+                if (Spec) {
+                  std::optional<uint64_t> ModuleOffset;
+                  if (auto *R = Spec->get("module_register"))
+                    ModuleOffset = number(*R);
+                  else if (auto *R = Spec->get("module_offset_register"))
+                    ModuleOffset = value(C, readRegister(P, number(*R)));
+                  if (ModuleOffset)
+                    if (auto *Identity = P.Identities.lookup(
+                            readRegister(P, *ModuleOffset,
+                                         registerWidth(*Spec, "module_bytes"))))
+                      if (Identity->TheKind == SymValueIdentity::Kind::Module)
+                        Event["module_identity"] = Identity->Name;
+                }
                 if (Spec && Spec->get("dispatch_register")) {
                   auto Dispatch = value(
                       C, readRegister(P, field(*Spec, "dispatch_register")));
@@ -621,8 +739,9 @@ public:
                     Spec->getString("continuation") == "register_effects") {
                   Event["continuation_contract"] =
                       "register_effects; memory_effect=none";
-                  Events.push_back(std::move(Event));
                   applyRegisterEffects(P, *Spec);
+                  identifyResult(P, *Spec, Event);
+                  Events.push_back(std::move(Event));
                   ++P.Opaque;
                   continue;
                 }
@@ -684,6 +803,29 @@ public:
               }
               continue;
             }
+            if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2)
+              if (auto *Identity =
+                      P.Identities.lookup(Exec.operandValue(Op.Inputs[1]))) {
+                J::Object Flow{{"function", hex(P.Function)},
+                               {"pc", hex(P.PC)},
+                               {"instruction_operation", Op.Seq},
+                               {"operation", "store"},
+                               {"destination",
+                                describe(C, Exec.operandValue(Op.Inputs[0]))},
+                               {"identity", identityJSON(*Identity)},
+                               {"prior_opaque_calls", P.Opaque}};
+                auto Key =
+                    hex(P.Function) + ":" + hex(P.PC) + ":" +
+                    std::to_string(Op.Seq) + ":" + Identity->Name + ":" +
+                    Identity->Module + ":" + hex(Identity->Function) + ":" +
+                    hex(Identity->Address) + ":" +
+                    llvm::formatv("{0}",
+                                  describe(C, Exec.operandValue(Op.Inputs[0])))
+                        .str();
+                if (SymbolFlows.size() < 4096 &&
+                    SeenSymbolFlows.insert(Key).second)
+                  SymbolFlows.push_back(std::move(Flow));
+              }
             auto Step = Exec.step(Op);
             if (Step == StepResult::Unmodelled || Exec.opaqueOperationCount()) {
               Stop = "unsupported_semantics";
@@ -771,12 +913,15 @@ public:
                                   {"steps", Steps},
                                   {"calls", std::move(Events)},
                                   {"strings", std::move(Strings)},
+                                  {"symbol_flows", std::move(SymbolFlows)},
                                   {"stops", std::move(Stops)}});
     }
   }
   J::Value result() {
     return J::Object{
         {"schemaVersion", 1},
+        {"input_sha256", InputSHA256},
+        {"profile_sha256", ProfileSHA256},
         {"engine", "NeverD BytecodeDecoder + SymExec + BitVectorSolver"},
         {"scope", "Independent function entries under explicit register/memory "
                   "assumptions; observations, not whole-program equivalence."},

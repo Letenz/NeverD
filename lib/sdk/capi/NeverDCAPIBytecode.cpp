@@ -95,6 +95,8 @@ const char *recover(const unsigned char *Code, size_t CodeSize,
         {"input_bytes", uint64_t(CodeSize)},
         {"scope", Result->CheckedOnly ? "cfg" : "state-c"},
         {"with_context", Result->WithContext},
+        {"mapped_observations", Result->MappedObservations},
+        {"unmapped_observations", Result->UnmappedObservations},
         {"source", std::move(Result->Source)}});
   } catch (const std::exception &Error) {
     // Do not let an allocation failure while reporting another exception

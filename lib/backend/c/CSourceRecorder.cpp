@@ -59,6 +59,9 @@ void CSourceRecorder::prepareHighSources() {
     }
     if (auto Expr = Source.Expression.lock()) {
       Key K{Source.Function, Expr.get()};
+      if (InstructionsOnly && Source.Kind == HighSourceKind::CallExpression &&
+          Expr->Kind == ExprKind::Call)
+        HighCallAnchors[K].insert(Source.Occurrence);
       Origins[K].insert(Source.Occurrence);
       Alive[K] = std::move(Expr);
     }
@@ -254,8 +257,15 @@ std::string CSourceRecorder::definition(const llvm::Function &Function) {
 
 std::string CSourceRecorder::expression(va_t Function, const HighExpr &Expr,
                                         std::string Text) {
-  if (InstructionsOnly)
+  if (InstructionsOnly) {
+    auto At = HighCallAnchors.find({Function, &Expr});
+    if (Expr.Kind == ExprKind::Call && At != HighCallAnchors.end() &&
+        At->second.size() == 1) {
+      auto ID = event(std::nullopt, {*At->second.begin()}, Function);
+      return begin(ID) + Text + end(ID);
+    }
     return Text;
+  }
   auto It = HighRegions.find({Function, &Expr});
   if (It == HighRegions.end())
     return Text;
@@ -311,7 +321,8 @@ std::optional<size_t> CSourceRecorder::statement(va_t Function,
 
 std::string CSourceRecorder::expression(const llvm::Instruction &Value,
                                         std::string Text) {
-  if (InstructionsOnly)
+  if (InstructionsOnly &&
+      !(Map.RecordCallExpressions && llvm::isa<llvm::CallBase>(Value)))
     return Text;
   auto Event = instruction(Value);
   return Event ? begin(*Event) + Text + end(*Event) : Text;

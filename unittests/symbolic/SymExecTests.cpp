@@ -19,6 +19,7 @@
 
 #include "neverd/symbolic/SymExec.h"
 #include "neverd/symbolic/SymParse.h"
+#include "neverd/symbolic/SymValueIdentity.h"
 
 #include <algorithm>
 #include <array>
@@ -28,6 +29,37 @@
 
 using namespace neverd;
 using namespace neverd::symbolic;
+
+TEST(SymValueIdentity, ExactResultsSurviveOnlyCompleteValueTransport) {
+  for (auto Order : {llvm::endianness::little, llvm::endianness::big})
+    for (unsigned Bits : {32u, 64u}) {
+      SymContext Context;
+      SymState State(Context, Order);
+      SymValueIdentities Identities;
+      SymValueIdentity I{SymValueIdentity::Kind::Symbol,
+                         "example",
+                         "module",
+                         "resolver",
+                         0x100,
+                         0x110};
+      auto Value = Context.mkFreshVar(Bits, "result");
+      EXPECT_TRUE(Identities.bind(Context, Value, I));
+      EXPECT_FALSE(Identities.bind(Context, Context.mkZero(Bits), I));
+      EXPECT_FALSE(Identities.bind(Context, Context.mkVar("input", Bits), I));
+      auto Address = Context.mkConst(64, 0x1000);
+      State.store(Address, Value);
+      auto Reload = State.load(Address, Bits / 8);
+      ASSERT_NE(Identities.lookup(Reload), nullptr);
+      EXPECT_EQ(*Identities.lookup(Reload), I);
+      EXPECT_EQ(Identities.lookup(Context.mkAdd(Value, Context.mkOne(Bits))),
+                nullptr);
+      State.store(Address, Context.mkConst(8, 7));
+      EXPECT_EQ(Identities.lookup(State.load(Address, Bits / 8)), nullptr);
+      I.Name = "conflicting";
+      EXPECT_FALSE(Identities.bind(Context, Value, I));
+      EXPECT_EQ(Identities.lookup(Value), nullptr);
+    }
+}
 
 namespace {
 

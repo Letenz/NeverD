@@ -6,10 +6,13 @@
 
 #include "neverd/pipeline/BytecodeRecovery.h"
 
+#include "BytecodeSourceEvidence.h"
+
 #include "neverd/analysis/BytecodeDecoder.h"
 #include "neverd/analysis/BytecodeSource.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -78,7 +81,7 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     if (Key != "schemaVersion" && Key != "profile" && Key != "layout" &&
         Key != "functions" && Key != "bindings" && Key != "base" &&
         Key != "output" && Key != "optimize" && Key != "unaligned_pointers" &&
-        Key != "with_context")
+        Key != "with_context" && Key != "observations")
       return invalid(llvm::Twine("unknown bytecode recovery key: ") +
                      llvm::StringRef(Key));
   if (Root->get(Decode ? "profile" : "layout"))
@@ -118,6 +121,9 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   bool UnalignedPointers =
       Root->getBoolean("unaligned_pointers").value_or(false);
   bool WithContext = Root->getBoolean("with_context").value_or(false);
+  const auto *Observations = Root->get("observations");
+  if (Observations && (Check || Decode))
+    return invalid("observations require source emission and a static profile");
   if (Optimize && !LLVMRoute)
     return invalid("optimize requires llvmc source emission");
   std::string ProfileJSON;
@@ -135,6 +141,7 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
   std::vector<LowFunc> Functions;
   std::map<va_t, SourceFunctionTypeHint> Hints;
   std::vector<MedFunc> MedFunctions;
+  std::map<va_t, std::vector<BytecodeStateFunction::StoreOrigin>> StoreOrigins;
   std::set<std::string> Names;
   std::map<uint64_t, uint64_t> Intervals;
   uint64_t Bytes = 0;
@@ -211,6 +218,7 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     if (!Bound)
       return invalid(F.Name + ": " + llvm::toString(Bound.takeError()));
     Hints.emplace(F.Entry, Bound->SourceABI);
+    StoreOrigins.emplace(F.Entry, std::move(Bound->StoreOrigins));
     F = std::move(Bound->Function);
   }
   for (va_t Address : ExternalCalls)
@@ -238,6 +246,20 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     MedFunctions.push_back(std::move(Med));
   }
   CEmitterOptions Options;
+  std::vector<CSourceEvidence> Evidence;
+  if (Observations) {
+    auto Bound = bindBytecodeSourceEvidence(*Observations, Code, ProfileJSON,
+                                            MedFunctions, StoreOrigins);
+    if (!Bound)
+      return Bound.takeError();
+    Evidence = std::move(*Bound);
+  }
+  CSourceMap SourceMap;
+  SourceMap.RecordCallExpressions = Observations != nullptr;
+  LLVMSourceMap LLVMSources;
+  HighSourceMap HighSources;
+  if (Observations)
+    Options.SourceMap = &SourceMap;
   Options.TheArch = Arch::AArch64;
   Options.Format = BinaryFormat::ELF;
   Options.PreserveLLVMFunctionTypes = true;
@@ -261,9 +283,11 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
       MedFunctions.push_back(std::move(Declaration));
       Bodies.push_back(0);
     }
-    auto Module =
-        MedLLVMEmitter().emit(MedFunctions, Context, "bytecode", Arch::AArch64,
-                              {}, nullptr, BinaryFormat::ELF, false, &Bodies);
+    MedLLVMEmitter Emitter;
+    if (Observations)
+      Emitter.setSourceMap(&LLVMSources);
+    auto Module = Emitter.emit(MedFunctions, Context, "bytecode", Arch::AArch64,
+                               {}, nullptr, BinaryFormat::ELF, false, &Bodies);
     if (!Module || llvm::verifyModule(*Module, &llvm::errs()))
       return invalid("LLVM verification failed");
     if (Optimize) {
@@ -272,6 +296,7 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
       // function boundaries. Use the shared thin policy rather than a second
       // pass list or module-wide inlining/speculative loop transforms.
       Policy.Strength = Pipeline::OptStrength::Thin;
+      Policy.SourceMap = Observations ? &LLVMSources : nullptr;
       auto Result = Pipeline::optimizeModule(*Module, Policy);
       if (Result.Stop == OptimizationStopReason::InputInvalid ||
           Result.Stop == OptimizationStopReason::VerificationFailed)
@@ -282,6 +307,10 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     }
     if (llvm::verifyModule(*Module, &llvm::errs()))
       return invalid("LLVM source transformation failed verification");
+    if (Observations) {
+      SourceMap.LLVMSources = &LLVMSources;
+      nameLLVMSourceEvidence(LLVMSources, Evidence);
+    }
     if (!LLVMCEmitter().emit(*Module, OS, Options))
       return invalid("LLVM C emission failed");
   } else {
@@ -289,6 +318,27 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
     MedToHighConverter Converter;
     Converter.setFuncNames(&CallNames);
     for (const auto &Med : MedFunctions) {
+      if (Observations) {
+        Converter.setStatementObserver([&](const MedOp &Op, const HighStmt &S) {
+          if (Op.Opcode == NdOp::CALL)
+            return;
+          HighSources.push_back({Med.Entry,
+                                 {Op.Addr, Op.OriginSeq},
+                                 {},
+                                 S.Kind == StmtKind::Store
+                                     ? HighSourceKind::Store
+                                     : HighSourceKind::Statement,
+                                 S.Kind});
+        });
+        Converter.setExpressionObserver([&](const MedOp &Op, const ExprPtr &E) {
+          if (Op.Opcode == NdOp::CALL && E && E->Kind == ExprKind::Call)
+            HighSources.push_back({Med.Entry,
+                                   {Op.Addr, Op.OriginSeq},
+                                   E,
+                                   HighSourceKind::CallExpression,
+                                   {}});
+        });
+      }
       auto High = Converter.convert(Med, Arch::AArch64);
       auto Flow = analyzeHighSourceFlow(High, true);
       if (!Flow.Complete)
@@ -297,10 +347,23 @@ recoverBytecode(llvm::ArrayRef<uint8_t> Code, llvm::StringRef RequestJSON,
             (Flow.Items.empty() ? "" : ": " + Flow.Items.front().Reason));
       HighFunctions.push_back(std::move(High));
     }
+    SourceMap.HighSources = &HighSources;
     if (!HighCEmitter().emit(HighFunctions, OS, Options))
       return invalid("structured C emission failed");
   }
   OS.flush();
+  if (Observations) {
+    auto Annotated =
+        annotateCSourceEvidence(Result.Source, SourceMap, Evidence);
+    Result.Source =
+        "/* Conditional source observations: " +
+        std::to_string(Annotated.Mapped) + " mapped, " +
+        std::to_string(Annotated.Unmapped) +
+        " unmapped. Call ABI and runtime effects are preserved. */\n" +
+        std::move(Annotated.Source);
+    Result.MappedObservations = Annotated.Mapped;
+    Result.UnmappedObservations = Annotated.Unmapped;
+  }
   return Result;
 }
 } // namespace neverd

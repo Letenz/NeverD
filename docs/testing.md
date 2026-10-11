@@ -1266,6 +1266,16 @@ observable calls while leaving the input LLVM module unchanged.
 
 ## Interpreter recovery checks
 
+`NeverDBytecodeObservation` covers input-bound call-site source evidence through
+HighC, LLVMC and optimized LLVMC, compiling and executing successful and failed
+state gateway calls. It rejects stale reports and mismatched call occurrences.
+Symbol identities are tested through complete memory transport, partial stores
+and opaque-call invalidation with 32- and 64-bit results. `SymValueIdentity.*`
+also checks both byte orders, constants, arithmetic and conflicting identities.
+`CSourceEvidence.*` exercises the shared Windows/ELF source model, mismatched
+functions, ambiguous spans and hostile comment text. It does not claim native
+Windows process execution coverage.
+
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed
 temporaries, byte order and full-width fields. Source checks run both AArch64

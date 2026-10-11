@@ -61,6 +61,16 @@ surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
 statement anchors. Library folding retains its separate region projection.
 This supplies navigation evidence rather than complete expression provenance.
+Conditional runtime call evidence consumes these same exact occurrences through
+`CSourceEvidence`, independently of binary format or architecture. Producers
+validate current input identity and call/store ownership before projection.
+An explicitly observed surviving HighIR call expression can retain its own
+anchor when surrounding assignments change; a changed-kind or ambiguous
+expression cannot. The evidence view names local LLVM results and inserts
+escaped call-site comments without changing targets, arguments, types or
+effects. `SymValueIdentities` follows only complete fresh resolver values via
+the shared symbolic state, including nullable results; this provenance is not
+a loader import, immutable address, or rewriting certificate.
 Source and assembly cursors browse independently. Graph refreshes retain the
 latest requested or selected instruction even while no layout is available.
 A new navigation cancels the preceding function-lookup callback so a late reply
