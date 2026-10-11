@@ -224,3 +224,169 @@ TEST_F(ARM32_Intrinsics, Decompile_ClrexUsesCompilerBuiltin) {
       << content.substr(0, 3000);
   EXPECT_EQ(content.find("__clrex()"), std::string::npos) << content;
 }
+
+// The NEON saturating and rounding shifts by a vector of signed amounts, the
+// narrowing shifts right, and the saturating doubling multiplies print as
+// the ACLE intrinsic their shape names.
+TEST_F(ARM32_Intrinsics, Decompile_NeonSaturatingOperationsUseACLE) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling ARM requires Clang";
+  const auto Source = tmpFile("neon_saturating.s");
+  const auto Object = tmpFile("neon_saturating.o");
+  std::ofstream(Source) << R"S(
+.syntax unified
+.arm
+.text
+.global neon_saturating
+.type neon_saturating,%function
+neon_saturating:
+  vld1.8 {d0-d3}, [r0]
+  vqshl.s32 q8, q0, q1
+  vqrshl.u16 d18, d0, d1
+  vrshl.s8 q10, q0, q1
+  vqshl.u64 d22, d0, d1
+  vqshrn.s32 d23, q1, #5
+  vqshrun.s32 d24, q0, #3
+  vqrshrn.u16 d25, q1, #4
+  vqdmulh.s16 q13, q0, q1
+  vqrdmulh.s32 d28, d0, d1
+  vqdmull.s16 q15, d2, d3
+  vst1.8 {d16-d19}, [r1]
+  add r1, r1, #32
+  vst1.8 {d20-d23}, [r1]
+  add r1, r1, #32
+  vst1.8 {d24-d27}, [r1]
+  add r1, r1, #32
+  vst1.8 {d28-d31}, [r1]
+  bx lr
+.size neon_saturating,.-neon_saturating
+)S";
+  const std::vector<std::string> Target = {"-target", "armv7a-none-eabi",
+                                           "-mfpu=neon", "-mfloat-abi=softfp"};
+  std::vector<std::string> Assemble = Target;
+  Assemble.insert(Assemble.end(),
+                  {"-c", Source.string(), "-o", Object.string()});
+  const auto Assembled = exec(NEVERD_TEST_CLANG, Assemble);
+  ASSERT_EQ(Assembled.exitCode, 0) << Assembled.err;
+  auto r = decompileToHighC(Object);
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  const std::string C = readDecompiledFile("decompiled_high.c");
+  for (const char *Name :
+       {"vqshlq_s32(", "vqrshl_u16(", "vrshlq_s8(", "vqshl_u64(",
+        "vqshrn_n_s32(", "vqshrun_n_s32(", "vqrshrn_n_u16(", "vqdmulhq_s16(",
+        "vqrdmulh_s32(", "vqdmull_s16("})
+    EXPECT_NE(C.find(Name), std::string::npos) << Name << "\n" << C;
+  EXPECT_EQ(C.find("unknown"), std::string::npos) << C;
+  const auto CFile = tmpFile("neon_saturating_high.c");
+  std::ofstream(CFile) << C;
+  std::vector<std::string> Check = Target;
+  Check.insert(Check.end(), {"-ffreestanding", "-std=gnu11"});
+  const auto Compiled = checkHighCClangCompile(CFile, Check);
+  EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
+}
+
+// VQSHLU saturates signed lanes shifted left by an immediate to the unsigned
+// range; ACLE has it only with the immediate, which the lifter passes.
+TEST_F(ARM32_Intrinsics, Decompile_NeonShiftLeftUnsignedUsesItsImmediate) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling ARM requires Clang";
+  const auto Source = tmpFile("neon_shift_left_unsigned.s");
+  const auto Object = tmpFile("neon_shift_left_unsigned.o");
+  std::ofstream(Source) << R"S(
+.syntax unified
+.arm
+.text
+.global neon_shift_left_unsigned
+.type neon_shift_left_unsigned,%function
+neon_shift_left_unsigned:
+  vld1.8 {d0-d1}, [r0]
+  vqshlu.s32 q8, q0, #3
+  vqshlu.s8 d18, d1, #2
+  vst1.8 {d16-d18}, [r1]
+  bx lr
+.size neon_shift_left_unsigned,.-neon_shift_left_unsigned
+)S";
+  const std::vector<std::string> Target = {"-target", "armv7a-none-eabi",
+                                           "-mfpu=neon", "-mfloat-abi=softfp"};
+  std::vector<std::string> Assemble = Target;
+  Assemble.insert(Assemble.end(),
+                  {"-c", Source.string(), "-o", Object.string()});
+  const auto Assembled = exec(NEVERD_TEST_CLANG, Assemble);
+  ASSERT_EQ(Assembled.exitCode, 0) << Assembled.err;
+  auto r = decompileToHighC(Object);
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  const std::string C = readDecompiledFile("decompiled_high.c");
+  for (const char *Name : {"vqshluq_n_s32(", "vqshlu_n_s8("})
+    EXPECT_NE(C.find(Name), std::string::npos) << Name << "\n" << C;
+  EXPECT_EQ(C.find("unknown"), std::string::npos) << C;
+  const auto CFile = tmpFile("neon_shift_left_unsigned_high.c");
+  std::ofstream(CFile) << C;
+  std::vector<std::string> Check = Target;
+  Check.insert(Check.end(), {"-ffreestanding", "-std=gnu11"});
+  const auto Compiled = checkHighCClangCompile(CFile, Check);
+  EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
+
+  auto IR = liftToLLVMIR(Object);
+  ASSERT_EQ(IR.exitCode, 0) << IR.err;
+  EXPECT_NE(IR.out.find("@llvm.arm.neon.vqshiftsu.v4i32("), std::string::npos)
+      << IR.out;
+}
+
+// The NEON reciprocal and reciprocal square root estimates and steps on f32
+// lanes, and the unsigned estimates on u32 lanes, print as the ACLE intrinsic
+// of their shape.
+TEST_F(ARM32_Intrinsics, Decompile_NeonEstimatesUseACLE) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "assembling ARM requires Clang";
+  const auto Source = tmpFile("neon_estimates.s");
+  const auto Object = tmpFile("neon_estimates.o");
+  std::ofstream(Source) << R"S(
+.syntax unified
+.arm
+.text
+.global neon_estimates
+.type neon_estimates,%function
+neon_estimates:
+  vld1.8 {d0-d3}, [r0]
+  vrecpe.f32 q8, q0
+  vrecps.f32 d18, d0, d1
+  vrsqrte.f32 q10, q1
+  vrsqrts.f32 d22, d2, d3
+  vrecpe.u32 q12, q0
+  vrsqrte.u32 d26, d1
+  vst1.8 {d16-d19}, [r1]
+  add r1, r1, #32
+  vst1.8 {d20-d23}, [r1]
+  add r1, r1, #32
+  vst1.8 {d24-d27}, [r1]
+  bx lr
+.size neon_estimates,.-neon_estimates
+)S";
+  const std::vector<std::string> Target = {"-target", "armv7a-none-eabi",
+                                           "-mfpu=neon", "-mfloat-abi=softfp"};
+  std::vector<std::string> Assemble = Target;
+  Assemble.insert(Assemble.end(),
+                  {"-c", Source.string(), "-o", Object.string()});
+  const auto Assembled = exec(NEVERD_TEST_CLANG, Assemble);
+  ASSERT_EQ(Assembled.exitCode, 0) << Assembled.err;
+  auto r = decompileToHighC(Object);
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  const std::string C = readDecompiledFile("decompiled_high.c");
+  for (const char *Name : {"vrecpeq_f32(", "vrecps_f32(", "vrsqrteq_f32(",
+                           "vrsqrts_f32(", "vrecpeq_u32(", "vrsqrte_u32("})
+    EXPECT_NE(C.find(Name), std::string::npos) << Name << "\n" << C;
+  EXPECT_EQ(C.find("unknown"), std::string::npos) << C;
+  const auto CFile = tmpFile("neon_estimates_high.c");
+  std::ofstream(CFile) << C;
+  std::vector<std::string> Check = Target;
+  Check.insert(Check.end(), {"-ffreestanding", "-std=gnu11"});
+  const auto Compiled = checkHighCClangCompile(CFile, Check);
+  EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
+
+  auto IR = liftToLLVMIR(Object);
+  ASSERT_EQ(IR.exitCode, 0) << IR.err;
+  for (const char *Name :
+       {"@llvm.arm.neon.vrecpe.v4f32(", "@llvm.arm.neon.vrecpe.v4i32(",
+        "@llvm.arm.neon.vrsqrte.v2i32("})
+    EXPECT_NE(IR.out.find(Name), std::string::npos) << Name << "\n" << IR.out;
+}

@@ -209,6 +209,8 @@ extern llvm::cl::SubCommand MobileCmd;
 extern llvm::cl::SubCommand WebCmd;
 extern llvm::cl::list<std::string> WebArguments;
 int runWeb();
+int runWebRewrite();
+int runWebBehavior();
 int runWebPackages();
 int runWebArchive();
 int runWebDesktop();

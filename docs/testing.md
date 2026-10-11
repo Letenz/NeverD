@@ -360,6 +360,13 @@ destination/RHS aliasing, unaligned scalar/VEX memory, unmasked exceptions,
 instruction-wide exception priority, legacy alignment and protected cross-page
 sources. Discarded numerical results must retain state changes and faults.
 Scalar C return probes separately verify floating type, raw bits and state.
+Another 36 forms cover HADD/HSUB and ADDSUB single/double precision, legacy 128
+and VEX 128/256 register/memory sources. A native SSE3 raw-bit oracle compares
+248,832 concrete masked-completion observations across all rounding modes,
+DAZ/FTZ and seeded status, including both source orders and distinct NaN payloads.
+Generated-code probes additionally retain discarded results, unmasked invalid
+priority, legacy misalignment and full protected sources. VEX 256 native probes
+exercise the production feature scan as well as SIMD register allocation.
 Declared scalar stack-argument probes compare original execution and readable C
 through default/NoOpt and O0/O2, including complete raw results and MXCSR. They
 exercise the fifth Win64 or ninth SysV floating argument. `MedCallingConvFPStack`
@@ -369,8 +376,21 @@ packed/straddling home initialization and malformed or segmented refusals.
 Low/Med/High and owned assembly tests reject malformed roles, controls, state
 pointers, effects and addressing contracts. Native execution requires x64 and
 OS-enabled AVX; descriptor checks also cover x86-32 without claiming native
-x86-32 execution. These tests do not certify horizontal arithmetic, FMA,
+x86-32 execution. These tests do not certify FMA,
 EVEX/SAE, x87, enabled #AC or unavailable-feature faults.
+
+`NeverDX86FPFmaStateAccuracyTests` compares 192 VEX FMA3 forms: 132/213/231,
+single/double, scalar 128 and packed 128/256, register/memory, four product/addend
+sign combinations and both packed alternating forms. Original bytes are
+compared with Codegen default/NoOpt and standalone HighC/LLVMC default/NoOpt at
+O0/O2. Every comparison retains full YMM output, memory and MXCSR. The concrete
+matrix independently executes 5,971,968 native comparisons across rounding,
+DAZ/FTZ, seeded status and raw zero/denormal/infinity/NaN values. Child processes
+check unmasked invalid/overflow, instruction-wide priority, unchanged output
+and discarded protected-source accesses. Malformed controls and owned-assembly
+contracts must fail clearly. Typed source stack probes separately cover the
+fifth Win64 or ninth SysV floating argument. Native execution requires an x64
+host with OS-enabled FMA3. FMA4, EVEX/SAE and unavailable features are excluded.
 
 ## x86 invalid encodings and instruction boundaries
 
@@ -433,6 +453,20 @@ ctest --test-dir build-release \
 
 ## Offline web analysis
 
+`WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
+Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
+`WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
+retained extractor ancestry, foreign namespaces and atomic aggregate refusal.
+`WebNodeBehaviorSDK.*` checks 16-source selection independent of the four-result
+cache, revisions, private-value canaries, truncated entry lists, archive/Bun/SEA
+association and CLI processes with an unusable PATH. Supply the pinned
+`NEVERD_CLAUDE_CODE_21296_ELF` and `NEVERD_CLAUDE_CODE_21296_NPM_DIR` inputs for
+the two optional real source cases. `WebSourceDeclarations.*` and the class
+cases in origins/paths cover the shared declaration projection. Changes to
+that shared boundary require the owning Web directory, worker/MCP parity and
+parser/backend omission checks, followed by restoration of the enabled build.
+See the [Node behavior profile](web-node-behavior-profile.md).
+
 `WebDesktopManifest.*` checks explicit NW.js/VSIX profiles, documented directory
 layouts, manifest-relative files, URL/command-line boundaries, malformed JSON
 and independent metadata/work bounds. `WebDesktopSDK.*` checks distinct profile
@@ -491,6 +525,10 @@ See the [stream profiles](web-stream-profile.md).
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and
 WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+`WebSourceXHR.*` covers direct/const receiver and argument anchors, shadowing,
+aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
+compound-assignment exclusions, missing/forbidden methods and atomic budgets.
+XHR remains excluded from the unchanged fetch/HAR correlation profile.
 `WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
 hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
 cache limits, canary exclusion and direct/framed parity. Run the owning web
@@ -534,6 +572,19 @@ downloaded by tests. Missing evidence is an explicit skip. Synthetic extension
 tests cover malformed prelinked indices, counts, aliases and alignment.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+`WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
+surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
+directive preservation, tagged-template refusal, ASI outer-tree mismatches,
+exact inverse and tampered receipts. Lexer, record and output-growth budgets
+must refuse atomically. Its optional pinned Claude module 1897 case checks 5
+string-recovery and 201 constant-folding substitutions, each retaining 1,496
+refused candidates, with exact original recovery. This does not qualify every
+module for semantic rewriting. `WebRewriteExport` checks candidate/receipt
+failure rollback, foreign files, symlinks and renamed/replaced output paths.
+`WebRewriteSDK` checks private literals, cache/revision and parse-goal bindings,
+immutable captured bytes and receipt-bound CLI export with an unusable PATH.
+Worker/MCP tests compare both passes and record pages against the shared API;
+MCP excludes raw export and arbitrary output paths.
 Async-rest source spans and illegal trailing commas have parser regressions.
 Resource-declaration tests cover contextual keywords, line terminators,
 initialization, loops, source types, immutable lexical bindings and conservative
@@ -932,6 +983,11 @@ and remaining budgets at every small-fixture budget boundary. Equal-size
 instruction, edge, root and ownership changes must replace the graph; rolled
 back and temporary override payloads cannot leave borrowed pointers behind.
 Resource failure and value-analysis incompleteness remain distinct.
+`ResolverConditionQueryCache.*` checks shared value/control graph ownership,
+ordered control queries, temporary certified edges, roots and storage-owner
+changes, and every small-fixture budget boundary. An independent graph-walk
+oracle covers cyclic, disconnected and multiple-entry control flow, including
+edges leaving the graph, with cold and repeated queries.
 `ResolverValueQueryCache.*` checks actual complete-batch reuse, exact remaining
 budgets at every small-fixture boundary, ordered mixed results and feasible
 masks, all query fields, proof limits and graph-independent relocation context.

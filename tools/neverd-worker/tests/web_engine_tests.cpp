@@ -1290,6 +1290,9 @@ int main(int argc, char **argv) {
         << R"({"name":"SECRET_WEB_PACKAGE","version":"1","scripts":{"postinstall":"SECRET_WEB_COMMAND"},"dependencies":{"SECRET_WEB_DEP":"1"}})";
     std::ofstream(packageRoot / "after/package.json")
         << R"({"name":"SECRET_WEB_PACKAGE","version":"2","optionalDependencies":{"SECRET_WEB_DEP":"2"}})";
+    std::ofstream(packageRoot / "before/z.js")
+        << "require('node:child_process').execFile('SECRET_WEB_COMMAND',"
+           "options);";
     std::ofstream(packageRoot / "z.original") << "abc";
     std::ofstream(packageRoot / "zz.registry")
         << R"({"name":"SECRET_WEB","dist":{"integrity":"sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="}})";
@@ -1347,6 +1350,65 @@ int main(int argc, char **argv) {
       check(reply["error"]["code"] == "invalid_request",
             "Package analysis accepted execution field");
     }
+    if (hasBindings) {
+      const Json selected{
+          {"schema_version", 1},
+          {"revision", packageRevision},
+          {"artifact_id", packageArtifacts["items"][5]["artifact_id"]},
+          {"source_type", "commonjs"}};
+      const auto source = web.execute("web_source_analyze", selected);
+      reply = process.call("web_source_analyze", selected, packageRevision,
+                           packageProject);
+      check(reply["payload"] == source, "Package source differs");
+      const Json args{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"source_id", source["source_id"]}};
+      const auto behavior = web.execute("web_node_behavior_analyze", args);
+      reply = process.call("web_node_behavior_analyze", args, packageRevision,
+                           packageProject);
+      check(reply["payload"] == behavior && behavior["record_count"] == 1 &&
+                behavior["runtime_api_verified"] == false,
+            "Node behavior differs or changes evidence classification");
+      const Json page{{"schema_version", 1},
+                      {"revision", packageRevision},
+                      {"node_behavior_id", behavior["node_behavior_id"]}};
+      const auto records = web.execute("web_node_behavior_records", page);
+      reply = process.call("web_node_behavior_records", page, packageRevision,
+                           packageProject);
+      check(reply["payload"] == records &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Node records differ or expose argument values");
+      const Json selection{{"schema_version", 1},
+                           {"revision", packageRevision},
+                           {"package_analysis_id", packageIDs[0]},
+                           {"source_ids", Json::array({source["source_id"]})}};
+      const auto aggregate =
+          web.execute("web_package_behavior_analyze", selection);
+      reply = process.call("web_package_behavior_analyze", selection,
+                           packageRevision, packageProject);
+      check(reply["payload"] == aggregate && aggregate["record_count"] == 1 &&
+                aggregate["selection_complete"] == false,
+            "Package behavior differs or claims complete selection");
+      for (const auto *kind : {"sources", "records"}) {
+        const Json rowArgs{
+            {"schema_version", 1},
+            {"revision", packageRevision},
+            {"package_behavior_id", aggregate["package_behavior_id"]},
+            {"record_kind", kind}};
+        const auto rows = web.execute("web_package_behavior_records", rowArgs);
+        reply = process.call("web_package_behavior_records", rowArgs,
+                             packageRevision, packageProject);
+        check(reply["payload"] == rows &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Package behavior rows differ or expose private values");
+      }
+      auto bad = selection;
+      bad["origin"] = Json::object();
+      reply = process.call("web_package_behavior_analyze", bad, packageRevision,
+                           packageProject);
+      check(reply["error"]["code"] == "invalid_request",
+            "Worker accepted a supplied origin relation");
+    }
     const Json compare{{"schema_version", 1},
                        {"revision", packageRevision},
                        {"before_id", packageIDs[0]},
@@ -1371,8 +1433,8 @@ int main(int argc, char **argv) {
     const Json integrity{
         {"schema_version", 1},
         {"revision", packageRevision},
-        {"artifact_id", packageArtifacts["items"][5]["artifact_id"]},
-        {"declaration_id", packageArtifacts["items"][6]["artifact_id"]}};
+        {"artifact_id", packageArtifacts["items"][6]["artifact_id"]},
+        {"declaration_id", packageArtifacts["items"][7]["artifact_id"]}};
     const auto verified =
         web.execute("web_package_integrity_verify", integrity);
     reply = process.call("web_package_integrity_verify", integrity,
@@ -1515,7 +1577,13 @@ int main(int argc, char **argv) {
         "postData":{"text":"SECRET_WEB"}},
         "response":{"status":200,"content":{"text":"SECRET_WEB"}}}]}})";
       std::ofstream(interfaceRoot / "b.js")
-          << "fetch('https://SECRET_WEB/a?token=SECRET_WEB');";
+          << "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+             "const SECRET_WEB_XHR = new XMLHttpRequest();"
+             "SECRET_WEB_XHR.open('GET','https://SECRET_WEB/a');"
+             "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
+             "SECRET_WEB_XHR.send('SECRET_WEB');"
+             "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;"
+             "const recovered='SECRET_'+'WEB_RECOVERED';const n=1+2;";
       const auto beforeInterfaces = web.revision(),
                  beforeProject = web.projectId();
       const Json interfaceImport{{"schema_version", 1},
@@ -1589,8 +1657,57 @@ int main(int argc, char **argv) {
         const auto analysis = web.execute("web_interfaces_analyze", infer);
         reply = process.call("web_interfaces_analyze", infer, interfaceRevision,
                              interfaceProject);
-        check(reply["payload"] == analysis && analysis["interface_count"] == 1,
+        check(reply["payload"] == analysis &&
+                  analysis["interface_count"] == 5 &&
+                  analysis["profile"] == "fetch-websocket-xhr-syntax-v2" &&
+                  analysis["xhr_correlation"] == false,
               "Static interfaces differ");
+        const Json sourcePage{
+            {"schema_version", 1},
+            {"revision", interfaceRevision},
+            {"analysis_id", analysis["interface_analysis_id"]}};
+        const auto sites = web.execute("web_interface_records", sourcePage);
+        reply = process.call("web_interface_records", sourcePage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == sites &&
+                  sites["items"][1]["kind"] == "xhr_open" &&
+                  sites["items"][2]["header_kind"] == "sensitive" &&
+                  sites["items"][3]["body_status"] == "argument_syntax" &&
+                  sites["items"][4]["handler_status"] == "value_syntax" &&
+                  sites["items"][1]["receiver_binding_id"] ==
+                      sites["items"][4]["receiver_binding_id"] &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "XHR syntax evidence differs or exposes values");
+        for (const auto *Pass : {"string_recovery", "constant_folding"}) {
+          auto RewriteArgs = infer;
+          RewriteArgs["pass"] = Pass;
+          const auto Rewritten =
+              web.execute("web_source_rewrite_analyze", RewriteArgs);
+          reply = process.call("web_source_rewrite_analyze", RewriteArgs,
+                               interfaceRevision, interfaceProject);
+          check(reply["payload"] == Rewritten &&
+                    Rewritten["analysis_status"] == "verified_local_rewrites" &&
+                    Rewritten["accepted_count"] == 1 &&
+                    Rewritten["whole_program_equivalence"] == false &&
+                    Rewritten["source_reflection_preserved"] == false &&
+                    reply.dump().find("SECRET_WEB") == std::string::npos,
+                "Rewrite evidence differs or exposes private values");
+          const Json RewritePage{{"schema_version", 1},
+                                 {"revision", interfaceRevision},
+                                 {"rewrite_id", Rewritten["rewrite_id"]}};
+          const auto Records =
+              web.execute("web_source_rewrite_records", RewritePage);
+          reply = process.call("web_source_rewrite_records", RewritePage,
+                               interfaceRevision, interfaceProject);
+          check(reply["payload"] == Records &&
+                    reply.dump().find("SECRET_WEB") == std::string::npos,
+                "Rewrite records differ or expose recovered literals");
+          RewriteArgs["path"] = "SECRET_WEB";
+          reply = process.call("web_source_rewrite_analyze", RewriteArgs,
+                               interfaceRevision, interfaceProject);
+          check(reply["error"]["code"] == "invalid_request",
+                "Rewrite analysis accepted an export path");
+        }
         const Json compare{{"schema_version", 1},
                            {"revision", interfaceRevision},
                            {"analysis_id", analysis["interface_analysis_id"]},

@@ -8,6 +8,13 @@ C(Intrinsic::X87ReadStatus, "neverd_x87_read_status");
 C(Intrinsic::X64Syscall, "neverd_x64_syscall");
 C(Intrinsic::X64WindowsSyscall, "neverd_x64_windows_syscall");
 
+// SSE4.2 CRC32 (the function takes the crc32 target feature,
+// X86IntrinsicTargetFeatures.def).
+C(Intrinsic::X86Crc32b, "_mm_crc32_u8");
+C(Intrinsic::X86Crc32w, "_mm_crc32_u16");
+C(Intrinsic::X86Crc32d, "_mm_crc32_u32");
+C(Intrinsic::X86Crc32q, "_mm_crc32_u64");
+
 // SSE/AVX shuffle & unpack
 C(Intrinsic::Pshufb, "_mm_shuffle_epi8");
 C(Intrinsic::Pshufd, "_mm_shuffle_epi32");
@@ -213,6 +220,8 @@ C(Intrinsic::EVEXCompressStore, "neverd_evex_compress_store");
 C(Intrinsic::EVEXExpandLoad, "neverd_evex_expand_load");
 C(Intrinsic::X86FPClass, "neverd_x86_fpclass");
 C(Intrinsic::X86FPArith, "neverd_x86_fp_arith");
+C(Intrinsic::X86FPFmaState, "neverd_x86_fp_fma_state");
+C(Intrinsic::X86FPFmaMemoryState, "neverd_x86_fp_fma_memory_state");
 C(Intrinsic::X86FPConvert, "neverd_x86_fp_convert");
 C(Intrinsic::X86FPRoundTransform, "neverd_x86_fp_round_transform");
 C(Intrinsic::X86FPExtract, "neverd_x86_fp_extract");

@@ -466,6 +466,17 @@ It only exposes a capability-filtered subset and cannot assert reviewed source
 ranges. No analysis process or language runtime is spawned. See the
 [MCP profile](web-mcp-profile.md) for its concrete limits and ownership.
 Views use owned parser token/comment spans and never claim semantic rewrites.
+`SourceRewrite` is a separate derived-source boundary. `rewrite/Plan` selects
+explicit primitive passes using the existing binding/value/effect owners;
+`Primitive` emits closed values, `Validate` checks SameValue and the complete
+unreplaced tree, and `Apply` verifies both directions against exact bytes.
+`SessionRewrite` retains at most two private results and publishes metadata.
+Its raw local export requires a pass/source/revision-bound receipt;
+`rewrite/Export` owns exclusive fixed files and descriptor-based rollback.
+This transaction does not change Bun export's retained-partial-evidence policy.
+Neither worker nor MCP exposes raw rewrite export. Local substitutions do not
+claim source-reflection or whole-program equivalence. See the
+[primitive rewrite profile](web-source-rewrite-profile.md).
 `BunContainer` owns ELF/Mach-O/PE graph location, target identity and native-range
 validation. `Bun` owns the shared graph records, flags and module decoding;
 transport capability lists and extraction results use the same profile builder.
@@ -483,6 +494,16 @@ evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
 comparisons. Missing evidence, conflicting declarations and unresolved runtime
 semantics remain distinct. All adapters consume these same results.
+`packages/behavior/Rules` owns the fixed Node API syntax vocabulary, `Source`
+consumes shared bindings/module origins/values, and `Package` owns exact
+inventory and retained Bun/SEA delivery joins. `Publication` emits metadata;
+the two behavior session adapters own selection, cache and revision boundaries.
+Source ownership, delivery package and declared entry remain distinct.
+`SourceModel::indexSourceDeclarations` supplies the order-independent unique
+binding projection for origins, paths, navigation and bundles; valid class
+outer/inner declarations preserve ambiguity without poisoning other nodes.
+The full binding declaration model stays authoritative. See the
+[Node behavior profile](web-node-behavior-profile.md).
 `packages/PackageArchive` owns tar/local-PAX/single-gzip framing, complete-stream
 budgets and member admission; `BlobStore` supplies bounded private derived
 spools. `SessionPackageArchive` atomically publishes members after full validation.
@@ -500,7 +521,10 @@ publisher authentication and behavior remain separate claims. See the
 [archive/integrity profile](web-package-archive-profile.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
-`interfaces/SourceInterfaces` consumes the shared syntax/binding/value models;
+`interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
+Its private `SourceContext` owns bounded admission, indexes, finite strings and
+record publication; `SourceFetch` and `SourceXHR` own their syntax rules. XHR
+links lexical constructors/receivers without inferring request sessions;
 `interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
@@ -719,6 +743,14 @@ outer-account exhaustion, symbolic failure or use of pointer-named symbolic
 values or merges excludes the batch. Image metadata is immutable during a
 build, and every new build discards this state.
 These caches do not bypass proposal validation, rollback or fixed-point stages.
+Control-dependence queries acquire the same exact graph and retain at most 64
+completed batches under an independent 1 MiB allowance. The load address and
+ordered branch inventory bind each batch; hits pay its original traversal work
+and a smaller allowance follows the normal incomplete path. Cold traversals
+reuse dense block visitation storage while preserving walk order and logical
+work charges. Value and memory reconstruction split their ordered memo indexes
+by block ID, retaining full keys, stable recursive references and the original
+global entry counts used by evidence accounting.
 
 A bounded group of AArch64 absolute dispatches in one relocatable ELF function
 can share an exact read-only pointer object. Each selector first proves its
@@ -1709,12 +1741,18 @@ evidence. Its configured reset environment remains the concrete starting
 profile. Generic external FLOAT operations and remaining x87 control/TOP/tag
 semantics retain their separate contracts.
 
-Legacy/VEX ADD/SUB/MUL/DIV/SQRT/MIN/MAX scalar and packed forms extend this
+Legacy/VEX ADD/SUB/MUL/DIV/SQRT/MIN/MAX scalar and packed forms, plus packed
+HADD/HSUB and ADDSUB, extend this
 completion scope with `X86FPArithState` and `X86FPArithMemoryState`. One
 aggregate carries the complete raw numerical result and outgoing MXCSR;
 packed lanes complete together, retaining instruction-wide exception priority.
 SQRT consumes only its RHS and requires an exact zero dummy LHS. Control bit
-5 identifies VEX packed memory and does not enable SAE. Memory accesses remain
+5 identifies VEX packed memory and does not enable SAE. Bits 6/7 select
+horizontal pair reduction or alternating subtraction/addition; these controls
+exclude scalar and incompatible arithmetic kinds. Horizontal pairs retain
+physical low-then-high NaN source priority within each 128-bit block. Alternating
+lanes share the common evaluator's two-stage exception completion rather than
+committing separate scalar operations. Memory accesses remain
 inside the incoming/outgoing CSR scope, preserving legacy packed alignment
 faults and complete source reads even when the numerical result is discarded.
 The lifter owns scalar source merging and VEX upper zeroing. Low/Med/High
@@ -1722,10 +1760,22 @@ shape validators and LLVM/C assembly authentication consume the same contract;
 only exact scalar numerical slices acquire floating type provenance. LLVM and
 readable C execute the actual instruction, and concrete execution reuses the
 common packed evaluator and authenticated memory access owner. Existing scalar
-ADD/SUB/MUL/DIV register contracts remain valid. Horizontal arithmetic, FMA,
+ADD/SUB/MUL/DIV register contracts remain valid. FMA4,
 EVEX/SAE, enabled alignment checking and unavailable CPU-feature faults retain
 their separate contracts. Swift explicitly refuses this new completion surface
 until it has an equivalent lowering.
+
+VEX FMA3 uses append-only `X86FPFmaState` and `X86FPFmaMemoryState` contracts.
+Their six LowIR inputs retain the physical destination, vvvv and r/m sources
+and incoming MXCSR. A two-byte control retains132/213/231 order, source signs,
+scalar/packed width and alternating addends. These sources are never commuted
+or negated through ordinary FLOAT nodes: native LLVM and both C projections
+execute the original operation. Concrete evaluation maps physical sources to
+the common single-rounding FMA evaluator, including same-lane invalid priority
+over denormal evidence. Memory access completes inside that instruction's CSR
+scope. Scalar output merges the old destination's upper 128 bits; VEX zeroes
+the remaining upper vector. Immutable scalar stack sources reuse the matching
+six-input value contract, preserving both other numerical inputs and CSR.
 
 Legacy/VEX ROUND extends that state surface through whole-instruction
 `X86FPRoundState` aggregates. Immediate bits 7:4 are ignored, bit 2 selects

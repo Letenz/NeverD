@@ -45,6 +45,13 @@ std::string interfaceMethod(std::string_view Method, bool Fetch) {
   return "other";
 }
 
+bool interfaceForbiddenMethod(std::string_view Method) {
+  if (Method.size() > 7)
+    return false;
+  const auto Lower = asciiLower(Method);
+  return Lower == "connect" || Lower == "trace" || Lower == "track";
+}
+
 std::string interfaceHeaderKind(std::string_view Name) {
   if (Name.size() > 64)
     return "other";

@@ -12,6 +12,7 @@
 #include "SourceModel.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/SourceBindings.h"
 
 namespace neverd::web {
 
@@ -45,6 +46,35 @@ uint64_t validateSourceModel(const SourceAnalysis &Source) {
       throw Error("invalid_source_model");
   }
   return Edges;
+}
+
+SourceDeclarationIndex indexSourceDeclarations(const SourceAnalysis &S,
+                                               const SourceBindingAnalysis &B) {
+  if (B.SourceID != S.ID || S.Nodes.size() > MaxJavaScriptNodes ||
+      B.Declarations.size() > 2 * MaxJavaScriptNodes ||
+      B.Bindings.size() > 2 * MaxJavaScriptNodes)
+    throw Error("invalid_source_binding_model");
+  SourceDeclarationIndex Result;
+  Result.UniqueBindings.assign(S.Nodes.size(), NoSourceIndex);
+  std::vector<bool> Multiple(S.Nodes.size());
+  Result.Steps = S.Nodes.size();
+  for (const auto &D : B.Declarations) {
+    ++Result.Steps;
+    if (D.Binding >= B.Bindings.size() ||
+        (D.Node != NoSourceIndex && D.Node >= S.Nodes.size()))
+      throw Error("invalid_source_binding_model");
+    if (D.Node == NoSourceIndex)
+      continue;
+    auto &Unique = Result.UniqueBindings[D.Node];
+    if (B.Bindings[D.Binding].Conflicting ||
+        (Unique != NoSourceIndex && Unique != D.Binding)) {
+      Multiple[D.Node] = true;
+      Unique = NoSourceIndex;
+    } else if (!Multiple[D.Node]) {
+      Unique = D.Binding;
+    }
+  }
+  return Result;
 }
 
 } // namespace neverd::web

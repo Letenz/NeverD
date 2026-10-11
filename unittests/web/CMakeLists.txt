@@ -48,14 +48,20 @@ target_compile_definitions(NeverDWebSourceMapTests PRIVATE
   NEVERD_WEB_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   add_neverd_unittest(NeverDWebSourceTests
+    NodeBehaviorTests.cpp
+    PackageBehaviorTests.cpp
     SourceInterfaceTests.cpp
+    SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp
     ElectronEntryTests.cpp
     ElectronSourceTests.cpp
     SourceTests.cpp
     SourceRecoveryTests.cpp
+    SourceRewriteTests.cpp
+    RewriteExportTests.cpp
     SourceBindingTests.cpp
+    SourceDeclarationIndexTests.cpp
     SourceValueTests.cpp
     SourceEffectTests.cpp
     SourceModuleTests.cpp
@@ -66,6 +72,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   )
   target_compile_definitions(NeverDWebSourceTests PRIVATE
     NEVERD_WEB_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+  target_include_directories(NeverDWebSourceTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
   set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/RecoveryTestProperties.cmake")
 endif()
@@ -78,6 +85,8 @@ if(TARGET neverd_shared)
     "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDWebSDKTests
     SDKTests.cpp
+    RewriteSDKTests.cpp
+    NodeBehaviorSDKTests.cpp
     PackageSDKTests.cpp
     PackageArchiveSDKTests.cpp
     PackageIntegritySDKTests.cpp
