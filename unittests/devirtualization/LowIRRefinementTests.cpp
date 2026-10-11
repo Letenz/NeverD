@@ -9,8 +9,9 @@
 
 #include "neverd/analysis/LowIRRefinement.h"
 
+#include <ostream>
 #include <string>
-#include <tuple>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::analysis;
@@ -4327,9 +4328,36 @@ Program relocatedCounterLoops(bool Relocate, uint16_t Bytes, bool Tagged,
   return P;
 }
 
-class LowIRTransferredCounterState
-    : public ::testing::TestWithParam<std::tuple<LowIRLoopSpace, bool, bool>> {
+struct TransferredCounterCase {
+  LowIRLoopSpace Space;
+  bool Ascending;
+  bool Relocate;
+
+  std::string name() const {
+    const char *Storage = Space == LowIRLoopSpace::Register ? "Register"
+                          : Space == LowIRLoopSpace::Frame  ? "Frame"
+                                                            : "Temporary";
+    return std::string(Storage) + (Ascending ? "Ascending" : "Descending") +
+           (Relocate ? "Relocated" : "InPlace");
+  }
 };
+
+void PrintTo(const TransferredCounterCase &Case, std::ostream *Out) {
+  *Out << Case.name();
+}
+
+std::vector<TransferredCounterCase> transferredCounterCases() {
+  std::vector<TransferredCounterCase> Cases;
+  for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
+                     LowIRLoopSpace::FunctionTemporary})
+    for (bool Ascending : {false, true})
+      for (bool Relocate : {false, true})
+        Cases.push_back({Space, Ascending, Relocate});
+  return Cases;
+}
+
+class LowIRTransferredCounterState
+    : public ::testing::TestWithParam<TransferredCounterCase> {};
 
 TEST_P(LowIRTransferredCounterState, PreservesCompleteState) {
   const auto [Space, Ascending, Relocate] = GetParam();
@@ -4381,19 +4409,9 @@ TEST_P(LowIRTransferredCounterState, PreservesCompleteState) {
 
 INSTANTIATE_TEST_SUITE_P(
     AllStorageAndTransferModes, LowIRTransferredCounterState,
-    ::testing::Combine(::testing::Values(LowIRLoopSpace::Register,
-                                         LowIRLoopSpace::Frame,
-                                         LowIRLoopSpace::FunctionTemporary),
-                       ::testing::Bool(), ::testing::Bool()),
+    ::testing::ValuesIn(transferredCounterCases()),
     [](const ::testing::TestParamInfo<LowIRTransferredCounterState::ParamType>
-           &Info) {
-      const auto [Space, Ascending, Relocate] = Info.param;
-      const char *Storage = Space == LowIRLoopSpace::Register ? "Register"
-                            : Space == LowIRLoopSpace::Frame  ? "Frame"
-                                                              : "Temporary";
-      return std::string(Storage) + (Ascending ? "Ascending" : "Descending") +
-             (Relocate ? "Relocated" : "InPlace");
-    });
+           &Info) { return Info.param.name(); });
 
 TEST(LowIRLoopInference, TransferredCountersKeepProofBoundaries) {
   for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
