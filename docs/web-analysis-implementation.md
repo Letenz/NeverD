@@ -2657,3 +2657,85 @@ added by this increment.
 Wrapper implementation/argument flow, response/transformation tracing, dynamic
 URL resolution, source/stream joins and the remaining #714–#718 acceptance gaps
 remain. This increment does not close the five epics.
+
+## Independently bounded request source relationships (2026-10-12)
+
+`request-source-relations-v1` consumes selected request evidence and the
+authoritative navigation and declaration models. Separate `RelationContext`,
+`RequestLinks` and `ResultLinks` components retain function/direct-return,
+awaited const-origin, fixed member-use and then-handler syntax. No runtime
+response identity, caller target, wrapper argument role or callback parameter
+flow is inferred. Relation failure is atomic and leaves requests available.
+The profile has independent 4,096-record/2,000,000-step bounds; cached and
+fresh navigation have identical identities and work charges. Explicit session,
+C ABI, CLI and strict worker/MCP operations all delegate to that owner. See
+the [relationship profile](web-interface-relations-profile.md).
+
+The native CLI with an unusable external-tool PATH analyzes the same exact
+NeverD-exported Claude Code 2.1.296 macOS ARM64 module 928. It retains two
+relationships: the member-fetch call at byte 150,734 for 36 bytes belongs to
+one function, and its direct return starts at byte 150,728 for 42 bytes. The
+relation identity is
+`d9cea58d2be6c7cf4b17f2e1071e31b05bc0978a2b09c04d5c08071e283e5ded`,
+with 553,772 charged steps. The request retains its existing v3 identity,
+unresolved spread and unknown method. The C++ pinned test independently checks
+both exact ranges and their common function. No original client executes.
+
+All twenty-seven focused core cases and twelve SDK cases pass. They include
+aliases/shadowing/writes/computed exclusions, optional syntax, foreign/malformed
+models, exact/short budgets, canary withholding, pagination and revision
+revocation. A 2,050-request source exceeds the relation fanout cap and retains
+128 valid request records while publishing zero relations and a fixed budget
+reason. Fresh/cached navigation produces identical relation identity and work.
+The 112-step SDK/CLI/transport build and the subsequent 33-step owning native,
+artifact and source-map rebuild pass. After every owning binary is current,
+the complete Web regression has 724 passes and one expected missing-ASAR-policy
+skip among 725 unique cases (90.50 seconds), including all eight captured
+Claude platforms. All nine native-handoff cases pass. Worker/MCP/ABI checks
+have seven passes and one expected backend-omission skip (37.11 seconds).
+The Qt production-worker review suite has nineteen passes and one expected
+unavailable-only skip (14.39 seconds), including captured Claude selection.
+No complete existing GUI regression pass is claimed; its previously reproduced
+unchanged-parent font/focus failures remain documented above. Logs:
+`/tmp/neverd-interface-relations-{build,owners-build,core-final,sdk,web-regression-final,native-final,transports,gui-build,gui-tests}.log`
+and `/tmp/neverd-interface-relations-claude-0928.jsonl`.
+
+With JavaScript omitted, the 137-step rebuild passes. All five compiled HAR/CLI
+SDK cases and seven transport/availability cases pass, with one expected
+backend-omission skip (21.08 seconds). Both new exported APIs return explicit
+unavailability and their capability profile/operations disappear. With the
+complete Web backend omitted, the nine-step rebuild passes; both ABI
+availability cases run positively and transport/availability has six passes
+with two expected backend/input skips (3.19 seconds). Logs:
+`/tmp/neverd-interface-relations-nojs-{configure,build,sdk,transports}.log`
+and `/tmp/neverd-interface-relations-noweb-{configure,build,transports}.log`.
+
+Both flags are restored to ON. The 139-step parser/backend/tool rebuild passes,
+followed by all twenty-seven source cases, twelve SDK cases and seven
+transport/availability passes with one expected unavailable-only skip
+(11.53 seconds). LLVM formatting and diff whitespace pass. Source provenance
+passes across 7,401 worktree files; the capability checker reports the same
+sixteen pre-existing unclaimed native source-patch declarations. Both additive
+Web relation declarations are claimed in both public surface lists; no global
+checker pass is claimed. Logs:
+`/tmp/neverd-interface-relations-restored-{configure,build,core,sdk,transports}.log`
+and `/tmp/neverd-interface-relations-{format,provenance,capabilities}.log`.
+
+This increment advances #717's source-navigation boundary. General wrapper
+argument/dataflow, response transformations, dynamic URLs, source/stream joins,
+reviewed endpoint presentations and the remaining five-epic acceptance gaps
+remain. No new dependency, external analyzer/runtime, target execution or
+network path is introduced.
+
+Integration preserves upstream `dev` at
+`a969ad55eb7fbd56a792b589de24baa2dd726a1c`, including its native symbolic
+projection and HighC changes. The Web implementation, public SDK, tools, tests
+and profile documents remain byte-identical after rebase. Its 761-step shared
+native/SDK/tool rebuild passes, followed by all twenty-seven focused source
+cases, twelve SDK cases and nine native-handoff cases. Transport/availability
+has seven passes and one expected unavailable-only skip (6.95 seconds); the
+production-worker Qt review suite again has nineteen passes and one expected
+unavailable-only skip (12.41 seconds). Source provenance passes across 7,405
+worktree files. Logs:
+`/tmp/neverd-interface-relations-upstream-{build,core,sdk,native,transports,gui}.log`
+and `/tmp/neverd-interface-relations-provenance-final.log`.

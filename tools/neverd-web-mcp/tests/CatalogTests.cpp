@@ -82,8 +82,21 @@ void closedArguments() {
                           "package_assessment_findings",
                           "package_review_append",
                           "package_review_decisions",
-                          "package_assessment_report"}),
+                          "package_assessment_report",
+                          "interface_relations_analyze",
+                          "interface_relation_records"}),
             0);
+  const auto &Relations = C.find("neverd_web_interface_relations_analyze");
+  Relations.payload({{"revision", "1"}, {"analysis_id", "a"}});
+  refuses([&] { Relations.payload({{"revision", "1"}, {"source_id", "a"}}); });
+  const auto &RelationPage = C.find("neverd_web_interface_relation_records");
+  Json RelationArgs{{"revision", "1"}, {"relations_id", "r"}, {"limit", 128}};
+  RelationPage.payload(RelationArgs);
+  RelationArgs["limit"] = 129;
+  refuses([&] { RelationPage.payload(RelationArgs); });
+  RelationArgs["limit"] = 1;
+  RelationArgs["execute"] = true;
+  refuses([&] { RelationPage.payload(RelationArgs); });
   const auto &Assessment = C.find("neverd_web_package_assessment_create");
   Json AssessmentArgs{{"revision", "1"},
                       {"package_analysis_id", "p"},

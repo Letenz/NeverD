@@ -211,6 +211,33 @@ void sourceAndMaps(Harness &H) {
               Items[6].at("url_node_id").is_null() &&
               Items[6].at("method") == "unknown",
           "MCP promoted a member spelling or invented spread arguments");
+  const auto Relations =
+      H.same("web_interface_relations_analyze",
+             {{"revision", H.Revision},
+              {"analysis_id", Interfaces.at("interface_analysis_id")}});
+  require(Relations.at("profile") == "request-source-relations-v1" &&
+              Relations.at("relation_count") == 2 &&
+              Relations.at("response_api_identity") ==
+                  "member_spelling_unverified" &&
+              Relations.at("har_correlation") == false,
+          "MCP changed request relations or response identity");
+  const Json RelationArgs{{"revision", H.Revision},
+                          {"relations_id", Relations.at("relations_id")}};
+  const auto RelationPage =
+      H.same("web_interface_relation_records", RelationArgs);
+  require(RelationPage.at("items")[0].at("kind") ==
+                  "await_result_const_binding" &&
+              RelationPage.at("items")[1].at("kind") ==
+                  "bound_result_member_call" &&
+              RelationPage.at("items")[1].at("member_spelling") == "json" &&
+              RelationPage.at("items")[0].at("binding_id") ==
+                  RelationPage.at("items")[1].at("binding_id"),
+          "MCP changed result binding anchors");
+  redacted(Relations);
+  redacted(RelationPage);
+  auto UnsafeRelation = RelationArgs;
+  UnsafeRelation["execute"] = true;
+  invalid([&] { H.get("web_interface_relation_records", UnsafeRelation); });
   auto Bindings = Args;
   Bindings["record_kind"] = "bindings";
   H.same("web_source_binding_records", Bindings);
@@ -792,16 +819,19 @@ int main() {
       H.get("web_native_analyze",
             {{"revision", "1"}, {"handoff_id", "CANARY"}});
     });
-    F.write("source", "fetch('https://CANARY/a?token=CANARY'); const "
-                      "privateName = 'CANARY'; while(true) {};"
-                      "const CANARY_XHR = new XMLHttpRequest();"
-                      "CANARY_XHR.open('GET','https://CANARY/a');"
-                      "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
-                      "CANARY_XHR.send('CANARY');"
-                      "CANARY_XHR.onload = CANARY_CALLBACK;"
-                      "this.fetch('https://CANARY/a', {method:'POST'});"
-                      "fetch(...CANARY_ARGUMENTS);"
-                      "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
+    F.write(
+        "source",
+        "const CANARY_RESULT=await "
+        "fetch('https://CANARY/a?token=CANARY');CANARY_RESULT.json(); const "
+        "privateName = 'CANARY'; while(true) {};"
+        "const CANARY_XHR = new XMLHttpRequest();"
+        "CANARY_XHR.open('GET','https://CANARY/a');"
+        "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
+        "CANARY_XHR.send('CANARY');"
+        "CANARY_XHR.onload = CANARY_CALLBACK;"
+        "this.fetch('https://CANARY/a', {method:'POST'});"
+        "fetch(...CANARY_ARGUMENTS);"
+        "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
     F.write(

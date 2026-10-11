@@ -22,6 +22,7 @@
 #include "neverd/web/ElectronEntries.h"
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
+#include "neverd/web/InterfaceRelations.h"
 #include "neverd/web/Interfaces.h"
 #include "neverd/web/Nexe.h"
 #include "neverd/web/NodeBehavior.h"
@@ -119,6 +120,7 @@ struct Session::Impl {
   std::string HARPreviewToken;
   uint64_t HARPreviewSequence = 0;
   std::map<std::string, SourceInterfaces> InterfaceSources;
+  std::map<std::string, InterfaceSourceRelations> InterfaceRelations;
   std::map<std::string, InterfaceCorrelation> InterfaceCorrelations;
   uint64_t CachedArchiveBytes = 0;
   struct HTMLResults {

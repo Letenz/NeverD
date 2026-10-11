@@ -69,14 +69,26 @@ neverd_web_har_records_json(neverd_web_session_t Session,
                             const char *ExpectedRevision, size_t RevisionSize,
                             const char *CaptureID, size_t CaptureIDSize,
                             uint64_t Offset, uint64_t Limit);
-/// Direct external fetch/WebSocket syntax is inferred evidence, not proof of
-/// intrinsic identity, reachability or execution. No source text is returned.
+/// Direct fetch/WebSocket, unverified member-fetch and bounded XHR syntax are
+/// inferred evidence, not intrinsic identity, reachability or execution.
+/// Spread argument roles remain unresolved. No source text is returned.
 NEVERD_API const char *neverd_web_interfaces_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
 NEVERD_API const char *neverd_web_interface_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Explicit source-syntax relationships from one existing request analysis.
+/// No runtime response identity, wrapper argument flow or HAR join is inferred.
+NEVERD_API const char *neverd_web_interface_relations_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize);
+/// Metadata-only relation pages. Limit is 1..128; source, names and values
+/// remain private behind exact source-node and lexical-binding anchors.
+NEVERD_API const char *neverd_web_interface_relation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RelationsID, size_t RelationsIDSize,
     uint64_t Offset, uint64_t Limit);
 /// Explicit source and committed capture selections only. Matching method,
 /// origin and path produces candidate pairs, never an execution claim.

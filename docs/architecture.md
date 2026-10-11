@@ -748,6 +748,14 @@ links lexical constructors/receivers without inferring request sessions;
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
 as source execution. See the [passive interface profile](web-interface-profile.md).
+`interfaces/SourceRelations` independently projects selected request/result
+syntax. `RelationContext` owns model admission, lexical indexes and bounded
+identities; `RequestLinks`/`ResultLinks` own direct-return, awaited-const and
+fixed member-use grammars. Function containment comes from `SourceNavigation`,
+and declaration uniqueness from `indexSourceDeclarations`. Exhaustion clears
+relations without invalidating request evidence. `SessionInterfaceRelations`
+owns explicit selection, revision/cache lifetime and metadata-only pages.
+See the [relationship profile](web-interface-relations-profile.md).
 `streams/Framing` owns bounded line/SSE framing, `streams/Records` owns
 selected JSON/protocol shapes and `streams/Relations` owns recorded-context
 joins. Shared `JsonReader` reports consumed nodes even on failure so a stream

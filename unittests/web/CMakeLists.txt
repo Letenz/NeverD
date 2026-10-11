@@ -64,6 +64,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     PackageBehaviorDiffTests.cpp
     PackageInstallTests.cpp
     SourceInterfaceTests.cpp
+    InterfaceRelationTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp

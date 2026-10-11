@@ -54,6 +54,11 @@ public:
   std::string interfaceRecords(std::string_view ExpectedRevision,
                                std::string_view AnalysisID, uint64_t Offset,
                                uint64_t Limit) const;
+  std::string analyzeInterfaceRelations(std::string_view ExpectedRevision,
+                                        std::string_view InterfaceAnalysisID);
+  std::string interfaceRelationRecords(std::string_view ExpectedRevision,
+                                       std::string_view RelationsID,
+                                       uint64_t Offset, uint64_t Limit) const;
   std::string compareInterfaces(std::string_view ExpectedRevision,
                                 std::string_view AnalysisID,
                                 std::string_view CaptureID);

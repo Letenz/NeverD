@@ -821,6 +821,16 @@ enabled restoration when changing this shared profile.
 aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
 compound-assignment exclusions, missing/forbidden methods and atomic budgets.
 XHR remains excluded from the unchanged fetch/HAR correlation profile.
+`WebInterfaceRelations.*` adds exact function/return/await/consumer anchors,
+lexical alias/shadow/write/computed exclusions, member/then spread uncertainty,
+malformed/foreign navigation and independent exact/short graph budgets. The
+same optional pinned Claude module retains function and direct-return links.
+`WebInterfaceSDK` checks fresh/cached navigation equality, revision revocation,
+closed metadata, 128-record pages and 2,050 retained requests whose relation
+fanout exceeds 4,096 without destroying request pages. Run the owning Web
+directory without a name-prefix filter so parameterized platform cases also
+run, then worker/MCP/catalog, both omission profiles and enabled restoration.
+See the [relationship profile](web-interface-relations-profile.md).
 `WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
 hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
 cache limits, canary exclusion and direct/framed parity. Run the owning web

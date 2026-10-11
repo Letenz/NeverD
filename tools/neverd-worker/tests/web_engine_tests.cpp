@@ -1917,7 +1917,9 @@ int main(int argc, char **argv) {
         "postData":{"text":"SECRET_WEB"}},
         "response":{"status":200,"content":{"text":"SECRET_WEB"}}}]}})";
       std::ofstream(interfaceRoot / "b.js")
-          << "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+          << "const SECRET_WEB_RESULT=await "
+             "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+             "SECRET_WEB_RESULT.json();"
              "const SECRET_WEB_XHR = new XMLHttpRequest();"
              "SECRET_WEB_XHR.open('GET','https://SECRET_WEB/a');"
              "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
@@ -2028,6 +2030,40 @@ int main(int argc, char **argv) {
                   sites["items"][6]["method"] == "unknown" &&
                   reply.dump().find("SECRET_WEB") == std::string::npos,
               "XHR syntax evidence differs or exposes values");
+        const auto relations =
+            web.execute("web_interface_relations_analyze", sourcePage);
+        reply = process.call("web_interface_relations_analyze", sourcePage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relations &&
+                  relations["relation_count"] == 2 &&
+                  relations["profile"] == "request-source-relations-v1" &&
+                  relations["response_api_identity"] ==
+                      "member_spelling_unverified" &&
+                  relations["har_correlation"] == false,
+              "Request relations differ or promote response identity");
+        const Json relationPage{{"schema_version", 1},
+                                {"revision", interfaceRevision},
+                                {"relations_id", relations["relations_id"]}};
+        const auto relationRecords =
+            web.execute("web_interface_relation_records", relationPage);
+        reply = process.call("web_interface_relation_records", relationPage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relationRecords &&
+                  relationRecords["items"][0]["kind"] ==
+                      "await_result_const_binding" &&
+                  relationRecords["items"][1]["kind"] ==
+                      "bound_result_member_call" &&
+                  relationRecords["items"][1]["member_spelling"] == "json" &&
+                  relationRecords["items"][0]["binding_id"] ==
+                      relationRecords["items"][1]["binding_id"] &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Request relation pages differ or expose private values");
+        auto invalidRelations = relationPage;
+        invalidRelations["execute"] = true;
+        reply = process.call("web_interface_relation_records", invalidRelations,
+                             interfaceRevision, interfaceProject);
+        check(reply["error"]["code"] == "invalid_request",
+              "Request relation pages accepted an execution field");
         for (const auto *Pass : {"string_recovery", "constant_folding"}) {
           auto RewriteArgs = infer;
           RewriteArgs["pass"] = Pass;

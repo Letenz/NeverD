@@ -94,6 +94,8 @@ struct API {
   WEB_API(neverd_web_har_records_json)
   WEB_API(neverd_web_interfaces_analyze_json)
   WEB_API(neverd_web_interface_records_json)
+  WEB_API(neverd_web_interface_relations_analyze_json)
+  WEB_API(neverd_web_interface_relation_records_json)
   WEB_API(neverd_web_interfaces_compare_json)
   WEB_API(neverd_web_interface_correlation_records_json)
   WEB_API(neverd_web_package_records_json)
@@ -363,16 +365,19 @@ Json Backend::execute(const std::string &operation, const Json &p) {
              sizeField(p, "limit", 128, 128)));
   }
   if (operation == "web_har_preview" || operation == "web_har_commit" ||
-      operation == "web_interfaces_analyze") {
-    const auto *key = operation == "web_har_preview"  ? "artifact_id"
-                      : operation == "web_har_commit" ? "preview_token"
-                                                      : "source_id";
+      operation == "web_interfaces_analyze" ||
+      operation == "web_interface_relations_analyze") {
+    const auto *key = operation == "web_har_preview"          ? "artifact_id"
+                      : operation == "web_har_commit"         ? "preview_token"
+                      : operation == "web_interfaces_analyze" ? "source_id"
+                                                              : "analysis_id";
     fields(p, {"revision", key});
-    const auto call = operation == "web_har_preview"
-                          ? api().neverd_web_har_preview_json
-                      : operation == "web_har_commit"
-                          ? api().neverd_web_har_commit_json
-                          : api().neverd_web_interfaces_analyze_json;
+    const auto call =
+        operation == "web_har_preview"  ? api().neverd_web_har_preview_json
+        : operation == "web_har_commit" ? api().neverd_web_har_commit_json
+        : operation == "web_interfaces_analyze"
+            ? api().neverd_web_interfaces_analyze_json
+            : api().neverd_web_interface_relations_analyze_json;
     if (!call)
       throw Error("capability_unavailable",
                   "Passive interfaces are unavailable");
@@ -385,15 +390,20 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return value;
   }
   if (operation == "web_har_records" || operation == "web_interface_records" ||
-      operation == "web_interface_correlation_records") {
+      operation == "web_interface_correlation_records" ||
+      operation == "web_interface_relation_records") {
     const auto *key = operation == "web_har_records"         ? "capture_id"
                       : operation == "web_interface_records" ? "analysis_id"
-                                                             : "correlation_id";
+                      : operation == "web_interface_relation_records"
+                          ? "relations_id"
+                          : "correlation_id";
     fields(p, {"revision", key, "offset", "limit"});
     const auto call = operation == "web_har_records"
                           ? api().neverd_web_har_records_json
                       : operation == "web_interface_records"
                           ? api().neverd_web_interface_records_json
+                      : operation == "web_interface_relation_records"
+                          ? api().neverd_web_interface_relation_records_json
                           : api().neverd_web_interface_correlation_records_json;
     if (!call)
       throw Error("capability_unavailable",

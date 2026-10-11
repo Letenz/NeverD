@@ -145,6 +145,16 @@ protected:
         S, Revision.data(), Revision.size(), Source.data(), Source.size(),
         Capture.data(), Capture.size()));
   }
+  Value relations(std::string ID) {
+    return take(neverd_web_interface_relations_analyze_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size()));
+  }
+  Value relationRecords(std::string ID, uint64_t Offset = 0,
+                        uint64_t Limit = 128) {
+    return take(neverd_web_interface_relation_records_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), Offset,
+        Limit));
+  }
 };
 
 TEST_F(WebInterfaceSDK, PreviewIsRequiredAndTokensAreSingleUse) {
@@ -375,6 +385,103 @@ fetch('https://CANARY_HOST/CANARY_PATH', {method:'POST'});
 }
 #endif
 
+#if NEVERD_TEST_WEB_JAVASCRIPT
+TEST_F(WebInterfaceSDK,
+       RequestRelationsKeepPrivateValuesAndRuntimeClaimsSeparate) {
+  std::ofstream(Root / "b0.js", std::ios::trunc) << R"(
+async function CANARY_WRAPPER() {
+  const CANARY_RESULT = await fetch('https://CANARY_HOST/CANARY_PATH',
+      {method:'POST',body:'CANARY_BODY'});
+  CANARY_RESULT.json();
+  return fetch(...CANARY_ARGUMENTS);
+}
+fetch(...CANARY_ARGUMENTS).then(CANARY_HANDLER);
+)";
+  open();
+  const auto Request = source();
+  const auto ID = field(Request, "interface_analysis_id");
+  const auto A = relations(ID);
+  EXPECT_EQ(field(A, "profile"), "request-source-relations-v1");
+  EXPECT_EQ(field(A, "analysis_status"), "partial");
+  EXPECT_EQ(field(A, "response_api_identity"), "member_spelling_unverified");
+  EXPECT_EQ(field(A, "wrapper_argument_flow"), "not_analyzed");
+  EXPECT_EQ(field(A, "callback_parameter_roles"), "not_assigned");
+  EXPECT_FALSE(
+      A.getAsObject()->getBoolean("source_execution_observed").value_or(true));
+  EXPECT_FALSE(A.getAsObject()->getBoolean("har_correlation").value_or(true));
+  EXPECT_EQ(A.getAsObject()->getInteger("relation_count"), 6);
+  const auto RID = field(A, "relations_id");
+  const auto Page = relationRecords(RID, 0, 2);
+  ASSERT_EQ(Page.getAsObject()->getArray("items")->size(), 2u);
+  EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), 2);
+  EXPECT_EQ(relationRecords(RID, 6).getAsObject()->getArray("items")->size(),
+            0u);
+  EXPECT_EQ(code(relationRecords(RID, 7)), "invalid_page");
+  EXPECT_EQ(code(relationRecords(RID, 0, 129)), "invalid_page");
+  EXPECT_EQ(code(relations("unknown")), "unknown_interface_analysis");
+  const auto H = admit();
+  const auto Joined = compare(ID, H);
+  EXPECT_EQ(Joined.getAsObject()->getInteger("pair_count"), 1);
+  EXPECT_EQ(field(relations(ID), "relations_id"), RID);
+  const auto OldRevision = Revision;
+  open();
+  EXPECT_EQ(code(take(neverd_web_interface_relation_records_json(
+                S, OldRevision.data(), OldRevision.size(), RID.data(),
+                RID.size(), 0, 1))),
+            "stale_revision");
+  EXPECT_EQ(code(relationRecords(RID)), "unknown_interface_relations");
+}
+
+TEST_F(WebInterfaceSDK,
+       LocalAndPublishedNavigationGiveIdenticalRequestRelations) {
+  std::ofstream(Root / "b0.js", std::ios::trunc)
+      << "const CANARY_RESULT = await fetch(...CANARY_ARGS); "
+         "CANARY_RESULT.text();";
+  open();
+  auto Request = source();
+  const auto Before = relations(field(Request, "interface_analysis_id"));
+  const auto BeforeID = field(Before, "relations_id");
+  const auto BeforeSteps = Before.getAsObject()->getInteger("steps");
+  const auto BeforeItems =
+      relationRecords(BeforeID).getAsObject()->getArray("items")->size();
+  open();
+  Request = source();
+  const auto SourceID = field(Request, "source_id");
+  const auto Navigation = take(neverd_web_source_navigation_analyze_json(
+      S, Revision.data(), Revision.size(), SourceID.data(), SourceID.size()));
+  EXPECT_EQ(field(Navigation, "navigation_id"), field(Before, "navigation_id"));
+  const auto After = relations(field(Request, "interface_analysis_id"));
+  EXPECT_EQ(field(After, "relations_id"), BeforeID);
+  EXPECT_EQ(After.getAsObject()->getInteger("steps"), BeforeSteps);
+  EXPECT_EQ(relationRecords(BeforeID).getAsObject()->getArray("items")->size(),
+            BeforeItems);
+}
+
+TEST_F(WebInterfaceSDK, RelationRecordExhaustionKeepsRequestPagesAvailable) {
+  {
+    std::ofstream O(Root / "b0.js", std::ios::trunc);
+    for (unsigned I = 0; I < 2050; ++I)
+      O << "const CANARY_RESULT_" << I << " = await fetch(url); CANARY_RESULT_"
+        << I << ".json();\n";
+  }
+  open();
+  const auto Request = source();
+  ASSERT_EQ(field(Request, "analysis_status"), "partial");
+  ASSERT_EQ(Request.getAsObject()->getInteger("interface_count"), 2050);
+  const auto ID = field(Request, "interface_analysis_id");
+  const auto A = relations(ID);
+  EXPECT_EQ(field(A, "analysis_status"), "budget_exceeded");
+  EXPECT_EQ(field(A, "reason"), "interface_relation_record_budget_exceeded");
+  EXPECT_EQ(A.getAsObject()->getInteger("relation_count"), 0);
+  const auto RID = field(A, "relations_id");
+  EXPECT_TRUE(relationRecords(RID).getAsObject()->getArray("items")->empty());
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  EXPECT_EQ(Page.getAsObject()->getArray("items")->size(), 128u);
+  EXPECT_EQ(field(Page, "analysis_status"), "partial");
+}
+#endif
+
 #ifdef NEVERD_WEB_TEST_CLI
 TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   const auto Path = Root.string(), Out = Path + ".stdout",
@@ -419,6 +526,16 @@ TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   EXPECT_NE(Output.find("\"kind\":\"xhr_open\""), std::string::npos);
   EXPECT_NE(Output.find("\"kind\":\"xhr_send\""), std::string::npos);
   EXPECT_NE(Output.find("\"kind\":\"xhr_event_handler\""), std::string::npos);
+  std::ofstream(Root / "b0.js", std::ios::app)
+      << "const CANARY_RESULT=await "
+         "fetch(...CANARY_ARGS);CANARY_RESULT.json();";
+  EXPECT_EQ(Run({"interface-relations", Path, "module", "6"}), 0);
+  EXPECT_NE(Output.find("request-source-relations-v1"), std::string::npos);
+  EXPECT_NE(Output.find("await_result_const_binding"), std::string::npos);
+  EXPECT_NE(Output.find("bound_result_member_call"), std::string::npos);
+  EXPECT_NE(
+      Output.find("\"response_api_identity\":\"member_spelling_unverified\""),
+      std::string::npos);
   EXPECT_EQ(
       Run({"interface-correlate", Path, "module", "6", "1", Policy, Hash}), 0);
   EXPECT_NE(Output.find("\"pair_count\":1"), std::string::npos);

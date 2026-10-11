@@ -250,7 +250,13 @@ neither result establishes an absent or authenticated runtime interface. The
 same pinned case runs through the C++ core with no target execution. This is
 one selected source unit, not a whole-client interface inventory.
 
-This does not complete #717. Wrapper implementation/argument flow, response and transformation
+The separately selected [request source relationship profile](web-interface-relations-profile.md)
+adds function/direct-return anchors, direct awaited const-result origins,
+fixed lexical result-member uses and direct then-handler syntax. These are
+independently bounded syntax relations, with response API/value identity and
+execution unverified; they do not broaden HAR joins.
+
+This does not complete #717. Wrapper implementation/argument flow and general response/transformation
 tracing, schema exports, reviewed endpoint displays and
 broader host qualification remain required. Separately selected
 [SSE/JSONL/JSON-RPC/MCP-shape/log adapters](web-stream-profile.md) now provide
