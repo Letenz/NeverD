@@ -1690,14 +1690,19 @@ nonoverlapping blocks and actual taken/fallthrough successors. Removing both
 sides of an edge or dropping a whole write-containing block cannot turn an
 incomplete graph into a frame proof. Indirect branches require a separate proof
 and remain outside this bounded frame analysis.
-Complete decoded leaf callees can retain saved cells when their concrete
+Complete decoded callees can retain saved cells when their concrete
 argument values bound every store and all returns restore the invocation SP
 without changing its physical return PC. The analysis intersects all returning
 paths, validates complete instruction boundaries and both decoded branch
-successors, discards private callee storage at return, and refuses nested calls,
-unknown writes, exceptional transfers and independent callee roots. A receipt
-names every inspected callee; shared SSA requires their current operation/CFG
-digests before accepting the frame. Source signatures grant no memory effects.
+successors, and discards private callee storage at return. Nested direct calls
+share the same budget and protect every active return PC, including the write
+made by CALL itself. Recursion, more than 16 nested bodies, opaque calls,
+unknown writes, exceptional transfers and independent callee roots refuse the
+proof. A preserved register keeps a frame identity only when both its ABI and
+the inspected return states preserve it. A receipt names all inspected callees,
+including transitive dependencies; shared SSA requires their current
+operation/CFG digests before accepting the frame. Source signatures grant no
+memory effects.
 The analysis runs once per queried function, with a cumulative module work cap
 separate from the address-use receipt limit. Transfers charge the tracked
 register/cell facts as well as operations; joins and dependency hashing also

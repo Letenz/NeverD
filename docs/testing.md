@@ -2541,10 +2541,18 @@ refuses the frame proof while preserving the separate address-use analysis.
 changing loops, block ordering, independent/EH roots, expired temporaries,
 released stack storage, partial/atomic writes and exhausted budgets. No opaque
 callee memory preservation or mixed PE32 callback activation is implied.
-`LocalUnwindFrameProofInspectsLeafWritesAndReturnPC` uses decoded caller/helper
+`LocalUnwindFrameProofInspectsCalleeWritesAndReturnPC` uses decoded caller/helper
 instructions to check a neighbouring parent-frame write, partial saved-SP
 overwrite, unknown write address, return-PC corruption, wrong return SP,
 nested calls, malformed/incomplete bodies, and missing or stale callee evidence.
+Two- and three-body call chains and repeated invocations retain a proved cell;
+opaque calls, direct/mutual recursion, callee-save register clobbers, nested
+one-arm writes and exhausted budgets do not. Both explicit writes and a
+stack-switched CALL must preserve every active return PC. Missing or changed
+inner bodies invalidate the entire receipt, and a repeated body is checked
+again with the second invocation's actual argument addresses.
+`LocalUnwindCalleeDepthAndWorkLimitsDoNotPublishPartialFacts` checks shallow
+chains, the 16-body limit, deeper chains and an explicitly exhausted budget.
 Missing instruction slices in either caller or callee, a symmetrically removed
 callee branch edge, and a wholly removed caller branch arm cannot hide the path
 that overwrites a saved cell. Complete caller diamonds retain their frame proof.

@@ -1551,9 +1551,10 @@ TEST(CFGBuilderCoverage, LocalUnwindTargetRequiresExclusiveSameFrameUses) {
   }
 }
 
-TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
+TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsCalleeWritesAndReturnPC) {
   constexpr va_t Entry = 0x140001000, Target = Entry + 0x80;
   constexpr va_t Leaf = Entry + 0x100, Stub = Entry + 0x180;
+  constexpr va_t InnerVA = Entry + 0x140, GrandVA = Entry + 0x160;
   auto Make = [&] {
     BinaryImage Img;
     Img.Arch = Arch::X64;
@@ -1622,7 +1623,7 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
     Img.ExceptionMetadata.rebuildIndex();
     return Img;
   };
-  for (unsigned Mutation = 0; Mutation != 25; ++Mutation) {
+  for (unsigned Mutation = 0; Mutation != 40; ++Mutation) {
     SCOPED_TRACE(Mutation);
     auto Img = Make();
     auto &Bytes = Img.Segments[0].Data;
@@ -1643,7 +1644,7 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
     if (Mutation == 5) {
       const std::vector<uint8_t> Body{
           0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x89, 0xd5, 0xe8, 0x73,
-          0,    0,    0, // nested call cannot borrow a leaf contract
+          0,    0,    0, // an opaque nested call cannot borrow a body contract
           0xc6, 0x45, 0x20, 1,    0x48, 0x83, 0xc4, 0x20, 0x5d, 0xc3};
       std::copy(Body.begin(), Body.end(), Bytes.begin() + 0x100);
       Img.Symbols[1].Size = Body.size();
@@ -1672,9 +1673,58 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
           1,    0xeb, 0xbe}; // byte store; jmp back to the local-unwind setup
       std::copy(Arm.begin(), Arm.end(), Bytes.begin() + 0x50);
     }
+    if (Mutation >= 25) {
+      std::vector<uint8_t> Body{0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x89,
+                                0xd5, 0xe8, 0x33, 0,    0,    0, // call InnerVA
+                                0xc6, 0x45, 0x20, 1,    0x48, 0x83, 0xc4,
+                                0x20, 0x5d, 0xc3};
+      if (Mutation == 38)
+        Body.insert(Body.begin() + 13,
+                    {0x48, 0x89, 0xea,      // mov rdx,rbp
+                     0xe8, 0x2b, 0, 0, 0}); // second independent invocation
+      if (Mutation == 39)
+        Body.insert(Body.begin() + 13,
+                    {0x48, 0x8d, 0x55, 8,   // lea rdx,[rbp+8]
+                     0xe8, 0x2a, 0, 0, 0}); // same body, overlapping borrow
+      std::copy(Body.begin(), Body.end(), Bytes.begin() + 0x100);
+      Img.Symbols[1].Size = Body.size();
+      std::vector<uint8_t> Inner{0xc6, 0x42, 0x21, 2, 0xc3};
+      if (Mutation == 26)
+        Inner[2] = 0x28; // nested overwrite of the caller's saved SP
+      if (Mutation == 27)
+        Inner = {0xc6, 0x44, 0x24, 0x30, 1, 0xc3}; // outer return PC
+      if (Mutation == 28)
+        Inner = {0xc6, 0x04, 0x24, 1, 0xc3}; // current return PC
+      if (Mutation == 29)
+        Inner = {0xe8, 0xfb, 0xff, 0xff, 0xff, 0xc3}; // recursion
+      if (Mutation == 31)
+        Inner = {0x48, 0x89, 0xcd, 0xc3}; // clobber the outer RBP alias
+      if (Mutation == 32)
+        Inner = {0x85, 0xc9, 0x74, 5,    0xc6, 0x42, 0x21, 2,
+                 0xc3, 0xc6, 0x42, 0x28, 2,    0xc3}; // only one arm clobbers
+      if (Mutation == 33)
+        Inner = {0x57, 0x48, 0x83, 0xec, 0x20, 0x48, 0x89,
+                 0xd7, 0xe8, 0x13, 0,    0,    0, // third checked callee
+                 0x48, 0x83, 0xc4, 0x20, 0x5f, 0xc3};
+      if (Mutation == 34)
+        Inner = {0x48, 0x83, 0xc4, 0x38, 0xe8,
+                 0x17, 0,    0,    0, // CALL itself overwrites the outer PC
+                 0x48, 0x83, 0xec, 0x38, 0xc3};
+      if (Mutation == 35)
+        Inner = {0xe8, 0xbb, 0xff, 0xff, 0xff, 0xc3}; // mutual recursion
+      std::copy(Inner.begin(), Inner.end(), Bytes.begin() + 0x140);
+      Img.Symbols.push_back(Symbol::makeFunc(InnerVA, Inner.size()));
+      const std::array<uint8_t, 5> Grand{0xc6, 0x42, 0x22, 3, 0xc3};
+      std::copy(Grand.begin(), Grand.end(), Bytes.begin() + 0x160);
+      Img.Symbols.push_back(Symbol::makeFunc(GrandVA, Grand.size()));
+    }
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     std::set<va_t> Entries{Entry, Leaf, Stub};
+    if (Mutation >= 25) {
+      Entries.insert(InnerVA);
+      Entries.insert(GrandVA);
+    }
     CFGBuilder Builder;
     Builder.setKnownFuncEntries(&Entries);
     auto Caller = Builder.build(Img, Dec, Entry, "caller");
@@ -1737,21 +1787,46 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
       }
     }
     std::map<va_t, const LowFunc *> Callees{{Leaf, &Callee}};
+    LowFunc Inner, Grand;
+    if (Mutation >= 25) {
+      Inner = Builder.build(Img, Dec, InnerVA, "inner");
+      Grand = Builder.build(Img, Dec, GrandVA, "grand");
+      ASSERT_TRUE(Inner.hasCompleteLiftCoverage());
+      ASSERT_TRUE(Grand.hasCompleteLiftCoverage());
+      if (Mutation == 36)
+        Inner.TruncatedPathAddresses.push_back(InnerVA);
+      if (Mutation != 30)
+        Callees.emplace(InnerVA, &Inner);
+      Callees.emplace(GrandVA, &Grand);
+    }
     size_t Budget = 100000;
     const auto Opaque =
         proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64), Budget);
     EXPECT_TRUE(Opaque.Calls.empty());
-    Budget = Mutation == 10 ? 0 : Mutation == 16 ? 1 : 100000;
+    Budget = Mutation == 10   ? 0
+             : Mutation == 16 ? 1
+             : Mutation == 37 ? 50
+                              : 100000;
     auto Proof = proveLowSEHFrames(Caller, getTargetRegInfo(Arch::X64), Budget,
                                    &Callees);
-    if (Mutation != 0 && Mutation != 11 && Mutation != 23) {
+    if (Mutation != 0 && Mutation != 11 && Mutation != 23 && Mutation != 25 &&
+        Mutation != 33 && Mutation != 38) {
       EXPECT_TRUE(Proof.Calls.empty());
       continue;
     }
     ASSERT_EQ(Proof.Calls.size(), 1u);
     EXPECT_EQ(Proof.Calls.begin()->second, -56);
-    EXPECT_EQ(Proof.CalleeDependencies, (std::vector<va_t>{Leaf}));
+    std::vector<va_t> Dependencies{Leaf};
+    if (Mutation >= 25)
+      Dependencies.push_back(InnerVA);
+    if (Mutation == 33)
+      Dependencies.push_back(GrandVA);
+    EXPECT_EQ(Proof.CalleeDependencies, Dependencies);
     std::vector<LowFunc> Bodies{Caller, Callee};
+    if (Mutation >= 25) {
+      Bodies.push_back(Inner);
+      Bodies.push_back(Grand);
+    }
     auto Evidence =
         pipeline_detail::collectWindowsEHContinuationRootsForTesting(
             Img, Bodies, Entries, std::nullopt, true);
@@ -1768,6 +1843,22 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
     EXPECT_THROW(
         LowToMedConverter().convert(Caller, Arch::X64, BinaryFormat::COFF),
         std::exception);
+    if (Mutation >= 25) {
+      Callees.erase(InnerVA);
+      EXPECT_THROW(Converter.convert(Caller, Arch::X64, BinaryFormat::COFF),
+                   std::exception);
+      Callees.emplace(InnerVA, &Inner);
+      Inner.Blocks.front().InstructionBoundaries.front().Immediate = 99;
+      EXPECT_THROW(Converter.convert(Caller, Arch::X64, BinaryFormat::COFF),
+                   std::exception);
+      Inner.Blocks.front().InstructionBoundaries.front().Immediate.reset();
+      if (Mutation == 33) {
+        Callees.erase(GrandVA);
+        EXPECT_THROW(Converter.convert(Caller, Arch::X64, BinaryFormat::COFF),
+                     std::exception);
+        Callees.emplace(GrandVA, &Grand);
+      }
+    }
     const auto Original = Callee;
     bool ChangedStore = false;
     for (auto &Block : Callee.Blocks)
@@ -1787,6 +1878,76 @@ TEST(CFGBuilderCoverage, LocalUnwindFrameProofInspectsLeafWritesAndReturnPC) {
                                           &Callees));
     EXPECT_THROW(Converter.convert(Caller, Arch::X64, BinaryFormat::COFF),
                  std::exception);
+  }
+}
+
+TEST(CFGBuilderCoverage,
+     LocalUnwindCalleeDepthAndWorkLimitsDoNotPublishPartialFacts) {
+  constexpr va_t Entry = 0x140001000;
+  for (unsigned Depth : {1u, 2u, 16u, 17u, 20u}) {
+    SCOPED_TRACE(Depth);
+    BinaryImage Img;
+    Img.Arch = Arch::X64;
+    Img.Bits = Bitness::Bits64;
+    Img.Format = BinaryFormat::COFF;
+    Img.Base = Entry - 0x1000;
+    Img.Entry = Entry;
+    Segment Text;
+    Text.Name = ".text";
+    Text.VA = Entry;
+    Text.Size = 0x801;
+    Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+    Text.Data.assign(Text.Size, 0xcc);
+    const std::vector<uint8_t> Caller{
+        0x48, 0x83, 0xec, 0x38,       // sub rsp,56
+        0x48, 0x89, 0x64, 0x24, 0x28, // mov [rsp+40],rsp
+        0xe8, 0xf2, 0,    0,    0,    // call first helper
+        0x48, 0x8b, 0x4c, 0x24, 0x28, // mov rcx,[rsp+40]
+        0xe8, 0xe8, 7,    0,    0, // call opaque target with the restored frame
+        0x48, 0x83, 0xc4, 0x38, 0xc3};
+    std::copy(Caller.begin(), Caller.end(), Text.Data.begin());
+    Img.Symbols.push_back(Symbol::makeFunc(Entry, Caller.size()));
+    std::set<va_t> Entries{Entry, Entry + 0x800};
+    for (unsigned I = 0; I != Depth; ++I) {
+      const unsigned Offset = 0x100 + I * 16;
+      const std::vector<uint8_t> Body =
+          I + 1 == Depth
+              ? std::vector<uint8_t>{0xc3}
+              : std::vector<uint8_t>{0x48, 0x83, 0xec, 0x28, 0xe8, 7,    0,
+                                     0,    0,    0x48, 0x83, 0xc4, 0x28, 0xc3};
+      std::copy(Body.begin(), Body.end(), Text.Data.begin() + Offset);
+      Img.Symbols.push_back(Symbol::makeFunc(Entry + Offset, Body.size()));
+      Entries.insert(Entry + Offset);
+    }
+    Text.Data[0x800] = 0xc3;
+    Img.Segments.push_back(std::move(Text));
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Entries);
+    auto Function = Builder.build(Img, Dec, Entry, "caller");
+    ASSERT_TRUE(Function.hasCompleteLiftCoverage());
+    std::map<va_t, LowFunc> Bodies;
+    std::map<va_t, const LowFunc *> Callees;
+    for (unsigned I = 0; I != Depth; ++I) {
+      const va_t Address = Entry + 0x100 + I * 16;
+      auto &Body = Bodies[Address];
+      Body = Builder.build(Img, Dec, Address, "helper");
+      ASSERT_TRUE(Body.hasCompleteLiftCoverage());
+      Callees.emplace(Address, &Body);
+    }
+    for (size_t InitialWork : {size_t(500000), size_t(32)}) {
+      SCOPED_TRACE(InitialWork);
+      size_t Work = InitialWork;
+      const auto Proof = proveLowSEHFrames(
+          Function, getTargetRegInfo(Arch::X64), Work, &Callees);
+      if (Depth <= 16 && InitialWork == 500000) {
+        ASSERT_EQ(Proof.Calls.size(), 1u);
+        EXPECT_EQ(Proof.Calls.begin()->second, -56);
+        EXPECT_EQ(Proof.CalleeDependencies.size(), Depth);
+      } else
+        EXPECT_TRUE(Proof.Calls.empty());
+    }
   }
 }
 

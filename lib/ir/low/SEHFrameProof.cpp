@@ -14,6 +14,7 @@
 #include "neverd/ir/low/LowUndefinedEffects.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/SHA256.h"
@@ -25,6 +26,9 @@
 
 namespace neverd {
 namespace {
+
+// The shared work budget bounds total analysis; this also bounds C++ recursion.
+constexpr size_t MaxCalleeDepth = 16;
 
 using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
 Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
@@ -150,10 +154,19 @@ bool completeFrameCFG(const LowFunc &F, const std::map<int, size_t> &Positions,
 struct CallContext {
   const std::map<va_t, const LowFunc *> *Callees = nullptr;
   std::set<va_t> Dependencies;
+  std::set<va_t> ActiveFunctions;
+  std::set<int64_t> ReturnSlots;
+
+  bool overlapsReturnPC(int64_t Begin, int64_t End) const {
+    return llvm::any_of(ReturnSlots, [&](int64_t Slot) {
+      return Begin < Slot + 8 && Slot < End;
+    });
+  }
 };
 
-std::optional<State> transferLeaf(const LowFunc &Callee, const State &Caller,
-                                  const TargetRegInfo &TRI, size_t &Remaining);
+std::optional<State> transferCallee(const LowFunc &Callee, const State &Caller,
+                                    const TargetRegInfo &TRI, size_t &Remaining,
+                                    CallContext &Calls);
 
 bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
               size_t &Remaining, LowSEHFrameProof *Record,
@@ -201,8 +214,6 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
     }
     if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
         Op.Opcode == NdOp::INTRINSIC) {
-      if (ReturnSlot)
-        return false; // This bounded proof admits returning leaves only.
       const auto CurrentSP = S.get(SP);
       if (Record && CurrentSP && S.get(Frame) == CurrentSP &&
           Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
@@ -212,21 +223,37 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
           return false;
       }
       std::optional<State> Returned;
-      if (Calls && Calls->Callees && CurrentSP && !S.Spills.empty() &&
-          Op.Opcode == NdOp::CALL && Op.NumInputs == 1 &&
-          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 8) {
+      if (Calls && Calls->Callees && CurrentSP &&
+          (ReturnSlot || !S.Spills.empty()) && Op.Opcode == NdOp::CALL &&
+          Op.NumInputs == 1 && Op.Inputs[0].isConst() &&
+          Op.Inputs[0].Size == 8) {
         const auto It = Calls->Callees->find(Op.Inputs[0].Offset);
         if (It != Calls->Callees->end() && It->second &&
             It->second->Entry == It->first) {
-          Returned = transferLeaf(*It->second, S, TRI, Remaining);
+          Returned = transferCallee(*It->second, S, TRI, Remaining, *Calls);
           if (Returned)
             Calls->Dependencies.insert(It->first);
         }
       }
+      if (ReturnSlot && !Returned)
+        return false;
       // Only the inspected body's actual stores may preserve a saved slot.
       // A neighbouring pointer passed to an opaque callee has no extent.
-      S = Returned ? std::move(*Returned) : State{};
-      S.Values.clear();
+      State Preserved;
+      if (Returned) {
+        Preserved.Spills = std::move(Returned->Spills);
+        for (const auto &[K, Value] : S.Values) {
+          const auto &[Space, Offset, Size] = K;
+          const auto AtReturn = Returned->Values.find(K);
+          // The actual body must preserve the value as well as its ABI
+          // carrier. A declared callee-save register alone grants no fact.
+          if (Space == VnodeSpace::REG &&
+              TRI.isCallPreserved(Offset, Size, BinaryFormat::COFF) &&
+              AtReturn != Returned->Values.end() && AtReturn->second == Value)
+            Preserved.Values.emplace(K, Value);
+        }
+      }
+      S = std::move(Preserved);
       const bool DefinesSP = Op.Output.isReg() && Op.Output.Size &&
                              Op.Output.Offset < SP.Offset + SP.Size &&
                              SP.Offset < Op.Output.Offset + Op.Output.Size;
@@ -249,7 +276,9 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
         S.Spills.clear();
         continue;
       }
-      if (ReturnSlot && *Address < *ReturnSlot + 8 && *ReturnSlot < End)
+      if (ReturnSlot &&
+          (!Calls || !consume(Remaining, Calls->ReturnSlots.size()) ||
+           Calls->overlapsReturnPC(*Address, End)))
         return false;
       S.invalidateMemory(*Address, End);
       if (Value && Op.Inputs[1].Size == 8)
@@ -309,21 +338,32 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
 // Inspect the concrete argument/frame values at this call, preserving only
 // saved cells common to all returns. The architectural call owns one new PC
 // slot; LowIR's RETURN does not otherwise expose its load. A store through an
-// unknown address, a modified PC, a non-returning exit or a nested call cannot
-// establish this contract. No parameter width or ABI declaration bounds writes.
-std::optional<State> transferLeaf(const LowFunc &F, const State &Caller,
-                                  const TargetRegInfo &TRI, size_t &Remaining) {
+// unknown address, a modified active PC, a non-returning exit or an unproved
+// nested call cannot establish this contract. No parameter width or ABI
+// declaration bounds writes. Every nested body shares the caller's budget.
+std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
+                                    const TargetRegInfo &TRI, size_t &Remaining,
+                                    CallContext &Calls) {
   const auto SP = NdVar::reg(TRI.StackPointer, 8);
   const auto CallerSP = Caller.get(SP);
   int64_t Slot = 0;
   if (!CallerSP || llvm::SubOverflow(*CallerSP, int64_t{8}, Slot) ||
-      !F.hasCompleteLiftCoverage() || !F.FunctionTemporaries.empty() ||
-      F.Blocks.empty() || F.CalleePopBytes ||
+      Calls.ActiveFunctions.size() >= MaxCalleeDepth ||
+      Calls.ActiveFunctions.count(F.Entry) ||
+      !consume(Remaining, Calls.ReturnSlots.size() + 1) ||
+      Calls.overlapsReturnPC(Slot, *CallerSP) || !F.hasCompleteLiftCoverage() ||
+      !F.FunctionTemporaries.empty() || F.Blocks.empty() || F.CalleePopBytes ||
       (F.ExceptionMetadata &&
        (F.ExceptionMetadata->SEH || F.ExceptionMetadata->Cxx ||
         F.ExceptionMetadata->Registration)) ||
       !consume(Remaining, Caller.Values.size() + Caller.Spills.size() + 1))
     return std::nullopt;
+  Calls.ActiveFunctions.insert(F.Entry);
+  Calls.ReturnSlots.insert(Slot);
+  auto RestoreInvocation = llvm::make_scope_exit([&] {
+    Calls.ActiveFunctions.erase(F.Entry);
+    Calls.ReturnSlots.erase(Slot);
+  });
   std::map<int, size_t> Positions;
   std::set<va_t> Starts;
   std::optional<size_t> Entry;
@@ -367,7 +407,7 @@ std::optional<State> transferLeaf(const LowFunc &F, const State &Caller,
         B.Ops.empty())
       return std::nullopt;
     State Out = *Inputs[I];
-    if (!transfer(B, Out, TRI, Remaining, nullptr, nullptr, Slot))
+    if (!transfer(B, Out, TRI, Remaining, nullptr, &Calls, Slot))
       return std::nullopt;
     const auto &Last = B.Ops.back();
     if (Last.Opcode == NdOp::RETURN) {
@@ -501,7 +541,8 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
       !F.hasCompleteLiftCoverage() || !F.FunctionTemporaries.empty())
     return {};
   const size_t N = F.Blocks.size();
-  CallContext Calls{Callees, {}};
+  CallContext Calls;
+  Calls.Callees = Callees;
   std::map<int, size_t> Positions;
   std::set<va_t> Starts;
   for (size_t I = 0; I < N; ++I)

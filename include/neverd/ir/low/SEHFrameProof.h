@@ -32,8 +32,9 @@ struct LowSEHFrameProof {
 
 /// Intersection analysis over ordinary CFG edges. Independent and exceptional
 /// entries start without the function's SP identity. Unknown calls/stores
-/// invalidate saved memory. Optional decoded leaf callees prove concrete
-/// effects; no callee memory contract is inferred from an ABI.
+/// invalidate saved memory. Optional decoded callees prove concrete effects
+/// under one bounded invocation stack; every active return PC is protected.
+/// No callee memory contract is inferred from an ABI.
 /// Exhausted budgets and incomplete inputs return no proof.
 LowSEHFrameProof
 proveLowSEHFrames(const LowFunc &Function, const TargetRegInfo &TRI,
