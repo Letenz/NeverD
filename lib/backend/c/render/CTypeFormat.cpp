@@ -251,11 +251,8 @@ std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
   return (Prefix + "\"" + Text + "\"").str();
 }
 
-bool isCodeSectionData(const DebugContext *Dbg, va_t Addr) {
-  if (!Dbg)
-    return false;
-  const auto Data = Dbg->resolveDataObject(Addr);
-  return Data && !Data->Name.empty() && !Dbg->resolveFunction(Addr);
+bool isCodeSectionData(const BinaryImage *Img, va_t Addr) {
+  return Img && Img->DataInCode.count(Addr) != 0;
 }
 
 namespace {

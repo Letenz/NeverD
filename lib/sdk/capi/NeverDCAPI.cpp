@@ -592,6 +592,7 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
       Image.ExactDataObjects, [](const ExactDataObjectExtent &Object) {
         return Object.Evidence == ExactDataObjectEvidence::AuthenticatedDebug;
       });
+  Image.DataInCode.clear();
   applyDebugSymbols(Image, *Found.Context);
   const auto CurrentSize = std::filesystem::file_size(Request.PDBPath, EC);
   const auto CurrentTime =

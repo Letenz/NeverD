@@ -5139,7 +5139,7 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
   // .rdata / .rodata (readable, not writable, not executable), and where
   // the debug information places data among the code.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return isCodeSectionData(Dbg, Addr);
+    return isCodeSectionData(Opts.Image, Addr);
   return true;
 }
 
