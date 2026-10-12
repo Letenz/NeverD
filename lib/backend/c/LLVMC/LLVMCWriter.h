@@ -92,6 +92,7 @@ public:
   void writeModule(llvm::Module &Mod, const llvm::Function *Only = nullptr);
   void prepareFunctionIdentifiers(llvm::Module &Mod);
   std::string functionIdentifier(const llvm::Function &Fn) const;
+  std::string sourceScalarType(llvm::Type *Type, bool Signed) const;
   std::string sourceFunctionDeclaration(const llvm::Function &Fn,
                                         llvm::StringRef Declarator) const;
   /// The C name of global \p Name: the module names a global by its symbol

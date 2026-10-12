@@ -68,6 +68,11 @@ struct StateSourceImport {
   /// operands use these values; supplied operands retain their captured values.
   /// A pointer default must be null. Variadic imports cannot have defaults.
   std::vector<uint64_t> Defaults;
+  /// Instead of a named import, call this captured pointer operand with the
+  /// other Parameters in order. Name must be empty. The target is required,
+  /// not variadic or defaulted, and null retains the original gateway.
+  /// This asserts the target's callable ABI; it supplies no symbol identity.
+  std::optional<unsigned> TargetArgument;
 };
 struct StateSourceImage {
   StateSourceSlot Base;

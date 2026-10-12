@@ -1005,6 +1005,20 @@ from the captured count before fixed writes. Non-null pointer defaults,
 optional by-value strings and defaults on variadic imports are rejected.
 Variadic integer tails must declare their promoted types. Neither JSON parsing
 nor C emission supplies omitted operands or infers their meaning from names.
+The required prefix must fit the gateway's captured slots; explicit defaults
+may extend beyond that bank argument list. The accepted count is capped by the
+available slots, and such trailing operands are always supplied by the contract.
+An unnamed `TargetArgument` contract forwards one required captured pointer as
+the callee, removes it from the native operands and preserves their remaining
+order. It asserts an ordinary fixed C ABI, not an imported symbol or target
+identity. Null targets, mismatched selectors and invalid counts keep the
+original gateway. The shared owner captures all operands before fixed bank
+writes; the emitter shares signed signature spelling between declarations and
+indirect calls. Exact LLVM call types bypass virtual-style callee folding at its
+shared owner, preserving the captured target's loads and observable stores even
+when another call changes the source pointer slot. Named imports,
+pointer-source candidates, variadics and string
+normalization of the target cannot be mixed with this mode.
 The same owner handles explicitly unspecified void-result captures with a
 bounded forward byte-liveness proof. It omits a capture only when all normal
 return paths overwrite every destination byte before any observer. Unknown

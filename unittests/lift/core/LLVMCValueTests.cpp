@@ -2048,6 +2048,83 @@ int main(void) {
   }
 }
 
+TEST(LLVMCValues, PreservedIndirectChainsKeepLoadsStoresAndCapturedTargets) {
+  llvm::LLVMContext C;
+  llvm::SMDiagnostic Diag;
+  auto M = llvm::parseAssemblyString(R"(
+declare void @replace_target(ptr)
+define i64 @captured(ptr %holder, ptr %snapshot, i64 %x) {
+  %base = load i64, ptr %holder, align 1
+  %address = add i64 %base, 24
+  %slot = inttoptr i64 %address to ptr
+  %target = load i64, ptr %slot, align 1
+  store i64 %target, ptr %snapshot, align 1
+  call void @replace_target(ptr %slot)
+  %nonnull = icmp ne i64 %target, 0
+  br i1 %nonnull, label %invoke, label %empty
+invoke:
+  %callee = inttoptr i64 %target to ptr
+  %result = call i64 %callee(i64 %x)
+  ret i64 %result
+empty:
+  ret i64 0
+}
+)",
+                                     Diag, C);
+  ASSERT_TRUE(M);
+  M->setDataLayout("e-p:64:64");
+  auto Print = [&] {
+    std::string Text;
+    llvm::raw_string_ostream OS(Text);
+    M->print(OS, nullptr);
+    return Text;
+  };
+  auto Before = Print();
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers =
+      neverd::CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*M, OS, Options));
+  EXPECT_EQ(Print(), Before);
+  M->getFunction("captured")->setName("reference");
+  auto Reference = Print();
+  Source += R"(
+#include <string.h>
+extern uint64_t reference(void *,void *,uint64_t);
+static unsigned mode,calls;
+static uint64_t trace;
+static uint64_t first(uint64_t x) { ++calls;trace=x*131;return x^0xa987654321ULL; }
+static uint64_t second(uint64_t x) { ++calls;trace=x*37;return x+0x192837465ULL; }
+void replace_target(void *p) {
+ uint64_t target=mode ? 0 : (uintptr_t)second;
+ memcpy(p,&target,8);
+}
+int main(void) {
+ for(unsigned k=0;k<1024;k++) {
+  unsigned char object[48],saved[48],holder[16],a[16],b[16];
+  memset(object,0x63,sizeof(object));memset(holder,0x19,sizeof(holder));
+  memset(a,0x57,sizeof(a));memcpy(b,a,sizeof(a));
+  unsigned off=k&7;mode=(k/8)&1;
+  uint64_t base=(uintptr_t)(object+off);
+  uint64_t target=k%3==0 ? 0 : k%3==1 ? (uintptr_t)first : (uintptr_t)second;
+  memcpy(holder+off,&base,8);memcpy(object+off+24,&target,8);
+  uint64_t x=UINT64_C(0xfedcba9876543210)*k;
+  calls=0;trace=0;uint64_t ra=reference(holder+off,a+off,x),ta=trace;unsigned ca=calls;
+  memcpy(saved,object,sizeof(object));memcpy(object+off+24,&target,8);
+  calls=0;trace=0;uint64_t rb=captured(holder+off,b+off,x);
+  if(ra!=rb || ta!=trace || ca!=calls || memcmp(a,b,sizeof(a)) || memcmp(object,saved,sizeof(object))) return 1;
+  uint64_t snapshot;memcpy(&snapshot,b+off,8);if(snapshot!=target) return 2;
+ }
+ return 0;
+}
+)";
+  for (auto Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+}
+
 TEST(LLVMCValues, PreservedIndirectVoidCallHasExplicitEmptyPrototype) {
   llvm::LLVMContext C;
   llvm::Module M("indirect-void-call", C);

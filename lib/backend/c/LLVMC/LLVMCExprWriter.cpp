@@ -2304,7 +2304,10 @@ bool LLVMCWriter::isComposedRemValue(const llvm::Value *V) {
 
 std::string LLVMCWriter::indirectCalleeStr(const llvm::Value *Callee,
                                            bool MarkChain) {
-  if (!Callee)
+  // Exact calls print the captured SSA operand, not a reconstructed vtable
+  // expression. Do not mark its loads or observable stores as consumed by an
+  // expression that this mode will never emit.
+  if (!Callee || Opts.PreserveLLVMFunctionTypes)
     return {};
   std::vector<const llvm::Instruction *> Chain;
   auto Mark = [&](const llvm::Value *V) {

@@ -301,6 +301,24 @@ Defaults cannot be combined with variadic imports or optional by-value strings.
 These values are explicit caller assertions; NeverD does not infer a missing
 argument's value from the callee name.
 
+The required prefix must fit the gateway's `arguments`. Defaults may supply
+additional trailing parameters without bank slots; the accepted count is capped
+by the number of available slots. This represents explicit wrapper padding,
+without reading nonexistent operands.
+
+To forward a target held in an argument, replace `name` with `target_argument`,
+the zero-based index of a required `pointer` in `parameters`. For example,
+`parameters: ["pointer", "u64", "u64"]`, `target_argument: 0` and `defaults: [0]`
+with two bank argument slots calls the captured target with the second slot
+and a trailing zero. The count still includes the target operand. Other
+parameters keep their order; the target must use an eight-byte slot. Null
+targets, invalid counts and selector mismatches use the original gateway.
+The contract asserts that nonnull targets support this fixed C calling ABI and
+the declared effects. It does not identify a symbol or prove arbitrary pointers
+callable. This mode cannot use `name`, `pointer_source`, a pointer gateway,
+variadics, a defaulted target or a string contract on the target. It introduces
+no guest-memory read to discover the callee.
+
 Gateway `indirect_arguments` lists argument indices whose slots contain byte
 offsets into the bank. Each points to an eight-byte value captured before fixed
 writes. Unknown or out-of-bounds offsets preserve the original gateway; the

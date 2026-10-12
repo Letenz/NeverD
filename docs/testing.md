@@ -1683,6 +1683,20 @@ O0/O2 with undefined-behavior traps; both accepted and fallback paths execute.
 Native Python tests check static/callback parity, zero supplied operands,
 out-of-range counts and rejection of malformed or overflowing defaults,
 non-null pointer defaults and unpromoted narrow variadic operands.
+Forwarded-target cases reject conflicting identities, malformed target indices,
+missing required slots and target normalization before mutation. Windows x64
+and big-endian ARM64 IR check target removal at different operand positions and
+signed indirect signatures. An independent compiled oracle compares 8192 cases
+per O0/O2 level with undefined-behavior traps: replaced and null targets,
+captured operands whose slots are overwritten, optional pointers, padding beyond
+the available bank slots, signed narrow results, all four store widths, full
+unaligned banks, guest effects and failure statuses. Python static/callback
+producers share padding and target admission through the native C API.
+`LLVMCValues.PreservedIndirectChainsKeepLoadsStoresAndCapturedTargets` checks
+1024 nested-pointer cases at each O0/O2 level against independently compiled
+LLVM, with undefined-behavior traps. It preserves observable target snapshots
+and calls the captured value after another call replaces or nulls the slot.
+The compiler also rejects any emitted read of an uninitialized target.
 `LLVMCVoidAnalysis.FreezeOfIntegerCall*` covers joins between an integer call
 result and a memory load. Its 1024-case C oracle checks both branches, the
 stored/returned bits and exact call counts at O0/O2 with undefined-behavior

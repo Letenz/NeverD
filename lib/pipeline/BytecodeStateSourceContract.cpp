@@ -215,13 +215,13 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
     for (const auto &I : *O->getArray("imports")) {
       auto *Import = I.getAsObject();
       if (!Import ||
-          !keys(*Import,
-                {"selector", "pointer_source", "name", "parameters", "result",
-                 "variadic_fixed", "void_result", "defaults"}) ||
+          !keys(*Import, {"selector", "pointer_source", "name", "parameters",
+                          "result", "variadic_fixed", "void_result", "defaults",
+                          "target_argument"}) ||
           (G.FunctionPointer ? bool(Import->get("selector"))
                              : !number(*Import, "selector")) ||
-          !Import->getString("name") || !Import->getArray("parameters") ||
-          !Import->get("result"))
+          (bool(Import->get("name")) == bool(Import->get("target_argument"))) ||
+          !Import->getArray("parameters") || !Import->get("result"))
         return invalid("incomplete imported signature");
       StateSourceImport Native;
       Native.Selector = number(*Import, "selector").value_or(0);
@@ -242,7 +242,17 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
             StateSourcePointerSource{unsigned(*number(*Source, "image")),
                                      unsigned(*number(*Source, "offset"))};
       }
-      Native.Name = Import->getString("name")->str();
+      if (Import->get("target_argument")) {
+        auto Index = number(*Import, "target_argument");
+        if (!Index || *Index >= 16)
+          return invalid("invalid forwarded target argument");
+        Native.TargetArgument = unsigned(*Index);
+      } else {
+        auto Name = Import->getString("name");
+        if (!Name)
+          return invalid("invalid import name");
+        Native.Name = Name->str();
+      }
       auto T = type(*Import->get("result"));
       if (!T)
         return T.takeError();

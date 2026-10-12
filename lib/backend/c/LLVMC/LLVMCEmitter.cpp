@@ -1068,26 +1068,28 @@ void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
       }
 }
 
+std::string LLVMCWriter::sourceScalarType(llvm::Type *T, bool Signed) const {
+  if (Signed && (T->isIntegerTy(8) || T->isIntegerTy(16) ||
+                 T->isIntegerTy(32) || T->isIntegerTy(64)))
+    return "int" + std::to_string(T->getIntegerBitWidth()) + "_t";
+  return typeToCLLVM(T);
+}
+
 std::string
 LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
                                        llvm::StringRef Declarator) const {
   auto *FT = Fn.getFunctionType();
-  auto SourceScalar = [&](llvm::Type *T, bool Signed) {
-    if (Signed && (T->isIntegerTy(8) || T->isIntegerTy(16) ||
-                   T->isIntegerTy(32) || T->isIntegerTy(64)))
-      return "int" + std::to_string(T->getIntegerBitWidth()) + "_t";
-    return typeToCLLVM(T);
-  };
-  std::string Result = SourceScalar(FT->getReturnType(),
-                                    Fn.hasFnAttribute(LLVMSourceSignedResult)) +
-                       " " + Declarator.str() + "(";
+  std::string Result =
+      sourceScalarType(FT->getReturnType(),
+                       Fn.hasFnAttribute(LLVMSourceSignedResult)) +
+      " " + Declarator.str() + "(";
   if (FT->getNumParams() == 0 && !FT->isVarArg()) {
     Result += "void";
   } else if (FT->getNumParams()) {
     for (unsigned I = 0; I < FT->getNumParams(); ++I) {
       if (I)
         Result += ", ";
-      Result += SourceScalar(
+      Result += sourceScalarType(
           FT->getParamType(I),
           Fn.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
     }

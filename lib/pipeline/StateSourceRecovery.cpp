@@ -94,7 +94,8 @@ llvm::FunctionType *signature(llvm::LLVMContext &C,
   std::vector<llvm::Type *> Parameters;
   unsigned Fixed = I.VariadicFixedParameters.value_or(I.Parameters.size());
   for (unsigned P = 0; P < Fixed; ++P)
-    Parameters.push_back(type(C, I.Parameters[P]));
+    if (I.TargetArgument != P)
+      Parameters.push_back(type(C, I.Parameters[P]));
   return llvm::FunctionType::get(type(C, I.Result), Parameters,
                                  I.VariadicFixedParameters.has_value());
 }
@@ -722,7 +723,8 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     std::set<uint64_t> Selectors;
     std::set<std::pair<unsigned, unsigned>> PointerSources;
     for (const auto &I : G.Imports) {
-      if (!identifier(I.Name) || Gateways.count(I.Name) ||
+      if ((I.TargetArgument ? !I.Name.empty() : !identifier(I.Name)) ||
+          Gateways.count(I.Name) ||
           (!G.FunctionPointer && (!Selectors.insert(I.Selector).second ||
                                   (!G.Selector && I.Selector))) ||
           bool(G.FunctionPointer) != bool(I.PointerSource) ||
@@ -735,11 +737,19 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           (I.VoidResult != StateSourceVoidResult::Zero &&
            (I.VoidResult != StateSourceVoidResult::Unspecified ||
             I.Result != StateSourceType::Void)) ||
-          I.Parameters.size() > G.Arguments.size() || !ValidType(I.Result) ||
+          I.Parameters.size() > 16 || !ValidType(I.Result) ||
           !llvm::all_of(I.Parameters, ValidType) ||
           llvm::is_contained(I.Parameters, StateSourceType::Void))
         return invalid("invalid import identity or parameters");
       unsigned Required = I.Parameters.size() - I.Defaults.size();
+      if (Required > G.Arguments.size())
+        return invalid("required argument has no bank slot");
+      if (I.TargetArgument &&
+          (G.FunctionPointer || I.PointerSource || I.VariadicFixedParameters ||
+           *I.TargetArgument >= Required ||
+           I.Parameters[*I.TargetArgument] != StateSourceType::Pointer ||
+           G.Arguments[*I.TargetArgument].Bytes != 8))
+        return invalid("invalid forwarded call target");
       for (unsigned P = 0; P < I.Parameters.size(); ++P) {
         auto *T = type(M.getContext(), I.Parameters[P]);
         if (I.VariadicFixedParameters && P >= *I.VariadicFixedParameters &&
@@ -763,8 +773,11 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
       }
       for (const auto &S : G.Strings)
         if (S.Argument >= I.Parameters.size() || S.Argument >= Required ||
+            I.TargetArgument == S.Argument ||
             I.Parameters[S.Argument] != StateSourceType::Pointer)
           return invalid("string requires an imported pointer parameter");
+      if (I.TargetArgument)
+        continue;
       auto *T = signature(M.getContext(), I);
       auto [At, Added] = Names.emplace(I.Name, &I);
       if ((!Added && (signature(M.getContext(), *At->second) != T ||
@@ -1035,8 +1048,9 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           *Offset <= R.Contract.StateBytes &&
           *Bytes <= R.Contract.StateBytes - *Offset)
         for (const auto &I : G.Imports) {
-          if (Arity && (*Arity > I.Parameters.size() ||
-                        *Arity < I.Parameters.size() - I.Defaults.size()))
+          if (Arity &&
+              (*Arity > std::min(I.Parameters.size(), G.Arguments.size()) ||
+               *Arity < I.Parameters.size() - I.Defaults.size()))
             continue;
           if (G.FunctionPointer) {
             if (!PointerOrigin)
@@ -1059,14 +1073,15 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       llvm::Value *ScalarMatches = B.getTrue();
       if (Import && !Arity) {
         auto *Count = Call->getArgOperand(N + 1);
-        unsigned Total = Import->Parameters.size();
+        unsigned Total =
+            std::min(Import->Parameters.size(), G.Arguments.size());
         if (Import->Defaults.empty())
           ScalarMatches = B.CreateICmpEQ(Count, B.getInt64(Total),
                                          "argument_count_matches");
         else
           ScalarMatches = B.CreateAnd(
-              B.CreateICmpUGE(Count,
-                              B.getInt64(Total - Import->Defaults.size())),
+              B.CreateICmpUGE(Count, B.getInt64(Import->Parameters.size() -
+                                                Import->Defaults.size())),
               B.CreateICmpULE(Count, B.getInt64(Total)),
               "argument_count_matches");
       }
@@ -1088,6 +1103,12 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
                                                          B.getInt64Ty()))),
             "function_pointer_matches");
       }
+      if (Import && Import->TargetArgument)
+        ScalarMatches = B.CreateAnd(
+            ScalarMatches,
+            B.CreateICmpNE(Call->getArgOperand(N + 4 + *Import->TargetArgument),
+                           B.getInt64(0)),
+            "call_target_nonnull");
       for (auto E : G.ExcludedArguments)
         ScalarMatches =
             B.CreateAnd(ScalarMatches,
@@ -1157,9 +1178,11 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       auto NativeCall = [&](llvm::IRBuilder<> &B) {
         std::vector<llvm::Value *> Args;
         for (size_t I = 0; I < Import->Parameters.size(); ++I) {
-          auto *V = Call->getArgOperand(N + 4 + I);
           size_t Required = Import->Parameters.size() - Import->Defaults.size();
-          if (I >= Required)
+          llvm::Value *V = I < G.Arguments.size()
+                               ? Call->getArgOperand(N + 4 + I)
+                               : B.getInt64(Import->Defaults[I - Required]);
+          if (I >= Required && I < G.Arguments.size())
             V = B.CreateSelect(
                 B.CreateICmpUGT(Call->getArgOperand(N + 1), B.getInt64(I)), V,
                 B.getInt64(Import->Defaults[I - Required]), "default_argument");
@@ -1174,35 +1197,57 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         // declared gateway contract. Guest effects cannot observe this bank.
         for (auto W : G.Writes)
           write(B, Call->getArgOperand(0), W.Slot, B.getInt64(W.Value), Scope);
-        auto Target = M.getOrInsertFunction(Import->Name,
-                                            signature(M.getContext(), *Import));
-        auto *Declaration = llvm::cast<llvm::Function>(Target.getCallee());
+        auto *FT = signature(M.getContext(), *Import);
+        llvm::Value *Callee;
+        if (Import->TargetArgument) {
+          Callee = Args[*Import->TargetArgument];
+          Args.erase(Args.begin() + *Import->TargetArgument);
+        } else {
+          Callee = M.getOrInsertFunction(Import->Name, FT).getCallee();
+          auto *Declaration = llvm::cast<llvm::Function>(Callee);
+          if (signedType(Import->Result))
+            Declaration->addFnAttr(LLVMSourceSignedResult);
+          for (unsigned I = 0; I < Declaration->arg_size(); ++I)
+            if (signedType(Import->Parameters[I]))
+              Declaration->addParamAttr(
+                  I, llvm::Attribute::get(M.getContext(),
+                                          LLVMSourceSignedParameter));
+        }
+        llvm::FunctionCallee Target(FT, Callee);
+        auto *Native =
+            B.CreateCall(Target, Args,
+                         Import->Result == StateSourceType::Void ? ""
+                         : Import->TargetArgument ? "indirect_result"
+                                                  : Import->Name + "_result");
         if (signedType(Import->Result))
-          Declaration->addFnAttr(LLVMSourceSignedResult);
-        for (unsigned I = 0; I < Declaration->arg_size(); ++I)
-          if (signedType(Import->Parameters[I]))
-            Declaration->addParamAttr(
-                I, llvm::Attribute::get(M.getContext(),
-                                        LLVMSourceSignedParameter));
-        auto *Native = B.CreateCall(Target, Args,
-                                    Import->Result == StateSourceType::Void
-                                        ? ""
-                                        : Import->Name + "_result");
+          Native->addFnAttr(
+              llvm::Attribute::get(M.getContext(), LLVMSourceSignedResult));
+        auto NativeIndex = [&](unsigned I) {
+          return I - unsigned(Import->TargetArgument &&
+                              I > *Import->TargetArgument);
+        };
         for (unsigned I = 0; I < Import->Parameters.size(); ++I) {
+          if (Import->TargetArgument == I)
+            continue;
+          unsigned P = NativeIndex(I);
+          if (signedType(Import->Parameters[I]))
+            Native->addParamAttr(
+                P, llvm::Attribute::get(M.getContext(),
+                                        LLVMSourceSignedParameter));
           // Fixed pointer operands already carry a pointer expression; keep
           // by-value string literals readable. Integer casts also select the
           // declared overload when a platform header provides alternatives.
-          if (I < Declaration->arg_size() &&
+          if (P < FT->getNumParams() &&
               Import->Parameters[I] == StateSourceType::Pointer)
             continue;
           Native->addParamAttr(
-              I, llvm::Attribute::get(
+              P, llvm::Attribute::get(
                      M.getContext(), LLVMSourceArgumentType,
                      sourceScalarSpelling(Import->Parameters[I])));
         }
         for (const auto &S : Candidates)
           Native->addParamAttr(
-              S.Argument,
+              NativeIndex(S.Argument),
               llvm::Attribute::get(M.getContext(),
                                    LLVMSourceByValueStringParameter));
         Native->setMetadata(llvm::LLVMContext::MD_noalias, Scope);

@@ -4629,10 +4629,12 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
     break;
   }
   std::string Parameters;
-  for (auto *Parameter : Type->params()) {
+  for (unsigned I = 0; I < Type->getNumParams(); ++I) {
     if (!Parameters.empty())
       Parameters += ", ";
-    Parameters += typeToCLLVM(Parameter);
+    Parameters += sourceScalarType(
+        Type->getParamType(I),
+        Call.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
   }
   if (Type->isVarArg()) {
     // C before C23 names no variadic type without a fixed parameter; shown
@@ -4645,8 +4647,9 @@ std::string LLVMCWriter::indirectCalleeType(const llvm::CallBase &Call,
   } else if (Parameters.empty()) {
     Parameters = "void";
   }
-  return typeToCLLVM(Type->getReturnType()) + " (" + Convention + "*)(" +
-         Parameters + ")";
+  return sourceScalarType(Type->getReturnType(),
+                          Call.hasFnAttr(LLVMSourceSignedResult)) +
+         " (" + Convention + "*)(" + Parameters + ")";
 }
 
 std::string
