@@ -65,10 +65,10 @@ std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
                                            const DebugContext *Dbg, va_t Addr,
                                            bool AllowEmpty = false);
 
-/// Whether \p Addr, in an executable section, begins data that \p Dbg names
-/// and no function: a kernel keeps tables and literals among its code
-/// (`RtlpIntegerChars` in PAGE).
-bool isCodeSectionData(const DebugContext *Dbg, va_t Addr);
+/// Whether \p Addr, in an executable section, begins data that the debug
+/// information names there and no code claims (BinaryImage::DataInCode): a
+/// kernel keeps tables among its code (`RtlpIntegerChars` in PAGE).
+bool isCodeSectionData(const BinaryImage *Img, va_t Addr);
 
 /// Whether C text starts with a string literal (`"..."`, `L"..."`, `u8"..."`,
 /// `u"..."`, `U"..."`), which C takes as an array, not as an integer.

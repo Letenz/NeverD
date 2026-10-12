@@ -195,6 +195,15 @@ public:
     return It != Ranges.begin() && Normalized < std::prev(It)->second;
   }
 
+  /// Whether code the metadata gives ends at \p Addr.
+  bool endsAt(va_t Addr) const {
+    const va_t Normalized = normalize(Addr);
+    const auto It = std::lower_bound(
+        Ranges.begin(), Ranges.end(), Normalized,
+        [](const auto &Range, va_t Address) { return Range.second < Address; });
+    return It != Ranges.end() && It->second == Normalized;
+  }
+
 private:
   va_t normalize(va_t Addr) const {
     return normalizeCodeAddress(Addr, Img.Arch, Img.Mode);
@@ -319,6 +328,16 @@ void neverd::recordAbsolutePointerRelocations(
       break;
     }
   }
+}
+
+unsigned neverd::recordDataInCode(BinaryImage &Img,
+                                  llvm::ArrayRef<va_t> Objects) {
+  const CodeMetadata Code(Img);
+  unsigned Recorded = 0;
+  for (const va_t Addr : Objects)
+    if (Img.isCodeAddress(Addr) && !Code.claims(Addr) && !Code.endsAt(Addr))
+      Recorded += Img.DataInCode.insert(Addr).second;
+  return Recorded;
 }
 
 unsigned

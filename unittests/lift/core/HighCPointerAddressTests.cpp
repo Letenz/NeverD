@@ -15,6 +15,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -1460,8 +1461,10 @@ public:
 TEST(HighCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
   // The literals print as their text and the table by its name, as the
   // listing shows them; without the PDB the bytes among the code are code.
-  BinaryImage Img = makeDataAmongCodeFixture();
+  const BinaryImage Img = makeDataAmongCodeFixture();
   DataAmongCodeDbg Dbg;
+  BinaryImage Debugged = Img;
+  applyDebugSymbols(Debugged, Dbg);
   HighFunc Func;
   Func.Name = "page_data";
   Func.ReturnType = NdType::makeInt(8, false);
@@ -1479,23 +1482,23 @@ TEST(HighCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
       HighExpr::makeConst(0x140005010, 8, ConstantAddressProvenance::Address);
   Func.Body = {Wide, Empty, Return};
   const DataAccessWidths Widths;
-  const auto Emit = [&](DebugContext *Debug) {
+  const auto Emit = [&](const BinaryImage &Image, DebugContext *Debug) {
     std::string Source;
     llvm::raw_string_ostream OS(Source);
     CEmitterOptions Options;
     Options.TheArch = Arch::X64;
     Options.Format = BinaryFormat::COFF;
-    Options.Image = &Img;
+    Options.Image = &Image;
     Options.AccessWidths = &Widths;
     EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
     OS.flush();
     return Source;
   };
-  const std::string Named = Emit(&Dbg);
+  const std::string Named = Emit(Debugged, &Dbg);
   EXPECT_NE(Named.find("Format(L\"SA\")"), std::string::npos) << Named;
   EXPECT_NE(Named.find("Format(\"\")"), std::string::npos) << Named;
   EXPECT_NE(Named.find("&KeyTable"), std::string::npos) << Named;
-  const std::string Bare = Emit(nullptr);
+  const std::string Bare = Emit(Img, nullptr);
   EXPECT_NE(Bare.find("0x140005008"), std::string::npos) << Bare;
   EXPECT_NE(Bare.find("0x140005010"), std::string::npos) << Bare;
   EXPECT_EQ(Bare.find("KeyTable"), std::string::npos) << Bare;
@@ -1661,8 +1664,10 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
 TEST(LLVMCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
   // The LLVM module keeps addresses among the code as numbers; they print as
   // HighC prints them, and the table is declared.
-  BinaryImage Img = makeDataAmongCodeFixture();
+  const BinaryImage Img = makeDataAmongCodeFixture();
   DataAmongCodeDbg Dbg;
+  BinaryImage Debugged = Img;
+  applyDebugSymbols(Debugged, Dbg);
   llvm::LLVMContext Context;
   llvm::Module Module("llvm-c-page-data", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
@@ -1682,7 +1687,7 @@ TEST(LLVMCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
                                  llvm::PointerType::getUnqual(I8))});
   Builder.CreateRet(llvm::ConstantInt::get(I64, 0x140005010));
 
-  const auto Emit = [&](DebugContext *Debug) {
+  const auto Emit = [&](const BinaryImage &Image, DebugContext *Debug) {
     std::string Source;
     llvm::raw_string_ostream OS(Source);
     CEmitterOptions Options;
@@ -1690,15 +1695,15 @@ TEST(LLVMCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
     Options.Format = BinaryFormat::COFF;
     Options.EmitIncludes = false;
     EXPECT_TRUE(
-        LLVMCEmitter().emit(Module, OS, Options, Debug, &Img, Function));
+        LLVMCEmitter().emit(Module, OS, Options, Debug, &Image, Function));
     OS.flush();
     return Source;
   };
-  const std::string Named = Emit(&Dbg);
+  const std::string Named = Emit(Debugged, &Dbg);
   EXPECT_NE(Named.find("L\"SA\""), std::string::npos) << Named;
   EXPECT_NE(Named.find("(uintptr_t)&KeyTable"), std::string::npos) << Named;
   EXPECT_NE(Named.find("extern uint8_t KeyTable;"), std::string::npos) << Named;
-  const std::string Bare = Emit(nullptr);
+  const std::string Bare = Emit(Img, nullptr);
   EXPECT_EQ(Bare.find("KeyTable"), std::string::npos) << Bare;
   EXPECT_EQ(Bare.find("L\"SA\""), std::string::npos) << Bare;
 }
