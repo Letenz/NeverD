@@ -49,6 +49,21 @@ class _OverlayView:
 
 
 class SourcePatchDocumentationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        original_read_text = Path.read_text
+
+        def read_text(path, encoding=None, errors=None, **kwargs):
+            # Exercise Windows' non-UTF-8 default on every host. Explicit
+            # encodings still reach the real file decoder unchanged.
+            if encoding is None:
+                encoding = "cp1252"
+            return original_read_text(path, encoding=encoding, errors=errors,
+                                      **kwargs)
+
+        default_encoding = patch.object(Path, "read_text", read_text)
+        default_encoding.start()
+        self.addCleanup(default_encoding.stop)
+
     def check(self, overrides: dict[Path, str]) -> list[str]:
         errors: list[str] = []
         view = _OverlayView(overrides)
@@ -61,29 +76,29 @@ class SourcePatchDocumentationTests(unittest.TestCase):
 
     def test_source_change_requires_translation_review(self) -> None:
         path = Path("docs/source-patching.md")
-        errors = self.check({path: path.read_text() + "\nA changed support profile.\n"})
+        errors = self.check({path: path.read_text(encoding="utf-8") + "\nA changed support profile.\n"})
         self.assertTrue(any("guide revision differs" in e for e in errors), errors)
 
     def test_executable_example_cannot_change_a_target_address(self) -> None:
         path = Path("docs/ja/source-patching.md")
-        errors = self.check({path: path.read_text().replace("--func=0x401140", "--func=0x401141")})
+        errors = self.check({path: path.read_text(encoding="utf-8").replace("--func=0x401140", "--func=0x401141")})
         self.assertTrue(any("examples differ in compiler" in e for e in errors), errors)
 
     def test_target_refusal_cannot_be_translated_into_cpu_support(self) -> None:
         path = Path("docs/de/source-patching.md")
-        errors = self.check({path: path.read_text().replace("| `PE` | `REFUSED`", "| `PE` | `CPU`")})
+        errors = self.check({path: path.read_text(encoding="utf-8").replace("| `PE` | `REFUSED`", "| `PE` | `CPU`")})
         self.assertTrue(any("target dispositions differ" in e for e in errors), errors)
 
     def test_runtime_requirement_cannot_disappear_into_a_comment(self) -> None:
         path = Path("docs/ar/source-patching.md")
-        text = path.read_text().replace("`NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`",
+        text = path.read_text(encoding="utf-8").replace("`NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`",
                                        "<!-- `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` -->")
         errors = self.check({path: text})
         self.assertTrue(any("contract missing in verification" in e for e in errors), errors)
 
     def test_architecture_must_name_the_shared_admission_owner(self) -> None:
         path = Path("docs/zh-CN/architecture.md")
-        errors = self.check({path: path.read_text().replace("validateSourcePatchTarget", "oldTarget")})
+        errors = self.check({path: path.read_text(encoding="utf-8").replace("validateSourcePatchTarget", "oldTarget")})
         self.assertTrue(any("validateSourcePatchTarget" in e for e in errors), errors)
 
 
