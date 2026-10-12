@@ -457,8 +457,7 @@ ChooserView::ChooserView(Session &session, const AddressSpace &space,
   filter_->setVisible(false);
   filter_->installEventFilter(this);
   layout->addWidget(filter_);
-  status_->setContentsMargins(6, 2, 6, 2);
-  makeRowShrinkable(*status_);
+  makeStatusLine(*status_);
   layout->addWidget(status_);
   filterTimer_.setSingleShot(true);
   filterTimer_.setInterval(FilterDebounceMs);

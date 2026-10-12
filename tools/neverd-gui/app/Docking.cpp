@@ -2,10 +2,13 @@
 
 #include "Theme.h"
 
+#include <QCursor>
 #include <QEnterEvent>
+#include <QHoverEvent>
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStyle>
 #include <QTimer>
 #include <QVariantAnimation>
 #include <cmath>
@@ -18,6 +21,7 @@
 #include <kddockwidgets/qtwidgets/views/FloatingWindow.h>
 #include <kddockwidgets/qtwidgets/views/Group.h>
 #include <kddockwidgets/qtwidgets/views/Separator.h>
+#include <kddockwidgets/qtwidgets/views/TabBar.h>
 
 namespace neverd::gui {
 namespace {
@@ -160,6 +164,70 @@ private:
   bool pressed_ = false;
 };
 
+/// A row of docked tabs.  Only the current tab and the one under the pointer
+/// show their close buttons, as in Visual Studio Code: a cross on every tab
+/// competes with the titles.  A hidden button keeps its room, so the tabs stay
+/// put when it appears.
+class DockTabBar final : public KDDockWidgets::QtWidgets::TabBar {
+public:
+  DockTabBar(KDDockWidgets::Core::TabBar *controller, QWidget *parent)
+      : TabBar(controller, parent) {
+    connect(this, &QTabBar::currentChanged, this,
+            [this] { updateCloseButtons(); });
+  }
+
+protected:
+  bool event(QEvent *event) override {
+    const bool handled = TabBar::event(event);
+    switch (event->type()) {
+    case QEvent::HoverEnter:
+    case QEvent::HoverMove:
+      setHoveredTab(
+          tabAt(static_cast<QHoverEvent *>(event)->position().toPoint()));
+      break;
+    case QEvent::HoverLeave:
+      setHoveredTab(-1);
+      break;
+    case QEvent::Show:
+      updateCloseButtons();
+      break;
+    default:
+      break;
+    }
+    return handled;
+  }
+
+  void tabInserted(int index) override {
+    TabBar::tabInserted(index);
+    updateCloseButtons();
+  }
+
+  void tabRemoved(int index) override {
+    TabBar::tabRemoved(index);
+    // The tab that slid under the pointer is the hovered one now.
+    hovered_ = tabAt(mapFromGlobal(QCursor::pos()));
+    updateCloseButtons();
+  }
+
+private:
+  void setHoveredTab(int index) {
+    if (index == hovered_)
+      return;
+    hovered_ = index;
+    updateCloseButtons();
+  }
+
+  void updateCloseButtons() {
+    const auto side = static_cast<QTabBar::ButtonPosition>(style()->styleHint(
+        QStyle::SH_TabBar_CloseButtonPosition, nullptr, this));
+    for (int i = 0; i < count(); ++i)
+      if (QWidget *button = tabButton(i, side))
+        button->setVisible(i == currentIndex() || i == hovered_);
+  }
+
+  int hovered_ = -1;
+};
+
 /// A floating window has no native frame.  Its outline is the border of the
 /// workbench's other popups.
 class DockFloatingWindow final
@@ -189,6 +257,13 @@ public:
   createSeparator(KDDockWidgets::Core::Separator *controller,
                   KDDockWidgets::Core::View *parent) const override {
     return new DockSeparator(controller, parent);
+  }
+
+  KDDockWidgets::Core::View *
+  createTabBar(KDDockWidgets::Core::TabBar *controller,
+               KDDockWidgets::Core::View *parent) const override {
+    return new DockTabBar(controller,
+                          KDDockWidgets::QtCommon::View_qt::asQWidget(parent));
   }
 
   KDDockWidgets::Core::View *

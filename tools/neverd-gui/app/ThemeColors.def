@@ -66,18 +66,18 @@ NEVERD_THEME_COLOR(PrefixExternal, "#AF00DB", "#C586C0")
 
 // Navigation band: one per entry of AddressClasses.def, plus markers.
 NEVERD_THEME_COLOR(NavUnmapped, "#E5E5E5", "#252526")
-NEVERD_THEME_COLOR(NavRegularFunction, "#007ACC", "#007ACC")
-NEVERD_THEME_COLOR(NavLibraryFunction, "#4EC9B0", "#4EC9B0")
-NEVERD_THEME_COLOR(NavInstruction, "#C97C55", "#CE9178")
-NEVERD_THEME_COLOR(NavData, "#A0A0A0", "#6E6E6E")
-NEVERD_THEME_COLOR(NavUnexplored, "#B4B464", "#7A7A3A")
-NEVERD_THEME_COLOR(NavExternal, "#C586C0", "#C586C0")
+NEVERD_THEME_COLOR(NavRegularFunction, "#007ACC", "#3F85C4")
+NEVERD_THEME_COLOR(NavLibraryFunction, "#4EC9B0", "#53AB97")
+NEVERD_THEME_COLOR(NavInstruction, "#C97C55", "#BA836D")
+NEVERD_THEME_COLOR(NavData, "#A0A0A0", "#696969")
+NEVERD_THEME_COLOR(NavUnexplored, "#B4B464", "#77784E")
+NEVERD_THEME_COLOR(NavExternal, "#C586C0", "#B17EAD")
 NEVERD_THEME_COLOR(NavCursor, "#FFCC00", "#FFD700")
 NEVERD_THEME_COLOR(NavCursorOutline, "#3B3B3B", "#000000")
 
 // Choosers: row tints for import thunks and recognized library functions.
-NEVERD_THEME_COLOR(ChooserThunkRow, "#F6E3F5", "#3A2638")
-NEVERD_THEME_COLOR(ChooserLibraryRow, "#DFF3EF", "#1D3531")
+NEVERD_THEME_COLOR(ChooserThunkRow, "#F8ECF7", "#312630")
+NEVERD_THEME_COLOR(ChooserLibraryRow, "#E7F6F3", "#1F2D2B")
 
 // Graph view.
 NEVERD_THEME_COLOR(GraphBackground, "#F3F3F3", "#181818")
