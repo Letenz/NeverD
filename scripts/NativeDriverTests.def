@@ -178,6 +178,9 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction/"
     "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.SameValueWritesDoNotSupplyAnUnchangedMemoryProof/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors/"
     "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(

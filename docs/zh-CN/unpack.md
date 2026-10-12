@@ -145,3 +145,5 @@ neverd unpack packed.exe -o unpacked.exe \
 `runtime_state.additional_state_inventory_known` 与 `has_additional_dependencies` 报告 OS 所有者保留的私有堆、虚拟内存保留区、锁、句柄、视图及异常状态。清单缺失或仍有资源时，即使没有堆指针匹配，默认恢复也会拒绝。显式快照保留诊断；运行时恢复必须重建受支持的所有者。
 
 checked x64 执行在 DriverEntry 返回时重新验证本次加载器调用：RBX/RBP/RSI/RDI/R12–15、XMM6–15 的全部 128 位、MXCSR 控制位、FPCSR，以及方向标志清零。易失寄存器和 MXCSR 状态位允许变化。检查失败会在发布 NTSTATUS 或执行生命周期前停止。此返回检查不重建捕获入口，不证明其他调用者，也不认证 Windows 原生内核加载。
+
+驱动执行断点交接仅在前一次安装的 RAM 写监视未被触及时复用已有代码快照。已提交写入即使写回相同值，也会使此保证失效。内核服务、调度边界和新调用要求刷新；新增监视范围仍须先建立初始快照。
