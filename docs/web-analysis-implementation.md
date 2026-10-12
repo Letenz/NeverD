@@ -42,13 +42,13 @@ their existing scope; no Python support for web APIs is claimed.
 | P4A Bun extraction | ELF, thin Mach-O and PE x64/ARM64 extraction; decoded-source navigation/view/storage anchors, bounded serialized-map decoding and explicit native handoff; 25 full compiler images, Claude Code 2.1.296 and 20 extraction cases qualified | Other runtime/layout versions remain unsupported; Node SEA/nexe/pkg are qualified separately in P7 and JSC caches stay opaque |
 | Shared native handoff | Nine native handoff tests and 65 existing Session C API tests passed; immutable-buffer loader, independent native SDK session and metadata-only CLI/worker entry points; parser/backend omission checked | Other hosts, explicit universal slices and bounded native pipeline work remain |
 | P4B desktop/VSIX extraction | C++ ASAR and ZIP32 containers; Electron manifests/boundaries/IPC/entries, NW.js/VSIX manifest file candidates and HTML/import-map candidates; real Claude Code VSIX→Bun extraction qualified below | External-source HTML/import closure, runtime/window routing, distribution detection, safe export and broader host/release qualification remain |
-| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, captured registry/in-toto/DSSE/SLSA metadata, and composed assessments with immutable caller dispositions and bounded Markdown implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature/report metadata | GUI/persistent reviews, broader lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
-| P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR syntax candidates and explicit fetch-only method/origin/path comparison implemented | Wrappers, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
+| P4C package graph/diff | Versioned npm graph/diff, bounded archives, original SRI, selected source behavior/install chains and comparison, offline OSV matching, captured registry/in-toto/DSSE/SLSA metadata, composed assessments, bounded persistent review journals and selected-evidence Qt review implemented; official Claude Code packages qualify original digest, payload, wrapper comparison and registry signature/report metadata | Broader GUI evidence selectors, lifecycle/loader profiles and archive/host qualification remain; signature and publisher authentication are unverified |
+| P4D passive interfaces/HAR | Native HAR preview/commit, fetch/WebSocket/XHR/member syntax candidates, one-layer lexical fetch parameter forwarding, separate request/result syntax links and explicit fetch-only method/origin/path comparison implemented | General wrapper/dataflow, response/transformation tracing, reviewed displays, schema exports and broader qualification remain |
 | P5 reversible source projections | Reviewed display, original/projected ranges, explicit primitive rewrites, bounded whole-binding renaming and Boolean expression selection with distinct profiles, exact inverse and refusal tests | Statement/control-flow transforms and broader qualification remain |
 | P6 stream/log consumers | Native versioned SSE/JSONL/JSON-RPC/MCP-shape/log readers, recorded-ID candidates and preview/commit implemented | Real supplied transcript/source correlation and broader framing/host qualification remain |
-| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA preparation/native resource reader, nexe 4.0.0-rc.7 EOF reader and pkg 5.8.1 uncompressed VFS reader; shared source/asset consumers and producer qualification below | Tauri/Wails bridges/assets and broader host/producer qualification remain; other Node-family layouts stay unsupported |
+| P7 Tauri/Wails/Node-family | Independent Node 22.15.0 SEA, nexe 4.0.0-rc.7 EOF and pkg 5.8.1 VFS readers; measured Wails 2.11.0 / Go 1.25.7 Linux ELF and Windows PE x64 assets, raw/readable local export and native handoff; shared consumers | Tauri/custom CEF assets, Wails bridges, larger interactive analysis and broader host/producer qualification remain; other Node-family layouts stay unsupported |
 | P8 C++ MCP, optional presentation, distribution | Initial native C++ MCP stdio profile implemented and qualified below | Broader host/distribution and optional presentation remain |
-| P9 full acceptance audit | Pending | Issue-by-issue fixture and cross-platform evidence, documented gaps |
+| P9 full acceptance audit | [Issue-by-issue and fixed-sample audit](web-epic-acceptance.md) records qualified operations and explicit gaps | Required Tauri assets, broader source/config flow and remaining consumer boundaries prevent completion |
 
 Original bytes now use `posix-unlinked-spool-v1`: a private, immediately unlinked
 file with one close-on-exec descriptor per snapshot. Import streams and hashes
@@ -2739,3 +2739,564 @@ unavailable-only skip (12.41 seconds). Source provenance passes across 7,405
 worktree files. Logs:
 `/tmp/neverd-interface-relations-upstream-{build,core,sdk,native,transports,gui}.log`
 and `/tmp/neverd-interface-relations-provenance-final.log`.
+
+## Measured Wails stored assets and native handoff (2026-10-12)
+
+`wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1` admits one measured ELF64
+little-endian `ET_EXEC` layout. Separate C++ owners validate native mappings,
+framed build declarations, complete ordered embed tables, private path policy,
+content/metadata overlap and every stored compiler digest. The Go toolchain's
+1,024/1,025-byte hash boundary is implemented explicitly; its stored 128-bit
+value is not ordinary truncated SHA-256. Full plain SHA-256 remains the byte
+identity. Declarations and structural compatibility do not authenticate Go,
+Wails, a publisher, runtime filesystem selection or an asset-server mount.
+Unknown producer versions, replaced framework declarations, PIE, ARM64, PE
+and Mach-O remain explicit refusals for this profile. See the
+[profile and primary format references](web-wails-profile.md).
+
+Session extraction/pages and explicit local export add three always-declared
+C APIs. Completed extractions are revision-bound and independently limited to
+four caches / 8 MiB retained private metadata. Pages contain at most 128 records
+and omit names and text. Each stored filesystem has its own namespace; another
+table cannot satisfy an HTML/module reference. Shared occurrence selection
+retains physical or expanded-stream coordinates through nested archives. The
+worker and MCP expose only extraction/pages with closed argument schemas.
+The raw export operation is a local SDK/CLI disclosure consumer and is excluded
+from both transports.
+
+The CLI uses these C APIs under an unusable external-tool PATH. Raw export
+creates a new private directory with exclusive fixed filenames, preserves the
+complete original container, writes every stored file, rereads all hashes and
+only then publishes its manifest. Captured paths are manifest data rather than
+host path components. Existing destinations and symlinks are refused. No Go,
+Wails, package manager, target application or external analyzer is installed,
+linked or launched.
+
+The optional real capture is the bare Linux x64 Zentro v0.3.0 release, 28,832,896
+bytes, SHA-256 `ed0932139a8735f403f8c237234d5fb958b4cf5f0a571499475809d330768145`.
+Its GitHub release digest matches the captured bytes. NeverD verifies one table
+at offset 19,580,128 with fourteen rows: three directories and eleven files,
+4,700,610 payload bytes. All compiler digest fields validate. Member 7 preserves
+the complete 1,552,742-byte JS bundle at offset 16,727,680, SHA-256
+`550cdaae8e65f0cbd2a75132a0dc5073fc8a7883811d0d7abdd6a59f71bd0e1e`.
+The raw export rereads thirteen files / 33,542,457 bytes including original and
+manifest. Its manifest SHA is
+`2d44bfa3c8b89e61310119497d26a1d623b948e0a0426ba850e4a30f4381fb06`.
+Diagnostic outputs stay outside Git in
+`/tmp/neverd-wails-qualification-zentro-v0.3.0/recovered`.
+
+HTML member 5 contains one root-relative script reference. It remains
+`unsupported_local_url` with a null linked artifact; embedded names do not
+prove the application's runtime mount root. An initial optional SDK assertion
+incorrectly expected that association and failed; the corrected test proves
+the explicit unresolved result. Positive relative references are covered by
+authored fixtures. Whole-bundle interactive source analysis returns
+`source_byte_budget_exceeded` at the existing independent 1 MiB limit. Raw
+export does not turn this into parse success. Original native handoff instead
+opens the exact captured image and reports 36 sections / 32,475 function
+records, with a valid independently owned session after Web-session destruction.
+These are loader records, not complete native recovery or bridge semantics.
+
+Eight core and eight SDK cases cover declaration/version refusal, unrelated
+Go slice exclusion, native pointer ranges, directory ordering/ancestors, path
+collisions, aliases/overlaps, empty/1,024/1,025-byte digest boundaries, exact and
+one-short independent budgets, privacy, compressed origins, failed publication,
+cache/revision invalidation, local export and native lifetime. The complete
+owning Web directory passes 740 of 741 cases with one existing expected
+ASAR-policy omission-only skip (166.58 seconds). All eight parameterized Claude
+platform cases and supplied producer corpora remain enabled. Its nine native
+handoff cases pass. Logs: `/tmp/neverd-wails-web-regression-fixed.log` and
+`/tmp/neverd-wails-zentro-{cli-qualified,html,source,native,export}.jsonl`.
+
+The first post-export transport run exposed a missing MCP test exclusion for
+the new raw local export. The test now checks the documented exclusion, and
+the affected MCP Web case passes (2.35 seconds). Worker, protocol, catalog,
+process, availability and captured-Claude transport cases passed in the same
+run; one backend-omission-only case skipped as expected. The production-worker
+Qt review suite has nineteen passes and one expected unavailable-only skip
+(9.62 seconds). No complete GUI-suite pass is claimed. Logs:
+`/tmp/neverd-wails-{transports-final,mcp-fixed,gui-tests}.log`.
+
+Parser omission rebuilds 145 owning SDK/tool steps. All six remaining Wails SDK
+cases pass, including exact raw export, HTML and actual native handoff (8.81
+seconds). Transport/availability has seven passes and one expected
+backend-omission-only skip (25.25 seconds). Backend omission rebuilds eight
+steps, preserves all three ABI declarations with explicit unavailability, and
+has six transport/availability passes plus two expected unavailable-corpus
+skips (2.73 seconds). Logs:
+`/tmp/neverd-wails-nojs-{configure,build,sdk,transports}.log` and
+`/tmp/neverd-wails-noweb-{configure,build,transports}.log`.
+
+LLVM formatting and diff whitespace pass. Source provenance passes across
+7,419 worktree files. The initial capability check found two new lexical-order
+errors in the additive Web declaration lists; those are corrected. The checker
+now reports only the same sixteen pre-existing unclaimed native source-patch
+declarations. All three Wails declarations are claimed in both lists; no
+global capability-check pass is claimed. Logs:
+`/tmp/neverd-wails-{format-final,provenance-final,capabilities-corrected}.log`.
+
+Integration preserves upstream `dev` at
+`c3df0112296b75feed71917ef01c51342762a03b`, including its workbench appearance
+changes and empty C-render-pass optimization. The Web implementation, public
+SDK, CLI/transports, tests and Wails profile remain byte-identical after rebase.
+The 149-step shared native/SDK/tool rebuild passes. With Web restored and the
+parser still omitted, all nine native-handoff and six Wails SDK cases pass
+(8.09 seconds); transport/availability has seven passes and one expected
+backend-omission-only skip (15.21 seconds). Logs:
+`/tmp/neverd-wails-upstream-{configure,build,native-sdk,transports}.log`.
+The next shared readable-export increment restores the parser and qualifies
+larger source selections; the raw extraction increment alone does not claim
+that recovery.
+
+This increment advances #716's stored-asset and native handoff boundary.
+Wails bridges, other producer/container/architecture profiles, Tauri/custom
+CEF, larger whole-source analysis and the remaining five-epic acceptance gaps
+remain open.
+
+## Shared sequential readable-source export (2026-10-12)
+
+`source-local-readable-export-v1` adds a C++ local disclosure consumer over the
+existing immutable `ArtifactView`, recovery parser and exclusive export writer.
+It selects an exact revision/artifact and explicit source goal, verifies the
+original hash through 64 KiB reads, and preserves original/expanded origins and
+selected ranges. Its 32 MiB materialization/output limit is independent of
+ordinary 1 MiB / 100,000-node source admission and the 200,000-node cache.
+`SourceRecovery` remains the only formatter and same-parser-tree proof owner.
+Large models never enter interactive caches or semantic consumers. The new
+always-declared C API and direct/Wails CLI forms are thin selection layers;
+worker/MCP exclude the raw operation. See the
+[profile](web-readable-export-profile.md).
+
+Every local export preserves exact `original.bin`. Only a verified same-tree
+candidate produces `readable.js`. Invalid syntax/encoding and bounded parser
+refusals instead preserve the original with explicit unsuccessful readability
+status and no fake source. Unknown/stale/oversized selections and unsupported
+goals refuse before writes. Fixed exclusive names and read-back hashes retain
+the existing no-overwrite/symlink contract. No new dependency, runtime, formatter,
+target execution or remote source path is introduced.
+
+The actual pinned Zentro bundle succeeds under an unusable external-tool PATH:
+1,552,742 original bytes / 449,790 syntax nodes become a complete 1,897,987-byte
+readable file with a matching reparsed tree. Original SHA-256 is
+`550cdaae8e65f0cbd2a75132a0dc5073fc8a7883811d0d7abdd6a59f71bd0e1e`;
+readable SHA-256 is
+`962afafa77d08adbc53e4f721456773a4bbaa5b16e86c7317bc1c6f1812dd8f7`.
+The original physical offset remains 16,727,680. Three files / 3,452,862 bytes
+are reread-verified, including manifest SHA
+`99d98812f42db48455b10c20bf3db743c98989d0917bc22a409ecd0b90adb9bc`.
+The complete result stays outside Git at
+`/tmp/neverd-wails-qualification-zentro-v0.3.0/readable`.
+The bundle also exceeds ordinary node/cache limits; simply raising a byte limit
+would not provide an honest interactive analysis result.
+
+Seven new SDK cases and all eight Wails SDK cases pass together (22.43 seconds),
+covering exact input deletion/hash retention, comments/literals/ASI, goal and
+encoding refusals, 9 MiB chunked reads, cache isolation, one-over 32 MiB refusal,
+stale/unknown IDs, compressed origins, actual pinned output and CLI operation.
+The initial test helper had an invalid optional/StringRef comparison; its
+explicit value/type comparison fixes compilation. An enabled 174-step owning
+build and the two-step pinned-test update pass. Logs:
+`/tmp/neverd-readable-{enabled-build,pinned-sdk-build,enabled-focused-sdk}.log`
+and `/tmp/neverd-wails-zentro-readable.{jsonl,stderr}`.
+
+Parser omission passes all seven applicable readable/Wails SDK cases (9.14
+seconds), plus seven transport/availability cases with one expected
+backend-omission-only skip (20.77 seconds). Backend omission preserves the new
+ABI and passes six transport/availability cases with two expected unavailable
+skips (3.75 seconds). Both options are restored to ON. Logs:
+`/tmp/neverd-readable-nojs-{build,build-fixed,build-final,sdk,transports}.log`
+and `/tmp/neverd-readable-noweb-{configure,build,transports}.log`.
+
+The complete owning Web directory passes 747 of 748 cases with the one expected
+ASAR-policy omission-only skip (185.82 seconds). All supplied producer corpora
+and all eight parameterized Claude platform cases remain enabled. The nine
+native handoff cases also pass within that run. Transport/availability has
+seven passes and one expected backend-omission-only skip (14.88 seconds). The
+32-step production-worker Qt rebuild preserves the upstream workbench changes;
+its review suite has nineteen passes and one expected unavailable-only skip
+(24.56 seconds). No full GUI-suite pass is claimed. Logs:
+`/tmp/neverd-readable-enabled-{web-regression,transports}.log` and
+`/tmp/neverd-readable-gui-{build,tests}.log`.
+
+LLVM formatting and diff whitespace pass. Provenance passes across 7,425
+worktree files. The capability check reports the same sixteen existing
+unclaimed native source-patch declarations; the new readable declaration is
+claimed in both canonical Web surface lists. No global capability-check pass
+is claimed. Logs: `/tmp/neverd-readable-{format,provenance,capabilities}.log`.
+
+Independent future-profile captures now include the bare Windows x64 Zentro
+v0.3.0 image, 29,747,136 bytes / SHA
+`8c07c39c307c24d04be12019ef39210fc2360c0b40ffee8297deae9d1a0ee9e4`, and
+the 26,123,021-byte macOS universal ZIP / SHA
+`02a5cad79c66aea2bc5f87bf9999c773bc410d862cb27e478ee0da893e083c9b`.
+Both match the release-page digests. NeverD itself inventories the Windows
+bytes and opens a pathless native PE/x86_64 session with nine sections and
+28,136 function records. It also expands the seven-member macOS ZIP with
+verified member CRCs. These are input/container/native qualification results,
+not Wails PE/Mach-O asset extraction or complete native semantics. No installer,
+application, package manager or target runtime is launched. Capture logs stay
+outside Git in `/tmp/neverd-wails-zentro-{windows,macos}-*.{jsonl,log,stderr}`.
+
+This closes the measured bundle's sequential readable-export gap. It does not
+claim erased TypeScript/types/names, complete JavaScript semantics, runtime
+mounts/bridges or larger interactive dataflow. The five epics remain in progress.
+
+Integration onto `41f5b263b69e202e1739bf63b9694a7ab9f2c0ee` preserves the
+verified Web implementation, public entry point, CLI, tests and reader profiles
+byte for byte. The upstream native/worker changes require a 252-step shared
+rebuild, which passes. All fifteen readable/Wails SDK cases and nine native
+handoff cases pass (17.21 seconds). Transport/availability passes seven cases
+with the expected backend-omission-only skip (21.90 seconds). A fourteen-step
+Qt worker/review rebuild passes; review has nineteen passes and one expected
+unavailable-only skip (26.93 seconds). Provenance passes across 7,428 files;
+the capability audit retains only the same sixteen existing source-patch
+declaration gaps. Logs are `/tmp/neverd-readable-integrated-{build,
+sdk-native,transports,gui-build,gui-tests,provenance,capabilities}.log`.
+
+### Independently qualified Wails Windows PE images
+
+The new explicit `wails-2.11.0-go-1.25.7-windows-x64-pe-embedfs-v1` profile
+admits captured x64 PE32+ executables declaring Go 1.25.7 / Wails 2.11.0 /
+GOOS=windows / GOARCH=amd64. `desktop/wails/Profiles` is the authoritative
+layout registry, `PE` owns PE header/RVA/preferred-base translation, and
+`Mappings` owns the shared permission, overlap and physical-pointer policy.
+The original ELF format owner uses that same policy. Build-info, table/path
+admission and compiler digest verification remain single shared owners.
+There is no runtime/tool dependency, loader relocation, producer authentication,
+implicit asset-server mount or bridge inference. ARM64, PE32, DLL, Mach-O and
+other producer versions remain explicit refusals. Limits stay unchanged; the
+PE header adds a fixed 96-section bound. See the [profiles](web-wails-profile.md).
+
+Extraction caches bind artifact and profile, so a successful Windows capture
+cannot answer a Linux request. Metadata pages, nested selections, raw manifests
+and readable origins retain the actual selected profile/platform. Capabilities
+keep the original Linux `profile` field and add the authoritative `profiles`
+list. The same C APIs, worker/MCP schemas and direct C++ CLI consumers are used;
+no separate formatter, byte reader or native loader is introduced.
+
+Actual Zentro v0.3.0 Windows release bytes match SHA
+`8c07c39c307c24d04be12019ef39210fc2360c0b40ffee8297deae9d1a0ee9e4` /
+29,747,136 bytes. NeverD itself finds one table at 19,725,376, fourteen rows
+(three directories / eleven files), and 4,700,647 payload bytes, verifying all
+compiler digests and file hashes. Build information is at 28,108,288 / 5,570
+bytes. The container has 3,276,250 reader steps, 18,603,080 scanned bytes and
+39,147,988 hashed bytes under the existing limits. No release binary is run.
+
+Windows member seven has physical offset 16,867,808, length 1,552,742 and SHA
+`1b3a234dc7a96030d32d901baaf456771a0b63fc9c6f2cdfbb046980d618f79f`.
+Its 449,790-node parse produces the complete 1,897,987-byte readable file with
+matching reparsed structure and SHA
+`d8ebf61ff86a156541432442d18cd82f5294dc104384e7887b1b7e9f3f94f013`.
+Equal Linux/Windows sizes/node counts do not establish equal bytes; each has
+independent hashes and origins. Readable export rereads three files / 3,452,863
+bytes with manifest SHA
+`3e843ec978b4bf4adb7f8b4ac89100b6274ef7fa32ae0e734a7cddb849caf7d3`.
+Raw export rereads thirteen files / 34,456,736 bytes with manifest SHA
+`6dce4fac4a7f769ed09af43eee92ca30b6fcb18114b5c8d97afaf6630ff0f504`.
+The original native PE handoff reports nine sections / 28,136 function records
+and survives Web-session destruction. The HTML's root-relative script stays
+unbound without guessing the runtime mount. Logs and outputs remain outside
+Git at `/tmp/neverd-wails-zentro-pe-{qualified,readable,export,native}.jsonl`
+and `/tmp/neverd-wails-qualification-zentro-v0.3.0/windows-{readable,recovered}`.
+
+Four authored PE core cases independently separate RVA/file offsets and cover
+platform/ISA/header refusals, overlap/overflow/alignment, padding, virtual tails,
+mutable pointers and corrupted hashes. Two additional SDK cases verify profile
+cache isolation, capability lists, raw/readable provenance and all real PE
+consumers; a pinned core case verifies every actual stored file. Existing CLI
+and compressed-origin cases now exercise both profiles. The first new SDK
+helper's optional/StringRef comparison failed compilation and was corrected
+with explicit value extraction. The 60-step first build, two-step helper
+repair, 18-step owning update, two-step final SDK build and fifteen-step
+source/map/ZIP owning rebuild all pass.
+
+Concurrent PRE_TEST CTest discovery initially duplicated generated SDK test
+rows. Only disposable generated discovery files were regenerated serially;
+the owning directory then has exactly 755 tests. The repeated initial run is
+not reported as distinct coverage. The corrected focused run passes all 39
+distinct cases: thirteen core, seventeen SDK and nine native (12.53 seconds).
+Transport/availability passes seven cases with the expected omission-only skip
+(15.67 seconds). Qt review passes nineteen cases with its expected unavailable
+skip (20.64 seconds in the Qt receipt). Formatting/diff whitespace pass;
+provenance passes across 7,431 files. Capability auditing retains the same
+sixteen existing native source-patch declaration gaps. Logs are
+`/tmp/neverd-wails-pe-{first-build,sdk-build,sdk-build-fixed,enabled-build,
+sdk-final-build,owning-build,discovery,distinct-focused-tests,transports,
+gui-tests,format,provenance,capabilities}.log`.
+
+The complete owning Web run passes 754 of 755 distinct cases with only the
+expected ASAR-policy omission-only skip (138.61 seconds). All eight actual
+Claude platform cases and every supplied producer corpus remain enabled.
+No file prefix filter or parser omission hides that coverage. Log:
+`/tmp/neverd-wails-pe-full-web-tests.log`.
+
+Parser omission passes the 151-step build, all eighteen applicable SDK/native
+cases (2.95 seconds), and seven transport/availability cases with the expected
+backend-omission-only skip (4.99 seconds). The real PE assets/raw export/native
+handoff remain available; readable export refuses before writes. Backend
+omission passes its eight-step build and six transport/availability cases with
+two expected unavailable skips (2.93 seconds), retaining the existing ABI.
+Both Web and JS options are restored to ON and the 156-step complete owning
+rebuild passes. Logs: `/tmp/neverd-wails-pe-nojs-{configure,build,discovery,
+sdk-native,transports}.log`, `/tmp/neverd-wails-pe-noweb-{configure,build,
+transports}.log` and `/tmp/neverd-wails-pe-restored-{configure,build}.log`.
+
+After restoration, all 39 distinct focused cases pass again (4.07 seconds),
+transport/availability retains seven passes and the expected omission-only
+skip (5.34 seconds), and Qt review has nineteen passes and its expected
+unavailable-only skip (8.37 seconds). Logs:
+`/tmp/neverd-wails-pe-restored-{discovery,focused-tests,transports,gui}.log`.
+The latest fetched `dev` is the already-published readable-export baseline
+`87668457804294d91aff8ca06eede343bf07fc27`; no upstream code is replaced.
+The five epics are still in progress. Tauri assets, more general request/config
+dataflow and the remaining GUI acceptance surfaces are separate work.
+
+A normal push encountered concurrent `dev` updates. Integration onto
+`1cc8cd52535e88559724277317ce011c0d166ed3` preserves all verified Web code,
+entry points, tests and Wails profiles byte for byte. The 75-step shared
+SDK/CLI/transport rebuild and ten-step Qt app/worker/review rebuild pass.
+All 39 distinct focused cases pass again (6.36 seconds); transport/availability
+retains seven passes and its expected omission-only skip (7.82 seconds).
+Qt review has nineteen passes and its expected unavailable-only skip (13.01
+seconds). Provenance passes across 7,445 worktree files; the capability audit
+still reports only the sixteen existing source-patch declaration gaps.
+Logs: `/tmp/neverd-wails-pe-{rejected-fetch,rebase,integrated-build,
+integrated-gui-build,integrated-discovery,integrated-focused,
+integrated-transports,integrated-gui,integrated-provenance,
+integrated-capabilities}.log`. No force push or upstream replacement is used.
+
+A second concurrent update advances `dev` to
+`e8bdeeb69ba2c325415e45dce05ec4cf66cd3e8f`. It changes only the Qt design
+skill/reference documentation. Rebase preserves the entire verified production
+code and test tree byte for byte; no additional executable test boundary is
+changed. Log: `/tmp/neverd-wails-pe-second-rebase.log`.
+
+A third concurrent update advances `dev` to
+`cdfdc1e120671c7ca50d64adc14ae96c4bc1a768`, changing native ARM32 call argument
+recovery and a shared limits-header spelling. The Wails Web implementation and
+tests remain byte-identical. The 571-step shared SDK/CLI/transport rebuild passes;
+all 39 distinct focused cases pass (6.82 seconds), transport/availability keeps
+seven passes and its expected omission-only skip (8.10 seconds), and the Qt
+review suite passes (12.93 seconds). Provenance passes across 7,445 files; the
+capability audit retains the same sixteen unrelated source-patch declarations.
+The normal push publishes the verified Wails change as
+`db000d136185c77fdc7247d5bffae5e9d82ac95e` on `dev`; no force push is used.
+Logs: `/tmp/neverd-wails-pe-third-{rebase,build,discovery,focused,transports,
+gui,provenance,capabilities}.log` and
+`/tmp/neverd-wails-pe-verified-push.log`. This receipt covers that native baseline,
+not any later upstream changes. The five epics remain in progress.
+
+## Single-layer lexical request forwarding — 2026-10-12
+
+This increment advances #717 through
+`fetch-websocket-xhr-wrappers-syntax-v4` and
+`direct-lexical-fetch-forwarding-v1`. `interfaces/SourceWrappers` uses the
+authoritative declaration index to admit uniquely declared, unwritten function
+declarations or directly initialized const functions/arrows with simple one/two
+parameter signatures and exactly one returned external fetch call. The inner
+URL/init operands must be exact lexical references to those parameters. Caller
+positions can be reordered. The existing fetch-option and private-URL owners
+interpret selected actual syntax; no duplicate method/value/parser semantics
+are introduced. General alias, multi-layer, async, generator, transformed,
+default/rest/destructuring and dynamic-member flow remains unsupported.
+
+The shared SDK/CLI/worker/MCP metadata retains separate caller, function,
+internal-request, binding and parameter anchors. Spread or absent arguments
+withhold caller positions/role nodes; the wrapper definition remains navigable.
+No raw URL, source/name, header or body value is published. These rows remain
+static forwarding candidates and cannot join HAR or the separate result-link
+grammar. Discovery consumes existing work/record/private budgets; failure clears
+both records and definition counts. No runtime, external script or input sample
+is executed. See the [interface profile](web-interface-profile.md).
+
+Eight authored C++ core cases cover reordered anchors/stable IDs, shared fetch
+rules, missing/spread arguments, unsupported grammar, writes/shadow/duplicates,
+lexical separation, unchanged HAR eligibility and atomic record exhaustion.
+The SDK case adds canaries, all public links, cache equality and revision
+revocation. Worker/MCP cases compare the same backend contract. The first new
+test translation unit had missing closing parentheses; those test-only syntax
+errors were repaired. The first transport run retained v3/candidate-count and
+old relation-page-index assertions; all affected assertions were updated for
+the new fixture and shared v4 profile. No unrelated product semantics changed.
+
+An additional optional C++ regression captures two exact NeverD-exported Claude
+Code 2.1.296 macOS ARM64 units. Module 1905 is 54,991 bytes with SHA
+`157c010c3056606ebf89818348df35a547fde95dde1b130d2e96e26e80c5e34d`;
+module 1920 is 198,048 bytes with SHA
+`0a1c2aa1424babd95eeec371f67c875b6382db0c891b3b3e90f710f2102b16df`.
+NeverD preserves their four direct-fetch anchors at 2,693/47, 10,795/29,
+11,101/36 and 79,329/53. All URLs/options/methods remain dynamic/unresolved;
+zero wrapper definitions are admitted. This is a real refusal qualification,
+not evidence that these complex requests were reconstructed. Manual CLI runs
+use `PATH=/neverd-no-external-tools`. Six of eight selected units yield bounded
+partial syntax reports; module 299 explicitly refuses its parser budget and
+module 415 exceeds the interactive source byte limit. Logs:
+`/tmp/neverd-wrapper-claude-m{00178,00299,00415,01892,01905,01908,01909,01920}.{jsonl,stderr}`.
+
+Final serial target builds, the eight-step owning update and six-step transport
+assertion repair pass. The first focused run passes all 48 then-selected cases
+(6.57 seconds). After adding the exact real-module regression, the complete
+owning Web suite passes 764 of 765 distinct cases with only its expected
+ASAR-policy omission-only skip (86.97 seconds). Every supplied producer corpus
+and all eight actual Claude platform cases remain enabled. Transport/availability
+passes seven cases with its expected omission-only skip (6.69 seconds); Qt review
+passes (14.26 seconds). Formatting passes; provenance initially passes across
+7,447 files and capability checking retains the sixteen existing unrelated
+source-patch declaration gaps. Logs:
+`/tmp/neverd-wrapper-{first-build,fixed-build,final-serial-build,owning-build,
+focused-tests,transport-fix-build,final-discovery,full-web-tests,
+fixed-transports,gui,final-format,provenance,capabilities}.log`.
+
+The [acceptance audit](web-epic-acceptance.md) now records per-issue remaining
+requirements and per-platform pass/partial/not-attempted cross-track selections.
+The five-issue objective remains incomplete, including the required Tauri asset
+layout/native-handoff criterion and broader configuration/request flow.
+
+JS omission passes its 151-step build, all 23 selected SDK/native cases
+(6.70 seconds), and seven transport/availability cases with the expected
+backend-omission-only skip (13.33 seconds). Backend omission uses the actual
+`NEVERD_ENABLE_WEB_ANALYSIS=OFF` option: the eight-step build passes and six
+transport/availability cases pass with two expected unavailable skips
+(3.39 seconds). An initial unused `NEVERD_ENABLE_WEB` cache spelling was
+removed; its no-op build is not counted as omission evidence. Logs:
+`/tmp/neverd-wrapper-nojs-{configure,build,discovery,sdk-native,transports}.log`,
+`/tmp/neverd-wrapper-noweb-{correct-configure,correct-build,transports}.log`.
+
+Integration onto `e1841bc8b` preserves all verified Web production code and
+tests byte for byte. Both actual Web/JS options are restored to ON and the
+187-step complete owning/shared rebuild passes, including the updated native
+C backend. All 88 distinct selected source/wrapper/interface/Wails/readable/
+native cases pass (7.29 seconds); transport/availability keeps seven passes and
+its expected omission-only skip (7.33 seconds). The Qt app/worker/review rebuild
+and review test pass (11.90 seconds). Provenance passes across 7,453 files;
+capability checking retains the same sixteen unrelated declarations.
+Logs: `/tmp/neverd-wrapper-{rebase,restored-configure,restored-build,
+restored-discovery,restored-focused,restored-transports,
+integrated-gui-build,integrated-gui-tests,integrated-provenance,
+integrated-capabilities}.log`. This is integrated regression evidence for that
+native/GUI baseline, not a claim that the complete GUI or native test corpus ran.
+
+A subsequent normal integration onto `a45105012` preserves the verified Web
+code, entry points and tests byte for byte while retaining upstream native
+parameter-printing changes. Its 77-step shared rebuild passes. All 88 selected
+cases pass again (6.70 seconds); transport/availability has seven passes and
+the expected omission-only skip (6.02 seconds), and Qt review passes
+(9.66 seconds). Formatting/whitespace pass and both real Web/JS options remain
+ON. Logs: `/tmp/neverd-wrapper-{second-rebase,second-integrated-build,
+second-discovery,second-focused,second-transports,second-gui,publish-format}.log`.
+The Tauri boundary in the acceptance audit now links pinned upstream encoding
+and Rust-layout evidence; no Tauri binary profile or extraction success is
+invented from that source review.
+
+## Native Tauri PHF/Brotli qualification and old GNU tar — 2026-10-12
+
+This increment closes the previously missing first Tauri asset-layout/native
+handoff boundary with actual input bytes. The [Tauri profile](web-tauri-profile.md)
+pins lencx/ChatGPT v1.1.0's original macOS x64 archive, expanded stream, selected
+native member, initializer instructions and PHF tables. It qualifies a storage
+grammar; exact compiled Tauri/Rust versions, type identity, initializer
+reachability, runtime mutation/mounts, bridges and signatures are not verified.
+No target/source bytes are committed or redistributed.
+
+The real release first refused as an unsupported tar dialect. Uniform
+`gnu-oldtar-basic-single-gzip-v1` now owns old GNU basic magic/timestamps and
+refuses every sparse/multivolume extension, mixed headers and local PAX. Existing
+checksum, portable paths, links-as-metadata, padding, complete gzip and budgets
+remain authoritative. Capability `tar_profiles` lists both supported dialects;
+profile selection participates in archive/member IDs. Native package/source/
+Bun consumers and exclusive CLI exports also exercise authored GNU tar/tgz
+fixtures with an unusable external-tool PATH.
+
+The native program constructs its PHF header in instructions instead of storing
+a complete header in data. `pipeline/evidence/ConstantStores` projects selected
+full-width consecutive stores through the authoritative decoder/relocation
+roles/LowIR. No web component decodes instructions or guesses pointer semantics.
+`capi/TauriInitializer` joins the hash-bound native image and loader mappings;
+`desktop/tauri` independently validates every PHF key/index, range/path and
+explicit Brotli frame. SDK inputs cannot provide a descriptor. Chained fixups
+remain unsupported under this first profile. Core readers stay independent of
+sessions and adapters; all authored implementation/fixtures use LLVM-style C++
+with project/file banners.
+
+The optional pinned static Brotli 1.2.0 decoder/common SDK is called in process.
+The C++ wrapper accounts allocations and bounds each input/output call, total
+output/calls and a shared deadline. Missing codec/path support is unavailable,
+never an external fallback. A separately compiled omission target checks the
+owning codec and capabilities. Original Brotli, Rust Project, Frank Denis and
+Steven Fackler notices/licenses/source revisions are preserved. The source
+provenance checker has one narrowly reviewed allowance for the explicit PHF
+adaptation notice, linked to those retained licenses.
+
+The actual selected constructor is eight instructions/five stores; all fifteen
+PHF rows validate. NeverD decodes **946,884 stored bytes into 2,700,272 bytes**.
+Raw export preserves the original native image, fifteen frames and fifteen
+decoded files plus a manifest, with reread hashes (32 files). All nine JS
+members pass independent same-parser-tree readable export. A retained 910,730
+byte JS member has 74,127 syntax nodes and a 993,874-byte readable copy with
+SHA-256 `70f96cd6755e0e61064af380a565c789ddf00204773ad3304650118e53be7071`.
+Deleted names/types/TypeScript and whole-program equivalence are not recovered.
+`ArtifactView` keeps decoded-frame coordinates, exact compressed ranges and
+nested archive origins; the original native member enters the shared native
+handoff. Revision-bound SDK/CLI/worker/MCP selection uses the same owners and
+metadata privacy; raw export remains local and absent from MCP.
+
+Native five-field authored/actual regressions pass all five cases. The owning
+core/GNU focused run passes six cases; GNU consumer/CLI plus Tauri SDK passes
+fourteen cases before the additional chained-fixup refusal. Direct/framed
+worker, MCP catalog/web/process pass four cases (6.35 seconds). The full owning
+Web directory passes **747 of 775 cases**, with 28 explicit skips (44.63 seconds).
+The retained eight Claude platform captures, official linux-x64 standalone/npm
+and new Tauri capture are enabled. Old temporary producer captures, npm wrapper/
+lock, advisory/attestation/diff, VSIX and Wails corpora are no longer present;
+their 27 optional cases were not requalified. The remaining skip is the expected
+ASAR-policy omission-only case. An initial full run used an unavailable native
+path and a preexisting empty npm capture, was interrupted, and is not evidence;
+the successful run selects the existing pinned standalone and platform archive.
+No missing corpus was replaced by a fabricated input.
+
+The CMake dependency repair clears only two stale temporary FetchContent
+source overrides and restores the same repository-pinned Ada/Hermes revisions
+and checksums. The rebuilt 287-step Web/CLI target succeeds. Initial C++ include/
+error conversion failures and inert fixture PHF/function-entry mistakes are
+fixed without weakening admission; inert Mach-O uses LC_FUNCTION_STARTS rather
+than a guessed prologue. Subsequent core/consumer/parity builds pass. Logs:
+`/tmp/neverd-{gnu-tar-fixed-build,tauri-{core-tests-build,consumer-fixed-build,
+parity-build,gnu-omission-build,boundaries-build,native-final-tests,
+gnu-consumer-tests,boundaries-core-tests,boundaries-sdk-tests,transports-tests,
+no-codec-tests,full-web-fixed-env-tests}}.log`.
+
+Parser omission passes its 156-step build, twelve selected SDK cases with one
+expected parser-dependent skip, and all four transports (6.09 seconds). The
+additional native/chained-fixup guard uses a five-step build and all four Tauri
+SDK cases pass with the real archive enabled (0.69 seconds). Backend omission
+passes its seven-step build and transport capability/refusal checks. Logs:
+`/tmp/neverd-tauri-{nojs-{configure,build,sdk-tests,transports-tests,
+guard-build,guard-tests},noweb-{configure,build,tests}}.log`.
+The Web/JS options are restored before integration. Source provenance passes
+across 7,481 worktree files. New Tauri C/JSON declarations are accounted for in
+the shared capability exclusions; the checker retains the sixteen existing
+unrelated source-patch declaration gaps on this pre-integration baseline.
+The [five-epic audit](web-epic-acceptance.md) records the new bounded criterion
+and remaining cross-track work; it does not declare the entire objective done.
+
+Integration merges `origin/dev` at `7aabfa363` normally; every new Web reader,
+SDK/native join and test remains byte-identical to the verified increment.
+The 302-step shared rebuild passes, followed by **748 passes / 28 skips out of
+776 distinct owning Web cases**. Five native-projection cases (including actual
+input), native buffer boundary and four transports pass (9.72 seconds). Qt
+app/worker/review builds and the selected review test pass (3.03 seconds).
+All changed C++ files pass clang-format and whitespace checks; source provenance
+passes across 7,485 files. Capability audit retains the same sixteen unrelated
+source-patch gaps. Both Web/JS options are ON; submodule revisions and the
+original checkout are unchanged.
+
+An initial integration run regenerated GoogleTest inventory concurrently from
+two CTest roots, causing duplicate discovery entries. Those 1,041 executions
+are not counted as distinct coverage. Regenerating inventory once restores
+exactly 265 source and 210 SDK cases; the clean owning run above is authoritative.
+The initial integration build also requested a nonexistent `NeverDLoaderTests`
+target; the correct existing `NeverDNativeBufferTests` target is built and run.
+Logs: `/tmp/neverd-tauri-{dev-integration,integrated-fixed-build,clean-discovery,
+integrated-clean-web-tests,integrated-native-transports-tests,
+integrated-gui-{build,tests},published-format,integrated-provenance,
+integrated-capabilities}.log`.

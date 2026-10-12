@@ -1363,7 +1363,7 @@ La validación KVM exige cancelar una vCPU real que no sale por sí sola y 48 re
 
 Con `native_cpu_only=true`, `native_driver_tests=true` activa `NeverDNativeDriverTests` sin Unicorn. Antes de configurar, `build_wdk_driver_fixtures.py` verifica el SHA-256 completo de los paquetes oficiales Microsoft WDK/SDK 10.0.26100.6584 y recompila 48 imágenes de controladores normales/CFG/DBG desde las fuentes originales. `WDKDriverFixtures.def` declara las identidades de los paquetes, los argumentos del compilador y enlazador y las asociaciones de fixtures. Los archivos Microsoft sin modificar y sus licencias permanecen en los directorios locales de compilación/caché; CI solo publica metadatos y registros de compilación. El manifiesto conserva versiones de herramientas, comandos, hashes de fuentes/cabeceras y hashes de las imágenes producidas.
 
-`NativeDriverTests.def` exige 230 resultados WHP de las 115 cargas de `DriverBuiltinImages.def` y `DriverBackendParityCases.def`: 27 imágenes integradas, 48 imágenes WDK y 40 escenarios, en direcciones originales y reubicadas. El inventario obligatorio completo es `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`. Las 30 comprobaciones de conjuntos de espera incluyen dieciséis casos de modelo portables y catorce casos de controladores nativos originales. `run_native_cpu_ci.py --with-drivers` conserva identidades exactas y pruebas JUnit con Unicorn desactivado. Fixtures requeridos ausentes u omitidos hacen fallar esta validación opcional; las compilaciones ordinarias mantienen opcionales los fixtures externos. Las imágenes fijas conservan el rechazo esperado de reubicación. La ejecución nativa de invitados ARM64 sigue sin verificarse.
+`NativeDriverTests.def` exige 230 resultados WHP de las 115 cargas de `DriverBuiltinImages.def` y `DriverBackendParityCases.def`: 27 imágenes integradas, 48 imágenes WDK y 40 escenarios, en direcciones originales y reubicadas. El inventario obligatorio completo es `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`. Las 30 comprobaciones de conjuntos de espera incluyen dieciséis casos de modelo portables y catorce casos de controladores nativos originales. `run_native_cpu_ci.py --with-drivers` conserva identidades exactas y pruebas JUnit con Unicorn desactivado. Fixtures requeridos ausentes u omitidos hacen fallar esta validación opcional; las compilaciones ordinarias mantienen opcionales los fixtures externos. Las imágenes fijas conservan el rechazo esperado de reubicación. La ejecución nativa de invitados ARM64 sigue sin verificarse.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` inyecta vencimiento, parada y ambos antes de dos instrucciones iniciales distintas. Comprueba la fase exacta, la duración del mensaje propio, el tipo y los bits de causa, un único plazo invariable y la liberación de memoria. Los fallos reales de transporte y las discrepancias de estado siguen diferenciados. La validación inicial x64 nativa tiene un presupuesto de `5 s`; los plazos del invitado y márgenes de paso único no cambian.
 
@@ -1792,3 +1792,31 @@ Las regresiones del observador de escrituras verifican la visibilidad antes de l
 `RegistrationCallNoReturn` rechaza extensiones, destinos o rangos de operaciones modificados, llamadas condicionales y arquitecturas o formatos incorrectos. La prueba PE32 realineada cubre una llamada terminal demostrada de forma independiente y una continuación ordinaria cuya eliminación requiere una prueba vigente; una prueba de memoria inválida no recrea una arista ya ausente.
 
 `SafeSEHReference.*` comprueba pertenencia a SafeSEH inmutable, almacenamiento malformado o ambiguo, reubicaciones, otras arquitecturas/formatos y el orden de declaraciones entre fragmentos. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` usa `NEVERD_NONLOCAL_FINALLY_INPUTS` para comprobar 32 combinaciones LLVM de fixtures MSVC nativos x86/x64, O0/O2 y GS, con y sin optimización del código fuente. Verifica LLVM y las firmas de llamadas resueltas, y exige que la reconstrucción EH nativa x86 no admitida siga rechazándose. El trabajo específico de Windows EH descarga el artefacto nativo y ejecuta la matriz; sin el directorio de entrada, la prueba se omite explícitamente.
+
+`RAMReservationTests.cpp` comprueba los testigos públicos con escrituras iguales y ABA, rangos retenidos, reutilización de direcciones, mapeos compartidos, reversión, cancelación, escrituras confirmadas antes de un fallo y ejecución opaca. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` verifica datos propios en direcciones preferidas, inferiores y del núcleo: restaurar los bytes no restaura su procedencia. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` distingue las correcciones CFG activas de los punteros alternativos inactivos.
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` comprueba la salida PE, un lector DIR64 independiente, la reubicación del modelo y la exclusión de registros de depuración reescritos. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rechaza inconsistencias de origen, base u orden y excluye sustituciones de formato incluso con bytes iguales. Estas pruebas validan metadatos diagnósticos, no una recuperación nativa.
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` comprueba nueve formas intrinsic, la escritura de finally en el marco padre, la restauración del ESP de argumentos, la retirada de registration y las entradas de despacho de excepciones. Solo pasa el FWAIT canónico; las otras ocho formas incorrectas o diferentes siguen rechazadas.
+
+`NeverDNativeFinallyInputTests` contiene por separado la matriz de entradas MSVC. `NeverDPipelineOutcomeTests` sigue siendo obligatorio en cada plataforma CI y no depende de archivos nativos opcionales. El trabajo Windows EH compila y ejecuta el objetivo con sus imágenes verificadas. El CI de macOS selecciona explícitamente Homebrew Clang 22 para las pruebas de reemplazo de código fuente, independientemente del compilador de NeverD. Los métodos de sondeo de pila no admitidos siguen rechazándose.
+
+Los objetivos de pruebas MSVC usan `/bigobj` para los numerosos segmentos COFF de las plantillas de GoogleTest y LLVM. Los demás compiladores no cambian. Las pruebas de configuración verifican el comando generado; el CI nativo de Windows verifica la compilación y ejecución.
+
+El rechazo verificado de desplazamientos dobles informa del contador enmascarado y del ancho del operando cuando el destino y los indicadores están indefinidos. `X64DoubleShift` verifica que las salidas tipadas y la API de errores anterior conservan el motivo sin cambios de registros o RAM ni observaciones de memoria; la prueba del controlador comprueba el mismo motivo antes de enviar el escenario.
+
+## Parches de código fuente y objetos nativos
+
+`CPU` indica instalación y ejecución aislada de funciones; `REFUSED` indica un contrato de instalación ausente. ARM32 ELF exige registro EHABI; Mach-O de 32 bits exige contratos verificados del cargador, frontend y desenrollado; PE requiere actualmente x64 para instalar fuentes.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Parches de código fuente y objetos nativos](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

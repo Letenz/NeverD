@@ -1,0 +1,131 @@
+name: Source patch Windows runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev, codex/native-source-patching]
+    paths:
+      - '.github/workflows/source-patch-windows.yml'
+      - 'lib/sdk/SourcePatchCompiler.*'
+      - 'lib/sdk/capi/NeverDCAPISourcePatch.cpp'
+      - 'lib/backend/codegen/SourcePatch*'
+      - 'lib/backend/codegen/CompiledImage.cpp'
+      - 'cmake/NeverDLLVMAddressModel.cmake'
+      - 'cmake/patches/llvm-aarch64-specifier-scope.patch'
+      - 'lib/backend/codegen/COFF/COFFSource*'
+      - 'unittests/SourcePatch*'
+      - 'unittests/CMakeLists.txt'
+      - 'include/neverd/ir/med/MedSyscallConvention.h'
+      - 'lib/ir/med/abi/MedSyscallConvention*'
+      - 'lib/ir/med/CMakeLists.txt'
+  pull_request:
+    paths:
+      - '.github/workflows/source-patch-windows.yml'
+      - 'lib/sdk/SourcePatchCompiler.*'
+      - 'lib/sdk/capi/NeverDCAPISourcePatch.cpp'
+      - 'lib/backend/codegen/SourcePatch*'
+      - 'lib/backend/codegen/CompiledImage.cpp'
+      - 'cmake/NeverDLLVMAddressModel.cmake'
+      - 'cmake/patches/llvm-aarch64-specifier-scope.patch'
+      - 'lib/backend/codegen/COFF/COFFSource*'
+      - 'unittests/SourcePatch*'
+      - 'unittests/CMakeLists.txt'
+      - 'include/neverd/ir/med/MedSyscallConvention.h'
+      - 'lib/ir/med/abi/MedSyscallConvention*'
+      - 'lib/ir/med/CMakeLists.txt'
+
+permissions:
+  contents: read
+
+# Dev moves frequently. A running qualification must retain its own SHA and
+# finish, rather than be cancelled by an unrelated later integration.
+concurrency:
+  group: source-patch-windows-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-pe:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout pinned dependencies
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Enable MSVC and Windows SDK
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Install the checked source producer
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'LLVM-22.1.6-win64.exe'
+          Invoke-WebRequest 'https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.6/LLVM-22.1.6-win64.exe' -OutFile $installer
+          $expected = 'e2d9a6855ff22c0acf3adc87ff1e1ad9705b8b6fc5bab2542aefc3315fc24cf7'
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw 'Clang 22.1.6 installer digest mismatch'
+          }
+          $install = Join-Path $env:RUNNER_TEMP 'source-patch-clang'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$install") -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Clang installer failed: $($process.ExitCode)" }
+          "$install\bin" >> $env:GITHUB_PATH
+          "NEVERD_SOURCE_CLANG=$install\bin\clang.exe" >> $env:GITHUB_ENV
+          choco install ninja --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Ninja installation failed' }
+
+      - name: Require the native PE runtime inputs
+        shell: pwsh
+        run: |
+          $crt = Join-Path $env:VCToolsInstallDir 'lib\x64'
+          $sdkRoot = Join-Path $env:WindowsSdkDir "Lib\$($env:WindowsSDKVersion.TrimEnd('\'))"
+          $ucrt = Join-Path $sdkRoot 'ucrt\x64'
+          $sdk = Join-Path $sdkRoot 'um\x64'
+          foreach ($directory in @($crt, $ucrt, $sdk)) {
+            if (-not (Test-Path -PathType Container $directory)) { throw "Missing runtime directory: $directory" }
+          }
+          "NEVERD_TEST_WINDOWS_CRT_LIB=$crt" >> $env:GITHUB_ENV
+          "NEVERD_TEST_WINDOWS_UCRT_LIB=$ucrt" >> $env:GITHUB_ENV
+          "NEVERD_TEST_WINDOWS_SDK_LIB=$sdk" >> $env:GITHUB_ENV
+          'NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1' >> $env:GITHUB_ENV
+
+      - name: Configure and build the focused patch tests
+        shell: pwsh
+        run: |
+          & $env:NEVERD_SOURCE_CLANG --version
+          cmake -S . -B build-source-windows -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
+            -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=ON `
+            -DNEVERD_ENABLE_SEMANTIC_TESTS=ON -DNEVERD_ENABLE_WEB_ANALYSIS=OFF `
+            -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF `
+            "-DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=$env:NEVERD_SOURCE_CLANG"
+          if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
+          cmake --build build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests --parallel 4
+          if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
+
+      - name: Execute PE under Windows and the four-architecture matrix
+        shell: pwsh
+        run: |
+          # This Clang qualification does not install the optional NeverC producer.
+          & build-source-windows/bin/NeverDSourcePatchTests.exe '--gtest_filter=SourcePatchPE.*:SourcePatchObject.*:SourcePatchTrampoline.*-SourcePatchObject.NeverCEntryTableCannotLoseItsLoadTimeRelocations' '--gtest_output=xml:build-source-windows/native-pe.xml'
+          if ($LASTEXITCODE -ne 0) { throw 'PE source patch tests failed' }
+          & build-source-windows/bin/NeverDSourcePatchMatrixTests.exe '--gtest_output=xml:build-source-windows/target-matrix.xml'
+          if ($LASTEXITCODE -ne 0) { throw 'Source target matrix failed' }
+          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[16,48], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
+          if ($LASTEXITCODE -ne 0) { throw 'Incomplete native qualification' }
+
+      - name: Preserve native runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: source-patch-windows-${{ github.sha }}
+          path: |
+            build-source-windows/*.xml
+            build-source-windows/CMakeCache.txt
+          if-no-files-found: warn

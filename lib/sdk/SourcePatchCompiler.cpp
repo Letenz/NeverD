@@ -3,6 +3,7 @@
 #include "SourcePatchCompiler.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/codegen/SourcePatch.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
@@ -64,6 +65,12 @@ llvm::Error appendUserArguments(std::vector<std::string> &Arguments,
   // Compiler control, target identity and output modes belong to the adapter.
   // Accept ordinary source configuration without permitting @response files
   // or driver escape options to silently change that contract.
+  // Drivers expand response files before interpreting option values, so also
+  // reject response tokens consumed by a separate -I, -include, -D, etc.
+  for (size_t I = 0; I < Options.compiler_arg_count; ++I)
+    if (llvm::StringRef(Options.compiler_args[I]).starts_with("@"))
+      return compilerError("response files are not supported in compiler "
+                           "arguments");
   for (size_t I = 0; I < Options.compiler_arg_count; ++I) {
     llvm::StringRef Arg(Options.compiler_args[I]);
     const bool Separate = Arg == "-I" || Arg == "-isystem" ||
@@ -125,8 +132,9 @@ compileSourcePatch(llvm::StringRef Source,
       Options.language != NEVERD_SOURCE_PATCH_C)
     return compilerError(
         "NeverC C++ source is not an admitted language profile");
-  if (Format == BinaryFormat::MachO && Architecture == Arch::ARM)
-    return compilerError("ARM Mach-O requires a verified watchOS frontend ABI");
+  if (!Object)
+    if (auto Error = validateSourcePatchTarget(Architecture, Format))
+      return std::move(Error);
   const char *Target = llvmCodegenTriple(Architecture, Format);
   if (!Target)
     return compilerError("unsupported native target");

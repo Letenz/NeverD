@@ -89,22 +89,33 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("nexe_records"), ASARAvailable);
   EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
   EXPECT_EQ(Has("pkg_records"), ASARAvailable);
+  EXPECT_EQ(Has("wails_extract"), ASARAvailable);
+  EXPECT_EQ(Has("wails_records"), ASARAvailable);
+  EXPECT_EQ(Has("wails_export"), ASARAvailable);
+  EXPECT_EQ(Has("source_readable_export"), bool(NEVERD_TEST_WEB_JS));
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
     if (!Entry || Entry->getString("kind") != "source_interfaces")
       continue;
     SourceInterfacesAvailable = true;
-    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v3");
+    EXPECT_EQ(Entry->getString("profile"),
+              "fetch-websocket-xhr-wrappers-syntax-v4");
     EXPECT_FALSE(Entry->getBoolean("xhr_correlation").value_or(true));
     const auto *Kinds = Entry->getArray("candidate_kinds");
     ASSERT_NE(Kinds, nullptr);
-    EXPECT_EQ(Kinds->size(), 7u);
+    EXPECT_EQ(Kinds->size(), 8u);
     EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
       return Kind.getAsString() == "fetch_member_call";
     }));
     EXPECT_EQ(Entry->getString("fetch_member_identity"),
               "property_spelling_unverified");
     EXPECT_FALSE(Entry->getBoolean("fetch_member_correlation").value_or(true));
+    EXPECT_EQ(Entry->getString("wrapper_profile"),
+              "direct-lexical-fetch-forwarding-v1");
+    EXPECT_FALSE(Entry->getBoolean("wrapper_correlation").value_or(true));
+    EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
+      return Kind.getAsString() == "fetch_wrapper_call";
+    }));
   }
   EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
   unsigned RelationProfiles = 0;
@@ -275,6 +286,14 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                     0),
         neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
                                     0, 1),
+        neverd_web_wails_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                      0),
+        neverd_web_wails_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                      0, 0, 1),
+        neverd_web_wails_export_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                     0),
+        neverd_web_source_readable_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0, nullptr, 0),
         neverd_web_stream_preview_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
         neverd_web_stream_commit_json(nullptr, nullptr, 0, nullptr, 0),

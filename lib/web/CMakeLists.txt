@@ -64,6 +64,21 @@ add_neverd_component_library(NeverDWeb
   desktop/Manifest.cpp
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
+  desktop/wails/ELF.cpp
+  desktop/wails/PE.cpp
+  desktop/wails/Mappings.cpp
+  desktop/wails/Profiles.cpp
+  desktop/wails/BuildInfo.cpp
+  desktop/wails/Tables.cpp
+  desktop/wails/Contents.cpp
+  desktop/wails/Reader.cpp
+  SessionWails.cpp
+  SessionWailsExport.cpp
+  desktop/tauri/PHF.cpp
+  desktop/tauri/Reader.cpp
+  SessionTauri.cpp
+  SessionTauriExport.cpp
+  compression/Brotli.cpp
   SessionDesktop.cpp
   SessionElectron.cpp
   SessionElectronIPC.cpp
@@ -89,6 +104,7 @@ add_neverd_component_library(NeverDWeb
   compression/Zstd.cpp
   SessionBun.cpp
   SessionBunExport.cpp
+  SessionReadableExport.cpp
   InputRoot.cpp
   JsonReader.cpp
   SourceLocation.cpp
@@ -108,6 +124,8 @@ add_neverd_component_library(NeverDWeb
   LLVM_COMPONENTS Support
 )
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebBrotli.cmake")
+neverd_add_web_brotli()
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
   target_link_libraries(NeverDWeb PRIVATE ZLIB::ZLIB)
@@ -169,6 +187,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/SourceInterfaces.cpp
     interfaces/SourceContext.cpp
     interfaces/SourceFetch.cpp
+    interfaces/SourceWrappers.cpp
     interfaces/SourceXHR.cpp
     interfaces/RelationContext.cpp
     interfaces/RequestLinks.cpp

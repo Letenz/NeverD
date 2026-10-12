@@ -289,6 +289,12 @@ public:
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// The operands call \p E passes, by index, where it passes one for each
+  /// HighIR parameter of a definition in this file: those of the parameters
+  /// the definition prints.  Empty where the operands pass in order, as an
+  /// AArch64 callee with stack parameters, which has every integer argument
+  /// register as one, read or not, does not.
+  std::vector<size_t> printedCallOperands(const HighExpr &E) const;
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
@@ -303,6 +309,10 @@ public:
   /// The type \p Func's definition declares its HighIR parameter \p Index
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// The type of the parameter \p Func's definition prints at \p Position,
+  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// prototype and a call's arguments count them, or null past the last.
+  TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
@@ -809,6 +819,9 @@ public:
   /// The helper of each x86 saturating lane operation and lane width
   /// (X86SaturatingLanes.def).
   std::map<std::pair<Intrinsic, unsigned>, std::string> SaturatingLaneHelpers;
+  /// The scalar LSE builtins of NeverD's Clang the output calls, each given
+  /// a definition for other compilers (ScalarLSEFallbacks.def).
+  std::set<Intrinsic> ScalarLSEBuiltins;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
@@ -850,6 +863,9 @@ public:
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;
+  /// The functions whose emittedParamIndices are being computed, whose calls
+  /// another's walk takes as passing every operand.
+  mutable std::set<const HighFunc *> ParamIndicesInProgress;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
@@ -1021,12 +1037,16 @@ public:
   std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
   /// The object code indexes at \p Addr: one a symbol sizes, else the
   /// stretch of its data section between the sized objects around it (a
-  /// table a compiler emits under an assembler-local label).
+  /// table a compiler emits under an assembler-local label), cut at the data
+  /// symbols around \p Addr, which begin objects even when unsized.
   std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
   /// The image's sized data objects by address, each as large as the
   /// largest symbol there, and the furthest end of any object up to each.
   std::vector<std::pair<va_t, uint64_t>> SizedObjects;
   std::vector<va_t> SizedObjectReach;
+  /// Where the image's data symbols begin, sized or not, in order: a PDB
+  /// public names an object without sizing it.
+  std::vector<va_t> DataSymbolStarts;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.

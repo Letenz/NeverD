@@ -88,6 +88,30 @@ void commitPrimaryFunctionSymbol(BinaryImage &Img, va_t Addr, va_t End,
   ++Added;
 }
 
+/// A function symbol that pdata sized grows over the chained fragments that
+/// follow its primary record without a gap, the rest of its body
+/// (ExceptionFunction::contiguousEnd); a size from another source stays.
+void extendPrimarySymbolsOverFragments(BinaryImage &Img) {
+  struct Extent {
+    va_t PrimaryEnd;
+    va_t End;
+  };
+  std::unordered_map<va_t, Extent> Extended;
+  for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions) {
+    if (F.Kind == RuntimeFunctionKind::Chained || !F.CodeRange.isValid())
+      continue;
+    if (const va_t End = F.contiguousEnd(); End != F.CodeRange.End)
+      Extended[F.CodeRange.Begin] = {F.CodeRange.End, End};
+  }
+  for (Symbol &Sym : Img.Symbols) {
+    if (!Sym.IsFunc)
+      continue;
+    const auto It = Extended.find(Sym.Addr);
+    if (It != Extended.end() && Sym.Size == It->second.PrimaryEnd - Sym.Addr)
+      Sym.Size = It->second.End - Sym.Addr;
+  }
+}
+
 bool runtimeFunctionCovers(va_t Addr, va_t End, va_t Query) {
   return Query >= Addr && Query < End;
 }
@@ -276,6 +300,7 @@ void parseX64Exceptions(const COFFObjectFile &Obj, BinaryImage &Img,
   }
 
   unwind_detail::resolveX64UnwindChains(Img.ExceptionMetadata);
+  extendPrimarySymbolsOverFragments(Img);
 
   if (Restrict) {
     for (const ExceptionFunction &F : Img.ExceptionMetadata.Functions)
@@ -935,6 +960,7 @@ bool ensureX64RuntimeFunction(BinaryImage &Img, va_t Address) {
   if (IsChained && PrimaryRange)
     ensureX64RuntimeFunction(Img, PrimaryRange->Begin);
   unwind_detail::resolveX64UnwindChains(Img.ExceptionMetadata);
+  extendPrimarySymbolsOverFragments(Img);
   return true;
 }
 

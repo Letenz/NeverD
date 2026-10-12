@@ -670,6 +670,14 @@ private:
       int Model = UcCpuModel;
       uc_ctl_set_cpu_model(UC, Model);
     }
+    // A process starts with the x87 control word the System V psABI gives
+    // it, 0x037F: every exception masked, round to nearest, 64-bit
+    // precision.  Unicorn resets the word to zero, which code that saves it
+    // with fnstcw and restores it with fldcw turns into 24-bit precision.
+    if (Arch == UC_ARCH_X86) {
+      uint64_t ControlWord = 0x037F;
+      uc_reg_write(UC, UC_X86_REG_FPCW, &ControlWord);
+    }
 
     // The function returns to (and emulation stops at) the address just past
     // the code image.  ARM `bx`/`pop {pc}` treats the low bit of a loaded PC as

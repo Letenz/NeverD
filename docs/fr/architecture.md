@@ -9,6 +9,10 @@ pour modifier NeverD en toute sécurité. Il couvre volontairement uniquement le
 code appartenant à NeverD ; les sous-modules LLVM, Capstone et Unicorn gardent
 leur propre architecture interne.
 
+## Frontière du remplacement source et objet
+
+`SourcePatchCompiler` gère l’identité du compilateur et le choix de l’artefact. `validateSourcePatchTarget` est l’admission commune de la source et de l’IR fourni ; le triplet seul ne prouve pas le support. `bindSourcePatch` authentifie les entrées IR ; `PatchObject` gère les sections natives, les relocations et les preuves de plage FDE. `publishSourcePatch` prépare, vérifie et publie la transaction exacte. `COFFSourceImage` gère le nouveau stockage et les tables de déroulement PE x64 ; les réécritures levées gardent leurs preuves EH originales distinctes. Voir [les correctifs source](source-patching.md).
+
 ## Frontière du système
 
 ```mermaid
@@ -1649,3 +1653,11 @@ En RAM ordinaire, `XCHG` accepte les opérandes non alignés de 8/16/32/64 bits,
 DarwinFiles importe le timespec et le masque de signal de Pselect dans DarwinSelect.cpp et refuse les opérations sur un état de signal non modélisé. Select et Pselect partagent immediateSelect pour les bitmaps, la borne inférieure de capacité, le fournisseur et la copie ordonnée ; timeval et timespec gardent leurs largeurs et limites propres. Les masques complets non nuls exigent un futur modèle d’état de signal.
 
 `isCheckedX86SafeSEHHandlerReference` authentifie une entrée de gestionnaire PE32 conservée avec le décodeur SafeSEH existant, les octets immuables de la table et de son en-tête, et le pointeur load-config relocalisé. LLVM déclare cette identité source avant tout corps, y compris les corps omis des fragments. L’appartenance à la table ne prouve ni la personnalité du langage, ni une ABI appelable, ni le droit de reconstruire les exceptions natives ; les vérifications indépendantes restent nécessaires.
+
+L’initialisation des champs du noyau dépend d’un propriétaire distinct de la RAM physique. La validation des permissions reste pure. Les écritures hôte réussies, les transactions vérifiées validées et les événements logiciels exacts après écriture définissent seulement les octets effectivement écrits, y compris les valeurs identiques et les écritures achevées avant une faute. Les écritures temporaires, annulations avant validation et invalidations opaques ne prouvent aucune initialisation. Un bitmap propriétaire suit les tranches physiques retenues et leurs alias sans lire la RAM invitée. Les événements logiciels prouvent leurs écritures signalées sans garantir une couverture complète ; les services typés conservent leurs contrats explicites.
+
+`MemoryWriteWitness` conserve les plages exactes des allocations physiques et partage l’invalidation des écritures validées avec les réservations RAM. Les écritures identiques, partielles ou par alias l’invalident ; une exécution sans suivi complet retire prudemment la preuve. La création et les requêtes exigent un propriétaire arrêté. L’observation du pilote lie les champs DIR64 validés après la copie de l’image, avant les corrections de session, et publie des faits possédés lorsque l’allocation et l’historique correspondent. Ces faits ne couvrent ni les pointeurs générés ni la restauration native du noyau.
+
+Le chargeur de pilotes lie les faits de relocalisation au SHA-256 du fichier validé. La reconstruction PE utilise ces faits possédés et exclut les champs remplacés par les imports ou le formatage avant d’émettre des enregistrements DIR64 de diagnostic. Ce composant ne déduit pas les relocalisations des pointeurs générés et ne retire pas le refus du noyau.
+
+`isCanonicalX87Wait` définit la même règle de conservation du cadre sur le chemin normal pour le transfert registration ordinaire et les retours local-finally vérifiés. L’opération FWAIT et la distribution des exceptions restent intactes. Les autres intrinsic et les formes incorrectes restent opaques ; cette règle ne prouve ni une sortie finally non locale ni une restauration native.

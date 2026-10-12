@@ -22,6 +22,8 @@
 #include "Session.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
+#include "TitleBar.h"
+#include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 #include "web/PackageReviewDialog.h"
@@ -171,6 +173,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
     : KDDockWidgets::QtWidgets::MainWindow(QStringLiteral("NeverDMainWindow")),
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
+  frame_ = WindowFrame::attach(*this);
   setWindowIcon(icon(QStringLiteral("app")));
   setCenterWidgetMargins(dockAreaMargins());
   setAcceptDrops(true);
@@ -312,7 +315,16 @@ QString MainWindow::layoutPath() const {
 //===----------------------------------------------------------------------===//
 
 void MainWindow::buildMenusAndToolbars() {
-  actions_.buildMenus(menuBar(), [this](QMenu *menu, const QString &name) {
+  menuBar_ = new QMenuBar(this);
+  if (frame_) {
+    titleBar_ = new TitleBar(*this, menuBar_);
+    titleBar_->setCommandCenterAction(
+        actions_.action(ActionId::OptionsPalette));
+    setMenuWidget(titleBar_);
+  } else {
+    setMenuBar(menuBar_);
+  }
+  actions_.buildMenus(menuBar_, [this](QMenu *menu, const QString &name) {
     fillPlaceholder(menu, name);
   });
   const auto toolbars = actions_.buildToolbars(this);
@@ -867,7 +879,8 @@ void MainWindow::jump(Address address) {
   hex_->setFocus();
 }
 
-void MainWindow::activateCodeName(CodeView *view, const QString &name) {
+void MainWindow::activateCodeName(CodeView *view, const QString &name,
+                                  bool selectSourceAddress) {
   const auto serial = ++codeNavigationSerial_;
   const auto epoch = session_.epoch();
   const auto source = view->text()->function();
@@ -876,8 +889,8 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name) {
   const auto representation = view->representation();
   session_.read(
       QStringLiteral("resolve"), {{"query", name}}, view,
-      [this, view, serial, epoch, source, from, representation,
-       name](const QJsonObject &payload) {
+      [this, view, serial, epoch, source, from, representation, name,
+       selectSourceAddress](const QJsonObject &payload) {
         if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
             view->text()->function() != source ||
             view->representation() != representation || !view->isVisible())
@@ -887,6 +900,8 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name) {
         if (function && !payload.value("import").toBool()) {
           navigateCodeFunction(view, address.value_or(*function), *function,
                                from);
+          if (selectSourceAddress)
+            view->text()->selectAddress(address.value_or(*function));
         } else if (address) {
           // Data and import slots retain ordinary address navigation.
           jump(*address);
@@ -1337,17 +1352,21 @@ void MainWindow::updateActions() {
 }
 
 void MainWindow::updateTitle() {
+  QString shown = QStringLiteral("NeverD");
   if (!session_.loaded()) {
-    setWindowTitle(QStringLiteral("NeverD"));
-    return;
+    setWindowTitle(shown);
+  } else {
+    // Like a classic title bar: the database, then the input it describes.
+    const QString database = session_.databasePath();
+    shown = QFileInfo::exists(database) ? QFileInfo(database).fileName()
+                                        : session_.fileName();
+    setWindowTitle(
+        QStringLiteral("NeverD - %1 %2").arg(shown, session_.projectPath()));
   }
-  // Like a classic title bar: the database, then the input it describes.
-  const QString database = session_.databasePath();
-  const QString shown = QFileInfo::exists(database)
-                            ? QFileInfo(database).fileName()
-                            : session_.fileName();
-  setWindowTitle(
-      QStringLiteral("NeverD - %1 %2").arg(shown, session_.projectPath()));
+  // The command center names the file, as Visual Studio Code's names the
+  // workspace, and its tooltip carries the full title.
+  if (titleBar_)
+    titleBar_->setCommandCenterText(shown, windowTitle());
 }
 
 void MainWindow::updateStatusBar() {
@@ -1641,8 +1660,71 @@ void MainWindow::jumpAnywhere() {
 }
 
 void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
+  if (!session_.loaded())
+    return;
+  const auto serial = ++codeNavigationSerial_;
+  auto *view = focusedCodeView();
+  if (!view) {
+    showReferencesDialog(address, to, nullptr);
+    return;
+  }
+  if (!to) {
+    const auto position = view->text()->currentAddress();
+    showReferencesDialog(position ? position : view->text()->function(), false,
+                         view);
+    return;
+  }
+  // A source name can denote a different function from both its source row
+  // and the independent assembly cursor. Prefer its published image identity.
+  const auto target = view->text()->renameTarget();
+  if (target)
+    if (const auto at = addressValue(target->value("address"))) {
+      showReferencesDialog(at, to, view);
+      return;
+    }
+  const auto query = target && !target->value("query").toString().isEmpty()
+                         ? target->value("query").toString()
+                         : view->text()->currentToken();
+  if (query.isEmpty()) {
+    const auto position = view->text()->currentAddress();
+    showReferencesDialog(position ? position : view->text()->function(), to,
+                         view);
+    return;
+  }
+  const auto epoch = session_.epoch();
+  const auto function = view->text()->function();
+  const auto representation = view->representation();
+  const auto valid = [this, view, serial, epoch, function, representation] {
+    return serial == codeNavigationSerial_ && epoch == session_.epoch() &&
+           view->text()->function() == function &&
+           view->representation() == representation && view->isVisible();
+  };
+  session_.read(
+      QStringLiteral("resolve"), {{"query", query}}, view,
+      [this, view, to, valid](const QJsonObject &payload) {
+        const auto address = addressValue(payload.value("address"));
+        // Release the query delivery barrier before the modal chooser asks
+        // the same dispatcher to read its reference pages.
+        QTimer::singleShot(0, view, [this, view, to, valid, address] {
+          if (valid())
+            showReferencesDialog(address, to, view);
+        });
+      },
+      [this, query, valid](const QString &, const QString &error) {
+        if (valid())
+          output_->append(tr("Cannot jump to %1: %2").arg(query, error), 2);
+      });
+}
+
+void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
+                                      CodeView *origin) {
   if (!address || !session_.loaded())
     return;
+  const QPointer<CodeView> view = origin;
+  const auto epoch = session_.epoch();
+  const auto serial = codeNavigationSerial_;
+  const auto function = view ? view->text()->function() : std::nullopt;
+  const auto representation = view ? view->representation() : QString();
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const QString title = (to ? tr("xrefs to %1") : tr("xrefs from %1"))
                             .arg(displayAddress(*address, digits));
@@ -1650,9 +1732,20 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
       session_, space_, title,
       {{"address", hexAddress(*address)}, {"direction", to ? "to" : "from"}},
       this);
-  if (dialog.exec() == QDialog::Accepted)
-    if (const auto chosen = dialog.chosen())
+  if (dialog.exec() != QDialog::Accepted || epoch != session_.epoch() ||
+      serial != codeNavigationSerial_)
+    return;
+  if (const auto chosen = dialog.chosen()) {
+    if (origin) {
+      if (view && view->isVisible() && view->text()->function() == function &&
+          view->representation() == representation)
+        activateCodeName(view, hexAddress(*chosen), true);
+    } else {
       navigate(*chosen);
+      disassembly_->window()->activateWindow();
+      disassembly_->focusContent();
+    }
+  }
 }
 
 void MainWindow::showPseudocode(const QString &representation,

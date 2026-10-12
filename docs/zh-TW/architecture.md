@@ -7,6 +7,10 @@
 本指南說明貢獻者安全修改 NeverD 所需理解的生產邊界。內容刻意只涵蓋
 NeverD 自有程式碼；LLVM、Capstone 與 Unicorn 子模組各自維護內部架構。
 
+## 原始碼與物件替換邊界
+
+`SourcePatchCompiler` 負責編譯器身分與製品選擇。`validateSourcePatchTarget` 統一決定原始碼與外部 IR 的目標准入，目標三元組本身不足以證明支援。`bindSourcePatch` 確認 IR 入口映射；`PatchObject` 負責原生區段、重定位與 FDE 範圍證據。`publishSourcePatch` 暫存、檢查並獨占發佈完整交易。`COFFSourceImage` 負責 PE x64 的新儲存與展開表；提升後的重寫仍要求獨立的原 EH 證據。參見[原始碼 patch](source-patching.md)。
+
 ## 系統邊界
 
 ```mermaid
@@ -1438,3 +1442,11 @@ DarwinFiles 負責共通屬性匯入、名稱/stat 有效性與紀錄編碼；Da
 DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩，並拒絕未建模的訊號狀態操作。Select 與 Pselect 共用 immediateSelect，統一處理位元圖、容量下界、提供方與依序複製；timeval 與 timespec 保留各自的欄位寬度及邊界。完整的非空遮罩需要後續的訊號狀態模型。
 
 `isCheckedX86SafeSEHHandlerReference` 使用既有 SafeSEH 解碼器、不可變的表與標頭位元組，以及具有重定位的 load-config 指標，驗證保留的 PE32 處理器入口。LLVM 在輸出任何函式本體前宣告此來源身分，包括分片省略的本體。表成員資格不證明語言 personality、可呼叫 ABI 或原生 EH 重建權限；各使用端仍執行獨立檢查。
+
+核心欄位初始化由獨立的實體 RAM 記錄管理，權限驗證維持純檢查。成功的主機寫入、已提交的受檢交易及精確的軟體寫後事件，只確認實際提交的位元組，包括同值寫入及故障前已完成的寫入。暫時寫入、回復、提交前取消的嘗試及不透明失效不建立初始化證據。自有位圖隨保留的實體切片跨別名生效，查詢無須讀取客體 RAM。軟體事件只證明所報告的寫入，不代表完整寫入涵蓋；具型別的模型服務保留各自明確的初始化契約。
+
+`MemoryWriteWitness` 保留精確的實體配置切片，與 RAM reservation 共用已提交寫入的失效機制。同值、部分及別名寫入會使記錄失效；無法完整追蹤寫入的執行會保守地撤銷證明。建立和查詢要求實體擁有者已停止。驅動觀察在映像複製後、工作階段修正前綁定已驗證的 DIR64 欄位，只有映射配置和寫入歷史仍相符時才保留載入事實。這些事實不涵蓋產生的指標，也不提供原生核心狀態重建器。
+
+驅動程式載入器以已驗證檔案的 SHA-256 繫結重定位事實。PE 重建使用這些自有事實，在輸出診斷 DIR64 記錄前排除匯入修復或中繼資料格式化替換的欄位。此層不能推斷生成指標的重定位，也不能解除核心執行階段拒絕。
+
+`isCanonicalX87Wait` 為一般 registration 轉移和經驗證的 local-finally 返回提供相同的正常路徑框架保留規則。FWAIT 操作與例外分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。此規則不授予非區域 finally 退出或原生還原證明。

@@ -7,6 +7,9 @@ QDialog#commandPalette { border: 1px solid ${MenuSeparator}; }
 QMenuBar { background: ${MenuBar}; color: ${MenuBarText}; border: none; padding: 0 2px; }
 QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 3px; }
 QMenuBar::item:selected, QMenuBar::item:pressed { background: ${MenuBarSelection}; }
+/* The menus in a title bar the window draws itself, dimmed while inactive. */
+QWidget#titleBar QMenuBar { background: transparent; color: ${TitleBarText}; }
+QWidget#titleBar[active="false"] QMenuBar { color: ${TitleBarInactiveText}; }
 QMenu { background: ${Menu}; color: ${MenuText}; border: 1px solid ${MenuSeparator}; padding: 4px; }
 QMenu::item { padding: 4px 24px 4px 26px; border-radius: 3px; }
 QMenu::item:selected { background: ${MenuSelection}; color: ${HighlightedText}; }
@@ -23,7 +26,7 @@ QToolButton { background: transparent; color: ${WindowText}; border: 1px solid t
 QToolButton:hover { background: ${ToolBarHover}; }
 QToolButton:pressed, QToolButton:checked { background: ${Highlight}; color: ${HighlightedText}; }
 QToolButton::menu-indicator { image: none; width: 0; }
-QStatusBar { background: ${StatusBar}; color: ${StatusBarText}; min-height: 22px; }
+QStatusBar { background: ${StatusBar}; color: ${StatusBarText}; min-height: 22px; border-top: 1px solid ${StatusBarBorder}; }
 QStatusBar QLabel { color: ${StatusBarText}; padding: 0 8px; }
 QStatusBar::item { border: none; }
 QTreeView, QListView, QTableView { background: ${Base}; alternate-background-color: ${AlternateBase}; color: ${Text}; border: none; selection-background-color: ${Highlight}; selection-color: ${HighlightedText}; outline: none; }

@@ -3,6 +3,8 @@
 
 #include <functional>
 #include <optional>
+#include <string>
+#include <unordered_map>
 
 namespace neverd::worker {
 /// Analyst presentation edits, scoped to a function and source representation.
@@ -15,11 +17,16 @@ public:
   static void validateChange(const Json &view, const Json &request);
   using Resolver =
       std::function<std::optional<std::uint64_t>(const std::string &)>;
+  /// The listing's display names for functions the engine leaves generic,
+  /// such as main or start for a sub_ name, by engine name.
+  using FunctionAliases = std::unordered_map<std::string, std::string>;
   /// Decorate a complete source view, preserving its lines and remapping every
   /// UTF-8 span. Edit targets come from declared locals or resolved image
-  /// names.
+  /// names. An image name shows its rename, otherwise its display name.
   static void decorate(Json &view, const Json &row, std::uint64_t function,
                        const std::string &representation, const Json &renames,
-                       const Json &annotations, const Resolver &resolve);
+                       const Json &annotations,
+                       const FunctionAliases &displayNames,
+                       const Resolver &resolve);
 };
 } // namespace neverd::worker

@@ -68,6 +68,10 @@ struct API {
   WEB_API(neverd_web_nexe_records_json)
   WEB_API(neverd_web_pkg_extract_json)
   WEB_API(neverd_web_pkg_records_json)
+  WEB_API(neverd_web_wails_extract_json)
+  WEB_API(neverd_web_wails_records_json)
+  WEB_API(neverd_web_tauri_extract_json)
+  WEB_API(neverd_web_tauri_records_json)
   WEB_API(neverd_web_packages_analyze_json)
   WEB_API(neverd_web_package_archive_extract_json)
   WEB_API(neverd_web_package_archive_records_json)
@@ -1006,6 +1010,56 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         kind.data(), kind.size(),
         sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
         sizeField(p, "limit", 128, 512)));
+  }
+  if (operation == "web_tauri_extract") {
+    fields(p, {"revision", "artifact_id", "profile", "initializer_address"});
+    if (!api().neverd_web_tauri_extract_json)
+      throw Error("capability_unavailable", "Tauri extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto profile = required(p, "profile", 64);
+    auto value = result(api().neverd_web_tauri_extract_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        decimal(p, "initializer_address"), profile.data(), profile.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_tauri_records") {
+    fields(p, {"revision", "extraction_id", "offset", "limit"});
+    if (!api().neverd_web_tauri_records_json)
+      throw Error("capability_unavailable", "Tauri extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "extraction_id", 64);
+    return result(api().neverd_web_tauri_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 128)));
+  }
+  if (operation == "web_wails_extract") {
+    fields(p, {"revision", "artifact_id", "profile"});
+    if (!api().neverd_web_wails_extract_json)
+      throw Error("capability_unavailable", "Wails extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "artifact_id", 64);
+    const auto profile = required(p, "profile", 64);
+    auto value = result(api().neverd_web_wails_extract_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        profile.data(), profile.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_wails_records") {
+    fields(p, {"revision", "extraction_id", "record_kind", "offset", "limit"});
+    if (!api().neverd_web_wails_records_json)
+      throw Error("capability_unavailable", "Wails extraction is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "extraction_id", 64);
+    const auto kind = required(p, "record_kind", 16);
+    return result(api().neverd_web_wails_records_json(
+        session_, revision.data(), revision.size(), id.data(), id.size(),
+        kind.data(), kind.size(),
+        sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+        sizeField(p, "limit", 128, 128)));
   }
   if (operation == "web_bun_extract") {
     fields(p, {"revision", "artifact_id"});

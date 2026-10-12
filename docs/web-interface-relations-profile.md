@@ -1,11 +1,13 @@
 # Request source relationships
 
 `request-source-relations-v1` projects bounded syntax relationships from an
-explicit existing `fetch-websocket-xhr-syntax-v3` analysis. It consumes the same
+explicit existing `fetch-websocket-xhr-wrappers-syntax-v4` analysis. It consumes the same
 source and lexical-binding models and the authoritative
 `javascript-source-navigation-v1` function/call index. It accepts only direct
 fetch and unverified member-fetch candidates for these request/result links.
 It does not change request eligibility, URL/method interpretation or HAR joins.
+V4 wrapper-call rows carry their own one-layer forwarding anchors; this separate
+result-relation profile does not consume those rows or compose wrapper chains.
 
 ## Selected relationships
 

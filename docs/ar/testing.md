@@ -1284,7 +1284,7 @@ build-release/bin/NeverDMetadataJSONTests --gtest_filter='ELFARM32ModeCAPITest.*
 
 عند ضبط `native_cpu_only=true`، يفعّل `native_driver_tests=true` اختبارات `NeverDNativeDriverTests` دون Unicorn. قبل التهيئة، يتحقق `build_wdk_driver_fixtures.py` من SHA-256 الكامل لحزم Microsoft الرسمية WDK/SDK 10.0.26100.6584 ويعيد بناء 48 صورة برنامج تشغيل عادية أو CFG أو DBG من المصادر الأصلية. يحدد `WDKDriverFixtures.def` هويات الحزم ومعاملات المترجم والرابط وربط عينات الاختبار. تبقى ملفات Microsoft غير المعدلة وتراخيصها في مجلدات البناء أو التخزين المؤقت المحلية؛ ولا يرفع CI إلا بيانات البناء الوصفية وسجلاته. يسجل البيان إصدارات الأدوات والأوامر وبصمات المصادر والترويسات وصور الخرج.
 
-يتطلب `NativeDriverTests.def` عدد 230 نتيجة WHP لجميع الأحمال الـ115 في `DriverBuiltinImages.def` و`DriverBackendParityCases.def`: عدد 27 صورة مدمجة و48 صورة WDK و40 سيناريو طلب، بالعناوين الأصلية والمعاد تموضعها. القائمة الإلزامية الكاملة هي `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`. تتضمن فحوص مجموعات الانتظار الـ30 ست عشرة حالة نموذج محمولة وأربع عشرة حالة أصلية لبرامج التشغيل. يحتفظ `run_native_cpu_ci.py --with-drivers` بالهويات الدقيقة وأدلة JUnit مع تعطيل Unicorn. يؤدي غياب أي عينة إلزامية أو تخطيها إلى فشل بوابة التحقق الاختيارية، بينما تبقى العينات الخارجية اختيارية للبناء العادي. تحافظ الصور الثابتة على رفض إعادة التموضع المتوقع. لم يتم التحقق بعد من التنفيذ الأصلي لضيوف ARM64.
+يتطلب `NativeDriverTests.def` عدد 230 نتيجة WHP لجميع الأحمال الـ115 في `DriverBuiltinImages.def` و`DriverBackendParityCases.def`: عدد 27 صورة مدمجة و48 صورة WDK و40 سيناريو طلب، بالعناوين الأصلية والمعاد تموضعها. القائمة الإلزامية الكاملة هي `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`. تتضمن فحوص مجموعات الانتظار الـ30 ست عشرة حالة نموذج محمولة وأربع عشرة حالة أصلية لبرامج التشغيل. يحتفظ `run_native_cpu_ci.py --with-drivers` بالهويات الدقيقة وأدلة JUnit مع تعطيل Unicorn. يؤدي غياب أي عينة إلزامية أو تخطيها إلى فشل بوابة التحقق الاختيارية، بينما تبقى العينات الخارجية اختيارية للبناء العادي. تحافظ الصور الثابتة على رفض إعادة التموضع المتوقع. لم يتم التحقق بعد من التنفيذ الأصلي لضيوف ARM64.
 
 يحقن `InterruptionRetainsPhaseCauseDeadlineAndLease` انتهاء المهلة والتوقف وكليهما قبل تعليمتين مختلفتين أثناء البدء. ويتحقق من تشخيص المرحلة الدقيق وعمر الرسالة المملوكة ونوع الخطأ وبتات أسبابه وبقاء الموعد النهائي موحداً وتحرير ملكية الذاكرة. تظل إخفاقات النقل الفعلية واختلافات الحالة متميزة. تبلغ ميزانية التحقق الأولي لـ x64 الأصلي `5 s`، ولا تتغير مهل الضيف العادية أو سماح الخطوة الواحدة.
 
@@ -1716,3 +1716,31 @@ guest/Python5,000,000us / quantum1024 / public10s
 يرفض `RegistrationCallNoReturn` حدود التعليمات والأهداف ونطاقات العمليات المعدلة والاستدعاءات الشرطية والاستخدام مع معمارية أو صيغة غير صحيحة. يتحقق اختبار PE32 ذي المكدس المعاد محاذاته من استدعاء نهائي مثبت بصورة مستقلة ومن حافة متابعة عادية تتطلب دليلاً حالياً لإزالتها؛ ولا يعيد دليل ذاكرة غير صالح إنشاء حافة غائبة.
 
 تفحص `SafeSEHReference.*` العضوية في جدول SafeSEH غير قابل للتغيير والتخزين المشوه أو الملتبس وإعادة التموضع والمعماريات والصيغ الأخرى وترتيب التصريحات بين الأجزاء. يستخدم `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` المتغير `NEVERD_NONLOCAL_FINALLY_INPUTS` لفحص 32 تركيبة LLVM لعينات MSVC الأصلية على x86/x64 مع O0/O2 وGS ومع تفعيل تحسين المصدر وتعطيله. يتحقق من LLVM وتواقيع الاستدعاءات المحلولة، مع استمرار رفض إعادة بناء x86 EH الأصلي غير المدعوم. تنزل مهمة Windows EH المخصصة ملف العينات الأصلي وتنفذ المصفوفة؛ ويُتجاوز الاختبار صراحة عند غياب مجلد الإدخال.
+
+يتحقق `RAMReservationTests.cpp` من أدلة الكتابة العامة مع القيم المتطابقة وABA والنطاقات المحتفظ بها وإعادة استخدام العناوين والتعيينات المشتركة والتراجع والإلغاء والكتابات الملتزمة قبل الخطأ والتنفيذ غير الشفاف. يتحقق `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` من حقائق التحميل المملوكة في العناوين المفضلة والأدنى وعناوين النواة: استعادة البايتات لا تستعيد المصدر المثبت. يميز `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` بين تصحيحات CFG النشطة والاحتفاظ بالمؤشرات البديلة غير النشطة.
+
+يتحقق `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` من إخراج PE وقارئ DIR64 مستقل وإعادة تموضع النموذج واستبعاد سجلات التصحيح المعاد كتابتها. يرفض `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` اختلاف المصدر أو القاعدة أو الترتيب ويستبعد استبدال التنسيق حتى مع تطابق البايتات. تثبت هذه الفحوص بيانات التشخيص، لا الاستعادة الأصلية.
+
+يفحص `OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` تسع صيغ intrinsic، وكتابة finally في إطار الأب، واستعادة ESP للوسائط، وإزالة registration، والحفاظ على مداخل توزيع الاستثناءات. تنجح صيغة FWAIT القياسية فقط، وتظل الصيغ الثماني غير السليمة أو المختلفة مرفوضة.
+
+تحتوي `NeverDNativeFinallyInputTests` بصورة مستقلة على مصفوفة مدخلات MSVC. تبقى `NeverDPipelineOutcomeTests` إلزامية على كل منصة CI ولا تعتمد على ملفات أصلية اختيارية. تبني مهمة Windows EH الهدف وتنفذه باستخدام الصور المتحقق منها. تختار CI على macOS مترجم Homebrew Clang 22 صراحة لاختبارات استبدال المصدر، بصورة مستقلة عن مترجم بناء NeverD. وتستمر في رفض طرق فحص المكدس غير المدعومة.
+
+تستخدم أهداف اختبارات MSVC الخيار `/bigobj` للسماح بعدد أكبر من أقسام COFF الناتجة عن قوالب GoogleTest وLLVM. لا تتغير ملفات تعريف المترجمات الأخرى. تتحقق اختبارات الإعداد من أمر الترجمة المولد، وتتحقق CI الأصلية على Windows من الترجمة والتنفيذ.
+
+يُبلغ رفض الإزاحة المزدوجة في الوضع المتحقق عن العدد بعد تطبيق القناع وعرض المعامل عندما تكون النتيجة والأعلام غير محددة. يتحقق `X64DoubleShift` من احتفاظ الخروج ذي النوع وواجهة الأخطاء القديمة بالسبب دون تغييرات في السجلات أو RAM أو تسجيل عمليات الوصول إلى الذاكرة؛ ويتحقق اختبار برنامج التشغيل من السبب نفسه قبل إرسال السيناريو.
+
+## تصحيحات المصدر والكائنات الأصلية
+
+تعني `CPU` تثبيت المصدر وتنفيذ الدالة المعزولة، وتعني `REFUSED` رفضاً صريحاً لغياب عقد التثبيت. تحتاج ARM32 ELF إلى تسجيل EHABI؛ وتحتاج Mach-O ذات 32 بت إلى عقود محمل وواجهة ترجمة وفك مكدس متحققة؛ ويتطلب تثبيت مصدر PE حالياً x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[تصحيحات المصدر والكائنات الأصلية](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

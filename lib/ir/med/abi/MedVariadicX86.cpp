@@ -26,7 +26,7 @@ using med_calling_conv_detail::computeForwardValueClosure;
 using med_calling_conv_detail::containsValue;
 
 /// The va_start GP/FP-offset word with a parameter-register spill.
-bool hasX64VariadicPrologue(VariadicScan &S) {
+bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord) {
   const MedFunc &Func = S.Func;
   const TargetRegInfo &TRI = S.TRI;
   bool Marked = false;
@@ -42,8 +42,10 @@ bool hasX64VariadicPrologue(VariadicScan &S) {
       if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         continue;
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
-        if (Op.Inputs[I].isConst() && isX64VaStartWord(Op.Inputs[I].ConstVal))
+        if (Op.Inputs[I].isConst() && isX64VaStartWord(Op.Inputs[I].ConstVal)) {
           HasVaWord = true;
+          VaStartWord = Op.Inputs[I].ConstVal;
+        }
       if (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 &&
           Op.Inputs[1].isConst() && Op.Inputs[1].Size == sizeof(uint32_t))
         if (auto Delta = entrySpDelta(S.values(), S.SpOff, Op.Inputs[0], 0))
@@ -53,8 +55,10 @@ bool hasX64VariadicPrologue(VariadicScan &S) {
     if (auto FpOffset =
             FieldStores.find(Delta + static_cast<int64_t>(sizeof(uint32_t)));
         FpOffset != FieldStores.end() &&
-        isX64VaStartWord(GpOffset | (FpOffset->second << 32)))
+        isX64VaStartWord(GpOffset | (FpOffset->second << 32))) {
       HasVaWord = true;
+      VaStartWord = GpOffset | (FpOffset->second << 32);
+    }
   Marked = HasVaWord && countParamRegSpills(Func, TRI.IntParamRegs) >= 1;
   return Marked;
 }
@@ -162,4 +166,24 @@ bool hasI386VariadicPrologue(VariadicScan &S) {
 }
 
 } // namespace med_variadic_detail
+
+// A System V caller sets AL to the number of vector registers it passes a
+// variadic function, which saves them to its register save area only when AL
+// is not zero.  A function that takes every vector argument register as a
+// parameter is passed all eight: AL is 8, and the area always holds them.
+void bindX64VariadicVectorCount(MedFunc &Func, const TargetRegInfo &TRI,
+                                uint8_t VectorRegisters) {
+  for (MedBlock &Block : Func.Blocks)
+    for (MedOp &Op : Block.Ops) {
+      if (med_calling_conv_detail::isEntryLiveInCopy(Op, TRI.IntReturnReg))
+        continue;
+      for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+        MedVar &Input = Op.Inputs[I];
+        if (Input.Kind == MedVar::Reg && Input.RegOff == TRI.IntReturnReg &&
+            Input.Size == 1 && Input.SSAVer == 0)
+          Input = MedVar::makeConst(VectorRegisters, 1);
+      }
+    }
+}
+
 } // namespace neverd

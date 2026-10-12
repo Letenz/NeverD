@@ -391,6 +391,7 @@ llvm::Error AddressSpace::writeWithPermissions(uint64_t Address,
                     memory::ProjectionReserve + Offset;
     RAM.invalidateReservations(Page.Physical + Offset, Count);
     std::memcpy(Backing, Bytes.data(), Count);
+    RAM.recordInitialization(Page.Physical + Offset, Count);
     Bytes = Bytes.drop_front(Count);
     Address += Count;
   }

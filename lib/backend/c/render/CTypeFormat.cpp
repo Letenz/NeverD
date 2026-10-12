@@ -155,7 +155,13 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     // address. A fixup, including one beginning before this candidate, makes
     // those bytes unsuitable for replacement by a string literal. Use the
     // loader's shared storage-provenance query for every supported format.
-    const va_t First = Addr >= 7 ? Addr - 7 : 0;
+    // The query names where a slot begins, and no data slot is wider than a
+    // pointer: one that begins a pointer's width before the candidate ends
+    // where it starts (the last entry of a table of 32-bit pointers to the
+    // strings right after it).
+    const uint32_t PointerBytes = Img->getPointerSize();
+    const va_t Reach = PointerBytes ? PointerBytes - 1 : 7;
+    const va_t First = Addr >= Reach ? Addr - Reach : 0;
     const va_t End = Addr + Extent;
     for (va_t Byte = First; Byte < End; ++Byte)
       if (Img->hasRelocationProvenanceAt(Byte))

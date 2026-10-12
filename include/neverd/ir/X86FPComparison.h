@@ -11,9 +11,25 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APInt.h"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 namespace neverd {
+// Bits are ordered LT, EQ, GT, UNORD.  Keeping the architectural table
+// explicit prevents predicate suffixes with identical truth values from also
+// being mistaken for identical exception behavior.
+constexpr std::array<uint8_t, 32> X86FPComparisonPredicateResults = {
+    0x2, 0x1, 0x3, 0x8, 0xd, 0xe, 0xc, 0x7, 0xa, 0x9, 0xb,
+    0x0, 0x5, 0x6, 0x4, 0xf, 0x2, 0x1, 0x3, 0x8, 0xd, 0xe,
+    0xc, 0x7, 0xa, 0x9, 0xb, 0x0, 0x5, 0x6, 0x4, 0xf,
+};
+
+constexpr std::array<bool, 32> X86FPComparisonSignalingPredicates = {
+    false, true,  true, false, false, true, true,  false, false, true, true,
+    false, false, true, true,  false, true, false, false, true,  true, false,
+    false, true,  true, false, false, true, true,  false, false, true,
+};
+
 struct X86FPComparisonResult {
   unsigned Relation; // LT, EQ, GT, UNORD.
   uint32_t Raised;

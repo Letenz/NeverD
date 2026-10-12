@@ -9,6 +9,10 @@ müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
 Architektur.
 
+## Grenze für Quellcode- und Objektersetzung
+
+`SourcePatchCompiler` verwaltet Compileridentität und Artefaktauswahl. `validateSourcePatchTarget` ist die gemeinsame Zielzulassung für Quellcode und geliefertes IR; das Tripel allein beweist keinen Support. `bindSourcePatch` bestätigt IR-Einstiege; `PatchObject` verwaltet native Abschnitte, Relokationen und FDE-Bereichsnachweise. `publishSourcePatch` bereitet die genaue Transaktion vor, prüft und veröffentlicht sie exklusiv. `COFFSourceImage` verwaltet neuen PE-x64-Speicher und Unwind-Tabellen; geliftete Umschreibungen behalten ihre getrennten ursprünglichen EH-Nachweise. Siehe [Quellcodepatches](source-patching.md).
+
 ## Systemgrenze
 
 ```mermaid
@@ -1643,3 +1647,11 @@ In gewöhnlichem RAM erlaubt `XCHG` nicht ausgerichtete 8/16/32/64-Bit-Operanden
 DarwinFiles importiert Pselect-timespec und Signalmaske in DarwinSelect.cpp und verweigert nicht modellierte Signalzustandsoperationen. Select und Pselect teilen immediateSelect für Bitmaps, Kapazitätsuntergrenze, Anbieter und geordnete Ausgabe; timeval und timespec behalten ihre eigenen Feldbreiten und Grenzen. Vollständige nichtleere Masken benötigen ein künftiges Signalzustandsmodell.
 
 `isCheckedX86SafeSEHHandlerReference` authentifiziert einen beibehaltenen PE32-Handler-Einstieg mit dem vorhandenen SafeSEH-Decoder, unveränderlichen Tabellen- und Headerbytes sowie dem relozierten load-config-Zeiger. LLVM deklariert diese Quellidentität vor allen Funktionskörpern, auch bei ausgelassenen Shards. Die Tabellenzugehörigkeit beweist weder eine Sprach-Personality noch eine aufrufbare ABI oder die Erlaubnis zur nativen EH-Rekonstruktion; die unabhängigen Prüfungen bleiben bestehen.
+
+Die Initialisierung von Kernelfeldern hat einen eigenen Besitzer im physischen RAM. Die Berechtigungsprüfung bleibt rein. Erfolgreiche Hostschreibzugriffe, bestätigte geprüfte Transaktionen und genaue Softwareereignisse nach dem Schreiben definieren nur tatsächlich geschriebene Bytes, einschließlich gleicher Werte und vor einem Fehler abgeschlossener Schreibzugriffe. Temporäre Zugriffe, Rücknahmen, vor der Bestätigung abgebrochene Versuche und undurchsichtige Invalidierung begründen keine Initialisierung. Eine eigene Bitmap folgt den gehaltenen physischen Bereichen durch Aliase und ist ohne Lesen des Gast-RAM abfragbar. Softwareereignisse belegen nur gemeldete Schreibzugriffe, keine vollständige Abdeckung; typisierte Modelldienste behalten ihre ausdrücklichen Verträge.
+
+`MemoryWriteWitness` hält exakte Bereiche physischer Allokationen und nutzt dieselbe Invalidierung bestätigter Schreibzugriffe wie RAM-Reservierungen. Gleiche Werte, Teilzugriffe und Aliaszugriffe invalidieren den Nachweis; Ausführung ohne vollständige Verfolgung verwirft ihn konservativ. Erstellung und Abfragen erfordern einen gestoppten Besitzer. Die Treiberbeobachtung bindet validierte DIR64-Felder nach der Image-Kopie und vor Sitzungskorrekturen. Eigene Fakten bleiben nur bei gleicher Allokation und Schreibhistorie erhalten. Generierte Zeiger und native Kernel-Wiederherstellung sind damit nicht abgedeckt.
+
+Der Treiber-Loader bindet Relokationsfakten an SHA-256 der geprüften Datei. Die PE-Rekonstruktion verwendet die eigenen Fakten und schließt durch Importreparatur oder Formatierung ersetzte Felder vor der Ausgabe diagnostischer DIR64-Einträge aus. Diese Komponente kann weder generierte Zeigerrelokationen ableiten noch die Kernel-Laufzeitverweigerung aufheben.
+
+`isCanonicalX87Wait` definiert dieselbe Regel zum Erhalt des Frames auf dem normalen Pfad für gewöhnliche registration-Transfers und geprüfte local-finally-Rückkehrpfade. Die FWAIT-Operation und die Ausnahmeverteilung bleiben erhalten. Andere intrinsic und fehlerhafte Formen bleiben undurchsichtig; die Regel beweist weder einen nichtlokalen finally-Austritt noch eine native Wiederherstellung.

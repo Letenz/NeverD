@@ -580,6 +580,9 @@ struct HighFunc {
   bool DoesNotReturn = false;
   /// MedFunc::ReturnsNoValue: C shows the function as void.
   bool ReturnsNoValue = false;
+  /// MedFunc::IsVariadic: its prologue saves its argument registers for
+  /// va_arg, which reads no more of them than a caller passes.
+  bool IsVariadic = false;
   /// How execution reaches Entry (MedFunc::EntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;

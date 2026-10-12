@@ -13,7 +13,9 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/MedReturnValue.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
 #include <optional>
@@ -186,7 +188,8 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     RetVal = sourceFloatValue(CurOp.Inputs[0], 10);
   const auto &TRI = getTargetRegInfo(TargetArch);
   const bool UsesFPReturnReg = Func.ReturnType &&
-                               Func.ReturnType->Kind == NdTypeKind::Float &&
+                               (Func.ReturnType->Kind == NdTypeKind::Float ||
+                                Med.ReturnsVectorRegister) &&
                                TRI.hasFPReturnReg() && !Med.FPReturnViaX87;
   const uint64_t ReturnReg =
       UsesFPReturnReg ? TRI.FPReturnReg : TRI.IntReturnReg;
@@ -242,6 +245,23 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     for (size_t I = 0; I < Med.MultiReturn.size(); ++I) {
       const MedReturnReg &Field = Med.MultiReturn[I];
       ExprPtr Value = Reaching(Field.RegOff);
+      // A field the function never writes returns the argument its caller
+      // passed in the register, which recoverCallAbi made a parameter.
+      if (!Value &&
+          returnsArgumentUnchanged(Med, Field, getTargetRegInfo(TargetArch),
+                                   Image ? Image->abiFormat()
+                                         : BinaryFormat::Unknown) &&
+          std::any_of(
+              Med.Params.begin(), Med.Params.end(),
+              [&](const MedVar &P) { return P.RegOff == Field.RegOff; })) {
+        MedVar Argument;
+        Argument.Kind = MedVar::Param;
+        Argument.Id = -1;
+        Argument.RegOff = Field.RegOff;
+        Argument.Size = Field.Size;
+        Argument.TheArch = TargetArch;
+        Value = medvarToExpr(Argument);
+      }
       if (!Value)
         throw std::runtime_error(
             "cannot recover a field of a multi-register struct return");
@@ -462,7 +482,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   }
 
   // The FP return register holds the scalar's bits in its low lane.
-  if (UsesFPReturnReg &&
+  if (UsesFPReturnReg && Func.ReturnType->Kind == NdTypeKind::Float &&
       (!RetVal->Type || RetVal->Type->Kind != NdTypeKind::Float)) {
     const auto Bytes = ExplicitABI
                            ? Med.SourceTypeHint->ReturnLocation.ValueBytes

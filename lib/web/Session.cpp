@@ -14,6 +14,7 @@
 #include "SessionInternal.h"
 
 #include "neverd/web/Source.h"
+#include "neverd/web/SourceRecovery.h"
 
 namespace neverd::web {
 
@@ -134,6 +135,62 @@ std::string Session::capabilities() {
         {"runtime_activation", "not_checked"},
         {"v8_decoding", "opaque"}});
   }
+  if (tauriAvailable()) {
+    Operations.emplace_back("tauri_extract");
+    Operations.emplace_back("tauri_records");
+    Operations.emplace_back("tauri_export");
+    const TauriLimits L;
+    Analyses.emplace_back(llvm::json::Object{
+        {"kind", "tauri_extraction"},
+        {"profile", std::string(TauriProfile)},
+        {"max_input_bytes", std::to_string(MaxTauriInputBytes)},
+        {"max_members", L.Members},
+        {"max_stored_bytes", std::to_string(L.StoredBytes)},
+        {"max_member_stored_bytes", std::to_string(MaxBlobReadBytes)},
+        {"max_decoded_bytes", std::to_string(L.DecodedBytes)},
+        {"max_member_decoded_bytes", std::to_string(L.MemberDecodedBytes)},
+        {"max_private_bytes", std::to_string(L.PrivateBytes)},
+        {"max_reader_steps", std::to_string(L.Steps)},
+        {"max_codec_calls", std::to_string(L.CodecCalls)},
+        {"max_codec_millis", std::to_string(L.CodecMillis)},
+        {"max_codec_memory", std::to_string(L.CodecMemory)},
+        {"max_cached_extractions", MaxCachedTauriExtractions},
+        {"max_cached_decoded_bytes",
+         std::to_string(MaxCachedTauriDecodedBytes)},
+        {"max_page_records", 128},
+        {"member_path_policy", std::string(ArchivePathProfile)},
+        {"initializer_selection", "explicit_native_instruction_address"},
+        {"scope", "selected_initializer_table"},
+        {"executes_input", false}});
+  }
+  if (wailsAvailable()) {
+    Operations.emplace_back("wails_extract");
+    Operations.emplace_back("wails_records");
+    Operations.emplace_back("wails_export");
+    const WailsLimits Limits;
+    llvm::json::Array Profiles;
+    for (const auto P : wailsProfiles())
+      Profiles.emplace_back(std::string(P));
+    Analyses.emplace_back(llvm::json::Object{
+        {"kind", "wails_extraction"},
+        {"profile", std::string(WailsProfile)},
+        {"profiles", std::move(Profiles)},
+        {"max_input_bytes", std::to_string(MaxWailsInputBytes)},
+        {"max_tables", Limits.Tables},
+        {"max_members", Limits.Members},
+        {"max_payload_bytes", std::to_string(Limits.PayloadBytes)},
+        {"max_private_bytes", std::to_string(Limits.PrivateBytes)},
+        {"max_reader_steps", std::to_string(Limits.Steps)},
+        {"max_cached_extractions", MaxCachedWailsExtractions},
+        {"max_cached_private_bytes",
+         std::to_string(MaxCachedWailsPrivateBytes)},
+        {"max_page_records", 128},
+        {"member_path_policy", std::string(ArchivePathProfile)},
+        {"executes_input", false},
+        {"authenticates_producer_version", false},
+        {"runtime_filesystem_binding", "not_checked"},
+        {"native_bridge_analysis", "not_analyzed"}});
+  }
   llvm::json::Array SEAProfiles;
   for (const auto &P : seaProfiles())
     SEAProfiles.emplace_back(P);
@@ -205,13 +262,16 @@ std::string Session::capabilities() {
       {"intrinsic_verified", false},
       {"fetch_member_identity", "property_spelling_unverified"},
       {"fetch_member_correlation", false},
+      {"wrapper_profile", std::string(SourceRequestWrapperProfile)},
+      {"wrapper_argument_flow", "single_layer_parameter_forwarding"},
+      {"wrapper_correlation", false},
       {"spread_argument_resolution", "not_analyzed"},
       {"websocket_correlation", false},
       {"xhr_correlation", false},
       {"candidate_kinds",
-       llvm::json::Array{"fetch", "fetch_member_call", "websocket", "xhr_open",
-                         "xhr_set_request_header", "xhr_send",
-                         "xhr_event_handler"}}});
+       llvm::json::Array{"fetch", "fetch_member_call", "fetch_wrapper_call",
+                         "websocket", "xhr_open", "xhr_set_request_header",
+                         "xhr_send", "xhr_event_handler"}}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "source_interface_relations"},
       {"profile", std::string(InterfaceSourceRelationProfile)},
@@ -329,6 +389,9 @@ std::string Session::capabilities() {
       {"profile", std::string(PackageArchiveProfile)},
       {"zip_profile", std::string(ZipArchiveProfile)},
       {"formats", llvm::json::Array{"tar", "tgz", "zip"}},
+      {"tar_profiles",
+       llvm::json::Array{std::string(PackageArchiveProfile),
+                         std::string(PackageGNUArchiveProfile)}},
       {"available", packageArchiveAvailable()},
       {"gzip_available", packageGzipAvailable()},
       {"zip_deflate_available", packageZipDeflateAvailable()},
@@ -472,6 +535,25 @@ std::string Session::capabilities() {
 #ifdef NEVERD_ENABLE_WEB_JAVASCRIPT
   Operations.emplace_back("source_analyze");
   Operations.emplace_back("source_nodes");
+  Operations.emplace_back("source_readable_export");
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "source_local_readable_export"},
+      {"profile", std::string(SourceReadableExportProfile)},
+      {"recovery_profile", std::string(JavaScriptRecoveryProfile)},
+      {"max_source_bytes", std::to_string(MaxRecoverySourceBytes)},
+      {"max_output_bytes", std::to_string(MaxRecoverySourceBytes)},
+      {"max_syntax_nodes", MaxRecoveryNodes},
+      {"max_lexemes", MaxRecoveryLexemes},
+      {"max_string_units", std::to_string(MaxRecoveryStringUnits)},
+      {"storage_read_chunk_bytes", BlobTransferBytes},
+      {"destination", "new_private_directory"},
+      {"filename_policy", "fixed_names"},
+      {"raw_local_disclosure", true},
+      {"interactive_cache_modified", false},
+      {"transformation", "whitespace_insertion_only"},
+      {"verification", "same_parser_tree_and_exported_file_sha256"},
+      {"semantic_coverage", "not_established"},
+      {"executes_input", false}});
   Operations.emplace_back("source_map_lookup");
   Operations.emplace_back("source_bindings_analyze");
   Operations.emplace_back("source_binding_records");
@@ -804,6 +886,8 @@ std::string Session::commit(std::string_view Token) {
   State->SEAExtractions.clear();
   State->NexeExtractions.clear();
   State->PkgExtractions.clear();
+  State->WailsExtractions.clear();
+  State->TauriExtractions.clear();
   State->AsarExtractions.clear();
   State->ElectronManifests.clear();
   State->DesktopManifests.clear();
@@ -875,6 +959,8 @@ std::string Session::metadata() const {
       {"sea_extraction_count", State->SEAExtractions.size()},
       {"nexe_extraction_count", State->NexeExtractions.size()},
       {"pkg_extraction_count", State->PkgExtractions.size()},
+      {"wails_extraction_count", State->WailsExtractions.size()},
+      {"tauri_extraction_count", State->TauriExtractions.size()},
       {"asar_extraction_count", State->AsarExtractions.size()},
       {"electron_manifest_count", State->ElectronManifests.size()},
       {"desktop_manifest_count", State->DesktopManifests.size()},

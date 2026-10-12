@@ -48,6 +48,7 @@
 #include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceView.h"
 #include "neverd/web/Streams.h"
+#include "neverd/web/Wails.h"
 
 #include <map>
 #include <mutex>
@@ -85,6 +86,8 @@ struct Session::Impl {
   std::map<std::string, SEAExtraction> SEAExtractions;
   std::map<std::string, NexeExtraction> NexeExtractions;
   std::map<std::string, PkgExtraction> PkgExtractions;
+  std::map<std::string, WailsExtraction> WailsExtractions;
+  std::map<std::string, TauriExtraction> TauriExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
   std::map<std::string, ElectronManifest> ElectronManifests;
   std::map<std::pair<std::string, std::string>, DesktopManifest>
@@ -151,7 +154,8 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && NexeExtractions.empty() &&
-                   PkgExtractions.empty() && AsarExtractions.empty() &&
+                   PkgExtractions.empty() && WailsExtractions.empty() &&
+                   TauriExtractions.empty() && AsarExtractions.empty() &&
                    ElectronManifests.empty() && DesktopManifests.empty() &&
                    HTMLDocuments.empty() && PackageAnalyses.empty() &&
                    PackageArchives.empty() && PackageIntegrity.empty() &&

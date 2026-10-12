@@ -92,6 +92,80 @@ int ptrcmp(int a) {
                        "ptrcmp", {"ptrcmp", "A"});
 }
 
+// A table of functions the code reaches only through a selected base
+// (`T = c ? FA : FB; T[i]`) holds the functions' addresses, not their
+// offsets in the object's text.
+TEST_F(X86_64_ImageTable, ASelectedTableOfFunctionsHoldsTheirAddresses) {
+  expectRunsLikeSource(
+      R"C(
+static int a0(int x) { return x + 11; }
+static int a1(int x) { return x * 5; }
+static int a2(int x) { return x ^ 0x3c; }
+static int a3(int x) { return (x << 2) + 3; }
+static int b0(int x) { return x - 7; }
+static int b1(int x) { return x * 9 + 2; }
+static int b2(int x) { return (x >> 2) ^ x; }
+static int b3(int x) { return x * x - 1; }
+static int (*const FA[4])(int) = {a0, a1, a2, a3};
+static int (*const FB[4])(int) = {b0, b1, b2, b3};
+int fnsel(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    int (*const *T)(int) = ((s >> 4) & 1u) ? FA : FB;
+    int (*f)(int) = T[(s >> 7) & 3u];
+    h = h * 131u + (unsigned)f((int)(s >> 3));
+    h ^= h >> 10;
+  }
+  return (int)h;
+}
+)C",
+      "fnsel",
+      {"fnsel", "FA", "FB", "a0", "a1", "a2", "a3", "b0", "b1", "b2", "b3"});
+}
+
+// Clang turns a table of pointers to arrays into a relative table, the
+// offsets of the arrays from the table's own start: the table the output
+// declares spans the arrays, which the code reaches only through it.
+TEST_F(X86_64_ImageTable, ARelativeTableSpansTheObjectsItReaches) {
+  KernelOptimization = "-O1";
+  expectRunsLikeSource(R"C(
+static const unsigned B0[3] = {11u, 22u, 33u};
+static const unsigned B1[3] = {101u, 202u, 303u};
+static const unsigned B2[3] = {1001u, 2002u, 3003u};
+static const unsigned *const QS[3] = {B0, B1, B2};
+int pptr1(int a) {
+  unsigned h = (unsigned)a, acc = 0;
+  for (int i = 0; i < 48; i++) {
+    h = h * 1103515245u + 12345u;
+    unsigned k = (h >> 4) % 3u, j = (h >> 7) % 3u;
+    acc = acc * 131u + QS[k][j] + (unsigned)i;
+  }
+  return (int)acc;
+}
+)C",
+                       "pptr1", {"pptr1", "QS", "QS_rel", "B0", "B1", "B2"});
+}
+
+// A 256-bit constant vector, here the counts of a variable shift, keeps its
+// value: the C spells it as its 64-bit pieces shifted into place.
+TEST_F(X86_64_ImageTable, AWideConstantVectorKeepsItsValue) {
+  HostFlags = {"-mavx2"};
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-mavx2"}, R"C(
+typedef int v8si __attribute__((vector_size(32)));
+int shifts(int a) {
+  v8si v = {a, a ^ 0x55, a * 3, a + 7, a, a >> 1, a * 5, a - 9};
+  v8si s = {0, 2, 4, 6, 8, 10, 12, 14};
+  v8si r = v >> s;
+  int t = 0;
+  for (int i = 0; i < 8; i++)
+    t = t * 31 + (r[i] & 1023);
+  return t;
+}
+)C",
+                            "shifts", {"shifts"}, {-3, 0, 1, 77, 0x12345});
+}
+
 // At -O0 a local label table is copied from its read-only initializer, an
 // object no symbol names: the copy reads the object the output declares,
 // not the address the image gives it.

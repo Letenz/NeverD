@@ -186,6 +186,19 @@ void MemoryProjection::recordRAMWrite(uint64_t Physical, uint64_t Size) {
   RAM.invalidateReservations(Physical, Size);
   WatchedWrite |= writeWatched(Physical, Size);
 }
+void MemoryProjection::recordRAMInitialization(uint64_t Physical,
+                                               uint64_t Size) {
+  auto &RAM = *Space->State->Memory->State;
+  assert(RAM.Running && diagnostic::RAMTransactionLease);
+  RAM.recordInitialization(Physical, Size);
+}
+bool MemoryProjection::hasInitializationWatches() const {
+  auto &RAM = *Space->State->Memory->State;
+  std::unique_lock Lock(RAM.Mutex, std::try_to_lock);
+  // Keeping the hook when another owner is busy is conservative. Never read
+  // the mutable weak registry outside the physical lease.
+  return !Lock.owns_lock() || !RAM.InitializationWatches.empty();
+}
 
 bool MemoryProjection::setWriteWatches(
     const std::vector<MemoryWriteWatch> &Watches) {

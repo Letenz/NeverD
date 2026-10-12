@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/LowToMed.h"
 
 #include <algorithm>
@@ -254,6 +255,12 @@ void LowToMedConverter::modelCallFPReturn(MedFunc &Func) {
       // register untouched) may still return in the FP register.
       if (Op.Output.Kind == MedVar::Temp && Op.Output.Id >= 0 &&
           Op.Output.Size > 0)
+        continue;
+      // A summarized callee that provably never writes the FP return register
+      // returns nothing there: the register keeps the caller's value, which
+      // is also what a callee passing its argument straight back returns.
+      if (callPreservesRegisterBytes(TargetArch, Op.CallPreservedGPRs, FPRet,
+                                     FPReturnWidth))
         continue;
 
       // Is the call's result consumed via the FP return register?  Either a

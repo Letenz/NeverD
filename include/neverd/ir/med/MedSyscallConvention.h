@@ -25,7 +25,7 @@
 
 namespace neverd {
 
-class BinaryImage;
+struct BinaryImage;
 
 struct SyscallConvention {
   Arch TheArch = Arch::Unknown;

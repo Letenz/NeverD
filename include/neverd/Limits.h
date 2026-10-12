@@ -472,11 +472,12 @@ constexpr int kCallArgStoreAddressDepth = 32;
 /// followed back to the slot it was loaded from.
 constexpr int kCallTargetSlotDepth = 16;
 
-/// AArch64 calls with the complete x0-x7 prefix can have an integer argument
-/// at [sp]. Materializing eight constants may expand into several MedIR ops per
-/// register, so keep a larger but finite window once the full bank itself
-/// proves that stack overflow is ABI-plausible.
-constexpr int kAArch64FullBankCallArgStoreScanWindow = 64;
+/// A call that fills every integer argument register (AArch64 x0-x7, ARM
+/// r0-r3) can have an integer argument at [sp]. Materializing each value may
+/// expand into several MedIR ops per register, so keep a larger but finite
+/// window once the full bank itself proves that stack overflow is
+/// ABI-plausible.
+constexpr int kFullBankCallArgStoreScanWindow = 64;
 
 //===----------------------------------------------------------------------===//
 // Backend / code generation
@@ -514,6 +515,11 @@ constexpr size_t kMaxEmbeddedDataLen = 4096;
 /// ARM32 NEON pool fell back to ~2 MB of overlapping copies).  The cap is
 /// therefore generous and only guards against an abnormally huge segment.
 constexpr size_t kMaxSingleGlobalEmbedLen = 1u << 20; // 1 MiB
+
+/// Maximum text bytes of one page of a paged code view (source or IR): a
+/// page that would pass it ends early and the next page starts at the line
+/// after it, so only a single longer line fails.
+constexpr size_t kMaxViewPageBytes = 2u << 20; // 2 MiB
 
 /// The widest alignment an embedded copy of image bytes keeps for the
 /// addresses in it: a 64-byte AVX-512 aligned operand.  A copy starts at an

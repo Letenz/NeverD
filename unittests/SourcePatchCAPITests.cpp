@@ -86,10 +86,10 @@ protected:
       "int replacement(int x) { return x + 40; }";
 
   void SetUp() override {
-#if !((defined(__APPLE__) && defined(__aarch64__)) ||                          \
+#if !((defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))) || \
       (defined(__linux__) && defined(__x86_64__)))
-    GTEST_SKIP()
-        << "native source runtime profile requires Darwin ARM64 or Linux x64";
+    GTEST_SKIP() << "native source runtime profile requires Darwin ARM64/x64 "
+                    "or Linux x64";
 #endif
     if (std::string(NEVERD_TEST_CLANG).empty())
       GTEST_SKIP() << "Clang is required for native replacement fixtures";
@@ -124,6 +124,17 @@ int main(int argc, char **argv) {
     std::vector<std::string> Compile{NEVERD_TEST_CLANG, "-O0", Source.string(),
                                      "-o", Original.string()};
 #if defined(__APPLE__)
+    bool IntelFixture = false;
+#if defined(__x86_64__)
+    IntelFixture = true;
+#endif
+    if (const char *Architecture = std::getenv("NEVERD_TEST_DARWIN_ARCH")) {
+      ASSERT_EQ(std::string(Architecture), "x86_64");
+      Compile.insert(Compile.end(), {"-arch", Architecture});
+      IntelFixture = true;
+    }
+    if (IntelFixture)
+      Compile.push_back("-Wl,-segalign,0x4000");
     if (ReserveStorageHeader)
       Compile.push_back("-Wl,-headerpad,0x400");
 #endif
@@ -431,6 +442,39 @@ TEST_F(SourcePatch, CompilerCannotOverrideTheTarget) {
   EXPECT_EQ(patch(), 0);
   EXPECT_NE(error().find("unsupported source option"), std::string::npos);
   EXPECT_FALSE(std::filesystem::exists(Output));
+}
+
+TEST_F(SourcePatch, CompilerResponseFilesCannotBypassOptionValidation) {
+  const auto Response = Directory / "extra arguments.rsp";
+  std::ofstream(Response) << "unused-directory -DBASE=37\n";
+  const std::string ResponseArgument = "@" + Response.string();
+  // Drivers expand response tokens before parsing an option's value. With -I,
+  // this file would inject BASE and turn an otherwise invalid source into a
+  // successfully published patch.
+  for (const char *Option :
+       {"-I", "-isystem", "-iquote", "-include", "-D", "-U", "-isysroot", ""}) {
+    SCOPED_TRACE(Option);
+    const char *Arguments[] = {Option, ResponseArgument.c_str()};
+    Options.compiler_args = *Option ? Arguments : Arguments + 1;
+    Options.compiler_arg_count = *Option ? 2 : 1;
+    ASSERT_EQ(patch("int replacement(int x){return x+BASE;}"), 0) << error();
+    EXPECT_NE(error().find("response files"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+  }
+
+  // The same supported options keep their ordinary values, including spaces.
+  const auto Include = Directory / "include path";
+  ASSERT_TRUE(std::filesystem::create_directory(Include));
+  std::ofstream(Include / "shared.h") << "#define TOTAL (BASE + 3)\n";
+  const std::string IncludeArgument = Include.string();
+  const char *Arguments[] = {"-I", IncludeArgument.c_str(), "-D", "BASE=37"};
+  Options.compiler_args = Arguments;
+  Options.compiler_arg_count = 4;
+  ASSERT_EQ(patch("#include \"shared.h\"\n"
+                  "int replacement(int x){return x+TOTAL;}"),
+            1)
+      << error();
+  EXPECT_EQ(execute({Output.string()}), 84);
 }
 
 TEST_F(SourcePatch, IncludesMacrosAndSourcePathsArePreserved) {

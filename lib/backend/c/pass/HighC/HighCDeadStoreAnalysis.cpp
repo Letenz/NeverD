@@ -18,6 +18,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -30,9 +31,30 @@ struct ReducedAddr {
   int64_t Offset = 0;
 };
 
-struct ExprDef {
-  MedVar Var;
-  const HighExpr *Value = nullptr;
+auto medVarIdentity(const MedVar &Var) {
+  return std::tuple{Var.Kind,   Var.Id,        Var.SSAVer,
+                    Var.RegOff, Var.RenameTag, Var.TheArch};
+}
+
+// Index the existing identity once. A second definition is ambiguous even
+// when it points at the same expression; it must never become a unique alias.
+// The global index does not establish dominance. The private-frame proof
+// maintains a separate index containing only preceding top-level aliases.
+class ExprDefinitions {
+  using Key = decltype(medVarIdentity(MedVar{}));
+  std::map<Key, const HighExpr *> Values;
+
+public:
+  void add(const MedVar &Var, const HighExpr *Value) {
+    const auto [It, Added] = Values.try_emplace(medVarIdentity(Var), Value);
+    if (!Added)
+      It->second = nullptr;
+  }
+
+  const HighExpr *findUnique(const MedVar &Var) const {
+    const auto It = Values.find(medVarIdentity(Var));
+    return It == Values.end() ? nullptr : It->second;
+  }
 };
 
 template <typename Visitor>
@@ -54,22 +76,7 @@ void walkExprNodes(const HighExpr &Root, Visitor &&Visit) {
 }
 
 bool sameMedVar(const MedVar &A, const MedVar &B) {
-  return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
-         A.RegOff == B.RegOff && A.RenameTag == B.RenameTag &&
-         A.TheArch == B.TheArch;
-}
-
-const HighExpr *findUniqueDef(const std::vector<ExprDef> &Defs,
-                              const MedVar &Var) {
-  const HighExpr *Found = nullptr;
-  for (const ExprDef &Def : Defs) {
-    if (!sameMedVar(Def.Var, Var))
-      continue;
-    if (Found)
-      return nullptr;
-    Found = Def.Value;
-  }
-  return Found;
+  return medVarIdentity(A) == medVarIdentity(B);
 }
 
 std::optional<int64_t> addOffset(int64_t A, int64_t B) {
@@ -92,12 +99,12 @@ int64_t signedConstant(const HighExpr &Expr) {
 }
 
 std::optional<ReducedAddr> reduceAddr(const HighExpr &Expr,
-                                      const std::vector<ExprDef> &Defs,
+                                      const ExprDefinitions &Defs,
                                       int64_t Offset = 0, int Depth = 0) {
   if (Depth > limits::kMaxHighCMemoryWalkDepth)
     return std::nullopt;
   if (Expr.Kind == ExprKind::Var) {
-    if (const HighExpr *Def = findUniqueDef(Defs, Expr.Var))
+    if (const HighExpr *Def = Defs.findUnique(Expr.Var))
       return reduceAddr(*Def, Defs, Offset, Depth + 1);
     return ReducedAddr{Expr.Var, Offset};
   }
@@ -148,7 +155,7 @@ std::string reducedAddrKey(const ReducedAddr &Addr) {
          std::to_string(Addr.Offset);
 }
 
-bool matchesReducedAddr(const HighExpr &Expr, const std::vector<ExprDef> &Defs,
+bool matchesReducedAddr(const HighExpr &Expr, const ExprDefinitions &Defs,
                         const std::vector<ReducedAddr> &Candidates) {
   auto Reduced = reduceAddr(Expr, Defs);
   if (!Reduced)
@@ -181,7 +188,7 @@ void collectLoadAddrVars(const HighExpr &E, std::set<std::string> &Out,
 // partial overlaps, calls, and address escapes rather than infer ownership
 // from the absence of a matching load.
 bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
-                               const std::vector<ExprDef> &Defs) {
+                               const ExprDefinitions &Defs) {
   if (Func.FrameSize <= 0)
     return false;
   bool HasNonlocalControl = false;
@@ -195,7 +202,7 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
   std::vector<std::pair<int64_t, int64_t>> Slots;
   // A global unique definition is not a reaching definition. Only preceding
   // top-level assignments can establish a frame alias for subsequent uses.
-  std::vector<ExprDef> DominatingDefs;
+  ExprDefinitions DominatingDefs;
   std::set<const HighStmt *> TopLevel;
   for (const auto &Stmt : Func.Body)
     TopLevel.insert(&Stmt);
@@ -224,7 +231,7 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
         if (Expr.Kind == ExprKind::Var) {
           if (Expr.Var.Size != Width)
             return Result = false;
-          if (const auto *Def = findUniqueDef(Defs, Expr.Var))
+          if (const auto *Def = Defs.findUnique(Expr.Var))
             return Result = FullWidth(*Def, Width, Depth + 1);
         }
         for (const auto &Operand : Expr.Operands)
@@ -266,7 +273,7 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
         if (Expr.Kind == ExprKind::Var) {
           if (IsFrameBase(Expr.Var))
             return Result = false;
-          if (const auto *Def = findUniqueDef(Defs, Expr.Var))
+          if (const auto *Def = Defs.findUnique(Expr.Var))
             return Result = CheckValue(*Def, Depth + 1);
         }
         for (const auto &Operand : Expr.Operands)
@@ -309,11 +316,11 @@ bool hasOnlyPrivateFrameMemory(const HighFunc &Func,
       if (Stmt.Dst->Kind == ExprKind::Var && Address &&
           IsFrameBase(Address->Base)) {
         if (!TopLevel.count(&Stmt) ||
-            findUniqueDef(Defs, Stmt.Dst->Var) != Stmt.Val.get()) {
+            Defs.findUnique(Stmt.Dst->Var) != Stmt.Val.get()) {
           Valid = false;
           return;
         }
-        DominatingDefs.push_back({Stmt.Dst->Var, Stmt.Val.get()});
+        DominatingDefs.add(Stmt.Dst->Var, Stmt.Val.get());
         return;
       }
     }
@@ -350,11 +357,11 @@ void analyzeDeadStores(HighCAnalysisState &State, const HighFunc &Func,
     });
   });
 
-  std::vector<ExprDef> Defs;
+  ExprDefinitions Defs;
   walkStmts(Func.Body, [&](const HighStmt &S) {
     if (S.Kind == StmtKind::Assign && S.Dst && S.Val &&
         S.Dst->Kind == ExprKind::Var)
-      Defs.push_back({S.Dst->Var, S.Val.get()});
+      Defs.add(S.Dst->Var, S.Val.get());
   });
   State.CanElideFrameStores =
       !HasOrderedMemory && hasOnlyPrivateFrameMemory(Func, Defs);

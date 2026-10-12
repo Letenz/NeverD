@@ -21,7 +21,9 @@ namespace neverd::web {
 
 inline constexpr std::string_view HARProfile = "har-1.2-metadata-v1";
 inline constexpr std::string_view SourceInterfaceProfile =
-    "fetch-websocket-xhr-syntax-v3";
+    "fetch-websocket-xhr-wrappers-syntax-v4";
+inline constexpr std::string_view SourceRequestWrapperProfile =
+    "direct-lexical-fetch-forwarding-v1";
 inline constexpr std::string_view InterfaceCorrelationProfile =
     "absolute-http-method-origin-path-v1";
 inline constexpr std::string_view InterfaceRedactionPolicy =
@@ -103,6 +105,12 @@ struct SourceInterface {
   uint32_t ReceiverNode = NoSourceIndex;
   uint32_t AsyncNode = NoSourceIndex, HeaderNameNode = NoSourceIndex;
   uint32_t HeaderValueNode = NoSourceIndex, HandlerNode = NoSourceIndex;
+  uint32_t WrapperNode = NoSourceIndex, WrapperRequestNode = NoSourceIndex;
+  uint32_t WrapperBinding = NoSourceIndex;
+  uint32_t URLParameterNode = NoSourceIndex,
+           OptionsParameterNode = NoSourceIndex;
+  uint32_t URLArgumentIndex = NoSourceIndex,
+           OptionsArgumentIndex = NoSourceIndex;
   std::string Method = "unknown", MethodStatus = "unknown";
   std::string URLStatus = "absent", OptionsStatus = "absent";
   std::string ReceiverStatus = "not_applicable";
@@ -110,6 +118,7 @@ struct SourceInterface {
   std::string CredentialArgumentsStatus = "not_applicable";
   std::string BodyStatus = "not_applicable", HeaderKind = "not_applicable";
   std::string EventKind = "not_applicable", HandlerStatus = "not_applicable";
+  std::string WrapperStatus = "not_applicable";
   uint64_t TemplateHoles = 0;
   bool Optional = false;
   InterfaceEndpoint Endpoint;
@@ -120,6 +129,7 @@ struct SourceInterfaces {
   std::string Status = "unavailable", Reason;
   std::vector<SourceInterface> Records;
   uint64_t Steps = 0, PrivateBytes = 0, ExcludedDispatches = 0;
+  uint64_t WrapperDefinitions = 0;
 };
 
 SourceInterfaces analyzeSourceInterfaces(const SourceAnalysis &Source,

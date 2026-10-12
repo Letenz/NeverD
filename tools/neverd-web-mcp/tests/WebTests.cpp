@@ -13,6 +13,8 @@
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/TauriFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
 #include "neverd-web-mcp/WebTools.h"
@@ -109,7 +111,9 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+    const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
+                         Name == "tauri_export" || Name == "native_analyze" ||
+                         Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
@@ -186,10 +190,13 @@ void sourceAndMaps(Harness &H) {
     invalid([&] { H.get("web_source_rewrite_analyze", RewriteArgs); });
   }
   const auto Interfaces = H.same("web_interfaces_analyze", Args);
-  require(Interfaces.at("interface_count") == 7 &&
+  require(Interfaces.at("interface_count") == 9 &&
               Interfaces.at("xhr_correlation") == false &&
               Interfaces.at("fetch_member_correlation") == false &&
-              Interfaces.at("profile") == "fetch-websocket-xhr-syntax-v3",
+              Interfaces.at("profile") ==
+                  "fetch-websocket-xhr-wrappers-syntax-v4" &&
+              Interfaces.at("wrapper_definitions") == 1 &&
+              Interfaces.at("wrapper_correlation") == false,
           "MCP lost XHR syntax evidence or changed correlation claims");
   const auto Sites =
       H.same("web_interface_records",
@@ -211,12 +218,20 @@ void sourceAndMaps(Harness &H) {
               Items[6].at("url_node_id").is_null() &&
               Items[6].at("method") == "unknown",
           "MCP promoted a member spelling or invented spread arguments");
+  require(Items[8].at("kind") == "fetch_wrapper_call" &&
+              Items[8].at("method") == "POST" &&
+              Items[8].at("wrapper_request_node_id") ==
+                  Items[7].at("node_id") &&
+              Items[8].at("wrapper_binding_id").is_string() &&
+              Items[8].at("url_argument_index") == 0 &&
+              Items[8].at("options_argument_index") == 1,
+          "MCP lost lexical wrapper forwarding anchors");
   const auto Relations =
       H.same("web_interface_relations_analyze",
              {{"revision", H.Revision},
               {"analysis_id", Interfaces.at("interface_analysis_id")}});
   require(Relations.at("profile") == "request-source-relations-v1" &&
-              Relations.at("relation_count") == 2 &&
+              Relations.at("relation_count") == 4 &&
               Relations.at("response_api_identity") ==
                   "member_spelling_unverified" &&
               Relations.at("har_correlation") == false,
@@ -225,14 +240,17 @@ void sourceAndMaps(Harness &H) {
                           {"relations_id", Relations.at("relations_id")}};
   const auto RelationPage =
       H.same("web_interface_relation_records", RelationArgs);
-  require(RelationPage.at("items")[0].at("kind") ==
-                  "await_result_const_binding" &&
-              RelationPage.at("items")[1].at("kind") ==
-                  "bound_result_member_call" &&
-              RelationPage.at("items")[1].at("member_spelling") == "json" &&
-              RelationPage.at("items")[0].at("binding_id") ==
-                  RelationPage.at("items")[1].at("binding_id"),
-          "MCP changed result binding anchors");
+  require(
+      RelationPage.at("items")[0].at("kind") == "await_result_const_binding" &&
+          RelationPage.at("items")[1].at("kind") ==
+              "request_function_containment" &&
+          RelationPage.at("items")[2].at("kind") == "direct_request_return" &&
+          RelationPage.at("items")[3].at("kind") ==
+              "bound_result_member_call" &&
+          RelationPage.at("items")[3].at("member_spelling") == "json" &&
+          RelationPage.at("items")[0].at("binding_id") ==
+              RelationPage.at("items")[3].at("binding_id"),
+      "MCP changed result binding anchors");
   redacted(Relations);
   redacted(RelationPage);
   auto UnsafeRelation = RelationArgs;
@@ -831,6 +849,8 @@ int main() {
         "CANARY_XHR.onload = CANARY_CALLBACK;"
         "this.fetch('https://CANARY/a', {method:'POST'});"
         "fetch(...CANARY_ARGUMENTS);"
+        "const CANARY_WRAPPER=(u,i)=>fetch(u,i);"
+        "CANARY_WRAPPER('https://CANARY/wrapper',{method:'POST'});"
         "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
@@ -953,6 +973,87 @@ int main() {
                                      {"source_id", Source.at("source_id")},
                                      {"byte_offset", "6"},
                                      {"byte_length", "1"}});
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "wails_extract") != Ops.end()) {
+      F.write("sea", neverd::web::wails_test::elf());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto E = H.same("web_wails_extract", Args);
+      require(E.at("table_count") == 1 && E.at("member_count") == 3 &&
+                  E.at("asset_server_binding") == "not_checked",
+              "Wails stored table evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto M = H.same("web_wails_records", Page);
+      require(M.at("next_offset") == 2 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Wails page differs or exposes private names");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_wails_extract", Invalid); });
+      auto InvalidPage = Page;
+      InvalidPage["limit"] = 129;
+      invalid([&] { H.get("web_wails_records", InvalidPage); });
+      H.fail("web_wails_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "paths"}},
+             "invalid_record_kind");
+      if (HasParser) {
+        const auto S =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(S.at("parse_status") == "parsed",
+                "Wails member source is unavailable");
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "tauri_extract") != Ops.end()) {
+      F.write("sea", neverd::web::tauri_test::image());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "tauri-phf-0.10-macho-x64-five-store-brotli-v1"},
+          {"initializer_address", "4294967552"}};
+      const auto E = H.same("web_tauri_extract", Args);
+      require(E.at("member_count") == 2 &&
+                  E.at("phf_lookup_status") == "all_keys_match_rows",
+              "Tauri native initializer evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"offset", 0},
+                      {"limit", 1}};
+      const auto M = H.same("web_tauri_records", Page);
+      require(M.at("next_offset") == 1 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Tauri page differs or exposes private bytes");
+      auto Invalid = Args;
+      Invalid["table"] = Json::object();
+      invalid([&] { H.get("web_tauri_extract", Invalid); });
+      Invalid = Page;
+      Invalid["limit"] = 129;
+      invalid([&] { H.get("web_tauri_records", Invalid); });
+      auto BadPC = Args;
+      BadPC["initializer_address"] = "4294967553";
+      H.fail("web_tauri_extract", BadPC,
+             "native_store_instruction_boundary_required");
+      if (HasParser) {
+        const auto Source =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(Source.at("parse_status") == "parsed",
+                "Tauri source selection unavailable");
       }
     }
     offlineAdvisories();

@@ -14,6 +14,7 @@
 #include "llvm/IR/Instructions.h"
 
 #include <algorithm>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -22,8 +23,8 @@ namespace neverd {
 CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
                                  Recording Mode)
     : Map(Map), Mode(Mode) {
-  if (Mode == Recording::DefinitionsAndInstructions && Map.Recognitions &&
-      !Map.Recognitions->empty())
+  if ((Mode == Recording::DefinitionsAndInstructions || recordsPositions()) &&
+      Map.Recognitions && !Map.Recognitions->empty())
     throw std::invalid_argument(
         "library coverage needs an independent source recording");
   Map.Anchors.clear();
@@ -34,6 +35,8 @@ CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
       for (size_t I = 0; I < Map.Recognitions->size(); ++I)
         Map.Regions.push_back({I, {}, false});
   }
+  if (recordsPositions())
+    return;
   for (size_t Salt = 0;; ++Salt) {
     Prefix = "\x1eND:" + std::to_string(Salt) + ':';
     if (!Ordinary.contains(Prefix))
@@ -250,6 +253,8 @@ std::string CSourceRecorder::end(size_t Event) const {
 
 llvm::StringRef CSourceRecorder::plain(llvm::StringRef Text,
                                        std::string &Storage) const {
+  if (recordsPositions())
+    return Text;
   size_t At = Text.find(Prefix);
   if (At == llvm::StringRef::npos)
     return Text;
@@ -351,6 +356,8 @@ std::string CSourceRecorder::expression(const llvm::Instruction &Value,
 
 bool CSourceRecorder::finish(llvm::StringRef Annotated,
                              llvm::StringRef Ordinary) {
+  if (recordsPositions())
+    return false;
   std::vector<CSourceRegion> Candidate =
       recordsInstructions() ? std::vector<CSourceRegion>() : Map.Regions;
   std::vector<std::set<sigs::LibraryOccurrence>> Covered(Candidate.size());
@@ -445,6 +452,67 @@ bool CSourceRecorder::finish(llvm::StringRef Annotated,
     Map.Regions = std::move(Candidate);
   if (Mode != Recording::Instructions)
     Map.Definitions = std::move(Definitions);
+  return true;
+}
+
+void CSourceRecorder::positionDefinition(std::optional<va_t> Entry,
+                                         uint64_t Offset) {
+  if (!recordsPositions() || Offset > std::numeric_limits<size_t>::max()) {
+    PositionsValid = false;
+    return;
+  }
+  PositionDefinitions.push_back({Entry, static_cast<size_t>(Offset)});
+}
+
+void CSourceRecorder::positionStatement(size_t Event, uint64_t Begin,
+                                        uint64_t End) {
+  if (!recordsPositions() || Event >= Events.size() ||
+      !Events[Event].Function || Begin > End ||
+      End > std::numeric_limits<size_t>::max()) {
+    PositionsValid = false;
+    return;
+  }
+  // A suppressed statement emits no text and must not gain a navigation span.
+  if (Begin != End)
+    PositionAnchors.push_back(
+        {*Events[Event].Function,
+         {static_cast<size_t>(Begin), static_cast<size_t>(End)},
+         Events[Event].Coverage});
+}
+
+void CSourceRecorder::appendPositionBuffer(size_t First, uint64_t Size,
+                                           uint64_t Offset) {
+  if (!recordsPositions() || First > PositionAnchors.size() ||
+      Offset > std::numeric_limits<size_t>::max() ||
+      Size > std::numeric_limits<size_t>::max() - Offset) {
+    PositionsValid = false;
+    return;
+  }
+  for (size_t I = First; I < PositionAnchors.size(); ++I) {
+    auto &Span = PositionAnchors[I].Span;
+    if (Span.Begin > Span.End || Span.End > Size) {
+      PositionsValid = false;
+      return;
+    }
+  }
+  for (size_t I = First; I < PositionAnchors.size(); ++I) {
+    PositionAnchors[I].Span.Begin += Offset;
+    PositionAnchors[I].Span.End += Offset;
+  }
+}
+
+bool CSourceRecorder::finishPositions(llvm::StringRef Ordinary) {
+  if (!recordsPositions() || !PositionsValid)
+    return false;
+  for (const auto &Definition : PositionDefinitions)
+    if (Definition.Begin > Ordinary.size())
+      return false;
+  for (const auto &Anchor : PositionAnchors)
+    if (Anchor.Span.Begin >= Anchor.Span.End ||
+        Anchor.Span.End > Ordinary.size())
+      return false;
+  Map.Definitions = std::move(PositionDefinitions);
+  Map.Anchors = std::move(PositionAnchors);
   return true;
 }
 
