@@ -1755,3 +1755,7 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+## سياق x87 المملوك لدالة x64
+
+يقارن `NeverDX86X87ConvertStateTests` البايتات الأصلية مع LLVM الأصلي وHighC وLLVMC عبر default/NoOpt وC O0/O2. يفحص التحويلات وثمانية أشكال حسابية والأعلام وMMX/EMMS والمكدسات الممتلئة والفارغة والاستدعاءات والأغلفة والحلقات ونقاط الدخول المستقلة. تغطي أربعة أشكال FLDENV/FRSTOR الاستثناءات المعلقة والوسوم والقيم المحتفظ بها؛ وعند الاقتضاء تُختبر أربع قيم RC وثلاث قيم PC معرفة و64 قناع استثناء. ترفض عقود Low/Med/High الأشكال غير الصالحة والمقابض المزورة والمحددات المبتورة. يحفظ الإرجاع الضيق آثار الاستدعاء ويرفض البتات المجهولة المطلوبة. يحتاج المرجع الأصلي إلى x64 وClang؛ ولا يثبت تغطية كل التعليمات أو المنصات أو المعالجات أو أولويات الأعطال أو ABI للواردات العائمة ذات الأنواع.

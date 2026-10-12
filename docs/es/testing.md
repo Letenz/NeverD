@@ -1831,3 +1831,7 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+## Contexto x87 propio de cada función x64
+
+`NeverDX86X87ConvertStateTests` compara bytes originales con LLVM nativo, HighC y LLVMC en default/NoOpt y C O0/O2. Verifica conversiones, ocho formas aritméticas, flags, MMX/EMMS, pilas llenas/vacías, llamadas, wrappers, bucles y entradas independientes. Cuatro formatos FLDENV/FRSTOR cubren excepciones pendientes, etiquetas y valores conservados; donde corresponde, cuatro RC, tres PC definidos y 64 máscaras. Los contratos Low/Med/High rechazan formas inválidas, handles falsificados y selectores truncados. Los retornos estrechos conservan efectos de llamadas y rechazan bits desconocidos requeridos. El oráculo necesita x64 y Clang; no certifica todas las instrucciones, plataformas, CPU, prioridades de fallo ni ABI de importaciones flotantes tipadas.

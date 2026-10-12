@@ -1798,3 +1798,7 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+## Контекст x87, принадлежащий функции x64
+
+`NeverDX86X87ConvertStateTests` сравнивает исходные байты с нативным LLVM, HighC и LLVMC в default/NoOpt и C O0/O2. Проверяются преобразования, восемь арифметических форм, флаги, MMX/EMMS, полный/пустой стек, вызовы, оболочки, циклы и независимые входы. Четыре формата FLDENV/FRSTOR покрывают ожидающие исключения, теги и сохранённые значения; где применимо проверяются четыре RC, три определённых PC и 64 маски исключений. Контракты Low/Med/High отклоняют неверные формы, поддельные дескрипторы и усечённые селекторы. Узкий возврат сохраняет эффекты вызовов и отклоняет требуемые неизвестные биты. Эталон требует x64 и Clang; полной проверки всех команд, платформ, CPU, приоритетов ошибок и ABI типизированных плавающих импортов нет.

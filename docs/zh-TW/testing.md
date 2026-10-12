@@ -1676,3 +1676,7 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+## x64 x87 上下文所有權
+
+`NeverDX86X87ConvertStateTests` 在預設/NoOpt 與 C O0/O2 路線比較原始指令及原生 LLVM、HighC、LLVMC 輸出，檢查轉換、八種算術形式、旗標、MMX/EMMS、滿/空堆疊、呼叫、包裝函式、入口迴圈與獨立入口。四種 FLDENV/FRSTOR 格式涵蓋待處理例外、標籤與保留載荷；適用情況涵蓋四種 RC、三種有效 PC 及 64 種例外遮罩。Low/Med/High 契約拒絕非法形狀、偽造控制代碼與截斷選擇器。窄回傳保留呼叫副作用，並拒絕實際需要的未知位元。原生對照需要 x64 與 Clang；不宣稱涵蓋全部指令、平台、CPU、故障優先順序或具型別的浮點匯入 ABI。

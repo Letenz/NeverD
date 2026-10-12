@@ -1730,3 +1730,7 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+## x64 x87 コンテキストの所有権
+
+`NeverDX86X87ConvertStateTests` は元のバイト列と LLVM、HighC、LLVMC の実行を default/NoOpt、C O0/O2 で比較します。変換、八種の算術形式、フラグ、MMX/EMMS、満杯・空スタック、呼び出し、ラッパー、入口ループ、独立入口を検証します。四種の FLDENV/FRSTOR 形式で保留例外、タグ、保持データを確認し、適用可能な場合は四種の RC、三種の有効 PC、64 種の例外マスクを使用します。Low/Med/High 契約は不正な形状、偽造ハンドル、切り詰められたセレクターを拒否します。狭い戻り値は呼び出し効果を保持し、必要な不明ビットを拒否します。ネイティブ比較には x64 と Clang が必要で、全命令、プラットフォーム、CPU、障害順序、型付き浮動小数点インポート ABI の網羅は主張しません。
