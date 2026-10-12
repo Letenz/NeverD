@@ -15,6 +15,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -5310,14 +5311,33 @@ void HighCWriter::noteImageAddress(va_t Addr) {
       It != ImageObjects.end() && It->second.Type)
     return;
   // The address alone stands in with an integer as wide as the object its
-  // symbol sizes, which the type of any access replaces.
-  const uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  // symbol sizes, else as the accesses that name it, or the pointer a
+  // relocated slot holds, which the type of any access replaces.
+  uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  if (!Size && Opts.AccessWidths)
+    Size = Opts.AccessWidths->at(Addr).value_or(0);
+  if (!Size && Opts.Image &&
+      (Opts.Image->CodePtrRelocSlots.count(Addr) ||
+       Opts.Image->DataPtrRelocSlots.count(Addr)))
+    Size = Opts.Image->getPointerSize();
   noteImageObject(
       Addr,
       NdType::makeInt(Size == 1 || Size == 2 || Size == 4 || Size == 8 ? Size
                                                                        : 2),
       false);
   ImageObjects[Addr].WeakType = true;
+}
+
+std::optional<uint64_t>
+HighCWriter::dataNameWidth(va_t Addr, const ImageObject &Obj) const {
+  if (Opts.AccessWidths) {
+    if (const auto Width = Opts.AccessWidths->at(Addr); Width && *Width)
+      return *Width;
+    return std::nullopt;
+  }
+  if (Obj.MemoryWidths.size() == 1)
+    return *Obj.MemoryWidths.begin();
+  return std::nullopt;
 }
 
 bool HighCWriter::isParamCopy(const HighExpr &E) const {

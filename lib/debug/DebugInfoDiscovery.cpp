@@ -368,9 +368,11 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     Img.Symbols.push_back(std::move(New));
   }
 
+  // A guessed function that a data object refutes claims no pointer to it
+  // as one to code, so the guesses go first.
   if (DbgFuncs.empty()) {
-    recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
     dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
+    recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
     return 0;
   }
 
@@ -417,8 +419,8 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     ++Applied;
   }
 
-  recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
+  recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

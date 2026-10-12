@@ -254,3 +254,26 @@ int editdist(int a) {
 )C",
                        "editdist", {"editdist", "SA", "SB"});
 }
+
+// A table of string pointers becomes a relative table: each entry the
+// offset of its string, in another section of the object, from the table.
+// The code adds the entry back to the table's address, so the table's
+// object reaches the strings.
+TEST_F(X86_64_ImageTable, ARelativeTableReachesItsStrings) {
+  expectRunsLikeSource(R"C(
+static const char *const W[6] = {"alphaA", "bravoB", "charlC",
+                                 "deltaD", "echoEe", "foxtrF"};
+int offptr(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    unsigned j = (s >> 5) % 6u;
+    const char *p = W[j] + ((s >> 9) % 6u);
+    h = h * 131u + (unsigned)(unsigned char)*p;
+    h ^= h >> 11;
+  }
+  return (int)h;
+}
+)C",
+                       "offptr", {"offptr", "W"});
+}
