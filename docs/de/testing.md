@@ -1818,4 +1818,4 @@ Die Schreibbeobachter-Regressionen prüfen Sichtbarkeit vor der nächsten Anweis
 
 MSVC-Testziele verwenden `/bigobj` für die vielen COFF-Sektionen aus GoogleTest- und LLVM-Template-Instanziierungen. Andere Compilerprofile bleiben unverändert. Konfigurationstests prüfen den erzeugten Compileraufruf; native Windows-CI prüft weiterhin Kompilierung und Ausführung.
 
-Die geprüfte Ablehnung doppelter Verschiebungen meldet den maskierten Zähler und die Operandenbreite, wenn Ziel und Flags undefiniert sind. `X64DoubleShift` prüft, dass typisierte Ausgänge und die bisherige Fehler-API den Grund ohne Register-, RAM- oder Beobachtereffekte erhalten; der Treibertest prüft denselben Grund vor der Szenarioausführung.
+Die geprüfte Ablehnung doppelter Verschiebungen meldet den maskierten Zähler und die Operandenbreite, wenn Ziel und Flags undefiniert sind. `X64DoubleShift` prüft, dass typisierte Ausgänge und die bisherige Fehler-API den Grund ohne Register- oder RAM-Änderungen und ohne Speicherbeobachtungen erhalten; der Treibertest prüft denselben Grund vor der Szenarioausführung.

@@ -5133,4 +5133,4 @@ establish operating-system unwind behavior.
 
 MSVC unit test targets use `/bigobj` to allow the larger COFF section counts produced by GoogleTest and LLVM template instantiations. Other compiler profiles are unchanged. Configuration checks verify the generated test compile command; native Windows CI still verifies compilation and execution.
 
-Checked double-shift rejection reports the masked count and operand width when its destination and flags are undefined. `X64DoubleShift` verifies that typed exits and the legacy error API retain the reason without register, RAM or observer effects; the driver fixture verifies that the same reason survives before scenario dispatch.
+Checked double-shift rejection reports the masked count and operand width when its destination and flags are undefined. `X64DoubleShift` verifies that typed exits and the legacy error API retain the reason without register or RAM changes or memory observations; the driver fixture verifies that the same reason survives before scenario dispatch.

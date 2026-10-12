@@ -1817,4 +1817,4 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 
 Les cibles de tests MSVC utilisent `/bigobj` pour les nombreux segments COFF issus des modèles GoogleTest et LLVM. Les autres compilateurs sont inchangés. Les tests de configuration vérifient la commande générée ; le CI Windows natif vérifie encore la compilation et l’exécution.
 
-Le refus contrôlé des doubles décalages indique le compteur masqué et la largeur de l’opérande lorsque la destination et les indicateurs sont indéfinis. `X64DoubleShift` vérifie la conservation du motif par les sorties typées et l’ancienne API d’erreur, sans effet sur les registres, la RAM ou les observateurs ; le test de pilote vérifie ce même motif avant l’envoi du scénario.
+Le refus contrôlé des doubles décalages indique le compteur masqué et la largeur de l’opérande lorsque la destination et les indicateurs sont indéfinis. `X64DoubleShift` vérifie la conservation du motif par les sorties typées et l’ancienne API d’erreur, sans changement des registres ou de la RAM ni observation d’accès mémoire ; le test de pilote vérifie ce même motif avant l’envoi du scénario.

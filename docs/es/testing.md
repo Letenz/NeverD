@@ -1803,4 +1803,4 @@ Las regresiones del observador de escrituras verifican la visibilidad antes de l
 
 Los objetivos de pruebas MSVC usan `/bigobj` para los numerosos segmentos COFF de las plantillas de GoogleTest y LLVM. Los demás compiladores no cambian. Las pruebas de configuración verifican el comando generado; el CI nativo de Windows verifica la compilación y ejecución.
 
-El rechazo verificado de desplazamientos dobles informa del contador enmascarado y del ancho del operando cuando el destino y los indicadores están indefinidos. `X64DoubleShift` verifica que las salidas tipadas y la API de errores anterior conservan el motivo sin efectos en registros, RAM u observadores; la prueba del controlador comprueba el mismo motivo antes de enviar el escenario.
+El rechazo verificado de desplazamientos dobles informa del contador enmascarado y del ancho del operando cuando el destino y los indicadores están indefinidos. `X64DoubleShift` verifica que las salidas tipadas y la API de errores anterior conservan el motivo sin cambios de registros o RAM ni observaciones de memoria; la prueba del controlador comprueba el mismo motivo antes de enviar el escenario.
