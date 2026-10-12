@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
+<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
 
 [← Documentation Index](README.md)
 
@@ -12,6 +12,8 @@ NeverD 使用指定编译器编译替换函数，再安装到明确的原函数�
 ## 选择编译器
 
 使用 `--compiler=clang`、`--compiler=gcc` 或 `--compiler=neverc`。Clang 和普通模式的 NeverC 可以生成 LLVM IR；`object` 制品保留编译器生成的机器指令。CLI 对 GCC 默认选择对象；Python SDK 使用 GCC 时须明确指定 `artifact="object"`。选定的编译器不会静默回退。
+
+使用 `--compiler-arg` 或 SDK 的 `compiler_args` 传入包含路径、宏定义及受支持的源码选项。禁止覆盖目标或输出模式，也禁止在任何参数位置传入响应文件标记（`@file`），包括单独选项的值。普通的 `-I` 路径和 `-D` 宏定义仍然受支持。
 
 示例地址须替换为已确认的原函数入口。替换声明必须匹配原机器 ABI，包括调用约定和结构体布局；地址本身不能证明声明正确。C++ 需要 `--language=c++` 和正确的 Clang++/G++ 路径。建议使用 `extern "C"` 入口，否则传入精确的修饰名。允许额外辅助函数。`--entry` 与 `--func` 共同明确选择替换目标；旧入口 `--from-c` 也会遵守指定地址。
 

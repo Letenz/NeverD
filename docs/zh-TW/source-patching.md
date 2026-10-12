@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
+<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
 
 [← Documentation Index](README.md)
 
@@ -12,6 +12,8 @@ NeverD 使用指定編譯器編譯替換函式，再安裝到明確的原函式�
 ## 選擇編譯器
 
 使用 `--compiler=clang`、`--compiler=gcc` 或 `--compiler=neverc`。Clang 與普通模式 NeverC 可產生 LLVM IR；`object` 製品保留編譯器產生的機器指令。CLI 對 GCC 預設選擇物件；Python SDK 使用 GCC 時須指定 `artifact="object"`。選定的編譯器不會靜默退回其他編譯器。
+
+使用 `--compiler-arg` 或 SDK 的 `compiler_args` 傳入包含路徑、巨集定義及受支援的原始碼選項。禁止覆寫目標或輸出模式，也禁止在任何參數位置傳入回應檔標記（`@file`），包括獨立選項的值。一般的 `-I` 路徑和 `-D` 巨集定義仍然受支援。
 
 示例位址須替換為已確認的原函式入口。替換宣告必須符合原機器 ABI，包括呼叫慣例與結構配置；位址本身不能證明宣告正確。C++ 需要 `--language=c++` 與正確的 Clang++/G++ 路徑。建議使用 `extern "C"` 入口，否則傳入精確的修飾名稱。允許額外輔助函式。`--entry` 與 `--func` 共同明確指定替換目標；舊入口 `--from-c` 亦遵守指定位址。
 

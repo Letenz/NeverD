@@ -87,6 +87,7 @@ struct Session::Impl {
   std::map<std::string, NexeExtraction> NexeExtractions;
   std::map<std::string, PkgExtraction> PkgExtractions;
   std::map<std::string, WailsExtraction> WailsExtractions;
+  std::map<std::string, TauriExtraction> TauriExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
   std::map<std::string, ElectronManifest> ElectronManifests;
   std::map<std::pair<std::string, std::string>, DesktopManifest>
@@ -154,12 +155,13 @@ struct Session::Impl {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && NexeExtractions.empty() &&
                    PkgExtractions.empty() && WailsExtractions.empty() &&
-                   AsarExtractions.empty() && ElectronManifests.empty() &&
-                   DesktopManifests.empty() && HTMLDocuments.empty() &&
-                   PackageAnalyses.empty() && PackageArchives.empty() &&
-                   PackageIntegrity.empty() && PackageAdvisories.empty() &&
-                   PackageAttestations.empty() && HARCaptures.empty() &&
-                   InterfaceSources.empty() && StreamCaptures.empty()
+                   TauriExtractions.empty() && AsarExtractions.empty() &&
+                   ElectronManifests.empty() && DesktopManifests.empty() &&
+                   HTMLDocuments.empty() && PackageAnalyses.empty() &&
+                   PackageArchives.empty() && PackageIntegrity.empty() &&
+                   PackageAdvisories.empty() && PackageAttestations.empty() &&
+                   HARCaptures.empty() && InterfaceSources.empty() &&
+                   StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }
