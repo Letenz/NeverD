@@ -5069,6 +5069,8 @@ The committed-write observer regressions verify visibility before the next instr
 
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` checks wrong sentinels, cycles, forward/out-of-range links, invalid initial levels and handler/filter roles despite a complete parser status. Initial-active-scope and empty-table controls preserve valid frame sentinels in both EH3 and EH4. Over-width handler and filter addresses also reject without publishing facts.
 
+The source registration solver uses one administration-boundary check for object borrows, catch-object construction and local-finally writes. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` and `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` cover EH3/EH4 reads, writes and partial overlaps with SavedESP, exception pointers and cookie cells. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` protects the saved entry frame independently of later reloads. Adjacent ordinary objects remain valid.
+
 ## Source and native object replacement tests
 
 `NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,

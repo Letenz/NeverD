@@ -534,6 +534,99 @@ RegistrationCalleeFrameContract objectLeafContract() {
   return C;
 }
 
+LowFunc makeSEHObjectCall(bool EH4, bool GS, int32_t Offset, uint16_t Width,
+                          bool Initialize) {
+  auto F = EH4 ? makeCookieFrame(GS) : makeBranchingFrame();
+  const auto BP = NdVar::reg(x86reg::RBP, 4);
+  const auto SP = NdVar::reg(x86reg::RSP, 4);
+  const auto Object = NdVar::reg(x86reg::RCX, 4);
+  if (!EH4) {
+    auto &Exit = F.Blocks[3];
+    emitOp(Exit, Exit.StartAddr, NdOp::INT_ADD, NdVar::tmp(30, 4),
+           {BP, NdVar::cst(uint32_t(-16), 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::LOAD, NdVar::tmp(31, 4),
+           {NdVar::tmp(30, 4)});
+    emitOp(Exit, Exit.StartAddr, NdOp::STORE, {},
+           {NdVar::cst(0, 4), NdVar::tmp(31, 4)}, NdMemoryAddressSpace::X86FS);
+  }
+  LowBlock Call;
+  Call.Id = F.Blocks.size();
+  Call.StartAddr = 0x1100;
+  Call.Succs = {1, 2};
+  va_t Address = Call.StartAddr;
+  auto Emit = [&](NdOp Opcode, NdVar Output,
+                  std::initializer_list<NdVar> Inputs, uint8_t Size) {
+    const size_t First = Call.Ops.size();
+    emitOp(Call, Address, Opcode, Output, Inputs);
+    Call.InstructionBoundaries.push_back({Address, Size, First, 1});
+    Address += Size;
+  };
+  Emit(NdOp::INT_SUB, SP, {SP, NdVar::cst(48, 4)}, 3);
+  Emit(NdOp::INT_ADD, Object, {BP, NdVar::cst(uint32_t(Offset), 4)}, 3);
+  if (Initialize)
+    Emit(NdOp::STORE, {}, {Object, NdVar::cst(7, Width)}, 3);
+  Emit(NdOp::CALL, {}, {NdVar::cst(0x2100, 4)}, 5);
+  Call.InstructionBoundaries.back().Control = LowInstructionControl::Call;
+  Call.EndAddr = Address;
+  F.Blocks[0].Succs = {Call.Id};
+  F.Blocks.push_back(std::move(Call));
+  return F;
+}
+
+TEST(RegistrationState, SEHObjectBorrowsExcludeSavedStackAndExceptionPointers) {
+  for (bool EH4 : {false, true}) {
+    for (bool Write : {false, true}) {
+      for (const auto &[Offset, Width, Allowed] :
+           {std::tuple{-32, uint16_t(4), true},
+            std::tuple{-28, uint16_t(4), !EH4},
+            std::tuple{-25, uint16_t(1), !EH4},
+            std::tuple{-25, uint16_t(4), false},
+            std::tuple{-24, uint16_t(4), false},
+            std::tuple{-21, uint16_t(1), false},
+            std::tuple{-20, uint16_t(4), false},
+            std::tuple{-17, uint16_t(1), false}}) {
+        SCOPED_TRACE(EH4);
+        SCOPED_TRACE(Write);
+        SCOPED_TRACE(Offset);
+        SCOPED_TRACE(Width);
+        const auto F = makeSEHObjectCall(EH4, false, Offset, Width, !Write);
+        RegistrationCalleeFrameContract Leaf;
+        Leaf.Target = 0x2100;
+        (Write ? Leaf.ECXWrites : Leaf.ECXReads) = {{0, Width}};
+        const std::vector Callees{Leaf};
+        const auto A =
+            analyzeRegistrationStates(F, EH4 ? 0x4000 : 0, 0, &Callees);
+        EXPECT_EQ(A.CallFrameEffectsComplete, Allowed);
+        EXPECT_EQ(A.CallFrameEffects.empty(), !Allowed);
+        EXPECT_EQ(A.callFrameEffect(F.Blocks.back().Ops.back().Addr,
+                                    F.Blocks.back().Ops.back().Seq) != nullptr,
+                  Allowed);
+      }
+    }
+  }
+}
+
+TEST(RegistrationState, SEHObjectWritesCannotBorrowWholeOrPartialCookieCells) {
+  for (const auto &[Offset, Width, Allowed] :
+       {std::tuple{-40, uint16_t(4), true}, std::tuple{-37, uint16_t(4), false},
+        std::tuple{-36, uint16_t(4), false},
+        std::tuple{-33, uint16_t(1), false}, std::tuple{-32, uint16_t(4), true},
+        std::tuple{-29, uint16_t(4), false},
+        std::tuple{-28, uint16_t(4), false},
+        std::tuple{-25, uint16_t(1), false}}) {
+    SCOPED_TRACE(Offset);
+    SCOPED_TRACE(Width);
+    auto F = makeSEHObjectCall(true, true, Offset, Width, false);
+    RegistrationCalleeFrameContract Leaf;
+    Leaf.Target = 0x2100;
+    Leaf.ECXWrites = {{0, Width}};
+    const std::vector Callees{Leaf};
+    const auto A = analyzeRegistrationStates(F, 0x4000, 0, &Callees);
+    EXPECT_EQ(A.CallFrameEffectsComplete, Allowed);
+    EXPECT_EQ(A.CallFrameEffects.empty(), !Allowed);
+  }
+}
+
 TEST(RegistrationState, MalformedSEHScopeGraphsPublishNoStateFacts) {
   for (bool EH4 : {false, true}) {
     const auto Base = EH4 ? makeCookieFrame() : makeBranchingFrame();

@@ -1653,3 +1653,5 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 亦涵蓋表外常數上界、無符號高半區及 -2。零步退出保留原層級與框架記憶體事實；動態上界及無效目前層級仍遭拒絕。
 
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 檢查解析已完成但含錯誤哨兵、循環、前向或越界連結、無效初始層級及處理器/過濾器角色的記錄。初始活動範圍與空表對照案例驗證 EH3/EH4 的合法框架哨兵仍被保留。 超出指標寬度的處理器及過濾器位址也會遭拒，且不發布事實。
+
+原始碼登記狀態求解器對物件借用、catch 物件建構與 local-finally 寫入共用管理區邊界檢查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 與 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 涵蓋 EH3/EH4 對 SavedESP、例外指標與 cookie 槽的讀取、寫入及部分重疊。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 獨立檢查入口框架保存槽，無須依賴後續重新載入才發現覆寫。相鄰一般物件仍可合法借用。

@@ -94,8 +94,9 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent) {
           // The runtime owns SavedESP, exception pointers and the complete
           // registration record. A finally that can change them needs a
           // separate nonlocal-transition proof, not an ordinary return fact.
-          if (int64_t(*Address.Offset) + Memory.AccessSize >
-              int64_t(*Chain.RegistrationOffset) - 8)
+          if (!frameObjectIsDisjointFromAdministration(
+                  *Address.Offset,
+                  int64_t(*Address.Offset) + Memory.AccessSize))
             return false;
           const auto Value = Transfer.read(*Memory.StoredValue);
           if (Value.CallbackAddress || (Value.MayBeFrame && !Value.Offset))

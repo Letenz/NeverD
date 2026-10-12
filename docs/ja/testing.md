@@ -1707,3 +1707,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は、表外の定数上限、符号なし値の上半分、-2 も検証します。反復なしの終了は元のレベルとフレームメモリの事実を保持し、動的な上限と無効な現在レベルは引き続き拒否します。
 
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` は解析完了後の誤った番兵、循環、前方・範囲外リンク、無効な初期レベルとハンドラー/フィルターの役割を検査します。初期有効スコープと空の表の対照例で EH3/EH4 の有効な番兵を保持します。 幅を超えるハンドラーとフィルターのアドレスも、事実を公開せず拒否します。
+
+ソースの登録状態ソルバーは、オブジェクトの借用、catch オブジェクトの構築、local-finally の書き込みに共通の管理領域境界チェックを使います。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` と `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` は、EH3/EH4 の SavedESP、例外ポインター、cookie スロットに対する読み取り、書き込み、部分的な重なりを検証します。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` は、後続の再読み取りに依存せず、保存された入口フレームを保護します。隣接する通常のオブジェクトは引き続き借用できます。

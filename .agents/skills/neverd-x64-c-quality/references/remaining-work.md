@@ -26,6 +26,13 @@ conditional memory, invocation lifetime and both C routes remain open.
 
 ## CRT and catch-continuation repairs
 
+- Object borrows, local-finally writes and catch-object construction share the
+  source solver’s administration-boundary check. SEH SavedESP and exception
+  pointers, discontiguous EH4 cookies and realigned saved-entry anchors cannot
+  become scalar objects, even when no later reload exposes the overwrite.
+  Whole and partial overlaps reject; adjacent initialized objects stay valid.
+  These boundaries do not close the remaining conditional incoming-object or
+  nonlocal-invocation proof.
 - COFF parsing and LowIR share EH3/EH4 scope-index and frame-sentinel rules.
   Registration analysis rechecks normalized initial levels, backward enclosing
   links, handler/filter roles and PE32 code-address width before publishing

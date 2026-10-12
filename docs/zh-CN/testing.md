@@ -1615,3 +1615,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` 还覆盖表外常量上界、无符号高半区和 -2。零步退出保留原层级和帧内存事实；动态上界及无效当前层级仍被拒绝。
 
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` 检查解析状态已完成但包含错误哨兵、循环、前向或越界链接、无效初始层级及处理器/过滤器角色的记录。初始活动作用域和空表对照用例验证 EH3/EH4 合法帧哨兵仍被保留。 超出指针宽度的处理器和过滤器地址也会被拒绝，且不发布事实。
+
+源码登记状态求解器对对象借用、catch 对象构造和 local-finally 写入共用管理区边界检查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 与 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 覆盖 EH3/EH4 对 SavedESP、异常指针和 cookie 槽的读取、写入及部分重叠。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 独立检查入口帧保存槽，无需依赖后续重新加载才发现覆盖。相邻普通对象仍可合法借用。

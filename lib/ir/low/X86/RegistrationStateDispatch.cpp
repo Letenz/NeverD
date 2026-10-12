@@ -161,8 +161,7 @@ void RegistrationStateSolver::dispatch(
         if (!SP || !Offset || Source.Unknown || Unknown || *Offset < *SP ||
             *Offset < -int64_t(limits::kMaxRegistrationEHStateWork) ||
             End > *Chain.cxxRuntimeFrameOffset() ||
-            (*Offset < int64_t(*Chain.TryLevelOffset) + 4 &&
-             int64_t(*Chain.RegistrationOffset) - 4 < End) ||
+            !frameObjectIsDisjointFromAdministration(*Offset, End) ||
             !charge(SlotBytes + Root.Frame.cellCount() +
                     Root.RuntimeObject.cellCount())) {
           CompleteCatchObjects = false;
