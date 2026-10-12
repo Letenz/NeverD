@@ -370,8 +370,11 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     const bool RightEq = AsEqZero(E.Operands[1].get(), XEq) &&
                          AsSignedLtZero(E.Operands[0].get(), XLt);
     if ((LeftEq || RightEq) && SameScalar(XEq.get(), XLt.get())) {
+      // The zero takes x's width: a wider one would compare x extended,
+      // and a 16-bit x zero-extended is never below zero.
+      const uint16_t Bytes = XEq->Type && XEq->Type->Size ? XEq->Type->Size : 4;
       auto Sle = HighExpr::makeBinop(NdOp::INT_SLESSEQUAL, XEq,
-                                     HighExpr::makeConst(0, 4));
+                                     HighExpr::makeConst(0, Bytes));
       return renderBinOp(*Sle, ParentPrec);
     }
   }
