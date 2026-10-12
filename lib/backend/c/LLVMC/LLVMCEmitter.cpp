@@ -26,6 +26,7 @@
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCSourceStrings.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -763,7 +764,7 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       continue;
     }
 
-    if (!GV.hasInitializer())
+    if (!GV.hasInitializer() || sourceStringOnlyCalledByValue(GV))
       continue;
 
     auto *Init = GV.getInitializer();

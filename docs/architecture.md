@@ -914,6 +914,10 @@ contracts; the owner proves pointer offsets and checks current bytes, modes and
 argument exclusions before emitting a literal native call. Candidate images do
 not establish immutable memory or import identity. No platform resolver names
 or sample decoding policies live in the JSON adapter or source emitter.
+A call-site string-content attribute permits the C emitter to spell an
+immutable private NUL array as a literal at that call. Unmarked calls and
+writable or externally initialized globals retain ordinary address/storage
+spelling; the attribute does not classify every call to the same function.
 
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive

@@ -742,6 +742,11 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
                                     Import->Result == StateSourceType::Void
                                         ? ""
                                         : Import->Name + "_result");
+        for (const auto &S : Candidates)
+          Native->addParamAttr(
+              S.Argument,
+              llvm::Attribute::get(M.getContext(),
+                                   LLVMSourceByValueStringParameter));
         Native->setMetadata(llvm::LLVMContext::MD_noalias, Scope);
         llvm::Value *Result = B.getInt64(0);
         if (Native->getType()->isPointerTy())

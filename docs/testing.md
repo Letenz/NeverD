@@ -1524,6 +1524,8 @@ module sentinels and bank alignment at O0/O2 with undefined-behavior traps,
 comparing complete bank bytes, guest effects, native-call traces and failure
 statuses. Native Python tests exercise static/callback parity and reject
 malformed images, string declarations and exclusions through the shared C ABI.
+String spelling also rejects missing call-site contracts, writable globals and
+externally initialized globals, preserving ordinary address identity.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed

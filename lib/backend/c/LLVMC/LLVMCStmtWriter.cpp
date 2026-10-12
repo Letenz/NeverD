@@ -15,6 +15,7 @@
 #include "../render/X86FPStateHelpers.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCSourceStrings.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -5128,6 +5129,8 @@ std::string LLVMCWriter::comparedOperandText(const llvm::Value *V,
 std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
                                     const llvm::CallBase &Call,
                                     unsigned ArgIdx) {
+  if (const auto *String = sourceStringArgument(Arg, Call, ArgIdx))
+    return "\"" + escapeCString(String->getAsCString()) + "\"";
   const llvm::BasicBlock *BB = Call.getParent();
   if (const llvm::PHINode *Phi = joinPhiForCallArg(Arg, BB))
     return getName(Phi);

@@ -16,5 +16,10 @@ inline constexpr llvm::StringLiteral LLVMSourceSignedResult =
     "neverd.source.signed_result";
 inline constexpr llvm::StringLiteral LLVMSourceSignedParameter =
     "neverd.source.signed_parameter";
+// A call-site contract: this argument is a read-only NUL string consumed by
+// content, without retaining or observing its address. It permits literal
+// spelling at that call only; it does not classify other calls to the callee.
+inline constexpr llvm::StringLiteral LLVMSourceByValueStringParameter =
+    "neverd.source.by_value_string";
 } // namespace neverd
 #endif

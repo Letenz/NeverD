@@ -12,6 +12,7 @@
 #include "ByteCellScalarizationTest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/pipeline/StateSourceRecovery.h"
 
 using namespace neverd;
@@ -247,6 +248,38 @@ TEST(StateSource, PartialSelectorsUseTheOriginalSnapshotOnBothByteOrders) {
       ASSERT_FALSE(E) << llvm::toString(std::move(E));
       EXPECT_EQ(R->RewrittenCalls, 1u) << cell_test::print(*M);
     }
+}
+
+TEST(StateSource, StringSpellingRequiresAReadOnlyGlobalAndACallSiteContract) {
+  for (unsigned Case = 0; Case < 4; ++Case) {
+    llvm::LLVMContext C;
+    auto M = cell_test::parse(C, R"(
+@text = private constant [5 x i8] c"item\00"
+declare i64 @consume(ptr)
+define i64 @example(ptr %state, ptr %context) {
+  %result = call i64 @consume(ptr @text)
+  ret i64 %result
+})");
+    ASSERT_TRUE(M);
+    auto *Call =
+        llvm::cast<llvm::CallInst>(&M->getFunction("example")->front().front());
+    if (Case != 0)
+      Call->addParamAttr(
+          0, llvm::Attribute::get(C, LLVMSourceByValueStringParameter));
+    if (Case == 2)
+      M->getGlobalVariable("text", true)->setConstant(false);
+    if (Case == 3)
+      M->getGlobalVariable("text", true)->setExternallyInitialized(true);
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+    EXPECT_EQ(Source.find("consume(\"item\")") != std::string::npos, Case == 1)
+        << Source;
+    EXPECT_EQ(Source.find("consume(text)") != std::string::npos, Case != 1)
+        << Source;
+  }
 }
 
 TEST_F(StateSourceCompiled,
