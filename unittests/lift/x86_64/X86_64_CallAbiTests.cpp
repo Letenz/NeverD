@@ -62,6 +62,28 @@ protected:
   }
 };
 
+// The callee's `setl al; setg cl` writes the low bytes of RAX and RCX and
+// keeps the rest of each, which nothing reads: RCX is no fourth parameter,
+// and the call passes the two arguments its caller sets.
+TEST_F(X86_64_CallAbi, AByteWriteMakesNoParameter) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static int c64(long long, long long) __attribute__((noinline));
+int cmpsum(int a) {
+  unsigned h = 0, s = (unsigned)a | 1u;
+  for (int i = 0; i < 12; i++) {
+    unsigned xl = s, xh = s ^ 0x1234u, yl = s * 7u, yh = s + (unsigned)i;
+    long long x = (long long)(((unsigned long long)xh << 32) | xl);
+    long long y = (long long)(((unsigned long long)yh << 32) | yl);
+    h = h * 131u + (unsigned)(c64(x, y) + 2);
+    s = s * 1103515245u + 12345u;
+  }
+  return (int)h;
+}
+static int c64(long long a, long long b) { return a < b ? -1 : (a > b ? 1 : 0); }
+)C",
+                            "cmpsum", {"cmpsum", "c64"}, {0x71, 0, 1, -3, 77});
+}
+
 // Six register arguments and four pushed afresh on every iteration of a
 // loop, whose stack pointer is a PHI at the loop head.
 TEST_F(X86_64_CallAbi, StackArgumentsPushedInALoopReachTheCallee) {
