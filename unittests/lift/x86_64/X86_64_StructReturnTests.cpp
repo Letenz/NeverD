@@ -72,3 +72,42 @@ id mkid(int x) {
 )C",
                             "retid", {"retid", "mkid", "id"}, {-3, 0, 1, 77});
 }
+
+// Two floats share xmm0's low eightbyte.  The callee returns the register's
+// whole vector, and the caller reads both lanes of it.
+TEST_F(X86_64_StructReturn, TwoFloatsReturnPackedInOneRegister) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct { float a, b; } ff;
+ff mkff(int x) __attribute__((noinline));
+int retff(int x) {
+  ff r = mkff(x);
+  return (int)r.a ^ ((int)r.b * 5);
+}
+ff mkff(int x) {
+  ff r;
+  r.a = (float)(x >> 3);
+  r.b = (float)(x >> 1) + 1.0f;
+  return r;
+}
+)C",
+                            "retff", {"retff", "mkff", "ff"},
+                            {-3, 0, 1, 77, 0x34567});
+}
+
+// A vector returns whole in xmm0.
+TEST_F(X86_64_StructReturn, AVectorReturnsAllItsLanes) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef unsigned v4su __attribute__((vector_size(16)));
+v4su mk4(unsigned x) __attribute__((noinline));
+int use4(int x) {
+  v4su v = mk4((unsigned)x);
+  return (int)(v[0] ^ v[3] * 3u ^ v[1] << 2);
+}
+v4su mk4(unsigned x) {
+  v4su v = {x, x + 1u, x, x * 7u};
+  return v + v;
+}
+)C",
+                            "use4", {"use4", "mk4", "v4su"},
+                            {-3, 0, 1, 77, 0x12345678});
+}

@@ -447,6 +447,11 @@ struct MedFunc {
   /// from the caller-side struct-return remodel (modelCallStructReturn).
   std::vector<MedReturnReg> MultiReturn;
 
+  /// The function returns the whole vector its FP return register holds (a
+  /// `__m128`, a NEON vector, x86-64's `{float, float}` packed in one
+  /// register), typed Float(16): its bits, not a scalar float.
+  bool ReturnsVectorRegister = false;
+
   std::vector<MedTypedParam> TypedParams;
   /// The width (4 or 8 bytes) of the scalar each floating-point argument
   /// register parameter carries in its low lane, by register offset, when
