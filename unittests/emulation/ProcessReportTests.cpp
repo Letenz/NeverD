@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
@@ -25,6 +26,81 @@ namespace field = process_report;
 #define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "FaultReportCases.def"
 #undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport, DarwinCreatedCompletionFlagsAreIndependentAndCompatible) {
+  for (const char *Purpose : {"synchronization", "data_synchronization"})
+    for (unsigned Variant = 0; Variant != 3; ++Variant) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedSynchronizationFilesJSON));
+      Files.getAsObject()->erase("synchronization");
+      Files.getAsObject()->erase("data_synchronization");
+      llvm::json::Object Provider{{"objects", llvm::json::Array{}}};
+      if (Variant)
+        Provider["created_regular_objects"] = Variant == 2;
+      (*Files.getAsObject())[Purpose] = std::move(Provider);
+      if (Variant != 2)
+        Files.getAsObject()->erase("creation_policy");
+      auto Parsed = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto &O = *Parsed->DarwinFiles;
+      EXPECT_EQ(bool(O.Synchronization),
+                llvm::StringRef(Purpose) == "synchronization");
+      EXPECT_EQ(bool(O.DataSynchronization),
+                llvm::StringRef(Purpose) == "data_synchronization");
+      EXPECT_EQ(O.Synchronization
+                    ? O.Synchronization->CreatedRegularObjects
+                    : O.DataSynchronization->CreatedRegularObjects,
+                Variant == 2);
+    }
+}
+TEST(ProcessReport,
+     DarwinCreatedCompletionRejectsMalformedFlagsAndMissingPolicy) {
+  for (const char *Purpose : {"synchronization", "data_synchronization"}) {
+    for (const char *Bad :
+         {R"({"objects":[],"created_regular_objects":null})",
+          R"({"objects":[],"created_regular_objects":1})",
+          R"({"objects":[],"created_regular_objects":"true"})",
+          R"({"objects":[],"created_regular_objects":[]})",
+          R"({"objects":[],"created_regular_objects":{}})",
+          R"({"created_regular_objects":true})",
+          R"({"objects":[],"created_regular_objects":true,"extra":false})",
+          R"({"objects":["/data","/data"],"created_regular_objects":true})",
+          R"({"objects":["/missing"],"created_regular_objects":true})",
+          R"({"objects":["/data\u0000"],"created_regular_objects":true})"}) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedSynchronizationFilesJSON));
+      (*Files.getAsObject())[Purpose] = llvm::cantFail(llvm::json::parse(Bad));
+      auto Rejected = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_FALSE(bool(Rejected)) << Purpose << ':' << Bad;
+      const auto Expected =
+          llvm::StringRef(Bad).contains("/missing") ||
+                  llvm::StringRef(Bad).contains("\\u0000")
+              ? std::string(llvm::StringRef(Purpose) == "synchronization"
+                                ? "Darwin file synchronization"
+                                : "Darwin data synchronization") +
+                    " grants require complete ordinary initial regular objects"
+              : std::string(field::DarwinFilesOptions) + Purpose;
+      EXPECT_EQ(llvm::toString(Rejected.takeError()), Expected)
+          << Purpose << ':' << Bad;
+    }
+    auto Files = llvm::cantFail(
+        llvm::json::parse(darwin_test::CreatedSynchronizationFilesJSON));
+    Files.getAsObject()->erase("creation_policy");
+    auto Rejected = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(Files)}}))
+            .str());
+    ASSERT_FALSE(bool(Rejected));
+    EXPECT_EQ(llvm::toString(Rejected.takeError()),
+              "invalid Darwin virtual file creation policy");
+  }
+}
 
 TEST(ProcessReport, RetainsOptionalFaultCauseAndFullWidthProcessorCode) {
   ProcessResult Result{ProcessProfile::WindowsPE64,

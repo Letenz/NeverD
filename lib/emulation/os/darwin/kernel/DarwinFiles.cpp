@@ -386,16 +386,23 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       if (auto E =
               AdmitOrdinaryObject(Path, diagnostic::FileAdvisoryLockOption))
         return E;
-  if (Options.Synchronization)
-    for (const auto &Path : Options.Synchronization->Objects)
-      if (auto E =
-              AdmitOrdinaryObject(Path, diagnostic::FileSynchronizationOption))
+  const auto AdmitCompletion = [&](const auto &Environment,
+                                   const char *Reason) -> llvm::Error {
+    if (!Environment)
+      return llvm::Error::success();
+    if (Environment->CreatedRegularObjects && !Options.CreationPolicy)
+      return failure(diagnostic::FileCreationPolicy);
+    for (const auto &Path : Environment->Objects)
+      if (auto E = AdmitOrdinaryObject(Path, Reason))
         return E;
-  if (Options.DataSynchronization)
-    for (const auto &Path : Options.DataSynchronization->Objects)
-      if (auto E = AdmitOrdinaryObject(
-              Path, diagnostic::FileDataSynchronizationOption))
-        return E;
+    return llvm::Error::success();
+  };
+  if (auto E = AdmitCompletion(Options.Synchronization,
+                               diagnostic::FileSynchronizationOption))
+    return E;
+  if (auto E = AdmitCompletion(Options.DataSynchronization,
+                               diagnostic::FileDataSynchronizationOption))
+    return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
     const auto M = Options.Metadata.find(Path);
@@ -2548,6 +2555,13 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     Node->CurrentMetadata = createdMetadata(
         *ParentIdentity, FileRegularMode | (Mode & 0777 & ~CurrentUmask), 1);
     Node->Policy = &Policy.Mutation;
+    // These independent creation providers belong only to this newly admitted
+    // ordinary regular object, never to an old name or initial grant.
+    Node->Synchronization = Options->Synchronization &&
+                            Options->Synchronization->CreatedRegularObjects;
+    Node->DataSynchronization =
+        Options->DataSynchronization &&
+        Options->DataSynchronization->CreatedRegularObjects;
   }
   // A new object never inherits an old observation/policy at the same name.
   auto Entry = std::make_shared<FileEntry>(Node);

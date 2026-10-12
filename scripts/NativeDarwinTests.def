@@ -146,3 +146,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     OrdinaryFileSynchronizationKeepsProviderAndCommittedState)
 NEVERD_NATIVE_DARWIN_CASE(
     OrdinaryDataSynchronizationKeepsProviderAndCommittedState)
+NEVERD_NATIVE_DARWIN_CASE(
+    CreatedRegularSynchronizationKeepsIndependentProvidersAndState)

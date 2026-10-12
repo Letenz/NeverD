@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 00321c4fec4ae92fbf8fbd92d10fb68ad205dd2b887a94b85f45df2a386cf4c4 -->
+<!-- i18n-source: 8ab7d80b05dfd2be0fd0a6e4fe66faf0a0e895ca83a5a5a9234e6e2192437546 -->
 
 [← 문서 목록](README.md)
 
@@ -1344,7 +1344,7 @@ opaque streams unsupported kind / directory and symlink descriptions need indepe
 readonly regular description accepted only with explicit object completion grant
 Contents owns grant / dup fcntl dup2 select current description and object
 runtime hardlink rename held zero-name unlink retain original grant
-created and reused names do not inherit completion grants
+created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
@@ -1352,8 +1352,8 @@ all52 other logical file routes closed before preflight / both static queries re
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
-66 current native-common cases / 81 mandatory workloads per platform
-ARM64 matching native mandatory243 / actual successful execution required
+67 current native-common cases / 82 mandatory workloads per platform
+ARM64 matching native mandatory246 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
@@ -1383,7 +1383,7 @@ opaque streams unsupported kind / directory and symlink descriptions need indepe
 readonly regular description accepted only with explicit data object completion grant
 Contents owns separate grants / dup fcntl dup2 select current description and object
 runtime hardlink rename held zero-name unlink retain original grant
-created and reused names do not inherit completion grants
+created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
@@ -1391,8 +1391,8 @@ all52 other logical file routes closed before preflight / both static queries re
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
-66 current native-common cases / 81 mandatory workloads per platform
-ARM64 matching native mandatory243 / actual successful execution required
+67 current native-common cases / 82 mandatory workloads per platform
+ARM64 matching native mandatory246 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
@@ -1402,3 +1402,35 @@ native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
 
 [XNU synchronization purposes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU descriptor lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU syscall declarations](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master).
+
+
+## 새 일반 파일의 명시적 동기화 완료 제공자
+
+각 독립 선언은 created_regular_objects Boolean(C++ CreatedRegularObjects)을 허용합니다. true는 완전한 CreationPolicy를 요구하며 일반 파일 생성에 성공할 때만 해당 즉시 완료 권한을 부여합니다. 생략과 false는 기존 기본값을 유지합니다. 필수 objects는 초기 객체만 허용하며 이름 재사용으로 이전 권한이 이동하지 않습니다. 파일과 데이터 권한은 독립적입니다.
+
+```text
+CreatedRegularObjects / created_regular_objects / defaultfalse / mandatory objects array
+synchronization={"objects":[],"created_regular_objects":true}
+data_synchronization={"objects":[],"created_regular_objects":true}
+true requires complete CreationPolicy / current umask / parent metadata / valid inode and mutation policy
+ordinary regular creation commit only / independent File95+408 and Data187 grants
+initial grants and creation grants never supply each other / existing O_CREAT receives no new grant
+name reuse never transfers old authority / fresh explicit creation grant may authorize a replacement
+false or omission retains old default / missing and empty environments remain distinct
+single completion parser and input byte owner / no extra path entry FD inode or byte charge
+failed creation preserves admission resources and grants / directories links streams remain unsupported
+Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and mapping leases
+closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
+bytes stat cursor flags xattrs allocation namespace locks unchanged / no observation restoration
+completion grants supply no mode ownership xattr flock or general DAC authority
+both immutable query environments reject even false declarations / all52 other logical routes remain closed
+SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
+CreatedRegularSynchronizationKeepsIndependentProvidersAndState
+67 current native-common cases / 82 mandatory workloads per platform / ARM64 matching native mandatory246
+702 original native literal observations / O0 O1 O2 / raw SVC and syscall / three upper carriers
+freshly created target without preparatory sync / own176-byte guarded native stat and content preserved
+native and model post-write F_GETFL65538 / existing FileWasWritten0x10000 / own initial flags captured and preserved
+immediate successful declared provider / committed model mutations / no deferred work or requested cancellation
+no host flush or physical durability / general cancellation provider errors leases waits remain unknown
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```

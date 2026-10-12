@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinAdvisoryLockTestData.h"
+#include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
@@ -2883,6 +2884,95 @@ TEST_P(DarwinProcess,
   EXPECT_EQ(Unknown->Services.back().Number, Class | 95);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       CreatedRegularSynchronizationKeepsIndependentProvidersAndState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::createdSynchronizationOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("created-regular-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 42);
+    EXPECT_EQ(R->ReturnValue, 42u);
+    EXPECT_EQ(R->StandardOutput, "C");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(), 147u);
+    for (unsigned I = 0; I != 9; ++I) {
+      EXPECT_EQ(R->Services[I].Number,
+                Class | darwin_test::CreatedSynchronizationPrefixNumbers[I]);
+      EXPECT_EQ(R->Services[I].Result,
+                darwin_test::CreatedSynchronizationPrefixValues[I]);
+      EXPECT_EQ(R->Services[I].Error, false);
+    }
+    constexpr uint64_t Highs[] = {0, 0x1234567800000000ULL,
+                                  0xffffffff00000000ULL},
+                       Numbers[] = {95, 408, 187},
+                       FDs[] = {3, 5, 10, 20, 4, 0xffffffffULL};
+    for (unsigned H = 0; H != 3; ++H)
+      for (unsigned N = 0; N != 3; ++N) {
+        const auto Start = 9 + H * 36 + N * 12;
+        for (unsigned I = 0; I != 6; ++I) {
+          const auto &E = R->Services[Start + I];
+          EXPECT_EQ(E.Number, Class | Highs[H] | Numbers[N]);
+          EXPECT_EQ(E.Arguments[0], Highs[H] | FDs[I]);
+          EXPECT_EQ(E.Result, I == 5 ? 9u : 0u);
+          EXPECT_EQ(E.Error, I == 5);
+        }
+        for (unsigned I = 0; I != 6; ++I) {
+          const auto &E = R->Services[Start + 6 + I];
+          EXPECT_EQ(E.Number, Class | (I < 3 ? 339u : I < 5 ? 199u : 92u));
+          EXPECT_EQ(E.Result, I < 3    ? 0u
+                              : I == 3 ? 10u
+                              : I == 4 ? 3u
+                                       : 0x10002u);
+          EXPECT_EQ(E.Error, false);
+        }
+      }
+    for (unsigned I = 0; I != 30; ++I) {
+      const auto &E = R->Services[117 + I];
+      const auto Value = darwin_test::CreatedSynchronizationTailValues[I];
+      EXPECT_EQ(E.Number,
+                Class | darwin_test::CreatedSynchronizationTailNumbers[I]);
+      EXPECT_EQ(E.Result, Value);
+      EXPECT_EQ(E.Error, Value == 9);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->CreationPolicy->FirstInode, 100u);
+  }
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
+    Options.DarwinFiles =
+        darwin_test::createdSynchronizationOptions(Variant == 0, Variant == 1);
+    if (Variant == 3) {
+      Options.DarwinFiles->Synchronization.reset();
+      Options.DarwinFiles->DataSynchronization.reset();
+    }
+    if (Variant == 4) {
+      Options.DarwinFiles->Synchronization->Objects.insert("/data");
+      Options.DarwinFiles->DataSynchronization->Objects.insert("/data");
+    }
+    auto R = run("created-regular-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_EQ(R->Services.size(), Variant == 0 ? 34u : 10u);
+    EXPECT_EQ(R->Services.back().Number, Class | (Variant == 0 ? 187u : 95u));
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+    EXPECT_EQ(R->Diagnostic,
+              Variant == 0 ? "Darwin regular-object data integrity completion "
+                             "provider is not configured"
+              : Variant == 3
+                  ? "Darwin file synchronization environment is not configured"
+                  : "Darwin regular-object file integrity completion provider "
+                    "is not configured");
+  }
 }
 
 TEST_P(DarwinProcess,

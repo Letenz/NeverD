@@ -885,6 +885,75 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_created_regular_completion_keeps_independent_providers_and_state(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        def metadata(mode: int, inode: int, size: int) -> dict:
+            return {"device":7,"inode":inode,"mode":mode,"link_count":2 if mode == 0o40700 else 1,"uid":501,"gid":20,"size":size,"block_size":512,"blocks":1 if size else 0,"flags":0,"generation":9,"access_time":{"seconds":1,"nanoseconds":2},"modification_time":{"seconds":3,"nanoseconds":4},"change_time":{"seconds":5,"nanoseconds":6},"birth_time":{"seconds":7,"nanoseconds":8}}
+        base = {"files":[{"path":"/data","bytes_hex":"616200ff6566","metadata":metadata(0o100600,2,6)}],"directories":[{"path":"/","mutable":True,"metadata":metadata(0o40700,1,0),"mutation_policy":{"directory_entry_size":16,"mutation_time":{"seconds":91,"nanoseconds":92}}}],"working_directory":"/","umask":18,"creation_policy":{"first_inode":100,"block_size":512,"generation":9,"creation_time":{"seconds":41,"nanoseconds":42},"mutation_policy":{"allocation_unit":512,"mutation_time":{"seconds":101,"nanoseconds":102}}},"synchronization":{"objects":[],"created_regular_objects":True},"data_synchronization":{"objects":[],"created_regular_objects":True}}
+        expected = list(zip((5,4,5,41,92,90,199,92,339),(3,10,4,5,10,20,3,0x10002,0)))
+        for high in (0,0x1234567800000000,0xffffffff00000000):
+            for number in (95,408,187):
+                expected += [(high | number, value) for value in (0,0,0,0,0,9)]
+                expected += [(339,0)] * 3 + [(199,10),(199,3),(92,0x10002)]
+        expected += list(zip((201,339,95,408,187,339,339,339,6,95,408,187,95,408,187,6,95,408,187,95,408,187,339,199,3,6,6,6,10,4),(0,0,0,0,0,0,0,0,0,9,9,9,0,0,0,0,9,9,9,0,0,0,0,0,6,0,0,0,0,1)))
+        self.assertEqual(len(expected),147)
+        for fixture, profile in (("macos-arm64","macos-macho64-v1"),("macos-x86_64","macos-macho64-v1"),("ios-arm64","ios-macho64-v1"),("ios-simulator-arm64","ios-simulator-macho64-v1"),("ios-simulator-x86_64","ios-simulator-macho64-v1")):
+            path = str((Path(fixtures) / fixture).resolve(strict=True))
+            cls = 0x2000000 if fixture.endswith("x86_64") else 0
+            for variant in range(5):
+                request = {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["guest","created-regular-synchronization","/data"],"darwin_files":json.loads(json.dumps(base))}
+                request["darwin_files"]["synchronization"]["created_regular_objects"] = variant in (0,1)
+                request["darwin_files"]["data_synchronization"]["created_regular_objects"] = variant in (0,2)
+                if variant == 4:
+                    del request["darwin_files"]["synchronization"]
+                    del request["darwin_files"]["data_synchronization"]
+                options = json.dumps(request,sort_keys=True)
+                for _ in range(2 if variant == 0 else 1):
+                    result = session.emulate_process(path,profile,options)
+                    self.assertEqual(result["stop_reason"],"exited" if variant == 0 else "unsupported_service")
+                    self.assertEqual(result["stdout_hex"],"43" if variant == 0 else "")
+                    self.assertEqual(result["stderr_hex"],"")
+                    calls = result["services"]
+                    self.assertEqual(len(calls),147 if variant == 0 else 34 if variant == 1 else 10)
+                    if variant == 0:
+                        self.assertEqual(result["exit_status"],42)
+                        for call, (number,value) in zip(calls,expected):
+                            self.assertEqual(call["number"],format(cls | number,"x"))
+                            self.assertEqual(call["result"],format(value,"x"))
+                            self.assertEqual(call["error"],value == 9)
+                        for h, high in enumerate((0,0x1234567800000000,0xffffffff00000000)):
+                            for n in range(3):
+                                for i, fd in enumerate((3,5,10,20,4,0xffffffff)):
+                                    self.assertEqual(calls[9+h*36+n*12+i]["arguments"][0],format(high | fd,"x"))
+                    else:
+                        self.assertEqual(calls[-1]["number"],format(cls | (187 if variant == 1 else 95),"x"))
+                        self.assertIsNone(calls[-1]["result"])
+                        self.assertNotIn("error",calls[-1])
+                    self.assertEqual(json.dumps(request,sort_keys=True),options)
+                    self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
+            for purpose in ("synchronization","data_synchronization"):
+                for bad in (None,1,"true",[],{}):
+                    request = {"darwin_files":json.loads(json.dumps(base))}
+                    request["darwin_files"][purpose]["created_regular_objects"] = bad
+                    with self.assertRaises(NeverDError):
+                        session.emulate_process(path,profile,json.dumps(request))
+                    self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
+
     def test_darwin_ordinary_data_synchronization_keeps_provider_and_committed_state(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

@@ -238,8 +238,12 @@ struct DarwinAdvisoryLockOptions {
 /// errors, cancellation, revocation, leases and asynchronous waits are unknown.
 struct DarwinFileSynchronizationOptions {
   /// Initial ordinary regular objects. Grants follow their Contents through
-  /// runtime links/rename/held unlink; created or reused names stay unknown.
+  /// runtime links/rename/held unlink; replacements never inherit this grant.
   std::set<std::string> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy; false preserves the old default.
+  /// Existing objects and directory/link creation receive no grant from this.
+  bool CreatedRegularObjects = false;
 };
 
 /// Independent immediate successful regular-vnode data integrity completion.
@@ -249,8 +253,12 @@ struct DarwinFileSynchronizationOptions {
 /// distinct operation; provider failures, cancellation and waits stay unknown.
 struct DarwinFileDataSynchronizationOptions {
   /// Initial ordinary regular objects, retained through runtime names and
-  /// open zero-name lifetime. Created/reused objects never inherit grants.
+  /// open zero-name lifetime. Replacements never inherit initial grants.
   std::set<std::string> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy; false preserves the old default.
+  /// Existing objects and directory/link creation receive no grant from this.
+  bool CreatedRegularObjects = false;
 };
 
 /// Closed initial catalogue, with canonical absolute guest paths. No host

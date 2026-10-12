@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "../TestProcess.h"
 #include "DarwinAdvisoryLockTestData.h"
+#include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
@@ -3895,6 +3896,157 @@ TEST_F(ProcessPublic,
     EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
   }
+#endif
+}
+
+TEST_F(ProcessPublic,
+       DarwinCreatedRegularCompletionPreservesProvidersAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    const uint64_t Class =
+        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+    for (unsigned Variant = 0; Variant != 5; ++Variant) {
+      auto Files = llvm::cantFail(llvm::json::parse(
+          emulation::darwin_test::CreatedSynchronizationFilesJSON));
+      const bool FileGranted = Variant == 0 || Variant == 1,
+                 DataGranted = Variant == 0 || Variant == 2;
+      (*Files.getAsObject()->getObject(field::FileSynchronization))
+          [field::FileSynchronizationCreatedRegularObjects] = FileGranted;
+      (*Files.getAsObject()->getObject(field::FileDataSynchronization))
+          [field::FileSynchronizationCreatedRegularObjects] = DataGranted;
+      if (Variant == 4) {
+        Files.getAsObject()->erase(field::FileSynchronization);
+        Files.getAsObject()->erase(field::FileDataSynchronization);
+      }
+      llvm::json::Value Input = llvm::json::Object{
+          {"backend", "unicorn"},
+          {"instruction_quantum", 1024},
+          {"timeout_microseconds", 5000000},
+          {"arguments",
+           llvm::json::Array{"guest", "created-regular-synchronization",
+                             "/data"}},
+          {"darwin_files", std::move(Files)}};
+      const auto Options = llvm::formatv("{0}", Input).str();
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+      const auto *Object = Report->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getString(field::Stop),
+                Variant == 0 ? "exited" : "unsupported_service");
+      EXPECT_EQ(Object->getString(field::Stdout), Variant == 0 ? "43" : "");
+      EXPECT_EQ(Object->getString(field::Stderr), "");
+      const auto *Calls = Object->getArray(field::Services);
+      ASSERT_NE(Calls, nullptr);
+      ASSERT_EQ(Calls->size(), Variant == 0 ? 147u : Variant == 1 ? 34u : 10u);
+      if (Variant == 0) {
+        EXPECT_EQ(Object->getInteger(field::ExitStatus), 42);
+        for (unsigned I = 0; I != 9; ++I) {
+          const auto *E = (*Calls)[I].getAsObject();
+          ASSERT_NE(E, nullptr);
+          EXPECT_EQ(E->getString(field::Number),
+                    llvm::utohexstr(
+                        Class | emulation::darwin_test::
+                                    CreatedSynchronizationPrefixNumbers[I],
+                        true));
+          EXPECT_EQ(
+              E->getString(field::Result),
+              llvm::utohexstr(
+                  emulation::darwin_test::CreatedSynchronizationPrefixValues[I],
+                  true));
+          EXPECT_EQ(E->getBoolean(field::Error), false);
+        }
+        constexpr uint64_t Highs[] = {0, 0x1234567800000000ULL,
+                                      0xffffffff00000000ULL},
+                           Numbers[] = {95, 408, 187},
+                           FDs[] = {3, 5, 10, 20, 4, 0xffffffffULL};
+        for (unsigned H = 0; H != 3; ++H)
+          for (unsigned N = 0; N != 3; ++N)
+            for (unsigned I = 0; I != 12; ++I) {
+              const auto *E = (*Calls)[9 + H * 36 + N * 12 + I].getAsObject();
+              ASSERT_NE(E, nullptr);
+              const uint64_t Number = I < 6    ? Highs[H] | Numbers[N]
+                                      : I < 9  ? 339
+                                      : I < 11 ? 199
+                                               : 92,
+                             Value = I < 5     ? 0
+                                     : I == 5  ? 9
+                                     : I < 9   ? 0
+                                     : I == 9  ? 10
+                                     : I == 10 ? 3
+                                               : 0x10002;
+              EXPECT_EQ(E->getString(field::Number),
+                        llvm::utohexstr(Class | Number, true));
+              EXPECT_EQ(E->getString(field::Result),
+                        llvm::utohexstr(Value, true));
+              EXPECT_EQ(E->getBoolean(field::Error), I == 5);
+              if (I < 6) {
+                const auto *A = E->getArray(field::Arguments);
+                ASSERT_NE(A, nullptr);
+                EXPECT_EQ((*A)[0].getAsString(),
+                          llvm::utohexstr(Highs[H] | FDs[I], true));
+              }
+            }
+        for (unsigned I = 0; I != 30; ++I) {
+          const auto *E = (*Calls)[117 + I].getAsObject();
+          ASSERT_NE(E, nullptr);
+          const auto Value =
+              emulation::darwin_test::CreatedSynchronizationTailValues[I];
+          EXPECT_EQ(
+              E->getString(field::Number),
+              llvm::utohexstr(Class | emulation::darwin_test::
+                                          CreatedSynchronizationTailNumbers[I],
+                              true));
+          EXPECT_EQ(E->getString(field::Result), llvm::utohexstr(Value, true));
+          EXPECT_EQ(E->getBoolean(field::Error), Value == 9);
+        }
+      } else {
+        const auto *E = Calls->back().getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | (Variant == 1 ? 187u : 95u), true));
+        EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
+        EXPECT_EQ(E->get(field::Error), nullptr);
+      }
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                Variant == 0 ? process_cli::GuestFailure
+                             : process_cli::Incomplete);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+    }
+  }
+  for (const auto Purpose :
+       {field::FileSynchronization, field::FileDataSynchronization})
+    for (const char *Bad : {"null", "1", "\"true\"", "[]", "{}"}) {
+      auto Files = llvm::cantFail(llvm::json::parse(
+          emulation::darwin_test::CreatedSynchronizationFilesJSON));
+      (*Files.getAsObject()->getObject(
+          Purpose))[field::FileSynchronizationCreatedRegularObjects] =
+          llvm::cantFail(llvm::json::parse(Bad));
+      const auto Options =
+          llvm::formatv("{{\"darwin_files\":{0}}}", Files).str();
+      EXPECT_TRUE(takeString(neverd_emulate_process_json(Session, Path.c_str(),
+                                                         IOSSimulatorMachO64,
+                                                         Options.c_str()))
+                      .empty());
+      EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    }
 #endif
 }
 

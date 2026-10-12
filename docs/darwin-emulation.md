@@ -2210,11 +2210,11 @@ native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 
 Raw BSD fsync95 and fsync_nocancel408 use the same Fsync/Int owner within the existing uncancelled single-thread profile. DarwinFileOptions::Synchronization or strict darwin_files.synchronization={"objects":["/data"]} declares an immediate successful regular-vnode file integrity completion provider: successful model mutations have already committed, with no deferred provider work or requested cancellation. A zero result acknowledges that supplied provider; it neither flushes host storage nor proves physical durability. The cancellable XNU entry tests cancellation before the common path; the nocancel entry does not. General cancellation, provider failures, leases, shadow/resource-fork flushes and asynchronous waits remain unknown.
 
-Admission grants only initial ordinary regular objects with complete metadata, flags0, link_count1 and no initial inode aliases. Objects are unique canonical strings, at most256, charged with their NUL against the shared input byte budget. Unknown keys, malformed arrays, duplicates and invalid paths fail before image loading. Missing versus explicitly empty providers stay distinct. Both static query environments reject even empty declarations and close all52 other logical file routes before preflight; alias408 introduces no additional route.
+The objects array grants only initial ordinary regular objects with complete metadata, flags0, link_count1 and no initial inode aliases. Objects are unique canonical strings, at most256, charged with their NUL against the shared input byte budget. Unknown keys, malformed arrays, duplicates and invalid paths fail before image loading. Missing versus explicitly empty providers stay distinct. Both static query environments reject even empty declarations and close all52 other logical file routes before preflight; alias408 introduces no additional route.
 
-Low32 descriptor lookup comes first, returning EBADF9 for absent or closed descriptors even without a provider. Opaque streams, directory descriptions and symlink descriptions remain unsupported independently of the ordinary regular provider. Readonly regular descriptions may complete with an explicit object grant, without inferring general DAC authority. Contents owns the grant through runtime hardlinks, rename and held zero-name unlink. Current duplicate, fcntl and dup2 descriptions select the current object; created objects and reused names never inherit a grant. A mapping or retained Contents cannot make a closed descriptor valid. Completion changes no bytes, cursor, descriptor flags, stat fields, xattrs, allocation, namespace or advisory locks, and cannot restore invalidated observations. Mutation and authorization owners remain independent.
+Low32 descriptor lookup comes first, returning EBADF9 for absent or closed descriptors even without a provider. Opaque streams, directory descriptions and symlink descriptions remain unsupported independently of the ordinary regular provider. Readonly regular descriptions may complete with an explicit object grant, without inferring general DAC authority. Contents owns the grant through runtime hardlinks, rename and held zero-name unlink. Current duplicate, fcntl and dup2 descriptions select the current object; created objects and reused names never inherit an initial grant; fresh objects require the separate creation provider below. A mapping or retained Contents cannot make a closed descriptor valid. Completion changes no bytes, cursor, descriptor flags, stat fields, xattrs, allocation, namespace or advisory locks, and cannot restore invalidated observations. Mutation and authorization owners remain independent.
 
-The original SDK-free workload retains68 service records and20 guarded full stat observations, with separate main return40 and stdout S. It covers five software profiles, C/CLI/Python and the three matching ARM64 HVF profiles. Current inventories require66 common native cases and81 mandatory workloads per platform: all243 matching ARM64 identities must actually pass. Original ARM64 O0/O1/O2 controls contain504 literal observations through raw SVC and syscall with three upper-carrier variants. Their complete guarded native records and cursors are unchanged, using actual native times. Directory and pipe results in those captures are observations outside the admitted ordinary regular-object provider. F_FULLFSYNC51, F_BARRIERFSYNC85, global synchronization, provider errors, resource-fork/shadow flushes, leases, revocation and asynchronous waits remain separate gaps. Native Intel and physical iOS remain unverified; the complete OS/framework environment is still incomplete.
+The original SDK-free workload retains68 service records and20 guarded full stat observations, with separate main return40 and stdout S. It covers five software profiles, C/CLI/Python and the three matching ARM64 HVF profiles. Current inventories require67 common native cases and82 mandatory workloads per platform: all246 matching ARM64 identities must actually pass. Original ARM64 O0/O1/O2 controls contain504 literal observations through raw SVC and syscall with three upper-carrier variants. Their complete guarded native records and cursors are unchanged, using actual native times. Directory and pipe results in those captures are observations outside the admitted ordinary regular-object provider. F_FULLFSYNC51, F_BARRIERFSYNC85, global synchronization, provider errors, resource-fork/shadow flushes, leases, revocation and asynchronous waits remain separate gaps. Native Intel and physical iOS remain unverified; the complete OS/framework environment is still incomplete.
 
 
 ```text
@@ -2231,7 +2231,7 @@ opaque streams unsupported kind / directory and symlink descriptions need indepe
 readonly regular description accepted only with explicit object completion grant
 Contents owns grant / dup fcntl dup2 select current description and object
 runtime hardlink rename held zero-name unlink retain original grant
-created and reused names do not inherit completion grants
+created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
@@ -2239,8 +2239,8 @@ all52 other logical file routes closed before preflight / both static queries re
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
-66 current native-common cases / 81 mandatory workloads per platform
-ARM64 matching native mandatory243 / actual successful execution required
+67 current native-common cases / 82 mandatory workloads per platform
+ARM64 matching native mandatory246 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
@@ -2255,11 +2255,11 @@ native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 
 Raw BSD fdatasync187 has its own Fdatasync/Int purpose: XNU tests cancellation and asks fsync_common for MNT_DWAIT, while fsync95/fsync_nocancel408 ask for MNT_WAIT. DarwinFileOptions::DataSynchronization or strict darwin_files.data_synchronization={"objects":["/data"]} declares immediate successful ordinary regular-vnode data integrity completion after successful modeled data mutations have committed, with no deferred provider work or requested cancellation. The independent file Synchronization declaration never supplies this data purpose, and the data declaration never supplies file completion. Zero acknowledges that supplied provider; it flushes no host storage and proves no physical durability. The existing uncancelled single-thread scope does not establish general cancellation, provider errors, leases or asynchronous waits.
 
-The strict declaration contains only the objects array: at most256 unique canonical absolute strings, charged with NUL to the same catalogue input budget. Initial ordinary regular objects require complete metadata, flags0, no special mode bits, link_count1 and no initial inode aliases. Missing and explicitly empty environments differ; both static query declarations reject even empty data/file environments. Current descriptions select independent default-false Contents grants. Runtime names and held zero-name objects retain their original grants; newly created/recreated objects do not. Mapping or retained Contents cannot revive a closed descriptor.
+The required objects array grants initial objects; the independent optional created_regular_objects Boolean below extends each declaration. It permits at most256 unique canonical absolute strings, charged with NUL to the same catalogue input budget. Initial ordinary regular objects require complete metadata, flags0, no special mode bits, link_count1 and no initial inode aliases. Missing and explicitly empty environments differ; both static query declarations reject even empty data/file environments. Current descriptions select independent default-false Contents grants. Runtime names and held zero-name objects retain their original grants; newly created/recreated objects do not inherit those initial grants. The separate creation declaration below can supply a fresh provider. Mapping or retained Contents cannot revive a closed descriptor.
 
 Low32 FD lookup precedes provider selection and returns EBADF9 for absent/closed descriptors. Opaque streams and directory/symlink descriptions remain independent unsupported kinds or targets. Readonly regular descriptions may complete with the explicit data grant, without general DAC inference. A successful completion changes no bytes, cursor, flags, stat, xattrs, allocation, namespace or advisory locks, and restores no invalid observations. Write/truncate, mode/ownership and other mutation owners keep their existing state and authority.
 
-The original SDK-free data workload records41 services and11 whole guarded stat observations, with main41/stdout D, through five software profiles, C/CLI/Python and three matching ARM64 HVF profiles. Current native inventories require66 common cases and81 mandatory workloads per platform, including all243 matching ARM64 identities actually passing. The original ARM64 O0/O1/O2 captures have252 literal observations through libc/raw calls and three high carriers, with actual native times and unchanged176-byte guarded native records/cursors. Native directory/pipe/new-object results do not supply an initial-object model provider. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Provider failures, cancellation, leases, resource-fork/shadow flushes, asynchronous waits, physical durability, full/barrier/global synchronization and the complete Apple framework environment remain unsupported or unverified.
+The original SDK-free data workload records41 services and11 whole guarded stat observations, with main41/stdout D, through five software profiles, C/CLI/Python and three matching ARM64 HVF profiles. Current native inventories require67 common cases and82 mandatory workloads per platform, including all246 matching ARM64 identities actually passing. The original ARM64 O0/O1/O2 captures have252 literal observations through libc/raw calls and three high carriers, with actual native times and unchanged176-byte guarded native records/cursors. Native directory/pipe/new-object results do not supply an initial-object model provider. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Provider failures, cancellation, leases, resource-fork/shadow flushes, asynchronous waits, physical durability, full/barrier/global synchronization and the complete Apple framework environment remain unsupported or unverified.
 
 ```text
 fdatasync187 / distinct Fdatasync Int purpose / low32 FD / raw high carriers retained
@@ -2276,7 +2276,7 @@ opaque streams unsupported kind / directory and symlink descriptions need indepe
 readonly regular description accepted only with explicit data object completion grant
 Contents owns separate grants / dup fcntl dup2 select current description and object
 runtime hardlink rename held zero-name unlink retain original grant
-created and reused names do not inherit completion grants
+created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
@@ -2284,8 +2284,8 @@ all52 other logical file routes closed before preflight / both static queries re
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
-66 current native-common cases / 81 mandatory workloads per platform
-ARM64 matching native mandatory243 / actual successful execution required
+67 current native-common cases / 82 mandatory workloads per platform
+ARM64 matching native mandatory246 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
@@ -2295,3 +2295,35 @@ native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
 
 [XNU synchronization purposes](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c), [XNU descriptor lookup](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c), [XNU syscall declarations](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/syscalls.master).
+
+
+## Explicit completion providers for created ordinary files
+
+Either independent completion declaration now accepts an optional created_regular_objects Boolean (C++ CreatedRegularObjects). True requires the complete existing CreationPolicy and supplies the chosen immediate successful provider only when an ordinary regular object is successfully created. Missing or false preserves the previous creation behavior. Required objects continues to grant only initial objects; creating at a reused name never transfers an old grant. File and data declarations remain independent.
+
+```text
+CreatedRegularObjects / created_regular_objects / defaultfalse / mandatory objects array
+synchronization={"objects":[],"created_regular_objects":true}
+data_synchronization={"objects":[],"created_regular_objects":true}
+true requires complete CreationPolicy / current umask / parent metadata / valid inode and mutation policy
+ordinary regular creation commit only / independent File95+408 and Data187 grants
+initial grants and creation grants never supply each other / existing O_CREAT receives no new grant
+name reuse never transfers old authority / fresh explicit creation grant may authorize a replacement
+false or omission retains old default / missing and empty environments remain distinct
+single completion parser and input byte owner / no extra path entry FD inode or byte charge
+failed creation preserves admission resources and grants / directories links streams remain unsupported
+Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and mapping leases
+closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
+bytes stat cursor flags xattrs allocation namespace locks unchanged / no observation restoration
+completion grants supply no mode ownership xattr flock or general DAC authority
+both immutable query environments reject even false declarations / all52 other logical routes remain closed
+SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
+CreatedRegularSynchronizationKeepsIndependentProvidersAndState
+67 current native-common cases / 82 mandatory workloads per platform / ARM64 matching native mandatory246
+702 original native literal observations / O0 O1 O2 / raw SVC and syscall / three upper carriers
+freshly created target without preparatory sync / own176-byte guarded native stat and content preserved
+native and model post-write F_GETFL65538 / existing FileWasWritten0x10000 / own initial flags captured and preserved
+immediate successful declared provider / committed model mutations / no deferred work or requested cancellation
+no host flush or physical durability / general cancellation provider errors leases waits remain unknown
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```

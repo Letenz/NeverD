@@ -8104,6 +8104,138 @@ static int ordinary_data_synchronization(const char *path) {
   return 0;
 }
 
+/* Original SDK-free completion on explicitly declared created regular objects.
+ */
+union created_sync_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int created_sync_result(u64 number, u64 fd, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, fd, 0, 0, 0, 0, 0, &error);
+  return value != expected || error != !!expected || secondary ? 270 : 0;
+}
+static int created_sync_capture(u64 fd, union created_sync_stat_guard *out) {
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0100000)
+    return 271;
+  return 0;
+}
+static int created_sync_status(u64 fd,
+                               const union created_sync_stat_guard *initial) {
+  union created_sync_stat_guard observed;
+  if (created_sync_capture(fd, &observed))
+    return 272;
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 272;
+  return 0;
+}
+static int created_sync_offset(u64 fd, u64 expected) {
+  unsigned error;
+  return call(199, fd, 0, 1, 0, 0, 0, &error) != expected || error || secondary
+             ? 273
+             : 0;
+}
+static int created_regular_synchronization(const char *path) {
+  char name[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4087)
+      return 274;
+    name[size] = path[size];
+    ++size;
+  }
+  const char suffix[] = ".created";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    name[size + i] = suffix[i];
+  unsigned error;
+  const u64 a = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, a, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary)
+    return 275;
+  const u64 b = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || b == a)
+    return 275;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b)
+    return 275;
+  const u64 f = call(92, a, 0, 10, 0, 0, 0, &error);
+  if (error || secondary || f != 10 ||
+      call(90, a, 20, 0, 0, 0, 0, &error) != 20 || error || secondary ||
+      call(199, b, 3, 0, 0, 0, 0, &error) != 3 || error || secondary)
+    return 275;
+  const u64 initial_flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary || (initial_flags & 3) != 2)
+    return 275;
+  union created_sync_stat_guard initial;
+  if (created_sync_capture(a, &initial))
+    return 276;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 numbers[] = {95, 408, 187};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 3; ++n) {
+      const u64 high = highs[h], number = high | numbers[n];
+      if (created_sync_result(number, high | a, 0) ||
+          created_sync_result(number, high | d, 0) ||
+          created_sync_result(number, high | f, 0) ||
+          created_sync_result(number, high | 20, 0) ||
+          created_sync_result(number, high | b, 0) ||
+          created_sync_result(number, high | 0xffffffffUL, 9) ||
+          created_sync_status(a, &initial) ||
+          created_sync_status(b, &initial) ||
+          created_sync_status(d, &initial) || created_sync_offset(a, 10) ||
+          created_sync_offset(b, 3) ||
+          call(92, a, 3, 0, 0, 0, 0, &error) != initial_flags || error ||
+          secondary)
+        return 277;
+    }
+  if (call(201, a, 6, 0, 0, 0, 0, &error) || error || secondary ||
+      created_sync_capture(a, &initial))
+    return 278;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], b, 0))
+      return 278;
+  if (created_sync_status(a, &initial) || created_sync_status(b, &initial) ||
+      created_sync_status(d, &initial) || created_sync_result(6, a, 0))
+    return 278;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], a, 9))
+      return 279;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], d, 0))
+      return 279;
+  if (created_sync_result(6, d, 0))
+    return 279;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], d, 9))
+      return 279;
+  for (unsigned n = 0; n != 3; ++n)
+    if (created_sync_result(numbers[n], f, 0))
+      return 279;
+  if (created_sync_status(b, &initial) || call(199, b, 0, 0, 0, 0, 0, &error) ||
+      error || secondary)
+    return 280;
+  char bytes[6];
+  if (call(3, b, (u64)bytes, 6, 0, 0, 0, &error) != 6 || error || secondary)
+    return 280;
+  for (unsigned i = 0; i != 6; ++i)
+    if (bytes[i] != "012345"[i])
+      return 280;
+  if (created_sync_result(6, f, 0) || created_sync_result(6, 20, 0) ||
+      created_sync_result(6, b, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "C", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 281;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -8150,6 +8282,11 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "created-regular-synchronization")) {
+    const int status =
+        argc < 3 ? 282 : created_regular_synchronization(argv[2]);
+    return status ? status : 42;
+  }
   if (equal(argv[1], "ordinary-data-synchronization")) {
     const int status = argc < 3 ? 269 : ordinary_data_synchronization(argv[2]);
     return status ? status : 41;

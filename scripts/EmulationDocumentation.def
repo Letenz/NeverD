@@ -1957,7 +1957,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "20 guarded full stat observations")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return40")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory243")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory246")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "504 original native literal observations")
 
@@ -1986,11 +1986,38 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "11 guarded full stat observations")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return41")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "81 mandatory workloads per platform")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "82 mandatory workloads per platform")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory243")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory246")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "252 original native literal observations")
 
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "OrdinaryDataSynchronizationKeepsProviderAndCommittedState")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularObjects / created_regular_objects / defaultfalse")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "true requires complete CreationPolicy")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial grants and creation grants never supply each other")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free147 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "33 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return42")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "82 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory246")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "702 original native literal observations")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "native and model post-write F_GETFL65538 / existing FileWasWritten0x10000")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularSynchronizationKeepsIndependentProvidersAndState")

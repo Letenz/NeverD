@@ -13313,8 +13313,9 @@
         "chmod15/fchmod124/fchmodat467 require the explicit operation-specific ordinary mode_mutations environment, canonical nonroot effective credentials, complete current ordinary security attributes and independent initial-regular-object provider/ctime grants. No ACL/MAC/listener/privilege bypass/revocation/native file-directory leases or unmodeled pre-setattr lifecycle is inferred. Current pathname SEARCH precedes missing names and uses the sole complete-record validity owner; unknown groups/credentials/metadata remain unsupported. Changed nonowner modes yield EPERM; same-mode has no WRITE_SECURITY ownership denial but still requires its provider grant. ALLPERMS-filtered ordinary permissions and fixed virtual ctime are the only changed fields. Object grants follow dup/independent opens/runtime hardlinks/rename/held unlink, never creation/name reuse, and never restore invalidated metadata. Data/namespace/xattr/storage and VM mapping lifetime retain independent contracts. Strict JSON distinguishes absent/empty environments and rejects extra/duplicate/lossy inputs. Invalid low32 flags yield EINVAL before import; independently known pointer/empty/FD errors preserve shared ordering and absolute-path dirfd bypass. Final directory/link, special bits, selected root and general DAC/vnode authorization are unsupported. SDK-free54-service-record/54-raw-call workload (main return is not a raw exit event) and31 guarded stat records accompany literal both-page-size current/invalidated/nonowner/SEARCH/VM tests and C/CLI/Python paths. Mode-era62 common native cases/77 mandatory workloads per platform required actual successful matching ARM64 HVF/native execution; counts/skips cannot qualify. Original450 owner observations preserve414 literal controls and36 link-provider captures, not native nonowner or universal ctime claims. Original failed rounds/deadlines/source identities remain unchanged; native Intel, physical iOS, broader ownership/fsync/flock waits/signals/sockets/kqueue/dyld/frameworks and the full macOS/iOS goal remain incomplete or unverified.",
         "chown16/fchown123/fchownat468 require explicit ownership_mutations with independent initial ordinary regular-object provider/time grants, current complete attributes and canonical nonroot effective credentials. UID third-party denial precedes changed target-group membership; unknown membership remains unsupported, TAKE_OWNERSHIP has no ordinary POSIX fallback and group-only WRITE_SECURITY requires the current owner. Same IDs have no change-derived security-right request but still need a provider. Low32 UINT32_MAX deactivates an ID: both inactive preserve the full record and ctime, while any active ID assigns fixed declared virtual ctime even at the same numeric value. Current SEARCH, retained object identity, existing metadata-validity and independent mode/data/namespace/xattr/storage/VM lease owners remain authoritative. Created/reused names never inherit grants and invalidated records cannot be restored. fchownat only accepts NOFOLLOW0x20; ANY0x800 is EINVAL before pointer/FD import. Both immutable query closures deny all52 other file routes before preflight. The SDK-free workload has77 service records/41 guarded stat observations and separate main return38, with C/CLI/Python paths. Current64 common native cases/79 mandatory workloads per platform require actual matching ARM64 execution, not discovery/count/skip inference. Original720 owner captures comprise702 literal controls and18 final-link provider captures; nonowner authorization is source/model evidence and native ctime is not a universal constant. No ACL/MAC/listener/bypass/revocation/native leases or broader setattr lifecycle is supplied. Native Intel, physical iOS, broader ownership and full OS/framework environment remain incomplete or unverified.",
         "flock131 requires explicit advisory_locks with unique initial ordinary regular-object grants and a closed whole-file provider with initially empty locks and only current modeled open-description owners. Low32 FD/action and Int results retain raw upper carriers. FD lookup precedes action; known vnodes without action return EBADF9, UN8 > EX2 > SH1 and unrelated bits are ignored. Readonly EX is allowed. Shared/shared is compatible; nonblocking conflicts return EAGAIN35 before removing an old lock, so failed upgrades retain SH. Success replaces lock type, while a contended blocking wait is unsupported before model mutation. Dup/fcntl/dup2 share owners and the final descriptor close/replacement releases locks; VM mappings or retained Contents do not keep them. Object grants follow runtime links, rename and held zero-name unlink; created/reused names never inherit them. No stat/bytes/cursor/flags/xattr/allocation/namespace effects or restoration of invalidated metadata. Mode, ownership, data and namespace policies remain independent. Missing versus empty providers stay distinct, including unlock, and both static query environments reject even empty declarations and deny all52 other file routes before preflight. SDK-free77 records/13 guarded stat observations/main39 have C/CLI/Python and matching ARM64 HVF coverage requirements. Current64 common native cases/79 mandatory per platform require all237 matching ARM64 identities to actually pass. Original720 literal native observations comprise522 action and198 namespace/duplicate/VM-lifetime controls at O0/O1/O2. No external/interprocess peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC/listeners/revocation/provider errors/native leases or blocking-wait lifecycle. Native Intel, physical iOS and the complete macOS/iOS environment remain unverified or incomplete.",
-        "fsync95/fsync_nocancel408 share one Fsync Int owner only in the existing uncancelled single-thread profile, with low32 FD and raw upper carriers preserved. Explicit synchronization objects declare immediate successful ordinary regular-vnode file integrity completion after modeled mutations have committed, without deferred provider work or a cancellation request. Missing/empty/object grants remain distinct and strict; complete ordinary initial flags0/link_count1/no-alias objects share path+NUL budgets. FD lookup precedes provider selection with EBADF9 for absent/closed descriptors; opaque streams, directory/symlink descriptions and ungranted regular objects stay unsupported. Readonly descriptions may complete only with that independent grant. Contents follows runtime links, rename and held zero-name unlink; current dup/fcntl/dup2 references select its object, recreated/reused objects do not inherit grants, and VM/retained Contents do not revive closed FDs. Completion changes no bytes/cursor/flags/stat/xattrs/allocation/namespace/advisory locks and restores no invalidated observations. Both static query domains reject empty declarations and deny52 other logical routes before preflight; alias408 adds none. SDK-free68 records/20 guarded stat observations/main40/stdout S use C/CLI/Python and matching ARM64 HVF requirements. Current66 native-common/81 mandatory per platform require all243 matching ARM64 identities to pass. Original504 ARM64 O0/O1/O2 literal observations retain176-byte guarded native stat records/cursors across raw SVC/syscall/high carriers, including directory/pipe observations outside this provider. No host flush or physical durability, full cancellation, F_FULLFSYNC51/F_BARRIERFSYNC85/global sync, provider errors, resource-fork/shadow flush, leases/revocation/asynchronous waits is supplied. Native Intel and physical iOS remain unverified; the full macOS/iOS environment is incomplete.",
-        "fdatasync187 has a distinct Fdatasync Int purpose requesting XNU MNT_DWAIT, not an fsync95/fsync_nocancel408 MNT_WAIT alias. Strict independent data_synchronization objects supply immediate successful ordinary regular-vnode data integrity completion after successful modeled data commits, with no deferred work or requested cancellation. File/data declarations never supply each other. Complete ordinary initial flags0/link_count1/no-alias objects and path+NUL budgets retain one admission owner. Low32 FD lookup first returns EBADF9 for absent/closed descriptors; opaque streams and directory/symlink targets remain unsupported, readonly regular descriptions require the data grant, and missing/empty providers differ. Contents grants follow runtime names, dup/fcntl/dup2 and held zero-name lifetime; created/reused objects inherit none and VM retention cannot revive closed FDs. No bytes/cursor/flags/stat/xattrs/allocation/namespace/lock mutation or observation restoration. Both query declarations reject even empty environments and close52 other logical routes. SDK-free41 records/11 guarded full stat observations/main41/stdout D use C/CLI/Python and matching ARM64 HVF. Native-common66/mandatory81 per platform require all243 matching ARM64 identities to actually pass. Original252 ARM64 O0/O1/O2 literal observations retain176-byte guarded native stat/cursors; directory/pipe/new-object captures do not expand the provider. No host flush, physical durability, full cancellation, provider errors, leases/revocation/resource-fork/shadow flush or asynchronous waits. F_FULLFSYNC51/F_BARRIERFSYNC85/global sync and complete macOS/iOS frameworks remain incomplete; native Intel and physical iOS remain unverified."
+        "fsync95/fsync_nocancel408 share one Fsync Int owner only in the existing uncancelled single-thread profile, with low32 FD and raw upper carriers preserved. Explicit synchronization objects declare immediate successful ordinary regular-vnode file integrity completion after modeled mutations have committed, without deferred provider work or a cancellation request. Missing/empty/object grants remain distinct and strict; complete ordinary initial flags0/link_count1/no-alias objects share path+NUL budgets. FD lookup precedes provider selection with EBADF9 for absent/closed descriptors; opaque streams, directory/symlink descriptions and ungranted regular objects stay unsupported. Readonly descriptions may complete only with that independent grant. Contents follows runtime links, rename and held zero-name unlink; current dup/fcntl/dup2 references select its object, recreated/reused objects do not inherit grants, and VM/retained Contents do not revive closed FDs. Completion changes no bytes/cursor/flags/stat/xattrs/allocation/namespace/advisory locks and restores no invalidated observations. Both static query domains reject empty declarations and deny52 other logical routes before preflight; alias408 adds none. SDK-free68 records/20 guarded stat observations/main40/stdout S use C/CLI/Python and matching ARM64 HVF requirements. Current67 native-common/82 mandatory per platform require all246 matching ARM64 identities to pass. Original504 ARM64 O0/O1/O2 literal observations retain176-byte guarded native stat records/cursors across raw SVC/syscall/high carriers, including directory/pipe observations outside this provider. No host flush or physical durability, full cancellation, F_FULLFSYNC51/F_BARRIERFSYNC85/global sync, provider errors, resource-fork/shadow flush, leases/revocation/asynchronous waits is supplied. Native Intel and physical iOS remain unverified; the full macOS/iOS environment is incomplete.",
+        "fdatasync187 has a distinct Fdatasync Int purpose requesting XNU MNT_DWAIT, not an fsync95/fsync_nocancel408 MNT_WAIT alias. Strict independent data_synchronization objects supply immediate successful ordinary regular-vnode data integrity completion after successful modeled data commits, with no deferred work or requested cancellation. File/data declarations never supply each other. Complete ordinary initial flags0/link_count1/no-alias objects and path+NUL budgets retain one admission owner. Low32 FD lookup first returns EBADF9 for absent/closed descriptors; opaque streams and directory/symlink targets remain unsupported, readonly regular descriptions require the data grant, and missing/empty providers differ. Contents grants follow runtime names, dup/fcntl/dup2 and held zero-name lifetime; created/reused objects inherit no initial grant and VM retention cannot revive closed FDs. No bytes/cursor/flags/stat/xattrs/allocation/namespace/lock mutation or observation restoration. Both query declarations reject even empty environments and close52 other logical routes. SDK-free41 records/11 guarded full stat observations/main41/stdout D use C/CLI/Python and matching ARM64 HVF. Native-common67/mandatory82 per platform require all246 matching ARM64 identities to actually pass. Original252 ARM64 O0/O1/O2 literal observations retain176-byte guarded native stat/cursors; directory/pipe/new-object captures do not expand the provider. No host flush, physical durability, full cancellation, provider errors, leases/revocation/resource-fork/shadow flush or asynchronous waits. F_FULLFSYNC51/F_BARRIERFSYNC85/global sync and complete macOS/iOS frameworks remain incomplete; native Intel and physical iOS remain unverified.",
+        "Each independent file/data completion environment requires objects and admits optional Boolean created_regular_objects (CreatedRegularObjects), defaultfalse. True requires the complete CreationPolicy, current umask, known parent identity and bounded ordinary regular creation admission. Only successful regular create assigns fresh independent Contents grants; initial Objects do not supply creation, existing O_CREAT grants nothing, and name reuse never transfers old authority. An explicitly granted replacement receives a new creation grant. Directory/link/stream constructors remain ungranted. One parser, admission and existing byte/FD/entry/inode/namespace owners preserve rollback with no extra grant charges. Grants follow current dup/fcntl/dup2/reuse, runtime names, held zero-name and real VM lifetime; closed FD9 cannot be revived. No bytes/stat/cursor/flags/xattrs/allocation/namespace/lock change, observation restoration or mode/ownership/xattr/flock/general DAC authority. Both static query declarations reject even false/empty environments and retain52 other logical closed routes. SDK-free147 records/33 guarded full stat/main42/C run five software and three matching HVF profiles plus C/CLI/Python. Native-common67/mandatory82 require all246 matching ARM64 identities to actually pass. Original702 O0/O1/O2 literal controls observe the fresh unflushed target itself; native and model post-write F_GETFL65538 include the existing FileWasWritten0x10000 owner; corrected checks capture and preserve the whole initial flags without introducing status-bit support. Immediate success acknowledges committed modeled mutations and a declared provider; no host flush, physical durability, full cancellation, provider errors, leases or waits are claimed. Intel native, physical iOS and complete Apple frameworks remain incomplete."
       ],
       "tests": [
         {
@@ -17775,6 +17776,193 @@
           "target": "NeverDProcessPublicTests",
           "source": "unittests/emulation/ProcessPublicTests.cpp",
           "filter": "ProcessPublic.DarwinOrdinaryDataSynchronizationPreservesProviderAcrossCAndCLI",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "DarwinCreatedSynchronizationOptions.DefaultsRequireCompleteCreationPolicy",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "DarwinCreatedSynchronizationOptions.CreationCannotBypassInitialAdmissionOrSharedBudget",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "DarwinCreatedSynchronizationOptions.StaticQueriesRejectEvenFalseDeclarations",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.EachPurposeHasIndependentDefaults/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.InitialAndCreatedGrantsDoNotSupplyEachOther/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.CompleteDirtyStateAndCarriersStayUnchanged/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.RuntimeNamesAndReplacementKeepSeparateObjectGrants/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.DuplicatesAndFDReuseSelectTheCurrentContents/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.RealMappingCannotReviveClosedDescriptors/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.FailedDescriptorAndInodeAdmissionPublishesNothing/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.FailedStorageAndEntryAdmissionPreservesState/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.DirectoryAndLinkCreationNeverGrantsRegularCompletion/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinCreatedSynchronizationTests.cpp",
+          "filter": "*/DarwinCreatedSynchronizationTest.OtherAuthoritiesAndUnknownObservationsStayIndependent/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.CreatedRegularSynchronizationKeepsIndependentProvidersAndState/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.DarwinCreatedRegularCompletionPreservesProvidersAcrossCAndCLI",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinCreatedCompletionFlagsAreIndependentAndCompatible",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinCreatedCompletionRejectsMalformedFlagsAndMissingPolicy",
           "platforms": [
             "darwin",
             "linux",

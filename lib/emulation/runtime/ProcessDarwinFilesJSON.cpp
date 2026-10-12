@@ -316,6 +316,35 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     }
     return llvm::Error::success();
   };
+  auto Completion = [&](const llvm::json::Value &Value, llvm::StringRef Name,
+                        auto &Options) -> llvm::Error {
+    const auto *Environment = Value.getAsObject();
+    const auto *Objects =
+        Environment ? Environment->getArray(field::FileSynchronizationObjects)
+                    : nullptr;
+    const auto *Created =
+        Environment
+            ? Environment->get(field::FileSynchronizationCreatedRegularObjects)
+            : nullptr;
+    if (!Environment || Environment->size() != 1 + unsigned(bool(Created)) ||
+        !Objects || Objects->size() > darwin_file_limits::Files)
+      return invalid(Name);
+    auto &Provider = Options.emplace();
+    if (Created) {
+      const auto Enabled = Created->getAsBoolean();
+      if (!Enabled)
+        return invalid(Name);
+      Provider.CreatedRegularObjects = *Enabled;
+    }
+    for (const auto &Value : *Objects) {
+      const auto Path = Value.getAsString();
+      if (!Path || Path->size() >= Remaining ||
+          !Provider.Objects.insert(Path->str()).second)
+        return invalid(Name);
+      Remaining -= Path->size() + 1;
+    }
+    return llvm::Error::success();
+  };
   for (const auto &[Key, V] : *Object) {
     const llvm::StringRef Name = Key;
     if (Name == field::FileAuthorization) {
@@ -350,38 +379,11 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         Remaining -= Path->size() + 1;
       }
     } else if (Name == field::FileDataSynchronization) {
-      const auto *Environment = V.getAsObject();
-      const auto *Objects =
-          Environment
-              ? Environment->getArray(field::FileDataSynchronizationObjects)
-              : nullptr;
-      if (!Environment || Environment->size() != 1 || !Objects ||
-          Objects->size() > darwin_file_limits::Files)
-        return invalid(Name);
-      auto &Synchronization = Out.DataSynchronization.emplace();
-      for (const auto &Value : *Objects) {
-        const auto Path = Value.getAsString();
-        if (!Path || Path->size() >= Remaining ||
-            !Synchronization.Objects.insert(Path->str()).second)
-          return invalid(Name);
-        Remaining -= Path->size() + 1;
-      }
+      if (auto E = Completion(V, Name, Out.DataSynchronization))
+        return E;
     } else if (Name == field::FileSynchronization) {
-      const auto *Environment = V.getAsObject();
-      const auto *Objects =
-          Environment ? Environment->getArray(field::FileSynchronizationObjects)
-                      : nullptr;
-      if (!Environment || Environment->size() != 1 || !Objects ||
-          Objects->size() > darwin_file_limits::Files)
-        return invalid(Name);
-      auto &Synchronization = Out.Synchronization.emplace();
-      for (const auto &Value : *Objects) {
-        const auto Path = Value.getAsString();
-        if (!Path || Path->size() >= Remaining ||
-            !Synchronization.Objects.insert(Path->str()).second)
-          return invalid(Name);
-        Remaining -= Path->size() + 1;
-      }
+      if (auto E = Completion(V, Name, Out.Synchronization))
+        return E;
     } else if (Name == field::FileAdvisoryLocks) {
       const auto *Environment = V.getAsObject();
       const auto *Objects =
