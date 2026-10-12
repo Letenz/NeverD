@@ -24,6 +24,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -4642,6 +4643,13 @@ TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
   return EmittedParamTypes[Index];
 }
 
+TypeRef HighCWriter::emittedParamTypeAt(const HighFunc &Func,
+                                        size_t Position) const {
+  const std::vector<size_t> Indices = emittedParamIndices(Func);
+  return Position < Indices.size() ? emittedParamType(Func, Indices[Position])
+                                   : nullptr;
+}
+
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
   return emittedParamIndices(Func).size();
 }
@@ -4663,11 +4671,23 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
       It != EmittedParamIndices.end() && It->second.size() <= N)
     return It->second;
   std::set<int> Used;
-  // An indirect call's target is a use too.
+  ParamIndicesInProgress.insert(&Func);
+  const auto Done =
+      llvm::make_scope_exit([&] { ParamIndicesInProgress.erase(&Func); });
+  // An indirect call's target is a use too.  A call's operand that its
+  // callee's definition does not declare is none: the call does not pass it.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
         E.Var.Kind == MedVar::Param)
       Used.insert(E.Var.Id);
+    if (E.Kind == ExprKind::Call)
+      if (const std::vector<size_t> Passed = printedCallOperands(E);
+          !Passed.empty()) {
+        for (size_t I : Passed)
+          if (I < E.Operands.size() && E.Operands[I])
+            Walk(*E.Operands[I]);
+        return;
+      }
     E.forEachChildExpr([&](const ExprPtr &Child) { Walk(*Child); });
   };
   walkStmts(Func.Body, [&](const HighStmt &S) {

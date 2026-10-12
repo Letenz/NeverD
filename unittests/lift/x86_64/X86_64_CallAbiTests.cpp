@@ -110,3 +110,26 @@ TEST_F(X86_64_CallAbi, AByteReadOfAParameterTakesTheWholeRegister) {
   ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
   EXPECT_EQ(exec(Program.string(), {}).exitCode, 0) << C;
 }
+
+// Ten doubles: eight in xmm0-xmm7 and two on the stack.  The callee's lift
+// also lists the six integer argument registers, which it never reads; its
+// definition leaves them out, and so must its prototype and its calls.
+TEST_F(X86_64_CallAbi, AStackDoubleCalleeIsDeclaredAsItIsDefined) {
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu", "-ffp-contract=off"},
+      R"C(
+static double d10(double, double, double, double, double, double, double,
+                  double, double, double) __attribute__((noinline));
+int sumd10(int a) {
+  double b = (double)(a & 0xffff);
+  return (int)d10(b, b + 1, b + 2, b + 3, b + 4, b + 5, b + 6, b + 7, b + 8,
+                  b + 9);
+}
+static double d10(double a, double b, double c, double d, double e, double f,
+                  double g, double h, double i, double j) {
+  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9 +
+         j * 10;
+}
+)C",
+      "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
+}

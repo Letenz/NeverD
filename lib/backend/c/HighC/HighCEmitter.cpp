@@ -1765,7 +1765,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function.SourceTypeHint &&
                   I < Function.SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function.SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamType(Function, I));
+              : typeToC(emittedParamTypeAt(Function, I));
     }
     if (ParamCount == 0)
       Declarator += "void";
@@ -1789,7 +1789,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamType(*Function, I));
+              : typeToC(emittedParamTypeAt(*Function, I));
     }
     if (ParamCount == 0)
       Declarator += "void";
@@ -1827,7 +1827,7 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
           Function->SourceTypeHint &&
                   I < Function->SourceTypeHint->Parameters.size()
               ? sourceParameterType(Function->SourceTypeHint->Parameters[I])
-              : typeToC(emittedParamType(*Function, I));
+              : typeToC(emittedParamTypeAt(*Function, I));
     }
     if (ParamCount == 0)
       Declarator += "void";

@@ -289,6 +289,12 @@ public:
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// The operands call \p E passes, by index, where it passes one for each
+  /// HighIR parameter of a definition in this file: those of the parameters
+  /// the definition prints.  Empty where the operands pass in order, as an
+  /// AArch64 callee with stack parameters, which has every integer argument
+  /// register as one, read or not, does not.
+  std::vector<size_t> printedCallOperands(const HighExpr &E) const;
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
@@ -303,6 +309,10 @@ public:
   /// The type \p Func's definition declares its HighIR parameter \p Index
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// The type of the parameter \p Func's definition prints at \p Position,
+  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// prototype and a call's arguments count them, or null past the last.
+  TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
@@ -850,6 +860,9 @@ public:
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;
+  /// The functions whose emittedParamIndices are being computed, whose calls
+  /// another's walk takes as passing every operand.
+  mutable std::set<const HighFunc *> ParamIndicesInProgress;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
