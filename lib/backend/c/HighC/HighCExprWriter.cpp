@@ -842,7 +842,22 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::FLOAT_ISNAN:
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
-  case NdOp::FLOAT_UINT2FLOAT:
+  case NdOp::FLOAT_UINT2FLOAT: {
+    // The conversion reads its operand as a signed or an unsigned integer of
+    // its width, whatever C type the operand's text has: `(float)(x ^ 9)` of
+    // an unsigned x converts an unsigned value.
+    const HighExpr &Source = *E.Operands[0];
+    if (isPlainInteger(Source.Type)) {
+      const bool Signed = E.Op == NdOp::FLOAT_INT2FLOAT;
+      const uint16_t Width = Source.Type->Size;
+      return "(" + typeToC(E.Type) + ")" +
+             (declaredLocalInteger(Source, Width, Signed)
+                  ? exprStr(Source, 99)
+                  : castOperandText(integerView(
+                        Source, NdType::makeInt(Width, Signed), 99)));
+    }
+    return "(" + typeToC(E.Type) + ")" + exprStr(Source, 99);
+  }
   case NdOp::FLOAT_FLOAT2FLOAT:
     return "(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
   default:

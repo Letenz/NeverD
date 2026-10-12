@@ -338,3 +338,27 @@ int ptab(int a) {
 )C",
                        "ptab", {"ptab"});
 }
+
+// SCVTF converts v as a signed 64-bit value, but the C of `v` is unsigned
+// arithmetic: `(float)(0x123456789 ^ ...)` converted an unsigned value.  A
+// signed conversion now reads its operand as a signed integer of its width.
+TEST_F(AArch64_HighCExecution, ASignedConversionReadsItsOperandSigned) {
+  expectRunsLikeSource(R"C(
+int i64f(int a) {
+  unsigned long long acc = 1;
+  unsigned s = (unsigned)a | 1u;
+  for (int i = 0; i < 100; i++) {
+    s = s * 1103515245u + 12345u;
+    long long v = ((long long)(int)s << 9) ^ 0x123456789LL;
+    unsigned long long u = ((unsigned long long)s << 32) | (s ^ 0x55u);
+    float f = (float)v, g = (float)u;
+    long long bv = (long long)(f * 0.5f);
+    unsigned long long bu = (unsigned long long)(g * 0.25f);
+    acc = acc * 131 + (unsigned long long)bv + bu;
+    acc ^= acc >> 29;
+  }
+  return (int)(acc ^ (acc >> 32));
+}
+)C",
+                       "i64f", {"i64f"});
+}
