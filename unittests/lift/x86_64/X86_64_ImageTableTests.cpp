@@ -147,6 +147,25 @@ int pptr1(int a) {
                        "pptr1", {"pptr1", "QS", "QS_rel", "B0", "B1", "B2"});
 }
 
+// A 256-bit constant vector, here the counts of a variable shift, keeps its
+// value: the C spells it as its 64-bit pieces shifted into place.
+TEST_F(X86_64_ImageTable, AWideConstantVectorKeepsItsValue) {
+  HostFlags = {"-mavx2"};
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-mavx2"}, R"C(
+typedef int v8si __attribute__((vector_size(32)));
+int shifts(int a) {
+  v8si v = {a, a ^ 0x55, a * 3, a + 7, a, a >> 1, a * 5, a - 9};
+  v8si s = {0, 2, 4, 6, 8, 10, 12, 14};
+  v8si r = v >> s;
+  int t = 0;
+  for (int i = 0; i < 8; i++)
+    t = t * 31 + (r[i] & 1023);
+  return t;
+}
+)C",
+                            "shifts", {"shifts"}, {-3, 0, 1, 77, 0x12345});
+}
+
 // At -O0 a local label table is copied from its read-only initializer, an
 // object no symbol names: the copy reads the object the output declares,
 // not the address the image gives it.

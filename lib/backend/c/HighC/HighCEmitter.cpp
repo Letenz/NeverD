@@ -3000,6 +3000,32 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
     return "__builtin_bit_cast(" + typeToC(Type) + ", (unsigned __int128)(" +
            Value + "))";
   }
+  // A wider integer, a 256- or 512-bit constant vector, is the sum of its
+  // 64-bit pieces shifted into place, a constant expression of the unsigned
+  // type whose bits its conversion keeps.
+  if (Type && Type->Kind == NdTypeKind::Int && !Type->IsEnum &&
+      Type->Size > 16 && Type->Size % 8 == 0) {
+    const uint8_t *Bytes = Opts.Image->readVA(Addr, Type->Size);
+    if (!Bytes)
+      return std::nullopt;
+    const std::string Unsigned =
+        typeToC(NdType::makeInt(Type->Size, /*Signed=*/false));
+    std::string Value;
+    for (unsigned Piece = Type->Size / 8; Piece-- > 0;) {
+      uint64_t Bits = 0;
+      for (unsigned I = 0; I < 8; ++I)
+        Bits |= static_cast<uint64_t>(Bytes[Piece * 8 + I]) << (8 * I);
+      if (!Bits)
+        continue;
+      std::string Term = "(" + Unsigned + ")0x" + llvm::utohexstr(Bits) + "ull";
+      if (Piece)
+        Term = "(" + Term + " << " + std::to_string(Piece * 64) + ")";
+      Value += (Value.empty() ? "" : " | ") + Term;
+    }
+    if (Value.empty())
+      return std::nullopt;
+    return Type->IsSigned ? "(" + typeToC(Type) + ")(" + Value + ")" : Value;
+  }
   if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
                 Type->Size != 8))
     return std::nullopt;
