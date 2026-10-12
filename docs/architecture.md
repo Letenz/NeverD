@@ -10,15 +10,14 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## Source and object replacement boundary
 
-`SourcePatchCompiler` owns compiler identity, target arguments and artifact
-selection. `bindSourcePatch` authenticates explicit IR entry mappings;
-`PatchObject` instead owns native section/symbol/relocation and FDE-range
-evidence. Objects never receive fabricated LLVM MC function-owner identities.
-Both producers share original binding validation, ELF storage/relocation/unwind
-registration and the `publishSourcePatch` transaction. That transaction requires
-an exact receipt for every requested entry, checks the candidate again, and
-publishes exclusively. Lifted/full rewrites keep their separate source-provenance
-and preserve-original/no-op policies. See [source patches](source-patching.md).
+`SourcePatchCompiler` owns compiler identity and artifact selection.
+`validateSourcePatchTarget` is the common admission for source and supplied IR;
+a codegen triple alone is insufficient. `bindSourcePatch` authenticates IR entry
+mappings. `PatchObject` owns native sections, relocations and FDE-range evidence;
+objects never receive fabricated MC function-owner identities. Both paths share
+original binding validation and the exact `publishSourcePatch` transaction.
+Lifted rewrites keep their separate original EH evidence and provenance rules.
+See [source patches](source-patching.md).
 
 `COFFSourceImage` owns installation of compiler-produced PE x64 source output:
 separate code/state/metadata permissions, retained original runtime rows,

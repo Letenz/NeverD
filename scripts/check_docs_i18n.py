@@ -730,6 +730,7 @@ ENGLISH_DOCS = (
     Path("docs/memory-safety.md"),
     Path("docs/plugins.md"),
     Path("docs/python-plugins.md"),
+    Path("docs/source-patching.md"),
     Path("docs/roadmap.md"),
     Path("docs/testing.md"),
     Path("docs/emulation.md"),
@@ -772,11 +773,14 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
         Path(f"docs/{locale}/mobile.md"),
         *(Path(f"docs/{locale}/{stem}.md") for stem in MACOS_GUIDE_STEMS),
         Path(f"docs/{locale}/unpack.md"),
+        Path(f"docs/{locale}/source-patching.md"),
     )
 
 
 LOCALIZED_DOCS = tuple(path for locale in LOCALES for path in localized_paths(locale))
 MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS + (
+    Path("docs/source-patching-details.md"),
+    Path("docs/source-patching-details.md"),
     Path("docs/driver-scheduling.md"),
     *(Path(f"docs/{locale}/driver-scheduling.md") for locale in LOCALES),
     *(Path(f"docs/{stem}.md") for stem in EMULATION_GUIDE_STEMS),
@@ -2752,8 +2756,32 @@ README_SECTION_MARKER = re.compile(r'^<!-- i18n-section: ([a-z0-9-]+) -->$', re.
 README_SOURCE_REVISION = re.compile(r'^<!-- i18n-source: ([0-9a-f]{64}) -->$', re.MULTILINE)
 SYNCHRONIZED_GUIDES = (
     "process-emulation", "memory-safety", "solver", "interpreter-recovery",
+    "source-patching",
 )
 GUIDE_SECTION_CONTRACTS = {
+    ("source-patching", "compiler"): (
+        "--compiler=clang", "--compiler=gcc", "--compiler=neverc", "object",
+        'artifact="object"', "--language=c++", 'extern "C"', "--entry", "--func",
+        "--from-c",
+    ),
+    ("source-patching", "profiles"): (
+        "dyncode", "x86", "x64", "ARM32", "ARM64", "ELF", "PE", "Mach-O",
+        "CPU", "REFUSED",
+    ),
+    ("source-patching", "references"): (
+        "function", "data", "const", "-Wl,-headerpad,0x400", ".data.rel.ro",
+    ),
+    ("source-patching", "publication"): (
+        "neverd_patch_source", "neverd_source_patch_options_v1",
+        "neverd_patch_source_report", "neverd_patch_from_c", "--mode=inplace",
+    ),
+    ("source-patching", "verification"): (
+        "NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE", "NEVERD_TEST_REQUIRE_FIXED_LLVM=1",
+        "NeverDSourcePatchTests", "NeverDSourcePatchMatrixTests", "SourcePatchPE",
+        "NEVERD_TEST_WINDOWS_CRT_LIB", "NEVERD_TEST_WINDOWS_UCRT_LIB",
+        "NEVERD_TEST_WINDOWS_SDK_LIB", "NEVERD_TEST_WINDOWS_RUNNER",
+        "NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1",
+    ),
     ("interpreter-recovery", "machine-state"): (
         "modelInterpreterMachineStateX64", "InterpreterMachineStateModel",
         "MaxOperations", "checkLowIRLoopRefinement",
@@ -2970,6 +2998,41 @@ def validate_synced_guide_examples(errors: list[str], view: RepositoryView) -> N
                            + ", ".join(sorted(missing)))
 
 
+def validate_source_patch_guides(errors: list[str], view: RepositoryView) -> None:
+    """Keep target limits, reviewed translations and discoverability together."""
+    stem = "source-patching"
+    source = Path(f"docs/{stem}.md")
+    original = view.read_text(source)
+    revision = hashlib.sha256(original.encode("utf-8")).hexdigest()
+    profiles = ("Clang 22.1.6", "GCC/G++ 13.3.0", "NeverC 3389.1.5")
+    ownership = ("SourcePatchCompiler", "validateSourcePatchTarget", "bindSourcePatch",
+                 "PatchObject", "publishSourcePatch", "COFFSourceImage")
+    testing = ("NeverDSourcePatchTests", "NeverDSourcePatchMatrixTests", "SourcePatchPE",
+               "NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE",
+               "NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1")
+    for locale in (None, *LOCALES):
+        folder = Path("docs") if locale is None else Path(f"docs/{locale}")
+        path = folder / f"{stem}.md"
+        text = view.read_text(path)
+        validate_language_selector(path, stem, locale, errors, view)
+        require_tokens(path, profiles, errors, view)
+        if locale is not None:
+            if README_SOURCE_REVISION.findall(text) != [revision]:
+                report(errors, f"{path}: source patch guide revision differs from {source}; "
+                       "review the translation before updating its i18n-source SHA-256")
+            if readme_table_signature(text) != readme_table_signature(original):
+                report(errors, f"{path}: source patch profile table differs from {source}")
+            # The target disposition is language-independent, including every
+            # CPU/REFUSED cell, not merely the number of table columns.
+            matrix = lambda body: [line for line in body.splitlines()
+                                   if line.startswith(("| `ELF`", "| `PE`", "| `Mach-O`"))]
+            if matrix(text) != matrix(original):
+                report(errors, f"{path}: source patch target dispositions differ from {source}")
+        require_tokens(folder / "README.md", (f"({stem}.md)",), errors, view)
+        require_tokens(folder / "architecture.md", ownership, errors, view)
+        require_tokens(folder / "testing.md", (*testing, f"({stem}.md)"), errors, view)
+
+
 def validate_macos_guides(errors: list[str], view: RepositoryView) -> None:
     """Keep every Mac guide discoverable, reviewed and executable in each locale."""
     for stem in MACOS_GUIDE_STEMS:
@@ -3077,6 +3140,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
     validate_readme_parity(errors, view)
     validate_emulation_overview(errors, view)
     validate_synced_guide_examples(errors, view)
+    validate_source_patch_guides(errors, view)
     validate_macos_guides(errors, view)
     validate_driver_documents(errors, view)
     validate_architecture_semantics(errors, view)
@@ -3195,6 +3259,7 @@ def validate_matrix(errors: list[str], view: RepositoryView) -> None:
             _hvf_guide,
             _darwin_guide,
             unpack_guide,
+            _source_patch_guide,
         ) = localized_paths(locale)
         require_tokens(
             _interpreter_guide,

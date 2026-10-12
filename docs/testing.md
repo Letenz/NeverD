@@ -5126,6 +5126,29 @@ The committed-write observer regressions verify visibility before the next instr
 
 ## Source and native object replacement tests
 
+`NeverDSourcePatchMatrixTests` compiles and links real fixtures, installs source
+or supplied IR, reloads the result and invokes the patched original entry in
+Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
+PE, Mach-O) require exact results or the documented explicit admission refusal.
+The positive native-object case also executes its installed bytes. Every
+invocation must reach the return address within a finite instruction/time budget.
+This CPU matrix does not certify operating-system loaders or C++ unwinders.
+The synthetic legacy Mach-O 32-bit images are refusal inputs, not OS profiles.
+On Apple Silicon, `NEVERD_TEST_DARWIN_ARCH=x86_64` runs the C API/CLI and
+seven exception scenarios through Rosetta 2 using x64 originals. Intel fixtures
+reserve file/virtual padding with `-Wl,-segalign,0x4000` independently of header
+padding; the default 4 KiB layout cannot hold a new compact-unwind page.
+The exact reference regressions cover both x64 ELF PLT branches and Mach-O GOT
+data words. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires both corrected producers.
+See the [source patch matrix](source-patching.md).
+
+The dedicated `source-patch-windows.yml` workflow uses Clang 22.1.6, the native
+MSVC CRT and the Windows SDK. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing
+runtime inputs fail; the workflow also rejects skipped PE/object/matrix cases.
+It retains XML evidence and does not cancel an active qualification when an
+unrelated dev push arrives. Check the actual run result before claiming native
+Windows qualification.
+
 `NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,
 atomic publication, original data bindings, native state and C++ exceptions.
 Its object cases use cross Clang plus LLD for malformed-input, relocation and

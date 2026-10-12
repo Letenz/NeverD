@@ -48,6 +48,45 @@ class _OverlayView:
         return self._base.exists(path)
 
 
+class SourcePatchDocumentationTests(unittest.TestCase):
+    def check(self, overrides: dict[Path, str]) -> list[str]:
+        errors: list[str] = []
+        view = _OverlayView(overrides)
+        i18n.validate_source_patch_guides(errors, view)
+        i18n.validate_synced_guide_examples(errors, view)
+        return errors
+
+    def test_complete_guide_matrix_is_reviewed(self) -> None:
+        self.assertEqual(self.check({}), [])
+
+    def test_source_change_requires_translation_review(self) -> None:
+        path = Path("docs/source-patching.md")
+        errors = self.check({path: path.read_text() + "\nA changed support profile.\n"})
+        self.assertTrue(any("guide revision differs" in e for e in errors), errors)
+
+    def test_executable_example_cannot_change_a_target_address(self) -> None:
+        path = Path("docs/ja/source-patching.md")
+        errors = self.check({path: path.read_text().replace("--func=0x401140", "--func=0x401141")})
+        self.assertTrue(any("examples differ in compiler" in e for e in errors), errors)
+
+    def test_target_refusal_cannot_be_translated_into_cpu_support(self) -> None:
+        path = Path("docs/de/source-patching.md")
+        errors = self.check({path: path.read_text().replace("| `PE` | `REFUSED`", "| `PE` | `CPU`")})
+        self.assertTrue(any("target dispositions differ" in e for e in errors), errors)
+
+    def test_runtime_requirement_cannot_disappear_into_a_comment(self) -> None:
+        path = Path("docs/ar/source-patching.md")
+        text = path.read_text().replace("`NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`",
+                                       "<!-- `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` -->")
+        errors = self.check({path: text})
+        self.assertTrue(any("contract missing in verification" in e for e in errors), errors)
+
+    def test_architecture_must_name_the_shared_admission_owner(self) -> None:
+        path = Path("docs/zh-CN/architecture.md")
+        errors = self.check({path: path.read_text().replace("validateSourcePatchTarget", "oldTarget")})
+        self.assertTrue(any("validateSourcePatchTarget" in e for e in errors), errors)
+
+
 class DocumentationEvidenceMatchingTests(unittest.TestCase):
     def test_numeric_counts_keep_exact_ascii_boundaries(self) -> None:
         cases = (
@@ -415,6 +454,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
                 Path("docs/memory-safety.md"),
                 Path("docs/plugins.md"),
                 Path("docs/python-plugins.md"),
+                Path("docs/source-patching.md"),
                 Path("docs/roadmap.md"),
                 Path("docs/testing.md"),
                 Path("docs/emulation.md"),
@@ -436,7 +476,7 @@ class LocalizedDocumentationMatrixTests(unittest.TestCase):
         )
 
     def test_cpu_process_and_solver_guides_are_in_every_localized_matrix(self) -> None:
-        for stem in ("emulation", "cpu-execution", "process-emulation", "solver", "unpack"):
+        for stem in ("emulation", "cpu-execution", "process-emulation", "solver", "unpack", "source-patching"):
             self.assertIn(Path(f"docs/{stem}.md"), i18n.ENGLISH_DOCS)
             for locale in i18n.LOCALES:
                 self.assertIn(Path(f"docs/{locale}/{stem}.md"), i18n.localized_paths(locale))

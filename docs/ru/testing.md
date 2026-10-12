@@ -1759,3 +1759,19 @@ bulk-attributes проверяет полные группы, множество
 `RegistrationCallNoReturn` отклоняет изменённые границы инструкций, цели и диапазоны операций, условные вызовы и неверные архитектуры или форматы. Тест PE32 с выровненным стеком проверяет как независимо доказанный завершающий вызов, так и обычное ребро продолжения, удаляемое по актуальному доказательству. Недействительное доказательство эффектов памяти не восстанавливает уже отсутствующее ребро.
 
 `SafeSEHReference.*` проверяет принадлежность неизменяемой таблице SafeSEH, повреждённую или неоднозначную память, релокации, другие архитектуры/форматы и порядок объявлений между фрагментами. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` использует `NEVERD_NONLOCAL_FINALLY_INPUTS` для проверки 32 сочетаний LLVM на нативных образцах MSVC x86/x64, O0/O2 и GS, с оптимизацией исходного представления и без неё. Проверяются LLVM и сигнатуры разрешённых вызовов; неподдерживаемая реконструкция нативного x86 EH должна по-прежнему отклоняться. Специализированное задание Windows EH загружает нативный артефакт и выполняет матрицу; без входного каталога тест явно пропускается.
+
+## Патчи из исходного кода и нативных объектов
+
+`CPU` означает установку и изолированное выполнение функции; `REFUSED` — явный отказ из-за отсутствующего контракта установки. ARM32 ELF требует регистрации EHABI; 32-битный Mach-O требует проверенных контрактов загрузчика, frontend и раскрутки; установка исходного кода PE сейчас требует x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Патчи из исходного кода и нативных объектов](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

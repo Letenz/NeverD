@@ -1,6 +1,6 @@
 **语言**: [English](../README.md) | [简体中文](README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
+<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
 
 [← NeverD 项目](project.md)
 
@@ -17,6 +17,7 @@
 | [项目说明（简体中文）](project.md) | 概览、快速开始、构建、SDK、CLI |
 | [贡献指南](CONTRIBUTING.md) | 开发环境、构建配置、工作流、风格与 PR 要求 |
 | [架构](architecture.md) | IR 路径、组件边界、严格提升、支持深度与修改位置 |
+| [源码与原生对象 patch](source-patching.md) | 编译器选择、原生对象、地址绑定、异常、发布事务与已验证配置 |
 | [离线 Web 分析（英文）](../web-analysis.md) | C++ 制品、源码、绑定和映射检查，元数据策略、SDK 与当前验证范围 |
 | [JavaScript 基础重写（英文）](../web-source-rewrite-profile.md) | 显式处理步骤、局部替换检查、精确逆变换与受验证凭据约束的本地导出 |
 | [Bun 独立程序配置（英文）](../web-bun-profile.md) | 限定范围的 x64/ARM64 ELF、单架构 Mach-O 和 PE 提取、原始范围与固定测试样本的来源 |
