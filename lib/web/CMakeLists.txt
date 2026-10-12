@@ -96,6 +96,7 @@ add_neverd_component_library(NeverDWeb
   compression/Zstd.cpp
   SessionBun.cpp
   SessionBunExport.cpp
+  SessionReadableExport.cpp
   InputRoot.cpp
   JsonReader.cpp
   SourceLocation.cpp

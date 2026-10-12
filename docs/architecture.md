@@ -812,6 +812,13 @@ formatting cannot remove or lower them. See the
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR or package archive members. Nested origins retain
 container-relative offsets separately from original/expanded storage offsets.
+`SessionReadableExport` consumes that selection with an explicit source goal
+and the independent sequential recovery parser. It verifies original bytes,
+retains exact origins/ranges and uses the shared exclusive export writer.
+`SourceRecovery` alone owns whitespace insertion and same-parser-tree proof;
+its larger models never enter interactive source/semantic caches. C API and CLI
+select this result; worker/MCP exclude raw export. See the
+[readable-export profile](web-readable-export-profile.md).
 Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
 owns its pinned native Unicode collision policy. `SessionAsar` publishes bounded

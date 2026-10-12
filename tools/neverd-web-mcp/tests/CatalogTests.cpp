@@ -39,10 +39,10 @@ void capabilitySubset() {
     require(Disabled.names() == Json::array({"neverd_web_capabilities"}),
             "Disabled backend advertised unavailable tools");
   }
-  auto Caps =
-      capabilities({"import_preview", "source_map_analyze", "source_analyze",
-                    "native_analyze", "bun_export", "wails_export",
-                    "source_rewrite_export", "unknown_future_operation"});
+  auto Caps = capabilities(
+      {"import_preview", "source_map_analyze", "source_analyze",
+       "native_analyze", "bun_export", "wails_export", "source_readable_export",
+       "source_rewrite_export", "unknown_future_operation"});
   Catalog C(Caps, 0);
   require(C.names() == Json::array({"neverd_web_capabilities",
                                     "neverd_web_source_analyze",
@@ -200,6 +200,7 @@ void closedArguments() {
   }
   refuses([&] { View.payload({{"source_id", "s"}}); });
   refuses([&] { C.find("neverd_web_bun_export"); });
+  refuses([&] { C.find("neverd_web_source_readable_export"); });
   refuses([&] { C.find("neverd_web_native_analyze"); });
   refuses([&] { C.find("neverd_web_source_rewrite_export"); });
   const auto &Rewrite = C.find("neverd_web_source_rewrite_analyze");

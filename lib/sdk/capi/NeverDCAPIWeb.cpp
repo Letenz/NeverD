@@ -1188,6 +1188,24 @@ const char *neverd_web_source_analyze_json(
 #endif
 }
 
+const char *neverd_web_source_readable_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize, const char *OutputDirectory,
+    size_t OutputDirectorySize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.exportReadableSource(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(ArtifactID, ArtifactIDSize, 64),
+        buffer(SourceType, SourceTypeSize, 16),
+        buffer(OutputDirectory, OutputDirectorySize, 32768));
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_source_bindings_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize) {

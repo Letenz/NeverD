@@ -91,6 +91,8 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("pkg_records"), ASARAvailable);
   EXPECT_EQ(Has("wails_extract"), ASARAvailable);
   EXPECT_EQ(Has("wails_records"), ASARAvailable);
+  EXPECT_EQ(Has("wails_export"), ASARAvailable);
+  EXPECT_EQ(Has("source_readable_export"), bool(NEVERD_TEST_WEB_JS));
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
     if (!Entry || Entry->getString("kind") != "source_interfaces")
@@ -283,6 +285,8 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                       0, 0, 1),
         neverd_web_wails_export_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                      0),
+        neverd_web_source_readable_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0, nullptr, 0),
         neverd_web_stream_preview_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
         neverd_web_stream_commit_json(nullptr, nullptr, 0, nullptr, 0),

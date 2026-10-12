@@ -254,6 +254,13 @@ public:
   std::string analyzeSource(std::string_view ExpectedRevision,
                             std::string_view ArtifactID,
                             std::string_view SourceType);
+  /// Explicit local disclosure from an immutable direct-byte selection.
+  /// Recovery has independent bounds and never enters interactive caches.
+  /// Parse refusals preserve exact original bytes without a readable file.
+  std::string exportReadableSource(std::string_view ExpectedRevision,
+                                   std::string_view ArtifactID,
+                                   std::string_view SourceType,
+                                   std::string_view OutputDirectory);
   std::string sourceNodes(std::string_view ExpectedRevision,
                           std::string_view SourceID, uint64_t Offset,
                           uint64_t Limit) const;

@@ -50,7 +50,9 @@ bool decimal(llvm::StringRef S, uint64_t &N) {
 
 int runWebWails() {
   const auto &Command = WebArguments[0];
-  const bool Source = Command == "wails-source", HTML = Command == "wails-html";
+  const bool Readable = Command == "wails-readable-export";
+  const bool Source = Command == "wails-source" || Readable,
+             HTML = Command == "wails-html";
   const bool Native = Command == "wails-native";
   const bool Export = Command == "wails-export";
   auto Usage = [] {
@@ -60,11 +62,13 @@ int runWebWails() {
            "<new-output-directory> [artifact-index] | wails-html <root> "
            "<profile> <artifact-index> <member-index> | wails-source <root> "
            "<profile> <artifact-index> <member-index> "
-           "<script|module|commonjs>\n";
+           "<script|module|commonjs> | wails-readable-export <root> "
+           "<profile> <artifact-index> <member-index> "
+           "<script|module|commonjs> <new-output-directory>\n";
     return 2;
   };
   const auto Count = WebArguments.size();
-  if ((Source && Count != 6U) || (HTML && Count != 5U) ||
+  if ((Source && Count != (Readable ? 7U : 6U)) || (HTML && Count != 5U) ||
       (Export && Count != 4U && Count != 5U) ||
       (!Source && !HTML && !Export && Count != 3U && Count != 4U))
     return Usage();
@@ -135,6 +139,17 @@ int runWebWails() {
         "selection_id");
     if (Selection.empty())
       return 1;
+    if (Readable) {
+      const auto &Directory = WebArguments[6];
+      const auto R = reply(neverd_web_source_readable_export_json(
+                               G.Web, Rev.data(), Rev.size(), Selection.data(),
+                               Selection.size(), Type.data(), Type.size(),
+                               Directory.data(), Directory.size()),
+                           true);
+      return R && field(*R, "readable_status") == "verified_same_parser_tree"
+                 ? 0
+                 : 1;
+    }
     if (HTML)
       return reply(neverd_web_html_analyze_json(G.Web, Rev.data(), Rev.size(),
                                                 Selection.data(),
