@@ -808,6 +808,27 @@ TEST(ApplyDebugSymbolsTest, PublishesNamesOnlyDataObjectsWithoutExtents) {
   EXPECT_FALSE(Img.Symbols[0].IsFunc);
 }
 
+// The loader guesses a function after padding wherever the next bytes read
+// as a prologue; MSVC keeps string literals in .text, and `push rdi` is a
+// wide string's first letter.  A data object the debug information names
+// there refutes the guess, but not code metadata.
+TEST(ApplyDebugSymbolsTest, DataRefutesAFunctionGuessedAfterPadding) {
+  BinaryImage Img;
+  for (const va_t Addr : {0x1400u, 0x1500u, 0x1600u}) {
+    Symbol Guess = Symbol::makeFunc(Addr);
+    Guess.IsBoundaryGuess = true;
+    Img.Symbols.push_back(Guess);
+  }
+  Img.KnownCodeRanges.push_back({0x1600, 0x1610});
+  FakeDebugContext Dbg(
+      {}, {{"??_C@_1BE@BDEKEKBI@?$AAW?$AAI?$AAN", 0x1400, 0, false},
+           {"table_or_code", 0x1600, 0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(findFunc(Img, 0x1400), nullptr);
+  EXPECT_NE(findFunc(Img, 0x1500), nullptr);
+  EXPECT_NE(findFunc(Img, 0x1600), nullptr);
+}
+
 TEST(ApplyDebugSymbolsTest, PublishesOnlyAuthenticatedTypedObjectExtents) {
   const std::vector<DataObjectSym> Objects = {
       {"array", 0x2000, 8, true},
