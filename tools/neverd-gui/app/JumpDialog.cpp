@@ -2,6 +2,7 @@
 
 #include "Address.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "SecondaryTextDelegate.h"
 #include "Session.h"
 #include "Theme.h"
@@ -42,6 +43,7 @@ JumpDialog::JumpDialog(Session &session, QWidget *parent)
       matches_(new QListWidget(this)), hint_(new QLabel(this)) {
   setWindowTitle(tr("Jump anywhere"));
   setWindowIcon(icon(QStringLiteral("jump")));
+  activateOnReturn(*matches_);
   resize(620, 420);
   auto *layout = new QVBoxLayout(this);
   input_->setPlaceholderText(
