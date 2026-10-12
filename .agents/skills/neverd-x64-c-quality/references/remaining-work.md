@@ -25,6 +25,16 @@ Jumping out of an abnormal finally is MSVC C4532 undefined behavior. The legacy
 compiler observations do not certify guard retirement inside the resumed parent.
 `check_windows_native_seh_resume.py` is a separate x64 LLVM/CRT protocol
 experiment with a physical-stack capture and a parent continuation address.
+Its explicit escaped resume token selects the ordinary suffix at the call
+continuation. An address-taken join alone allowed O2 to sink suffix effects and
+require a predecessor-only PHI at hidden entry. Local Wine O0/O2 observations
+are supporting evidence only; native Windows and compiler-visible resumption
+still require their own validation. A second ordinary finally call in the same
+parent activation checks token reinitialization. Arbitrary live SSA values,
+nested activations and EHCONT/CET compatibility are not authenticated. A native
+bridge that enters a resume body through its normal ABI remains the stronger
+candidate. LLVMC refuses block addresses and other
+unrepresented constants instead of silently substituting zero.
 Compiler or native-runtime success alone grants no reconstruction receipt;
 conditional memory, invocation lifetime and both C routes remain open.
 

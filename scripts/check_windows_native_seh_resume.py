@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "unittests/lift/eh/fixtures"
 SOURCES = ("native_seh_resume.ll", "native_seh_resume_runtime.c",
            "native_seh_resume_probe.asm")
-EXPECTED = (123478, 12378, 13678, 1378, 1, 1, 1, 1, 128)
+EXPECTED = (1234782349, 123782349, 136782349, 13782349, 1, 1, 1, 1, 128)
 OBSERVATION = re.compile(
     r"NATIVE_SEH_RESUME (\d+) (\d+) (\d+) (\d+) registers=(\d+) "
     r"stack=(\d+) guards=(\d+) consistent=(\d+) iterations=(\d+) "

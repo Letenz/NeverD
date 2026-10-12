@@ -25,6 +25,11 @@ class NativeResumeEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.observe(observation(first_only))
 
+    def test_stale_resume_token_cannot_skip_a_later_ordinary_suffix(self):
+        stale = (1234782349, 12378239, 136782349, 1378239, 1, 1, 1, 1, 128)
+        with self.assertRaises(ValueError):
+            runner.observe(observation(stale))
+
     def test_incomplete_and_extra_output_cannot_pass(self):
         valid = observation(runner.EXPECTED)
         for changed in ({"exit_code": 1}, {"stdout": ""},
