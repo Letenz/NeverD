@@ -92,6 +92,29 @@ int ptrcmp(int a) {
                        "ptrcmp", {"ptrcmp", "A"});
 }
 
+// Clang turns a table of pointers to arrays into a relative table, the
+// offsets of the arrays from the table's own start: the table the output
+// declares spans the arrays, which the code reaches only through it.
+TEST_F(X86_64_ImageTable, ARelativeTableSpansTheObjectsItReaches) {
+  KernelOptimization = "-O1";
+  expectRunsLikeSource(R"C(
+static const unsigned B0[3] = {11u, 22u, 33u};
+static const unsigned B1[3] = {101u, 202u, 303u};
+static const unsigned B2[3] = {1001u, 2002u, 3003u};
+static const unsigned *const QS[3] = {B0, B1, B2};
+int pptr1(int a) {
+  unsigned h = (unsigned)a, acc = 0;
+  for (int i = 0; i < 48; i++) {
+    h = h * 1103515245u + 12345u;
+    unsigned k = (h >> 4) % 3u, j = (h >> 7) % 3u;
+    acc = acc * 131u + QS[k][j] + (unsigned)i;
+  }
+  return (int)acc;
+}
+)C",
+                       "pptr1", {"pptr1", "QS", "QS_rel", "B0", "B1", "B2"});
+}
+
 // At -O0 a local label table is copied from its read-only initializer, an
 // object no symbol names: the copy reads the object the output declares,
 // not the address the image gives it.
