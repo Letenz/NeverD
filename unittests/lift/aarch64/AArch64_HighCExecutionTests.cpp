@@ -240,3 +240,38 @@ int offptr(int a) {
 )C",
                        "offptr", {"offptr", "W"});
 }
+
+// The vectorized sum keeps a byte in w0, then `fmov x0, d0` and the
+// remainder loop's `madd x0` write the whole register.  Where the paths join,
+// a phi of the w0 view still holds the byte; the result is the x0 phi.
+TEST_F(AArch64_HighCExecution, AJoinReturnsTheWholeRegisterNotAStaleView) {
+  expectRunsLikeSource(R"C(
+long runs(long a) __attribute__((noinline));
+int rle(int a) {
+  long s = runs(a);
+  return (int)(s ^ (s >> 32));
+}
+long runs(long a) {
+  unsigned char in[48], val[48], run[48];
+  for (int i = 0; i < 48; i++)
+    in[i] = (unsigned char)(((unsigned)a + i / 3 * 5) & 7);
+  int n = 0, i = 0;
+  while (i < 48) {
+    unsigned char c = in[i];
+    int cnt = 0;
+    while (i < 48 && in[i] == c && cnt < 255) {
+      cnt++;
+      i++;
+    }
+    val[n] = c;
+    run[n] = (unsigned char)cnt;
+    n++;
+  }
+  long s = n * 10000;
+  for (int k = 0; k < n; k++)
+    s += (long)val[k] * 256 + run[k] * (k + 1);
+  return s;
+}
+)C",
+                       "rle", {"rle", "runs"});
+}

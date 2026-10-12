@@ -1430,8 +1430,8 @@ MedToHighConverter::untouchedParamRegister(uint64_t RegOff) const {
 bool MedToHighConverter::reachingRegAtBlockEntry(const MedBlock &B,
                                                  uint64_t RegOff,
                                                  MedVar &Out) const {
-  return CurMed &&
-         detail::reachingRegisterAtBlockEntry(*CurMed, B, RegOff, Out);
+  return CurMed && detail::reachingRegisterAtBlockEntry(
+                       *CurMed, B, RegOff, getTargetRegInfo(TargetArch), Out);
 }
 
 bool MedToHighConverter::isCallArgSetupDef(const MedBlock &CallBlk,

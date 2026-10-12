@@ -10,6 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "VariadicStackArguments.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -223,9 +225,9 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
               RIt->Output.Size > 0 && RIt->Output.RegOff == RegOff &&
               !isRegisterLowView(*RIt))
             return ValueFromDefinition(*RIt);
-        for (const auto &Phi : Block.Phis)
-          if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
-            return HighExpr::makeVar(Phi.Output);
+        if (const PhiNode *Phi = detail::registerPhi(
+                Med, Block, RegOff, getTargetRegInfo(TargetArch)))
+          return HighExpr::makeVar(Phi->Output);
         return nullptr;
       };
       if (ExprPtr Value = WrittenIn(CurBlock))
@@ -365,14 +367,9 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
 
-  if (!RetVal) {
-    for (auto &Phi : CurBlock.Phis) {
-      if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == ReturnReg) {
-        RetVal = HighExpr::makeVar(Phi.Output);
-        break;
-      }
-    }
-  }
+  if (!RetVal)
+    if (const PhiNode *Phi = detail::registerPhi(Med, CurBlock, ReturnReg, TRI))
+      RetVal = HighExpr::makeVar(Phi->Output);
 
   if (!RetVal) {
     // A bare RET block inherits the value established on its only incoming
@@ -392,10 +389,10 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         RetVal = ValueFromDefinition(*RIt);
         break;
       }
-      for (const auto &Phi : Pred->Phis)
-        if (!RetVal && Phi.Output.Kind == MedVar::Reg &&
-            Phi.Output.RegOff == ReturnReg)
-          RetVal = HighExpr::makeVar(Phi.Output);
+      if (!RetVal)
+        if (const PhiNode *Phi =
+                detail::registerPhi(Med, *Pred, ReturnReg, TRI))
+          RetVal = HighExpr::makeVar(Phi->Output);
     }
   }
 
@@ -481,12 +478,9 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       }
     }
     if (!High)
-      for (const auto &Phi : CurBlock.Phis)
-        if (Phi.Output.Kind == MedVar::Reg &&
-            Phi.Output.RegOff == TRI.IntReturnReg2) {
-          High = HighExpr::makeVar(Phi.Output);
-          break;
-        }
+      if (const PhiNode *Phi =
+              detail::registerPhi(Med, CurBlock, TRI.IntReturnReg2, TRI))
+        High = HighExpr::makeVar(Phi->Output);
     if (!High) {
       if (const MedBlock *Pred = onlyPredecessor(Med, CurBlock)) {
         for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt) {
