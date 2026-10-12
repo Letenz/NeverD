@@ -9,6 +9,7 @@
 #include "GraphView.h"
 #include "HexView.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "JumpDialog.h"
 #include "Language.h"
 #include "ListingView.h"
@@ -2160,6 +2161,7 @@ void MainWindow::showCommandPalette() {
   auto *filter = new QLineEdit(&dialog);
   filter->setPlaceholderText(tr("Type a command"));
   auto *list = new QListWidget(&dialog);
+  activateOnReturn(*list);
   // Shortcuts line up at the right of their commands.
   list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
   layout->addWidget(filter);

@@ -1,6 +1,7 @@
 #include "QuickStartDialog.h"
 
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "ProjectDatabase.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
@@ -637,6 +638,7 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
   auto *recentList = new RecentList(files);
   recentList->forget = [this] { removeSelected(); };
   recent_ = recentList;
+  activateOnReturn(*recent_);
   recent_->setObjectName(QStringLiteral("quickStartRecent"));
   recent_->setItemDelegate(new RecentDelegate(recent_));
   recent_->setFrameShape(QFrame::NoFrame);
