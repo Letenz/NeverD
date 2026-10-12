@@ -107,6 +107,7 @@ NEVERD_LINUX_VALUE(SignalMaskSize, 8)
 NEVERD_LINUX_X64_SERVICE(Open, 2, 3)
 NEVERD_LINUX_X64_SERVICE(Access, 21, 2)
 NEVERD_LINUX_X64_SERVICE(Mkdir, 83, 2)
+NEVERD_LINUX_X64_SERVICE(Readlink, 89, 3)
 NEVERD_LINUX_X64_SERVICE(ArchPrctl, 158, 2)
 NEVERD_LINUX_X64_SERVICE(Time, 201, 1)
 #endif
@@ -161,6 +162,7 @@ NEVERD_LINUX_SERVICE(Mincore, 27, 232, 3)
 NEVERD_LINUX_SERVICE(OpenAt, 257, 56, 4)
 NEVERD_LINUX_SERVICE(FaccessAt, 269, 48, 3)
 NEVERD_LINUX_SERVICE(MkdirAt, 258, 34, 3)
+NEVERD_LINUX_SERVICE(ReadlinkAt, 267, 78, 4)
 NEVERD_LINUX_SERVICE(Read, 0, 63, 3)
 NEVERD_LINUX_SERVICE(Close, 3, 57, 1)
 NEVERD_LINUX_SERVICE(Lseek, 8, 62, 3)
@@ -248,6 +250,14 @@ NEVERD_LINUX_DIAGNOSTIC(
 NEVERD_LINUX_DIAGNOSTIC(FileDirectIO,
                         "direct I/O for this catalogue file is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FilePathForm, "unsupported Linux memory-file path form")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkTarget,
+                        "linux_files symbolic links require nonempty NUL-free targets")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkTraversal,
+                        "Linux symbolic-link traversal or metadata is unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkDescriptor,
+                        "Linux descriptor-backed symbolic links are unmodeled")
+NEVERD_LINUX_DIAGNOSTIC(FileLinkPartialOutput,
+                        "partial Linux readlink output fault is unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileAccessMode,
                         "Linux memory-file permission checks are unmodeled")
 NEVERD_LINUX_DIAGNOSTIC(FileDirectory,

@@ -2264,6 +2264,55 @@ TEST(ProcessReport, MalformedMemoryFileCataloguesFailBeforeExecution) {
   EXPECT_EQ(Empty->LinuxFiles->DescriptorLimit, 256u);
 }
 
+TEST(ProcessReport, LinuxLinkObservationsAreBoundedAndShareTheFileNamespace) {
+  auto Good = processOptionsFromJSON(R"({"linux_files":{"files":[],
+    "symbolic_links":[{"path":"/links/raw","target_hex":"2f78ff79"}]}})");
+  ASSERT_TRUE(bool(Good)) << llvm::toString(Good.takeError());
+  EXPECT_EQ(Good->LinuxFiles->SymbolicLinks.at("/links/raw"),
+            (std::vector<uint8_t>{'/', 'x', 0xff, 'y'}));
+  for (
+      const char *Links :
+      {"null", "{}", "[null]", R"([{"path":"/x","target_hex":""}])",
+       R"([{"path":"/x","target_hex":"6100"}])",
+       R"([{"path":"/x","target_hex":"0"}])",
+       R"([{"path":"/x","target_hex":"gg"}])",
+       R"([{"path":"x","target_hex":"61"}])",
+       R"([{"path":"/x/","target_hex":"61"}])",
+       R"([{"path":"/x","target_hex":"61","extra":1}])",
+       R"([{"path":"/x","target_hex":"61"},{"path":"/x","target_hex":"62"}])",
+       R"([{"path":"/x","target_hex":"61"},{"path":"/x/y","target_hex":"62"}])",
+       R"([{"path":"/fixture/data","target_hex":"61"}])",
+       R"([{"path":"/fixture","target_hex":"61"}])",
+       R"([{"path":"/fixture/data/child","target_hex":"61"}])"}) {
+    SCOPED_TRACE(Links);
+    auto R = processOptionsFromJSON(
+        std::string(
+            R"({"linux_files":{"files":[{"path":"/fixture/data","bytes_hex":""}],"symbolic_links":)") +
+        Links + "}}");
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    auto O = *Good;
+    auto &F = *O.LinuxFiles;
+    if (Mode == 0)
+      F.SymbolicLinks["relative"] = {'x'};
+    if (Mode == 1)
+      F.SymbolicLinks["/bad"] = {0};
+    if (Mode == 2)
+      F.SymbolicLinks["/bad"].resize(16 * 1024 * 1024, 'x');
+    if (Mode == 3)
+      for (unsigned I = 0; I < 256; ++I)
+        F.Files["/file" + std::to_string(I)] = {};
+    if (Mode == 4)
+      F.Files["/links/raw/child"] = {};
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+}
+
 llvm::json::Value fileMetadata() {
   return llvm::cantFail(llvm::json::parse(R"({
     "device":4294967295,"inode":"18446744073709551615","mode":33279,

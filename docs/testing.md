@@ -5464,3 +5464,17 @@ MSVC unit test targets use `/bigobj` to allow the larger COFF section counts pro
 Checked double-shift rejection reports the masked count and operand width when its destination and flags are undefined. `X64DoubleShift` verifies that typed exits and the legacy error API retain the reason without register or RAM changes or memory observations; the driver fixture verifies that the same reason survives before scenario dispatch.
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` checks CPL0 IF clear/set against a CPL3 countercontrol, profile matching and digest separation, TF/AC/IOPL refusals, mandatory final IF dependence even with ordinary observations disabled, restoration and exact/one-short work limits. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` also checks that this native kernel profile cannot silently select the user source ABI. The production undefined-instruction admission and driver recovery guards are unchanged.
+
+Readlink coverage in `linux_files.c` checks raw x64/AArch64 and Android O0/O2
+ordinary/APS2/RELR calls, direct and dynamic Bionic bindings, signed low-word
+sizes, error ordering, binary targets without NUL, truncation, aliasing,
+page-tail import/output and unchanged descriptor cursors. Unsupported traversal,
+metadata and mixed-copy cases retain pending calls and unchanged output bytes.
+`ProcessReportTests` rejects conflicting namespaces, malformed targets and
+combined limits; C API/CLI and Python reuse the same query fixture.
+
+Android decimal-prefix tests use independent callers and literal expectations
+for all six C whitespace characters, signs, empty/nondigit inputs, decimal-only
+prefixes and signed 32/64-bit endpoints. They check errno preservation, dynamic
+provider lifetime, first-nondigit/page-tail access and fail-loud overflow under
+the same O0/O2 and ordinary/APS2/RELR fixture matrix.

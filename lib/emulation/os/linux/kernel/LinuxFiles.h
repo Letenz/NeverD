@@ -38,7 +38,14 @@ public:
 
 private:
   enum class Stream { Input, Output, Error };
-  enum class PathKind { File, Directory, Missing, NotDirectory };
+  enum class PathKind {
+    File,
+    Directory,
+    Missing,
+    NotDirectory,
+    SymbolicLink,
+    LinkTraversal
+  };
   // A pathname import can fail with guest errno independently of backend I/O.
   using Pathname = std::variant<std::string, uint32_t>;
   struct ParsedPath {
@@ -71,6 +78,9 @@ private:
   static std::optional<ParsedPath> parsePath(llvm::StringRef Path);
   PathKind lookupPath(const std::string &Path,
                       bool RequiresDirectory = false) const;
+  llvm::Expected<std::optional<uint64_t>>
+  readLink(uint32_t Directory, uint64_t Path, uint64_t Address, uint32_t Size,
+           ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>>
   access(uint64_t Address, uint32_t Mode, ProcessResult &Result);
   llvm::Expected<std::optional<uint64_t>> makeDirectory(uint64_t Address,

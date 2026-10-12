@@ -83,6 +83,8 @@ LinuxServices::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Mkdir:
   case ServiceKind::MkdirAt:
   case ServiceKind::Read:
+  case ServiceKind::Readlink:
+  case ServiceKind::ReadlinkAt:
   case ServiceKind::Close:
   case ServiceKind::Lseek:
   case ServiceKind::Fstat:

@@ -48,6 +48,10 @@ LinuxFiles::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
     return close(A0);
   case ServiceKind::Read:
     return readDescriptor(A0, A1, A2, Result);
+  case ServiceKind::Readlink:
+    return readLink(AtCurrentDirectory, A0, A1, A2, Result);
+  case ServiceKind::ReadlinkAt:
+    return readLink(A0, A1, A2, A3, Result);
   case ServiceKind::Lseek:
     return seekDescriptor(A0, A1, A2, Result);
   case ServiceKind::Fstat:

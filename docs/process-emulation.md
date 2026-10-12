@@ -402,6 +402,21 @@ sleep and real device clocks remain unsupported.
 workloads. C++ uses `ProcessOptions::LinuxFiles`; C, Python and CLI share this
 strict JSON contract:
 
+
+Optional `symbolic_links` entries use the same canonical absolute namespace:
+`{"path":"/links/item","target_hex":"2e2e2f746172676574"}`. Targets are
+nonempty NUL-free bytes and share the catalogue's count and byte limits with
+regular files. A link cannot also name a file or an ancestor directory.
+Raw x64 `readlink`, x64/AArch64 `readlinkat`, Android imports and `dlsym` bindings
+copy the observed target prefix without adding NUL. Absolute queries ignore
+`dirfd`; the kernel's signed low-32-bit size check precedes pathname access.
+Link queries preserve file cursors and do not resolve the target, including
+relative or dangling targets. Traversal through links, link metadata,
+relative queries and unknown descriptor-backed links stop explicitly; other
+file operations cannot silently treat these links as missing regular files.
+Mixed-permission output copies remain unsupported before any bytes are written.
+The error ordering follows the [Linux readlink contract](https://github.com/torvalds/linux/blob/v6.12/fs/stat.c#L491-L540).
+
 ```json
 {"linux_files":{"files":[
   {"path":"/fixture/data","bytes_hex":"00ff410a805a"}],
@@ -695,3 +710,10 @@ versions at the same address. The same x64 ELF runs natively on Linux as an
 independent result/fault oracle. Pure memory tests cover budget exhaustion,
 reclamation and authoritative mapping snapshots without retaining RAM.
 Cross-compilation and Unicorn ARM64 results are not native ARM64 KVM/WHP evidence.
+
+Android `atoi`, `atol` and `atoll` accept bounded C-locale decimal prefixes,
+including leading whitespace and one sign. The first nondigit ends the scan;
+representable 32-bit/64-bit results preserve errno. Out-of-range results stop
+explicitly without choosing libc-specific wrapping or saturation. This subset
+follows [C11 section 7.22.1.2](https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf);
+it does not add general `strtol` bases, end pointers or locale mutation.

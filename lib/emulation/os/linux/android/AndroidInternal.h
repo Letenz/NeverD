@@ -163,6 +163,7 @@ private:
   BionicResult setMemory(const NativeCallEvent &Call);
   BionicResult compareMemory(const NativeCallEvent &Call);
   BionicResult stringLength(const NativeCallEvent &Call);
+  BionicResult decimalInteger(const NativeCallEvent &Call);
   BionicResult compareString(const NativeCallEvent &Call);
   BionicResult getErrno(const NativeCallEvent &Call);
   BionicResult getPageSize(const NativeCallEvent &Call);

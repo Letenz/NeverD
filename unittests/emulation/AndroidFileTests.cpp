@@ -63,6 +63,46 @@ protected:
 TEST_P(AndroidFiles, OpensOwnCursorsAndReuseTheLowestAvailableDescriptor) {
   returned(run("files_sequence"));
 }
+TEST_P(AndroidFiles, ReadlinkCopiesObservedBytesThroughRawAndBionicCalls) {
+  Options.LinuxFiles->SymbolicLinks["/links/raw"] = {'/', 'x', 0xff, 'y'};
+  returned(run("files_links"));
+  returned(run("files_links_bionic"));
+  Options.Android->Libraries["libfiles.so"] = {"readlink", "readlinkat"};
+  for (uint64_t At : {0u, 1u}) {
+    auto R = run("files_links_dynamic", {0, At});
+    returned(R);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Library, "libfiles.so");
+    auto Closed = run("files_links_dynamic", {1, At});
+    EXPECT_EQ(Closed.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(Closed.Diagnostic.find("inactive dynamic library"),
+              std::string::npos);
+    EXPECT_FALSE(Closed.NativeCalls.back().Result);
+  }
+}
+TEST_P(AndroidFiles,
+       ReadlinkObservationsGrantNoTraversalOrPartialCopyContract) {
+  Options.LinuxFiles->SymbolicLinks["/links/raw"] = {'/', 'x', 0xff, 'y'};
+  Options.LinuxKernel.emplace().GKI = AndroidGKIKernel::Android16_6_12;
+  Options.Android->ThreadLimit = 1;
+  constexpr uint64_t Buffer = 0x20000000;
+  Options.Android->Memory.push_back(
+      {Buffer, 8192, std::vector<uint8_t>(8192, 0xa5), false});
+  Options.Android->ReadMemory.push_back({Buffer, 4096});
+  for (uint64_t Mode = 0; Mode != 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto R = run("files_links_pending", {Mode, Buffer});
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService) << R.Diagnostic;
+    ASSERT_FALSE(R.Services.empty());
+    EXPECT_FALSE(R.Services.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, std::vector<uint8_t>(4096, 0xa5));
+  }
+  Options.LinuxFiles.reset();
+  auto R = run("files_links_pending", {0, Buffer});
+  EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_NE(R.Diagnostic.find("explicit linux_files"), std::string::npos);
+}
 TEST_P(AndroidFiles, ReleasedGKIOpenFlagsSharePathErrorsAndErrno) {
   Options.LinuxFiles->DescriptorLimit = 4;
   Options.Android->ThreadLimit = 1;

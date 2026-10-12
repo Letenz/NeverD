@@ -2282,7 +2282,8 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
         "files_access", "files_access_faults", "files_access_bionic",
         "files_directory_errors", "files_directory_bionic",
         "files_trailing_paths", "files_trailing_paths_bionic",
-        "files_filesystem_status", "files_filesystem_status_bionic"}) {
+        "files_filesystem_status", "files_filesystem_status_bionic",
+        "files_links", "files_links_bionic"}) {
     SCOPED_TRACE(Entry);
     llvm::json::Object Request{
         {"backend", "unicorn"},
@@ -2294,6 +2295,10 @@ TEST_F(ProcessPublic, AndroidMemoryFilesShareStateThroughCAPIAndCLI) {
          llvm::json::Object{{"files", llvm::json::Array{llvm::json::Object{
                                           {"path", "/fixture/data"},
                                           {"bytes_hex", "00ff410a805a"}}}}}}};
+    if (llvm::StringRef(Entry).starts_with("files_links"))
+      (*Request.getObject("linux_files"))["symbolic_links"] =
+          llvm::json::Array{llvm::json::Object{{"path", "/links/raw"},
+                                               {"target_hex", "2f78ff79"}}};
     if (llvm::StringRef(Entry).starts_with("files_status"))
       (*Request.getObject("linux_files")
             ->getArray("files")

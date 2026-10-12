@@ -142,7 +142,8 @@ class ProcessIntegrationTests(unittest.TestCase):
                           "files_access_faults", "files_access_bionic",
                           "files_directory_errors", "files_directory_bionic",
                           "files_trailing_paths", "files_trailing_paths_bionic",
-                          "files_filesystem_status", "files_filesystem_status_bionic"):
+                          "files_filesystem_status", "files_filesystem_status_bionic",
+                          "files_links", "files_links_bionic"):
                 with self.subTest(optimization=optimization, entry=entry):
                     options = {
                         "backend": "unicorn", "instruction_quantum": 31,
@@ -151,6 +152,9 @@ class ProcessIntegrationTests(unittest.TestCase):
                     }
                     if entry in ("files_access", "files_directory_errors", "files_trailing_paths"):
                         options["linux_files"]["descriptor_limit"] = 4
+                    if entry.startswith("files_links"):
+                        options["linux_files"]["symbolic_links"] = [
+                            {"path": "/links/raw", "target_hex": "2f78ff79"}]
                     if entry.startswith("files_status"):
                         options["linux_files"]["files"][0]["metadata"] = {
                             "device": 0xfe12cd34, "inode": str(0xfedcba9876543210),

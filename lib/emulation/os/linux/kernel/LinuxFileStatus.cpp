@@ -50,9 +50,12 @@ LinuxFiles::statusAt(uint32_t Directory, uint64_t PathAddress, uint64_t Address,
   auto Path = parsePath(Name);
   if (!Path)
     return unsupported(Result, FilePathForm);
-  // Absolute names ignore dirfd. The closed catalogue contains no symlinks
-  // or automount points; directory prefixes carry no metadata observation.
+  // Absolute names ignore dirfd. Link targets do not establish traversal or
+  // link metadata; directory prefixes carry no metadata observation.
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:

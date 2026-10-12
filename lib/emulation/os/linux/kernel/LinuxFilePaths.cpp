@@ -66,17 +66,25 @@ LinuxFiles::PathKind LinuxFiles::lookupPath(const std::string &Path,
     return PathKind::Directory;
   if (Options->Files.contains(Path))
     return RequiresDirectory ? PathKind::NotDirectory : PathKind::File;
-  // Catalogue prefixes denote directories; a known file used as a path
-  // component is ENOTDIR.
+  if (Options->SymbolicLinks.contains(Path))
+    return RequiresDirectory ? PathKind::LinkTraversal : PathKind::SymbolicLink;
+  // Catalogue prefixes denote directories; a link component requires an
+  // unmodeled traversal, while a regular file component is ENOTDIR.
   const std::string Prefix = Path + '/';
-  auto Next = Options->Files.lower_bound(Prefix);
-  if (Next != Options->Files.end() &&
-      llvm::StringRef(Next->first).starts_with(Prefix))
-    return PathKind::Directory;
+  for (const auto *Catalogue : {&Options->Files, &Options->SymbolicLinks}) {
+    auto Next = Catalogue->lower_bound(Prefix);
+    if (Next != Catalogue->end() &&
+        llvm::StringRef(Next->first).starts_with(Prefix))
+      return PathKind::Directory;
+  }
   for (size_t I = Path.find('/', 1); I != std::string::npos;
-       I = Path.find('/', I + 1))
-    if (Options->Files.contains(Path.substr(0, I)))
+       I = Path.find('/', I + 1)) {
+    const auto Parent = Path.substr(0, I);
+    if (Options->Files.contains(Parent))
       return PathKind::NotDirectory;
+    if (Options->SymbolicLinks.contains(Parent))
+      return PathKind::LinkTraversal;
+  }
   return PathKind::Missing;
 }
 
@@ -95,6 +103,9 @@ LinuxFiles::access(uint64_t Address, uint32_t Mode, ProcessResult &Result) {
   if (!Path)
     return unsupported(Result, FilePathForm);
   switch (lookupPath(Path->Name, Path->RequiresDirectory)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:
@@ -125,6 +136,9 @@ LinuxFiles::makeDirectory(uint64_t Address, ProcessResult &Result) {
   const size_t Slash = Path.rfind('/');
   const std::string Parent = Slash ? Path.substr(0, Slash) : "/";
   switch (lookupPath(Parent)) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::File:
@@ -162,6 +176,9 @@ LinuxFiles::open(uint64_t Address, uint32_t Flags, ProcessResult &Result) {
     return std::optional<uint64_t>(uint64_t(0) - TooManyFiles);
   switch (
       lookupPath(Path->Name, Path->RequiresDirectory || (Flags & Directory))) {
+  case PathKind::SymbolicLink:
+  case PathKind::LinkTraversal:
+    return unsupported(Result, FileLinkTraversal);
   case PathKind::Missing:
     return std::optional<uint64_t>(uint64_t(0) - NoEntry);
   case PathKind::NotDirectory:

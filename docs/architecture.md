@@ -5340,3 +5340,10 @@ Kernel field initialization has a separate physical RAM owner. Permission valida
 `MemoryWriteWitness` retains exact physical allocation slices and shares the committed-write invalidation authority with RAM reservations. Same-value, partial and aliased writes invalidate it; opaque execution conservatively removes the proof. Creation and queries require a stopped owner. Driver observation binds validated DIR64 fields immediately after image copy, before session fixups, and publishes owned facts only while the mapped allocation and write history still match. These facts do not cover generated pointers or supply a native kernel materializer.
 
 The driver loader binds relocation facts to the validated file SHA-256. PE rebuilding consumes the owned facts and excludes fields replaced by import or metadata formatting before emitting diagnostic DIR64 records. This owner cannot infer generated-pointer relocations or remove the kernel runtime refusal.
+
+`LinuxFileLinks.cpp` owns readlink/readlinkat over explicit immutable link targets.
+The links share `LinuxFileOptions` validation, limits and namespace classification
+with regular files. The common classifier distinguishes link traversal from
+known missing paths, so other file services stop without inventing target
+contents or metadata. Bionic reuses this service and owns only errno conversion;
+CLI, C and Python consume the same strict `symbolic_links` JSON input.
