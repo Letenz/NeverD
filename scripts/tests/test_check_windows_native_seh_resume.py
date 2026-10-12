@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from scripts import check_windows_native_seh_resume as runner
 
@@ -12,6 +14,29 @@ def observation(values):
 
 
 class NativeResumeEvidenceTests(unittest.TestCase):
+    def test_coff_inputs_are_linked_without_source_language_override(self):
+        directory = Path("build") / "directory with spaces"
+        source = directory / "runtime.c"
+        objects = [directory / name for name in ("body.obj", "bridge.obj", "probe.obj")]
+        image = directory / "resume.exe"
+        with patch.object(runner, "compile_step") as compile_step:
+            runner.compile_and_link_c_runtime(
+                "cl", source, objects, image, directory, {}, ["/O2", "/GS", "/MD", "/Z7"])
+        self.assertEqual(compile_step.call_count, 2)
+        compile_command, link_command = [call.args[0] for call in compile_step.call_args_list]
+        self.assertIn("/TC", compile_command)
+        self.assertIn("/c", compile_command)
+        self.assertIn(str(source), compile_command)
+        self.assertFalse(any(item in compile_command for item in map(str, objects)))
+        self.assertNotIn(str(source), link_command)
+        self.assertNotIn("/TC", link_command)
+        self.assertNotIn("/TP", link_command)
+        self.assertNotIn("/c", link_command)
+        self.assertIn(str(directory / "runtime.obj"), link_command)
+        for item in objects:
+            self.assertEqual(link_command.count(str(item)), 1)
+        self.assertIn("/link", link_command)
+
     def test_checks_normal_and_abandoned_suffixes_and_native_abi(self):
         self.assertEqual(runner.observe(observation(runner.EXPECTED)), runner.EXPECTED)
         for index in range(len(runner.EXPECTED)):

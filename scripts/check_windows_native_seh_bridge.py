@@ -13,11 +13,11 @@ import re
 import subprocess
 
 if __package__:
-    from .check_windows_native_seh_resume import compile_step
+    from .check_windows_native_seh_resume import compile_and_link_c_runtime, compile_step
     from .check_windows_nonlocal_finally import require_architecture
     from .check_windows_registration_eh import run_image
 else:
-    from check_windows_native_seh_resume import compile_step
+    from check_windows_native_seh_resume import compile_and_link_c_runtime, compile_step
     from check_windows_nonlocal_finally import require_architecture
     from check_windows_registration_eh import run_image
 
@@ -196,14 +196,11 @@ def main(argv: list[str] | None = None) -> int:
                          case, record)
             compile_step([args.assembler, "/nologo", "/c", f"/Fo{wrapper}",
                           str(inputs[3])], case, record)
-            compile_step([args.compiler, "/nologo", "/W4", "/WX", "/TC",
-                          "/Od" if optimization == 0 else "/O2", "/GS", "/MD", "/Z7",
-                          f"/Fo{case / 'runtime.obj'}", f"/Fe{image}",
-                          f"/DBRIDGE_CORRUPTION_PROBE={int(name == 'shifted-target-frame')}",
-                          str(inputs[2]), str(llvm_object), str(bridge_object), str(wrapper),
-                          "/link", "/debug", "/incremental:no", "/fixed:no",
-                          f"/pdb:{case / 'bridge.pdb'}", f"/map:{case / 'bridge.map'}"],
-                         case, record)
+            compile_and_link_c_runtime(
+                args.compiler, inputs[2], [llvm_object, bridge_object, wrapper],
+                image, case, record,
+                ["/Od" if optimization == 0 else "/O2", "/GS", "/MD", "/Z7",
+                 f"/DBRIDGE_CORRUPTION_PROBE={int(name == 'shifted-target-frame')}"])
             data = image.read_bytes()
             require_architecture(data, "x64")
             record["sha256"] = hashlib.sha256(data).hexdigest()
