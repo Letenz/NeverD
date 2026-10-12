@@ -1632,7 +1632,7 @@ ctest --test-dir build-source -L \
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` 检查 CPL0 IF 清除／设置与 CPL3 反向控制、profile 匹配和摘要区分、TF/AC/IOPL 拒绝、关闭普通观察后仍必须检查最终 IF 依赖、恢复及精确／少一操作预算。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` 也检查该原生内核 profile 不能静默选择用户态源码 ABI。生产未定义指令 admission 与驱动恢复 guards 未改变。
 
-`NeverDX86X87IntegerLoadTests` 将原始 `FILD m16/m32/m64` 与 Codegen、HighC、LLVMC 的默认/NoOpt 和 C O0/O2 路径比较，观察完整 binary80、输出保护字节、控制字及定义的 C1，覆盖全部 RC、有效 PC 和异常掩码。具体执行检查遍历所有 16 位输入及宽整数的二次幂边界；纯转换保留浮点状态和填充字节。反例覆盖待处理/未知异常、精确内存范围、畸形元数据，以及分支、平衡/不平衡循环和未知调用后的全路径空槽证明。仅凭 ABI 入口不能证明空栈；目标槽未知或已占用时拒绝发布完整函数。原生 oracle 要求 x64 GCC/Clang；这些测试不认证完整 x87 TOP/标签/状态交付、栈溢出模拟、原生异常与内存故障优先级或 Linux/macOS/x86-32 原生执行。`NeverDLLVMCIntrinsicSemanticTests` 还以 C O0/O2 和未定义行为陷阱执行至 64 位的标量 `llvm.abs`，检查定义的最小有符号值与单次求值。
+`NeverDX86X87IntegerLoadTests` 将原始 `FILD m16/m32/m64` 与 Codegen、HighC、LLVMC 的默认/NoOpt 和 C O0/O2 路径比较，观察完整 binary80、输出保护字节、控制字及定义的 C1，覆盖全部 RC、有效 PC 和异常掩码。具体执行检查遍历所有 16 位输入及宽整数的二次幂边界；纯转换保留浮点状态和填充字节。反例覆盖待处理/未知异常、精确内存范围、畸形元数据，以及分支、平衡/不平衡循环和未知调用后的全路径空槽证明。函数入口按调用约定从空寄存器栈开始，槽内取值未定义；其他位置目标槽未知或已占用时拒绝发布完整函数。原生 oracle 要求 x64 GCC/Clang；这些测试不认证完整 x87 TOP/标签/状态交付、栈溢出模拟、原生异常与内存故障优先级或 Linux/macOS/x86-32 原生执行。`NeverDLLVMCIntrinsicSemanticTests` 还以 C O0/O2 和未定义行为陷阱执行至 64 位的标量 `llvm.abs`，检查定义的最小有符号值与单次求值。
 
 ```sh
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests

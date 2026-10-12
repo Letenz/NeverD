@@ -206,8 +206,9 @@ defined PC and exception-mask combinations. Concrete checks execute every
 state and padding. Pending/unknown waiting state, exact memory extents,
 malformed metadata, and all-path empty-destination admission receive negative
 controls, including branches, balanced/unbalanced loops and unknown calls.
-An ABI entry alone does not prove an empty stack: unknown or occupied FILD
-destinations reject complete function publication. Native oracles require x64
+A function entry starts from the calling convention's empty register
+stack with undefined slot values; an unknown or occupied FILD destination
+elsewhere rejects complete function publication. Native oracles require x64
 GCC/Clang. These checks do not certify complete x87 TOP/tags/status delivery,
 stack-overflow emulation, native exception/memory-fault priority, or native
 Linux/macOS/x86-32 execution. `NeverDLLVMCIntrinsicSemanticTests` additionally
