@@ -2361,14 +2361,19 @@ private:
   /// Calls, opaque/resumable terminators, external successors, unresolved
   /// transfers, and a required fallthrough with no successor make it false.
   /// UseGroupContext=false replays all exact member edges on the frozen owner.
+  /// RequireCompleteFiniteMembers additionally requires every supplied root
+  /// to be a real modeled block entry and every reachable indirect branch to
+  /// belong to the explicit all-consumer edge map. Raw target vectors grant
+  /// no completeness authority in this mode. Nonempty conditional code-root
+  /// input needs separate admission and is refused by this narrow owner.
   std::set<va_t> candidateReachableInstructions(
       const InsnRecord &Candidate, const std::vector<va_t> &CandidateTargets,
       const std::set<va_t> &Roots,
       const std::vector<JumpTableStorageRange> &CandidateStorage,
       size_t *GraphWorkBudget = nullptr, bool *AnalysisComplete = nullptr,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool *ClosedWorldControlFlow = nullptr,
-      bool UseGroupContext = true) const;
+      bool *ClosedWorldControlFlow = nullptr, bool UseGroupContext = true,
+      bool RequireCompleteFiniteMembers = false) const;
   /// Prove that the conditional branch at BranchAddr actually gates the table
   /// LOAD: it dominates the LOAD and only one of its outgoing CFG edges can
   /// reach the access.  A comparison in a sibling/case-body block is not a

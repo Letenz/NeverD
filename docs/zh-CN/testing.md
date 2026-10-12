@@ -917,6 +917,10 @@ GoogleTest 发现使用 `DISCOVERY_MODE PRE_TEST`，因此 CTest 枚举前必须
 
 `ResolverLoadRoles.RestrictedReplayDoesNotBorrowTheGroupHypothesis` 在 H 中额外加入可破坏地址及目标生产者的路径。两种角色查询均拒绝 H、接受独立指定的受限边；普通组模式仍使用 H。冷／热图复用必须保持这一差异。
 
+`ResolverFiniteControl.*` 用非成员的暂定目标子集隐藏写入越界索引的 STORE。子集产生表面有限域，但不得提供联合证明的控制完整性；补回 STORE 后两个索引的数值域也必须拒绝。直接分支、普通间接 RET 及已建模的额外入口为正例；未知／指令内部／guard 根、缺失块边界及块内畸形提前分支须拒绝。恰好／少一步预算要求耗尽后无残留完整性输出。这些用例检查共享图入口，不增加表准入路线。
+
+非空条件代码根也须拒绝这条窄准入，包括因缺失模型而被普通图静默跳过的目标。
+
 `ModuleAdjacentTable.*` 使用真实 ELF32/ELF64 相邻绝对表及两种函数顺序，覆盖最终 x87 返回、独立根、未拆块且绕过 mask 的块内跳转、物理续接间隙、TOP 克隆、畸形地址操作数、改变的 LOAD 地址/宽度和 FS/GS 地址域。地址逃逸、来源别名、重复来源及无 LOAD 的独立上下文均保留前表；后者仅删除 occurrence、保持 LowOps 不变作为对照。三表大预算正例和累计耗尽反例验证早先授权被撤销。扩大物理包络的测试验证最终保留（含后续 LOAD/别名否决），并未单独隔离包络比较。真实 CLI HighC 及优化/不优化 LLVMC 结果在宿主 O0/O2 执行全部 mask 输入类别。这些 fixture 尚未证明新查询对异常图或其他架构的支持。
 
 CI 在 Linux、macOS 和 Windows 上以 Release 开启测试构建，先审核发现的测试清单，

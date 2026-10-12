@@ -856,6 +856,15 @@ owner graph. It retains separate physical, preceding-phase and restricted edge
 sets, exact selector/LOAD/target use points and an owned source snapshot. Round
 reuse compares the current operations, occurrence inventories, boundaries and
 borrowed protection sets by value; a changed member revokes the whole result.
+Both joint graph replays require each supplied root to be an exact real block
+entry and each reachable ordinary indirect branch to belong to the complete
+member edge map. A nonmember's nonempty raw target vector cannot establish
+completeness. Ordinary returns and proved direct branches remain valid exits;
+missing roots, malformed earlier branches and incomplete work refuse the joint
+result. These checks share the graph and budget used by the numerical replay.
+This narrow owner refuses nonempty conditional code-root input until its exact
+local ownership and storage exclusions have their own admission. Ordinary graph
+queries retain their existing conditional-root policy.
 Numerical coordinate membership supplies neither input known bits nor negative
 dependency/origin authority. Other architecture/format admission remains with
 its existing proof owners.

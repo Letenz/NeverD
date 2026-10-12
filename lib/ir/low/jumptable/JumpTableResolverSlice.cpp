@@ -12327,7 +12327,8 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
     const std::vector<JumpTableStorageRange> &CandidateStorage,
     size_t *GraphWorkBudget, bool *AnalysisComplete,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool *ClosedWorldControlFlow, bool UseGroupContext) const {
+    bool *ClosedWorldControlFlow, bool UseGroupContext,
+    bool RequireCompleteFiniteMembers) const {
   if (UseGroupContext && GuardedGroupProofContext)
     CertifiedEdgeOverrides = CandidateTargets.empty()
                                  ? &GuardedGroupProofContext->EmptyEdges
@@ -12336,6 +12337,9 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
     *AnalysisComplete = false;
   if (ClosedWorldControlFlow)
     *ClosedWorldControlFlow = false;
+  if (RequireCompleteFiniteMembers &&
+      (!ClosedWorldControlFlow || !CertifiedEdgeOverrides))
+    return {};
   if (CertifiedEdgeOverrides) {
     const size_t LookupWork =
         orderedSetLookupWork(CertifiedEdgeOverrides->size());
@@ -12390,10 +12394,62 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
   if (!GraphComplete)
     return {};
 
+  bool Closed = false;
   if (ClosedWorldControlFlow) {
     if (!consumeResolverGraphWork(GraphWorkBudget, Graph.Blocks.size()))
       return {};
-    bool Closed = true;
+    Closed = true;
+    if (RequireCompleteFiniteMembers) {
+      auto Product = [&](size_t Count, size_t Unit) {
+        if (Count && Unit > std::numeric_limits<size_t>::max() / Count) {
+          if (GraphWorkBudget)
+            *GraphWorkBudget = 0;
+          return false;
+        }
+        return consumeResolverGraphWork(GraphWorkBudget, Count * Unit);
+      };
+      const size_t RootWork = 16 +
+                              orderedSetLookupWork(Graph.InsnToBlock.size()) +
+                              orderedSetLookupWork(Insns.size());
+      const size_t MemberWork =
+          16 + orderedSetLookupWork(CertifiedEdgeOverrides->size()) +
+          orderedSetLookupWork(Graph.InsnToBlock.size());
+      if (!Product(Roots.size(), RootWork) ||
+          !Product(Snapshot.size(), MemberWork) ||
+          !Product(CandidateTargets.size(), 2))
+        return {};
+      const auto CandidateEdges = CertifiedEdgeOverrides->find(Candidate.Addr);
+      // The narrow finite owner has no conditional code-root admission yet.
+      // The ordinary graph may omit a conditional target with no modeled
+      // block; that omission cannot establish a complete joint owner.
+      Closed = DiscoveredCodeRefSources.empty() &&
+               CandidateEdges != CertifiedEdgeOverrides->end() &&
+               CandidateEdges->second == CandidateTargets;
+      for (va_t Root : Roots) {
+        const auto Position = Graph.InsnToBlock.find(Root);
+        const auto Record = Insns.find(Root);
+        if (Position == Graph.InsnToBlock.end() || Position->second < 0 ||
+            size_t(Position->second) >= Graph.Blocks.size() ||
+            Graph.Blocks[Position->second].Start != Root ||
+            Record == Insns.end() || Record->second.Addr != Root ||
+            Record->second.Size == 0 || Record->second.IsInstructionGuard)
+          Closed = false;
+      }
+      // Check all retained instructions, including a malformed branch hidden
+      // before a block's last instruction. Ordinary RET is an allowed exit.
+      for (const ResolverInsnSnapshot &Record : Snapshot) {
+        const auto Position = Graph.InsnToBlock.find(Record.Addr);
+        if (Position == Graph.InsnToBlock.end() || !Record.IsBranch ||
+            !Record.IsIndirect || Record.IsCall || Record.IsRet)
+          continue;
+        if (!CertifiedEdgeOverrides->count(Record.Addr) ||
+            Position->second < 0 ||
+            size_t(Position->second) >= Graph.Blocks.size() ||
+            !Graph.Blocks[Position->second].LastInsn ||
+            Graph.Blocks[Position->second].LastInsn->Addr != Record.Addr)
+          Closed = false;
+      }
+    }
     for (const ResolverFlowBlock &Block : Graph.Blocks) {
       const ResolverInsnSnapshot *Last = Block.LastInsn;
       const bool NeedsModeledFallthrough =
@@ -12410,7 +12466,6 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
         break;
       }
     }
-    *ClosedWorldControlFlow = Closed;
   }
 
   std::set<va_t> Reachable;
@@ -12433,6 +12488,8 @@ std::set<va_t> CFGBuilder::candidateReachableInstructions(
     (void)Block;
     Reachable.insert(Addr);
   }
+  if (ClosedWorldControlFlow)
+    *ClosedWorldControlFlow = Closed;
   if (AnalysisComplete)
     *AnalysisComplete = true;
   return Reachable;

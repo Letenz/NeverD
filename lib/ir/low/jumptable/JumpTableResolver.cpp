@@ -772,7 +772,8 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
         ProofScratch.candidateReachableInstructions(
             ProofScratch.Insns.at(Branch), Targets,
             *ProofScratch.ActiveJumpTableProofRoots, MemberInfo.StorageRanges,
-            EvidenceBudget, &ReachComplete, &HypotheticalEdges, &Closed);
+            EvidenceBudget, &ReachComplete, &HypotheticalEdges, &Closed,
+            /*UseGroupContext=*/false, /*RequireCompleteFiniteMembers=*/true);
     if (!ReachComplete)
       return Incomplete();
     if (!Closed || !Reachable.count(CurrentFuncEntry))
@@ -832,7 +833,7 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
     const std::set<va_t> Reachable = candidateReachableInstructions(
         Insns.at(Branch), CertifiedEdges.at(Branch), OwnerRoots, JointStorage,
         EvidenceBudget, &ReachComplete, &CertifiedEdges, &Closed,
-        /*UseGroupContext=*/false);
+        /*UseGroupContext=*/false, /*RequireCompleteFiniteMembers=*/true);
     if (!ReachComplete)
       return Incomplete();
     if (!Closed || !Reachable.count(CurrentFuncEntry))

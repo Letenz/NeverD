@@ -1366,6 +1366,16 @@ group publication.
 extra H edge that can corrupt both an address and a target producer. Both role
 queries refuse H and accept its independently supplied restricted map; ordinary
 group mode still uses H. Cold/warm graph reuse must preserve this distinction.
+`ResolverFiniteControl.*` supplies a provisional nonmember target subset that
+hides a STORE of an out-of-range index. The subset admits an apparent finite
+domain, but cannot supply the joint owner's control completeness; exposing the
+STORE independently rejects both selector domains. Direct control, ordinary
+indirect RET and modeled additional roots are positives. Unknown/interior/guard
+roots, missing block boundaries and malformed nonterminal branches refuse.
+Conditional code-root input also refuses this narrow owner, including a target
+silently omitted by the ordinary graph because its model is missing.
+Exact/one-short work checks require no stale completeness output on exhaustion.
+These controls exercise the shared graph gate, not a new table admission route.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
