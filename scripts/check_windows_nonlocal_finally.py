@@ -26,7 +26,7 @@ OBSERVATION = re.compile(
     r"immediate_guards=(\d+) immediate_chain=(\d+) reentries=(\d+)\s*")
 EXPECTED = (123457, 12357, 13567, 1357, 123, 13)
 CONTROL = (128457, 12857, 18567, 1857, 128, 18)
-RUNTIME_CHECKS = (1, 1, 1, 192, 12356, 1256, 12456, 1256, 10, 11, 1, 1, 192)
+RUNTIME_CHECKS = (1, 1, 1, 192, 12356, 1256, 12456, 12456, 10, 11, 1, 1, 192)
 
 
 def observe(result: dict, control: bool = False) -> tuple[int, ...]:

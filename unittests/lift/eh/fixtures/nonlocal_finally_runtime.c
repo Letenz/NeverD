@@ -79,7 +79,11 @@ nonlocal_finally_reenter(unsigned Leave, unsigned Throwing) {
           RaiseException(PROBE_EXCEPTION, 0, 0, NULL);
       } __finally {
         Trace = Trace * 10 + 2;
-        if (Leave)
+        // Unlike the legacy compiler-observation cases above, this guard oracle
+        // must finish the termination handler during exception unwinding.
+        // C4532 makes an abnormal jump out of __finally undefined; an abandoned
+        // runtime guard can prevent the second exception from finding handlers.
+        if (Leave && !AbnormalTermination())
           goto Resume;
       }
       Trace = Trace * 10 + 3;

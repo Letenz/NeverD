@@ -19,6 +19,10 @@ analysis and comparison output belong outside the repository.
 The original MSVC nonlocal-finally fixture now includes a second exception
 immediately after parent resumption and a guarded caller-owned counter helper.
 Its schema 2 oracle checks the x86 chain at each return and at the resume label.
+The new reentry oracle permits a nonlocal jump only during ordinary execution;
+exception unwinding completes its finally before raising the second exception.
+Jumping out of an abnormal finally is MSVC C4532 undefined behavior. The legacy
+compiler observations do not certify guard retirement inside the resumed parent.
 `check_windows_native_seh_resume.py` is a separate x64 LLVM/CRT protocol
 experiment with a physical-stack capture and a parent continuation address.
 Compiler or native-runtime success alone grants no reconstruction receipt;
