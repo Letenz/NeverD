@@ -14,6 +14,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <regex>
 #include <string>
 
 class X86_64_CallAbi : public HighCHostExecutionTest {};
@@ -132,4 +133,90 @@ static double d10(double a, double b, double c, double d, double e, double f,
 }
 )C",
       "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
+}
+
+// A System V variadic function tests AL and saves the argument registers to
+// its register save area, which va_arg reads.  It takes every one of them as
+// a parameter: the integer registers and the vector registers' doubles.
+TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsIntegerArguments) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+#include <stdarg.h>
+static int si(int n, ...) __attribute__((noinline));
+int vsum_i(int a) {
+  unsigned u = (unsigned)a;
+  return si(4, (int)u, (int)(u * 3u + 1u), (int)(u ^ 0x55u), (int)(u + 7u));
+}
+static int si(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 31 + va_arg(ap, int);
+  va_end(ap);
+  return s;
+}
+)C",
+                            "vsum_i", {"vsum_i", "si"}, {0, 1, -1, 0x41, 77});
+}
+
+static const char *const VariadicDoubles = R"C(
+#include <stdarg.h>
+static double sd(int n, ...) __attribute__((noinline));
+int vsum_d(int a) {
+  double x = (double)a;
+  return (int)sd(3, x, x * 2.0, x + 0.5);
+}
+static double sd(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  double s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 3.0 + va_arg(ap, double);
+  va_end(ap);
+  return s;
+}
+)C";
+
+// The floating arguments of a variadic call travel in the vector registers,
+// which the callee saves when AL says the caller set any.
+TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsDoubleArguments) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, VariadicDoubles,
+                            "vsum_d", {"vsum_d", "sd"}, {0, 1, -1, 7, 1000});
+}
+
+// The LLVM route reads the same parameters: its lifted callee reads the
+// doubles a caller passes.
+TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsDoubleArguments) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const auto Source = tmpFile("vsum_d.c");
+  const auto Object = tmpFile("vsum_d.o");
+  const auto IR = tmpFile("vsum_d.ll");
+  std::ofstream(Source) << VariadicDoubles;
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-O2", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  const auto Lifted =
+      exec(ndBin(), {"lift", Object.string(), "-o", IR.string()});
+  ASSERT_EQ(Lifted.exitCode, 0) << Lifted.err;
+  const auto Reference = tmpFile("vsum_d_ref.c");
+  const auto Driver = tmpFile("vsum_d_driver.c");
+  const auto Program = tmpFile("vsum_d.exe");
+  std::ofstream(Reference) << std::regex_replace(
+      std::regex_replace(VariadicDoubles, std::regex("\\bvsum_d\\b"),
+                         "ref_vsum_d"),
+      std::regex("\\bsd\\b"), "ref_sd");
+  std::ofstream(Driver) << "int vsum_d(int);\nint ref_vsum_d(int);\n"
+                           "int main(void) {\n"
+                           "  for (int a = -3; a < 50; a += 7)\n"
+                           "    if (vsum_d(a) != ref_vsum_d(a))\n"
+                           "      return 1;\n"
+                           "  return 0;\n"
+                           "}\n";
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-O1", "-w", IR.string(), Reference.string(),
+                               Driver.string(), "-o", Program.string()});
+  ASSERT_EQ(Built.exitCode, 0) << Built.err;
+  EXPECT_EQ(exec(Program.string(), {}).exitCode, 0);
 }

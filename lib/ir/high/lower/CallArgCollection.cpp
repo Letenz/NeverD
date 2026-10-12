@@ -1282,6 +1282,48 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       continue;
     Args.push_back(Found[K] ? Found[K] : HighExpr::makeUndef(8));
   }
+  // A variadic callee that saves the vector argument registers takes every
+  // integer and vector argument register, as its parameters say: a caller
+  // passes the ones it sets, and the vector registers' low doubles carry its
+  // floating arguments.  Its summary lists none of them.
+  if (VariadicVectorCallees && CallIdx < Ops.size() &&
+      Ops[CallIdx].Opcode == NdOp::CALL && Ops[CallIdx].NumInputs >= 1 &&
+      Ops[CallIdx].Inputs[0].isConst() &&
+      VariadicVectorCallees->count(Ops[CallIdx].Inputs[0].ConstVal)) {
+    const size_t Integers = ParamRegs.size();
+    std::vector<ExprPtr> Stack;
+    if (Args.size() > Integers)
+      Stack.assign(Args.begin() + static_cast<std::ptrdiff_t>(Integers),
+                   Args.end());
+    Args.resize(Integers);
+    for (ExprPtr &Arg : Args)
+      if (!Arg)
+        Arg = HighExpr::makeUndef(TRI.PointerSize);
+    for (uint64_t Vector : TRI.floatingParamRegs(Format)) {
+      std::optional<MedVar> Reaching;
+      for (size_t J = CallIdx; J-- > 0 && !Reaching;) {
+        const MedOp &Prev = Ops[J];
+        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL)
+          break;
+        if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0 &&
+            Prev.Output.RegOff == Vector)
+          Reaching = Prev.Output;
+      }
+      MedVar LiveIn;
+      if (!Reaching && reachingRegAtBlockEntry(CurBlock, Vector, LiveIn))
+        Reaching = LiveIn;
+      ExprPtr Value = Reaching ? medvarToExpr(*Reaching)
+                               : HighExpr::makeUndef(sizeof(double));
+      if (Value && Value->Type && Value->Type->Size > sizeof(double)) {
+        Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
+                                    HighExpr::makeConst(0, 4));
+        Value->Type = NdType::makeInt(sizeof(double), false);
+      }
+      Args.push_back(std::move(Value));
+    }
+    Args.insert(Args.end(), Stack.begin(), Stack.end());
+    return Args;
+  }
   // A summarized callee's floating arguments follow its register arguments,
   // before any on the stack, as its parameters do.
   if (ExactRegisters) {

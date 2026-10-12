@@ -267,6 +267,12 @@ public:
   void setResolvedCalleeNames(const std::map<va_t, std::string> *Names) {
     ResolvedCalleeNames = Names;
   }
+  /// The variadic functions whose register save area holds the vector
+  /// argument registers too (MedFunc::VariadicFirstVectorRegister): a call
+  /// passes each of them every argument register.
+  void setVariadicVectorCallees(const std::set<va_t> *Entries) {
+    VariadicVectorCallees = Entries;
+  }
   void setJumpTables(const std::vector<JumpTable> &JTs) { JumpTables = JTs; }
 
   struct CallIndTarget {
@@ -481,6 +487,7 @@ private:
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
+  const std::set<va_t> *VariadicVectorCallees = nullptr;
   std::vector<JumpTable> JumpTables;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;

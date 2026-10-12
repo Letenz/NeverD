@@ -174,6 +174,10 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   NameResolver.setBinaryImage(&Img);
   NameResolver.setFuncNames(&AllFuncNames);
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
+  std::set<va_t> VariadicVectorCallees;
+  for (const MedFunc &MF : Result.MedFuncs)
+    if (MF.IsVariadic && MF.VariadicFirstVectorRegister >= 0)
+      VariadicVectorCallees.insert(MF.Entry);
 
   const size_t Total = Result.MedFuncs.size();
   // A worker failure invalidates the whole stage. Keep output private until
@@ -199,6 +203,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     Local.setBinaryImage(&Img);
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
+    Local.setVariadicVectorCallees(&VariadicVectorCallees);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});

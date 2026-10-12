@@ -1278,6 +1278,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       Missing = HighExpr::makeUndef(8);
       Op = Missing.get();
     }
+    // A variadic callee saves an argument register the call never set, and
+    // va_arg reads no more arguments than a caller passes: no defined run
+    // observes it, and it passes as zero.
+    if (Defined && Defined->IsVariadic && isUnknownCallOperand(Op)) {
+      Missing = HighExpr::makeConst(
+          0, Op->Type && Op->Type->Size ? Op->Type->Size : 8);
+      Op = Missing.get();
+    }
     Note = stringArgumentNote(*Op);
     if (const HighExpr *Imm = unwrapIntegerView(Op)) {
       if ((Imm->Kind == ExprKind::Var || Imm->Kind == ExprKind::Phi)) {

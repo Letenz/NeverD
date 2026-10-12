@@ -51,6 +51,8 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
 // ---- variadic (...) prologue detection (MedVariadic.cpp) ----
 void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
                     BinaryFormat Fmt);
+void bindX64VariadicVectorCount(MedFunc &Func, const TargetRegInfo &TRI,
+                                uint8_t VectorRegisters);
 
 using med_calling_conv_detail::isEntryLiveInCopy;
 using med_calling_conv_detail::isRenamedEntryLiveInCopy;
@@ -1256,9 +1258,28 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     detectVariadic(Func, TRI, TargetArch, Fmt);
 
     // x86-64/x86: also check for XMM floating-point parameters (no-op on ARM).
-    // A variadic function's FP register save area is not its parameter list.
-    if (!Func.IsVariadic)
+    // A variadic function's FP register save area is not its parameter list,
+    // except where it saves the vector registers (System V x86-64): past the
+    // named ones, they carry the floating arguments a caller passes, each
+    // promoted to double, and va_arg reads them from the area.
+    if (!Func.IsVariadic) {
       detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+    } else if (Func.VariadicFirstVectorRegister >= 0) {
+      detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      const auto VectorRegs = TRI.floatingParamRegs(TargetFormat);
+      size_t Passed = 0;
+      for (size_t K = 0; K < VectorRegs.size(); ++K)
+        if (llvm::any_of(Func.Params, [&](const MedVar &P) {
+              return P.RegOff == VectorRegs[K];
+            })) {
+          ++Passed;
+          if (K >= static_cast<size_t>(Func.VariadicFirstVectorRegister))
+            Func.FPParamScalarBytes[VectorRegs[K]] = sizeof(double);
+        }
+      if (Passed == VectorRegs.size())
+        bindX64VariadicVectorCount(Func, TRI,
+                                   static_cast<uint8_t>(VectorRegs.size()));
+    }
   }
 
   // Recover stack-passed arguments beyond the parameter registers (where they
