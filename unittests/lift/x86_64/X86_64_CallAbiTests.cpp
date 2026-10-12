@@ -133,3 +133,28 @@ static double d10(double a, double b, double c, double d, double e, double f,
 )C",
       "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
 }
+
+// A 32-byte record passes on the stack, and the caller copies it there with
+// two 16-byte stores; the callee reads each field with a floating-point
+// memory operand.  The call passes one argument per eight-byte slot.
+TEST_F(X86_64_CallAbi, ARecordCopiedToTheStackPassesEverySlot) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  double a, b, c, d;
+} H4;
+static double sh4(H4 s, double e) __attribute__((noinline));
+int hfa4d(int x) {
+  H4 s;
+  s.a = (double)(x & 0xff);
+  s.b = (double)((x >> 8) & 0xff);
+  s.c = (double)(x * 3);
+  s.d = (double)(x - 7);
+  return (int)sh4(s, (double)(x ^ 5));
+}
+static double sh4(H4 s, double e) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * e;
+}
+)C",
+                            "hfa4d", {"hfa4d", "sh4", "H4"},
+                            {0, 1, -1, 0x10, 0x1234, 1000});
+}

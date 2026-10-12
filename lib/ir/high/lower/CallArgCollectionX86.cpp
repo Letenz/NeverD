@@ -78,10 +78,27 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       const int64_t Offset = *Entry - *Scan.CallStackEntryOffset;
       if (Offset % SlotBytes != 0 || Offset / SlotBytes >= StackSlots)
         return true;
-      const size_t K =
-          RegisterPositions + static_cast<size_t>(Offset / SlotBytes);
-      if (K < Found.size() && !Found[K])
-        Found[K] = Scan.ToExpr(Store.Inputs[1]);
+      // A wider store, a 16-byte copy of a by-value record, fills one slot
+      // per pointer width it covers, each with its own bytes.
+      const int64_t Bytes = Store.Inputs[1].Size;
+      const int64_t Covered =
+          Bytes > SlotBytes && Bytes % SlotBytes == 0 ? Bytes / SlotBytes : 1;
+      for (int64_t J = 0; J < Covered; ++J) {
+        const size_t K =
+            RegisterPositions + static_cast<size_t>(Offset / SlotBytes + J);
+        if (Offset / SlotBytes + J >= StackSlots || K >= Found.size() ||
+            Found[K])
+          continue;
+        ExprPtr Value = Scan.ToExpr(Store.Inputs[1]);
+        if (Covered > 1) {
+          Value = HighExpr::makeBinop(
+              NdOp::SUBBYTES, Value,
+              HighExpr::makeConst(static_cast<uint64_t>(J * SlotBytes), 4));
+          Value->Type =
+              NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
+        }
+        Found[K] = std::move(Value);
+      }
       return true;
     });
   }
