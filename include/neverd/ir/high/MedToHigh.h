@@ -58,6 +58,12 @@ std::set<int> detectPtrParamIds(const MedFunc &Med);
 /// subexpressions.
 void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 
+/// Allow independent scalar-definition segments of a large function to run
+/// concurrently. MaxThreads is bounded by the process-wide thread setting and
+/// four workers; zero or one keeps the serial path. The caller must reserve
+/// this allowance outside any enclosing parallel function batch.
+void simplifyExprSemantics(std::vector<HighStmt> &Stmts, unsigned MaxThreads);
+
 /// Fold shared branch continuations after dead assignments have been removed.
 /// Preserve external entries and require exact fallthrough destinations.
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
@@ -248,6 +254,13 @@ public:
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
+
+  /// Reserve workers for semantic rewriting inside this conversion. Keep the
+  /// default serial setting when conversions themselves already run in
+  /// parallel.
+  void setSemanticThreadLimit(unsigned MaxThreads) {
+    SemanticThreadLimit = MaxThreads;
+  }
 
   /// Observe expression creation without adding metadata to either IR. The
   /// observer must keep weak references: later transformations can replace an
@@ -502,6 +515,7 @@ private:
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
+  unsigned SemanticThreadLimit = 1;
 };
 
 } // namespace neverd
