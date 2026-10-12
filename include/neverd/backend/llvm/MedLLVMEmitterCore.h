@@ -68,6 +68,7 @@ namespace neverd {
 
 struct SyscallConvention;
 class DebugContext;
+struct MedDynamicStackLookups;
 class MedLLVMEmitterTestPeer;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
@@ -1615,6 +1616,10 @@ private:
   /// varIsFrameDerived (which omits the width ops); used to recognise a dynamic
   /// stack allocation, where SP threads through those ops before the subtract.
   bool varIsStackPtrDerived(const MedVar &V, int Depth = 0) const;
+
+  /// The current function's definitions, PHIs and frame reloads, as the
+  /// shared dynamic-stack classification (MedDynamicStack.h) reads them.
+  MedDynamicStackLookups dynamicStackLookups() const;
 
   /// True when \p V reaches \p Target through identity / width ops — the
   /// backward dual of varIsStackPtrDerived, proving a dynamic adjustment's
