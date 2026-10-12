@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Die Zahl des Operanden mit invertierten Bits zeigen</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>&amp;Code</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Befehle ab der aktuellen Adresse definieren</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Offline-&amp;Paketprüfung...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Lokale Paketnachweise und Analystenbewertungen prüfen</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1447,14 @@ Doppelklicken springt zur Deklaration.</translation>
             <numerusform>%n Deklaration als C gezeigt</numerusform>
             <numerusform>%n Deklarationen als C gezeigt</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Abgebrochen</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Die gespeicherten Variablennamen gehören zu einer anderen Darstellung des Quelltexts</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2076,38 @@ Mit Vorzeichen: %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>Wie %1 geladen wird, ist unbekannt: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Kommentar zu dieser Quelltextzeile:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Neuer Name:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Umbenennen</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Wählen Sie eine deklarierte Variable oder einen Namen im Image zum Umbenennen aus</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Wählen Sie eine Quelltextzeile aus; klappen Sie eingeklappten Code vor dem Kommentieren auf</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>Der ausgewählte Name hat keine Adresse im Image</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Dieser Befehl ist keiner Quelltextzeile zugeordnet.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Diese Quelltextzeile ist keiner Befehlsadresse zugeordnet; der Funktionseinstieg wird angezeigt</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2246,10 @@ Mit Vorzeichen: %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Hier erscheinen die Dateien, die Sie öffnen. Wählen Sie „Neu“ oder ziehen Sie eine Datei auf dieses Fenster.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Zuletzt geöffnet: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2372,10 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Plattform: %1, aus dem Code erkannt: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>An %1 ist bereits ein Befehl definiert</translation>
     </message>
 </context>
 <context>
@@ -2548,6 +2612,21 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Close</source>
         <translation>Schließen</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Analyseprozess gestoppt.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Nur lesende Analyseanfragen sind erlaubt.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>Der Analyseprozess kann den Analysezustand nicht wiederherstellen.</translation>
     </message>
 </context>
 </TS>

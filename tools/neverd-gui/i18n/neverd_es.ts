@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Mostrar el número del operando con sus bits invertidos</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>Códi&amp;go</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Definir instrucciones a partir de la dirección actual</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Revisión de &amp;paquetes sin conexión...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Inspeccionar la evidencia local de los paquetes y las revisiones de los analistas</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1447,14 @@ Haz doble clic para ir a la declaración.</translation>
             <numerusform>%n declaración mostrada en C</numerusform>
             <numerusform>%n declaraciones mostradas en C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Cancelado</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Los nombres de variables guardados pertenecen a otra representación del código fuente</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2076,38 @@ Con signo: %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>Se desconoce cómo cargar %1: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Comentario de esta línea de código fuente:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Nuevo nombre:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Renombrar</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Selecciona una variable declarada o un nombre de la imagen para renombrarlo</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Selecciona una línea de código fuente; despliega el código plegado antes de comentarlo</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>El nombre seleccionado no tiene una dirección en la imagen</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Esta instrucción no tiene una asignación de dirección a una línea de código fuente.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Esta línea de código fuente no tiene una asignación a la dirección de una instrucción; se muestra la entrada de la función</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2246,10 @@ Con signo: %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Aquí aparecen los archivos que abre. Elija Nuevo o suelte un archivo en esta ventana.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Abierto por última vez: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2372,10 @@ Con signo: %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Plataforma: %1, detectada en el código: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>Ya hay una instrucción definida en %1</translation>
     </message>
 </context>
 <context>
@@ -2548,6 +2612,21 @@ Con signo: %4</translation>
     <message>
         <source>Close</source>
         <translation>Cerrar</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>El proceso de análisis se detuvo.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Solo se permiten lecturas del análisis.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>El proceso de análisis no puede restaurar el estado del análisis.</translation>
     </message>
 </context>
 </TS>

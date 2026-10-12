@@ -516,6 +516,11 @@ constexpr size_t kMaxEmbeddedDataLen = 4096;
 /// therefore generous and only guards against an abnormally huge segment.
 constexpr size_t kMaxSingleGlobalEmbedLen = 1u << 20; // 1 MiB
 
+/// Maximum text bytes of one page of a paged code view (source or IR): a
+/// page that would pass it ends early and the next page starts at the line
+/// after it, so only a single longer line fails.
+constexpr size_t kMaxViewPageBytes = 2u << 20; // 2 MiB
+
 /// The widest alignment an embedded copy of image bytes keeps for the
 /// addresses in it: a 64-byte AVX-512 aligned operand.  A copy starts at an
 /// address aligned as the data it holds needs, so an aligned access to it

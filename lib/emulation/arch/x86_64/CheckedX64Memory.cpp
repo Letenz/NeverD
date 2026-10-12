@@ -293,6 +293,8 @@ llvm::Error CheckedX64Backend::executeString(const cs_insn &I, unsigned Size,
                              sizeof(uint8_t));
       *Memory->physicalPointer(P.Physical + Address % x64::PageSize) =
           uint8_t(Value >> (N * CHAR_BIT));
+      Memory->recordRAMInitialization(P.Physical + Address % x64::PageSize,
+                                      sizeof(uint8_t));
     }
   } else if (Operation == StringOperation::Load) {
     // AL/AX preserve the untouched accumulator bits. EAX zero-extends.

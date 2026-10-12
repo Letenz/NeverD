@@ -426,6 +426,33 @@ TEST_F(DriverImageValidation, UnknownProcessorFieldRemainsUnsupported) {
   EXPECT_FALSE(Result->NTStatus);
 }
 
+TEST_F(DriverImageValidation,
+       UndefinedDoubleShiftRetainsItsReasonBeforeScenarioDispatch) {
+  // shrd ax, dx, 17 has an undefined destination and flags, followed by ret.
+  constexpr uint8_t Code[] = {0x66, 0x0f, 0xac, 0xd0, 0x11, 0xc3};
+  replaceEntry(Code);
+  DriverOptions Options;
+  Options.Backend = ExecutionBackendKind::Unicorn;
+  Options.Contract = ExecutionContract::CheckedX64;
+  Options.Requests.push_back({DriverRequestKind::Create});
+  Options.Unload = true;
+  auto Result = emulateDriver(writeModified(), Options);
+  ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+  EXPECT_EQ(Result->Stop, DriverStopReason::UnsupportedInstruction);
+  EXPECT_EQ(Result->Instructions, 1u);
+  EXPECT_FALSE(Result->NTStatus);
+  EXPECT_TRUE(Result->Calls.empty());
+  EXPECT_TRUE(Result->Requests.empty());
+  EXPECT_FALSE(Result->UnloadCompleted);
+  EXPECT_NE(Result->Diagnostic.find("double-shift count 17"),
+            std::string::npos);
+  EXPECT_NE(Result->Diagnostic.find("16-bit"), std::string::npos);
+  EXPECT_NE(Result->Diagnostic.find("undefined"), std::string::npos);
+  ASSERT_TRUE(Result->Fault);
+  EXPECT_EQ(Result->Fault->Kind, "invalid_instruction");
+  EXPECT_EQ(Result->Fault->PC, Result->PC);
+}
+
 TEST_F(DriverImageValidation, ExecuteOnlyCodeDoesNotRequireDataReadPermission) {
   bool Changed = false;
   for (const auto &Reference : Object->sections()) {

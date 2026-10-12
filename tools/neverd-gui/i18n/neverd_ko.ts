@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>피연산자의 숫자를 비트를 반전하여 표시합니다</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>코드(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>현재 주소부터 명령어를 정의합니다</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>오프라인 패키지 검토(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>로컬 패키지 증거와 분석가 검토를 살펴봅니다</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1444,14 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>C로 표시한 선언 %n개</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>취소됨</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>저장된 변수 이름은 다른 소스 렌더링에 속합니다</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2072,38 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>%1을(를) 불러오는 방법을 알 수 없습니다: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>이 소스 줄의 주석:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>새 이름:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>이름 바꾸기</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>이름을 바꿀 선언된 변수나 이미지의 이름을 선택하세요</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>소스 줄을 선택하세요. 접힌 코드는 펼친 뒤 주석을 다세요</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>선택한 이름에는 이미지 주소가 없습니다</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>이 명령어에는 소스 줄 주소 매핑이 없습니다.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>이 소스 줄에는 명령어 주소 매핑이 없습니다. 함수 진입점을 표시합니다</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2242,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>연 파일이 여기에 표시됩니다. [새 파일]을 선택하거나 이 창에 파일을 놓으세요.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>마지막으로 연 날짜: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2368,10 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>플랫폼: %1, 코드에서 판별: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1에 이미 명령어가 정의되어 있습니다</translation>
     </message>
 </context>
 <context>
@@ -2544,6 +2608,21 @@ Signed: %4</source>
     <message>
         <source>Close</source>
         <translation>닫기</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>분석 프로세스가 중지되었습니다.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>분석 읽기만 허용됩니다.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>분석 프로세스가 분석 상태를 복원할 수 없습니다.</translation>
     </message>
 </context>
 </TS>

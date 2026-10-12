@@ -1037,12 +1037,16 @@ public:
   std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
   /// The object code indexes at \p Addr: one a symbol sizes, else the
   /// stretch of its data section between the sized objects around it (a
-  /// table a compiler emits under an assembler-local label).
+  /// table a compiler emits under an assembler-local label), cut at the data
+  /// symbols around \p Addr, which begin objects even when unsized.
   std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
   /// The image's sized data objects by address, each as large as the
   /// largest symbol there, and the furthest end of any object up to each.
   std::vector<std::pair<va_t, uint64_t>> SizedObjects;
   std::vector<va_t> SizedObjectReach;
+  /// Where the image's data symbols begin, sized or not, in order: a PDB
+  /// public names an object without sizing it.
+  std::vector<va_t> DataSymbolStarts;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.

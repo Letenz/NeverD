@@ -16,6 +16,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -731,7 +732,10 @@ llvm::Error CheckedX64Backend::execute(const cs_insn &I) {
     // Counts above the operand width have undefined destination and flags.
     // Reject them before memory admission or observers, on every transport.
     if ((RawCount & Mask) > X.operands[0].size * CHAR_BIT)
-      return llvm::make_error<UnsupportedExecutionError>();
+      return llvm::make_error<diagnostic::InstructionRejectionError>(
+          llvm::formatv(diagnostic::UndefinedDoubleShift, RawCount & Mask,
+                        X.operands[0].size * CHAR_BIT)
+              .str());
   }
   const auto Bit = bitAccess(I.id);
   const bool BitWrites = Bit == BitAccess::Update;

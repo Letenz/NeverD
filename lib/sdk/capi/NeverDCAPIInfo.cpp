@@ -269,8 +269,12 @@ const char *neverd_unwind_frame_json(neverd_session_t Sess,
   const ExceptionFunction *F = S->Img.ExceptionMetadata.findFunction(Address);
   if (!F || !F->CodeRange.isValid())
     return dupStr(std::string("null"));
+  // A primary record's frame spans the chained fragments that continue its
+  // body, which its handler governs.
+  const va_t End = F->Kind == RuntimeFunctionKind::Chained ? F->CodeRange.End
+                                                           : F->contiguousEnd();
   llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
-                         {"end", vaHex(F->CodeRange.End)},
+                         {"end", vaHex(End)},
                          {"encoding", getExceptionEncodingName(F->Encoding)},
                          {"language_data", F->hasLanguageTable()}};
   if (!F->PersonalityName.empty())
