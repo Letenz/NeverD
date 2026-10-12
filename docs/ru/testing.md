@@ -1798,3 +1798,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+Проверяемое выполнение KVM x64 передаёт полный цикл инструкций частному потоку vCPU через `withExecutionOwner`. Допуск инструкций, транзакции RAM, обработчики и бюджеты остаются в этом цикле; каждый нативный вход сохраняет своё управление и приоритет исключений. Вызывающий поток контролирует активные входы и возвращается после подтверждения отмены. Обработчики CPU не должны зависеть от локального состояния вызывающего потока. Завершение отдельного нативного входа по-прежнему выполняется вызывающим потоком. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` и `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` проверяют владение и реальную отмену; изменение не сертифицирует восстановленный драйвер.

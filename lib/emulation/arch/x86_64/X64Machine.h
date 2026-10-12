@@ -11,6 +11,8 @@
 
 #include "neverd/emulation/CPU.h"
 
+#include "llvm/ADT/STLFunctionalExtras.h"
+
 #include <chrono>
 
 namespace neverd::emulation {
@@ -115,6 +117,13 @@ public:
   virtual llvm::Error runTo(X64MachineState &State, uint64_t PageTableRoot,
                             MachineRunControl Control,
                             llvm::ArrayRef<uint64_t> Stops);
+  /// Own a complete checked loop on the transport's execution thread, when
+  /// available. Admission, memory leases, hooks and budgets stay in that loop.
+  /// The default transport keeps the caller as its execution owner.
+  virtual llvm::Error
+  withExecutionOwner(llvm::function_ref<llvm::Error()> Loop) {
+    return Loop();
+  }
 };
 } // namespace neverd::emulation
 #endif

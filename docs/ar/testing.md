@@ -1755,3 +1755,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+يفوّض تنفيذ KVM x64 المتحقق منه حلقة التعليمات كاملة إلى خيط vCPU الخاص عبر `withExecutionOwner`. تبقى موافقة التعليمات ومعاملات RAM والاستدعاءات والميزانيات داخل الحلقة، ويحتفظ كل دخول أصلي بضوابطه وأولوية الاستثناءات. يراقب المستدعي المداخل النشطة ويؤكد اكتمال الإلغاء قبل العودة. لا يجوز أن تعتمد استدعاءات CPU على الحالة المحلية لخيط المستدعي. يبقى إكمال الدخول الأصلي المستقل على خيط المستدعي. يتحقق `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` و`OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` من الملكية والإلغاء الفعلي؛ ولا يشكل هذا التغيير اعتمادًا لبرنامج تشغيل مستعاد.

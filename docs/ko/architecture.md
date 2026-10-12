@@ -1503,3 +1503,5 @@ DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를
 드라이버 로더는 검증된 파일의 SHA-256에 재배치 사실을 연결합니다. PE 재구축은 소유된 사실을 사용하고 진단 DIR64 레코드를 출력하기 전에 가져오기 수정이나 메타데이터 형식화가 대체한 필드를 제외합니다. 이 계층은 생성 포인터의 재배치를 추론하거나 커널 런타임 거부를 해제할 수 없습니다.
 
 `isCanonicalX87Wait`는 일반 registration 전이와 검증된 local-finally 반환에 같은 정상 경로 프레임 보존 규칙을 제공합니다. FWAIT 연산과 예외 디스패치는 유지됩니다. 다른 intrinsic 및 잘못된 형식은 여전히 불투명하며, 이 규칙은 비지역 finally 종료나 네이티브 복원 증명을 제공하지 않습니다.
+
+검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.

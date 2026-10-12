@@ -36,11 +36,19 @@ public:
   /// execution lease. It must not publish a successful instruction's state.
   llvm::Error run(MachineRunControl Control, StateTransfer Prepare,
                   StateTransfer Capture, Completion Complete = {});
+  /// Delegate a complete checked execution loop to the vCPU worker. The loop
+  /// owns ISA admission, memory leases and its instruction/time budgets.
+  /// Its native entries retain their individual controls; the caller monitors
+  /// those entries and acknowledges any cancellation before returning. No
+  /// callback or stop token may escape this synchronous ownership interval.
+  llvm::Error withExecutionOwner(Completion Loop);
   KvmRunControl(const KvmRunControl &) = delete;
   KvmRunControl &operator=(const KvmRunControl &) = delete;
 
 private:
   KvmRunControl();
+  llvm::Error dispatch(MachineRunControl, StateTransfer, StateTransfer,
+                       Completion, Completion);
   struct State;
   std::unique_ptr<State> Impl;
 };

@@ -36,6 +36,11 @@ public:
       return diagnostic::error(diagnostic::KvmRunControl);
     return this->Control->run(Control, Prepare, Capture, Complete);
   }
+  llvm::Error withExecutionOwner(KvmRunControl::Completion Loop) {
+    if (!Control)
+      return diagnostic::error(diagnostic::KvmRunControl);
+    return Control->withExecutionOwner(Loop);
+  }
   virtual ~KvmVM() {
     // Stop the entry worker before unmapping its run state or closing the vCPU.
     Control.reset();
