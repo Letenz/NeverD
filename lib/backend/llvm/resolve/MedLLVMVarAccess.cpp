@@ -964,6 +964,9 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
         if (llvm::Constant *Code = resolveLiftedCodeAddress(V.ConstVal))
           return Builder.CreatePtrToInt(Code, sizeToType(V.Size),
                                         "codeptr.prov");
+        // A string literal among the code is data a symbol names.
+        if (llvm::Constant *Literal = resolveSymbolStringLiteral(V.ConstVal))
+          return Builder.CreatePtrToInt(Literal, sizeToType(V.Size), "literal");
         if (!FatalCodePointerResolution && !FatalDataPointerResolution)
           syncError() << "med_llvm_emitter: relocatable code address 0x"
                       << llvm::utohexstr(V.ConstVal) << " in "

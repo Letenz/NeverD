@@ -67,6 +67,7 @@
 namespace neverd {
 
 struct SyscallConvention;
+class DebugContext;
 class MedLLVMEmitterTestPeer;
 class MedLLVMProvenanceTestPeer;
 class LLVMSourceMap;
@@ -74,6 +75,10 @@ class LLVMSourceMap;
 class MedLLVMEmitter {
 public:
   void setSourceMap(LLVMSourceMap *Map) { SourceMap = Map; }
+  /// Debug information to name the image's data by where the image's own
+  /// symbols do not: publics a single function's load leaves unread.  Its
+  /// lookups may run from every shard at once.
+  void setDebugContext(const DebugContext *Context) { Dbg = Context; }
   /// Emit \p Funcs into a fresh module in \p LCtx.
   ///
   /// For parallel (sharded) emission each worker owns its own LLVMContext,
@@ -571,6 +576,11 @@ private:
 
   llvm::Constant *tryResolveGlobalData(uint64_t Addr,
                                        uint16_t DataSizeHint = 0);
+  /// The read-only copy of the string literal an image symbol spells at
+  /// \p Addr (StringLiteralSymbols.h), every byte of it, or null.  MSVC puts
+  /// literals among a kernel's code, where an address of one has no code
+  /// identity to take.
+  llvm::Constant *resolveSymbolStringLiteral(va_t Addr);
   /// Resolve a direct memory-address occurrence without discarding its
   /// relocation owner. COPY-folded exact occurrences use the owned route;
   /// legacy numeric constants retain the value-only fallback.
@@ -1992,6 +2002,7 @@ private:
   llvm::Function *CurFunc = nullptr;
   const MedFunc *CurMedFunc = nullptr;
   LLVMSourceMap *SourceMap = nullptr;
+  const DebugContext *Dbg = nullptr;
   std::optional<MedVar> MutableReturnValue;
   std::map<const MedFunc *, MedMutableSourcePlan> MutableSourcePlans;
   std::map<std::pair<int, int>, llvm::AllocaInst *> VarAllocs;
@@ -2037,10 +2048,12 @@ private:
   // declarations.
   std::map<std::pair<va_t, int>, llvm::BasicBlock *> PreparedFuncBlocks;
   std::map<va_t, llvm::BasicBlock *> LiftedCodeBlocks;
-  /// Exclusive end of each declared MedFunc, so an interior continuation IP
-  /// (MSVC catch `lea rip, parent+k`) can GEP from that function before or
-  /// after its body exists.
-  std::map<va_t, va_t> EmittedFuncCodeEnds;
+  /// The code of each declared MedFunc by its entry, in address order: its
+  /// body and the parts that lie apart from it, so an interior continuation
+  /// IP (MSVC catch `lea rip, parent+k`) can GEP from that function before or
+  /// after its body exists.  What lies between the parts -- other functions,
+  /// a string literal MSVC put among them -- is no part of the function.
+  std::map<va_t, std::vector<std::pair<va_t, va_t>>> EmittedFuncCodeRanges;
   /// Image VAs that a sibling SEH scope names as its filter/finally callback.
   /// Those functions are typed with the Win64 callback ABI so native lowering
   /// can authenticate them.
