@@ -1467,6 +1467,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>Сохранённые имена переменных относятся к другому представлению исходного кода</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Развернуть блок (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Свернуть блок (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

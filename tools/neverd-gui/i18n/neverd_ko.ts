@@ -1461,6 +1461,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>저장된 변수 이름은 다른 소스 렌더링에 속합니다</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>블록 펼치기 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>블록 접기 (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

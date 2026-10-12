@@ -962,10 +962,12 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   if (session(s)->path.ends_with("code-edits.bin") ||
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
+      session(s)->path.ends_with("code-folding.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
       session(s)->path.ends_with("tab-sync-paged.bin")) {
     const bool localReferences =
         session(s)->path.ends_with("local-references.bin");
+    const bool codeFolding = session(s)->path.ends_with("code-folding.bin");
     const bool paged =
         localReferences || session(s)->path.ends_with("tab-sync-paged.bin");
     std::string full = "#include <stdint.h>\n"
@@ -974,6 +976,26 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                        "  const char *message = \"v0 v1 function_22\";\n"
                        "  return v1;\n"
                        "}\n";
+    if (codeFolding)
+      full = "#include <stdint.h>\n"
+             "int32_t function_20(int32_t v0) {\n"
+             "  int32_t v7 = v0;\n"
+             "  if (v7) {\n"
+             "    while (v7) {\n"
+             "      --v7;\n"
+             "    }\n"
+             "  } else {\n"
+             "    for (int32_t v1 = 0; v1 < 2; ++v1) {\n"
+             "      v7 += v1;\n"
+             "    }\n"
+             "  }\n"
+             "  switch (v7) {\n"
+             "  case 2:\n"
+             "    v7 = 3;\n"
+             "    break;\n"
+             "  }\n"
+             "  return v7;\n"
+             "}\n";
     if (localReferences)
       full = "#include <stdint.h>\n"
              "struct Box { int64_t v7; };\n"
@@ -1002,7 +1024,7 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
     for (auto i = first; i < end; ++i) {
       const bool mapped =
           (session(s)->path.ends_with("code-edits-mapped.bin") && i == 2) ||
-          (paged && i == 550);
+          (codeFolding && i == 5) || (paged && i == 550);
       rows.push_back({{"line", i},
                       {"object_id", "source:" + std::to_string(i)},
                       {"kind", "source"},

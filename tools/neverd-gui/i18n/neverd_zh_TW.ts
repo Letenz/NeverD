@@ -1461,6 +1461,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>已儲存的變數名稱屬於另一份原始碼呈現</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>展開程式碼區塊 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>摺疊程式碼區塊 (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

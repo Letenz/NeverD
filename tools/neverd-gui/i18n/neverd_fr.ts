@@ -1464,6 +1464,14 @@ Double-cliquez pour aller à la déclaration.</translation>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>Les noms de variables enregistrés appartiennent à un autre rendu du source</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Déplier le bloc (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Replier le bloc (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

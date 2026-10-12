@@ -1464,6 +1464,14 @@ Doppelklicken springt zur Deklaration.</translation>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>Die gespeicherten Variablennamen gehören zu einer anderen Darstellung des Quelltexts</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Block aufklappen (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Block zuklappen (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

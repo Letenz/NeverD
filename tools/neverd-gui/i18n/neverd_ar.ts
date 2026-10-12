@@ -1476,6 +1476,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>أسماء المتغيرات المحفوظة تخص عرضًا مختلفًا للمصدر</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>توسيع الكتلة (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>طي الكتلة (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>

@@ -29,8 +29,11 @@ public:
   struct Line {
     StyledLine styled;
     QVector<Address> addresses;
-    /// The line shows a folded library operation.
+    /// The line shows a folded summary.
     bool folded = false;
+    int sourceLine = 0;
+    QString block;
+    bool blockFolded = false;
   };
 
   CodeText(Session &session, QWidget *parent = nullptr);
@@ -92,6 +95,8 @@ public:
   /// writer puts beside the declaration names it.
   std::optional<Address> objectAddress(const QString &name) const;
   void setFolded(bool folded);
+  /// Fold the header's block, or the innermost block containing the cursor.
+  bool setCurrentBlockFolded(bool folded);
   const QString &status() const { return status_; }
   /// Pages of the current function are still arriving.
   bool loading() const { return loading_; }
@@ -147,6 +152,8 @@ private:
   /// Position in the displayed text of a line and column.
   int displayPosition(int line, int column) const;
   QString regionAt(const QPoint &position) const;
+  QString blockAt(const QPoint &position) const;
+  void setRegionFolded(const QString &id, bool folded);
   void highlightLine(Line &line, bool &inComment) const;
   void updateMetrics();
   void updateRange();
@@ -176,6 +183,8 @@ private:
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;
   bool interrupted_ = false;
   bool foldPreludeAfterLoad_ = true;
+  QSet<QString> blocksAfterLoad_;
+  QString blockStructureAfterLoad_;
   /// The first page's prelude: lines and end_byte.
   QJsonObject prelude_;
   /// The language the first page names, and how many declarations it shows

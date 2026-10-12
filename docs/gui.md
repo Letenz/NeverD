@@ -322,6 +322,17 @@ Encoding Standard, and a string reads as text only when its characters keep to
 one script. Settings from versions that searched one code page keep it as the
 preferred one.
 
+Pseudocode, C and LLVM C also fold multiline brace blocks, including `if/else`,
+`while`, `do`, `for` and `switch`. Click the arrow beside the header's line number,
+or use Ctrl+Shift+[ to collapse the current block and Ctrl+Shift+] to expand it;
+Keypad -/+ work too. The header and closing line stay visible, so an `else`
+keeps its own arrow. Nested blocks retain their folding state when their parent
+is expanded. Line numbers remain the original source numbers, and copying or
+exporting includes the hidden code. Instruction and local-reference navigation
+and text search expand every fold hiding the target. Refreshing the same function
+preserves block folds while its brace structure is unchanged. Braces in comments and
+quoted strings do not define folding ranges; incomplete source stays expanded.
+
 **Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
 command line) lists every instruction that refers to a string: directly, into
 the middle of one (the text from that character on), or by reading a pointer
@@ -379,6 +390,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
 | Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
+| Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the current pseudocode brace block |
 | Ctrl+F5 | Write the function's pseudocode to a C file |
 | Alt+A | String literal options |
 | Ctrl+W | Save the database |

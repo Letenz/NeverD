@@ -198,6 +198,104 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void nestedPseudocodeBlocksFoldWithoutMovingAssembly_data() {
+    QTest::addColumn<QString>("representation");
+    QTest::newRow("pseudocode") << QStringLiteral("source");
+    QTest::newRow("explicit-c") << QStringLiteral("c");
+    QTest::newRow("llvm-c") << QStringLiteral("llvmc");
+  }
+
+  void nestedPseudocodeBlocksFoldWithoutMovingAssembly() {
+    QFETCH(QString, representation);
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("code-folding.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench
+        .action(representation == QLatin1String("llvmc")
+                    ? ActionId::ViewLLVMC
+                    : ActionId::ViewPseudocode)
+        ->trigger();
+    auto *view = bench.codeView(representation == QLatin1String("llvmc")
+                                    ? QStringLiteral("llvmc")
+                                    : QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(representation);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading() && code->lineCount() == 19);
+    const QString original = code->allText();
+    assembly->navigate(Base + 0x180);
+    QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+
+    // The while arrow uses the fixed line-number gutter, without selecting
+    // code or changing assembly. Its parent retains the child's fold state.
+    code->setCursorLine(4);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int height = int(std::ceil(metrics.lineSpacing()));
+    const QPoint arrow(int(6 + 4.25 * metrics.horizontalAdvance('M')),
+                       (4 - code->verticalScrollBar()->value()) * height +
+                           height / 2);
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, arrow);
+    QCOMPARE(code->lineCount(), 18);
+    code->setCursorLine(3);
+    QTest::keyClick(code, Qt::Key_BracketLeft,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(code->lineCount(), 16);
+    QTest::keyClick(code, Qt::Key_BracketRight,
+                    Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(code->lineCount(), 18);
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+
+    QVERIFY(code->findText(QStringLiteral("v7 = v0"), true));
+    const auto target = code->renameTarget();
+    QVERIFY(target);
+    const auto references = code->localReferences(*target);
+    const auto hidden =
+        std::find_if(references.cbegin(), references.cend(),
+                     [](const auto &ref) { return ref.line == 5; });
+    QVERIFY(hidden != references.cend());
+    code->setCursorLine(1);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    QCOMPARE(code->lineCount(), 3);
+    QVERIFY(
+        !code->currentAddress()); // The body cannot supply a header address.
+    QTest::keyClick(code, Qt::Key_Home, Qt::ControlModifier);
+    QTest::keyClick(code, Qt::Key_End, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(code->selectedText(), original);
+    QCOMPARE(code->allText(), original);
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("--v7"), true));
+    QCOMPARE(code->lineCount(), 19);
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+    code->setCursorLine(1);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    QVERIFY(code->selectLocalReference(*target, *hidden));
+    QCOMPARE(code->lineCount(), 19);
+    QCOMPARE(code->selectedText(), QStringLiteral("v7"));
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+    QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+
+    // A refresh preserves folds, and explicit instruction navigation expands
+    // all blocks hiding its mapped original row.
+    code->setCursorLine(3);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    code->load(Base + 0x140, representation);
+    QTRY_VERIFY(!code->loading() && code->lineCount() == 16);
+    code->selectAddress(Base + 0x142);
+    QCOMPARE(code->lineCount(), 19);
+    QCOMPARE(code->currentAddress(), std::optional<Address>(Base + 0x142));
+    QVERIFY(code->commentTarget());
+    QCOMPARE(code->commentTarget()->value("line").toInt(), 5);
+  }
+
   void localVariableReferencesStayInTheirCodeWindow_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("renamed");

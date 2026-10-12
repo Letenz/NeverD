@@ -266,6 +266,8 @@ void CodeText::clear() {
   prelude_ = {};
   declarations_.reset();
   library_.reset({}, {}, {});
+  blocksAfterLoad_.clear();
+  blockStructureAfterLoad_.clear();
   lines_.clear();
   function_.reset();
   status_.clear();
@@ -306,6 +308,8 @@ void CodeText::load(Address function, const QString &representation) {
   // a new function opens at its definition, its prelude folded.
   foldAfterLoad_ = same && library_.libraryFolded();
   foldPreludeAfterLoad_ = !same || library_.isFolded(PreludeRegion);
+  blocksAfterLoad_ = same ? library_.foldedBlocks() : QSet<QString>();
+  blockStructureAfterLoad_ = same ? library_.blockStructure() : QString();
   library_.reset({}, {}, {});
   emit foldingChanged();
   status_ = tr("Decompiling…");
@@ -337,11 +341,14 @@ void CodeText::request(int offset, quint64 serial) {
         // Folding needs the whole function: regions span pages.
         library_.reset(source_, sourceRows_,
                        regionsValid_ ? foldRegions() : QJsonArray(),
-                       byteOffset_);
+                       byteOffset_, false, CodeView::isSource(representation_));
         if (foldAfterLoad_)
           library_.setFolded(true);
         if (foldPreludeAfterLoad_)
           library_.setRegionFolded(PreludeRegion, true);
+        if (!blocksAfterLoad_.isEmpty() &&
+            library_.blockStructure() == blockStructureAfterLoad_)
+          library_.setFoldedBlocks(blocksAfterLoad_);
         // Unfolded pages are already colored and mapped. Only a changed
         // projection requires rebuilding earlier lines.
         rebuildLines(!library_.anyFolded());
@@ -585,6 +592,17 @@ void CodeText::rebuildLines(bool append) {
   }
   renderedChars_ = display.size();
   renderedRows_ = rows.size();
+  for (int i = 0; i < lines_.size(); ++i) {
+    lines_[i].sourceLine = folding ? library_.sourceLineAt(lineStarts_[i]) : i;
+    lines_[i].block.clear();
+    lines_[i].blockFolded = false;
+  }
+  if (folding)
+    for (const auto &block : library_.blocks())
+      if (block.line >= 0 && block.line < lines_.size()) {
+        lines_[block.line].block = block.id;
+        lines_[block.line].blockFolded = block.folded;
+      }
   if (folding)
     for (const auto &[begin, end] : library_.foldedRanges()) {
       auto it =
@@ -610,7 +628,9 @@ void CodeText::rebuildLines(bool append) {
                 });
       line.styled.spans = spans;
     }
-  gutterChars_ = std::max(3, int(QString::number(lines_.size()).size()));
+  const int lastSourceLine =
+      lines_.isEmpty() ? 1 : lines_.back().sourceLine + 1;
+  gutterChars_ = std::max(3, int(QString::number(lastSourceLine).size()));
   cursorLine_ =
       std::clamp(previousLine, 0, std::max(0, int(lines_.size()) - 1));
   updateRange();
@@ -632,6 +652,63 @@ QString CodeText::regionAt(const QPoint &position) const {
   return library_.regionAt(displayPosition(line, columnAt(line, position.x())));
 }
 
+QString CodeText::blockAt(const QPoint &position) const {
+  const int line = lineAt(position.y());
+  const int left = Margin + int((gutterChars_ + 0.5) * charWidth_);
+  const int right = Margin + int((gutterChars_ + 2) * charWidth_);
+  return line >= 0 && line < lines_.size() && position.x() >= left &&
+                 position.x() < right
+             ? lines_[line].block
+             : QString();
+}
+
+void CodeText::setRegionFolded(const QString &id, bool folded) {
+  if (!library_.hasRegion(id) || library_.isFolded(id) == folded)
+    return;
+  const int cursor =
+      library_.originalPosition(displayPosition(cursorLine_, cursorColumn_));
+  const auto anchor =
+      anchor_ ? std::optional<int>(library_.originalPosition(
+                    displayPosition(anchor_->first, anchor_->second)))
+              : std::nullopt;
+  const int top = library_.originalPosition(
+      displayPosition(verticalScrollBar()->value(), 0));
+  library_.setRegionFolded(id, folded);
+  rebuildLines();
+  auto projected = [this](int original) {
+    const int position = library_.projectedPosition(original);
+    const auto next =
+        std::upper_bound(lineStarts_.cbegin(), lineStarts_.cend(), position);
+    const int line = std::max(0, int(next - lineStarts_.cbegin()) - 1);
+    return std::pair{line, std::clamp(position - lineStarts_[line], 0,
+                                      int(lines_[line].styled.text.size()))};
+  };
+  if (!lines_.isEmpty()) {
+    const auto at = projected(cursor);
+    cursorLine_ = at.first;
+    cursorColumn_ = at.second;
+    anchor_ = anchor ? std::optional(projected(*anchor)) : std::nullopt;
+    verticalScrollBar()->setValue(projected(top).first);
+  }
+  selectedAddress_.reset();
+  marked_.clear();
+  viewport()->update();
+  emit foldingChanged();
+}
+
+bool CodeText::setCurrentBlockFolded(bool folded) {
+  if (loading_ || cursorLine_ < 0 || cursorLine_ >= lines_.size())
+    return false;
+  const auto id =
+      !lines_[cursorLine_].block.isEmpty()
+          ? lines_[cursorLine_].block
+          : library_.blockAt(displayPosition(cursorLine_, cursorColumn_));
+  if (id.isEmpty())
+    return false;
+  setRegionFolded(id, folded);
+  return true;
+}
+
 void CodeText::setFolded(bool folded) {
   library_.setFolded(folded);
   rebuildLines();
@@ -642,6 +719,14 @@ bool CodeText::event(QEvent *event) {
   if (event->type() == QEvent::ToolTip) {
     auto *help = static_cast<QHelpEvent *>(event);
     const QPoint local = viewport()->mapFrom(this, help->pos());
+    if (const QString id = blockAt(local); !id.isEmpty()) {
+      QToolTip::showText(help->globalPos(),
+                         library_.isFolded(id)
+                             ? tr("Expand block (Ctrl+Shift+])")
+                             : tr("Collapse block (Ctrl+Shift+[)"),
+                         this);
+      return true;
+    }
     if (const QString id = regionAt(local); !id.isEmpty()) {
       for (const auto &value : library_.regions()) {
         const auto region = value.toMap();
@@ -653,6 +738,8 @@ bool CodeText::event(QEvent *event) {
                 ? tr("The includes, support types and declarations this code "
                      "compiles with; click to show them, Keypad - to fold "
                      "them again.")
+            : region.value(QStringLiteral("kind")) == "source-block"
+                ? tr("Expand block (Ctrl+Shift+])")
                 : tr("%1\nRecognized library operation; click to show its "
                      "code.")
                       .arg(region.value(QStringLiteral("display_name"))
@@ -892,10 +979,10 @@ void CodeText::paintEvent(QPaintEvent *) {
       painter.fillRect(row, theme.color(ColorRole::ListingCurrentLine));
     else if (marked_.contains(i) || lines_[i].folded)
       painter.fillRect(row, theme.color(ColorRole::CodeFold));
-    painter.setPen(theme.color(ColorRole::CodeLineNumber));
-    painter.drawText(QRect(Margin - horizontalScrollBar()->value(), y,
-                           int(gutterChars_ * charWidth_), lineHeight_),
-                     Qt::AlignRight | Qt::AlignVCenter, QString::number(i + 1));
+    const int gutterRight = Margin + int((gutterChars_ + 2) * charWidth_);
+    painter.save();
+    painter.setClipRect(QRect(
+        gutterRight, y, std::max(0, area.width() - gutterRight), lineHeight_));
     auto &layout = lines_[i].styled.layout(font, styleStamp_, codeColor);
     if (!highlight_.isEmpty() && layout.lineCount()) {
       const QTextLine textLine = layout.lineAt(0);
@@ -923,6 +1010,29 @@ void CodeText::paintEvent(QPaintEvent *) {
       const qreal x = left + layout.lineAt(0).cursorToX(cursorColumn_);
       painter.fillRect(QRectF(x, y + 1, 2, lineHeight_ - 2),
                        theme.color(ColorRole::ListingCursor));
+    }
+    painter.restore();
+    painter.setPen(theme.color(ColorRole::CodeLineNumber));
+    painter.drawText(
+        QRect(Margin, y, int(gutterChars_ * charWidth_), lineHeight_),
+        Qt::AlignRight | Qt::AlignVCenter,
+        QString::number(lines_[i].sourceLine + 1));
+    if (!lines_[i].block.isEmpty()) {
+      const qreal x = Margin + (gutterChars_ + 1.25) * charWidth_;
+      const qreal middle = y + lineHeight_ / 2.0;
+      const qreal radius = std::min(charWidth_ * 0.35, lineHeight_ * 0.22);
+      painter.save();
+      painter.setRenderHint(QPainter::Antialiasing);
+      painter.setPen(QPen(theme.color(ColorRole::CodeLineNumber), 1.3));
+      if (lines_[i].blockFolded)
+        painter.drawPolyline(QPolygonF{{x - radius / 2, middle - radius},
+                                       {x + radius / 2, middle},
+                                       {x - radius / 2, middle + radius}});
+      else
+        painter.drawPolyline(QPolygonF{{x - radius, middle - radius / 2},
+                                       {x, middle + radius / 2},
+                                       {x + radius, middle - radius / 2}});
+      painter.restore();
     }
   }
 }
@@ -1173,15 +1283,38 @@ QString CodeText::allText() const {
 bool CodeText::findText(const QString &text, bool forward) {
   if (text.isEmpty())
     return false;
-  for (int step = 1; step <= lines_.size(); ++step) {
-    const int index = forward ? cursorLine_ + step : cursorLine_ - step;
-    if (index < 0 || index >= lines_.size())
+  QVector<int> starts{0};
+  for (int i = 0; i + 1 < source_.size(); ++i)
+    if (source_[i] == '\n')
+      starts.append(i + 1);
+  const int current =
+      !loading_ && library_.canFold()
+          ? library_.sourceLineAt(displayPosition(cursorLine_, 0))
+          : cursorLine_;
+  for (int step = 1; step <= starts.size(); ++step) {
+    const int index = forward ? current + step : current - step;
+    if (index < 0 || index >= starts.size())
       break;
-    const int column =
-        int(lines_[index].styled.text.indexOf(text, 0, Qt::CaseInsensitive));
+    const int end =
+        index + 1 < starts.size() ? starts[index + 1] : int(source_.size());
+    const int column = int(source_.mid(starts[index], end - starts[index])
+                               .indexOf(text, 0, Qt::CaseInsensitive));
     if (column >= 0) {
+      if (!loading_ && library_.unfoldSourceLine(index)) {
+        rebuildLines();
+        emit foldingChanged();
+      }
+      const int position =
+          !loading_ && library_.canFold()
+              ? library_.projectedPosition(starts[index] + column)
+              : starts[index] + column;
+      const auto next =
+          std::upper_bound(lineStarts_.cbegin(), lineStarts_.cend(), position);
+      const int line = std::max(0, int(next - lineStarts_.cbegin()) - 1);
+      if (line >= lineStarts_.size())
+        return false;
       highlight_ = text;
-      moveCursor(index, column, false);
+      moveCursor(line, position - lineStarts_[line], false);
       return true;
     }
   }
@@ -1227,20 +1360,33 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
     QApplication::clipboard()->setText(selectedText());
     return;
   }
-  // Keypad + shows the folded code at the cursor and Keypad - folds the
-  // prelude back, as the decompiler views of classic disassemblers do.
+  const auto foldModifiers = Qt::ControlModifier | Qt::ShiftModifier;
+  if ((event->modifiers() & foldModifiers) == foldModifiers) {
+    if (event->key() == Qt::Key_BracketLeft ||
+        event->key() == Qt::Key_BraceLeft) {
+      setCurrentBlockFolded(true);
+      return;
+    }
+    if (event->key() == Qt::Key_BracketRight ||
+        event->key() == Qt::Key_BraceRight) {
+      setCurrentBlockFolded(false);
+      return;
+    }
+  }
+  // Keypad +/- also fold source blocks, while retaining the prelude gestures.
   if (event->modifiers() & Qt::KeypadModifier) {
     if (event->key() == Qt::Key_Plus) {
       if (const QString id =
               library_.regionAt(displayPosition(cursorLine_, cursorColumn_));
           !id.isEmpty()) {
-        library_.setRegionFolded(id, false);
-        rebuildLines();
-        emit foldingChanged();
-      }
+        setRegionFolded(id, false);
+      } else
+        setCurrentBlockFolded(false);
       return;
     }
     if (event->key() == Qt::Key_Minus) {
+      if (setCurrentBlockFolded(true))
+        return;
       if (hasPrelude() && !preludeFolded() &&
           cursorLine_ < prelude_.value("lines").toInteger(0))
         setPreludeFolded(true);
@@ -1255,14 +1401,17 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
   selecting_ = false;
   if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton)
     return;
-  if (event->button() == Qt::LeftButton)
-    if (const QString id = regionAt(event->position().toPoint());
+  if (event->button() == Qt::LeftButton) {
+    if (const QString id = blockAt(event->position().toPoint());
         !id.isEmpty()) {
-      library_.toggleRegion(id);
-      rebuildLines();
-      emit foldingChanged();
+      setRegionFolded(id, !library_.isFolded(id));
+      return;
+    } else if (const QString id = regionAt(event->position().toPoint());
+               !id.isEmpty()) {
+      setRegionFolded(id, false);
       return;
     }
+  }
   const int line =
       std::min(lineAt(int(event->position().y())), int(lines_.size()) - 1);
   if (line < 0)
@@ -1300,7 +1449,8 @@ void CodeText::mouseReleaseEvent(QMouseEvent *) {
 }
 
 void CodeText::mouseDoubleClickEvent(QMouseEvent *event) {
-  if (event->button() != Qt::LeftButton)
+  if (event->button() != Qt::LeftButton ||
+      !blockAt(event->position().toPoint()).isEmpty())
     return;
   // A source name resolves by its symbol, as the C view's linked names do.
   if (const auto name = sourceNameAt(cursorLine_, cursorColumn_)) {
