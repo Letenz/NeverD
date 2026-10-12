@@ -45,3 +45,33 @@ int arrind(int a) {
 )C",
       "arrind", {"arrind", "r0", "r1", "r2", "r3", "rows"}, {-3, 0, 1, 77});
 }
+
+// `vcmp.f64 d19, #0` compares with +0.0 at the double's width.  A 4-byte
+// zero against the double was no comparison: its flags lowered to unknown
+// values, and the C trapped on the selects that read them.
+TEST_F(ARM32_ObjectImmediate, ACompareWithZeroIsADoubleCompare) {
+  expectHighCRunsLikeSource({"-target", "armv7-linux-gnueabi",
+                             "-mfpu=vfpv3-d16", "-mfloat-abi=softfp"},
+                            R"C(
+int seld(int a) {
+  unsigned long long s[6] = {0x7FF8000000000001ULL, 0x7FF0000000000000ULL,
+                             0xFFF0000000000000ULL, 0ULL,
+                             0x8000000000000000ULL, 0x400921FB54442D18ULL};
+  unsigned acc = 0;
+  for (int i = 0; i < 6; i++) {
+    double x;
+    __builtin_memcpy(&x, &s[i], 8);
+    for (int j = 0; j < 6; j++) {
+      double y;
+      __builtin_memcpy(&y, &s[j], 8);
+      unsigned c1 = (x < y) ? 3u : 5u;
+      unsigned c2 = (x == y) ? 7u : 11u;
+      unsigned c3 = (x >= y) ? 13u : 17u;
+      acc = acc * 3u + c1 + c2 + c3 + (unsigned)(a + i * j);
+    }
+  }
+  return (int)acc;
+}
+)C",
+                            "seld", {"seld"}, {0, 1, -1, 7, 0x12345678});
+}
