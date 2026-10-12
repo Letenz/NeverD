@@ -901,6 +901,15 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
                                                               : nullptr;
 }
 
+std::vector<size_t> HighCWriter::printedCallOperands(const HighExpr &E) const {
+  const HighFunc *Defined = calledDefinition(E);
+  if (!Defined || Defined->SourceTypeHint ||
+      E.Operands.size() != Defined->Params.size() ||
+      ParamIndicesInProgress.count(Defined))
+    return {};
+  return emittedParamIndices(*Defined);
+}
+
 std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
   if (!Opts.Image || !E.CallAddr)
     return {};
@@ -1236,7 +1245,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           : std::nullopt;
   const size_t ArityIntegers = Arity ? std::max(0, Arity->IntArgs) : 0;
   const size_t ArityFloats = Arity ? std::max(0, Arity->FpArgs) : 0;
+  const std::vector<size_t> DefinedIndices = printedCallOperands(E);
   auto OperandIndex = [&](size_t I) {
+    if (I < DefinedIndices.size())
+      return DefinedIndices[I];
     if (!Arity || !Arity->FpFirst || I >= ArityIntegers + ArityFloats)
       return I;
     return I < ArityFloats ? ArityIntegers + I : I - ArityFloats;
@@ -1287,7 +1299,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (Callee) {
       // A callee this file defines takes what its prototype declares.
       if (const TypeRef Expected = Defined
-                                       ? emittedParamType(*Defined, I)
+                                       ? emittedParamTypeAt(*Defined, I)
                                        : expectedDebugCallArgType(*Callee, I)) {
         S += exprStrAsTypedArg(*Op, Expected);
         continue;
@@ -1356,9 +1368,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       PointerArgument = Function;
     }
     // A floating parameter of the callee's prototype takes the bits.
-    TypeRef FloatParam = Defined && I < Defined->Params.size()
-                             ? emittedParamType(*Defined, I)
-                             : nullptr;
+    TypeRef FloatParam = Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
     if (!FloatParam && Prototype && I < Prototype->ParamCount) {
       if (Prototype->Params[I] == "double")
         FloatParam = NdType::makeFloat(sizeof(double));
@@ -1382,9 +1392,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       PointerArgumentOperands.erase(PointerArgument);
     // A signed result of at least an int's width passes the same register
     // bits as its unsigned carrier, unless a prototype widens it.
-    const TypeRef DefinedParam = Defined && I < Defined->Params.size()
-                                     ? emittedParamType(*Defined, I)
-                                     : nullptr;
+    const TypeRef DefinedParam =
+        Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
                            DefinedParam->Size <= Op->Type->Size)))
