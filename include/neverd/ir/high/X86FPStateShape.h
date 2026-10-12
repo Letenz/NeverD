@@ -34,7 +34,10 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
   const bool Store = Call.IntrinsicId == Intrinsic::X86F16CStoreState;
   const unsigned ControlIndex =
       Store ? 2 : (Memory || ScalarConvert || PackedConvert || Half ? 1 : 0);
-  const unsigned ImmediateIndex = Store ? 3 : 2;
+  const unsigned ImmediateIndex =
+      isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId) ? (Memory ? 2 : 1)
+      : Store                                            ? 3
+                                                         : 2;
   const bool HasImmediate =
       Call.Operands.size() > ImmediateIndex && Call.Operands[ImmediateIndex];
   const bool HasControl =
@@ -64,6 +67,22 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           !Memory && Index == 0 && !x86FPScalarConvertIsInteger(Control) &&
           Operand->Type->Size == x86FPScalarConvertSourceBytes(Control);
     }
+    if (isX86FPComiStateIntrinsic(Call.IntrinsicId) && Operand &&
+        Operand->Type && Operand->Type->Kind == NdTypeKind::Float)
+      ScalarOperands &=
+          (Memory ? Index == 2 : Index == 1 || Index == 2) &&
+          Operand->Type->Size ==
+              x86FPComiElementBytes(
+                  HasControl ? Call.Operands[ControlIndex]->ConstVal : 0);
+    if (isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId) && Operand &&
+        Operand->Type && Operand->Type->Kind == NdTypeKind::Float) {
+      const auto Control =
+          HasControl ? Call.Operands[ControlIndex]->ConstVal : 0;
+      ScalarOperands &=
+          x86FPMaskCompareIsScalar(Control) &&
+          (Memory ? Index == 3 : Index == 2 || Index == 3) &&
+          Operand->Type->Size == x86FPMaskCompareElementBytes(Control);
+    }
     if ((PackedConvert || Half) && Operand && Operand->Type &&
         Operand->Type->Kind == NdTypeKind::Float)
       ScalarOperands = false;
@@ -85,7 +104,9 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           Call.Type && Call.Type->Kind == NdTypeKind::Int &&
           Call.Type->Size > 0 &&
           (!(isX86FPApprox12Intrinsic(Call.IntrinsicId) || Arithmetic ||
-             ScalarConvert || PackedConvert || Half) ||
+             ScalarConvert || PackedConvert || Half ||
+             isX86FPComiStateIntrinsic(Call.IntrinsicId) ||
+             isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId)) ||
            (!Call.IsIndirectCall && !Call.IndirectTarget &&
             !Call.SourceCallHint && !Call.DoesNotReturn)),
       .OutputSize = Call.Type ? Call.Type->Size : 0U,
@@ -101,10 +122,13 @@ inline X86FPStateShape x86FPStateHighShape(const HighExpr &Call,
           Call.Operands[Memory ? 2 : 1]->Type->Kind == NdTypeKind::Int &&
           Call.Operands[Memory ? 2 : 1]->Kind == ExprKind::Const &&
           Call.Operands[Memory ? 2 : 1]->ConstVal == 0,
-      .StateSize = Size(Half                  ? (Store ? 4 : 3)
-                        : Round || Arithmetic ? (Fma ? 4 : 3)
-                        : Conversion          ? 1
-                                              : 2),
+      .StateSize = Size(isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId) ? 4
+                        : Half ? (Store ? 4 : 3)
+                        : Round || Arithmetic ||
+                                isX86FPComiStateIntrinsic(Call.IntrinsicId)
+                            ? (Fma ? 4 : 3)
+                        : Conversion ? 1
+                                     : 2),
       .HasAuxiliaryOutputs = !Call.IntrinsicOutputs.empty(),
       .DestinationIsConst = HasSelector &&
                             Call.Operands[2]->Kind == ExprKind::Const &&

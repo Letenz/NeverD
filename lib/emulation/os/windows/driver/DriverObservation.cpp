@@ -50,9 +50,33 @@ bool entryContextUnchanged(const WindowsDriverState::EntryContext &Entry) {
 DriverObservation::DriverObservation(
     ProcessObserver *Observer, ExecutionBackend &CPU, const DriverImage &Image,
     KernelModel &Kernel, const KernelExportRegistry &Exports,
-    const DriverResult &Result, std::string Name)
+    const DriverResult &Result, std::vector<RelocationWitness> RelocationWrites,
+    std::string Name)
     : Observer(Observer), CPU(CPU), Image(Image), Kernel(Kernel),
-      Exports(Exports), Result(Result), Name(std::move(Name)) {}
+      Exports(Exports), Result(Result),
+      RelocationWrites(std::move(RelocationWrites)), Name(std::move(Name)) {}
+
+llvm::Expected<std::vector<DriverObservation::RelocationWitness>>
+DriverObservation::watchRelocations(ExecutionBackend &CPU,
+                                    const DriverImage &Image) {
+  std::vector<RelocationWitness> Out;
+  for (const auto &Field : Image.Relocations) {
+    auto Bytes = CPU.addressSpace()->pinBacking(Image.Base + Field.RVA, 8);
+    if (!Bytes)
+      return Bytes.takeError();
+    auto Writes = Bytes->watchWrites();
+    if (!Writes)
+      return Writes.takeError();
+    std::array<uint8_t, 8> Value;
+    if (auto E = Bytes->read(0, Value))
+      return std::move(E);
+    if (llvm::support::endian::read64le(Value.data()) != Field.LoadedValue)
+      return llvm::createStringError(
+          "mapped driver relocation differs from the validated loader field");
+    Out.push_back({std::move(*Bytes), std::move(*Writes)});
+  }
+  return Out;
+}
 
 llvm::Error
 DriverObservation::replaceWatches(std::vector<ExecutionWatch> Next) {
@@ -260,11 +284,45 @@ DriverObservation::runtimeState(bool IncludeBacking) {
   auto State = Kernel.captureUnpackRuntime(IncludeBacking);
   if (!State)
     return State.takeError();
+  auto Relocations = imageRelocations();
+  if (!Relocations)
+    return Relocations.takeError();
   if (!entryContextUnchanged(*Entry))
     State->Reasons.emplace_back("changed DriverEntry invocation context");
+  else if (Result.Instructions)
+    // Admission is not a proof that the prefix preserves arbitrary incoming
+    // values or that the continuation establishes its live outputs. Even a
+    // same-value write can discard a fresh caller's register or return status.
+    State->Reasons.emplace_back(
+        "DriverEntry continuation requires fresh-caller reconstruction");
   State->Entry = std::move(*Entry);
+  State->Relocations = std::move(*Relocations);
   return std::shared_ptr<const ProcessRuntimeState>(
       std::make_shared<WindowsDriverState>(std::move(*State)));
+}
+llvm::Expected<WindowsDriverState::ImageRelocationState>
+DriverObservation::imageRelocations() {
+  if (RelocationWrites.size() != Image.Relocations.size())
+    return llvm::createStringError(
+        "driver relocation witnesses are incomplete");
+  WindowsDriverState::ImageRelocationState State{
+      Image.Base, Image.PreferredBase, {}, Image.FileHash};
+  for (size_t I = 0; I < Image.Relocations.size(); ++I) {
+    const auto &Field = Image.Relocations[I];
+    const auto &Witness = RelocationWrites[I];
+    auto Bytes = CPU.addressSpace()->pinBacking(Image.Base + Field.RVA, 8);
+    bool SameMapping = false;
+    if (Bytes)
+      SameMapping = Bytes->describesSameBytes(Witness.Bytes);
+    else
+      llvm::consumeError(Bytes.takeError());
+    auto Intact = Witness.Writes.intact();
+    if (!Intact)
+      return Intact.takeError();
+    State.Fields.push_back(
+        {Field.RVA, Field.LoadedValue, SameMapping && *Intact});
+  }
+  return State;
 }
 std::optional<uint64_t> DriverObservation::nativeCallCount() const {
   return Result.Calls.size();

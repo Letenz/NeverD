@@ -178,6 +178,89 @@ NEVERD_API int neverd_patch_from_c(neverd_session_t Sess, const char *CText,
                                    neverd_va_t FuncAddr,
                                    const char *OutputPath);
 
+enum neverd_source_patch_input {
+  NEVERD_SOURCE_PATCH_SOURCE = 0,
+  NEVERD_SOURCE_PATCH_LLVM_IR = 1,
+  NEVERD_SOURCE_PATCH_OBJECT = 2
+};
+enum neverd_source_patch_compiler {
+  NEVERD_SOURCE_PATCH_CLANG = 0,
+  NEVERD_SOURCE_PATCH_NEVERC = 1,
+  NEVERD_SOURCE_PATCH_GCC = 2
+};
+enum neverd_source_patch_language {
+  NEVERD_SOURCE_PATCH_C = 0,
+  NEVERD_SOURCE_PATCH_CXX = 1
+};
+enum neverd_source_patch_artifact {
+  NEVERD_SOURCE_PATCH_ARTIFACT_IR = 0,
+  NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT = 1
+};
+enum neverd_source_patch_mode {
+  NEVERD_SOURCE_PATCH_NORMAL = 0,
+  NEVERD_SOURCE_PATCH_DYNCODE = 1
+};
+
+/// A null/empty symbol selects the sole externally visible definition.
+/// Address zero is valid when the input authenticates a function there.
+typedef struct neverd_source_patch_mapping_v1 {
+  const char *symbol;
+  neverd_va_t original_va;
+} neverd_source_patch_mapping_v1;
+
+enum neverd_source_patch_binding_kind {
+  NEVERD_SOURCE_BIND_FUNCTION = 0,
+  NEVERD_SOURCE_BIND_READ_ONLY_DATA = 1,
+  NEVERD_SOURCE_BIND_WRITABLE_DATA = 2
+};
+
+/// An external declaration bound to existing image storage/code. Data size
+/// zero derives the extent from the IR declaration; object input must supply
+/// it. Function bindings require size zero and cannot name a replaced entry.
+typedef struct neverd_source_patch_binding_v1 {
+  const char *symbol;
+  uint32_t kind;
+  neverd_va_t original_va;
+  uint64_t size;
+} neverd_source_patch_binding_v1;
+
+/// All enum fields use fixed-width carriers. Initialize the complete structure
+/// to zero and set struct_size. Future fields will be appended. An empty
+/// mapping list admits the legacy sub_HEX/original-symbol naming convention;
+/// it still requires at least one exact installed replacement.
+typedef struct neverd_source_patch_options_v1 {
+  size_t struct_size;
+  uint32_t input_kind;
+  uint32_t compiler;
+  uint32_t language;
+  uint32_t artifact;
+  uint32_t mode;
+  uint32_t strategy; /* 0 = section, 1 = inplace */
+  const char *compiler_path;
+  const char *source_name;
+  const char *const *compiler_args;
+  size_t compiler_arg_count;
+  const neverd_source_patch_mapping_v1 *mappings;
+  size_t mapping_count;
+  uint32_t timeout_seconds; /* zero selects 30 seconds */
+  const neverd_source_patch_binding_v1 *bindings;
+  size_t binding_count;
+} neverd_source_patch_options_v1;
+
+/// Compile/admit an explicit replacement and publish a new file. InputSize is
+/// the exact byte length, excluding any optional terminating NUL. Input and
+/// existing output files are never overwritten. Unsupported compiler/target/
+/// artifact combinations fail explicitly without selecting another compiler.
+/// Returns one only after every requested target is installed and verified.
+NEVERD_API int
+neverd_patch_source(neverd_session_t Sess, const void *Input, size_t InputSize,
+                    const neverd_source_patch_options_v1 *Options,
+                    const char *OutputPath);
+
+/// JSON report for the latest source request, including actual compiler and
+/// installed original/new addresses. Caller frees it with neverd_free_string.
+NEVERD_API const char *neverd_patch_source_report(neverd_session_t Sess);
+
 /// Enable/disable the instruction-substitution pass for subsequent
 /// patch operations.  When enabled, every patch entry point (from-ir, from-c,
 /// full) runs the IR pass before codegen, replacing integer add/sub/and/or/xor

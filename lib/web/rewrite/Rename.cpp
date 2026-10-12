@@ -24,28 +24,6 @@ namespace neverd::web::rewrite {
 namespace {
 constexpr auto None = NoSourceIndex;
 
-struct NameLess {
-  uint64_t *Steps;
-  bool operator()(const std::u16string &A, const std::u16string &B) const {
-    for (size_t I = 0, End = std::min(A.size(), B.size()); I < End; ++I) {
-      charge(*Steps);
-      if (A[I] != B[I])
-        return A[I] < B[I];
-    }
-    charge(*Steps);
-    return A.size() < B.size();
-  }
-};
-
-struct RangeLess {
-  uint64_t *Steps;
-  bool operator()(const std::pair<uint64_t, uint64_t> &A,
-                  const std::pair<uint64_t, uint64_t> &B) const {
-    charge(*Steps);
-    return A < B;
-  }
-};
-
 struct Planner {
   SourceRewrite &A;
   const SourceAnalysis &S;
@@ -54,13 +32,17 @@ struct Planner {
   std::vector<uint32_t> Parents;
   std::vector<std::vector<uint32_t>> Declarations, References;
   std::vector<std::string> Refusals;
-  std::set<std::u16string, NameLess> Names;
-  std::map<std::pair<uint64_t, uint64_t>, uint32_t, RangeLess> IdentifierRanges;
+  std::set<std::u16string> Names;
+  std::map<std::pair<uint64_t, uint64_t>, uint32_t> IdentifierRanges;
 
   Planner(SourceRewrite &A, const SourceAnalysis &S,
           const SourceBindingAnalysis &B, std::string_view Bytes)
-      : A(A), S(S), B(B), Bytes(Bytes), Names(NameLess{&A.Steps}),
-        IdentifierRanges(RangeLess{&A.Steps}) {}
+      : A(A), S(S), B(B), Bytes(Bytes) {}
+
+  // A name search compares at most every character of its key per level.
+  void chargeName(size_t Size) {
+    charge(A.Steps, (Size + 1) * searchSteps(Names.size() + 1));
+  }
 
   uint32_t child(uint32_t I, std::string_view Field) {
     for (const auto &C : S.Nodes[I].Children) {
@@ -107,7 +89,9 @@ struct Planner {
         if (!Name)
           throw Error("source_rename_invalid_identifier");
         charge(A.Steps, Name->size());
+        chargeName(Name->size());
         Names.insert(*Name);
+        charge(A.Steps, searchSteps(IdentifierRanges.size() + 1));
         ++IdentifierRanges[{N.Start, N.End}];
       }
     }
@@ -162,14 +146,15 @@ struct Planner {
     if (I >= S.Nodes.size())
       return false;
     const auto &N = S.Nodes[I];
-    if (N.Kind != "Identifier" || N.Start >= N.End ||
-        IdentifierRanges.at({N.Start, N.End}) != 1)
+    if (N.Kind != "Identifier" || N.Start >= N.End)
       return false;
-    const auto L = std::lower_bound(S.Lexemes.begin(), S.Lexemes.end(), N.Start,
-                                    [&](const auto &L, uint64_t Offset) {
-                                      charge(A.Steps);
-                                      return L.Start < Offset;
-                                    });
+    charge(A.Steps, searchSteps(IdentifierRanges.size()));
+    if (IdentifierRanges.at({N.Start, N.End}) != 1)
+      return false;
+    charge(A.Steps, searchSteps(S.Lexemes.size()));
+    const auto L = std::lower_bound(
+        S.Lexemes.begin(), S.Lexemes.end(), N.Start,
+        [](const auto &L, uint64_t Offset) { return L.Start < Offset; });
     return L != S.Lexemes.end() && L->Kind == "identifier" &&
            L->Start == N.Start && L->End == N.End;
   }
@@ -270,6 +255,7 @@ struct Planner {
       Name += std::to_string(I);
       for (;;) {
         charge(A.Steps, Name.size());
+        chargeName(Name.size());
         if (Names.insert(std::u16string(Name.begin(), Name.end())).second)
           break;
         Name += '_';

@@ -9,6 +9,10 @@ para modificar NeverD con seguridad. Cubre deliberadamente solo el código
 propio de NeverD; los submódulos LLVM, Capstone y Unicorn mantienen su propia
 arquitectura interna.
 
+## Límite de sustitución de fuentes y objetos
+
+`SourcePatchCompiler` gestiona la identidad del compilador y el artefacto. `validateSourcePatchTarget` admite los destinos tanto de fuentes como de IR externo; el triplete por sí solo no demuestra soporte. `bindSourcePatch` autentica entradas IR; `PatchObject` gestiona secciones nativas, reubicaciones y evidencias de rangos FDE. `publishSourcePatch` prepara, verifica y publica la transacción exacta. `COFFSourceImage` gestiona el nuevo almacenamiento y las tablas de desenrollado PE x64; las reescrituras elevadas conservan evidencias EH originales separadas. Consulte [los parches de fuentes](source-patching.md).
+
 ## Límite del sistema
 
 ```mermaid
@@ -205,6 +209,8 @@ En cuerpos validados con variables mutables, LLVM propaga valores exactos de ubi
 El subconjunto mutable admite almacenamiento escalar de 8/16/32/64/128 bits; las entradas de conteo se limitan a 64 bits. Los anchos no estándar o superiores requieren un contrato de fuente independiente.
 
 El lifter de arquitectura gestiona de forma transaccional los metadatos adjuntos de salidas indefinidas: borra las pruebas anteriores antes de cada intento y publica efectos solo para el lifting exacto que haya terminado correctamente. `Missing` significa ausencia de pruebas, no una descripción `Complete` vacía. LowIR conserva los valores deterministas elegidos. `LowIRUndefinedIndependence` se encarga de la prueba relacional acotada de un grafo LowIR completo y acíclico suministrado, compartiendo entradas ordinarias y preservando las correlaciones de los nuevos valores indefinidos. Vincula límites completos de instrucciones y resúmenes de operaciones, y rechaza pruebas incompletas. La certificación general de grafos nativos, los invariantes de bucle y la equivalencia del código nativo con C siguen siendo tareas separadas fuera del alcance de rutas nativas finitas descrito a continuación.
+
+`FreshChoiceProjection` es interno al verificador de independencia. Reutiliza las proyecciones a cero de valores ordinarios dentro de un mismo contexto simbólico inmutable; solo admite hojas nuevas creadas después de la proyección anterior. Fuera de su capacidad, la tabla acotada de resultados vuelve a la sustitución ordinaria. Ambas ejecuciones conservan sus elecciones nuevas; los límites de nodos, los costes de consulta y las obligaciones de prueba no cambian.
 
 `Decoder` corrige el ancho disp32 mal informado por el prefijo de operando x64 antes de auditar formas y asociar reubicaciones. Deben coincidir los límites ModRM/SIB, el campo completo, el desplazamiento con signo, los operandos de memoria y los inmediatos posteriores. La decodificación completa, para lifting y ligera con detalles comparten esta normalización. Solo cambia el metadato del ancho codificado; disp16 real de i386, disp8, moffs y la decodificación sin detalles conservan su comportamiento.
 
@@ -1639,3 +1645,11 @@ En RAM ordinaria, `XCHG` admite operandos no alineados de 8/16/32/64 bits, con o
 DarwinFiles importa timespec y la máscara de señales de Pselect en DarwinSelect.cpp y rechaza las operaciones de estado de señales no modeladas. Select y Pselect comparten immediateSelect para mapas, límite inferior de capacidad, proveedor y copia ordenada; timeval y timespec conservan sus anchuras y límites propios. Las máscaras completas no nulas requieren un futuro modelo de estado de señales.
 
 `isCheckedX86SafeSEHHandlerReference` autentica una entrada PE32 conservada mediante el decodificador SafeSEH existente, los bytes inmutables de la tabla y su cabecera y el puntero load-config reubicado. LLVM declara esa identidad de origen antes de emitir cualquier cuerpo, incluidos los omitidos en fragmentos. Pertenecer a la tabla no demuestra una personalidad del lenguaje, una ABI invocable ni permiso para reconstruir EH nativo; se mantienen las comprobaciones independientes.
+
+La inicialización de campos del kernel tiene un propietario independiente en la RAM física. La validación de permisos sigue siendo pura. Las escrituras correctas del host, las transacciones comprobadas confirmadas y los eventos exactos posteriores a una escritura de software definen únicamente los bytes confirmados, incluidos valores idénticos y escrituras completadas antes de un fallo. Las escrituras temporales, reversiones, intentos cancelados antes de la confirmación e invalidaciones opacas no prueban inicialización. Un mapa de bits propio sigue los segmentos físicos retenidos y sus alias sin leer la RAM del huésped. Los eventos de software prueban las escrituras notificadas sin garantizar cobertura completa; los servicios tipados mantienen sus contratos explícitos.
+
+`MemoryWriteWitness` conserva los rangos exactos de las asignaciones físicas y comparte la invalidación de escrituras confirmadas con las reservas RAM. Las escrituras iguales, parciales o mediante alias lo invalidan; la ejecución sin seguimiento completo retira la prueba de forma conservadora. La creación y consulta requieren un propietario detenido. La observación del controlador vincula los campos DIR64 validados después de copiar la imagen y antes de las correcciones de sesión, y publica datos propios cuando coinciden la asignación y el historial. No cubren punteros generados ni restauración nativa del núcleo.
+
+El cargador de controladores vincula los hechos de reubicación al SHA-256 del archivo validado. La reconstrucción PE consume los hechos propios y excluye campos sustituidos por importaciones o formato antes de emitir registros DIR64 de diagnóstico. Este componente no infiere reubicaciones de punteros generados ni elimina el rechazo del núcleo.
+
+`isCanonicalX87Wait` define la misma regla de conservación del marco en la ruta normal para las transferencias registration ordinarias y los retornos local-finally verificados. Se conservan la operación FWAIT y el despacho de excepciones. Los demás intrinsic y las formas incorrectas siguen siendo opacos; esta regla no prueba una salida finally no local ni una restauración nativa.

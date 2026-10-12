@@ -24,6 +24,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/loader/BinaryImage.h"
 
@@ -1711,6 +1712,11 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
             targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst))) {
       emitIndent(Indent);
       OS << Name << " = " << *Identity << ";\n";
+      return;
+    }
+    if (auto Cast = lowBitsMaskCast(llvm::cast<llvm::BinaryOperator>(Inst))) {
+      emitIndent(Indent);
+      OS << Name << " = " << *Cast << ";\n";
       return;
     }
     if (Inst.getOpcode() == llvm::Instruction::URem ||
@@ -3910,6 +3916,23 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return true;
   }
 
+  if (auto Selector = classifyX87ConstantAsm(Call)) {
+    if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error(
+          "x87 constant/control C projection requires x86");
+    emitIndent(Indent);
+    if (*Selector >= 7) {
+      OS << "__asm__ volatile(\"" << (*Selector == 7 ? "fnstcw" : "fldcw")
+         << " (%0)\" :: \"r\"(" << valueStr(Call.getArgOperand(0))
+         << ") : \"memory\");\n";
+    } else {
+      OS << "__asm__ volatile(\"fldcw (%1)\\n\\t"
+         << X87ConstantMnemonics[*Selector] << "\\n\\tfstpt (%0)\" :: \"r\"("
+         << valueStr(Call.getArgOperand(0)) << "), \"r\"("
+         << valueStr(Call.getArgOperand(1)) << ") : \"st\", \"memory\");\n";
+    }
+    return true;
+  }
   if (auto Shape = classifyX86FPStateAsm(Call)) {
     if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
       llvm::report_fatal_error("x86 FP state C projection requires x86");
@@ -3940,6 +3963,48 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
       if (!Call.use_empty())
         OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
            << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPMaskCompareStateIntrinsic(Id)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Id);
+      const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));
+      const auto RawInput = [&](unsigned I) {
+        return "__builtin_bit_cast(" + RawType + ", " +
+               valueStr(Call.getArgOperand(I)) + ")";
+      };
+      std::string Expression = Helper->second + "(";
+      if (Memory)
+        Expression += "(void *)(uintptr_t)(" +
+                      integerPointerOperandStr(Call.getArgOperand(1)) + "), " +
+                      RawInput(0);
+      else
+        Expression += RawInput(0) + ", " + RawInput(1);
+      Expression += ", (void *)" + valueStr(Call.getArgOperand(2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
+    if (isX86FPComiStateIntrinsic(Id)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Id);
+      const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));
+      const auto RawInput = [&](unsigned Index) {
+        return "__builtin_bit_cast(" + RawType + ", " +
+               valueStr(Call.getArgOperand(Index)) + ")";
+      };
+      const auto Right =
+          Memory ? "(void *)(uintptr_t)(" +
+                       integerPointerOperandStr(Call.getArgOperand(1)) + ")"
+                 : RawInput(1);
+      const auto Expression = Helper->second + "(" + RawInput(0) + ", " +
+                              Right + ", (void *)" +
+                              valueStr(Call.getArgOperand(2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = " << Expression << ";\n";
       else
         OS << "(void)" << Expression << ";\n";
       return true;

@@ -16,6 +16,7 @@
 
 #include "CallArgCollectionDetail.h"
 #include "HighEntryStackOffsets.h"
+#include "VariadicStackArguments.h"
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
@@ -34,6 +35,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 
@@ -336,6 +338,20 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
     Found[K] = HighExpr::makeLoad(std::move(Address),
                                   NdType::makeInt(TRI.PointerSize));
   }
+}
+
+void collectFullBankStackArgs(const CallArgScan &Scan,
+                              std::vector<ExprPtr> &Found) {
+  const BinaryFormat Format =
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
+  if (Scan.FirstStackSlot !=
+      static_cast<int>(Scan.TRI->integerParamRegs(Format).size())) {
+    collectSpilledStackArgs(Scan, Found);
+    return;
+  }
+  CallArgScan FullBank = Scan;
+  FullBank.StoreScanWindow = limits::kFullBankCallArgStoreScanWindow;
+  collectSpilledStackArgs(FullBank, Found);
 }
 
 } // namespace call_args_detail
@@ -1204,8 +1220,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(CI->Args.size());
-        for (const MedVar &A : CI->Args)
-          FromABI.push_back(medvarToExpr(A));
+        for (size_t K = 0; K < CI->Args.size(); ++K) {
+          ExprPtr Arg = medvarToExpr(CI->Args[K]);
+          // The callee reads only the low lane's scalar.
+          if (const uint16_t Read =
+                  K < CI->ArgReadBytes.size() ? CI->ArgReadBytes[K] : 0;
+              Read && Arg && Arg->Type && Read < Arg->Type->Size) {
+            Arg = HighExpr::makeBinop(NdOp::SUBBYTES, Arg,
+                                      HighExpr::makeConst(0, 4));
+            Arg->Type = NdType::makeInt(Read, false);
+          }
+          FromABI.push_back(std::move(Arg));
+        }
         size_t End = FromABI.size();
         while (!CompleteSetup && End < static_cast<size_t>(MaxArgs) &&
                Found[End] && Found[End]->Kind != ExprKind::Undef)
@@ -1257,6 +1283,70 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
         K < ParamRegs.size())
       continue;
     Args.push_back(Found[K] ? Found[K] : HighExpr::makeUndef(8));
+  }
+  // A variadic callee that saves the vector argument registers takes every
+  // integer and vector argument register, as its parameters say: a caller
+  // passes the ones it sets, and the vector registers' low doubles carry its
+  // floating arguments.  Its summary lists none of them.
+  const int *VariadicOverflow = nullptr;
+  if (VariadicVectorCallees && CallIdx < Ops.size() &&
+      Ops[CallIdx].Opcode == NdOp::CALL && Ops[CallIdx].NumInputs >= 1 &&
+      Ops[CallIdx].Inputs[0].isConst())
+    if (const auto Callee =
+            VariadicVectorCallees->find(Ops[CallIdx].Inputs[0].ConstVal);
+        Callee != VariadicVectorCallees->end())
+      VariadicOverflow = &Callee->second;
+  if (VariadicOverflow) {
+    const size_t Integers = ParamRegs.size();
+    // Then the slots it stores, read as the pass that sized the callee's
+    // overflow parameters read them (VariadicStackArguments.h), and zero for
+    // one a shorter call leaves unset, which va_arg does not read.
+    std::vector<ExprPtr> Stack;
+    if (CurMed) {
+      indexMedDefinitions();
+      for (const detail::StackSlotValue &Slot : detail::storedStackArguments(
+               *CurMed, CurBlock, CallIdx, TargetArch, *EntryStackOffsets)) {
+        ExprPtr Value = medvarToExpr(Slot.Value);
+        if (Slot.Value.Size > TRI.PointerSize) {
+          Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
+                                      HighExpr::makeConst(Slot.Byte, 4));
+          Value->Type = NdType::makeInt(TRI.PointerSize, false);
+        }
+        Stack.push_back(std::move(Value));
+      }
+    }
+    const size_t Overflow = static_cast<size_t>(std::max(0, *VariadicOverflow));
+    Stack.resize(std::min(Stack.size(), Overflow));
+    while (Stack.size() < Overflow)
+      Stack.push_back(HighExpr::makeConst(0, TRI.PointerSize));
+    Args.resize(Integers);
+    for (ExprPtr &Arg : Args)
+      if (!Arg)
+        Arg = HighExpr::makeUndef(TRI.PointerSize);
+    for (uint64_t Vector : TRI.floatingParamRegs(Format)) {
+      std::optional<MedVar> Reaching;
+      for (size_t J = CallIdx; J-- > 0 && !Reaching;) {
+        const MedOp &Prev = Ops[J];
+        if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL)
+          break;
+        if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0 &&
+            Prev.Output.RegOff == Vector)
+          Reaching = Prev.Output;
+      }
+      MedVar LiveIn;
+      if (!Reaching && reachingRegAtBlockEntry(CurBlock, Vector, LiveIn))
+        Reaching = LiveIn;
+      ExprPtr Value = Reaching ? medvarToExpr(*Reaching)
+                               : HighExpr::makeUndef(sizeof(double));
+      if (Value && Value->Type && Value->Type->Size > sizeof(double)) {
+        Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,
+                                    HighExpr::makeConst(0, 4));
+        Value->Type = NdType::makeInt(sizeof(double), false);
+      }
+      Args.push_back(std::move(Value));
+    }
+    Args.insert(Args.end(), Stack.begin(), Stack.end());
+    return Args;
   }
   // A summarized callee's floating arguments follow its register arguments,
   // before any on the stack, as its parameters do.
@@ -1311,61 +1401,8 @@ MedToHighConverter::untouchedParamRegister(uint64_t RegOff) const {
 bool MedToHighConverter::reachingRegAtBlockEntry(const MedBlock &B,
                                                  uint64_t RegOff,
                                                  MedVar &Out) const {
-  if (!CurMed)
-    return false;
-
-  auto blockById = [&](int Id) -> const MedBlock * {
-    for (const auto &Blk : CurMed->Blocks)
-      if (Blk.Id == Id)
-        return &Blk;
-    return nullptr;
-  };
-
-  std::set<int> Visited;
-  std::function<bool(const MedBlock &, MedVar &)> entryOf;
-  std::function<bool(const MedBlock &, MedVar &)> exitOf;
-  entryOf = [&](const MedBlock &Blk, MedVar &R) -> bool {
-    if (!Visited.insert(Blk.Id).second)
-      return false;
-    for (const auto &Phi : Blk.Phis)
-      if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff &&
-          Phi.Output.Size > 0) {
-        R = Phi.Output;
-        return true;
-      }
-    if (Blk.Preds.empty()) {
-      // Function entry: the identity COPY is the live-in. Do not invent every
-      // unused incoming parameter; a later 1-arg call still has rdx live.
-      for (const auto &Op : Blk.Ops) {
-        if (Op.Opcode != NdOp::COPY)
-          break;
-        if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
-            Op.Output.Size > 0 && Op.NumInputs >= 1 &&
-            Op.Inputs[0].Kind == MedVar::Reg && Op.Inputs[0].RegOff == RegOff &&
-            Op.Inputs[0].Id == Op.Output.Id && Op.Inputs[0].SSAVer == 0) {
-          R = Op.Output;
-          return true;
-        }
-      }
-      return false;
-    }
-    for (int P : Blk.Preds)
-      if (const MedBlock *PB = blockById(P))
-        if (exitOf(*PB, R))
-          return true;
-    return false;
-  };
-  exitOf = [&](const MedBlock &Blk, MedVar &R) -> bool {
-    for (auto It = Blk.Ops.rbegin(); It != Blk.Ops.rend(); ++It)
-      if (It->Output.Kind == MedVar::Reg && It->Output.RegOff == RegOff &&
-          It->Output.Size > 0) {
-        R = It->Output;
-        return true;
-      }
-    return entryOf(Blk, R);
-  };
-
-  return entryOf(B, Out);
+  return CurMed &&
+         detail::reachingRegisterAtBlockEntry(*CurMed, B, RegOff, Out);
 }
 
 bool MedToHighConverter::isCallArgSetupDef(const MedBlock &CallBlk,

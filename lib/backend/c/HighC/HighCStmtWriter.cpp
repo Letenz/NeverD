@@ -329,6 +329,12 @@ void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   auto Event = SourceRecorder && CurrentFunc
                    ? SourceRecorder->statement(CurrentFunc->Entry, Stmt)
                    : std::nullopt;
+  if (Event && SourceRecorder->recordsPositions()) {
+    const uint64_t Begin = OS.tell();
+    writeStmtImpl(Stmt, Indent);
+    SourceRecorder->positionStatement(*Event, Begin, OS.tell());
+    return;
+  }
   if (Event)
     OS << SourceRecorder->begin(*Event);
   writeStmtImpl(Stmt, Indent);

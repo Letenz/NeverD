@@ -22,10 +22,14 @@
 #include "neverd/web/ElectronEntries.h"
 #include "neverd/web/ElectronIPC.h"
 #include "neverd/web/HTML.h"
+#include "neverd/web/InterfaceRelations.h"
 #include "neverd/web/Interfaces.h"
 #include "neverd/web/Nexe.h"
 #include "neverd/web/NodeBehavior.h"
+#include "neverd/web/PackageAdvisories.h"
 #include "neverd/web/PackageArchive.h"
+#include "neverd/web/PackageAssessment.h"
+#include "neverd/web/PackageAttestations.h"
 #include "neverd/web/PackageBehaviorDiff.h"
 #include "neverd/web/PackageInstall.h"
 #include "neverd/web/PackageIntegrity.h"
@@ -37,12 +41,14 @@
 #include "neverd/web/SourceBindings.h"
 #include "neverd/web/SourceBundles.h"
 #include "neverd/web/SourceEffects.h"
+#include "neverd/web/SourceFeatures.h"
 #include "neverd/web/SourceMap.h"
 #include "neverd/web/SourceModules.h"
 #include "neverd/web/SourceNavigation.h"
 #include "neverd/web/SourceRewrite.h"
 #include "neverd/web/SourceView.h"
 #include "neverd/web/Streams.h"
+#include "neverd/web/Wails.h"
 
 #include <map>
 #include <mutex>
@@ -59,7 +65,11 @@ struct Session::Impl {
   uint64_t PreviewSequence = 0;
   std::map<std::string, SourceAnalysis> Sources;
   std::map<std::string, SourceBindingAnalysis> Bindings;
-  std::map<std::string, SourceNavigation> Navigation;
+  struct NavigationResults {
+    SourceNavigation Evidence;
+    SourceFeatures Features;
+  };
+  std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {
     SourceValueAnalysis Values;
     SourceEffectAnalysis Effects;
@@ -76,6 +86,7 @@ struct Session::Impl {
   std::map<std::string, SEAExtraction> SEAExtractions;
   std::map<std::string, NexeExtraction> NexeExtractions;
   std::map<std::string, PkgExtraction> PkgExtractions;
+  std::map<std::string, WailsExtraction> WailsExtractions;
   std::map<std::string, AsarExtraction> AsarExtractions;
   std::map<std::string, ElectronManifest> ElectronManifests;
   std::map<std::pair<std::string, std::string>, DesktopManifest>
@@ -92,6 +103,16 @@ struct Session::Impl {
   std::map<std::string, PackageDiff> PackageDiffs;
   std::map<std::string, PackageArchive> PackageArchives;
   std::map<std::string, PackageIntegrityResult> PackageIntegrity;
+  std::map<std::string, PackageEvidenceDescriptor> PackageEvidenceDescriptors;
+  std::map<std::string, PackageAdvisory> PackageAdvisories;
+  std::map<std::string, PackageAdvisoryMatches> PackageAdvisoryMatchResults;
+  std::map<std::string, PackageAttestation> PackageAttestations;
+  std::map<std::string, PackageAttestationDigestMatch>
+      PackageAttestationDigests;
+  uint64_t PackageEvidenceBytes = 0;
+  std::map<std::string, PackageAssessment> PackageAssessments;
+  std::map<std::string, PackageReviewState> PackageReviews;
+  uint64_t PackageReviewEvents = 0, PackageReviewBytes = 0;
   std::map<std::string, HARCapture> HARCaptures;
   std::map<std::string, StreamCapture> StreamCaptures;
   std::optional<StreamCapture> PendingStream;
@@ -101,6 +122,7 @@ struct Session::Impl {
   std::string HARPreviewToken;
   uint64_t HARPreviewSequence = 0;
   std::map<std::string, SourceInterfaces> InterfaceSources;
+  std::map<std::string, InterfaceSourceRelations> InterfaceRelations;
   std::map<std::string, InterfaceCorrelation> InterfaceCorrelations;
   uint64_t CachedArchiveBytes = 0;
   struct HTMLResults {
@@ -131,12 +153,13 @@ struct Session::Impl {
   const char *analysisStatus() const {
     return Sources.empty() && Maps.empty() && BunExtractions.empty() &&
                    SEAExtractions.empty() && NexeExtractions.empty() &&
-                   PkgExtractions.empty() && AsarExtractions.empty() &&
-                   ElectronManifests.empty() && DesktopManifests.empty() &&
-                   HTMLDocuments.empty() && PackageAnalyses.empty() &&
-                   PackageArchives.empty() && PackageIntegrity.empty() &&
-                   HARCaptures.empty() && InterfaceSources.empty() &&
-                   StreamCaptures.empty()
+                   PkgExtractions.empty() && WailsExtractions.empty() &&
+                   AsarExtractions.empty() && ElectronManifests.empty() &&
+                   DesktopManifests.empty() && HTMLDocuments.empty() &&
+                   PackageAnalyses.empty() && PackageArchives.empty() &&
+                   PackageIntegrity.empty() && PackageAdvisories.empty() &&
+                   PackageAttestations.empty() && HARCaptures.empty() &&
+                   InterfaceSources.empty() && StreamCaptures.empty()
                ? "not_analyzed"
                : "partial";
   }

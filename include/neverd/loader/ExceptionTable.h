@@ -234,6 +234,52 @@ struct ExceptionInfo {
         static_cast<const ExceptionInfo *>(this)->findFunction(Address));
   }
 
+  /// A part of a function's code that lies apart from its body.
+  struct OutlyingChunk {
+    ExceptionAddressRange Range;
+    /// The entry of the function the part belongs to.
+    va_t Function = 0;
+  };
+
+  /// The parts of functions' code that chained records cover past a gap in
+  /// their bodies, in address order, merged where two of one function meet.
+  /// Compilers move a function's cold paths out of line, and a disassembler
+  /// lists each such part as a chunk of its function; the chained records
+  /// that continue a body without a gap are the body itself
+  /// (ExceptionFunction::contiguousEnd).
+  std::vector<OutlyingChunk> outlyingChunks() const {
+    std::set<va_t> ChainedBegins;
+    for (const ExceptionFunction &F : Functions)
+      if (F.Kind == RuntimeFunctionKind::Chained && F.CodeRange.isValid())
+        ChainedBegins.insert(F.CodeRange.Begin);
+    std::vector<OutlyingChunk> Chunks;
+    for (const ExceptionFunction &F : Functions) {
+      if (F.Kind != RuntimeFunctionKind::Primary || !F.CodeRange.isValid())
+        continue;
+      const va_t Entry =
+          F.FunctionEntry != 0 ? F.FunctionEntry : F.CodeRange.Begin;
+      const va_t BodyEnd = F.contiguousEnd();
+      for (const ExceptionAddressRange &Fragment : F.FragmentRanges)
+        if (Fragment.isValid() && ChainedBegins.count(Fragment.Begin) &&
+            (Fragment.Begin < F.CodeRange.Begin || Fragment.Begin >= BodyEnd))
+          Chunks.push_back({Fragment, Entry});
+    }
+    std::sort(Chunks.begin(), Chunks.end(),
+              [](const OutlyingChunk &A, const OutlyingChunk &B) {
+                return A.Range.Begin < B.Range.Begin;
+              });
+    size_t Count = 0;
+    for (const OutlyingChunk &Chunk : Chunks) {
+      if (Count != 0 && Chunks[Count - 1].Function == Chunk.Function &&
+          Chunks[Count - 1].Range.End == Chunk.Range.Begin)
+        Chunks[Count - 1].Range.End = Chunk.Range.End;
+      else
+        Chunks[Count++] = Chunk;
+    }
+    Chunks.resize(Count);
+    return Chunks;
+  }
+
   /// Scope filters and handlers of registration records that are code of the
   /// function installing the record rather than functions of their own: an
   /// x86 filter runs in that function's frame, and its handler continues the

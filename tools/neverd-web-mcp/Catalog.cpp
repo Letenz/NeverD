@@ -219,6 +219,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Native identity and source/cache equivalence remain unverified.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_pkg_records", "extraction_id", true);
+  Add("web_wails_extract",
+      "Validate a listed Wails/Go embed.FS profile and every stored asset "
+      "digest. Asset-server bindings and native bridges remain unverified.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_wails_records", "extraction_id", true, 128);
   Add("web_asar_extract",
       "Extract admitted ASAR members with an optional captured unpacked "
       "directory.",
@@ -238,11 +243,81 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Compare two retained package analyses in the same revision.",
       {decimal("revision"), text("before_id"), text("after_id")});
   Page("web_package_diff_records", "diff_id");
+  Add("web_package_advisory_import",
+      "Import captured OSV metadata and source/time declarations without "
+      "fetching or authenticating the publisher.",
+      {decimal("revision"), text("artifact_id"),
+       text("descriptor_artifact_id")});
+  Page("web_package_advisory_records", "package_advisory_id", true);
+  Add("web_package_advisories_match",
+      "Match declared npm versions against explicitly selected advisory "
+      "metadata; unknown coverage and exploitability remain explicit.",
+      {decimal("revision"),
+       text("package_analysis_id"),
+       {"advisory_ids", Field::Kind::StringArray, false, 16, 0}});
+  Page("web_package_advisories_match_records", "package_advisory_matches_id");
+  Add("web_package_attestation_import",
+      "Read selected captured registry, in-toto or DSSE metadata without "
+      "fetching keys or authenticating the signature or publisher.",
+      {decimal("revision"), text("artifact_id"), text("descriptor_artifact_id"),
+       text("input_kind", 24)});
+  Page("web_package_attestation_records", "package_attestation_id", true);
+  Add("web_package_attestation_digest_match",
+      "Compare one selected subject digest to original bytes. Equality does "
+      "not authenticate the statement or bind a package inventory.",
+      {decimal("revision"), text("artifact_id"), text("package_attestation_id"),
+       text("digest_id")});
+  Add("web_package_attestation_digest_result",
+      "Read an existing original-byte digest comparison and its evidence "
+      "anchors.",
+      {decimal("revision"), text("package_attestation_digest_match_id")});
   Add("web_package_integrity_verify",
       "Compare captured bytes to selected integrity declarations; not a "
       "benignness verdict.",
       {decimal("revision"), text("artifact_id"), text("declaration_id"),
        text("package_id", 64, false)});
+  Add("web_package_assessment_create",
+      "Compose explicitly selected retained evidence with coverage and binding "
+      "limits. Missing evidence never implies a safe package.",
+      {decimal("revision"),
+       text("package_analysis_id"),
+       {"integrity_ids", Field::Kind::StringArray, false, 16, 0},
+       {"advisory_ids", Field::Kind::StringArray, false, 16, 0},
+       text("advisory_matches_id", 64, false),
+       {"attestation_ids", Field::Kind::StringArray, false, 4, 0},
+       {"attestation_digest_match_ids", Field::Kind::StringArray, false, 4, 0},
+       text("package_behavior_id", 64, false),
+       text("package_install_id", 64, false),
+       text("package_diff_id", 64, false),
+       text("package_behavior_diff_id", 64, false)});
+  Add("web_package_review_append",
+      "Append a caller assertion to one finding using the expected review "
+      "head. "
+      "This preserves the evidence and does not authorize execution or export.",
+      {decimal("revision"), text("package_assessment_id"),
+       text("expected_review_head"), text("finding_id"),
+       choice("disposition", {"unreviewed", "needs_review", "accepted_risk",
+                              "false_positive"})});
+  Add("web_package_review_restore",
+      "Atomically restore a supplied metadata-only analyst journal against the "
+      "current "
+      "assessment and review head. A complete validated chain extends only its "
+      "exact "
+      "existing prefix; assertions do not authenticate an analyst or upgrade "
+      "evidence.",
+      {decimal("revision"), text("package_assessment_id"),
+       text("expected_review_head"), text("journal_json", 256 * 1024)});
+  for (const auto *Operation :
+       {"web_package_assessment_findings", "web_package_review_decisions",
+        "web_package_assessment_report"})
+    Add(Operation,
+        "Read a metadata-only page at the current review head. The report uses "
+        "fixed Markdown fields and does not publish raw source or private "
+        "names.",
+        {decimal("revision"), text("package_assessment_id"),
+         text("review_head"), number("offset", 2147483647),
+         number("limit", 512, false, 1)},
+        true);
   Selected(
       "web_har_preview", "artifact_id",
       "Preview metadata-only import and redaction of a captured HAR artifact.");
@@ -261,6 +336,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
            "Find supported source-inferred network interface candidates "
            "without network access.");
   Page("web_interface_records", "analysis_id", false, 128);
+  Selected(
+      "web_interface_relations_analyze", "analysis_id",
+      "Inspect bounded source-syntax request/result relationships; no "
+      "runtime response API, callback execution or wrapper argument flow.");
+  Page("web_interface_relation_records", "relations_id", false, 128);
   Add("web_interfaces_compare",
       "Correlate explicit source candidates with imported HAR observations; "
       "evidence classes remain separate.",

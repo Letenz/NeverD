@@ -318,6 +318,8 @@ TEST_F(WebNodeBehaviorSDK,
   CLI = run({"package-install", Lock.string(), "0", "npm-lock"}, 0);
   ASSERT_EQ(CLI.size(), 5u);
   EXPECT_EQ(CLI[0].getAsObject()->getInteger("install_presence_count"), 1);
+  if (!packageArchivesAvailable())
+    GTEST_SKIP() << "Pinned archive path policy unavailable";
   const auto Archive = Root / "inert.tar";
   std::ofstream(Archive, std::ios::binary)
       << finishTar(tarMember("package/package.json",

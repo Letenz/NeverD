@@ -9,6 +9,10 @@ per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
 architettura interna.
 
+## Confine della sostituzione di sorgenti e oggetti
+
+`SourcePatchCompiler` gestisce identità del compilatore e scelta dell’artefatto. `validateSourcePatchTarget` ammette i target comuni a sorgenti e IR fornito; la sola tripla non prova il supporto. `bindSourcePatch` autentica gli ingressi IR; `PatchObject` gestisce sezioni native, rilocazioni e prove degli intervalli FDE. `publishSourcePatch` prepara, verifica e pubblica la transazione esatta. `COFFSourceImage` gestisce nuovo spazio e tabelle di unwinding PE x64; le riscritture del codice sollevato mantengono prove EH originali separate. Vedere [le patch da sorgente](source-patching.md).
+
 ## Confine del sistema
 
 ```mermaid
@@ -205,6 +209,8 @@ Per i corpi validati con variabili mutabili, LLVM inoltra i valori esatti degli 
 Il sottoinsieme mutabile accetta memoria scalare da 8/16/32/64/128 bit; gli ingressi dei conteggi sono limitati a 64 bit. Larghezze non standard o superiori richiedono un contratto sorgente separato.
 
 Il lifter dell’architettura gestisce in modo transazionale i metadati aggiuntivi delle uscite indefinite: cancella le prove precedenti prima di ogni tentativo e pubblica gli effetti solo per l’esatto lifting riuscito. `Missing` indica l’assenza di prove, non una descrizione `Complete` vuota. LowIR conserva i valori deterministici scelti. `LowIRUndefinedIndependence` gestisce la prova relazionale limitata di un grafo LowIR fornito, completo e aciclico, condividendo gli ingressi ordinari e mantenendo le correlazioni dei nuovi valori indefiniti. Associa confini completi delle istruzioni e digest delle operazioni, rifiutando prove incomplete. La certificazione generale dei grafi nativi, gli invarianti dei cicli e l’equivalenza dal codice nativo a C restano lavori separati oltre l’ambito dei percorsi nativi finiti descritto di seguito.
+
+`FreshChoiceProjection` è interno al verificatore di indipendenza. Riutilizza le proiezioni a zero dei valori ordinari nello stesso contesto simbolico immutabile; ammette solo nuove foglie create dopo la proiezione precedente. Oltre la sua capacità, la tabella limitata dei risultati torna alla sostituzione ordinaria. Entrambe le esecuzioni conservano le proprie scelte nuove; limiti dei nodi, costi delle query e obblighi di prova restano invariati.
 
 `Decoder` corregge la larghezza disp32 errata dovuta al prefisso operando x64 prima delle verifiche della forma e dell’associazione delle rilocazioni. Devono concordare limiti ModRM/SIB, campo completo, spostamento con segno, operandi di memoria e immediati successivi. Decodifica completa, per il lifting e leggera con dettagli condividono questa normalizzazione. Cambia solo il metadato della larghezza codificata; disp16 effettivo di i386, disp8, moffs e decodifica senza dettagli mantengono il comportamento precedente.
 
@@ -1636,3 +1642,11 @@ Nella RAM ordinaria, `XCHG` ammette operandi non allineati a 8/16/32/64 bit, con
 DarwinFiles importa timespec e la maschera dei segnali di Pselect in DarwinSelect.cpp e rifiuta operazioni sullo stato dei segnali non modellate. Select e Pselect condividono immediateSelect per bitmap, limite inferiore della capacità, provider e copia ordinata; timeval e timespec mantengono larghezze e limiti propri. Le maschere complete non nulle richiedono un futuro modello dello stato dei segnali.
 
 `isCheckedX86SafeSEHHandlerReference` autentica un ingresso PE32 conservato tramite il decodificatore SafeSEH esistente, i byte immutabili della tabella e dell’intestazione e il puntatore load-config rilocato. LLVM dichiara questa identità sorgente prima di emettere qualsiasi corpo, compresi quelli omessi nei frammenti. L’appartenenza alla tabella non dimostra una personality del linguaggio, un’ABI invocabile o il permesso di ricostruire EH nativo; i controlli indipendenti restano necessari.
+
+L’inizializzazione dei campi del kernel ha un proprietario separato nella RAM fisica. La verifica dei permessi resta pura. Le scritture host riuscite, le transazioni verificate confermate e gli eventi software esatti dopo la scrittura definiscono solo i byte effettivamente scritti, inclusi valori identici e scritture completate prima di un errore. Scritture temporanee, rollback, tentativi annullati prima della conferma e invalidazioni opache non provano l’inizializzazione. Una bitmap propria segue le porzioni fisiche conservate e gli alias senza leggere la RAM ospite. Gli eventi software provano le scritture riportate senza garantire copertura completa; i servizi tipizzati mantengono i contratti espliciti.
+
+`MemoryWriteWitness` conserva gli intervalli esatti delle allocazioni fisiche e condivide l’invalidazione delle scritture confermate con le riserve RAM. Scritture identiche, parziali o tramite alias invalidano la prova; un’esecuzione senza tracciamento completo la rimuove in modo conservativo. Creazione e interrogazioni richiedono un proprietario fermo. L’osservazione del driver lega i campi DIR64 validati dopo la copia dell’immagine e prima delle correzioni di sessione, pubblicando dati posseduti quando allocazione e cronologia coincidono. Non coprono puntatori generati né ripristino nativo del kernel.
+
+Il caricatore dei driver lega i fatti di rilocazione a SHA-256 del file validato. La ricostruzione PE usa questi fatti posseduti ed esclude i campi sostituiti dagli import o dalla formattazione prima di emettere record DIR64 diagnostici. Questo componente non deduce rilocazioni dei puntatori generati e non rimuove il rifiuto del kernel.
+
+`isCanonicalX87Wait` definisce la stessa regola di conservazione del frame nel percorso normale per i trasferimenti registration ordinari e i ritorni local-finally verificati. L’operazione FWAIT e il dispatch delle eccezioni restano intatti. Gli altri intrinsic e le forme errate rimangono opachi; la regola non dimostra un’uscita finally non locale né un ripristino nativo.

@@ -168,6 +168,48 @@ protected:
   }
 };
 
+TEST_P(KernelSnapshot,
+       InitializationRequiresCommittedWritesNotPermissionChecks) {
+  const uint64_t Field = Model->driverObject() + DriverDispatchOffset + 8;
+  const auto Before = take(CPU->readInteger(Field, 8));
+  auto Uninitialized = [&](unsigned Width) {
+    auto E = Model->validateGuestAccess(Field, Width, false);
+    ASSERT_TRUE(bool(E));
+    EXPECT_NE(llvm::toString(std::move(E)).find("unmodeled"),
+              std::string::npos);
+  };
+  Uninitialized(8);
+  ok(Model->validateGuestAccess(Field, 8, true));
+  EXPECT_EQ(take(CPU->readInteger(Field, 8)), Before);
+  Uninitialized(8);
+  const uint8_t Store[] = {0x48, 0x89, 0x11, 0x90}; // mov [rcx],rdx; nop
+  ok(CPU->write(Code, Store));
+  ok(CPU->setReg(X64Register::CX, Field));
+  ok(CPU->setReg(X64Register::DX, Before ^ UINT64_MAX));
+  unsigned Attempts = 0;
+  BackendHooks Hooks;
+  Hooks.Write = [&](uint64_t Address, uint32_t Size, uint64_t) {
+    ++Attempts;
+    ok(Model->validateGuestAccess(Address, Size, true));
+    CPU->stop();
+  };
+  ok(CPU->installHooks(std::move(Hooks)));
+  const auto Exit = take(CPU->runUntilExit(Code, 1000000));
+  ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+  EXPECT_EQ(Attempts, 1u);
+  EXPECT_EQ(take(CPU->readInteger(Field, 8)), Before);
+  Uninitialized(8);
+  // A same-value partial store defines only its actual committed bytes.
+  put(Field, Before, 4);
+  ok(Model->validateGuestAccess(Field, 4, false));
+  Uninitialized(8);
+  constexpr uint64_t Alias = 0x61000000;
+  ok(CPU->mapAlias(Alias, Field & ~(PageSize - 1), PageSize, Read | Write));
+  put(Alias + Field % PageSize + 4, Before >> 32, 4);
+  EXPECT_EQ(take(CPU->readInteger(Field, 8)), Before);
+  ok(Model->validateGuestAccess(Field, 8, false));
+}
+
 TEST_P(KernelSnapshot, MemoryFaultRetainsCommittedObjectsAndFirstFault) {
   snapshotAfterFault(false);
 }

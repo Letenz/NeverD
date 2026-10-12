@@ -195,6 +195,8 @@ build-release/bin/NeverDLowIRRefinementTests
 
 `NeverDLowIRUndefinedIndependenceTests` 檢查完整無環 LowIR 圖的兩次執行獨立性。兩側共用一般入口輸入；每次新產生的架構未定義值在複製、重疊寫入、溢出儲存與重新載入中保持來源關聯。控制述詞先於路徑假設接受檢查。憑證要求 `Complete` 效果中繼資料，並精確綁定每條指令的完整邊界與操作摘要。缺少證據、可達迴圈、呼叫、未知別名或預算耗盡都會拒絕憑證。結論受明確觀察項與無故障堆疊框架契約限制，並非原生程式碼到 C 的完整等價證明。
 
+`FreshChoiceProjection.*` 歸屬 `NeverDInterpreterSpecializationTests`。獨立符號上下文與原有替換演算法比較精確節點順序，位元組輸入 oracle 檢查投影值及保留的選擇。迴歸涵蓋上下文和 leaf 准入、零容量及精確容量、回退，以及共用增量鏈的總遍歷工作量，不採用計時門檻。
+
 以下行為採用預設的嚴格審計契約。`NeverDOriginalBinaryUndefinedIndependenceTests` 使用獨立撰寫、固定映射的 x64 位元組，驗證實體原生 CALL/RET、改寫的返回目標、有限間接目標全集和不可變載入。同一測試目標也檢查直接分支完整收集、精確位元組／效果／映射／讀取見證綁定、外層返回時入口 RSP 及返回位址槽保持，以及堆疊框架與映像分離前提的可滿足性。缺失或重疊指令、不符合精確陷阱和明確環境投影規則的未審計分支、不終止或超出預算的迴圈、不完整目標列舉、執行設定／契約不符和預算耗盡均須拒絕，且不產生憑證或殘餘程式碼。成功要求每條可行原生路徑完整結束。此選用閘門不認證迴圈不變量、例外分派、啟用 CET 的執行或原生程式碼到 C 的等價性；一般恢復仍獨立可用。該目標也檢查嚴格提升的 `INT3`/`UD2` 終止邊界及其完整位元組、操作摘要綁定。未定義輸出附屬中繼資料的 `Missing` 必須保持不變；僅經符號執行證明不可達的陷阱可進入憑證，任意可行陷阱路徑都須傳回 `ContractViolation`，且無憑證、無殘餘程式碼。不建模陷阱後的循序執行或例外恢復，不使用 `codeFollowsTrap`，靜態 LowIR API 的支援範圍保持不變。
 
 實體返回回歸涵蓋直接及間接呼叫跳過無效行內位元組、可達的錯誤返回位置、完整目標列舉及恰好和不足的預算。完整狀態關係拒絕被改動的結果；獨立 C 經 O1/O2 編譯後也必須保留完整框架寫入，返回值相同不能掩蓋返回槽位元組變化。
@@ -1206,7 +1208,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1496,7 +1498,7 @@ block/副本發布測試亦涵蓋兩個獨立的 48 位元組範圍、描述符�
 
 `LowIRLoopInference.ProjectedCounterCopies*` 涵蓋在遞增前經由帶獨立標籤的字複製計數器位段的巢狀迴圈。144 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4 位元組位段、直接或快取退出條件，以及整字複製對照。投影相等關係必須在儲存的到達狀態和每條傳入轉移上成立；高位保持獨立。轉移域蘊含證明可辨識由不同參數表示的加法遞推。捨棄高位標籤、無效更新、缺少保護，以及推斷或最終證明預算少一單位時仍會拒絕。
 
-`LowIRLoopInference.TransferredCounters*` 涵蓋計數器在不同切點間搬移儲存位置、且其他迴圈可繞過各切點的情況。精確的符號單位步長轉移僅用於提出來源計數器保護條件，以及允許一個切點使用不同位置的備用排名；所有條件和排名仍須通過完整轉移證明。192 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4/8 位元組計數器、獨立標籤及位置不變的對照。結果或標籤變更、錯誤排名映射、不終止更新、缺少保護及推斷或最終證明預算不足均會被拒絕。計數器遍歷使用既有符號節點限額，可選圖選擇器的工作預算可維持為零。 案例同時涵蓋遞減至零及遞增至輸入上界。晚發現計數器時，待所有切點範本重建後再剪除界限及位元區段保護條件；其他擴展與獨立證明照常執行。
+`LowIRTransferredCounterState.*` 與 `LowIRLoopInference.TransferredCountersKeepProofBoundaries` 涵蓋計數器在不同切點間搬移儲存位置、且其他迴圈可繞過各切點的情況。精確的符號單位步長轉移僅用於提出來源計數器保護條件，以及允許一個切點使用不同位置的備用排名；所有條件和排名仍須通過完整轉移證明。192 組完整狀態案例涵蓋暫存器、框架、函式暫存量、兩種位元組順序、1/3/4/8 位元組計數器、獨立標籤及位置不變的對照。結果或標籤變更、錯誤排名映射、不終止更新、缺少保護及推斷或最終證明預算不足均會被拒絕。計數器遍歷使用既有符號節點限額，可選圖選擇器的工作預算可維持為零。 案例同時涵蓋遞減至零及遞增至輸入上界。晚發現計數器時，待所有切點範本重建後再剪除界限及位元區段保護條件；其他擴展與獨立證明照常執行。 完整狀態矩陣依儲存空間、方向和遷移方式分為 12 個具名參數組，每組包含 16 種組合；CTest 分別回報並限制每組的執行時間。
 
 `LowIRLoopRefinement.GuardedCuts*` 與 `BinaryLowIRLoopRefinement.GuardedCuts*` 涵蓋同址切點、暫存器、框架及原生系統旗標、兩種位元組序、未匹配的有限與循環路徑、重疊及錯配拒絕、前綴泛化、未定義值見證、錯誤中繼資料、摘要與共用預算。獨立原生測試證明兩個 R10 上下文共用循環位址，並確認未稽核邊界檢查先於選擇條件。一般 ABI 認證仍是獨立工作。
 
@@ -1635,3 +1637,31 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `RegistrationCallNoReturn` 拒絕變更的指令範圍、目標、操作範圍、條件呼叫，以及錯誤架構或格式下的使用。對齊堆疊 PE32 案例同時檢查已獨立證明終止的呼叫和依賴目前證明刪除的普通後繼邊；記憶體證據失效不能重新產生已不存在的普通邊。
 
 `SafeSEHReference.*` 檢查不可變 SafeSEH 表成員、畸形或歧義儲存、重定位、其他架構與格式，以及分片間的宣告順序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 透過 `NEVERD_NONLOCAL_FINALLY_INPUTS`，測試原生 MSVC x86/x64、O0/O2、GS 開關及來源最佳化開關的 32 種 LLVM 組合。測試驗證 LLVM 與已解析呼叫簽章，並要求不支援的 x86 原生 EH 重建仍遭拒絕。Windows EH 專項作業下載原生 fixture artifact 並執行此矩陣；缺少輸入目錄時測試會明確跳過。
+
+`RAMReservationTests.cpp` 驗證公開寫入記錄的同值及 ABA 寫入、保留切片、位址重用、兄弟映射、回復、取消、故障前已提交寫入和不透明執行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在偏好、向下重定位和核心載入位址檢查具有獨立生命週期的載入事實：還原位元組不會恢復已失效的來源證明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 區分活動 CFG 指標替換與未啟用 CFG 的後援指標保留。
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 檢查 PE 輸出、獨立 DIR64 讀取器、模型重定位及對重寫除錯記錄的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒絕來源、基址或順序不符，並排除格式化替換，即使位元組相同。這些檢查驗證診斷中繼資料，不代表原生復原成功。
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` 檢查九種 intrinsic 形式、finally 的父框架寫入效果、還原後的參數 ESP、registration 移除與保留的例外分派入口。僅規範 FWAIT 通過，其餘八種畸形或不同 intrinsic 形式繼續拒絕。
+
+`NeverDNativeFinallyInputTests` 獨立承載 MSVC 輸入矩陣。通用 `NeverDPipelineOutcomeTests` 在所有 CI 平台仍須執行，不依賴可選原生夾具。聚焦 Windows EH 作業以已驗證映像編譯並執行原生輸入目標。macOS CI 為原始碼替換夾具明確選用 Homebrew Clang 22，與建置 NeverD 的編譯器獨立；不支援的替換堆疊探測方法仍被拒絕。
+
+MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實例產生更多 COFF 節；其他編譯器設定不變。設定檢查核對實際產生的測試編譯命令，編譯及執行仍由原生 Windows CI 驗證。
+
+檢查模式的雙移位在目標和 flags 未定義時，報告遮罩後的計數及運算元寬度。`X64DoubleShift` 驗證型別化退出與舊錯誤介面保留原因，且沒有暫存器或 RAM 改變以及記憶體存取觀察；驅動夾具驗證該原因在情境派發前仍保留。
+
+## 原始碼與原生物件 patch
+
+`CPU` 表示原始碼安裝與隔離函式執行；`REFUSED` 表示明確缺少安裝契約。ARM32 ELF 需要 EHABI 註冊；32 位 Mach-O 需要經驗證的載入器、前端與展開契約；PE 原始碼安裝目前要求 x64。
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[原始碼與原生物件 patch](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

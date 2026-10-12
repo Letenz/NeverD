@@ -88,6 +88,10 @@ goal. Preview and receipt-bound export used `PATH=/neverd-no-external-tools`.
 | Rewrite ID | `9a333c1bfdcecedfc7f46404d5b39a934519725b7543d71f763306f9ef7544aa` |
 | Exported receipt SHA-256 | `bb700e0774af697b5185391faacaa5c4a9019d3e107b9e877423b7c469fed5d7` |
 
+This receipt hash was recorded on macOS when `rewrite_steps` counted
+comparator calls. Searches and sorts now charge deterministic bounds, so a
+re-export differs only in `rewrite_steps` and its hash.
+
 The candidate passed complete retained-tree/GetValue-scaffolding checks,
 surviving lexical-reference projection and exact inverse validation. The
 exported original also matched recovered `m01047.js` byte-for-byte. Local
@@ -124,6 +128,10 @@ No target, external formatter or JavaScript runtime was executed.
 | Candidate | 1,908 bytes; SHA-256 `858a4f1f64ec90f02a650eae0e79c6a3967508bdfe4caa81e22211d598895cae` |
 | Rewrite ID | `a1b685aca498eb7d5d34345d97f79a12f0195429e665b6262536c28fca1805a2` |
 | Exported receipt SHA-256 | `119aa0e1c34c97d9669791e64740f295a1cfb0c5a9aa7410f8a3c5fcce4d11a6` |
+
+This receipt hash was recorded on macOS when `rewrite_steps` counted
+comparator calls. Searches and sorts now charge deterministic bounds, so a
+re-export differs only in `rewrite_steps` and its hash.
 
 Complete reparse, retained syntax and lexical-graph comparison, and exact
 inverse verification passed. Rest parameters and exported function names

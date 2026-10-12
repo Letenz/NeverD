@@ -1439,8 +1439,7 @@ CodeView::CodeView(Session &session, const QString &representation,
   makeRowShrinkable(*barRow);
   layout->addWidget(barRow);
   layout->addWidget(text_, 1);
-  status_->setContentsMargins(6, 2, 6, 2);
-  makeRowShrinkable(*status_);
+  makeStatusLine(*status_);
   layout->addWidget(status_);
   connect(selector_, &QComboBox::currentIndexChanged, this, [this] {
     const auto name = selector_->currentData().toString();

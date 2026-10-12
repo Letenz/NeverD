@@ -9,6 +9,10 @@
 
 #include "neverd/analysis/LowIRRefinement.h"
 
+#include <ostream>
+#include <string>
+#include <vector>
+
 using namespace neverd;
 using namespace neverd::analysis;
 
@@ -4324,53 +4328,90 @@ Program relocatedCounterLoops(bool Relocate, uint16_t Bytes, bool Tagged,
   return P;
 }
 
-TEST(LowIRLoopInference, TransferredCountersPreserveCompleteState) {
-  unsigned Cases = 0;
+struct TransferredCounterCase {
+  LowIRLoopSpace Space;
+  bool Ascending;
+  bool Relocate;
+
+  std::string name() const {
+    const char *Storage = Space == LowIRLoopSpace::Register ? "Register"
+                          : Space == LowIRLoopSpace::Frame  ? "Frame"
+                                                            : "Temporary";
+    return std::string(Storage) + (Ascending ? "Ascending" : "Descending") +
+           (Relocate ? "Relocated" : "InPlace");
+  }
+};
+
+void PrintTo(const TransferredCounterCase &Case, std::ostream *Out) {
+  *Out << Case.name();
+}
+
+std::vector<TransferredCounterCase> transferredCounterCases() {
+  std::vector<TransferredCounterCase> Cases;
   for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,
                      LowIRLoopSpace::FunctionTemporary})
     for (bool Ascending : {false, true})
       for (bool Relocate : {false, true})
-        for (uint16_t Bytes : {1, 3, 4, 8})
-          for (bool Tagged : {false, true})
-            for (auto Order :
-                 {llvm::endianness::little, llvm::endianness::big}) {
-              SCOPED_TRACE(static_cast<unsigned>(Space));
-              SCOPED_TRACE(Ascending);
-              SCOPED_TRACE(Relocate);
-              SCOPED_TRACE(Bytes);
-              SCOPED_TRACE(Tagged);
-              SCOPED_TRACE(static_cast<unsigned>(Order));
-              auto P = relocatedCounterLoops(Relocate, Bytes, Tagged, Space, 1,
-                                             true, Ascending);
-              P.Contract.ByteOrder = Order;
-              LowIRLoopInferenceLimits Limits;
-              Limits.MaxCutSelectionWork = 0;
-              const auto R = inferLowIRLoopRefinementPlan(
-                  P.Function, P.Contract, Limits, {0x200, 0x400});
-              ASSERT_TRUE(R.inferred()) << R.Diagnostic;
-              EXPECT_EQ(R.CutSelectionWork, 0u);
-              ASSERT_TRUE(loopCheck(P, P, *R.Plan).proved());
-              if (Relocate) {
-                auto Wrong = P;
-                Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
-                loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
-                if (Tagged && Bytes != 8) {
-                  Wrong = P;
-                  bool Changed = false;
-                  for (auto &B : Wrong.Function.Blocks)
-                    for (auto &O : B.Ops)
-                      if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(104)) {
-                        O.Inputs[0] = n(0);
-                        Changed = true;
-                      }
-                  ASSERT_TRUE(Changed);
-                  loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
-                }
-              }
-              ++Cases;
-            }
-  EXPECT_EQ(Cases, 192u);
+        Cases.push_back({Space, Ascending, Relocate});
+  return Cases;
 }
+
+class LowIRTransferredCounterState
+    : public ::testing::TestWithParam<TransferredCounterCase> {};
+
+TEST_P(LowIRTransferredCounterState, PreservesCompleteState) {
+  const auto [Space, Ascending, Relocate] = GetParam();
+  unsigned Cases = 0, WrongOperations = 0, WrongTags = 0;
+  for (uint16_t Bytes : {1, 3, 4, 8})
+    for (bool Tagged : {false, true})
+      for (auto Order : {llvm::endianness::little, llvm::endianness::big}) {
+        SCOPED_TRACE(static_cast<unsigned>(Space));
+        SCOPED_TRACE(Ascending);
+        SCOPED_TRACE(Relocate);
+        SCOPED_TRACE(Bytes);
+        SCOPED_TRACE(Tagged);
+        SCOPED_TRACE(static_cast<unsigned>(Order));
+        auto P = relocatedCounterLoops(Relocate, Bytes, Tagged, Space, 1, true,
+                                       Ascending);
+        P.Contract.ByteOrder = Order;
+        LowIRLoopInferenceLimits Limits;
+        Limits.MaxCutSelectionWork = 0;
+        const auto R = inferLowIRLoopRefinementPlan(P.Function, P.Contract,
+                                                    Limits, {0x200, 0x400});
+        ASSERT_TRUE(R.inferred()) << R.Diagnostic;
+        EXPECT_EQ(R.CutSelectionWork, 0u);
+        ASSERT_TRUE(loopCheck(P, P, *R.Plan).proved());
+        if (Relocate) {
+          auto Wrong = P;
+          Wrong.Function.Blocks[4].Ops[0].Opcode = NdOp::INT_SUB;
+          ++WrongOperations;
+          loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+          if (Tagged && Bytes != 8) {
+            Wrong = P;
+            bool Changed = false;
+            for (auto &B : Wrong.Function.Blocks)
+              for (auto &O : B.Ops)
+                if (O.Opcode == NdOp::INT_AND && O.Inputs[0] == r(104)) {
+                  O.Inputs[0] = n(0);
+                  Changed = true;
+                }
+            ASSERT_TRUE(Changed);
+            ++WrongTags;
+            loopRefused(loopCheck(P, Wrong, *R.Plan), Status::Different);
+          }
+        }
+        ++Cases;
+      }
+  EXPECT_EQ(Cases, 16u);
+  EXPECT_EQ(WrongOperations, Relocate ? 16u : 0u);
+  EXPECT_EQ(WrongTags, Relocate ? 6u : 0u);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    AllStorageAndTransferModes, LowIRTransferredCounterState,
+    ::testing::ValuesIn(transferredCounterCases()),
+    [](const ::testing::TestParamInfo<LowIRTransferredCounterState::ParamType>
+           &Info) { return Info.param.name(); });
 
 TEST(LowIRLoopInference, TransferredCountersKeepProofBoundaries) {
   for (auto Space : {LowIRLoopSpace::Register, LowIRLoopSpace::Frame,

@@ -33,8 +33,10 @@ std::optional<std::uint64_t> resolve(const std::string &name) {
   return std::nullopt;
 }
 void decorate(Json &view, const Json &row = nullptr,
-              const Json &renames = Json::array()) {
-  CodeEdits::decorate(view, row, 0x1000, "c", renames, Json::array(), resolve);
+              const Json &renames = Json::array(),
+              const CodeEdits::FunctionAliases &displayNames = {}) {
+  CodeEdits::decorate(view, row, 0x1000, "c", renames, Json::array(),
+                      displayNames, resolve);
 }
 Json target(const Json &view, const std::string &original) {
   for (const auto &name : view.at("code_names"))
@@ -133,6 +135,24 @@ int main() {
             different.at("text").get<std::string>().find("input_value") ==
                 std::string::npos,
         "Obsolete aliases were applied to a different rendering");
+  // The listing names generic functions after what they are: main for the
+  // one the C runtime's start routine calls, start for the image entry.  A
+  // source view shows those names too, and the analyst's rename still wins.
+  const CodeEdits::FunctionAliases displayNames = {{"target", "main"},
+                                                   {"callee", "start"}};
+  auto named = page(source);
+  decorate(named, nullptr, Json::array(), displayNames);
+  const auto namedText = named.at("text").get<std::string>();
+  check(namedText.find("int32_t main(int32_t value) {") != std::string::npos &&
+            namedText.find("temp = value + start(value)") != std::string::npos,
+        "A source view did not show the listing's display names");
+  check(namedText.find("// value global_data callee") != std::string::npos,
+        "A display name changed a comment");
+  auto renamedOverDisplay = page(source);
+  decorate(renamedOverDisplay, nullptr, imageNames, displayNames);
+  check(renamedOverDisplay.at("text").get<std::string>().find(
+            "temp = value + renamed_callee(value)") != std::string::npos,
+        "A display name replaced the analyst's rename");
   auto shadowed =
       page("int target(int value) { { int value = 1; } return value; }\n");
   decorate(shadowed);

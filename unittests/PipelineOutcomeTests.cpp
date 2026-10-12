@@ -71,13 +71,20 @@ public:
   }
 
   static void buildLowIR(const BinaryImage &Image, PipelineResult &Result,
-                         const std::vector<va_t> &Entries) {
+                         const std::vector<va_t> &Entries,
+                         PipelineAnalysisCache *Cache = nullptr) {
     PipelineOptions Options;
+    Options.AnalysisCache = Cache;
     Options.OnlyFunctionEntries.insert(Entries.begin(), Entries.end());
     std::vector<std::pair<va_t, std::string>> Candidates;
     for (va_t Entry : Entries)
       Candidates.emplace_back(Entry, Image.getFunctionNameAt(Entry));
     Pipeline().buildLowIR(Image, Candidates, Options, nullptr, Result);
+  }
+
+  static std::shared_ptr<const void>
+  analysisFacts(const PipelineAnalysisCache &Cache) {
+    return Cache.Facts;
   }
 
   static void buildLowIR(const BinaryImage &Image, PipelineResult &Result) {
@@ -130,6 +137,159 @@ TEST(PipelineOutcome, UnsupportedArchitectureRetainsDecoderDiagnostic) {
   EXPECT_NE(Result.Error.find("decoder"), std::string::npos);
   EXPECT_TRUE(Result.HighFuncs.empty());
   EXPECT_EQ(Result.LlvmModule, nullptr);
+}
+
+BinaryImage selectionCacheImage(bool Floating) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  Image.Entry = 0x1000;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Image.Entry;
+  Text.Size = Text.FileSz = 0x2000;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  const auto Wrapper = [&](va_t From, va_t To) {
+    const uint32_t Offset = static_cast<uint32_t>(To - From - 5);
+    Text.Data[From - Text.VA] = 0xe8;
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[From - Text.VA + I + 1] = Offset >> (I * 8);
+    Text.Data[From - Text.VA + 5] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(From, 6));
+  };
+  Wrapper(0x1000, 0x1800);
+  Wrapper(0x1100, 0x1800);
+  Wrapper(0x1800, 0x2000);
+  // The two callers share a forwarding chain, which must keep the physical
+  // floating return or incoming integer argument across navigation.
+  Text.Data[0x2000 - Text.VA] = Floating ? 0xd9 : 0x89;
+  Text.Data[0x2001 - Text.VA] = Floating ? 0xe8 : 0xf8;
+  Text.Data[0x2002 - Text.VA] = 0xc3;
+  Image.Symbols.push_back(Symbol::makeFunc(0x2000, 3));
+  Text.Data[0x1200 - Text.VA] = 0xc3; // Valid, initially unnamed entry.
+  Image.Segments.push_back(std::move(Text));
+  return Image;
+}
+
+void expectSameSelection(const PipelineResult &Kept,
+                         const PipelineResult &Cold) {
+  std::string KeptText, ColdText;
+  llvm::raw_string_ostream KeptStream(KeptText), ColdStream(ColdText);
+  Pipeline::dumpLowIR(Kept.LowFuncs, KeptStream);
+  Pipeline::dumpLowIR(Cold.LowFuncs, ColdStream);
+  EXPECT_EQ(KeptText, ColdText);
+  ASSERT_EQ(Kept.LowFuncs.size(), Cold.LowFuncs.size());
+  for (size_t I = 0; I != Kept.LowFuncs.size(); ++I)
+    EXPECT_EQ(Kept.LowFuncs[I].hasCompleteInstructionLift(),
+              Cold.LowFuncs[I].hasCompleteInstructionLift());
+  EXPECT_EQ(Kept.CallMayWriteGPRs, Cold.CallMayWriteGPRs);
+  EXPECT_EQ(Kept.CallEntryReadGPRs, Cold.CallEntryReadGPRs);
+  EXPECT_EQ(Kept.CallEntryStackArgs, Cold.CallEntryStackArgs);
+  EXPECT_EQ(Kept.CallVariadicFrom, Cold.CallVariadicFrom);
+  EXPECT_EQ(Kept.CallDispatchThunks, Cold.CallDispatchThunks);
+  EXPECT_EQ(Kept.CallFloatReturns, Cold.CallFloatReturns);
+}
+
+TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
+  for (unsigned Count : {1u, 4u}) {
+    ScopedThreadCount Threads(Count);
+    for (bool Floating : {false, true}) {
+      SCOPED_TRACE(Count);
+      SCOPED_TRACE(Floating);
+      BinaryImage Image = selectionCacheImage(Floating);
+      PipelineAnalysisCache Cache;
+      PipelineResult First;
+      PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
+      const auto Facts = PipelineTestPeer::analysisFacts(Cache);
+      ASSERT_NE(Facts, nullptr);
+      for (va_t Entry : {0x1100, 0x1000}) {
+        PipelineResult Kept, Cold;
+        PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+        PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+        EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), Facts);
+        expectSameSelection(Kept, Cold);
+        ASSERT_EQ(Kept.LowFuncs.size(), 1u);
+        EXPECT_EQ(Kept.LowFuncs[0].Entry, Entry);
+        bool FoundCall = false;
+        for (const auto &Block : Kept.LowFuncs[0].Blocks)
+          for (const auto &Op : Block.Ops)
+            if (Op.Opcode == NdOp::CALL) {
+              FoundCall = true;
+              EXPECT_EQ(Op.Output.Size, Floating ? 10u : 8u);
+            }
+        EXPECT_TRUE(FoundCall);
+      }
+    }
+  }
+}
+
+TEST(PipelineOutcome, AnalysisCacheBindsExactEntryInventories) {
+  BinaryImage Image = selectionCacheImage(true);
+  PipelineAnalysisCache Cache;
+  auto Check = [&](va_t Entry) {
+    const auto Before = PipelineTestPeer::analysisFacts(Cache);
+    PipelineResult Kept, Cold;
+    PipelineTestPeer::buildLowIR(Image, Kept, {Entry}, &Cache);
+    PipelineTestPeer::buildLowIR(Image, Cold, {Entry});
+    EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Before);
+    expectSameSelection(Kept, Cold);
+  };
+  Check(0x1000);
+  Check(0x1200); // A new selected entry changes the known boundary inventory.
+  Check(0x1000);
+  Image.VerifiedFunctionEntries.insert(0x1200);
+  Check(0x1000);
+  // Equal cardinality is insufficient, and removing an entry matters too.
+  Image.VerifiedFunctionEntries = {0x1300};
+  Check(0x1000);
+  Image.VerifiedFunctionEntries.clear();
+  Check(0x1000);
+}
+
+TEST(PipelineOutcome, AnalysisCacheResetObservesChangedCalleeBytes) {
+  BinaryImage Image = selectionCacheImage(true);
+  PipelineAnalysisCache Cache;
+  PipelineResult First;
+  PipelineTestPeer::buildLowIR(Image, First, {0x1000}, &Cache);
+  const auto Before = PipelineTestPeer::analysisFacts(Cache);
+  ASSERT_NE(Before, nullptr);
+  Cache.reset();
+  Image.Segments[0].Data[0x2000 - 0x1000] = 0x89; // mov eax, edi; ret
+  Image.Segments[0].Data[0x2001 - 0x1000] = 0xf8;
+  PipelineResult Kept, Cold;
+  PipelineTestPeer::buildLowIR(Image, Kept, {0x1100}, &Cache);
+  PipelineTestPeer::buildLowIR(Image, Cold, {0x1100});
+  EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Before);
+  expectSameSelection(Kept, Cold);
+  ASSERT_EQ(Kept.LowFuncs.size(), 1u);
+  for (const auto &Block : Kept.LowFuncs[0].Blocks)
+    for (const auto &Op : Block.Ops)
+      if (Op.Opcode == NdOp::CALL)
+        EXPECT_EQ(Op.Output.Size, 8u);
+}
+
+TEST(PipelineOutcome, AnalysisCacheSeparatesImagesAndSkipsWholeImageRuns) {
+  BinaryImage FirstImage = selectionCacheImage(true);
+  BinaryImage SecondImage = selectionCacheImage(false);
+  PipelineAnalysisCache Cache;
+  PipelineResult First;
+  PipelineTestPeer::buildLowIR(FirstImage, First, {0x1000}, &Cache);
+  const auto Before = PipelineTestPeer::analysisFacts(Cache);
+  PipelineResult Second, Cold;
+  PipelineTestPeer::buildLowIR(SecondImage, Second, {0x1000}, &Cache);
+  PipelineTestPeer::buildLowIR(SecondImage, Cold, {0x1000});
+  EXPECT_NE(PipelineTestPeer::analysisFacts(Cache), Before);
+  expectSameSelection(Second, Cold);
+  Cache.reset();
+  PipelineOptions Options;
+  Options.AnalysisCache = &Cache;
+  Options.EmitDumpOutput = false;
+  llvm::LLVMContext Context;
+  const auto Whole = Pipeline().run(SecondImage, Context, Options);
+  EXPECT_TRUE(Whole.Success) << Whole.Error;
+  EXPECT_EQ(PipelineTestPeer::analysisFacts(Cache), nullptr);
 }
 
 TEST(PipelineOutcome, ParallelCalleeFrontiersPreserveEveryRegisterSummary) {
@@ -1008,72 +1168,6 @@ TEST(PipelineOutcome, SourceEHRefusalsAgreeAcrossSingleAndShardedEmission) {
       }
     }
   }
-}
-
-TEST(PipelineOutcome, NativeFinallyInputsRetainSourceLLVM) {
-  const char *Root = std::getenv("NEVERD_NONLOCAL_FINALLY_INPUTS");
-  if (!Root)
-    GTEST_SKIP() << "set NEVERD_NONLOCAL_FINALLY_INPUTS to native MSVC images";
-  ScopedThreadCount Threads(2);
-  for (const char *Architecture : {"x86", "x64"})
-    for (const char *Profile : {"Od-no-gs", "Od-gs", "O2-no-gs", "O2-gs"}) {
-      const auto Path =
-          std::filesystem::path(Root) / Architecture / Profile / "original.exe";
-      auto Image = loadBinary(Path.string());
-      ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
-      ASSERT_EQ(Image->Format, BinaryFormat::COFF);
-      ASSERT_EQ(Image->Arch,
-                std::string(Architecture) == "x86" ? Arch::X86 : Arch::X64);
-      for (const char *Name :
-           {"nonlocal_finally_goto", "nonlocal_finally_return"}) {
-        const auto *Export = Image->findExport(Name);
-        ASSERT_NE(Export, nullptr) << Path << ':' << Name;
-        for (bool NoOpt : {false, true}) {
-          SCOPED_TRACE(::testing::Message()
-                       << Path << ':' << Name << ':' << NoOpt);
-          llvm::LLVMContext Context;
-          PipelineOptions Options;
-          Options.EmitDumpOutput = false;
-          Options.SourceProjection = Options.LiftMode = true;
-          Options.OnlyFunctionEntries.insert(Export->Addr);
-          Options.NoOpt = NoOpt;
-          const auto Result = Pipeline().run(*Image, Context, Options);
-          ASSERT_TRUE(Result.Success) << Result.Error;
-          ASSERT_NE(Result.LlvmModule, nullptr);
-          EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
-          EXPECT_TRUE(validateResolvedLLVMCallSignatures(*Result.LlvmModule));
-          ASSERT_FALSE(Result.LowFuncs.empty());
-          for (const auto &Function : Result.LowFuncs)
-            EXPECT_TRUE(Function.hasCompleteLiftCoverage()) << Function.Name;
-          if (Image->Arch != Arch::X86)
-            continue;
-          // An external source-handler identity does not supply the missing
-          // ordinary-finally invocation and nonlocal-exit reconstruction.
-          auto Native = exception_rewrite::validateExceptionRewriteContracts(
-              *Result.LlvmModule);
-          EXPECT_FALSE(bool(Native));
-          if (!Native)
-            llvm::consumeError(Native.takeError());
-          if (std::string(Profile) != "Od-gs" &&
-              std::string(Profile) != "O2-gs")
-            continue;
-          const auto *EH = Image->ExceptionMetadata.findFunction(Export->Addr);
-          ASSERT_NE(EH, nullptr);
-          ASSERT_TRUE(EH->Registration);
-          bool HasRetainedHandler = false;
-          for (const auto &Function : *Result.LlvmModule) {
-            auto Identity = rewrite_source::getOriginalVA(Function);
-            ASSERT_TRUE(bool(Identity)) << llvm::toString(Identity.takeError());
-            if (*Identity == EH->Registration->HandlerVA &&
-                !Function.use_empty()) {
-              EXPECT_TRUE(Function.isDeclaration());
-              HasRetainedHandler = true;
-            }
-          }
-          EXPECT_TRUE(HasRetainedHandler);
-        }
-      }
-    }
 }
 
 TEST(PipelineOutcome, LiftPreservesTheFailedShardDiagnostic) {

@@ -13,6 +13,8 @@
 #ifndef NEVERD_LIB_PIPELINE_PIPELINERETURNMODELINGDETAIL_H
 #define NEVERD_LIB_PIPELINE_PIPELINERETURNMODELINGDETAIL_H
 
+#include <cstdint>
+
 namespace neverd {
 
 struct BinaryImage;
@@ -29,15 +31,32 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result);
 void recoverStructReturnFromCallers(const BinaryImage &Img,
                                     PipelineResult &Result);
 
+/// Type a callee that returns a whole vector in its FP return register, as
+/// its direct callers read it, Float(16) (MedFunc::ReturnsVectorRegister).
+/// Targets whose FP return register is a vector register.
+void recoverVectorReturnFromCallers(const BinaryImage &Img,
+                                    PipelineResult &Result);
+
 /// Propagate a proven multi-register return shape forward through tail-call
 /// forwarders (`struct S f(a){return g(a);}`) to callees reached only that way.
 void propagateStructReturnForwarderShapes(const BinaryImage &Img,
                                           PipelineResult &Result);
 
+/// What may reveal a callee's multi-register return shape.
+enum class StructReturnEvidence : uint8_t {
+  /// Only a direct caller's reads of the fields after the call.  A body that
+  /// merely writes a second return register, a clobbered scratch, reveals
+  /// nothing: C prints the callee's signature, which an extra field changes.
+  Callers,
+  /// Callers, or else the callee's own writes before each RETURN.  A rewrite
+  /// may return an extra register that its callers ignore.
+  CallersAndBody,
+};
+
 /// Recover a multi-register (or single wide-vector) return shape from a
 /// callee's own body when no direct caller reveals it.  AArch64 only.
-void recoverStructReturnFromBody(const BinaryImage &Img,
-                                 PipelineResult &Result);
+void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
+                                 StructReturnEvidence Evidence);
 
 /// Materialize the multi-register return at every direct call site to a known
 /// register-returning callee, including chained sites whose result no explicit

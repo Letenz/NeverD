@@ -10,10 +10,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "SessionInternal.h"
+#include "features/Publication.h"
 
 namespace neverd::web {
 namespace {
-llvm::json::Object summary(const SourceNavigation &A, uint64_t Revision) {
+llvm::json::Object summary(const SourceNavigation &A, const SourceFeatures &F,
+                           uint64_t Revision) {
   llvm::json::Array Diagnostics;
   for (const auto &D : A.Diagnostics)
     Diagnostics.emplace_back(llvm::json::Object{{"code", D.Code}});
@@ -30,6 +32,7 @@ llvm::json::Object summary(const SourceNavigation &A, uint64_t Revision) {
       {"function_count", A.Functions.size()},
       {"call_count", A.Calls.size()},
       {"reference_count", A.References.size()},
+      {"client_features", client_features::summary(F)},
       {"syntax_inventory_complete", A.Status == "ok" || A.Status == "partial"},
       {"reference_inventory_available",
        (A.Status == "ok" || A.Status == "partial") &&
@@ -54,7 +57,8 @@ std::string Session::analyzeSourceNavigation(std::string_view Revision,
     throw Error("unknown_source");
   const auto Existing = State->Navigation.find(Source->first);
   if (Existing != State->Navigation.end())
-    return json(summary(Existing->second, State->Revision));
+    return json(summary(Existing->second.Evidence, Existing->second.Features,
+                        State->Revision));
   auto Bindings = State->Bindings.find(Source->first);
   if (Bindings == State->Bindings.end())
     Bindings =
@@ -63,8 +67,12 @@ std::string Session::analyzeSourceNavigation(std::string_view Revision,
             .first;
   auto Navigation =
       web::analyzeSourceNavigation(Source->second, Bindings->second);
-  auto Reply = json(summary(Navigation, State->Revision));
-  State->Navigation.emplace(Source->first, std::move(Navigation));
+  auto Features = web::analyzeClientSourceFeatures(
+      Source->second, Bindings->second, Navigation);
+  auto Reply = json(summary(Navigation, Features, State->Revision));
+  State->Navigation.emplace(
+      Source->first,
+      Impl::NavigationResults{std::move(Navigation), std::move(Features)});
   return Reply;
 #endif
 }
@@ -86,7 +94,8 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
   if (Existing == State->Navigation.end())
     throw Error("source_navigation_not_analyzed");
   const auto &S = Source->second;
-  const auto &A = Existing->second;
+  const auto &A = Existing->second.Evidence;
+  const auto &Features = Existing->second.Features;
   const auto &B = State->Bindings.at(Source->first);
   auto NodeID = [&](uint32_t I) -> llvm::json::Value {
     return I == NoSourceIndex ? llvm::json::Value(nullptr)
@@ -107,6 +116,8 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
     Count = A.Calls.size();
   else if (Kind == "references")
     Count = A.References.size();
+  else if (Kind == "features")
+    Count = Features.Records.size();
   else
     throw Error("unsupported_navigation_record_kind");
   if (!Limit || Limit > 512 || Offset > Count)
@@ -157,6 +168,10 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
           {"syntactic_function_id", FunctionID(C.SyntacticFunction)},
           {"runtime_target", "not_proven"},
           {"optional", S.Nodes[Node].flag("optional")}};
+    } else if (Kind == "features") {
+      const auto &F = Features.Records[I];
+      Node = F.Node;
+      Item = client_features::record(F, S, B, A);
     } else {
       const auto &R = B.References.at(A.References[I].Reference);
       Node = R.Node;
@@ -175,7 +190,7 @@ std::string Session::sourceNavigationRecords(std::string_view Revision,
     Item["byte_length"] = std::to_string(N.End - N.Start);
     Items.emplace_back(std::move(Item));
   }
-  auto Reply = summary(A, State->Revision);
+  auto Reply = summary(A, Features, State->Revision);
   Reply["record_kind"] = std::string(Kind);
   Reply["items"] = std::move(Items);
   Reply["offset"] = Offset;

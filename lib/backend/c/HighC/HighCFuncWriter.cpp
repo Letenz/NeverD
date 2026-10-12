@@ -24,6 +24,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -1374,9 +1375,10 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
           const bool Frame = frameDisplacement(*S.Val).has_value();
           if (Frame)
             HasFrame.insert(Name);
-          if (typedMemberAccess(*S.Val) ||
-              (!Frame && S.Val->Kind == ExprKind::BinOp &&
-               (S.Val->Op == NdOp::INT_ADD || S.Val->Op == NdOp::INT_SUB)))
+          // Any other value the name takes moves it off the slot, not only
+          // address arithmetic: a copy of the pointer a loop advances
+          // (`lo = t89`) is neither a member access nor an addition.
+          if (typedMemberAccess(*S.Val) || !Frame)
             HasOtherAddr.insert(Name);
         }
       }
@@ -4641,6 +4643,13 @@ TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
   return EmittedParamTypes[Index];
 }
 
+TypeRef HighCWriter::emittedParamTypeAt(const HighFunc &Func,
+                                        size_t Position) const {
+  const std::vector<size_t> Indices = emittedParamIndices(Func);
+  return Position < Indices.size() ? emittedParamType(Func, Indices[Position])
+                                   : nullptr;
+}
+
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
   return emittedParamIndices(Func).size();
 }
@@ -4662,11 +4671,23 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
       It != EmittedParamIndices.end() && It->second.size() <= N)
     return It->second;
   std::set<int> Used;
-  // An indirect call's target is a use too.
+  ParamIndicesInProgress.insert(&Func);
+  const auto Done =
+      llvm::make_scope_exit([&] { ParamIndicesInProgress.erase(&Func); });
+  // An indirect call's target is a use too.  A call's operand that its
+  // callee's definition does not declare is none: the call does not pass it.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
         E.Var.Kind == MedVar::Param)
       Used.insert(E.Var.Id);
+    if (E.Kind == ExprKind::Call)
+      if (const std::vector<size_t> Passed = printedCallOperands(E);
+          !Passed.empty()) {
+        for (size_t I : Passed)
+          if (I < E.Operands.size() && E.Operands[I])
+            Walk(*E.Operands[I]);
+        return;
+      }
     E.forEachChildExpr([&](const ExprPtr &Child) { Walk(*Child); });
   };
   walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -6320,6 +6341,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
           "uint8_t " + Slot.Name + "[" + std::to_string(Slot.RegionBytes) + "]";
     else
       Decl.Type = cDisplayType(Slot.Type);
+    // A slot's name has its declared type, as a local's has, whether it is
+    // declared here or after the body: `var_m24 < 0` is no signed test of a
+    // uint32_t slot.
+    if (Decl.Type && Decl.Type->Kind == NdTypeKind::Int && !Decl.Type->IsEnum)
+      DeclaredCTypes.emplace(Slot.Name, Decl.Type);
     const bool Printed = PrintedAddrSlots.count(Slot.Name) ||
                          PrintedSlotStores.count(Slot.Name) ||
                          PrintedSlotLoads.count(Slot.Name);
@@ -6357,6 +6383,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // Render the body first: a name the declaration pass expected to be
   // forwarded or dead may still be printed, and it must be declared.
   std::string Body;
+  const size_t FirstBodyAnchor =
+      SourceRecorder ? SourceRecorder->positionBuffer() : 0;
   {
     llvm::raw_string_ostream BodyOS(Body);
     llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
@@ -6395,6 +6423,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     emitIndent(1);
     OS << Type << " " << Name << ";\n";
   }
+  if (SourceRecorder && SourceRecorder->recordsPositions())
+    SourceRecorder->appendPositionBuffer(FirstBodyAnchor, Body.size(),
+                                         OS.tell());
   OS << Body;
   if (EmitFunctionWrapper && !IndirectReturnName.empty() &&
       !PrintedIndirectReturn) {

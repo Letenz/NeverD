@@ -77,6 +77,14 @@ struct AbiCallContext {
   llvm::function_ref<std::optional<int64_t>(const MedVar &)> CallStackOffset;
 };
 
+/// Whether \p V, stored to the stack, is a prologue's save of a register's
+/// incoming value: a callee-saved register's, or the return address the link
+/// register holds (`push {r11, lr}`, `stp x29, x30`).  It passes no argument.
+inline bool isIncomingRegisterSave(const TargetRegInfo &TRI, const MedVar &V) {
+  return V.Kind == MedVar::Reg && V.SSAVer == 0 &&
+         (TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff));
+}
+
 /// Outgoing scalar stores that agree along every predecessor path
 /// to a call. Unknown writes, calls, independent entries and cycles stop the
 /// proof. Offsets are relative to the call's SP, using its exact SSA basis.

@@ -13,6 +13,7 @@
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
 #include "neverd-web-mcp/WebTools.h"
@@ -67,7 +68,7 @@ public:
             "Wrong tool failure diagnostic");
     return Error;
   }
-  Json import(std::size_t Index) {
+  Json import(std::size_t Index, std::size_t ExpectedArtifacts = 1) {
     const auto Preview = get("web_import_preview", {{"input_index", Index}});
     const auto Other =
         Reference.execute("web_import_preview",
@@ -82,7 +83,8 @@ public:
     Revision = Commit.at("revision").get<std::string>();
     same("web_metadata", Json::object());
     const auto Items = same("web_artifacts", {{"revision", Revision}});
-    require(Items.at("items").size() == 1, "Unexpected single-file capture");
+    require(Items.at("items").size() == ExpectedArtifacts,
+            "Unexpected captured artifact count");
     return Items.at("items")[0].at("artifact_id");
   }
 };
@@ -108,11 +110,50 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+    const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
+                         Name == "native_analyze" ||
+                         Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
   }
+}
+
+void clientSourceFeatures(Harness &H) {
+  const auto Artifact = H.import(0);
+  const auto S = H.same("web_source_analyze", {{"revision", H.Revision},
+                                               {"artifact_id", Artifact},
+                                               {"source_type", "script"}});
+  const Json Args{{"revision", H.Revision}, {"source_id", S.at("source_id")}};
+  const auto N = H.same("web_source_navigation_analyze", Args);
+  const auto &F = N.at("client_features");
+  require(F.at("profile") == "javascript-client-syntax-features-v1" &&
+              F.at("status") == "partial" && F.at("record_count") == 7 &&
+              F.at("feature_inventory_complete") == false &&
+              F.at("api_identity") == "not_authenticated" &&
+              F.at("effective_policy") == "not_analyzed",
+          "MCP promoted client syntax candidates or lost their coverage");
+  auto Page = Args;
+  Page["record_kind"] = "features";
+  Page["limit"] = 1;
+  const auto First = H.same("web_source_navigation_records", Page);
+  require(First.at("items").size() == 1 && First.at("next_offset") == 1 &&
+              First.at("items")[0].at("confidence") == "source_syntax_only" &&
+              First.at("items")[0].at("callback_source_link") ==
+                  "lexical_declaration_or_initializer" &&
+              First.at("items")[0].at("runtime_callback_target") ==
+                  "not_proven",
+          "MCP changed client callback syntax or paging");
+  Page["offset"] = 1;
+  Page["limit"] = 512;
+  const auto Rest = H.same("web_source_navigation_records", Page);
+  require(Rest.at("items").size() == 6 && Rest.at("page_complete") == true,
+          "MCP lost client pattern continuation");
+  redacted(N);
+  redacted(First);
+  redacted(Rest);
+  Page["execute"] = true;
+  invalid([&] { H.get("web_source_navigation_records", Page); });
 }
 
 void sourceAndMaps(Harness &H) {
@@ -148,9 +189,13 @@ void sourceAndMaps(Harness &H) {
     invalid([&] { H.get("web_source_rewrite_analyze", RewriteArgs); });
   }
   const auto Interfaces = H.same("web_interfaces_analyze", Args);
-  require(Interfaces.at("interface_count") == 5 &&
+  require(Interfaces.at("interface_count") == 9 &&
               Interfaces.at("xhr_correlation") == false &&
-              Interfaces.at("profile") == "fetch-websocket-xhr-syntax-v2",
+              Interfaces.at("fetch_member_correlation") == false &&
+              Interfaces.at("profile") ==
+                  "fetch-websocket-xhr-wrappers-syntax-v4" &&
+              Interfaces.at("wrapper_definitions") == 1 &&
+              Interfaces.at("wrapper_correlation") == false,
           "MCP lost XHR syntax evidence or changed correlation claims");
   const auto Sites =
       H.same("web_interface_records",
@@ -164,6 +209,52 @@ void sourceAndMaps(Harness &H) {
               Items[1].at("receiver_binding_id") ==
                   Items[4].at("receiver_binding_id"),
           "MCP changed XHR source links");
+  require(Items[5].at("kind") == "fetch_member_call" &&
+              Items[5].at("receiver_status") == "member_spelling_syntax_only" &&
+              Items[5].at("receiver_node_id").is_string() &&
+              Items[5].at("method") == "unknown" &&
+              Items[6].at("arguments_status") == "spread_unresolved" &&
+              Items[6].at("url_node_id").is_null() &&
+              Items[6].at("method") == "unknown",
+          "MCP promoted a member spelling or invented spread arguments");
+  require(Items[8].at("kind") == "fetch_wrapper_call" &&
+              Items[8].at("method") == "POST" &&
+              Items[8].at("wrapper_request_node_id") ==
+                  Items[7].at("node_id") &&
+              Items[8].at("wrapper_binding_id").is_string() &&
+              Items[8].at("url_argument_index") == 0 &&
+              Items[8].at("options_argument_index") == 1,
+          "MCP lost lexical wrapper forwarding anchors");
+  const auto Relations =
+      H.same("web_interface_relations_analyze",
+             {{"revision", H.Revision},
+              {"analysis_id", Interfaces.at("interface_analysis_id")}});
+  require(Relations.at("profile") == "request-source-relations-v1" &&
+              Relations.at("relation_count") == 4 &&
+              Relations.at("response_api_identity") ==
+                  "member_spelling_unverified" &&
+              Relations.at("har_correlation") == false,
+          "MCP changed request relations or response identity");
+  const Json RelationArgs{{"revision", H.Revision},
+                          {"relations_id", Relations.at("relations_id")}};
+  const auto RelationPage =
+      H.same("web_interface_relation_records", RelationArgs);
+  require(
+      RelationPage.at("items")[0].at("kind") == "await_result_const_binding" &&
+          RelationPage.at("items")[1].at("kind") ==
+              "request_function_containment" &&
+          RelationPage.at("items")[2].at("kind") == "direct_request_return" &&
+          RelationPage.at("items")[3].at("kind") ==
+              "bound_result_member_call" &&
+          RelationPage.at("items")[3].at("member_spelling") == "json" &&
+          RelationPage.at("items")[0].at("binding_id") ==
+              RelationPage.at("items")[3].at("binding_id"),
+      "MCP changed result binding anchors");
+  redacted(Relations);
+  redacted(RelationPage);
+  auto UnsafeRelation = RelationArgs;
+  UnsafeRelation["execute"] = true;
+  invalid([&] { H.get("web_interface_relation_records", UnsafeRelation); });
   auto Bindings = Args;
   Bindings["record_kind"] = "bindings";
   H.same("web_source_binding_records", Bindings);
@@ -311,6 +402,256 @@ void archives(Harness &H, bool HasParser) {
          {{"revision", H.Revision},
           {"analysis_id", Package.at("package_analysis_id")},
           {"record_kind", "scripts"}});
+}
+
+void offlineAssessments() {
+  Fixture F;
+  F.write("a.package", R"({"name":"CANARY","version":"1.0.0"})");
+  F.write("b.registry", R"({"name":"CANARY","version":"1.0.0","dist":{
+    "integrity":"sha256-ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=",
+    "signatures":[{"keyid":"CANARY_KEY","sig":"YWJj"}]}})");
+  F.write("c.descriptor", R"({"schema_version":1,"source":"CANARY_SOURCE",
+    "retrieved_at":"2026-10-11T12:00:00Z"})");
+  F.write("d.original", "abc");
+  Harness H({F.Root.string()});
+  H.import(0, 5);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto &Items = Artifacts.at("items");
+  const auto P = H.same("web_packages_analyze",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[1].at("artifact_id")},
+                         {"input_kind", "package-json"}});
+  const auto T = H.same("web_package_attestation_import",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[2].at("artifact_id")},
+                         {"descriptor_artifact_id", Items[3].at("artifact_id")},
+                         {"input_kind", "registry-dist"}});
+  const auto I = H.same("web_package_integrity_verify",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[4].at("artifact_id")},
+                         {"declaration_id", Items[2].at("artifact_id")}});
+  Json Selection{
+      {"revision", H.Revision},
+      {"package_analysis_id", P.at("package_analysis_id")},
+      {"integrity_ids", Json::array({I.at("integrity_id")})},
+      {"attestation_ids", Json::array({T.at("package_attestation_id")})}};
+  const auto A = H.same("web_package_assessment_create", Selection);
+  require(A.at("safety_verdict") == "not_assessed" &&
+              A.at("publisher_authenticated") == false &&
+              A.at("installed_tree_verified") == false,
+          "MCP assessment upgraded a selected digest into trust");
+  const auto ID = A.at("package_assessment_id"), Root = A.at("review_head_id");
+  Json Page{{"revision", H.Revision},
+            {"package_assessment_id", ID},
+            {"review_head", Root}};
+  const auto Findings = H.same("web_package_assessment_findings", Page);
+  require(Findings.at("items")[0].at("disposition_source") == "not_reviewed",
+          "MCP invented an analyst disposition");
+  const auto Finding = Findings.at("items")[0].at("finding_id");
+  Json Review{{"revision", H.Revision},
+              {"package_assessment_id", ID},
+              {"expected_review_head", Root},
+              {"finding_id", Finding},
+              {"disposition", "needs_review"}};
+  const auto U = H.same("web_package_review_append", Review);
+  require(U.at("decision_count") == 1 && U.at("replayed") == false,
+          "MCP lost the first immutable review decision");
+  require(H.same("web_package_review_append", Review).at("replayed") == true,
+          "MCP double-charged a last-request replay");
+  H.fail("web_package_assessment_findings", Page, "stale_package_review_head");
+  Page["review_head"] = U.at("review_head_id");
+  const auto Updated = H.same("web_package_assessment_findings", Page);
+  require(Updated.at("items")[0].at("finding_id") == Finding &&
+              Updated.at("items")[0].at("disposition") == "needs_review",
+          "MCP changed the evidence finding when reviewing it");
+  const auto Decisions = H.same("web_package_review_decisions", Page);
+  require(Decisions.at("items").size() == 1 &&
+              Decisions.at("items")[0].at("assertion_source") == "caller",
+          "MCP upgraded an analyst assertion into analyzer proof");
+  const Json Journal{{"schema_version", 1},
+                     {"profile", "offline-package-review-journal-v1"},
+                     {"package_assessment_id", ID},
+                     {"review_root_id", U.at("review_root_id")},
+                     {"review_head_id", U.at("review_head_id")},
+                     {"decisions", Decisions.at("items")}};
+  Json Restore{{"revision", H.Revision},
+               {"package_assessment_id", ID},
+               {"expected_review_head", U.at("review_head_id")},
+               {"journal_json", Journal.dump()}};
+  const auto Restored = H.same("web_package_review_restore", Restore);
+  require(Restored.at("replayed") == true &&
+              Restored.at("restored_events") == 0,
+          "MCP charged a journal replay twice");
+  Restore["raw"] = true;
+  invalid([&] { H.get("web_package_review_restore", Restore); });
+  const auto Report = H.same("web_package_assessment_report", Page);
+  redacted(Report);
+  require(Report.at("report_format") == "markdown" &&
+              Report.at("report_markdown").get<std::string>().find("YWJj") ==
+                  std::string::npos,
+          "MCP report disclosed a private signature");
+  Selection["notes"] = "CANARY";
+  invalid([&] { H.get("web_package_assessment_create", Selection); });
+  Review["disposition"] = "safe";
+  invalid([&] { H.get("web_package_review_append", Review); });
+  H.import(0, 5);
+  H.fail("web_package_assessment_report", Page, "stale_revision");
+  Page["revision"] = H.Revision;
+  H.fail("web_package_review_decisions", Page, "unknown_package_assessment");
+}
+
+void offlineAdvisories() {
+  Fixture F;
+  F.write("a.advisory",
+          R"({"id":"CANARY_GHSA","modified":"2026-10-10T00:00:00Z",
+    "affected":[{"package":{"ecosystem":"npm","name":"CANARY_PACKAGE"},
+      "versions":["1.0.0"]}],"severity":[{"type":"CVSS_V3","score":"CANARY"}]})");
+  F.write("b.descriptor", R"({"schema_version":1,"source":"CANARY_FEED",
+    "retrieved_at":"2026-10-11T12:00:00Z","as_of":"2026-10-11T11:00:00Z"})");
+  F.write("c.package", R"({"name":"CANARY_PACKAGE","version":"1.0.0"})");
+  Harness H({F.Root.string()});
+  H.import(0, 4);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto &Items = Artifacts.at("items");
+  Json Import{{"revision", H.Revision},
+              {"artifact_id", Items[1].at("artifact_id")},
+              {"descriptor_artifact_id", Items[2].at("artifact_id")}};
+  const auto Advisory = H.same("web_package_advisory_import", Import);
+  require(Advisory.at("publisher_authenticated") == false &&
+              Advisory.at("freshness_assessed") == false,
+          "MCP upgraded captured metadata into authentication or freshness");
+  const auto ID = Advisory.at("package_advisory_id");
+  for (const auto *Kind : {"affected", "severities"})
+    H.same("web_package_advisory_records", {{"revision", H.Revision},
+                                            {"package_advisory_id", ID},
+                                            {"record_kind", Kind}});
+  const auto P = H.same("web_packages_analyze",
+                        {{"revision", H.Revision},
+                         {"artifact_id", Items[3].at("artifact_id")},
+                         {"input_kind", "package-json"}});
+  Json Selection{{"revision", H.Revision},
+                 {"package_analysis_id", P.at("package_analysis_id")}};
+  for (const bool Selected : {false, true}) {
+    if (Selected)
+      Selection["advisory_ids"] = Json::array({ID});
+    const auto M = H.same("web_package_advisories_match", Selection);
+    require(M.at("declared_version_match_count") == (Selected ? 1 : 0) &&
+                M.at("exploitability_verified") == false &&
+                M.at("analysis_status") == "partial",
+            "MCP lost version selection or its explicit evidence boundary");
+    const auto Records = H.same(
+        "web_package_advisories_match_records",
+        {{"revision", H.Revision},
+         {"package_advisory_matches_id", M.at("package_advisory_matches_id")}});
+    require(Records.at("items").size() == (Selected ? 1 : 0),
+            "MCP changed selected advisory match rows");
+    if (Selected)
+      require(Records.at("items")[0].at("match_status") ==
+                  "declared_version_match",
+              "MCP changed the admitted version membership");
+  }
+  Selection["advisory_ids"] = Json::array({ID, ID});
+  H.fail("web_package_advisories_match", Selection,
+         "package_advisory_duplicate_selection");
+  Import["fetch"] = true;
+  invalid([&] { H.get("web_package_advisory_import", Import); });
+  const auto Old = H.Revision;
+  H.import(0, 4);
+  H.fail("web_package_advisory_records",
+         {{"revision", Old},
+          {"package_advisory_id", ID},
+          {"record_kind", "affected"}},
+         "stale_revision");
+  H.fail("web_package_advisory_records",
+         {{"revision", H.Revision},
+          {"package_advisory_id", ID},
+          {"record_kind", "affected"}},
+         "unknown_package_advisory");
+}
+
+void offlineAttestations() {
+  Fixture F;
+  F.write("a.statement", R"({"_type":"https://in-toto.io/Statement/v1",
+    "subject":[{"name":"CANARY","digest":{"sha256":
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"}}],
+    "predicateType":"CANARY_PREDICATE"})");
+  F.write("b.descriptor", R"({"schema_version":1,"source":"CANARY"})");
+  F.write("c.original", "abc");
+  F.write("d.registry", R"({"name":"CANARY","version":"1.0.0",
+    "dist":{"signatures":[{"sig":"Zm9v","keyid":"CANARY"}]}})");
+  F.write("e.envelope", R"({"payloadType":"application/vnd.in-toto+json",
+    "payload":"Zh==","signatures":[]})");
+  Harness H({F.Root.string()});
+  H.import(0, 6);
+  const auto Artifacts = H.same("web_artifacts", {{"revision", H.Revision}});
+  const auto Items = Artifacts.at("items");
+  Json Import{{"revision", H.Revision},
+              {"artifact_id", Items[1].at("artifact_id")},
+              {"descriptor_artifact_id", Items[2].at("artifact_id")},
+              {"input_kind", "intoto-statement"}};
+  const auto A = H.same("web_package_attestation_import", Import);
+  require(A.at("signature_verification") == "not_performed" &&
+              A.at("publisher_authenticated") == false &&
+              A.at("slsa_level_verified") == false,
+          "MCP authenticated unverified metadata");
+  const auto ID = A.at("package_attestation_id");
+  Json Digests;
+  for (const auto *Kind : {"signatures", "subjects", "digests"}) {
+    const auto Page = H.same("web_package_attestation_records",
+                             {{"revision", H.Revision},
+                              {"package_attestation_id", ID},
+                              {"record_kind", Kind}});
+    if (std::string_view(Kind) == "digests")
+      Digests = Page;
+  }
+  const auto M =
+      H.same("web_package_attestation_digest_match",
+             {{"revision", H.Revision},
+              {"artifact_id", Items[3].at("artifact_id")},
+              {"package_attestation_id", ID},
+              {"digest_id", Digests.at("items")[0].at("digest_id")}});
+  require(
+      M.at("integrity_status") == "match" &&
+          M.at("package_inventory_bound") == false &&
+          M.at("publisher_authenticated") == false,
+      "MCP changed an original digest comparison into package authentication");
+  H.same("web_package_attestation_digest_result",
+         {{"revision", H.Revision},
+          {"package_attestation_digest_match_id",
+           M.at("package_attestation_digest_match_id")}});
+  Import["artifact_id"] = Items[4].at("artifact_id");
+  Import["input_kind"] = "registry-dist";
+  const auto Registry = H.same("web_package_attestation_import", Import);
+  const auto Signatures =
+      H.same("web_package_attestation_records",
+             {{"revision", H.Revision},
+              {"package_attestation_id", Registry.at("package_attestation_id")},
+              {"record_kind", "signatures"}});
+  require(Signatures.at("items")[0].at("encoding_status") ==
+                  "admitted_standard_base64" &&
+              Signatures.at("items")[0].at("signature_verification") ==
+                  "not_performed",
+          "MCP changed registry signature admission");
+  Import["artifact_id"] = Items[5].at("artifact_id");
+  Import["input_kind"] = "dsse-intoto";
+  require(
+      H.same("web_package_attestation_import", Import).at("payload_status") ==
+          "invalid_base64",
+      "MCP accepted nonzero Base64 residual bits");
+  Import["verify"] = true;
+  invalid([&] { H.get("web_package_attestation_import", Import); });
+  const auto Old = H.Revision;
+  H.import(0, 6);
+  H.fail("web_package_attestation_records",
+         {{"revision", Old},
+          {"package_attestation_id", ID},
+          {"record_kind", "subjects"}},
+         "stale_revision");
+  H.fail("web_package_attestation_digest_result",
+         {{"revision", H.Revision},
+          {"package_attestation_digest_match_id",
+           M.at("package_attestation_digest_match_id")}},
+         "unknown_package_attestation_digest_match");
 }
 
 void passiveInputs(Harness &H) {
@@ -495,14 +836,21 @@ int main() {
       H.get("web_native_analyze",
             {{"revision", "1"}, {"handoff_id", "CANARY"}});
     });
-    F.write("source", "fetch('https://CANARY/a?token=CANARY'); const "
-                      "privateName = 'CANARY'; while(true) {};"
-                      "const CANARY_XHR = new XMLHttpRequest();"
-                      "CANARY_XHR.open('GET','https://CANARY/a');"
-                      "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
-                      "CANARY_XHR.send('CANARY');"
-                      "CANARY_XHR.onload = CANARY_CALLBACK;"
-                      "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
+    F.write(
+        "source",
+        "const CANARY_RESULT=await "
+        "fetch('https://CANARY/a?token=CANARY');CANARY_RESULT.json(); const "
+        "privateName = 'CANARY'; while(true) {};"
+        "const CANARY_XHR = new XMLHttpRequest();"
+        "CANARY_XHR.open('GET','https://CANARY/a');"
+        "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
+        "CANARY_XHR.send('CANARY');"
+        "CANARY_XHR.onload = CANARY_CALLBACK;"
+        "this.fetch('https://CANARY/a', {method:'POST'});"
+        "fetch(...CANARY_ARGUMENTS);"
+        "const CANARY_WRAPPER=(u,i)=>fetch(u,i);"
+        "CANARY_WRAPPER('https://CANARY/wrapper',{method:'POST'});"
+        "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
     F.write(
@@ -540,6 +888,13 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
       booleanBranches(H);
+      F.write("source",
+              "function CANARY_CALLBACK(v){return v;}"
+              "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
+              "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+              "const settings={permissions:{deny:['CANARY']},"
+              "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};");
+      clientSourceFeatures(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });
     archives(H, HasParser);
@@ -619,6 +974,50 @@ int main() {
                                      {"byte_length", "1"}});
       }
     }
+    if (std::find(Ops.begin(), Ops.end(), "wails_extract") != Ops.end()) {
+      F.write("sea", neverd::web::wails_test::elf());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto E = H.same("web_wails_extract", Args);
+      require(E.at("table_count") == 1 && E.at("member_count") == 3 &&
+                  E.at("asset_server_binding") == "not_checked",
+              "Wails stored table evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto M = H.same("web_wails_records", Page);
+      require(M.at("next_offset") == 2 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Wails page differs or exposes private names");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_wails_extract", Invalid); });
+      auto InvalidPage = Page;
+      InvalidPage["limit"] = 129;
+      invalid([&] { H.get("web_wails_records", InvalidPage); });
+      H.fail("web_wails_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "paths"}},
+             "invalid_record_kind");
+      if (HasParser) {
+        const auto S =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(S.at("parse_status") == "parsed",
+                "Wails member source is unavailable");
+      }
+    }
+    offlineAdvisories();
+    offlineAttestations();
+    offlineAssessments();
     passiveInputs(H);
     for (const auto &Analysis : Backend.at("analysis"))
       if (Analysis.at("kind") == "package_archive" &&

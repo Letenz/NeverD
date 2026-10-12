@@ -113,10 +113,17 @@ llvm::json::Object summary(const SourceInterfaces &A, uint64_t Revision) {
       {"reason", A.Reason},
       {"interface_count", A.Records.size()},
       {"excluded_dispatches", A.ExcludedDispatches},
+      {"wrapper_definitions", A.WrapperDefinitions},
       {"evidence_class", "static_inference"},
       {"intrinsic_verified", false},
       {"reachability", "not_analyzed"},
-      {"receiver_identity", "lexical_syntax_only"},
+      {"receiver_identity", "lexical_and_member_syntax_only"},
+      {"fetch_member_identity", "property_spelling_unverified"},
+      {"fetch_member_correlation", false},
+      {"wrapper_profile", std::string(SourceRequestWrapperProfile)},
+      {"wrapper_argument_flow", "single_layer_parameter_forwarding"},
+      {"wrapper_correlation", false},
+      {"spread_argument_resolution", "not_analyzed"},
       {"request_ordering", "not_analyzed"},
       {"xhr_correlation", false},
       {"server_completeness", "unknown"},
@@ -293,6 +300,10 @@ std::string Session::interfaceRecords(std::string_view Revision,
     return I == NoSourceIndex ? llvm::json::Value(nullptr)
                               : llvm::json::Value(S.Nodes.at(I).ID);
   };
+  auto Argument = [](uint32_t I) {
+    return I == NoSourceIndex ? llvm::json::Value(nullptr)
+                              : llvm::json::Value(I);
+  };
   llvm::json::Array Items;
   for (auto I = Offset; I < End; ++I) {
     const auto &C = A.Records[I];
@@ -309,6 +320,7 @@ std::string Session::interfaceRecords(std::string_view Revision,
         {"headers_node_id", Node(C.HeadersNode)},
         {"body_node_id", Node(C.BodyNode)},
         {"constructor_node_id", Node(C.ConstructorNode)},
+        {"receiver_node_id", Node(C.ReceiverNode)},
         {"receiver_binding_id",
          C.ReceiverBinding == NoSourceIndex
              ? llvm::json::Value(nullptr)
@@ -317,6 +329,17 @@ std::string Session::interfaceRecords(std::string_view Revision,
         {"header_name_node_id", Node(C.HeaderNameNode)},
         {"header_value_node_id", Node(C.HeaderValueNode)},
         {"handler_node_id", Node(C.HandlerNode)},
+        {"wrapper_node_id", Node(C.WrapperNode)},
+        {"wrapper_request_node_id", Node(C.WrapperRequestNode)},
+        {"wrapper_binding_id",
+         C.WrapperBinding == NoSourceIndex
+             ? llvm::json::Value(nullptr)
+             : llvm::json::Value(B.Bindings.at(C.WrapperBinding).ID)},
+        {"url_parameter_node_id", Node(C.URLParameterNode)},
+        {"options_parameter_node_id", Node(C.OptionsParameterNode)},
+        {"url_argument_index", Argument(C.URLArgumentIndex)},
+        {"options_argument_index", Argument(C.OptionsArgumentIndex)},
+        {"wrapper_status", C.WrapperStatus},
         {"receiver_status", C.ReceiverStatus},
         {"arguments_status", C.ArgumentsStatus},
         {"credential_arguments_status", C.CredentialArgumentsStatus},

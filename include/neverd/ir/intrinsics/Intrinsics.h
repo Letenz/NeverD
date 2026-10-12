@@ -342,6 +342,18 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/intrinsics_x86.inc"
 #include "neverd/ir/intrinsics/intrinsics_x86_fp_state.inc"
 
+  // Append after the existing x86 FP family to preserve every published ID.
+  // LoadConstant retains its ROM selector and explicit incoming control word.
+  X87ReadControl,
+  X87WriteControl,
+  X87LoadConstant,
+  // Append-only: scalar comparison flags below the outgoing MXCSR.
+  X86FPComiState,
+  X86FPComiMemoryState,
+  // Append-only: raw scalar/packed masks below the outgoing MXCSR.
+  X86FPMaskCompareState,
+  X86FPMaskCompareMemoryState,
+
   _Count = 16000
 };
 
@@ -621,6 +633,8 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
+  case Intrinsic::X86FPMaskCompareMemoryState:
+  case Intrinsic::X86FPComiMemoryState:
   case Intrinsic::X86FPScalarConvertMemoryState:
   case Intrinsic::X86F16CReadState:
   case Intrinsic::X86F16CStoreState:
@@ -842,6 +856,14 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     // [id,address,control,MXCSR]; widths are owned by X86FPState.h.
     return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&
            DataSize == 4 && (OutputSize == 8 || OutputSize == 12);
+  case Intrinsic::X86FPMaskCompareMemoryState:
+    return NumInputs == 6 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 1 &&
+           (OutputSize == 8 || OutputSize == 12 || OutputSize == 20 ||
+            OutputSize == 36);
+  case Intrinsic::X86FPComiMemoryState:
+    return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
+           (DataSize == 4 || DataSize == 8) && OutputSize == 8;
   case Intrinsic::X86F16CReadState:
     return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
            DataSize == 1 && (OutputSize == 20 || OutputSize == 36);

@@ -77,6 +77,9 @@ SIDEEFFECT(Intrinsic::X87Fprem);
 SIDEEFFECT(Intrinsic::X87Fprem1);
 SIDEEFFECT(Intrinsic::X87ReadStatus);
 SIDEEFFECT(Intrinsic::X87Wait);
+SIDEEFFECT(Intrinsic::X87ReadControl);
+SIDEEFFECT(Intrinsic::X87WriteControl);
+SIDEEFFECT(Intrinsic::X87LoadConstant);
 SIDEEFFECT(Intrinsic::X87Ffree);
 SIDEEFFECT(Intrinsic::X87Fincstp);
 SIDEEFFECT(Intrinsic::X64Syscall);
@@ -218,3 +221,8 @@ SIDEEFFECT(Intrinsic::DebugService);
 SIDEEFFECT(Intrinsic::X86F16CState);
 SIDEEFFECT(Intrinsic::X86F16CReadState);
 SIDEEFFECT(Intrinsic::X86F16CStoreState);
+SIDEEFFECT(Intrinsic::X86FPComiState);
+SIDEEFFECT(Intrinsic::X86FPComiMemoryState);
+
+SIDEEFFECT(Intrinsic::X86FPMaskCompareState);
+SIDEEFFECT(Intrinsic::X86FPMaskCompareMemoryState);

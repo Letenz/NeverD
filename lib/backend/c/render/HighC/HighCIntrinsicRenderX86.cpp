@@ -23,6 +23,7 @@
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/ir/intrinsics/X86StringCompare.h"
+#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 #include "neverd/lift/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1541,8 +1542,15 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
       S += "0";
       continue;
     }
+    // An operand narrower than the vector carries every byte the intrinsic
+    // reads of it, as the low double of movddup's memory operand does: it
+    // widens to the vector, whatever bytes past it hold.
+    const auto Read = x86VectorOperandReadBytes(Call.IntrinsicId, Width);
+    const bool Widens = Op->Type && Op->Type->Kind == NdTypeKind::Int &&
+                        Op->Type->Size < Width && Read &&
+                        (*Read >> Op->Type->Size) == 0;
     if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
-        Op->Type->Size == Width)
+        (Op->Type->Size == Width || Widens))
       S += "__builtin_bit_cast(" + Vector + ", (" + Raw + ")(" + ExprFn(*Op) +
            "))";
     else
@@ -1575,6 +1583,40 @@ std::string renderX86TypedIntrinsicCall(
         (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
                       : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
         "(";
+    if (isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
+      for (unsigned Index : Memory ? std::vector<unsigned>{0, 3, 4}
+                                   : std::vector<unsigned>{2, 3, 4}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto &Operand = *Call.Operands[Index];
+        const auto Text = ExprFn(Operand);
+        Result += Memory && Index == 0 ? "(void *)(uintptr_t)(" + Text + ")"
+                  : Operand.Type->Kind == NdTypeKind::Float
+                      ? "__builtin_bit_cast(" +
+                            x86FPStateRawCType(Operand.Type->Size) + ", " +
+                            Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
+    if (isX86FPComiStateIntrinsic(Call.IntrinsicId)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
+      for (unsigned Index : Memory ? std::vector<unsigned>{2, 0, 3}
+                                   : std::vector<unsigned>{1, 2, 3}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto &Operand = *Call.Operands[Index];
+        const auto Text = ExprFn(Operand);
+        Result += Memory && Index == 0 ? "(void *)(uintptr_t)(" + Text + ")"
+                  : Operand.Type->Kind == NdTypeKind::Float
+                      ? "__builtin_bit_cast(" +
+                            x86FPStateRawCType(Operand.Type->Size) + ", " +
+                            Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
     if (isX86F16CStateIntrinsic(Call.IntrinsicId)) {
       const bool Store = Call.IntrinsicId == I::X86F16CStoreState;
       for (unsigned Index : Store ? std::vector<unsigned>{0, 1, 4}
