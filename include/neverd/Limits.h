@@ -502,6 +502,10 @@ constexpr uint64_t kMinGlobalDataAddr = 0x1000;
 /// Maximum bytes to scan ahead when looking for a string literal.
 constexpr uint32_t kMaxStringScanLen = 4096;
 
+/// Bytes a relative lookup table's object may span to the end of its last
+/// target (clang's `.rel` tables keep their targets after the table).
+constexpr uint32_t kMaxRelativeTableSpanBytes = 1u << 16;
+
 /// Maximum bytes of constant data to embed inline in LLVM IR globals.
 /// Applies to read-only segment data (jump tables, vtables, etc.)
 /// that must travel with the code for ASLR-safe binary rewriting.

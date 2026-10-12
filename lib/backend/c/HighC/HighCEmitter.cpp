@@ -2249,34 +2249,50 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   // A relative table holds the offsets of its targets from its own start
   // (clang's `.rel` lookup tables), so the code reaches each target through
-  // the table's address: the table's object spans the targets.  Only offsets
-  // the assembler fixed, to sized objects after the table in its section,
-  // say where the targets are.
+  // the table's address: the table's object spans the targets.  A target is
+  // a sized object or a string after the table.  The assembler fixes an
+  // offset into the table's own section and relocates one into another (an
+  // object's strings), which the loader applies as the same offset.
+  auto StringExtent = [&](va_t Target) -> std::optional<uint64_t> {
+    for (uint64_t Byte = 0; Byte < limits::kMaxStringScanLen; ++Byte) {
+      const uint8_t *Unit = Opts.Image->readVA(Target + Byte, 1);
+      if (!Unit || Opts.Image->hasRelocationProvenanceAt(Target + Byte))
+        return std::nullopt;
+      if (*Unit == 0)
+        return Byte + 1;
+    }
+    return std::nullopt;
+  };
   auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes) {
     const auto Object = sizedObjectAt(Table);
-    const Section *Sec = Opts.Image->getSectionFor(Table);
-    if (!Object || Object->first != Table || !Sec ||
-        (EntryBytes != 4 && EntryBytes != 8) ||
-        Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+    if (!Object || Object->first != Table ||
+        (EntryBytes != 4 && EntryBytes != 8))
       return;
     va_t End = Table + Object->second;
     for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
          Slot += EntryBytes) {
       const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
-      if (!Bytes || Opts.Image->hasRelocationProvenanceAt(Slot))
+      if (!Bytes)
         return;
       const int64_t Offset =
           EntryBytes == 4 ? static_cast<int64_t>(
                                 static_cast<int32_t>(readLE<uint32_t>(Bytes)))
                           : static_cast<int64_t>(readLE<uint64_t>(Bytes));
-      if (Offset < static_cast<int64_t>(Object->second))
+      if (Offset < static_cast<int64_t>(Object->second) ||
+          Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes))
         return;
       const va_t Target = Table + static_cast<va_t>(Offset);
-      const auto TargetObject = sizedObjectAt(Target);
-      if (!TargetObject || TargetObject->first != Target ||
-          Target + TargetObject->second > Sec->VA + Sec->Size)
+      va_t TargetEnd = 0;
+      if (const auto TargetObject = sizedObjectAt(Target);
+          TargetObject && TargetObject->first == Target)
+        TargetEnd = Target + TargetObject->second;
+      else if (const auto String = StringExtent(Target))
+        TargetEnd = Target + *String;
+      else
         return;
-      End = std::max<va_t>(End, Target + TargetObject->second);
+      if (TargetEnd - Table > limits::kMaxRelativeTableSpanBytes)
+        return;
+      End = std::max<va_t>(End, TargetEnd);
     }
     ImageObject &Obj = ImageObjects[Table];
     Obj.IndexedBytes = std::max<uint64_t>(Obj.IndexedBytes, End - Table);
