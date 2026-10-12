@@ -11,6 +11,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "InstructionFlow.h"
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
@@ -29,6 +30,8 @@
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/sbf/emit/SBFCEmitter.h"
 #include "neverd/sbf/emit/SBFRustEmitter.h"
+
+#include "llvm/ADT/DenseSet.h"
 
 #include <limits>
 #include <set>
@@ -393,6 +396,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   Opts.Format = S->Img.abiFormat();
   Opts.Image = &S->Img;
   Opts.UserNames = &S->Renames;
+  Opts.AccessWidths = S->dataAccessWidths();
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
     SourceMap->HighSources = &S->PipeResult.HighSources;
@@ -453,6 +457,7 @@ static const char *decompileLlvmC(neverd_session_t Sess, neverd_va_t FuncEntry,
   Opts.TheArch = S->Img.Arch;
   Opts.Format = S->Img.abiFormat();
   Opts.UserNames = &S->Renames;
+  Opts.AccessWidths = S->dataAccessWidths();
   if (SourceMap) {
     SourceMap->Recognitions = &S->PipeResult.LibraryRecognitions;
     SourceMap->LLVMSources = Native->Sources.get();
@@ -1138,6 +1143,22 @@ const char *neverd_lift_dump(neverd_session_t Sess, const char *InputPath,
 // High-level pipeline: decompile all
 // ===--------------------------------------------------------------------===//
 
+/// The functions of a whole-program run, as a session lists them: the
+/// image's function symbols, then each function the pipeline found that no
+/// symbol begins.
+static std::vector<FuncInfo> runFunctions(const PipelineRunner &R) {
+  std::vector<FuncInfo> Functions;
+  llvm::DenseSet<va_t> Entries;
+  for (const Symbol *Sym : R.Img.getFunctionSymbols())
+    if (Entries.insert(Sym->Addr).second)
+      Functions.push_back({Sym->Addr, Sym->Size, Sym->Name});
+  for (const LowFunc &Function : R.Result.LowFuncs)
+    if (Entries.insert(Function.Entry).second)
+      Functions.push_back(
+          {Function.Entry, Function.OriginalSize, Function.Name});
+  return Functions;
+}
+
 static const char *decompileAllImpl(neverd_session_t Sess,
                                     const char *InputPath, int UseLlvmRoute,
                                     neverd_output_language_t Language,
@@ -1292,6 +1313,9 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     return nullptr;
   }
 
+  // Data takes the names a session's listing of the image gives it.
+  const std::optional<DataAccessWidths> AccessWidths =
+      collectDataAccessWidths(R.Img, runFunctions(R));
   if (UseLlvmRoute) {
     if (!R.Result.LlvmModule)
       return nullptr;
@@ -1299,6 +1323,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.TheArch = R.Img.Arch;
     COpts.Format = R.Img.abiFormat();
     COpts.UserNames = S ? &S->Renames : nullptr;
+    COpts.AccessWidths = AccessWidths ? &*AccessWidths : nullptr;
     try {
       LLVMCEmitter Emitter;
       Emitter.emit(*R.Result.LlvmModule, OS, COpts, R.Dbg.get(), &R.Img);
@@ -1313,6 +1338,7 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.Format = R.Img.abiFormat();
     COpts.Image = &R.Img;
     COpts.UserNames = S ? &S->Renames : nullptr;
+    COpts.AccessWidths = AccessWidths ? &*AccessWidths : nullptr;
     std::vector<CSourceName> Names;
     COpts.StructuredExceptionSyntax = Dialect.has_value();
     if (Dialect)

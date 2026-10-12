@@ -77,6 +77,7 @@ add_neverd_component_library(NeverDWeb
   desktop/tauri/PHF.cpp
   desktop/tauri/Reader.cpp
   desktop/bridge/Publication.cpp
+  features/configuration/Publication.cpp
   SessionTauri.cpp
   SessionTauriExport.cpp
   compression/Brotli.cpp
@@ -180,6 +181,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
     desktop/bridge/Source.cpp
+    features/configuration/Analysis.cpp
     packages/behavior/Rules.cpp
     packages/behavior/Source.cpp
     packages/behavior/Package.cpp

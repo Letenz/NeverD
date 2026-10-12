@@ -5,6 +5,7 @@
 #include "StringReferences.h"
 #include "TextFold.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
@@ -57,8 +58,6 @@ constexpr std::size_t CommentColumn = 40;
 constexpr std::size_t MaxXrefLines = 2;
 /// The strings one neverd_strings_page_json call reads.
 constexpr int StringPageRows = 65536;
-/// The widest access a reference may name: a zmmword.
-constexpr std::uint64_t MaxAccessWidth = 64;
 constexpr std::size_t MaxPageLines = 2000;
 constexpr std::size_t MaxOpcodeBytes = 12;
 constexpr std::size_t MaxDecodeChunk = 2048;
@@ -590,8 +589,9 @@ struct Listing::Impl {
   /// The size each named object's symbol gives, where it gives one.
   std::unordered_map<std::uint64_t, std::uint64_t> dataSizes;
   /// The width of every read and write of each address the code reads or
-  /// writes, by address; 0 where those widths differ.  Built with the index.
-  std::vector<std::pair<std::uint64_t, unsigned>> accessWidths;
+  /// writes, by address; 0 where those widths differ.  Built with the index,
+  /// as the engine builds the widths that name data in the C.
+  DataAccessWidths accessWidths;
   /// The automatic data items by start; none overlaps another item.
   std::map<std::uint64_t, AutoData> autoData;
   /// Where a run of unwritten bytes stops: named data and the automatic
@@ -1158,7 +1158,10 @@ struct Listing::Impl {
         // The largest symbol at an address sizes its object.
         if (const auto size = jsonCount(row.value("size", Json())))
           dataSizes[address] = std::max(dataSizes[address], size);
-        dataNames.emplace(address, std::move(name));
+        // A name that spells a string literal (MSVC's `??_C@`) gives way
+        // to the string's own, as IDA names it.
+        if (!row.value("literal", false))
+          dataNames.emplace(address, std::move(name));
       }
     if (Rescan) {
       importRows = takeJson(neverd_imports_json(session));
@@ -1304,29 +1307,15 @@ struct Listing::Impl {
   /// The widths of the code's reads and writes, from the index.
   void noteAccessWidths() {
     accessWidths.clear();
-    for (const auto &reference : references) {
-      if ((reference.kind != RefKind::Read &&
-           reference.kind != RefKind::Write) ||
-          !reference.width)
-        continue;
-      if (accessWidths.empty() || accessWidths.back().first != reference.to)
-        accessWidths.emplace_back(reference.to, reference.width);
-      else if (accessWidths.back().second != reference.width)
-        accessWidths.back().second = 0;
-    }
+    for (const auto &reference : references)
+      if (reference.kind == RefKind::Read || reference.kind == RefKind::Write)
+        accessWidths.add(reference.to, reference.width);
   }
 
   /// The width of every access to \p address, 0 where they differ, or none
   /// when the code reads and writes no data there.
   std::optional<unsigned> accessWidthAt(std::uint64_t address) const {
-    const auto it =
-        std::lower_bound(accessWidths.begin(), accessWidths.end(), address,
-                         [](const auto &entry, std::uint64_t value) {
-                           return entry.first < value;
-                         });
-    if (it == accessWidths.end() || it->first != address)
-      return std::nullopt;
-    return it->second;
+    return accessWidths.at(address);
   }
 
   /// Lays out the automatic data items. A named object is as large as its
@@ -2161,9 +2150,33 @@ struct Listing::Impl {
       // A table between functions, as MSVC places one after its function.
       if (asSwitchEntry(item, region, address))
         return item;
-      const std::uint64_t gapStart = previousCodeEnd(address, region);
-      const std::uint64_t gapEnd =
+      std::uint64_t gapStart = previousCodeEnd(address, region);
+      std::uint64_t gapEnd =
           std::min(nextFunctionStart(address, region), region.initializedEnd);
+      // A string between functions, as MSVC's literals sit among the code
+      // of a kernel's sections; the padding around it aligns it.
+      if (gapStart <= address && address < gapEnd) {
+        if (const auto *string = stringAt(address);
+            string && string->address >= gapStart &&
+            string->address + string->length + string->unit <= gapEnd) {
+          item.kind = ItemKind::String;
+          item.start = string->address;
+          item.size = string->length + string->unit;
+          item.index = static_cast<std::size_t>(string - strings.data());
+          return item;
+        }
+        const auto next =
+            std::upper_bound(strings.begin(), strings.end(), address,
+                             [](std::uint64_t value, const StringItem &s) {
+                               return value < s.address;
+                             });
+        if (next != strings.end() && next->address < gapEnd)
+          gapEnd = next->address;
+        if (next != strings.begin())
+          if (const auto &before = *std::prev(next);
+              before.address + before.length + before.unit > gapStart)
+            gapStart = before.address + before.length + before.unit;
+      }
       if (gapStart <= address && address < gapEnd)
         if (const auto alignment = paddingAlignment(gapStart, gapEnd)) {
           item.kind = ItemKind::Align;
@@ -3184,9 +3197,9 @@ struct Listing::Impl {
         if (!kind)
           continue;
         const auto width = row.size() == 4 ? jsonCount(row[3]) : 0;
-        references.push_back(
-            {jsonAddress(row[1]), jsonAddress(row[0]), *kind,
-             static_cast<std::uint8_t>(width <= MaxAccessWidth ? width : 0)});
+        references.push_back({jsonAddress(row[1]), jsonAddress(row[0]), *kind,
+                              static_cast<std::uint8_t>(
+                                  width <= MaxDataAccessWidth ? width : 0)});
       }
     const auto next = page.value("next_entry", Json());
     const auto previous = *indexCursor;

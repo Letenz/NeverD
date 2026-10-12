@@ -2,6 +2,7 @@ add_neverd_component_library(NeverDDecode
   Decoder.cpp
   InstructionRelocations.cpp
   InstructionRelocationsAArch64.cpp
+  InstructionRelocationsARM.cpp
   InstructionRelocationsX86.cpp
 
   LINK_COMPONENTS

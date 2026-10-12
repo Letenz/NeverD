@@ -18,6 +18,7 @@
 #include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Loader.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -34,6 +35,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <tuple>
 #include <vector>
 
 using namespace neverd;
@@ -827,6 +829,48 @@ TEST(ApplyDebugSymbolsTest, DataRefutesAFunctionGuessedAfterPadding) {
   EXPECT_EQ(findFunc(Img, 0x1400), nullptr);
   EXPECT_NE(findFunc(Img, 0x1500), nullptr);
   EXPECT_NE(findFunc(Img, 0x1600), nullptr);
+}
+
+// A pointer .data holds to such a literal points to data: the guess the
+// literal refutes claims no pointer to it as one to code.
+TEST(ApplyDebugSymbolsTest, PointerToALiteralWhereAGuessWasPointsToData) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  const SegmentFlags Code = SegmentFlags::Readable | SegmentFlags::Executable;
+  const SegmentFlags Writable = SegmentFlags::Readable | SegmentFlags::Writable;
+  for (const auto &[VA, Name, Flags] :
+       {std::tuple{va_t{0x1000}, "PAGE", Code},
+        std::tuple{va_t{0x3000}, ".data", Writable}}) {
+    Segment Seg;
+    Seg.VA = VA;
+    Seg.Size = Seg.FileSz = 0x100;
+    Seg.Flags = Flags;
+    Seg.Data.assign(0x100, 0);
+    Img.Segments.push_back(Seg);
+    Section Sec;
+    Sec.Name = Name;
+    Sec.VA = VA;
+    Sec.Size = Sec.FileSz = 0x100;
+    Sec.Flags = Flags;
+    Sec.Data.assign(0x100, 0);
+    Img.Sections.push_back(std::move(Sec));
+  }
+  Symbol Guess = Symbol::makeFunc(0x1040);
+  Guess.IsBoundaryGuess = true;
+  Img.Symbols.push_back(Guess);
+  const uint64_t Literal = 0x1040;
+  std::memcpy(Img.Segments[1].Data.data(), &Literal, sizeof(Literal));
+  recordAbsolutePointerRelocations(Img, {{0x3000, Literal, InvalidVA}});
+  ASSERT_TRUE(Img.CodePtrRelocSlots.count(0x3000));
+
+  FakeDebugContext Dbg(
+      {}, {{"??_C@_1BE@BDEKEKBI@?$AAW?$AAI?$AAN", Literal, 0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(findFunc(Img, Literal), nullptr);
+  EXPECT_FALSE(Img.CodePtrRelocSlots.count(0x3000));
+  EXPECT_TRUE(Img.DataPtrRelocSlots.count(0x3000));
 }
 
 TEST(ApplyDebugSymbolsTest, PublishesOnlyAuthenticatedTypedObjectExtents) {

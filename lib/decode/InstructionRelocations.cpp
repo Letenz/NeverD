@@ -66,6 +66,9 @@ InstructionRelocations instructionRelocations(const BinaryImage &Img,
   case Arch::AArch64:
     instruction_relocations_detail::addAArch64Fields(Img, DI, Result);
     break;
+  case Arch::ARM:
+    instruction_relocations_detail::addARMFields(Img, DI, Result);
+    break;
   default:
     break;
   }

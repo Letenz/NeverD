@@ -1211,16 +1211,45 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (const MedCallInfo *CI =
             CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx))) {
       // Where call-setup recovery gives a call its arguments, it gives a
-      // direct call all of them, none included.  The scan below bounds an
-      // indirect call's by the setup its own block writes, since nothing
-      // bounds them by the callee's signature.
+      // direct call all of them, none included.  Nothing bounds an indirect
+      // call's by its callee, so it takes those this function sets, up to
+      // the first it does not: a register's entry value where no parameter
+      // arrives, or what an earlier call left there, is no argument.  A
+      // value that reaches the call through a join is one (a loop's running
+      // value left in x0), though the call's block writes no register.  The
+      // scan below adds what the block writes past them.  Where only direct
+      // calls take register arguments (regparm), the scan alone gives an
+      // indirect call its stack arguments.
       const bool SetupConvention =
           Convention && Convention->ArgumentsFromCallSetup;
       const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
-      if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
+      auto SetInFunction = [&](const MedVar &Arg) {
+        if (Arg.isConst() || Arg.Kind == MedVar::Param ||
+            PhiOutputVars.count(varKey(Arg)))
+          return true;
+        if (const MedOp *Def = uniqueMedDefinition(Arg);
+            Def && !(Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 &&
+                     Def->Inputs[0] == Def->Output))
+          return true;
+        return Arg.Kind == MedVar::Reg &&
+               llvm::any_of(CurMed->Params, [&](const MedVar &P) {
+                 return P.RegOff == Arg.RegOff;
+               });
+      };
+      size_t Recovered = CI->Args.size();
+      if (SetupConvention && CI->IsIndirect) {
+        if (Convention->RegparmOnlyForInternalCalls)
+          Recovered = 0;
+        for (size_t K = 0; K < Recovered; ++K)
+          if (!SetInFunction(CI->Args[K])) {
+            Recovered = K;
+            break;
+          }
+      }
+      if (SetupConvention ? CompleteSetup || Recovered : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
-        FromABI.reserve(CI->Args.size());
-        for (size_t K = 0; K < CI->Args.size(); ++K) {
+        FromABI.reserve(Recovered);
+        for (size_t K = 0; K < Recovered; ++K) {
           ExprPtr Arg = medvarToExpr(CI->Args[K]);
           // The callee reads only the low lane's scalar.
           if (const uint16_t Read =

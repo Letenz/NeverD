@@ -2543,7 +2543,9 @@ int main(int argc, char **argv) {
                   "source_analyze") != caps["operations"].end()) {
       fixture.write(
           "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
-          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
+          "const defaults=loadSettings('CANARY');"
+          "({...defaults,permissions:{},...CANARY_OVERRIDES});");
       const auto before = web.revision(), projectBefore = web.projectId();
       const Json input{{"schema_version", 1}, {"path", fixture.path()}};
       const auto preview = web.execute("web_import_preview", input);
@@ -2597,6 +2599,18 @@ int main(int argc, char **argv) {
                 rest["items"][0]["target_name_node_ids"].size() == 3 &&
                 reply.dump().find("CANARY") == std::string::npos,
             "Worker Wails bridge anchors differ or reveal names");
+      args["record_kind"] = "config_merges";
+      args["offset"] = 0;
+      const auto order = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == order && order["items"].size() == 1 &&
+                order["items"][0]["terms"][0]["configuration_call_feature_id"]
+                    .is_string() &&
+                order["items"][0]["fields"][0]["possible_later_overwrite"] ==
+                    true &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker configuration source order differs or reveals values");
       args["execute"] = true;
       reply = process.call("web_source_navigation_records", args, revision,
                            project);

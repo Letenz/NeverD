@@ -705,6 +705,14 @@ identity without changing generic call/function IDs. Native projection and
 asset readers do not infer bridge targets, activation or callback behavior.
 All clients use existing navigation/pages and source anchors. See the
 [desktop bridge profile](web-desktop-bridge-profile.md).
+`features/configuration/Analysis` consumes source, authoritative bindings and
+existing client settings-property/call candidates. Shared declaration indexing
+owns identity ambiguity; this owner retains only object term order, lexical
+initializer source links and possible later unknown keys. `Publication` owns
+metadata and `SessionNavigation` composes its independent profile/cache with
+the other navigation owners. No layer promotes these source relationships to
+effective configuration or runtime values. See the
+[configuration order profile](web-configuration-order-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
