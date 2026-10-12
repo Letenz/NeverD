@@ -818,6 +818,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                        E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;
+    // A slice at or past the operand's last byte reads the zeros it extends
+    // with: a literal keeps its C width, as `(uint32_t)0` stands for a
+    // 16-byte vector of zeros, and shifting by that width or more is
+    // undefined in C.
+    if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int &&
+        E.Operands[0]->Type->Size && ByteOff >= E.Operands[0]->Type->Size &&
+        E.Type && E.Type->Kind == NdTypeKind::Int)
+      return "(" + Ty + ")0";
     // Literals retain their C spelling width, which can be much narrower than
     // their IR carrier. Shift the unsigned source bits at their declared width.
     if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int)
