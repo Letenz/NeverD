@@ -1342,7 +1342,11 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                  PtrParamIds.count(static_cast<int>(PI)))
         HP.Type = NdType::makePtr();
       else
-        HP.Type = NdType::makeInt(MP.Size);
+        // The code reads only part of a register it may extend itself, so the
+        // C promises no more about the incoming value than an int.  A narrower
+        // parameter is one AAPCS, Apple's arm64 ABI and Clang's x86-64 have
+        // the caller extend, and its C would skip the code's own extension.
+        HP.Type = NdType::makeInt(MP.Size > 0 && MP.Size < 4 ? 4 : MP.Size);
       Func.Params.push_back(HP);
     }
 
