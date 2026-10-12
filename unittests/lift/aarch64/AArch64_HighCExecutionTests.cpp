@@ -216,3 +216,27 @@ static unsigned h2(unsigned x) { return (x << 13) | (x >> 19); }
 )C",
                        "vt", {"vt", "h0", "h1", "h2", "obj", "vf_t"});
 }
+
+// A table of string pointers becomes a relative table whose address the
+// code keeps in a register: no add-back names the table, but the loader
+// relocates every entry as a displacement to its string, so the table's
+// object reaches the strings.
+TEST_F(AArch64_HighCExecution,
+       ARelativeTableKnownByItsAddressReachesItsStrings) {
+  expectRunsLikeSource(R"C(
+static const char *const W[6] = {"alphaA", "bravoB", "charlC",
+                                 "deltaD", "echoEe", "foxtrF"};
+int offptr(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    unsigned j = (s >> 5) % 6u;
+    const char *p = W[j] + ((s >> 9) % 6u);
+    h = h * 131u + (unsigned)(unsigned char)*p;
+    h ^= h >> 11;
+  }
+  return (int)h;
+}
+)C",
+                       "offptr", {"offptr", "W"});
+}
