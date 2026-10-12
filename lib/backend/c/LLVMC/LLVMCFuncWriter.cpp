@@ -16,6 +16,7 @@
 #include "../X86GetPcThunk.h"
 #include "LLVMCWriter.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -666,7 +667,8 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
   for (llvm::BasicBlock &BB : Fn) {
     for (llvm::Instruction &Inst : BB) {
       auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
-      if (!Call || Call->getType()->isVoidTy() || Call->use_empty())
+      if (!Call || Call->getType()->isVoidTy() || Call->use_empty() ||
+          StatementCalls.count(Call))
         continue;
       if (llvm::isa<llvm::IntrinsicInst>(Call) ||
           llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()) ||
@@ -8622,7 +8624,71 @@ void LLVMCWriter::writeAnalysisOnlyFunction(llvm::Function &Fn) {
   writeFunctionProjection(Fn);
 }
 
+namespace {
+/// How often \p Text prints \p Call, whole: a longer name that ends in its
+/// name is another call.
+size_t printedOccurrences(llvm::StringRef Text, llvm::StringRef Call) {
+  const auto Identifier = [](char C) { return llvm::isAlnum(C) || C == '_'; };
+  size_t Count = 0;
+  for (size_t At = Text.find(Call); At != llvm::StringRef::npos;
+       At = Text.find(Call, At + 1))
+    if (At == 0 || !Identifier(Text[At - 1]))
+      ++Count;
+  return Count;
+}
+} // namespace
+
 void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
+  // A call the analysis sinks into the one use that needs it must print
+  // there exactly once: text that prints the use twice (`(c) & (c)` for
+  // `test eax, eax`) runs it twice, and text that drops the use loses it.
+  // The text decides, so a function whose text prints such a call other than
+  // once is rendered again with those calls as statements.  Both of a source
+  // map's renders count the same plain text.
+  StatementCalls.clear();
+  for (unsigned Render = 1;; ++Render) {
+    std::string Text;
+    llvm::raw_string_ostream TextOS(Text);
+    {
+      struct Restore {
+        LLVMCOut &Out;
+        llvm::raw_ostream *Primary;
+        ~Restore() { Out.retarget(Primary); }
+      } Guard{OS, &OS.stream()};
+      OS.retarget(&TextOS);
+      renderFunctionProjection(Fn);
+    }
+    TextOS.flush();
+    bool Misprinted = false;
+    if (Render < limits::kMaxLLVMCFunctionRenders) {
+      std::string Storage;
+      const llvm::StringRef Plain = SourceRecorder
+                                        ? SourceRecorder->plain(Text, Storage)
+                                        : llvm::StringRef(Text);
+      for (const llvm::Value *Value : Analysis.Inlinable) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(Value);
+        if (!Call || llvm::isa<llvm::IntrinsicInst>(Call) ||
+            Call->getFunction() != &Fn)
+          continue;
+        const auto Printed = InlineCache.find(Call);
+        std::string CallStorage;
+        const llvm::StringRef CallText =
+            Printed == InlineCache.end() ? llvm::StringRef()
+            : SourceRecorder
+                ? SourceRecorder->plain(Printed->second, CallStorage)
+                : llvm::StringRef(Printed->second);
+        if (CallText.empty() || printedOccurrences(Plain, CallText) != 1)
+          Misprinted |= StatementCalls.insert(Call).second;
+      }
+    }
+    if (!Misprinted) {
+      OS << Text;
+      return;
+    }
+  }
+}
+
+void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   setupFunction(Fn);
   CallDeclNames.clear();
   std::string Buffered;

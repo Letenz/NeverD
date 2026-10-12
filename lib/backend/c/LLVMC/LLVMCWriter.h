@@ -115,6 +115,7 @@ public:
   void writeFunction(llvm::Function &Fn);
   void writeAnalysisOnlyFunction(llvm::Function &Fn);
   void writeFunctionProjection(llvm::Function &Fn);
+  void renderFunctionProjection(llvm::Function &Fn);
   void setupFunction(llvm::Function &Fn);
   void emitFunctionDecls(llvm::Function &Fn);
   void scanReferencedBlocks(llvm::Function &Fn);
@@ -698,6 +699,9 @@ public:
   std::map<const llvm::Function *, std::string> FunctionSymbolNames;
   /// Import entry names that are C names (SymbolDecorations.def).
   llvm::StringSet<> ImportEntryCNames;
+  /// The calls a function's next render keeps as statements: its text
+  /// printed each other than once where the analysis inlined it.
+  std::set<const llvm::CallBase *> StatementCalls;
 
   int NextVar = 0;
   std::map<const llvm::Value *, std::string> ValNames;
