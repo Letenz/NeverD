@@ -1575,6 +1575,23 @@ std::string renderX86TypedIntrinsicCall(
         (FPHelperName ? FPHelperName(Call.IntrinsicId, Bytes)
                       : x86FPStateCHelper(Call.IntrinsicId, Bytes)) +
         "(";
+    if (isX86FPMaskCompareStateIntrinsic(Call.IntrinsicId)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
+      for (unsigned Index : Memory ? std::vector<unsigned>{0, 3, 4}
+                                   : std::vector<unsigned>{2, 3, 4}) {
+        if (Result.back() != '(')
+          Result += ", ";
+        const auto &Operand = *Call.Operands[Index];
+        const auto Text = ExprFn(Operand);
+        Result += Memory && Index == 0 ? "(void *)(uintptr_t)(" + Text + ")"
+                  : Operand.Type->Kind == NdTypeKind::Float
+                      ? "__builtin_bit_cast(" +
+                            x86FPStateRawCType(Operand.Type->Size) + ", " +
+                            Text + ")"
+                      : Text;
+      }
+      return Result + ")";
+    }
     if (isX86FPComiStateIntrinsic(Call.IntrinsicId)) {
       const bool Memory = isX86FPStateMemoryIntrinsic(Call.IntrinsicId);
       for (unsigned Index : Memory ? std::vector<unsigned>{2, 0, 3}

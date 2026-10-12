@@ -248,3 +248,7 @@ C(Intrinsic::ReadDr, "__readdr");
 C(Intrinsic::WriteDr, "__writedr");
 C(Intrinsic::X86FPComiState, "neverd_x86_comi_state");
 C(Intrinsic::X86FPComiMemoryState, "neverd_x86_comi_memory_state");
+
+C(Intrinsic::X86FPMaskCompareState, "neverd_x86_mask_compare_state");
+C(Intrinsic::X86FPMaskCompareMemoryState,
+  "neverd_x86_mask_compare_memory_state");
