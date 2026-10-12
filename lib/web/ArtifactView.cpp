@@ -171,6 +171,20 @@ Session::Impl::artifactView(std::string_view SelectionID) const {
       if (R.ID == SelectionID && R.selectable())
         return Select(R, "pkg_prelude");
   }
+  for (const auto &[ID, E] : WailsExtractions)
+    for (const auto &M : E.Members)
+      if (M.ID == SelectionID && !M.Directory) {
+        auto Parent = artifactView(E.ArtifactID);
+        if (!Parent)
+          throw Error("wails_parent_bytes_unavailable");
+        auto View =
+            storedSelection(std::move(*Parent), E, M, "wails_embed_member");
+        View.Origin["table_id"] = M.TableID;
+        View.Origin["profile"] = E.Profile;
+        View.Origin["stored_digest_status"] = "go_toolchain_hash128_match";
+        View.Origin["runtime_filesystem_binding"] = "not_checked";
+        return View;
+      }
   for (const auto &[ID, E] : AsarExtractions)
     for (const auto &M : E.Members)
       if (M.ID == SelectionID) {
@@ -261,6 +275,10 @@ Session::Impl::artifactView(std::string_view SelectionID) const {
 
 std::optional<Snapshot>
 Session::Impl::memberNamespace(std::string_view SelectionID) const {
+  for (const auto &[ID, E] : WailsExtractions)
+    for (const auto &M : E.Members)
+      if (M.ID == SelectionID && !M.Directory)
+        return wailsNamespace(E, M.Table);
   for (const auto &[ID, E] : PkgExtractions)
     if (std::any_of(E.Members.begin(), E.Members.end(), [&](const auto &M) {
           return M.ID == SelectionID && M.selectable();

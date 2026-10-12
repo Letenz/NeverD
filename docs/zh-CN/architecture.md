@@ -7,6 +7,10 @@
 本指南说明贡献者安全修改 NeverD 所需了解的生产边界。内容有意仅涵盖
 NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部架构。
 
+## 源码与对象替换边界
+
+`SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
+
 ## 系统边界
 
 ```mermaid

@@ -65,6 +65,8 @@ int runWeb() {
        WebArguments[0] == "bun-rewrite" ||
        WebArguments[0] == "bun-rewrite-export"))
     return runWebRewrite();
+  if (!WebArguments.empty() && WebArguments[0] == "readable-export")
+    return runWebReadableExport();
   if (!WebArguments.empty() && WebArguments[0] == "desktop-manifest")
     return runWebDesktop();
   if (!WebArguments.empty() &&
@@ -81,8 +83,15 @@ int runWeb() {
        WebArguments[0] == "archive-pkg-source"))
     return runWebPkg();
   if (!WebArguments.empty() &&
+      (WebArguments[0] == "wails" || WebArguments[0] == "wails-source" ||
+       WebArguments[0] == "wails-html" || WebArguments[0] == "wails-native" ||
+       WebArguments[0] == "wails-export" ||
+       WebArguments[0] == "wails-readable-export"))
+    return runWebWails();
+  if (!WebArguments.empty() &&
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
+       WebArguments[0] == "interface-relations" ||
        WebArguments[0] == "interface-correlate"))
     return runWebInterfaces();
   if (!WebArguments.empty() && (WebArguments[0] == "stream-preview" ||
@@ -296,13 +305,22 @@ int runWeb() {
            "<source-member-index:source-type>... | "
            "source|bindings|semantics|modules|bundles|view|navigate <file> "
            "<script|module|commonjs> "
+           "| readable-export <root> <source-type> <new-output-directory> "
+           "[artifact-index] "
            "| sea|sea-source <file-or-root> <profile> [artifact-index] "
            "| nexe <root> <profile> [artifact-index] "
            "| nexe-source <root> <profile> <artifact-index> <member-index> "
            "<source-type> | archive-nexe[-source] <root> <profile> "
            "<tar|tgz|zip> <archive-index> <archive-member-index> "
            "[<member-index> <source-type>] "
-           "| pkg <root> <profile> [artifact-index] "
+           "| wails|wails-native <root> <profile> [artifact-index] "
+           "| wails-export <root> <profile> <new-output-directory> "
+           "[artifact-index] "
+           "| wails-html <root> <profile> <artifact-index> <member-index> "
+           "| wails-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | wails-readable-export <root> <profile> "
+           "<artifact-index> <member-index> <source-type> "
+           "<new-output-directory> | pkg <root> <profile> [artifact-index] "
            "| pkg-source <root> <profile> <artifact-index> <member-index> "
            "<source-type> | archive-pkg[-source] <root> <profile> "
            "<tar|tgz|zip> <archive-index> <archive-member-index> "

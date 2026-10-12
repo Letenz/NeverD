@@ -1703,3 +1703,19 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 MSVC の単体テストは `/bigobj` を指定し、GoogleTest と LLVM のテンプレート展開による大きな COFF セクション数に対応します。他のコンパイラ設定は変わりません。設定テストは生成されたコンパイルコマンドを確認し、ネイティブ Windows CI がコンパイルと実行を検証します。
 
 チェック付きの二重シフト拒否は、結果とフラグが未定義の場合にマスク後のカウントとオペランド幅を報告します。`X64DoubleShift` は型付き終了と従来のエラー API が理由を保持し、レジスタと RAM が変化せず、メモリアクセスの観測も発生しないことを確認します。ドライバーのフィクスチャはシナリオ送信前にも同じ理由が保持されることを確認します。
+
+## ソースとネイティブオブジェクトのパッチ
+
+`CPU` はソースのインストールと隔離した関数実行、`REFUSED` はインストール契約不足による明示的拒否を示します。ARM32 ELF には EHABI 登録、32 ビット Mach-O には検証済みのローダー・フロントエンド・アンワインド契約が必要です。PE のソースインストールは現在 x64 に限られます。
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[ソースとネイティブオブジェクトのパッチ](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

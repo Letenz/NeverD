@@ -1819,3 +1819,19 @@ Die Schreibbeobachter-Regressionen prüfen Sichtbarkeit vor der nächsten Anweis
 MSVC-Testziele verwenden `/bigobj` für die vielen COFF-Sektionen aus GoogleTest- und LLVM-Template-Instanziierungen. Andere Compilerprofile bleiben unverändert. Konfigurationstests prüfen den erzeugten Compileraufruf; native Windows-CI prüft weiterhin Kompilierung und Ausführung.
 
 Die geprüfte Ablehnung doppelter Verschiebungen meldet den maskierten Zähler und die Operandenbreite, wenn Ziel und Flags undefiniert sind. `X64DoubleShift` prüft, dass typisierte Ausgänge und die bisherige Fehler-API den Grund ohne Register- oder RAM-Änderungen und ohne Speicherbeobachtungen erhalten; der Treibertest prüft denselben Grund vor der Szenarioausführung.
+
+## Quellcode- und native Objektpatches
+
+`CPU` bedeutet Installation und isolierte Funktionsausführung; `REFUSED` bedeutet eine ausdrückliche Ablehnung wegen fehlendem Installationsvertrag. ARM32 ELF benötigt EHABI-Registrierung; 32-Bit-Mach-O benötigt geprüfte Loader-, Frontend- und Unwind-Verträge; PE-Quellcodeinstallation erfordert derzeit x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Quellcode- und native Objektpatches](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

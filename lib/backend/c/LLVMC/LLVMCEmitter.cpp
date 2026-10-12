@@ -1552,7 +1552,8 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     // A mapping failure leaves the successful ordinary source intact, with
     // unknown spans. Errors in the ordinary emission still propagate.
   }
-  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary,
+                               CSourceRecorder::Recording::Instructions);
   try {
     if (Sources)
       Instructions.prepareLLVMSources(*Sources);

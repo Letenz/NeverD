@@ -137,4 +137,33 @@ PackageReviewUpdate appendPackageReview(const PackageAssessment &A,
   Update.State.RetainedBytes += DecisionBytes;
   return Update;
 }
+
+PackageReviewUpdate restorePackageReview(const PackageAssessment &A,
+                                         const PackageReviewState &Prior,
+                                         std::string_view ExpectedHead,
+                                         PackageReviewState Candidate,
+                                         PackageReviewCapacity Remaining) {
+  package_evidence::requireIdentity(ExpectedHead);
+  validatePackageReview(A, Prior);
+  if (ExpectedHead != Prior.HeadID)
+    throw Error("stale_package_review_head");
+  if (Remaining.Events > MaxPackageReviewDecisions ||
+      Remaining.Bytes > MaxPackageReviewBytes ||
+      Candidate.Decisions.size() > MaxPackageReviewDecisions)
+    throw Error("invalid_package_review_capacity");
+  Candidate.RetainedBytes = Candidate.Decisions.size() * DecisionBytes;
+  validatePackageReview(A, Candidate);
+  if (Candidate.Decisions.size() < Prior.Decisions.size())
+    throw Error("package_review_prefix_mismatch");
+  for (size_t I = 0; I < Prior.Decisions.size(); ++I)
+    if (Candidate.Decisions[I].ID != Prior.Decisions[I].ID)
+      throw Error("package_review_prefix_mismatch");
+  const auto Events = Candidate.Decisions.size() - Prior.Decisions.size();
+  const auto Bytes = Events * DecisionBytes;
+  if (Events > Remaining.Events)
+    throw Error("package_review_decision_budget_exceeded");
+  if (Bytes > Remaining.Bytes)
+    throw Error("package_review_byte_budget_exceeded");
+  return {std::move(Candidate), Events, Bytes, Events == 0};
+}
 } // namespace neverd::web

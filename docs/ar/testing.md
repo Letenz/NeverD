@@ -1728,3 +1728,19 @@ guest/Python5,000,000us / quantum1024 / public10s
 تستخدم أهداف اختبارات MSVC الخيار `/bigobj` للسماح بعدد أكبر من أقسام COFF الناتجة عن قوالب GoogleTest وLLVM. لا تتغير ملفات تعريف المترجمات الأخرى. تتحقق اختبارات الإعداد من أمر الترجمة المولد، وتتحقق CI الأصلية على Windows من الترجمة والتنفيذ.
 
 يُبلغ رفض الإزاحة المزدوجة في الوضع المتحقق عن العدد بعد تطبيق القناع وعرض المعامل عندما تكون النتيجة والأعلام غير محددة. يتحقق `X64DoubleShift` من احتفاظ الخروج ذي النوع وواجهة الأخطاء القديمة بالسبب دون تغييرات في السجلات أو RAM أو تسجيل عمليات الوصول إلى الذاكرة؛ ويتحقق اختبار برنامج التشغيل من السبب نفسه قبل إرسال السيناريو.
+
+## تصحيحات المصدر والكائنات الأصلية
+
+تعني `CPU` تثبيت المصدر وتنفيذ الدالة المعزولة، وتعني `REFUSED` رفضاً صريحاً لغياب عقد التثبيت. تحتاج ARM32 ELF إلى تسجيل EHABI؛ وتحتاج Mach-O ذات 32 بت إلى عقود محمل وواجهة ترجمة وفك مكدس متحققة؛ ويتطلب تثبيت مصدر PE حالياً x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[تصحيحات المصدر والكائنات الأصلية](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

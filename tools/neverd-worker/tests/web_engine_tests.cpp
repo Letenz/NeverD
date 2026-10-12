@@ -17,6 +17,7 @@
 #include "../../../unittests/web/PackageArchiveFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "WebEngine.h"
 
@@ -1764,6 +1765,26 @@ int main(int argc, char **argv) {
     check(history["items"].size() == 1 &&
               history["items"][0]["assertion_source"] == "caller",
           "Worker changed immutable analyst history");
+    const Json journal{
+        {"schema_version", 1},
+        {"profile", "offline-package-review-journal-v1"},
+        {"package_assessment_id", reviewed["package_assessment_id"]},
+        {"review_root_id", reviewed["review_root_id"]},
+        {"review_head_id", reviewed["review_head_id"]},
+        {"decisions", history["items"]}};
+    Json restore{{"schema_version", 1},
+                 {"revision", packageRevision},
+                 {"package_assessment_id", reviewed["package_assessment_id"]},
+                 {"expected_review_head", reviewed["review_head_id"]},
+                 {"journal_json", journal.dump()}};
+    const auto restored = assessmentCall("web_package_review_restore", restore);
+    check(restored["replayed"] == true && restored["restored_events"] == 0,
+          "Worker charged an identical review journal twice");
+    restore["notes"] = "SECRET_WEB";
+    reply = process.call("web_package_review_restore", restore, packageRevision,
+                         packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted an arbitrary review note");
     assessmentCall("web_package_assessment_report", assessmentPage);
     assessmentSelection["raw"] = true;
     reply = process.call("web_package_assessment_create", assessmentSelection,
@@ -1897,12 +1918,18 @@ int main(int argc, char **argv) {
         "postData":{"text":"SECRET_WEB"}},
         "response":{"status":200,"content":{"text":"SECRET_WEB"}}}]}})";
       std::ofstream(interfaceRoot / "b.js")
-          << "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+          << "const SECRET_WEB_RESULT=await "
+             "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+             "SECRET_WEB_RESULT.json();"
              "const SECRET_WEB_XHR = new XMLHttpRequest();"
              "SECRET_WEB_XHR.open('GET','https://SECRET_WEB/a');"
              "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
              "SECRET_WEB_XHR.send('SECRET_WEB');"
              "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;"
+             "this.fetch('https://SECRET_WEB/a', {method:'POST'});"
+             "fetch(...SECRET_WEB_ARGUMENTS);"
+             "const SECRET_WEB_WRAPPER=(u,i)=>fetch(u,i);"
+             "SECRET_WEB_WRAPPER('https://SECRET_WEB/wrapper',{method:'POST'});"
              "const recovered='SECRET_'+'WEB_RECOVERED';const n=1+2;";
       const auto beforeInterfaces = web.revision(),
                  beforeProject = web.projectId();
@@ -1978,8 +2005,12 @@ int main(int argc, char **argv) {
         reply = process.call("web_interfaces_analyze", infer, interfaceRevision,
                              interfaceProject);
         check(reply["payload"] == analysis &&
-                  analysis["interface_count"] == 5 &&
-                  analysis["profile"] == "fetch-websocket-xhr-syntax-v2" &&
+                  analysis["interface_count"] == 9 &&
+                  analysis["fetch_member_correlation"] == false &&
+                  analysis["profile"] ==
+                      "fetch-websocket-xhr-wrappers-syntax-v4" &&
+                  analysis["wrapper_definitions"] == 1 &&
+                  analysis["wrapper_correlation"] == false &&
                   analysis["xhr_correlation"] == false,
               "Static interfaces differ");
         const Json sourcePage{
@@ -1996,8 +2027,59 @@ int main(int argc, char **argv) {
                   sites["items"][4]["handler_status"] == "value_syntax" &&
                   sites["items"][1]["receiver_binding_id"] ==
                       sites["items"][4]["receiver_binding_id"] &&
+                  sites["items"][5]["kind"] == "fetch_member_call" &&
+                  sites["items"][5]["receiver_node_id"].is_string() &&
+                  sites["items"][5]["method"] == "unknown" &&
+                  sites["items"][6]["arguments_status"] ==
+                      "spread_unresolved" &&
+                  sites["items"][6]["url_node_id"].is_null() &&
+                  sites["items"][6]["method"] == "unknown" &&
+                  sites["items"][8]["kind"] == "fetch_wrapper_call" &&
+                  sites["items"][8]["method"] == "POST" &&
+                  sites["items"][8]["wrapper_request_node_id"] ==
+                      sites["items"][7]["node_id"] &&
+                  sites["items"][8]["url_argument_index"] == 0 &&
+                  sites["items"][8]["options_argument_index"] == 1 &&
                   reply.dump().find("SECRET_WEB") == std::string::npos,
               "XHR syntax evidence differs or exposes values");
+        const auto relations =
+            web.execute("web_interface_relations_analyze", sourcePage);
+        reply = process.call("web_interface_relations_analyze", sourcePage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relations &&
+                  relations["relation_count"] == 4 &&
+                  relations["profile"] == "request-source-relations-v1" &&
+                  relations["response_api_identity"] ==
+                      "member_spelling_unverified" &&
+                  relations["har_correlation"] == false,
+              "Request relations differ or promote response identity");
+        const Json relationPage{{"schema_version", 1},
+                                {"revision", interfaceRevision},
+                                {"relations_id", relations["relations_id"]}};
+        const auto relationRecords =
+            web.execute("web_interface_relation_records", relationPage);
+        reply = process.call("web_interface_relation_records", relationPage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relationRecords &&
+                  relationRecords["items"][0]["kind"] ==
+                      "await_result_const_binding" &&
+                  relationRecords["items"][1]["kind"] ==
+                      "request_function_containment" &&
+                  relationRecords["items"][2]["kind"] ==
+                      "direct_request_return" &&
+                  relationRecords["items"][3]["kind"] ==
+                      "bound_result_member_call" &&
+                  relationRecords["items"][3]["member_spelling"] == "json" &&
+                  relationRecords["items"][0]["binding_id"] ==
+                      relationRecords["items"][3]["binding_id"] &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Request relation pages differ or expose private values");
+        auto invalidRelations = relationPage;
+        invalidRelations["execute"] = true;
+        reply = process.call("web_interface_relation_records", invalidRelations,
+                             interfaceRevision, interfaceProject);
+        check(reply["error"]["code"] == "invalid_request",
+              "Request relation pages accepted an execution field");
         for (const auto *Pass : {"string_recovery", "constant_folding"}) {
           auto RewriteArgs = infer;
           RewriteArgs["pass"] = Pass;
@@ -2363,6 +2445,52 @@ int main(int argc, char **argv) {
       reply = process.call("web_pkg_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "pkg accepted execution option");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "wails_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "wails";
+      std::ofstream(path, std::ios::binary) << neverd::web::wails_test::elf();
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "Wails capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"artifact_id", items["items"][0]["artifact_id"]},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto extracted = web.execute("web_wails_extract", args);
+      reply = process.call("web_wails_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 3,
+            "Wails extraction differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto records = web.execute("web_wails_records", page);
+      reply = process.call("web_wails_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Wails pages differ or reveal names");
+      auto invalid = args;
+      invalid["execute"] = true;
+      reply = process.call("web_wails_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "Wails accepted execution option");
     }
     process.stop();
     std::ifstream errors(fixture.root / "stderr");

@@ -39,10 +39,10 @@ void capabilitySubset() {
     require(Disabled.names() == Json::array({"neverd_web_capabilities"}),
             "Disabled backend advertised unavailable tools");
   }
-  auto Caps =
-      capabilities({"import_preview", "source_map_analyze", "source_analyze",
-                    "native_analyze", "bun_export", "source_rewrite_export",
-                    "unknown_future_operation"});
+  auto Caps = capabilities(
+      {"import_preview", "source_map_analyze", "source_analyze",
+       "native_analyze", "bun_export", "wails_export", "source_readable_export",
+       "source_rewrite_export", "unknown_future_operation"});
   Catalog C(Caps, 0);
   require(C.names() == Json::array({"neverd_web_capabilities",
                                     "neverd_web_source_analyze",
@@ -82,8 +82,36 @@ void closedArguments() {
                           "package_assessment_findings",
                           "package_review_append",
                           "package_review_decisions",
-                          "package_assessment_report"}),
+                          "package_assessment_report",
+                          "interface_relations_analyze",
+                          "interface_relation_records",
+                          "wails_extract",
+                          "wails_records"}),
             0);
+  const auto &Wails = C.find("neverd_web_wails_extract");
+  Json WailsArgs{{"revision", "1"}, {"artifact_id", "a"}, {"profile", "p"}};
+  Wails.payload(WailsArgs);
+  WailsArgs["execute"] = true;
+  refuses([&] { Wails.payload(WailsArgs); });
+  const auto &WailsPage = C.find("neverd_web_wails_records");
+  Json WailsPageArgs{{"revision", "1"},
+                     {"extraction_id", "e"},
+                     {"record_kind", "members"},
+                     {"limit", 128}};
+  WailsPage.payload(WailsPageArgs);
+  WailsPageArgs["limit"] = 129;
+  refuses([&] { WailsPage.payload(WailsPageArgs); });
+  const auto &Relations = C.find("neverd_web_interface_relations_analyze");
+  Relations.payload({{"revision", "1"}, {"analysis_id", "a"}});
+  refuses([&] { Relations.payload({{"revision", "1"}, {"source_id", "a"}}); });
+  const auto &RelationPage = C.find("neverd_web_interface_relation_records");
+  Json RelationArgs{{"revision", "1"}, {"relations_id", "r"}, {"limit", 128}};
+  RelationPage.payload(RelationArgs);
+  RelationArgs["limit"] = 129;
+  refuses([&] { RelationPage.payload(RelationArgs); });
+  RelationArgs["limit"] = 1;
+  RelationArgs["execute"] = true;
+  refuses([&] { RelationPage.payload(RelationArgs); });
   const auto &Assessment = C.find("neverd_web_package_assessment_create");
   Json AssessmentArgs{{"revision", "1"},
                       {"package_analysis_id", "p"},
@@ -172,6 +200,7 @@ void closedArguments() {
   }
   refuses([&] { View.payload({{"source_id", "s"}}); });
   refuses([&] { C.find("neverd_web_bun_export"); });
+  refuses([&] { C.find("neverd_web_source_readable_export"); });
   refuses([&] { C.find("neverd_web_native_analyze"); });
   refuses([&] { C.find("neverd_web_source_rewrite_export"); });
   const auto &Rewrite = C.find("neverd_web_source_rewrite_analyze");

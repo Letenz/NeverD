@@ -38,6 +38,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_SVELengthTests.cpp
   aarch64/AArch64_SVEStateTests.cpp
   aarch64/AArch64_SVEStoreTests.cpp
+  aarch64/AArch64_StructReturnTests.cpp
   aarch64/AArch64_WSPTests.cpp
   aarch64/AArch64_MulDivTests.cpp
   aarch64/AArch64DivisionSemanticTests.cpp
@@ -107,6 +108,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_FlagsMiscTests.cpp
   x86_64/X86_64_FmaMiscTests.cpp
   x86_64/X86_64_FPConvertTests.cpp
+  x86_64/X86_64_FramePointerWalkTests.cpp
   x86_64/X86_64_ImageTableTests.cpp
   x86_64/X86_64_IntrinsicsTests.cpp
   x86_64/X86_64_LodsMiscTests.cpp
@@ -130,6 +132,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_StackMemorySemanticTests.cpp
   x86_64/X86_64_NativeHostModeTests.cpp
   x86_64/X86_64_StringOpsTests.cpp
+  x86_64/X86_64_StructReturnTests.cpp
   x86_64/X86_64_X87FPUTests.cpp
   x86_64/X86_64_EVEXCompareTests.cpp
   x86_64/X86_64_WideISAStateTests.cpp
@@ -1537,6 +1540,7 @@ endif()
 # without relinking the aggregate lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDHighCStoreForwardingTests
   core/HighCStoreForwardingTests.cpp
+  core/HighCDefinitionIndexTests.cpp
 
   LINK_COMPONENTS
   BackendC

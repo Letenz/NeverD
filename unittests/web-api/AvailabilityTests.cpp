@@ -67,13 +67,15 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
         "package_attestation_digest_match", "package_attestation_digest_result",
         "package_assessment_create", "package_assessment_findings",
         "package_review_append", "package_review_decisions",
-        "package_assessment_report"})
+        "package_review_restore", "package_assessment_report"})
     EXPECT_TRUE(Has(Name));
   for (const auto Op : {"har_preview", "har_commit", "har_records",
                         "stream_preview", "stream_commit", "stream_records"})
     EXPECT_TRUE(Has(Op));
-  for (const auto Op : {"interfaces_analyze", "interface_records",
-                        "interfaces_compare", "interface_correlation_records"})
+  for (const auto Op :
+       {"interfaces_analyze", "interface_records", "interfaces_compare",
+        "interface_correlation_records", "interface_relations_analyze",
+        "interface_relation_records"})
     EXPECT_EQ(Has(Op), bool(NEVERD_TEST_WEB_JS));
   bool ASARAvailable = false;
   const auto *Analysis = Object->getArray("analysis");
@@ -87,18 +89,48 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
   EXPECT_EQ(Has("nexe_records"), ASARAvailable);
   EXPECT_EQ(Has("pkg_extract"), ASARAvailable);
   EXPECT_EQ(Has("pkg_records"), ASARAvailable);
+  EXPECT_EQ(Has("wails_extract"), ASARAvailable);
+  EXPECT_EQ(Has("wails_records"), ASARAvailable);
+  EXPECT_EQ(Has("wails_export"), ASARAvailable);
+  EXPECT_EQ(Has("source_readable_export"), bool(NEVERD_TEST_WEB_JS));
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
     if (!Entry || Entry->getString("kind") != "source_interfaces")
       continue;
     SourceInterfacesAvailable = true;
-    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v2");
+    EXPECT_EQ(Entry->getString("profile"),
+              "fetch-websocket-xhr-wrappers-syntax-v4");
     EXPECT_FALSE(Entry->getBoolean("xhr_correlation").value_or(true));
     const auto *Kinds = Entry->getArray("candidate_kinds");
     ASSERT_NE(Kinds, nullptr);
-    EXPECT_EQ(Kinds->size(), 6u);
+    EXPECT_EQ(Kinds->size(), 8u);
+    EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
+      return Kind.getAsString() == "fetch_member_call";
+    }));
+    EXPECT_EQ(Entry->getString("fetch_member_identity"),
+              "property_spelling_unverified");
+    EXPECT_FALSE(Entry->getBoolean("fetch_member_correlation").value_or(true));
+    EXPECT_EQ(Entry->getString("wrapper_profile"),
+              "direct-lexical-fetch-forwarding-v1");
+    EXPECT_FALSE(Entry->getBoolean("wrapper_correlation").value_or(true));
+    EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
+      return Kind.getAsString() == "fetch_wrapper_call";
+    }));
   }
   EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
+  unsigned RelationProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "source_interface_relations")
+      continue;
+    ++RelationProfiles;
+    EXPECT_EQ(Entry->getString("profile"), "request-source-relations-v1");
+    EXPECT_EQ(Entry->getString("response_api_identity"),
+              "member_spelling_unverified");
+    EXPECT_EQ(Entry->getString("callback_parameter_roles"), "not_assigned");
+    EXPECT_FALSE(Entry->getBoolean("har_correlation").value_or(true));
+  }
+  EXPECT_EQ(RelationProfiles, NEVERD_TEST_WEB_JS ? 1u : 0u);
   unsigned RenameProfiles = 0;
   for (const auto &A : *Analysis) {
     const auto *Entry = A.getAsObject();
@@ -207,6 +239,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
                                                 "scripts", 7, 0, 1),
         neverd_web_interfaces_analyze_json(Session, "1", 1, "source", 6),
         neverd_web_interface_records_json(Session, "1", 1, "analysis", 8, 0, 1),
+        neverd_web_interface_relations_analyze_json(Session, "1", 1, "analysis",
+                                                    8),
+        neverd_web_interface_relation_records_json(Session, "1", 1, "relations",
+                                                   9, 0, 1),
         neverd_web_interfaces_compare_json(Session, "1", 1, "analysis", 8,
                                            "capture", 7),
         neverd_web_interface_correlation_records_json(
@@ -250,6 +286,14 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                     0),
         neverd_web_pkg_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr, 0,
                                     0, 1),
+        neverd_web_wails_extract_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                      0),
+        neverd_web_wails_records_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                      0, 0, 1),
+        neverd_web_wails_export_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
+                                     0),
+        neverd_web_source_readable_export_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0, nullptr, 0),
         neverd_web_stream_preview_json(nullptr, nullptr, 0, nullptr, 0, nullptr,
                                        0),
         neverd_web_stream_commit_json(nullptr, nullptr, 0, nullptr, 0),
@@ -260,6 +304,10 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
         neverd_web_interfaces_analyze_json(nullptr, nullptr, 0, nullptr, 0),
         neverd_web_interface_records_json(nullptr, nullptr, 0, nullptr, 0, 0,
                                           1),
+        neverd_web_interface_relations_analyze_json(nullptr, nullptr, 0,
+                                                    nullptr, 0),
+        neverd_web_interface_relation_records_json(nullptr, nullptr, 0, nullptr,
+                                                   0, 0, 1),
         neverd_web_interfaces_compare_json(nullptr, nullptr, 0, nullptr, 0,
                                            nullptr, 0),
         neverd_web_interface_correlation_records_json(nullptr, nullptr, 0,
@@ -289,6 +337,8 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
                                               0),
         neverd_web_package_review_decisions_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, 0, 1),
+        neverd_web_package_review_restore_json(nullptr, nullptr, 0, nullptr, 0,
+                                               nullptr, 0, nullptr, 0),
         neverd_web_package_assessment_report_json(nullptr, nullptr, 0, nullptr,
                                                   0, nullptr, 0, 0, 1),
         neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,

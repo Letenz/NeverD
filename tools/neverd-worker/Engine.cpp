@@ -705,11 +705,14 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     full["representation"] = representation;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    // The resolver below runs other operations, so the decoration names
+    // functions from a copy of the listing's display names.
     if (sourceView)
       CodeEdits::decorate(
           full, codeEditRow(address), address, representation,
           backendJson(neverd_renames_json(session_)),
           backendJson(neverd_annotations_json(session_)),
+          CodeEdits::FunctionAliases(listing().functionAliases()),
           [this](const std::string &name) -> std::optional<std::uint64_t> {
             Json target;
             try {
@@ -812,7 +815,8 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   Json page = Json::object();
   for (const auto &[field, value] : namedView_.items())
     if (field != "text" && field != "rows" &&
-        !((field == "source_names" || field == "code_names") && value.is_array()))
+        !((field == "source_names" || field == "code_names") &&
+          value.is_array()))
       page[field] = value;
   page["text"] = text.substr(startByte, endByte - startByte);
   Json rows = Json::array();

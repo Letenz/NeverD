@@ -2535,4 +2535,23 @@ Signed: %4</source>
         <translation>Windows</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Свернуть</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Развернуть</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Восстановить</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрыть</translation>
+    </message>
+</context>
 </TS>

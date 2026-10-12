@@ -10,15 +10,14 @@ Capstone, and Unicorn submodules keep their own internal architecture.
 
 ## Source and object replacement boundary
 
-`SourcePatchCompiler` owns compiler identity, target arguments and artifact
-selection. `bindSourcePatch` authenticates explicit IR entry mappings;
-`PatchObject` instead owns native section/symbol/relocation and FDE-range
-evidence. Objects never receive fabricated LLVM MC function-owner identities.
-Both producers share original binding validation, ELF storage/relocation/unwind
-registration and the `publishSourcePatch` transaction. That transaction requires
-an exact receipt for every requested entry, checks the candidate again, and
-publishes exclusively. Lifted/full rewrites keep their separate source-provenance
-and preserve-original/no-op policies. See [source patches](source-patching.md).
+`SourcePatchCompiler` owns compiler identity and artifact selection.
+`validateSourcePatchTarget` is the common admission for source and supplied IR;
+a codegen triple alone is insufficient. `bindSourcePatch` authenticates IR entry
+mappings. `PatchObject` owns native sections, relocations and FDE-range evidence;
+objects never receive fabricated MC function-owner identities. Both paths share
+original binding validation and the exact `publishSourcePatch` transaction.
+Lifted rewrites keep their separate original EH evidence and provenance rules.
+See [source patches](source-patching.md).
 
 `COFFSourceImage` owns installation of compiler-produced PE x64 source output:
 separate code/state/metadata permissions, retained original runtime rows,
@@ -53,8 +52,8 @@ clears the worker's prepared-entry marker before another view can reuse it.
 Consecutive restricted x64 analyses may share a session-owned
 `PipelineAnalysisCache`. It owns the immutable entry snapshots and no-return,
 relocation-root and executable-owner indexes borrowed by the bounded raw x87
-graph and call-register body caches. Each selection still builds its output
-IR, replays the ordinary proof obligations and recomputes caller-dependent
+graph and machine-body caches. Each selection owns independent output IR,
+replays the ordinary proof obligations and recomputes caller-dependent
 register/argument summaries. Exact candidate and verified-entry inventories
 bind reuse; selection cannot silently change a cached function's boundaries.
 No-return proof and lazy-name memo entries are cleared between runs, so they
@@ -88,11 +87,17 @@ Pseudocode navigation uses instruction anchors recorded during source emission.
 HighIR statement observations retain function, address, sequence and statement
 kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
 observations retain weak handles through optimization and the private C clone.
-The source recorder publishes statement spans only when its private rendering
-reproduces ordinary source byte for byte. Instruction and library recordings use
-independent renders so navigation cannot weaken library folding evidence. The
-C API checks every occurrence against the same canonical LowIR boundaries and
-sequences used by Low/Med pages. C++, Rust and Go record individual statement
+With no library evidence, HighC records definition and statement byte positions
+on its ordinary output without inserting delimiters or repeating source analysis.
+Buffered bodies relocate their anchors when their unchanged text is appended,
+after any deferred declarations; nested buffers preserve the same event order.
+Only complete, in-bounds positions are published. Invalid positions fall back
+to private delimiter recordings that must reproduce ordinary source byte for
+byte. When library evidence is present, instruction and library recordings keep
+independent renders so navigation cannot weaken library folding evidence.
+The C API checks every occurrence
+against the same canonical LowIR boundaries and sequences used by Low/Med pages.
+C++, Rust and Go record individual statement
 spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
 surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
@@ -653,6 +658,18 @@ only admitted occurrences. Content, opaque V8 caches and private metadata have
 distinct roles; source/cache equivalence and symlink resolution remain unknown.
 `ArtifactView` retains occurrence namespaces and nested coordinates for shared
 consumers. See the [pkg profile](web-pkg-profile.md).
+`desktop/wails/Profiles` owns explicit producer/platform/container selection;
+`ELF` and `PE` own independently qualified header/address translation, while
+`Mappings` owns the shared file-backed permission and overlap policy. `BuildInfo`
+owns declared-version/platform framing, `Tables` owns recognizable slice/record and
+portable namespace admission, and `Contents` owns stored compiler hashes and
+overlap proof. `Reader` owns bounded atomic extraction. `SessionWails` publishes
+metadata; `ArtifactView` composes nested storage coordinates and keeps each
+filesystem table's namespace separate. `SessionWailsExport` reuses the shared
+exclusive writer for explicit local disclosure. None of these owners chooses
+an asset-server binding or implements a Go/JS bridge. Shared source/HTML/native
+consumers retain independent capabilities and limits. See the
+[Wails profile](web-wails-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -731,16 +748,40 @@ with one shared 256-event/256-KiB review allowance. Review-head checks cover all
 finding, history and report pages. Consumers do not reinterpret an original
 digest as installed-tree proof or an analyst disposition as analyzer confidence.
 See the [assessment profile](web-package-assessment-profile.md).
+`SessionPackageReviewRestore` owns only bounded journal decoding and the locked
+serialize-before-publish transaction. `Disposition` validates the entire supplied
+chain and exact prior prefix before charging a suffix; clients never reimplement
+the hash recipe or finding membership. `tools/neverd-gui/web/PackageSession`
+coordinates one private configured worker and complete revision/head-bound pages.
+`FindingModel`/`PackageReviewDialog` present fixed evidence and caller assertions;
+`ReviewJournal` owns bounded local canonical JSON and atomic file replacement.
+The GUI has no engine semantics, LLVM or target runtime dependency. See the
+[journal and desktop profile](web-package-review-journal.md).
 `interfaces/Endpoint` owns private URL comparison keys and fixed public
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
 Its private `SourceContext` owns bounded admission, indexes, finite strings and
-record publication; `SourceFetch` and `SourceXHR` own their syntax rules. XHR
+record publication; `SourceFetch` and `SourceXHR` own their syntax rules.
+`SourceWrappers` uses the authoritative declaration index to admit unique,
+unwritten single-return fetch wrappers and map simple parameters at lexical
+call sites. It reuses `SourceFetch` option rules and `SourceContext` URL/private
+budget rules; no transport infers argument roles. These one-layer candidates
+retain caller, function, internal request, binding and parameter anchors and
+remain excluded from HAR correlation and the separate result-relation grammar.
+XHR
 links lexical constructors/receivers without inferring request sessions;
 `interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
 owns redaction preview/commit, revision/cache lifetime and public metadata.
 Transports cannot publish uncommitted HAR observations or reinterpret a match
 as source execution. See the [passive interface profile](web-interface-profile.md).
+`interfaces/SourceRelations` independently projects selected request/result
+syntax. `RelationContext` owns model admission, lexical indexes and bounded
+identities; `RequestLinks`/`ResultLinks` own direct-return, awaited-const and
+fixed member-use grammars. Function containment comes from `SourceNavigation`,
+and declaration uniqueness from `indexSourceDeclarations`. Exhaustion clears
+relations without invalidating request evidence. `SessionInterfaceRelations`
+owns explicit selection, revision/cache lifetime and metadata-only pages.
+See the [relationship profile](web-interface-relations-profile.md).
 `streams/Framing` owns bounded line/SSE framing, `streams/Records` owns
 selected JSON/protocol shapes and `streams/Relations` owns recorded-context
 joins. Shared `JsonReader` reports consumed nodes even on failure so a stream
@@ -781,6 +822,13 @@ formatting cannot remove or lower them. See the
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR or package archive members. Nested origins retain
 container-relative offsets separately from original/expanded storage offsets.
+`SessionReadableExport` consumes that selection with an explicit source goal
+and the independent sequential recovery parser. It verifies original bytes,
+retains exact origins/ranges and uses the shared exclusive export writer.
+`SourceRecovery` alone owns whitespace insertion and same-parser-tree proof;
+its larger models never enter interactive source/semantic caches. C API and CLI
+select this result; worker/MCP exclude raw export. See the
+[readable-export profile](web-readable-export-profile.md).
 Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
 owns its pinned native Unicode collision policy. `SessionAsar` publishes bounded
@@ -1461,6 +1509,18 @@ and reused bodies. Format-derived call reads are still collected at ordered
 publication, so overlapping call sites cannot inherit a different contract
 because a worker completed earlier.
 
+Initial default x64 construction can also reconstruct a complete `LowFunc`
+from this inventory when the full metadata payload was retained. Machine
+blocks have one cache owner. The separate function payload preserves coverage,
+roots, jump-table storage and selector certificates, relocation provenance,
+temporaries and code references. The loader-owned exception record is borrowed
+from the immutable image and copied into each result; it is not duplicated in
+the retained payload. Requested names are rebound at the consumer. Missing or
+oversized metadata and registration-state ownership require an ordinary build.
+Protected-table and cross-function continuation rebuilds always use their
+explicit policies. A `CallRegisterBody` projection alone remains insufficient
+for output reconstruction.
+
 Function starts follow the same evidence rule. An x64 `RUNTIME_FUNCTION` with
 chained unwind info continues its parent function (`BinaryImage::
 ContinuationCodeStarts`), and an entry guessed only from inter-function padding
@@ -1468,6 +1528,15 @@ ContinuationCodeStarts`), and an entry guessed only from inter-function padding
 either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
+
+An x86 function whose whole body is one direct unconditional jump, after an
+optional `endbr` marker, passes its caller's return address, stack and
+arguments on untouched, so function detection makes the jump target an entry
+on the forwarder's evidence. GCC's `frame_dummy` (`endbr64; jmp
+register_tm_clones`) is the usual case: in a stripped image nothing else names
+the target, whose body the forwarder would otherwise absorb. A target between
+the forwarder and the next entry is the forwarder's own code, such as a loop
+entered at its test, and stays inside it.
 
 At a validated source-call boundary, an exact integer constant zero may supply
 a pointer parameter even when the machine expression uses a narrower integer
@@ -1930,12 +1999,15 @@ environment restores, tag changes, unknown intrinsics and exceptional edges
 supply no summary. Loader-authenticated imports use the existing ABI tables;
 an internal function's spelling supplies no effect.
 
-Call-register body retention is a separate opt-in inventory of at most 128
+Machine-body retention is a separate opt-in inventory of at most 128
 entries and 32 MiB, including its frozen construction context, block/vector
-capacities and dependency receipts. Active readers may keep evicted immutable
-entries alive; the allowance bounds retained cache payload rather than total
-RSS. Image bytes and metadata must remain unchanged for the operation, with
-the same exception for additive `CodeRefTargets` publication as raw graphs.
+capacities, nested function metadata and dependency receipts. Active readers
+may keep evicted immutable entries alive; the allowance bounds retained cache
+payload rather than total RSS. Completed block vectors release construction
+slack before retention, with actual capacities checked again against the same
+allowance. Image bytes and metadata must remain unchanged
+for the operation, with the same exception for additive `CodeRefTargets`
+publication as raw graphs.
 Only complete, nontruncated x64 bodies with registered callback owners qualify.
 Every skipped normalization stage, including speculative CFGs and build
 retries, records local stack use and exact direct/loaded-slot call targets.
@@ -4039,6 +4111,11 @@ address analysis accepts only bit-preserving views at the target width.
 HighC's later text-based store forwarding records the names used by each cached
 value. Liveness includes those dependencies at surviving loads, and subsequent
 value inlining cannot hide a definition still named in cached text.
+Its address analysis indexes definitions by the existing kind, ID, SSA version,
+register offset, rename tag and architecture identity. Repeated definitions
+remain ambiguous even when their expressions are shared. A separate index of
+preceding top-level aliases retains the private-frame dominance requirement;
+global uniqueness alone cannot authorize a memory rewrite.
 Candidate selection uses one cached rendering score: expanded operator and
 leaf count first, then fewer operations on a size tie. Associative infix
 chains count every printed binary operator. Signed literals are leaves;

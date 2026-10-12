@@ -1771,3 +1771,19 @@ bulk-attributes проверяет полные группы, множество
 Цели тестов MSVC используют `/bigobj` для большого числа секций COFF от шаблонов GoogleTest и LLVM. Другие компиляторы не меняются. Тесты конфигурации проверяют созданную команду; нативная Windows CI проверяет компиляцию и выполнение.
 
 Проверяемый отказ двойного сдвига сообщает маскированное число сдвигов и ширину операнда, когда результат и флаги не определены. `X64DoubleShift` проверяет сохранение причины в типизированном выходе и прежнем API ошибок без изменений регистров и RAM и без наблюдений доступа к памяти; тест драйвера проверяет ту же причину до выполнения сценария.
+
+## Патчи из исходного кода и нативных объектов
+
+`CPU` означает установку и изолированное выполнение функции; `REFUSED` — явный отказ из-за отсутствующего контракта установки. ARM32 ELF требует регистрации EHABI; 32-битный Mach-O требует проверенных контрактов загрузчика, frontend и раскрутки; установка исходного кода PE сейчас требует x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Патчи из исходного кода и нативных объектов](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

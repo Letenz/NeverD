@@ -1799,3 +1799,19 @@ Le regressioni dell’osservatore delle scritture verificano la visibilità prim
 I target dei test MSVC usano `/bigobj` per le numerose sezioni COFF generate dai template GoogleTest e LLVM. Gli altri compilatori restano invariati. I test di configurazione verificano il comando generato; la CI Windows nativa verifica compilazione ed esecuzione.
 
 Il rifiuto controllato degli shift doppi indica il conteggio mascherato e la larghezza dell’operando quando destinazione e flag sono indefiniti. `X64DoubleShift` verifica che le uscite tipizzate e la precedente API degli errori conservino il motivo senza modifiche a registri o RAM né osservazioni della memoria; il test del driver verifica lo stesso motivo prima dell’invio dello scenario.
+
+## Patch da sorgenti e oggetti nativi
+
+`CPU` indica installazione ed esecuzione isolata delle funzioni; `REFUSED` indica un contratto di installazione mancante. ARM32 ELF richiede registrazione EHABI; Mach-O a 32 bit richiede contratti verificati di loader, frontend e unwinding; l’installazione PE da sorgente richiede attualmente x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Patch da sorgenti e oggetti nativi](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

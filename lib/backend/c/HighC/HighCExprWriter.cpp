@@ -37,6 +37,28 @@
 namespace neverd {
 
 namespace {
+/// Whether printed C \p Text joins operands with a binary or conditional
+/// operator outside every parenthesis and bracket.  The printer spaces each
+/// such operator, and no unary one.
+bool hasTopLevelBinaryOperator(llvm::StringRef Text) {
+  static constexpr llvm::StringLiteral Operators[] = {
+      "&& ", "|| ", "== ", "!= ", "<= ", ">= ", "<< ", ">> ", "< ", "> ",
+      "+ ",  "- ",  "* ",  "/ ",  "% ",  "& ",  "| ",  "^ ",  "? ", ": "};
+  int Depth = 0;
+  for (size_t I = 0; I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (C == '(' || C == '[' || C == '{')
+      ++Depth;
+    else if (C == ')' || C == ']' || C == '}')
+      --Depth;
+    else if (C == ' ' && Depth == 0)
+      for (llvm::StringLiteral Operator : Operators)
+        if (Text.substr(I + 1).starts_with(Operator))
+          return true;
+  }
+  return false;
+}
+
 TypeRef debugParameterCarrier(TypeRef Type, Arch Architecture,
                               BinaryFormat Format) {
   // An indirect source parameter needs only a record declaration. Decide
@@ -653,8 +675,14 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         Inner->Op == NdOp::INT_SLESSEQUAL && Inner->Operands.size() == 2 &&
         IsZero(Inner->Operands[1]) && Inner->Operands[0])
       return PrintGtZero(Inner->Operands[0]);
-    if (Inner)
-      return invertCondStr(*Inner);
+    if (Inner) {
+      // The inverse is a condition of its own, `!a && !b` of `!(a || b)` or
+      // `a >= b` of `!(a < b)`: as an operand it keeps its grouping.
+      std::string Inverted = invertCondStr(*Inner);
+      if (ParentPrec > 0 && hasTopLevelBinaryOperator(Inverted))
+        Inverted = "(" + Inverted + ")";
+      return Inverted;
+    }
     return "!" + exprStr(*E.Operands[0], 99);
   }
   case NdOp::INT_ZEXT: {
@@ -871,6 +899,15 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
     return nullptr;
   return functionIdentifier(*It->second) == callIdentifier(E) ? It->second
                                                               : nullptr;
+}
+
+std::vector<size_t> HighCWriter::printedCallOperands(const HighExpr &E) const {
+  const HighFunc *Defined = calledDefinition(E);
+  if (!Defined || Defined->SourceTypeHint ||
+      E.Operands.size() != Defined->Params.size() ||
+      ParamIndicesInProgress.count(Defined))
+    return {};
+  return emittedParamIndices(*Defined);
 }
 
 std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
@@ -1208,7 +1245,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           : std::nullopt;
   const size_t ArityIntegers = Arity ? std::max(0, Arity->IntArgs) : 0;
   const size_t ArityFloats = Arity ? std::max(0, Arity->FpArgs) : 0;
+  const std::vector<size_t> DefinedIndices = printedCallOperands(E);
   auto OperandIndex = [&](size_t I) {
+    if (I < DefinedIndices.size())
+      return DefinedIndices[I];
     if (!Arity || !Arity->FpFirst || I >= ArityIntegers + ArityFloats)
       return I;
     return I < ArityFloats ? ArityIntegers + I : I - ArityFloats;
@@ -1259,7 +1299,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (Callee) {
       // A callee this file defines takes what its prototype declares.
       if (const TypeRef Expected = Defined
-                                       ? emittedParamType(*Defined, I)
+                                       ? emittedParamTypeAt(*Defined, I)
                                        : expectedDebugCallArgType(*Callee, I)) {
         S += exprStrAsTypedArg(*Op, Expected);
         continue;
@@ -1328,9 +1368,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       PointerArgument = Function;
     }
     // A floating parameter of the callee's prototype takes the bits.
-    TypeRef FloatParam = Defined && I < Defined->Params.size()
-                             ? emittedParamType(*Defined, I)
-                             : nullptr;
+    TypeRef FloatParam = Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
     if (!FloatParam && Prototype && I < Prototype->ParamCount) {
       if (Prototype->Params[I] == "double")
         FloatParam = NdType::makeFloat(sizeof(double));
@@ -1354,9 +1392,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       PointerArgumentOperands.erase(PointerArgument);
     // A signed result of at least an int's width passes the same register
     // bits as its unsigned carrier, unless a prototype widens it.
-    const TypeRef DefinedParam = Defined && I < Defined->Params.size()
-                                     ? emittedParamType(*Defined, I)
-                                     : nullptr;
+    const TypeRef DefinedParam =
+        Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
                            DefinedParam->Size <= Op->Type->Size)))
@@ -4456,6 +4493,57 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                           E.Type->IsSigned)
                    ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text
                    : PointerInteger("(uintptr_t)" + Text);
+    // A struct returned across several registers arrives whole in the
+    // integer the HighIR unpacks its fields from, one register's scalar
+    // after another.  An integer of another width than those fields would
+    // invent or drop field bytes.
+    if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind == NdTypeKind::Struct && !Return->IsEnum) {
+        const TypeRef Carrier =
+            E.Type ? E.Type : NdType::makeInt(Return->Size, false);
+        const auto Members = sourceAggregateMembers(Return);
+        uint16_t Packed = 0;
+        for (const auto &Member : Members)
+          Packed += Member.Type->Size;
+        if (Members.empty() || Packed != Carrier->Size)
+          return "((void)" + Text + ", (__builtin_trap(), (" +
+                 typeToC(Carrier) + ")0 /* unknown struct return fields */))";
+        if (Return->Size == Carrier->Size &&
+            (Carrier->Size == 4 || Carrier->Size == 8 || Carrier->Size == 16))
+          return typedText(
+              E, "__builtin_bit_cast(" + typeToC(Carrier) + ", " + Text + ")",
+              Carrier->Size, Carrier->IsSigned);
+        // No integer bit casts from the record (three floats are twelve
+        // bytes, and an int beside a double leaves padding): place each
+        // member's bits where the packed fields put them.
+        const std::string Wide = typeToC(Carrier);
+        std::string Fields;
+        uint16_t Offset = 0;
+        for (size_t I = 0; I < Members.size(); ++I) {
+          std::string Term =
+              "(" + Wide + ")__builtin_bit_cast(" +
+              typeToC(NdType::makeInt(Members[I].Type->Size, false)) +
+              ", nd_record.field_" + std::to_string(I) + ")";
+          if (Offset != 0)
+            Term = "(" + Term + " << " + std::to_string(Offset * 8) + ")";
+          Fields += (I ? " | " : "") + Term;
+          Offset += Members[I].Type->Size;
+        }
+        return typedText(E,
+                         "({ " + typeToC(Return) + " nd_record = " + Text +
+                             "; " + Fields + "; })",
+                         Carrier->Size, Carrier->IsSigned);
+      }
+    // A struct the callee returns in more registers than its C declaration
+    // carries has fields the C cannot read: they are unknown, not zeros.
+    if (&E != StatementCall && E.Type && E.Type->Kind == NdTypeKind::Int &&
+        E.Type->Size > 8)
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind != NdTypeKind::Struct &&
+          Return->Size < E.Type->Size)
+        return "((void)" + Text + ", (__builtin_trap(), (" + typeToC(E.Type) +
+               ")0 /* unknown struct return fields */))";
     // A floating result returns in the low lane of a register the HighIR
     // reads as integer bits: the C reads those bits, not the value converted
     // to an integer.  The lane's other bytes are unspecified after a call.

@@ -23,6 +23,7 @@
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
@@ -370,6 +371,24 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
             }
           }
       CalleeConsumesVaList[MF.Entry] = ConsumesVaList;
+      // A struct return field the function passes through unchanged is an
+      // argument its callers pass in that register, and so is each argument
+      // register of the field's class before it.
+      unsigned ReturnedFPArgs = 0;
+      for (const MedReturnReg &Field : MF.MultiReturn) {
+        if (!returnsArgumentUnchanged(MF, Field, TRI, Img.abiFormat()))
+          continue;
+        if (Field.IsFP) {
+          ReturnedFPArgs = std::max(
+              ReturnedFPArgs,
+              *argumentRegisterIndex(TRI, Img.abiFormat(), Field.RegOff, true) +
+                  1);
+        } else if (const int Idx = IntegerLayout.registerIndex(Field.RegOff);
+                   Idx >= 0) {
+          MaxRegIdx = std::max(MaxRegIdx, Idx);
+          MaxIdx = std::max(MaxIdx, Idx);
+        }
+      }
       std::sort(FPRegs.begin(), FPRegs.end());
       CalleeRegArity[MF.Entry] = callRegisterArity(MF, MaxRegIdx);
       CalleeTotalArity[MF.Entry] = callRecoveryTotalArity(MF, MaxIdx);
@@ -384,6 +403,14 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
         FpArity = countEntryLiveInFPArgs(MF, TRI, Img.abiFormat());
         if (FpArity > 0)
           FPRegs.assign(FPParamRegs.begin(), FPParamRegs.begin() + FpArity);
+      }
+      if (ReturnedFPArgs > 0) {
+        for (unsigned K = 0; K < ReturnedFPArgs && K < FPParamRegs.size(); ++K)
+          if (std::find(FPRegs.begin(), FPRegs.end(), FPParamRegs[K]) ==
+              FPRegs.end())
+            FPRegs.push_back(FPParamRegs[K]);
+        std::sort(FPRegs.begin(), FPRegs.end());
+        FpArity = std::max(FpArity, static_cast<int>(FPRegs.size()));
       }
       CalleeFPArity[MF.Entry] = FpArity;
       CalleeFPRegs[MF.Entry] = std::move(FPRegs);
@@ -624,6 +651,16 @@ void matchCallsToCalleeSignatures(const BinaryImage &Img,
         continue;
       if (CI.Args.size() > Callee.Params.size())
         CI.Args.resize(Callee.Params.size());
+      // The callee reads the scalar in an argument register's low lane: an
+      // SSE register's other bytes, which a scalar instruction leaves as they
+      // were, pass nothing.
+      CI.ArgReadBytes.assign(CI.Args.size(), 0);
+      for (size_t K = 0; K < CI.Args.size(); ++K)
+        if (const MedVar &Arg = CI.Args[K]; Arg.Kind == MedVar::Reg)
+          if (const auto Scalar = Callee.FPParamScalarBytes.find(Arg.RegOff);
+              Scalar != Callee.FPParamScalarBytes.end() &&
+              Scalar->second < Arg.Size)
+            CI.ArgReadBytes[K] = Scalar->second;
     }
 }
 

@@ -77,6 +77,14 @@ std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff);
 std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
                                                               uint64_t RegOff);
 
+/// Whether a call keeps the \p Size bytes at \p RegOff when its direct
+/// callee provably never writes the families in \p Preserved (a may-write
+/// mask's complement, MedOp::CallPreservedGPRs).  A general register's family
+/// covers the whole register; a vector family covers its low sixteen bytes,
+/// all a summary tracks.
+bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
+                                uint16_t Size);
+
 /// One straight-line step of a function, for register liveness.
 struct RegisterStep {
   GPRReadWidths Reads{};

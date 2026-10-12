@@ -1818,3 +1818,19 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 Les cibles de tests MSVC utilisent `/bigobj` pour les nombreux segments COFF issus des modèles GoogleTest et LLVM. Les autres compilateurs sont inchangés. Les tests de configuration vérifient la commande générée ; le CI Windows natif vérifie encore la compilation et l’exécution.
 
 Le refus contrôlé des doubles décalages indique le compteur masqué et la largeur de l’opérande lorsque la destination et les indicateurs sont indéfinis. `X64DoubleShift` vérifie la conservation du motif par les sorties typées et l’ancienne API d’erreur, sans changement des registres ou de la RAM ni observation d’accès mémoire ; le test de pilote vérifie ce même motif avant l’envoi du scénario.
+
+## Correctifs de source et objets natifs
+
+`CPU` indique l’installation et l’exécution isolée de fonctions ; `REFUSED` indique un contrat d’installation manquant. ARM32 ELF exige l’enregistrement EHABI ; Mach-O 32 bits exige des contrats vérifiés de chargeur, frontend et déroulement ; l’installation source PE exige actuellement x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Correctifs de source et objets natifs](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

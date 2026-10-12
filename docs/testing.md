@@ -103,6 +103,13 @@ complement `source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
+It also checks that empty library evidence needs only the ordinary HighC render,
+preserves definitions and instruction locations, and matches independent marker
+proofs across nested statements and multiple functions. Buffered byte positions
+cover UTF-8, marker-looking text, nested relocation, suppressed statements and
+refusal of invalid or overflowing ranges without partial publication. Private
+recordings still reject changed text. Ordinary rendering and output failures
+propagate without retrying them as optional mapping failures.
 `SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
 Go, partial slices, conflicting spans and functions shown as C after a dialect
 refusal. `SessionCAPITest.DialectNavigationMapsOnlyTheReturnRowAcrossPages`
@@ -231,6 +238,18 @@ parallel readers and retained-entry eviction. Existing x87 proof-budget sweeps
 also run with body retention enabled; cached blocks grant no larger proof
 allowance. Full pipeline checks still exercise format-derived arguments and
 register/stack summaries through their ordinary consumers.
+
+`CompleteFunctionCache` compares reconstructed default functions with cold
+builds, including address-taken roots, instruction coverage, relocation
+provenance, jump-table storage and exact selector/load occurrences. Exception
+records retain nested language data and remain owned by each result after the
+image and cache are destroyed. Names are rebound and output mutations cannot
+alter later results. The body-cache cases also exercise complete-function
+refusal for floating returns, local x87 state, incomplete input, changed
+contexts and depth-sensitive no-return answers, plus replay exceptions,
+concurrent readers and byte/entry eviction. The byte-limit case also keeps a
+working set whose live bodies fit the allowance, so construction slack cannot
+silently replace useful cached functions.
 
 `X87CallGraphCache` compares independent builders with and without shared
 graphs, including exact remaining proof budgets, recursion-depth failures,
@@ -642,12 +661,32 @@ metadata refusal, subject receipt ownership, exact behavior/comparison owners,
 source byte anchors, 610-finding paging, head-bound reports, immutable caller
 assertions, stale heads and revisions, last-request replay, shared 256-event
 capacity, atomic refusal, reset and CLI JSON/Markdown without an external PATH.
-Worker and MCP compare all five operations to the shared API and reject arbitrary
+Worker and MCP compare assessment/review operations to the shared API and reject arbitrary
 notes, safety scores and raw-export fields. Run the owning Web directory and
 worker/MCP/ABI checks, then the focused suites with JS omitted and all additive
 C stubs with Web omitted. Restore both build flags and rerun affected checks.
 The [assessment profile](web-package-assessment-profile.md) documents explicit
 selection, evidence relationships, report fields and shared limits.
+
+The additive journal cases also check entire-chain validation, exact-prefix
+restoration, zero-charge current-head replay, shared suffix capacity, late
+tampering, duplicate/unknown JSON fields and reconstruction after capture reset.
+`WebAvailability.*` includes the always-exported restore symbol and discovery.
+Use the full Web regression and worker/MCP/ABI checks for this shared mutation
+boundary, then JS/backend omission and enabled restoration.
+
+With Qt and `NEVERD_WORKER_WEB_ENGINE_TESTS=ON`, `NeverDGuiWebReview` uses only
+C++ fixtures and the production worker. It covers canonical journal persistence,
+failed-write preservation, duplicate/byte/record refusal, fixed confidence versus
+assertion columns, multi-page inventories, tar/registry ancestry, worker restart,
+atomic late-chain refusal, changed-input rejection and RTL/large-font controls.
+The optional `NEVERD_CLAUDE_CODE_21296_CROSS_DIR` selects the already pinned macOS
+ARM64 Claude platform package; `NEVERD_GUI_WEB_RECEIPT` explicitly writes its
+metadata receipt and a local widget PNG for visual review. No sample is executed
+or committed. Backend omission skips dependent positive cases and qualifies an
+explicit unavailable window; journals/models still work. Run the existing GUI
+unit/controller/language and smoke suites when modifying workbench commands.
+See the [journal/desktop profile](web-package-review-journal.md).
 
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
@@ -777,10 +816,33 @@ See the [stream profiles](web-stream-profile.md).
 fixed redaction classifications, missing/malformed fields, source anchors,
 shadowing/eval, options inheritance, method normalization, credential and
 WebSocket exclusions, exact origin/path candidate joins and fanout budgets.
+The v3 cases add non-computed member-fetch receiver anchors and optional calls
+without wrapper/API attribution or HAR eligibility. Any direct/member-fetch or
+WebSocket spread withholds argument-role nodes and default-method claims. The
+optional cross-platform evidence root also selects the exact NeverD-exported
+Claude macOS ARM64 module 928 by SHA-256 and verifies its unresolved member
+spread at byte 150,734 for 36 bytes. It does not execute the client. Run source,
+SDK and worker/MCP cases, the owning Web regression, JS/backend omission and
+enabled restoration when changing this shared profile.
+`WebSourceWrappers.*` adds v4 single-return lexical fetch forwarding, reordered
+caller/parameter anchors, const arrows/functions, shared option/method refusal,
+missing/spread arguments, duplicate declarations, shadowing, writes, unsupported
+parameters/bodies/aliases, unchanged HAR eligibility and atomic record limits.
+SDK and worker/MCP cases check the same metadata-only anchors and canaries.
 `WebSourceXHR.*` covers direct/const receiver and argument anchors, shadowing,
 aliases/writes, dynamic scope, all-call spread refusal, callback value syntax,
 compound-assignment exclusions, missing/forbidden methods and atomic budgets.
 XHR remains excluded from the unchanged fetch/HAR correlation profile.
+`WebInterfaceRelations.*` adds exact function/return/await/consumer anchors,
+lexical alias/shadow/write/computed exclusions, member/then spread uncertainty,
+malformed/foreign navigation and independent exact/short graph budgets. The
+same optional pinned Claude module retains function and direct-return links.
+`WebInterfaceSDK` checks fresh/cached navigation equality, revision revocation,
+closed metadata, 128-record pages and 2,050 retained requests whose relation
+fanout exceeds 4,096 without destroying request pages. Run the owning Web
+directory without a name-prefix filter so parameterized platform cases also
+run, then worker/MCP/catalog, both omission profiles and enabled restoration.
+See the [relationship profile](web-interface-relations-profile.md).
 `WebInterfaceSDK.*` and `NeverDWorkerWeb` verify explicit preview/commit,
 hash-bound CLI receipts, revoked tokens/revisions, immutable capture bytes,
 cache limits, canary exclusion and direct/framed parity. Run the owning web
@@ -847,6 +909,43 @@ including exact refusal reasons. See the
 claim complete feature attribution or run a target runtime.
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
+`WebReadableExportSDK.*` checks immutable input deletion, exact original and
+readable hashes, explicit source goals, invalid syntax/encoding without fake
+source, stale/unknown/oversize refusal before writes, 9 MiB chunked selection,
+independent interactive caches, nested compressed Wails origins and exclusive
+local destinations. Its optional pinned Wails bundle case uses the same
+`NEVERD_WAILS_ZENTRO_030_ELF` capture below. CLI tests use an unusable external-tool
+PATH. Parser omission retains the new ABI with explicit refusal before writes;
+backend omission checks the declaration independently. Worker/MCP exclude the
+raw operation from their capability subset. See the
+[readable-export profile](web-readable-export-profile.md).
+`WebWails.*` checks fixed Go/Wails declarations, native pointer ownership,
+non-filesystem slice exclusion, directory order/ancestors, portable path
+collisions, content/metadata overlap, complete hash verification and exact/short
+independent budgets. Its compiler digest cases cover empty files and the
+1,024/1,025-byte algorithm boundary. PE cases deliberately separate RVAs from
+file offsets and reject header/raw/virtual overlaps, invalid alignment,
+address overflow, PE32/DLL/foreign ISA, conflicting platform declarations,
+virtual tails, raw padding and mutable pointers. `WebWailsSDK.*` checks metadata canaries,
+pagination, failed-publication rollback, cache/revision invalidation, separate
+HTML table namespaces, ELF/PE compressed-parent source anchors, exclusive raw export
+and overwrite/symlink refusal. CLI cases use an unusable external-tool PATH.
+Worker/MCP compare the same extraction/pages and reject extra execution fields.
+`NEVERD_WAILS_ZENTRO_030_ELF` and `NEVERD_WAILS_ZENTRO_030_PE` select the exact
+bare Linux and Windows x64 Zentro v0.3.0 releases named in the
+[Wails profile](web-wails-profile.md). Positive optional
+cases verify all stored assets, exact JS SHA/offset/length, an unresolved
+root-relative HTML reference without guessing the runtime mount, the existing
+whole-source byte refusal and original native handoff/lifetime. The Windows
+case additionally exports all assets and verifies the complete independent
+same-tree readable output against its own hash and physical origin. Explicit
+profile selection also survives metadata pages, raw manifests and readable
+origins; cached extraction never answers a different profile. CLI tests cover
+both profiles with an unusable external-tool PATH. The pinned binaries remain
+offline corpus inputs, rather than runtime execution fixtures.
+They do not download, install or launch that application. Build every owning
+Web binary before running the complete owning Web directory without a prefix
+filter; the eight parameterized Claude platform cases must also remain enabled.
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
 surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
 directive preservation, tagged-template refusal, ASI outer-tree mismatches,
@@ -1231,6 +1330,11 @@ narrow-complement regression executes after semantic simplification.
 store-value dependencies live across all four architectures, including floating
 reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
 checks load identity/order, volatile/atomic state and poison boundaries.
+`HighCDefinitionIndex.*` in `NeverDHighCStoreForwardingTests` checks all six
+definition-identity fields, definition order, repeated and differently sized
+definitions, preceding versus conditional/later aliases, missing definitions
+and cyclic references. Address keys and private-frame eligibility must retain
+their existing behavior.
 `ELFARM32ModeTest.*` checks authenticated ARM/Thumb selection, normalized
 function addresses, mapping-only objects, mixed-image decoding, cross-mode
 calls with modular MBA arithmetic, wide Thumb branches, HighC/LLVMC
@@ -5081,6 +5185,29 @@ The committed-write observer regressions verify visibility before the next instr
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` checks PE output, an independent DIR64 reader, model rebasing and exclusion of rewritten debug records. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rejects source/base/order mismatches and excludes formatting replacements even when bytes match. These checks certify diagnostic metadata, not native recovery.
 
 ## Source and native object replacement tests
+
+`NeverDSourcePatchMatrixTests` compiles and links real fixtures, installs source
+or supplied IR, reloads the result and invokes the patched original entry in
+Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
+PE, Mach-O) require exact results or the documented explicit admission refusal.
+The positive native-object case also executes its installed bytes. Every
+invocation must reach the return address within a finite instruction/time budget.
+This CPU matrix does not certify operating-system loaders or C++ unwinders.
+The synthetic legacy Mach-O 32-bit images are refusal inputs, not OS profiles.
+On Apple Silicon, `NEVERD_TEST_DARWIN_ARCH=x86_64` runs the C API/CLI and
+seven exception scenarios through Rosetta 2 using x64 originals. Intel fixtures
+reserve file/virtual padding with `-Wl,-segalign,0x4000` independently of header
+padding; the default 4 KiB layout cannot hold a new compact-unwind page.
+The exact reference regressions cover both x64 ELF PLT branches and Mach-O GOT
+data words. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires both corrected producers.
+See the [source patch matrix](source-patching.md).
+
+The dedicated `source-patch-windows.yml` workflow uses Clang 22.1.6, the native
+MSVC CRT and the Windows SDK. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing
+runtime inputs fail; the workflow also rejects skipped PE/object/matrix cases.
+It retains XML evidence and does not cancel an active qualification when an
+unrelated dev push arrives. Check the actual run result before claiming native
+Windows qualification.
 
 `NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,
 atomic publication, original data bindings, native state and C++ exceptions.

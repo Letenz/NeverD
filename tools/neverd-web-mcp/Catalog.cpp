@@ -219,6 +219,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Native identity and source/cache equivalence remain unverified.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_pkg_records", "extraction_id", true);
+  Add("web_wails_extract",
+      "Validate a listed Wails/Go embed.FS profile and every stored asset "
+      "digest. Asset-server bindings and native bridges remain unverified.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_wails_records", "extraction_id", true, 128);
   Add("web_asar_extract",
       "Extract admitted ASAR members with an optional captured unpacked "
       "directory.",
@@ -293,6 +298,15 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
        text("expected_review_head"), text("finding_id"),
        choice("disposition", {"unreviewed", "needs_review", "accepted_risk",
                               "false_positive"})});
+  Add("web_package_review_restore",
+      "Atomically restore a supplied metadata-only analyst journal against the "
+      "current "
+      "assessment and review head. A complete validated chain extends only its "
+      "exact "
+      "existing prefix; assertions do not authenticate an analyst or upgrade "
+      "evidence.",
+      {decimal("revision"), text("package_assessment_id"),
+       text("expected_review_head"), text("journal_json", 256 * 1024)});
   for (const auto *Operation :
        {"web_package_assessment_findings", "web_package_review_decisions",
         "web_package_assessment_report"})
@@ -322,6 +336,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
            "Find supported source-inferred network interface candidates "
            "without network access.");
   Page("web_interface_records", "analysis_id", false, 128);
+  Selected(
+      "web_interface_relations_analyze", "analysis_id",
+      "Inspect bounded source-syntax request/result relationships; no "
+      "runtime response API, callback execution or wrapper argument flow.");
+  Page("web_interface_relation_records", "relations_id", false, 128);
   Add("web_interfaces_compare",
       "Correlate explicit source candidates with imported HAR observations; "
       "evidence classes remain separate.",

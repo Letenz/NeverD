@@ -8,6 +8,10 @@
 本番コードの境界を説明します。対象は意図的に NeverD 所有のコードだけに限定し、
 LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキテクチャを持ちます。
 
+## ソースとオブジェクト置換の境界
+
+`SourcePatchCompiler` はコンパイラの識別と成果物の選択を担当します。`validateSourcePatchTarget` はソースと外部 IR に共通の対象判定であり、対象トリプルだけでは対応を証明できません。`bindSourcePatch` は IR 入口を確認し、`PatchObject` はネイティブセクション、再配置、FDE 範囲の根拠を管理します。`publishSourcePatch` は候補の作成、検証、排他的公開を担当します。`COFFSourceImage` は PE x64 の新領域とアンワインド表を担当し、リフト後の書き換えは元の EH の独立した根拠を必要とします。[ソースパッチ](source-patching.md)を参照してください。
+
 ## システム境界
 
 ```mermaid

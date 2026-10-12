@@ -102,3 +102,87 @@ int extremes(int a) {
 )C",
                        "extremes", {"extremes"});
 }
+
+// `fcsel ..., gt` after an `fcmp` selects when Z is clear and N equals V.
+// V is the unordered test, `!(a == b || a < b || b < a)`, which prints as
+// a conjunction: compared with N it keeps its parentheses.
+TEST_F(AArch64_HighCExecution, AGreaterThanAfterFcmpGroupsTheUnorderedTest) {
+  expectRunsLikeSource(R"C(
+int minmax(int a) {
+  float mn = 1e30f, mx = -1e30f;
+  for (int i = 0; i < 200; i++) {
+    float x = (float)((int)(a * (i * 7 + 1)) % 2003 - 1000);
+    if (x < mn)
+      mn = x;
+    if (x > mx)
+      mx = x;
+  }
+  return (int)(mx - mn);
+}
+)C",
+                       "minmax", {"minmax"});
+}
+
+// Ten doubles: eight in v0-v7 and two on the stack.  The callee's lift also
+// lists x0-x7, which it never reads, and the call passes a value for each;
+// the call passes the ones the definition declares.
+TEST_F(AArch64_HighCExecution, AStackDoubleCallPassesWhatTheCalleeDeclares) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-ffp-contract=off"},
+      R"C(
+static double d10(double, double, double, double, double, double, double,
+                  double, double, double) __attribute__((noinline));
+int sumd10(int a) {
+  double b = (double)(a & 0xffff);
+  return (int)d10(b, b + 1, b + 2, b + 3, b + 4, b + 5, b + 6, b + 7, b + 8,
+                  b + 9);
+}
+static double d10(double a, double b, double c, double d, double e, double f,
+                  double g, double h, double i, double j) {
+  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9 +
+         j * 10;
+}
+)C",
+      "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
+}
+
+// Twelve variadic ints: x1-x7 and five on the stack, which the callee's
+// va_arg walk reads in place above its frame.  The callee takes them as
+// trailing parameters, seeded where the walk reads them.
+TEST_F(AArch64_HighCExecution, AVariadicCalleeReadsItsStackArgumentsInPlace) {
+  expectRunsLikeSource(R"C(
+int vmany(int n, ...) __attribute__((noinline));
+int vmany_e(int x) {
+  unsigned u = (unsigned)x;
+  return vmany(12, (int)u, (int)(u + 1u), (int)(u * 2u), (int)(u ^ 3u),
+               (int)(u - 4u), (int)(u * 5u), (int)(u + 6u), (int)(u ^ 7u),
+               (int)(u - 8u), (int)(u * 9u), (int)(u + 10u), (int)(u ^ 11u));
+}
+int vmany(int n, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 131 + __builtin_va_arg(ap, int);
+  __builtin_va_end(ap);
+  return s;
+}
+)C",
+                       "vmany_e", {"vmany_e", "vmany"});
+}
+
+// FCVTZS from a half register converts the half's value, which a float
+// holds exactly: the C converts it through float with the same saturation.
+TEST_F(AArch64_HighCExecution, AHalfConvertsToAnIntegerThroughFloat) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-march=armv8.2-a+fp16"}, R"C(
+int halfint(int a) {
+  unsigned short u = (unsigned short)a;
+  _Float16 h;
+  __builtin_memcpy(&h, &u, sizeof h);
+  return (int)h;
+}
+)C",
+      "halfint", {"halfint"},
+      {0, 0x0001, 0x3C00, 0x4300, 0xC100, 0x5640, 0x7BFF});
+}

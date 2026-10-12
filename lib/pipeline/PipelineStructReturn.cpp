@@ -13,6 +13,7 @@
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -169,8 +170,8 @@ void propagateStructReturnForwarderShapes(const BinaryImage &Img,
 // byproducts is handled on the direct-call path's redefine tracking) and to
 // functions WITHOUT an already recovered MultiReturn (a directly-called
 // struct returner keeps the proven Pipeline- propagated shape).
-void recoverStructReturnFromBody(const BinaryImage &Img,
-                                 PipelineResult &Result) {
+void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
+                                 StructReturnEvidence Evidence) {
   const auto &TRI = getTargetRegInfo(Img.Arch);
   struct RetCand {
     uint64_t RegOff;
@@ -216,6 +217,20 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
                      Field.Size == Candidate.Fields.front().Size;
           Shape.push_back({Field.RegOff, Field.Size, /*IsFP=*/true});
         }
+        // The integer return registers a caller reads in order are the
+        // fields of a non-HFA record.  Each holds eight of its bytes, as if
+        // loaded by LDP, though the caller may read only the low word.
+        if (!Complete) {
+          Shape.clear();
+          Complete = Candidate.Fields.size() >= 2 &&
+                     Candidate.Fields.size() <= TRI.IntReturnRegs.size();
+          for (size_t I = 0; Complete && I < Candidate.Fields.size(); ++I) {
+            const MedVar &Field = Candidate.Fields[I];
+            Complete = Field.RegOff == TRI.IntReturnRegs[I] &&
+                       (Field.Size == 4 || Field.Size == 8);
+            Shape.push_back({Field.RegOff, TRI.PointerSize, /*IsFP=*/false});
+          }
+        }
         if (!Complete)
           continue;
         const va_t Target = Call->Inputs[0].ConstVal;
@@ -224,16 +239,18 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
             !std::equal(It->second.begin(), It->second.end(), Shape.begin(),
                         Shape.end(),
                         [](const MedReturnReg &A, const MedReturnReg &B) {
-                          return A.RegOff == B.RegOff && A.Size == B.Size;
+                          return A.RegOff == B.RegOff && A.Size == B.Size &&
+                                 A.IsFP == B.IsFP;
                         }))
           ConflictingCallerShapes.insert(Target);
       }
     for (va_t Target : ConflictingCallerShapes)
       CallerHFAShapes.erase(Target);
     // The callee must itself leave every field: each field register has its
-    // own write, after the last call, before every RETURN.
-    auto writesEveryField = [](const MedFunc &MF,
-                               const std::vector<MedReturnReg> &Shape) {
+    // own write, after the last call, before every RETURN, or is an argument
+    // register the callee never writes, which returns the argument.
+    auto writesEveryField = [&](const MedFunc &MF,
+                                const std::vector<MedReturnReg> &Shape) {
       bool SawReturn = false;
       for (const auto &Blk : MF.Blocks) {
         for (size_t RetIdx = 0; RetIdx < Blk.Ops.size(); ++RetIdx) {
@@ -241,6 +258,8 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
             continue;
           SawReturn = true;
           for (const MedReturnReg &Field : Shape) {
+            if (returnsArgumentUnchanged(MF, Field, TRI, Img.abiFormat()))
+              continue;
             bool Written = false;
             for (size_t J = RetIdx; J-- > 0 && !Written;) {
               const MedOp &O = Blk.Ops[J];
@@ -271,6 +290,8 @@ void recoverStructReturnFromBody(const BinaryImage &Img,
         MF.MultiReturn = Shape->second;
         continue;
       }
+      if (Evidence == StructReturnEvidence::Callers)
+        continue;
       const LowFunc *LF = nullptr;
       if (auto It = LowByEntry.find(MF.Entry); It != LowByEntry.end())
         LF = It->second;

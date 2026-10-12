@@ -338,6 +338,20 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   }
 }
 
+void collectFullBankStackArgs(const CallArgScan &Scan,
+                              std::vector<ExprPtr> &Found) {
+  const BinaryFormat Format =
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
+  if (Scan.FirstStackSlot !=
+      static_cast<int>(Scan.TRI->integerParamRegs(Format).size())) {
+    collectSpilledStackArgs(Scan, Found);
+    return;
+  }
+  CallArgScan FullBank = Scan;
+  FullBank.StoreScanWindow = limits::kFullBankCallArgStoreScanWindow;
+  collectSpilledStackArgs(FullBank, Found);
+}
+
 } // namespace call_args_detail
 
 unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,
@@ -1204,8 +1218,18 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
         FromABI.reserve(CI->Args.size());
-        for (const MedVar &A : CI->Args)
-          FromABI.push_back(medvarToExpr(A));
+        for (size_t K = 0; K < CI->Args.size(); ++K) {
+          ExprPtr Arg = medvarToExpr(CI->Args[K]);
+          // The callee reads only the low lane's scalar.
+          if (const uint16_t Read =
+                  K < CI->ArgReadBytes.size() ? CI->ArgReadBytes[K] : 0;
+              Read && Arg && Arg->Type && Read < Arg->Type->Size) {
+            Arg = HighExpr::makeBinop(NdOp::SUBBYTES, Arg,
+                                      HighExpr::makeConst(0, 4));
+            Arg->Type = NdType::makeInt(Read, false);
+          }
+          FromABI.push_back(std::move(Arg));
+        }
         size_t End = FromABI.size();
         while (!CompleteSetup && End < static_cast<size_t>(MaxArgs) &&
                Found[End] && Found[End]->Kind != ExprKind::Undef)

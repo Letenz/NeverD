@@ -54,6 +54,11 @@ public:
   std::string interfaceRecords(std::string_view ExpectedRevision,
                                std::string_view AnalysisID, uint64_t Offset,
                                uint64_t Limit) const;
+  std::string analyzeInterfaceRelations(std::string_view ExpectedRevision,
+                                        std::string_view InterfaceAnalysisID);
+  std::string interfaceRelationRecords(std::string_view ExpectedRevision,
+                                       std::string_view RelationsID,
+                                       uint64_t Offset, uint64_t Limit) const;
   std::string compareInterfaces(std::string_view ExpectedRevision,
                                 std::string_view AnalysisID,
                                 std::string_view CaptureID);
@@ -115,6 +120,10 @@ public:
                                      std::string_view AssessmentID,
                                      std::string_view ReviewHead,
                                      uint64_t Offset, uint64_t Limit) const;
+  std::string restorePackageReview(std::string_view ExpectedRevision,
+                                   std::string_view AssessmentID,
+                                   std::string_view ExpectedHead,
+                                   std::string_view JournalJSON);
   std::string packageAssessmentReport(std::string_view ExpectedRevision,
                                       std::string_view AssessmentID,
                                       std::string_view ReviewHead,
@@ -210,6 +219,17 @@ public:
                          std::string_view ExtractionID,
                          std::string_view RecordKind, uint64_t Offset,
                          uint64_t Limit) const;
+  std::string extractWails(std::string_view ExpectedRevision,
+                           std::string_view ArtifactID,
+                           std::string_view Profile);
+  std::string wailsRecords(std::string_view ExpectedRevision,
+                           std::string_view ExtractionID,
+                           std::string_view RecordKind, uint64_t Offset,
+                           uint64_t Limit) const;
+  /// Explicit local disclosure, exclusive fixed filenames and reread hashes.
+  std::string exportWails(std::string_view ExpectedRevision,
+                          std::string_view ExtractionID,
+                          std::string_view OutputDirectory);
   std::string extractNexe(std::string_view ExpectedRevision,
                           std::string_view ArtifactID,
                           std::string_view Profile);
@@ -234,6 +254,13 @@ public:
   std::string analyzeSource(std::string_view ExpectedRevision,
                             std::string_view ArtifactID,
                             std::string_view SourceType);
+  /// Explicit local disclosure from an immutable direct-byte selection.
+  /// Recovery has independent bounds and never enters interactive caches.
+  /// Parse refusals preserve exact original bytes without a readable file.
+  std::string exportReadableSource(std::string_view ExpectedRevision,
+                                   std::string_view ArtifactID,
+                                   std::string_view SourceType,
+                                   std::string_view OutputDirectory);
   std::string sourceNodes(std::string_view ExpectedRevision,
                           std::string_view SourceID, uint64_t Offset,
                           uint64_t Limit) const;

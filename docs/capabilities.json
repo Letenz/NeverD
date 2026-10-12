@@ -238,6 +238,8 @@
           "neverd_web_import_preview_json",
           "neverd_web_interface_correlation_records_json",
           "neverd_web_interface_records_json",
+          "neverd_web_interface_relation_records_json",
+          "neverd_web_interface_relations_analyze_json",
           "neverd_web_interfaces_analyze_json",
           "neverd_web_interfaces_compare_json",
           "neverd_web_metadata_json",
@@ -272,6 +274,7 @@
           "neverd_web_package_records_json",
           "neverd_web_package_review_append_json",
           "neverd_web_package_review_decisions_json",
+          "neverd_web_package_review_restore_json",
           "neverd_web_packages_analyze_json",
           "neverd_web_packages_compare_json",
           "neverd_web_pkg_extract_json",
@@ -295,6 +298,7 @@
           "neverd_web_source_navigation_analyze_json",
           "neverd_web_source_navigation_records_json",
           "neverd_web_source_nodes_json",
+          "neverd_web_source_readable_export_json",
           "neverd_web_source_rewrite_analyze_json",
           "neverd_web_source_rewrite_export_json",
           "neverd_web_source_rewrite_records_json",
@@ -306,7 +310,10 @@
           "neverd_web_source_view_records_json",
           "neverd_web_stream_commit_json",
           "neverd_web_stream_preview_json",
-          "neverd_web_stream_records_json"
+          "neverd_web_stream_records_json",
+          "neverd_web_wails_export_json",
+          "neverd_web_wails_extract_json",
+          "neverd_web_wails_records_json"
         ]
       }
     ],
@@ -1082,6 +1089,8 @@
           "neverd_web_import_preview_json",
           "neverd_web_interface_correlation_records_json",
           "neverd_web_interface_records_json",
+          "neverd_web_interface_relation_records_json",
+          "neverd_web_interface_relations_analyze_json",
           "neverd_web_interfaces_analyze_json",
           "neverd_web_interfaces_compare_json",
           "neverd_web_metadata_json",
@@ -1116,6 +1125,7 @@
           "neverd_web_package_records_json",
           "neverd_web_package_review_append_json",
           "neverd_web_package_review_decisions_json",
+          "neverd_web_package_review_restore_json",
           "neverd_web_packages_analyze_json",
           "neverd_web_packages_compare_json",
           "neverd_web_pkg_extract_json",
@@ -1137,6 +1147,7 @@
           "neverd_web_source_navigation_analyze_json",
           "neverd_web_source_navigation_records_json",
           "neverd_web_source_nodes_json",
+          "neverd_web_source_readable_export_json",
           "neverd_web_source_rewrite_analyze_json",
           "neverd_web_source_rewrite_export_json",
           "neverd_web_source_rewrite_records_json",
@@ -1148,7 +1159,10 @@
           "neverd_web_source_view_records_json",
           "neverd_web_stream_commit_json",
           "neverd_web_stream_preview_json",
-          "neverd_web_stream_records_json"
+          "neverd_web_stream_records_json",
+          "neverd_web_wails_export_json",
+          "neverd_web_wails_extract_json",
+          "neverd_web_wails_records_json"
         ]
       }
     ],

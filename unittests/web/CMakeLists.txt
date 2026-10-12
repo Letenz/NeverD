@@ -21,6 +21,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   SEATests.cpp
   NexeTests.cpp
   PkgTests.cpp
+  WailsTests.cpp
   JsonReaderTests.cpp
   LINK_COMPONENTS Web
 )
@@ -64,6 +65,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     PackageBehaviorDiffTests.cpp
     PackageInstallTests.cpp
     SourceInterfaceTests.cpp
+    SourceWrapperTests.cpp
+    InterfaceRelationTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp
@@ -102,6 +105,7 @@ if(TARGET neverd_shared)
     "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDWebSDKTests
     SDKTests.cpp
+    ReadableExportSDKTests.cpp
     RewriteSDKTests.cpp
     RenameSDKTests.cpp
     BranchSDKTests.cpp
@@ -118,6 +122,7 @@ if(TARGET neverd_shared)
     SEASDKTests.cpp
     NexeSDKTests.cpp
     PkgSDKTests.cpp
+    WailsSDKTests.cpp
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     DesktopSDKTests.cpp

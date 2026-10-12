@@ -9,6 +9,10 @@ müssen, um NeverD sicher zu ändern. Er behandelt bewusst nur NeverD-eigenen
 Code; die LLVM-, Capstone- und Unicorn-Submodule behalten ihre interne
 Architektur.
 
+## Grenze für Quellcode- und Objektersetzung
+
+`SourcePatchCompiler` verwaltet Compileridentität und Artefaktauswahl. `validateSourcePatchTarget` ist die gemeinsame Zielzulassung für Quellcode und geliefertes IR; das Tripel allein beweist keinen Support. `bindSourcePatch` bestätigt IR-Einstiege; `PatchObject` verwaltet native Abschnitte, Relokationen und FDE-Bereichsnachweise. `publishSourcePatch` bereitet die genaue Transaktion vor, prüft und veröffentlicht sie exklusiv. `COFFSourceImage` verwaltet neuen PE-x64-Speicher und Unwind-Tabellen; geliftete Umschreibungen behalten ihre getrennten ursprünglichen EH-Nachweise. Siehe [Quellcodepatches](source-patching.md).
+
 ## Systemgrenze
 
 ```mermaid

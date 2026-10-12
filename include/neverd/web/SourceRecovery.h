@@ -14,6 +14,9 @@
 #include "neverd/web/Source.h"
 
 namespace neverd::web {
+inline constexpr std::string_view SourceReadableExportProfile =
+    "source-local-readable-export-v1";
+
 struct ReadableSource {
   std::string Status;
   std::string ParseStatus;

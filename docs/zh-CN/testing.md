@@ -1611,3 +1611,19 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 MSVC 单元测试目标使用 `/bigobj`，允许 GoogleTest 和 LLVM 模板实例产生更多 COFF 节；其他编译器配置不变。配置检查核对实际生成的测试编译命令，编译和执行仍由原生 Windows CI 验证。
 
 检查模式的双移位在目标和 flags 未定义时，报告掩码后的计数及操作数宽度。`X64DoubleShift` 验证类型化退出与旧错误接口保留原因，且没有寄存器或 RAM 改变以及内存访问观察；驱动夹具验证该原因在场景派发前仍保留。
+
+## 源码与原生对象 patch
+
+`CPU` 表示源码安装与隔离函数执行；`REFUSED` 表示明确缺少安装契约。ARM32 ELF 需要 EHABI 注册；32 位 Mach-O 需要经验证的加载器、前端及展开契约；PE 源码安装目前要求 x64。
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[源码与原生对象 patch](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```
