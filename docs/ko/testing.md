@@ -1685,3 +1685,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `RAMReservationTests.cpp`는 동일 값과 ABA 쓰기, 유지된 범위, 주소 재사용, 공유 매핑, 롤백, 취소, 오류 전에 커밋된 쓰기와 불투명 실행에서 공개 쓰기 증명을 검증합니다. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites`는 선호 주소, 낮은 주소와 커널 주소에서 소유된 로드 사실을 검사합니다. 바이트를 복원해도 출처 증명은 복원되지 않습니다. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts`는 활성 CFG 수정과 비활성 대체 포인터 유지를 구분합니다.
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts`는 PE 출력, 독립 DIR64 판독기, 모델 재배치와 다시 쓴 디버그 레코드 제외를 검사합니다. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites`는 입력·기준 주소·순서 불일치를 거부하고 바이트가 같아도 형식화 대체를 제외합니다. 이 검사는 진단 메타데이터를 검증하며 네이티브 복구를 인증하지 않습니다.
+
+`NeverDNativeFinallyInputTests`가 MSVC 입력 행렬을 별도로 담당합니다. 일반 `NeverDPipelineOutcomeTests`는 모든 CI 플랫폼에서 필수이며 선택적 네이티브 입력에 의존하지 않습니다. Windows EH 전용 작업은 검증된 이미지로 입력 대상을 빌드하고 실행합니다. macOS CI는 소스 교체용으로 Homebrew Clang 22를 명시적으로 선택하며 NeverD 빌드 컴파일러와 분리합니다. 지원하지 않는 스택 프로브 방식은 계속 거부합니다.
