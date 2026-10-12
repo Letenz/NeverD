@@ -4197,7 +4197,7 @@ Json Listing::regions() {
                      {"alignment", region.alignment},
                      {"class", region.exec                             ? "CODE"
                                : region.initializedEnd == region.start ? "BSS"
-                               : region.write                          ? "DATA"
+                               : region.write ? "DATA"
                                               : "CONST"}});
   }
   return items;
