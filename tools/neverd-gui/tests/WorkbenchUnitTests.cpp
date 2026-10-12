@@ -1251,8 +1251,10 @@ private slots:
       QVERIFY(glyph > 4);
 
       // Text fields type in the code font; read-only text reads as content.
-      QVERIFY(QFontInfo(edit->font()).fixedPitch());
-      QVERIFY(!QFontInfo(box->font()).fixedPitch());
+      // The families are what the theme asks for: a platform without the
+      // code font (Windows offscreen) resolves it to another face.
+      QCOMPARE(edit->font().family(), theme.codeFont().family());
+      QVERIFY(box->font().family() != theme.codeFont().family());
       QCOMPARE(pixel(log, log->rect().center()),
                theme.chrome(QStringLiteral("Base")));
       // Dialog buttons carry no icons.
