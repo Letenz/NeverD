@@ -3070,3 +3070,18 @@ A second concurrent update advances `dev` to
 skill/reference documentation. Rebase preserves the entire verified production
 code and test tree byte for byte; no additional executable test boundary is
 changed. Log: `/tmp/neverd-wails-pe-second-rebase.log`.
+
+A third concurrent update advances `dev` to
+`cdfdc1e120671c7ca50d64adc14ae96c4bc1a768`, changing native ARM32 call argument
+recovery and a shared limits-header spelling. The Wails Web implementation and
+tests remain byte-identical. The 571-step shared SDK/CLI/transport rebuild passes;
+all 39 distinct focused cases pass (6.82 seconds), transport/availability keeps
+seven passes and its expected omission-only skip (8.10 seconds), and the Qt
+review suite passes (12.93 seconds). Provenance passes across 7,445 files; the
+capability audit retains the same sixteen unrelated source-patch declarations.
+The normal push publishes the verified Wails change as
+`db000d136185c77fdc7247d5bffae5e9d82ac95e` on `dev`; no force push is used.
+Logs: `/tmp/neverd-wails-pe-third-{rebase,build,discovery,focused,transports,
+gui,provenance,capabilities}.log` and
+`/tmp/neverd-wails-pe-verified-push.log`. This receipt covers that native baseline,
+not any later upstream changes. The five epics remain in progress.
