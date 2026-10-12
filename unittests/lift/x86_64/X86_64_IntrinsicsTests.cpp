@@ -923,3 +923,42 @@ int fma_chain(int a) {
 )C",
       "fma_chain", {"fma_chain"}, {0, 1, -1, 0x4567, 77});
 }
+
+namespace {
+
+class X86_64_SystemRegister : public HighCHostExecutionTest {};
+
+// `str %eax` stores the task register's selector, zero extended, in the
+// register.  The C runs the instruction itself on a value of that width
+// through GNU inline asm and returns it.  Nothing executes here: a CPU with
+// UMIP refuses STR in user mode.
+TEST_F(X86_64_SystemRegister, AStoredSelectorIsTheValueReturned) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const auto Source = tmpFile("kernel.c");
+  const auto Object = tmpFile("kernel.o");
+  std::ofstream(Source) << "unsigned long str32(unsigned long x) {\n"
+                           "  __asm__ volatile(\"str %k0\" : \"+r\"(x));\n"
+                           "  return x;\n"
+                           "}\n";
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-O1", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  const auto Decompiled = decompileToHighC(Object);
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_NE(C.find("__asm__ volatile(\"str %0\" : \"=r\"("), std::string::npos)
+      << C;
+  EXPECT_EQ(C.find("void str32"), std::string::npos) << C;
+  const auto HostSource = tmpFile("host.c");
+  std::ofstream(HostSource) << C;
+  const auto Built =
+      exec(NEVERD_TEST_CLANG, {"-std=gnu11", "-c", HostSource.string(), "-o",
+                               tmpFile("host.o").string()});
+  EXPECT_EQ(Built.exitCode, 0) << Built.err << "\n" << C;
+}
+
+} // namespace

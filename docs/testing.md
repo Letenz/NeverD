@@ -206,8 +206,9 @@ defined PC and exception-mask combinations. Concrete checks execute every
 state and padding. Pending/unknown waiting state, exact memory extents,
 malformed metadata, and all-path empty-destination admission receive negative
 controls, including branches, balanced/unbalanced loops and unknown calls.
-An ABI entry alone does not prove an empty stack: unknown or occupied FILD
-destinations reject complete function publication. Native oracles require x64
+A function entry starts from the calling convention's empty register
+stack with undefined slot values; an unknown or occupied FILD destination
+elsewhere rejects complete function publication. Native oracles require x64
 GCC/Clang. These checks do not certify complete x87 TOP/tags/status delivery,
 stack-overflow emulation, native exception/memory-fault priority, or native
 Linux/macOS/x86-32 execution. `NeverDLLVMCIntrinsicSemanticTests` additionally
@@ -1354,6 +1355,12 @@ refusals and related or opaque inputs that still require full simplification.
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
 
+`HighSymSimplify.ParallelSegments*` compares serial and parallel rewriting
+over shared DAGs with distinct branch, switch and exception-body definitions.
+Independent arithmetic oracles check the rewritten results. Calls, labels,
+exception continuations, PHI copies, address escapes and ordered effects must
+still kill definitions; ordinary stores must retain them.
+
 ```sh
 cmake --build build-release --target NeverDSymbolicTests NeverDSolverTests \
   NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
@@ -1588,6 +1595,16 @@ absolute-table HighC, optimized LLVMC and unoptimized LLVMC execute zero,
 all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
 The existing deep-arithmetic narrow guards must retain their exact-definition
 proof before the batched extension-range fallback is considered.
+
+`ResolverGuardPredicates.*` checks compound entry/backedge predicates on x86,
+x64, ARM32 and AArch64, including changed lanes, independent roots, unrelated
+flags, wide indices and exhausted evidence. Query-mode changes must retain
+separate caches, and a logical union cannot claim CFG predecessor ownership.
+`JumpTableJoinedGuard.*` checks separate inclusive/exclusive loop guards in
+ELF, COFF and Mach-O. Its ELF source
+roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
+selection oracle. Small joined domains reuse the finite-coordinate proof;
+unchecked paths and sparse or incomplete domains cannot grant a dense table.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new

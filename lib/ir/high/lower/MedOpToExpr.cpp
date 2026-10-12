@@ -29,6 +29,8 @@ ExprPtr MedToHighConverter::medOpToExpr(const MedOp &Op) {
 }
 
 ExprPtr MedToHighConverter::medOpToExprImpl(const MedOp &Op) {
+  if (ExprPtr Dynamic = dynamicStackExpr(Op))
+    return Dynamic;
   if (const auto Displacement = i386GotDisplacement(Op))
     return i386GotRelativeAddress(Op, *Displacement);
   if (Op.Opcode == NdOp::SUBBYTES && Op.NumInputs == 2 &&

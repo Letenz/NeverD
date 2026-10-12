@@ -794,7 +794,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
                           << Func.Name << ", " << Func.Body.size()
                           << " stmts)\n");
   forwardPrivateFrameLoads(Func, TargetArch);
-  simplifyExprSemantics(Func.Body);
+  simplifyExprSemantics(Func.Body, SemanticThreadLimit);
   breakStmtCycles(Func.Body);
   // Semantic rewriting can make the scalar definitions that held an MBA
   // expansion dead. Remove them without feeding the shared result back through

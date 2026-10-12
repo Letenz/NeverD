@@ -2035,6 +2035,38 @@ const char *hiloCollapseExpr(Intrinsic Id) {
   }
 }
 
+std::string renderX86SystemRegisterOperand(Intrinsic Id,
+                                           const std::vector<std::string> &Ops,
+                                           uint16_t ResultBytes) {
+  using I = Intrinsic;
+  const char *Mnemonic = intrinsicAsmMnemonic(Id);
+  if (!Mnemonic)
+    return {};
+  switch (Id) {
+  case I::Sldt:
+  case I::Str:
+  case I::Smsw: {
+    // `str %eax` writes the selector zero extended, `str %ax` its low word:
+    // the instruction runs on a register of the destination's width.
+    if (!Ops.empty() ||
+        (ResultBytes != 2 && ResultBytes != 4 && ResultBytes != 8))
+      return {};
+    const std::string Type = "uint" + std::to_string(8 * ResultBytes) + "_t";
+    return "({ " + Type + " neverd_value; __asm__ volatile(\"" + Mnemonic +
+           " %0\" : \"=r\"(neverd_value)); neverd_value; })";
+  }
+  case I::Lldt:
+  case I::Ltr:
+  case I::Lmsw:
+    if (Ops.size() != 1)
+      return {};
+    return "__asm__ volatile(\"" + std::string(Mnemonic) +
+           " %0\" : : \"r\"((uint16_t)(" + Ops[0] + ")))";
+  default:
+    return {};
+  }
+}
+
 std::string renderX86AsmStatement(const char *Mnemonic,
                                   const std::vector<std::string> &Ops) {
   std::string AsmStmt = Mnemonic;

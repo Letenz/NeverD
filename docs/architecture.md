@@ -2261,7 +2261,14 @@ value owner handles known binary32/64/80 images without numerical conversion.
 This does not establish complete x87 architectural state or general arithmetic.
 
 The same tag solver admits FILD only when every incoming path proves its push
-destination empty; an ABI entry alone supplies no tag proof. The successful
+destination empty. A function entry starts from the calling convention's empty
+register stack, and every call returns under the same contract, which the TOP
+pass already assumes for callees it cannot prove: slots a call found empty stay
+empty, full ones become unknown. Payloads stay undefined, so these seeds prove
+push destinations but no FXAM or sign source. Only state restores (FRSTOR,
+FLDENV, FNSAVE, FXRSTOR, XRSTOR) and unmodeled x87 operations replace tags;
+value instructions define only their outputs, and other intrinsics, such as
+an IDIV's divide-error precondition, leave the register stack alone. The successful
 16/32/64-bit signed load becomes an exact raw binary80 image and clears C1 in
 shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
 the signed minimum without overflow. Waiting precedes the source memory load.
@@ -2663,6 +2670,15 @@ ownership from LowIR through MedIR into HighIR. Equal numeric bits do not merge
 different origins. HighIR symbolic simplification keeps address identities
 opaque; source binding uses the shared numeric-operand classification and still
 requires relocation bindings for memory and pointer consumers.
+
+HighIR semantic rewriting splits large functions only where its scalar
+definitions are already discarded. Each segment owns its statements,
+definition environment and symbolic contexts; shared input expression DAGs
+remain read-only. The pipeline grants up to four inner workers only when its
+outer function batch runs serially, bounded by `NEVERD_THREADS`. Small
+functions and converters without an explicit inner-thread allowance retain
+serial rewriting. Solver budgets, effect barriers and rewrite proofs are
+identical in both paths.
 
 MedIR owns bounded invariant-constant propagation across same-width SSA copies and complete PHIs, including loops. Every incoming value must converge to the same bits, width, provenance and address owner. Unknown definitions, unseeded cycles, incomplete edges and conflicting constants prevent substitution; budget exhaustion leaves the function unchanged. The analysis substitutes operands without removing calls, loads, stores or their effects. Both HighIR and LLVM consume the same result.
 

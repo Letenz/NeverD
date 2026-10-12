@@ -566,7 +566,8 @@ private:
 
   /// Shortcut path: MedIR -> LLVM IR (skip HighIR).
   bool runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
-                        const PipelineOptions &Opts, PipelineResult &Result);
+                        const PipelineOptions &Opts, PipelineResult &Result,
+                        const DebugContext *Dbg);
 
   /// Emit + verify + optimize the MedIR functions in parallel and return the
   /// combined module in \p Ctx.  The functions are split into shards; each
@@ -596,7 +597,8 @@ private:
                   const std::vector<std::pair<va_t, std::string>> &Imports,
                   const BinaryImage &Img, BinaryFormat Fmt, bool NoOpt,
                   unsigned NumThreads, bool RecordSources = false,
-                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {});
+                  llvm::ArrayRef<sigs::LibraryRecognition> Recognitions = {},
+                  const DebugContext *Dbg = nullptr);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

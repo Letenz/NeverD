@@ -12,6 +12,7 @@ add_neverd_component_library(NeverDIRHigh
   lower/CompareTreeSwitch.cpp
   lower/I386PicAddresses.cpp
   lower/MedOpToExpr.cpp
+  lower/MedToHighDynamicStack.cpp
   lower/MedToHigh.cpp
   lower/NdOpCallIndLowering.cpp
   lower/NdOpLowering.cpp

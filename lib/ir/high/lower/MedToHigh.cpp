@@ -346,10 +346,18 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
     return nullptr;
   auto It = DefExpr.find(Key);
   if (It == DefExpr.end() || !It->second ||
-      It->second->Kind == ExprKind::Call ||
       It->second->Kind == ExprKind::EntryRegister ||
       It->second->MemoryOrdering != NdMemoryOrdering::None ||
       It->second->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return nullptr;
+  // A call, or a conversion of one (the storage a run-time stack allocation
+  // returns), runs once: each use reads the variable it set.
+  const HighExpr *Value = It->second.get();
+  while (Value &&
+         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+         Value->Operands.size() == 1)
+    Value = Value->Operands[0].get();
+  if (!Value || Value->Kind == ExprKind::Call)
     return nullptr;
   return It->second;
 }
@@ -1203,6 +1211,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   ParamCopyIndexFunc = nullptr;
   LoadedEntrySlotsFor = nullptr;
   EntryOffsetDefsFor = nullptr;
+  DynamicStackFor = nullptr;
   EntryStackOffsets.reset();
   SourceParameters = Med.SourceTypeHint
                          ? sourceABIParameters(*Med.SourceTypeHint)

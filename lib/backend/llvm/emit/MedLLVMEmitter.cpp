@@ -879,7 +879,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   CodePtrTableGlobals.clear();
   PreparedFuncBlocks.clear();
   LiftedCodeBlocks.clear();
-  EmittedFuncCodeEnds.clear();
+  EmittedFuncCodeRanges.clear();
   SEHCallbackKinds.clear();
   ConflictingLiftedCodeBlocks.clear();
   CxxContinuationPlans.clear();
@@ -1142,16 +1142,38 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     // addresses cannot be reconstructed from the declaration alone.
     if (BodyMask && !(*BodyMask)[FuncIndex])
       continue;
-    va_t End = Func.Entry;
-    if (Func.OriginalSize)
-      End = Func.Entry + Func.OriginalSize;
-    if (Func.ExceptionMetadata && Func.ExceptionMetadata->CodeRange.End > End)
-      End = Func.ExceptionMetadata->CodeRange.End;
+    std::vector<std::pair<va_t, va_t>> Ranges;
+    const auto Add = [&](va_t Begin, va_t End) {
+      if (End > Begin)
+        Ranges.emplace_back(Begin, End);
+    };
+    // A sized body runs on from its entry; where unwind records describe
+    // it, only as far as they do without a gap, since its size then reaches
+    // its farthest part across other functions' code.
+    if (Func.OriginalSize) {
+      va_t End = Func.Entry + Func.OriginalSize;
+      if (Func.ExceptionMetadata)
+        End = std::min(End, Func.ExceptionMetadata->contiguousEnd());
+      Add(Func.Entry, End);
+    }
+    if (Func.ExceptionMetadata) {
+      Add(Func.ExceptionMetadata->CodeRange.Begin,
+          Func.ExceptionMetadata->CodeRange.End);
+      for (const ExceptionAddressRange &Fragment :
+           Func.ExceptionMetadata->FragmentRanges)
+        Add(Fragment.Begin, Fragment.End);
+    }
     for (const MedBlock &Block : Func.Blocks)
-      if (Block.EndAddr > End)
-        End = Block.EndAddr;
-    if (End > Func.Entry)
-      EmittedFuncCodeEnds[Func.Entry] = End;
+      Add(Block.StartAddr, Block.EndAddr);
+    llvm::sort(Ranges);
+    std::vector<std::pair<va_t, va_t>> Merged;
+    for (const auto &Range : Ranges)
+      if (!Merged.empty() && Range.first <= Merged.back().second)
+        Merged.back().second = std::max(Merged.back().second, Range.second);
+      else
+        Merged.push_back(Range);
+    if (!Merged.empty())
+      EmittedFuncCodeRanges[Func.Entry] = std::move(Merged);
   }
   initializeCxxContinuationPlans(Funcs, BodyMask);
 

@@ -27,6 +27,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/solver/SymSynthVerifier.h"
+#include "neverd/support/Parallel.h"
 #include "neverd/symbolic/SymMBA.h"
 #include "neverd/symbolic/SymWideArithmetic.h"
 
@@ -1276,11 +1277,14 @@ definitionInputs(const ExprPtr &Value, const AvailableDefinitions &Definitions,
   return Inputs;
 }
 
-void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
+void simplifyStatementRegions(std::vector<HighStmt> &Stmts,
+                              unsigned MaxThreads) {
   std::set<LocalIdentity> Escaped;
   std::unordered_set<va_t> Entries;
   HighExprSet Seen;
+  size_t StatementCount = 0;
   walkStmts(Stmts, [&](const HighStmt &S) {
+    ++StatementCount;
     if (S.Kind == StmtKind::Goto)
       Entries.insert(S.GotoTarget);
     for (const auto &Clause : S.EHClauses) {
@@ -1318,75 +1322,174 @@ void simplifyStatementRegions(std::vector<HighStmt> &Stmts) {
   Entries.erase(0);
   Entries.erase(InvalidVA);
 
+  struct StatementProperties {
+    bool ResetBefore;
+    bool ResetAfter;
+    uint64_t Weight;
+  };
+  auto Classify = [&](const HighStmt &S) {
+    const bool Straight =
+        (S.Kind == StmtKind::Assign || S.Kind == StmtKind::ExprStmt ||
+         S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop ||
+         S.Kind == StmtKind::Store) &&
+        S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
+        S.DefaultBody.empty() && S.EHClauses.empty() &&
+        S.EHClauseBodies.empty() && !S.IsPhiCopy &&
+        S.MemoryOrdering == NdMemoryOrdering::None &&
+        S.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+    bool Pure = true;
+    uint64_t Weight = 1;
+    forEachRhsExpr(S, [&](const ExprPtr &E) {
+      const auto Cost = expressionCost(E);
+      Pure &= Cost.has_value();
+      // Scheduling estimates never expand the rendered tree or overflow on a
+      // compact DAG whose rendered size has saturated expressionCost().
+      Weight += std::min<size_t>(Cost.value_or(1), 4096);
+    });
+    return StatementProperties{
+        !Straight || !Pure || Entries.count(S.Addr) ||
+            (S.Kind == StmtKind::Assign && !isScalarLocal(S.Dst)),
+        !Straight || !Pure || S.Kind == StmtKind::Return, Weight};
+  };
+  auto Simplify = [&](HighStmt &S, const StatementProperties &Properties,
+                      AvailableDefinitions &Definitions) {
+    if (Properties.ResetBefore)
+      Definitions.clear();
+    forEachRhsExpr(S, [&](ExprPtr &E) { simplifyRegions(E, Definitions); });
+    if (Properties.ResetAfter) {
+      Definitions.clear();
+      return;
+    }
+    // An ordinary store changes memory, not a scalar register, temporary,
+    // or unescaped parameter.  Its address and value have already been
+    // checked for effects; keep proven scalar definitions available to the
+    // following expressions, including a store/reload pair in the frame.
+    if (S.Kind == StmtKind::Store)
+      return;
+    if (S.Kind != StmtKind::Assign)
+      return;
+    if (!isScalarLocal(S.Dst)) {
+      Definitions.clear();
+      return;
+    }
+
+    const auto Key = highSourceLocalIdentity(S.Dst->Var);
+    auto Inputs = definitionInputs(S.Val, Definitions, Escaped);
+    for (auto It = Definitions.begin(); It != Definitions.end();) {
+      if (It->first == Key || It->second.Dependencies.count(Key))
+        It = Definitions.erase(It);
+      else
+        ++It;
+    }
+    if (Inputs && !Inputs->count(Key) && !Escaped.count(Key) &&
+        Definitions.size() < 256 && S.Val && S.Val->Type &&
+        S.Val->Type->Size == S.Dst->Type->Size &&
+        S.Val->Type->IsSigned == S.Dst->Type->IsSigned)
+      Definitions.emplace(Key, AvailableDefinition{S.Val, std::move(*Inputs)});
+  };
   std::vector<std::vector<HighStmt> *> Scopes{&Stmts};
+  auto AppendChildren = [&](HighStmt &S) {
+    for (auto *Body : {&S.Body, &S.ElseBody, &S.DefaultBody})
+      if (!Body->empty())
+        Scopes.push_back(Body);
+    for (auto &Case : S.Cases)
+      Scopes.push_back(&Case.Body);
+    for (auto &Body : S.EHClauseBodies)
+      Scopes.push_back(&Body);
+  };
+
+  // Keep small functions and callers without an inner-thread allowance on
+  // the original one-scope-at-a-time path. In particular, do not build task
+  // metadata for the common small function selected in the GUI.
+  if (MaxThreads > 1)
+    MaxThreads = std::min({MaxThreads, workerThreadCount(), 4u});
+  if (MaxThreads <= 1 || StatementCount < 1024) {
+    while (!Scopes.empty()) {
+      auto *Scope = Scopes.back();
+      Scopes.pop_back();
+      AvailableDefinitions Definitions;
+      for (auto &S : *Scope) {
+        AppendChildren(S);
+        Simplify(S, Classify(S), Definitions);
+      }
+    }
+    return;
+  }
+
+  struct Statement {
+    HighStmt *Stmt;
+    StatementProperties Properties;
+  };
+  struct Segment {
+    size_t Begin;
+    size_t End;
+  };
+  std::vector<Statement> Statements;
+  Statements.reserve(StatementCount);
+  std::vector<Segment> Segments;
+  std::vector<uint64_t> Weights;
+  uint64_t TotalWeight = 0;
   while (!Scopes.empty()) {
     auto *Scope = Scopes.back();
     Scopes.pop_back();
-    AvailableDefinitions Definitions;
+    size_t Begin = Statements.size();
+    uint64_t Weight = 0;
+    auto Finish = [&] {
+      if (Begin == Statements.size())
+        return;
+      Segments.push_back({Begin, Statements.size()});
+      Weights.push_back(Weight);
+      TotalWeight = std::min<uint64_t>(4096, TotalWeight + Weight);
+      Begin = Statements.size();
+      Weight = 0;
+    };
     for (auto &S : *Scope) {
-      for (auto *Body : {&S.Body, &S.ElseBody, &S.DefaultBody})
-        if (!Body->empty())
-          Scopes.push_back(Body);
-      for (auto &Case : S.Cases)
-        Scopes.push_back(&Case.Body);
-      for (auto &Body : S.EHClauseBodies)
-        Scopes.push_back(&Body);
-
-      const bool Straight =
-          (S.Kind == StmtKind::Assign || S.Kind == StmtKind::ExprStmt ||
-           S.Kind == StmtKind::Return || S.Kind == StmtKind::Nop ||
-           S.Kind == StmtKind::Store) &&
-          S.Body.empty() && S.ElseBody.empty() && S.Cases.empty() &&
-          S.DefaultBody.empty() && S.EHClauses.empty() &&
-          S.EHClauseBodies.empty() && !S.IsPhiCopy &&
-          S.MemoryOrdering == NdMemoryOrdering::None &&
-          S.MemoryAddressSpace == NdMemoryAddressSpace::Default;
-      bool Pure = true;
-      forEachRhsExpr(
-          S, [&](const ExprPtr &E) { Pure &= expressionCost(E).has_value(); });
-      if (!Straight || !Pure || Entries.count(S.Addr) ||
-          (S.Kind == StmtKind::Assign && !isScalarLocal(S.Dst)))
-        Definitions.clear();
-      forEachRhsExpr(S, [&](ExprPtr &E) { simplifyRegions(E, Definitions); });
-      if (!Straight || !Pure || S.Kind == StmtKind::Return) {
-        Definitions.clear();
-        continue;
-      }
-      // An ordinary store changes memory, not a scalar register, temporary,
-      // or unescaped parameter.  Its address and value have already been
-      // checked for effects; keep proven scalar definitions available to the
-      // following expressions, including a store/reload pair in the frame.
-      if (S.Kind == StmtKind::Store)
-        continue;
-      if (S.Kind != StmtKind::Assign)
-        continue;
-      if (!isScalarLocal(S.Dst)) {
-        Definitions.clear();
-        continue;
-      }
-
-      const auto Key = highSourceLocalIdentity(S.Dst->Var);
-      auto Inputs = definitionInputs(S.Val, Definitions, Escaped);
-      for (auto It = Definitions.begin(); It != Definitions.end();) {
-        if (It->first == Key || It->second.Dependencies.count(Key))
-          It = Definitions.erase(It);
-        else
-          ++It;
-      }
-      if (Inputs && !Inputs->count(Key) && !Escaped.count(Key) &&
-          Definitions.size() < 256 && S.Val && S.Val->Type &&
-          S.Val->Type->Size == S.Dst->Type->Size &&
-          S.Val->Type->IsSigned == S.Dst->Type->IsSigned)
-        Definitions.emplace(Key,
-                            AvailableDefinition{S.Val, std::move(*Inputs)});
+      AppendChildren(S);
+      const auto Properties = Classify(S);
+      // These are exactly the serial pass's definition-kill boundaries. A
+      // split never shortens a live scalar-definition chain, including chains
+      // through ordinary stores, nor imports one across labels or EH entries.
+      if (Properties.ResetBefore)
+        Finish();
+      Statements.push_back({&S, Properties});
+      Weight =
+          std::min<uint64_t>(uint64_t{1} << 20, Weight + Properties.Weight);
+      if (Properties.ResetAfter)
+        Finish();
     }
+    Finish();
+  }
+  auto Process = [&](size_t Index) {
+    AvailableDefinitions Definitions;
+    const auto &Segment = Segments[Index];
+    for (size_t I = Segment.Begin; I < Segment.End; ++I)
+      Simplify(*Statements[I].Stmt, Statements[I].Properties, Definitions);
+  };
+  // Every task owns distinct statement fields and its own definitions and
+  // symbolic contexts. Shared input expressions/types are read-only;
+  // simplifyRegions rebuilds changed nodes instead of mutating their DAG.
+  if (TotalWeight < 4096) {
+    for (size_t I = 0; I < Segments.size(); ++I)
+      Process(I);
+  } else {
+    parallelForEachWeighted(
+        Weights,
+        [&](auto Claim, size_t N) {
+          for (size_t I; (I = Claim()) < N;)
+            Process(I);
+        },
+        8, MaxThreads);
   }
 }
 
 } // namespace
 
 void simplifyExprSemantics(std::vector<HighStmt> &Stmts) {
-  simplifyStatementRegions(Stmts);
+  simplifyStatementRegions(Stmts, 1);
+}
+
+void simplifyExprSemantics(std::vector<HighStmt> &Stmts, unsigned MaxThreads) {
+  simplifyStatementRegions(Stmts, MaxThreads);
 }
 
 } // namespace neverd
