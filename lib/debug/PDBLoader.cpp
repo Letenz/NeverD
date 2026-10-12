@@ -782,17 +782,9 @@ struct PDBDebugContext::Impl {
     return llvm::Error::success();
   }
 
-  /// The publics nearest \p Addr in its section, through the publics'
-  /// address map: the last at or before it and the first after it.
-  std::pair<std::optional<va_t>, std::optional<va_t>>
-  publicsAround(va_t Addr) const {
-    std::lock_guard<std::mutex> Guard(PublicMutex);
-    if (!hasLazyPublics())
-      return {};
-    const auto Key = sectOffForVA(Addr);
-    if (!Key)
-      return {};
-    // The first public past Addr.
+  /// The index, in the publics' address map, of the first public past the
+  /// section and offset \p Key.
+  uint32_t firstPublicAfter(const std::pair<uint16_t, uint32_t> &Key) const {
     uint32_t Lo = 0;
     uint32_t Hi = publicCount();
     while (Lo < Hi) {
@@ -803,12 +795,25 @@ struct PDBDebugContext::Impl {
         Hi = Mid;
         continue;
       }
-      if (std::tie(Pub.Segment, Pub.Offset) <=
-          std::tie(Key->first, Key->second))
+      if (std::tie(Pub.Segment, Pub.Offset) <= std::tie(Key.first, Key.second))
         Lo = Mid + 1;
       else
         Hi = Mid;
     }
+    return Lo;
+  }
+
+  /// The publics nearest \p Addr in its section, through the publics'
+  /// address map: the last at or before it and the first after it.
+  std::pair<std::optional<va_t>, std::optional<va_t>>
+  publicsAround(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    if (!hasLazyPublics())
+      return {};
+    const auto Key = sectOffForVA(Addr);
+    if (!Key)
+      return {};
+    const uint32_t Lo = firstPublicAfter(*Key);
     // A public of the same section, as an address.
     const auto AddressOf = [&](uint32_t Index) -> std::optional<va_t> {
       pdb_loader_detail::ParsedPublicSym32 Pub;
@@ -826,6 +831,57 @@ struct PDBDebugContext::Impl {
     if (Lo < publicCount())
       After = AddressOf(Lo);
     return {Before, After};
+  }
+
+  /// The last data object of \p Addr's section at or before it, among the
+  /// symbols read in whole, when no function begins between the two.
+  std::optional<va_t> materializedDataBefore(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    auto Data = DataObjects.upper_bound(Addr);
+    if (Data == DataObjects.begin())
+      return std::nullopt;
+    --Data;
+    if (auto Function = Functions.upper_bound(Addr);
+        Function != Functions.begin() &&
+        std::prev(Function)->first >= Data->first)
+      return std::nullopt;
+    const auto Where = sectOffForVA(Addr);
+    const auto Object = sectOffForVA(Data->first);
+    if (!Where || !Object || Where->first != Object->first)
+      return std::nullopt;
+    return Data->first;
+  }
+
+  /// The last public of \p Addr's section at or before it, through the
+  /// publics' address map, and whether one of the publics there names a
+  /// function.
+  std::optional<std::pair<va_t, bool>> publicAtOrBefore(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    if (!hasLazyPublics())
+      return std::nullopt;
+    const auto Key = sectOffForVA(Addr);
+    if (!Key)
+      return std::nullopt;
+    std::optional<std::pair<uint16_t, uint32_t>> At;
+    bool IsFunction = false;
+    for (uint32_t I = firstPublicAfter(*Key); I-- > 0;) {
+      pdb_loader_detail::ParsedPublicSym32 Pub;
+      if (auto Err = readPublic(I, Pub)) {
+        llvm::consumeError(std::move(Err));
+        break;
+      }
+      if (!At) {
+        if (Pub.Segment != Key->first)
+          return std::nullopt;
+        At.emplace(Pub.Segment, Pub.Offset);
+      } else if (std::pair(Pub.Segment, Pub.Offset) != *At) {
+        break;
+      }
+      IsFunction |= Pub.IsFunction;
+    }
+    if (!At)
+      return std::nullopt;
+    return std::pair{Sections[At->first - 1].VA + At->second, IsFunction};
   }
 
   std::optional<AuthenticatedRecordParameter>
@@ -2284,6 +2340,18 @@ PDBDebugContext::dataSymbolsAround(va_t Addr) const {
   if (PImpl->hasLazyPublics())
     return PImpl->publicsAround(Addr);
   return DebugContext::dataSymbolsAround(Addr);
+}
+
+std::optional<va_t> PDBDebugContext::precedingDataSymbol(va_t Addr) const {
+  if (!PImpl)
+    return std::nullopt;
+  if (PImpl->hasLazyPublics()) {
+    const auto Public = PImpl->publicAtOrBefore(Addr);
+    if (!Public || Public->second)
+      return std::nullopt;
+    return Public->first;
+  }
+  return PImpl->materializedDataBefore(Addr);
 }
 
 // This narrow reader deliberately avoids resolveTpi's display fallbacks. A

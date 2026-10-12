@@ -309,6 +309,16 @@ public:
     }
     return {Before, After};
   }
+  /// Where the data symbol that \p Addr follows begins: the last symbol of
+  /// \p Addr's section at or before it, when that symbol names data and no
+  /// function.  No named function begins between the two, so the address
+  /// lies in data even where nothing sizes the object, as an unnamed table
+  /// after a named string does.  Providers with an address-ordered index
+  /// answer it; the default knows none.
+  virtual std::optional<va_t> precedingDataSymbol(va_t Addr) const {
+    (void)Addr;
+    return std::nullopt;
+  }
 
   virtual bool hasInfo() const = 0;
 };
