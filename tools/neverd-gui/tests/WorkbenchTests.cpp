@@ -31,6 +31,7 @@
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QFontMetricsF>
 #include <QInputDialog>
@@ -88,11 +89,16 @@ struct Workbench {
   QTemporaryDir layout;
   std::unique_ptr<MainWindow> window;
 
-  explicit Workbench(QString worker = QString::fromLocal8Bit(TEST_WORKER))
+  /// Unless \p shown, the window stays as a startup without a file leaves
+  /// it: hidden, its desktop not laid out yet.
+  explicit Workbench(QString worker = QString::fromLocal8Bit(TEST_WORKER),
+                     bool shown = true)
       : session(std::move(worker)) {
     window = std::make_unique<MainWindow>(session, mcp, broker);
     window->setLayoutPath(layout.filePath(QStringLiteral("layout.json")));
     window->resize(1400, 900);
+    if (!shown)
+      return;
     window->initializeLayout();
     window->show();
   }
@@ -129,6 +135,16 @@ QStringList representationsOf(CodeView *view) {
 QByteArray readAll(const QString &path) {
   QFile file(path);
   return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+/// A file dialog the user cancels.
+QString noFile(QWidget *) { return {}; }
+
+QPushButton *buttonNamed(QWidget *window, const QString &text) {
+  for (auto *button : window->findChildren<QPushButton *>())
+    if (button->text() == text)
+      return button;
+  return nullptr;
 }
 /// Accepts every "Load a new file" dialog with its defaults while it lives,
 /// as pressing Enter does.
@@ -2377,6 +2393,89 @@ private slots:
     QVERIFY(bench.session.loaded());
   }
 
+  void startupQuickStartGreetsAlone_data() {
+    QTest::addColumn<QString>("choice");
+    QTest::addColumn<QString>("button");
+    QTest::newRow("go") << QStringLiteral("go") << QStringLiteral("&Go");
+    QTest::newRow("escape") << QStringLiteral("escape") << QString();
+    QTest::newRow("new") << QStringLiteral("new") << QStringLiteral("&New");
+    QTest::newRow("previous")
+        << QStringLiteral("previous") << QStringLiteral("&Previous");
+    QTest::newRow("drop") << QStringLiteral("drop") << QString();
+    QTest::newRow("close") << QStringLiteral("close") << QString();
+  }
+
+  void startupQuickStartGreetsAlone() {
+    // As IDA's: a startup without a file shows the quick start alone, as a
+    // window of its own.  The workbench lays out its desktop and shows once
+    // the user chooses how to start; closing the quick start quits instead,
+    // without ever showing it.
+    QFETCH(QString, choice);
+    QFETCH(QString, button);
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QSettings().setValue(settings::RecentFiles, QStringList{path});
+    const auto restore = qScopeGuard([] {
+      QSettings().remove(settings::RecentFiles);
+      QSettings().remove(settings::RecentOpened);
+    });
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    LoadDialogAcceptor loadDialogs;
+    // New asks for the file in a dialog over the quick start.
+    QTimer files;
+    connect(&files, &QTimer::timeout, this, [&] {
+      if (auto *dialog =
+              qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+        dialog->selectFile(path);
+        // As pressing Open does; QFileDialog keeps its override protected.
+        static_cast<QDialog *>(dialog)->accept();
+      }
+    });
+    files.start(10);
+    bool answered = false, alone = false, dropped = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<QuickStartDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (!button.isEmpty()) {
+        if (auto *start = buttonNamed(dialog, button))
+          start->click();
+      } else if (choice == QLatin1String("escape")) {
+        QTest::keyClick(dialog, Qt::Key_Escape);
+      } else if (choice == QLatin1String("drop")) {
+        // The drop opens the file on the next event-loop turn.
+        dropped = dropFile(dialog, path);
+      }
+      // Close, or end a choice that failed to answer.
+      if (!dropped && dialog->isVisible())
+        dialog->close();
+    });
+    answer.start(5);
+    bench.window->scheduleQuickStart();
+    QTRY_VERIFY_WITH_TIMEOUT(answered, 1000);
+    QVERIFY(alone);
+    QVERIFY(!QApplication::activeModalWidget());
+    if (choice == QLatin1String("close")) {
+      QVERIFY(!bench.window->isVisible());
+      return;
+    }
+    QVERIFY(bench.window->isVisible());
+    QVERIFY(bench.functions() && bench.functions()->isVisible());
+    if (choice == QLatin1String("go") || choice == QLatin1String("escape")) {
+      QVERIFY(bench.session.filePath().isEmpty());
+      return;
+    }
+    QCOMPARE(dropped, choice == QLatin1String("drop"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QCOMPARE(QFileInfo(bench.session.filePath()).canonicalFilePath(),
+             QFileInfo(path).canonicalFilePath());
+  }
+
   void quickStartShowsRecentFilesAndStartsAsChosen() {
     // As IDA's Quick start: New, Go and Previous, the recent files and
     // whether it greets the next start.  Each recent file shows its format,
@@ -2401,7 +2500,7 @@ private slots:
       QSettings().remove(settings::QuickStartSize);
     });
 
-    QuickStartDialog dialog;
+    QuickStartDialog dialog(noFile);
     auto *recent =
         dialog.findChild<QListWidget *>(QStringLiteral("quickStartRecent"));
     QVERIFY(recent);
@@ -2442,11 +2541,52 @@ private slots:
     QCOMPARE(dialog.file(), elf);
   }
 
+  void quickStartAsksForANewFileOverItself() {
+    // New asks for the file over the quick start, which stays when the user
+    // cancels.  Escape works on one's own as Go does; only closing the
+    // window leaves the start unchosen.
+    QWidget *askedOver = nullptr;
+    QString picked;
+    const auto pick = [&](QWidget *parent) {
+      askedOver = parent;
+      return picked;
+    };
+    QuickStartDialog dialog(pick);
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    auto *newButton = buttonNamed(&dialog, QStringLiteral("&New"));
+    QVERIFY(newButton);
+    newButton->click();
+    QVERIFY(askedOver == &dialog);
+    QVERIFY(dialog.isVisible());
+    QCOMPARE(dialog.start(), QuickStartDialog::Start::None);
+    picked = QStringLiteral("/data/program");
+    newButton->click();
+    QVERIFY(!dialog.isVisible());
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QCOMPARE(dialog.start(), QuickStartDialog::Start::New);
+    QCOMPARE(dialog.file(), picked);
+
+    QuickStartDialog escaped(pick);
+    escaped.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&escaped));
+    QTest::keyClick(&escaped, Qt::Key_Escape);
+    QVERIFY(!escaped.isVisible());
+    QCOMPARE(escaped.start(), QuickStartDialog::Start::Go);
+
+    QuickStartDialog closed(pick);
+    closed.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&closed));
+    QVERIFY(closed.close());
+    QCOMPARE(closed.result(), int(QDialog::Rejected));
+    QCOMPARE(closed.start(), QuickStartDialog::Start::None);
+  }
+
   void quickStartResizesAndRemembersItsSize() {
     QSettings().remove(settings::QuickStartSize);
     const auto restore =
         qScopeGuard([] { QSettings().remove(settings::QuickStartSize); });
-    QuickStartDialog dialog;
+    QuickStartDialog dialog(noFile);
     dialog.resize(dialog.minimumSize());
     dialog.move(20, 20);
     dialog.show();
@@ -2487,7 +2627,7 @@ private slots:
     dialog.resize(chosenSize);
     QTest::keyClick(&dialog, Qt::Key_Escape);
 
-    QuickStartDialog reopened;
+    QuickStartDialog reopened(noFile);
     QCOMPARE(reopened.size(), chosenSize);
     reopened.resize(1, 1);
     QCOMPARE(reopened.size(), reopened.minimumSize());
