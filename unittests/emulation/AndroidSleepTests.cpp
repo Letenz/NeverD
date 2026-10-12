@@ -165,7 +165,7 @@ TEST_P(AndroidSleep,
   Options.Android->ThreadLimit = 2;
   Options.Limits.Instructions = 5000;
   Options.Android->Memory[0].Bytes.assign(8192, 0);
-  for (uint64_t Route : {0u, 1u, 2u}) {
+  for (uint64_t Route : {0u, 1u, 2u, 3u}) {
     auto R = run("sleep_busy", {Buffer, Route});
     ASSERT_EQ(R.Stop, ProcessStopReason::InstructionLimit) << R.Diagnostic;
     EXPECT_EQ(R.Instructions, 5000u);
@@ -175,7 +175,8 @@ TEST_P(AndroidSleep,
     EXPECT_EQ(word(R, 0), 0u);
     unsigned Pending = 0;
     for (const auto &Call : R.NativeCalls)
-      if (Call.Name == "nanosleep" || Call.Name == "syscall") {
+      if (Call.Name == "nanosleep" || Call.Name == "syscall" ||
+          Call.Name == "usleep") {
         EXPECT_FALSE(Call.Result);
         ++Pending;
       }
@@ -252,6 +253,70 @@ TEST_P(AndroidSleep, PolicyOverflowAndProviderLifetimeRefuseBeforeCompletion) {
   R = run("sleep_dynamic", {1});
   EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
   EXPECT_NE(R.Diagnostic.find("inactive dynamic library"), std::string::npos);
+}
+
+TEST_P(AndroidSleep, MicrosecondsShareClockWaitsAndUnsignedABIWidth) {
+  Options.Android->Libraries["libsleep-model.so"] = {"usleep"};
+  for (unsigned ThreadLimit : {1u, 2u}) {
+    Options.Android->ThreadLimit = ThreadLimit;
+    for (uint64_t Route : {0u, 1u, 3u}) {
+      for (uint64_t Microseconds : {0ULL, 1ULL, 999999ULL, 1000000ULL,
+                                    0xffffffffULL, 0xabcdef0100000001ULL}) {
+        SCOPED_TRACE(testing::Message()
+                     << ThreadLimit << ":" << Route << ":" << Microseconds);
+        auto R = run("sleep_micro", {Microseconds, Route, Buffer});
+        ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+        EXPECT_EQ(R.ReturnValue, 0u);
+        ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+        const uint64_t Elapsed = uint64_t(uint32_t(Microseconds)) * 1000;
+        const uint64_t Nanos = 999999998 + Elapsed;
+        const uint64_t Seconds = 4294967297 + Nanos / 1000000000;
+        auto Expected = Options.Android->Memory[0].Bytes;
+        const uint64_t Values[] = {73, Seconds, Nanos % 1000000000, Seconds};
+        for (size_t I = 0; I < std::size(Values); ++I)
+          llvm::support::endian::write64le(Expected.data() + I * 8, Values[I]);
+        EXPECT_EQ(R.MemorySnapshots[0].Bytes, Expected);
+        unsigned Completed = 0;
+        for (const auto &Call : R.NativeCalls) {
+          EXPECT_TRUE(Call.Result) << Call.Name;
+          if (Call.Name == "usleep") {
+            EXPECT_EQ(Call.Result, 0u);
+            EXPECT_EQ(Call.Arguments[0],
+                      Route == 3 ? Microseconds : uint32_t(Microseconds));
+            ++Completed;
+          }
+        }
+        EXPECT_EQ(Completed, 1u);
+        EXPECT_TRUE(R.Services.empty());
+      }
+    }
+  }
+}
+
+TEST_P(AndroidSleep, MicrosecondPolicyOverflowAndInactiveProviderStayPending) {
+  auto CheckPending = [&](const ProcessResult &R, const char *Diagnostic) {
+    EXPECT_EQ(R.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_NE(R.Diagnostic.find(Diagnostic), std::string::npos);
+    ASSERT_FALSE(R.NativeCalls.empty());
+    EXPECT_EQ(R.NativeCalls.back().Name, "usleep");
+    EXPECT_FALSE(R.NativeCalls.back().Result);
+    ASSERT_EQ(R.MemorySnapshots.size(), 1u);
+    EXPECT_EQ(R.MemorySnapshots[0].Bytes, Options.Android->Memory[0].Bytes);
+  };
+  for (unsigned ThreadLimit : {1u, 2u}) {
+    Options.Android->ThreadLimit = ThreadLimit;
+    Options.LinuxTime->AdvanceOnIdle = false;
+    for (uint64_t Duration : {0u, 1u})
+      CheckPending(run("sleep_micro", {Duration, 0, Buffer}),
+                   "advance_on_idle");
+    Options.LinuxTime->AdvanceOnIdle = true;
+    Options.LinuxTime->Clocks[0] = {INT64_MAX, 999999999};
+    CheckPending(run("sleep_micro", {1, 0, Buffer}), "virtual clock");
+    Options.LinuxTime->Clocks[0] = {1, 0};
+    Options.Android->Libraries["libsleep-model.so"] = {"usleep"};
+    CheckPending(run("sleep_micro", {1, 2, Buffer}),
+                 "inactive dynamic library");
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(OptimizationAndPacking, AndroidSleep,

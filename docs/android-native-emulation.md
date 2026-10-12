@@ -256,6 +256,12 @@ The supported Bionic subset is:
   while other guest threads run, and preserves remaining-time storage and errno
   on success. The policy is disabled by default; signal interruption and
   absolute sleeps remain unmodeled.
+- `usleep` uses the same policy and thread wait ownership. The argument is
+  unsigned 32-bit microseconds, including values of one second or more;
+  successful calls preserve errno. Direct imports and dynamic lookups share
+  provider lifetime checks. The scalar conversion follows Android 9's
+  [Bionic contract](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/upstream-freebsd/lib/libc/gen/usleep.c)
+  and [32-bit type](https://github.com/aosp-mirror/platform_bionic/blob/196632fb3c59ebbf1184d791a3e7124dd0c3f22b/libc/include/sys/types.h).
 
 TLS uses the API 28 Bionic layout: TPIDR_EL0 points to a guest TLS block,
 `__errno` addresses slot 2, and the stack guard occupies slot 5. The guard is a

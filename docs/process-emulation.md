@@ -350,8 +350,9 @@ use `ProcessOptions::LinuxTime`, with the same value validation. Other process
 profiles reject this option.
 
 `"advance_on_idle": true` explicitly enables relative `nanosleep` on x64 and
-ARM64, including Android's named and variadic wrappers. Clock IDs 0, 1 and
-7 advance from their initial values by elapsed virtual time. Process CPU clock
+ARM64, including Android's named and variadic wrappers and scalar `usleep`.
+Clock IDs 0, 1 and 7 advance from their initial values by elapsed virtual time.
+Process CPU clock
 observations may coexist with this policy and stay fixed during idle advancement.
 Other clock inputs remain excluded from this policy.
 A sleeping Android thread retains its original pending service;

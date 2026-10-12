@@ -147,6 +147,8 @@ private:
   BionicResult signalAction(const NativeCallEvent &Call);
   BionicResult kernelCall(std::optional<linux_model::ServiceKind> Kind,
                           const NativeCallEvent &Call);
+  BionicResult kernelResult(std::optional<uint64_t> Returned);
+  BionicResult usleep(const NativeCallEvent &Call);
   BionicResult openLibrary(NativeCallEvent &Call);
   BionicResult lookupSymbol(NativeCallEvent &Call);
   BionicResult closeLibrary(NativeCallEvent &Call);

@@ -2409,6 +2409,11 @@ observed bytes, request/remaining aliases, malformed inputs, multiple deadlines,
 saved registers/TLS/errno, join/mutex/once continuations, provider lifetime and
 pending events at instruction limits. Available native AArch64 transports also
 match Unicorn's complete reports, including instruction and thread traces.
+Direct and dynamically resolved `usleep` callers check zero, subsecond and
+multi-second durations, full unsigned 32-bit range, high register-bit narrowing,
+clock rollover, errno preservation, idle wake completion and a runnable peer.
+Disabled time policy, clock overflow and closed providers retain incomplete
+calls and unchanged output memory.
 `LinuxClockTests.cpp` checks shared elapsed
 time and atomic refusal on clock/deadline overflow. The x64/ARM64 Linux process
 fixtures verify raw sleep errors, unchanged input and both updated clock layouts.

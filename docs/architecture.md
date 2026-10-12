@@ -3064,6 +3064,9 @@ alone owns errno conversion and `time`'s user-space destination store.
 `LinuxClock` holds elapsed virtual time for the opt-in idle advancement policy.
 `LinuxSleep` copies and validates relative sleep requests, leaving a deadline
 for the owning scheduler or advancing an otherwise single-threaded workload.
+Bionic's `usleep` narrows its scalar argument to unsigned 32-bit microseconds
+and admits the converted duration through that same owner. Completion and errno
+conversion share the kernel-call path, including suspended native events.
 Android's typed waits retain the consumed request, complete CPU context and
 native-call versus raw-service event identity. `AndroidThreadWaits` owns wake
 readiness and completion; `GuestThreads` advances to the earliest deadline only

@@ -56,5 +56,9 @@ llvm::Expected<std::optional<uint64_t>>
 sleepService(ExecutionBackend &CPU, const ProcessServiceEvent &Event,
              const MemoryLayout &Layout, LinuxClock &Clock,
              ThreadContext *Thread, ProcessResult &Result);
+/// Admit a copied or scalar duration through the same virtual sleep policy.
+std::optional<uint64_t> sleepRelative(const LinuxTimespec &Duration,
+                                      LinuxClock &Clock, ThreadContext *Thread,
+                                      ProcessResult &Result);
 } // namespace neverd::emulation::linux_model
 #endif
