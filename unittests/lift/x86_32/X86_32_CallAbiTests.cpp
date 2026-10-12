@@ -195,3 +195,21 @@ int fg(double a, double b, double c, double d, double e, double f) {
 )C",
                        "icfp", {"icfp", "fg"});
 }
+
+// Clang passes a static function's doubles in xmm0 and xmm1.  CVTSI2SD and
+// MULSD write a register's low double and keep its upper half, which this
+// function never set: the callee reads only the low double, so the call
+// passes it alone and no unknown upper half reaches the C.
+TEST_F(X86_32_CallAbi, ADoubleArgumentPassesOnlyItsLowLane) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+static double h2(double, double) __attribute__((noinline));
+int dd(int a) {
+  double x = (double)a;
+  double r = h2(x * 1.25, x * 0.5 + 3.0);
+  return (int)r;
+}
+static double h2(double a, double b) { return a * b + a - b * 2.0; }
+)C",
+                       "dd", {"dd", "h2"});
+}
