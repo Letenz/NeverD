@@ -61,6 +61,21 @@ bool isStReg(const NdVar &V) {
          ((V.Offset - x86reg::ST0) % x86reg::FPURegStride == 0);
 }
 
+// A value instruction defines only its explicit outputs; its pops are the
+// lifter's TOP changes. Neither replaces the tags of other slots.
+bool isX87ValueIntrinsic(Intrinsic Kind) {
+  switch (Kind) {
+#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
+  case Intrinsic::ID:
+#include "neverd/ir/intrinsics/X87ValueInstructions.def"
+  case Intrinsic::X87Fprem:
+  case Intrinsic::X87Fprem1:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool isX87SignOperation(const LowOp &Op) {
   return (Op.Opcode == NdOp::FLOAT_NEG || Op.Opcode == NdOp::FLOAT_ABS) &&
          Op.NumInputs == 1 && isStReg(Op.Output) && isStReg(Op.Inputs[0]) &&
@@ -1764,7 +1779,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
                          Kind != Intrinsic::X87Fnclex &&
                          Kind != Intrinsic::X87Wait &&
                          Kind != Intrinsic::X87ReadStatus &&
-                         !isX87ConstantControlIntrinsic(Kind)) {
+                         !isX87ConstantControlIntrinsic(Kind) &&
+                         !isX87ValueIntrinsic(Kind)) {
                 // Restores, resumable traps and unknown extensions may replace
                 // tags. A subsequent explicit definition can recover a slot.
                 State = {};
@@ -1803,11 +1819,18 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         return It != Roots.end() &&
                (*It == Block.StartAddr || *It < Block.EndAddr);
       };
+      // A call boundary empties the register stack: the platform contract
+      // X87CallEffects already applies to every callee. The entry's payload
+      // stays undefined, so this proves only a push's empty destination;
+      // FXAM and sign changes still need the function's own definitions.
+      // Other roots, including exception landings, keep an unknown state.
+      const bool CallBoundary =
+          Block.StartAddr == Func.Entry && Block.ExceptionalPreds.empty();
       if (Block.StartAddr == Func.Entry || Block.Preds.empty() ||
           !Block.ExceptionalPreds.empty() ||
           rootWithin(Func.ModuleAnalysisRoots) ||
           rootWithin(CurrentImg->CodeRefTargets))
-        seed(Block.Id, {});
+        seed(Block.Id, CallBoundary ? Tags{0, 0xff, 0} : Tags{});
     }
     auto solve = [&]() {
       while (!Work.empty() && Budget) {

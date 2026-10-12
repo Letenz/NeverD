@@ -212,13 +212,15 @@ TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
-      for (unsigned Scenario = 0; Scenario < 9; ++Scenario) {
+      for (unsigned Scenario = 0; Scenario < 10; ++Scenario) {
         std::vector<uint8_t> Bytes;
-        const bool Accepted =
-            Scenario == 0 || Scenario == 4 || Scenario == 6 || Scenario == 7;
-        if (Scenario != 1)
+        // Scenarios 1 and 9 start at the function boundary, whose calling
+        // convention empties the register stack, as compiled FILD relies on.
+        const bool Accepted = Scenario == 0 || Scenario == 1 || Scenario == 4 ||
+                              Scenario == 6 || Scenario == 7;
+        if (Scenario != 1 && Scenario != 9)
           Bytes = {0xdb, 0xe3}; // fninit authenticates empty tags
-        if (Scenario == 2 || Scenario == 3)
+        if (Scenario == 2 || Scenario == 3 || Scenario == 9)
           for (unsigned I = 0; I < 8; ++I)
             Bytes.insert(Bytes.end(), {0xd9, 0xe8}); // fill all slots
         if (Scenario == 3)
