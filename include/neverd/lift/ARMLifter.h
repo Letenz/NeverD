@@ -25,7 +25,14 @@ public:
   explicit ARMLifter(Arch TargetArch,
                      InstructionMode SourceMode = InstructionMode::Default);
 
-  void lift(const cs_insn *Insn, std::vector<LowOp> &Ops);
+  /// Lift \p Insn.  \p UnrelocatedObjectInstruction says no relocation of an
+  /// unlinked object writes it, so the immediates it moves are numbers.
+  void lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
+            bool UnrelocatedObjectInstruction = false);
+
+  /// Whether the instruction being lifted moves only numbers: an unlinked
+  /// object's instruction that no relocation writes.
+  bool movesNumbers() const { return MovesNumbers; }
 
   void setStrict(bool S) { Strict = S; }
   bool isStrict() const { return Strict; }
@@ -169,6 +176,7 @@ private:
   Arch TargetArch;
   InstructionMode SourceMode = InstructionMode::Default;
   bool Strict = true;
+  bool MovesNumbers = false;
 };
 
 } // namespace neverd
