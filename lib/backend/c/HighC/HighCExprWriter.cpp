@@ -1902,6 +1902,25 @@ std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)
     return exprStr(E);
+  // A view wider than its source extends it, with zeros or its sign.  The
+  // source's text says so only where C's own conversion to the wide type
+  // extends the same way: zeros for an unsigned source, its sign for a
+  // signed one.  A zero-extended signed source keeps the extension's text.
+  if (P->Type && E.Type && P->Type->Size < E.Type->Size) {
+    bool Zero = false, Sign = false;
+    for (const HighExpr *Cur = &E; Cur && Cur != P;
+         Cur = Cur->Operands.empty() ? nullptr : Cur->Operands[0].get())
+      if (Cur->Kind == ExprKind::UnaryOp &&
+          (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT) &&
+          Cur->Operands.size() == 1 && Cur->Operands[0] &&
+          Cur->Operands[0]->Type && Cur->Type &&
+          Cur->Operands[0]->Type->Size < Cur->Type->Size)
+        (Cur->Op == NdOp::INT_ZEXT ? Zero : Sign) = true;
+    const bool SourceSigned =
+        P->Type->Kind == NdTypeKind::Int && P->Type->IsSigned;
+    if ((Zero && Sign) || (Zero && SourceSigned) || (Sign && !SourceSigned))
+      return exprStr(E);
+  }
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi ||
       P->Kind == ExprKind::Const || P->Kind == ExprKind::Load)
     return exprStr(*P);

@@ -855,6 +855,27 @@ __attribute__((target("avx2"))) int permd(int a) {
                             "permd", {"permd"}, {0, 1, -1, 0x4d, 77, 0x12345});
 }
 
+// `xor edx, edx; div rsi` divides the zero-extended rax.  The guard that
+// traps where the quotient does not fit took the dividend's signed source,
+// so a dividend with its top bit set extended by its sign and trapped.
+TEST_F(X86_64_HighCIntrinsics, AnUnsignedDivisionGuardZeroExtends) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+long udivide(long a, long b) __attribute__((noinline));
+int quotient(int a) {
+  return (int)udivide((long)(0xFFFFFFFF00000000ul ^ (unsigned)a),
+                      (long)((a & 0xFF) + 1));
+}
+long udivide(long a, long b) {
+  unsigned long ua = (unsigned long)a, ub = (unsigned long)b;
+  if (ub == 0)
+    return 0;
+  return (long)(ua / ub);
+}
+)C",
+                            "quotient", {"quotient", "udivide"},
+                            {0, 1, -1, 0x7F, 0x12345678});
+}
+
 // MULSD and ADDSS read their constant-pool operand through the address they
 // take, so each constant is the double or float the instruction reads.
 TEST_F(X86_64_HighCIntrinsics, ConstantPoolOperandsKeepTheirWidth) {
