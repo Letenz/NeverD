@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../lib/backend/c/LLVMC/LLVMCFrameLayout.h"
+#include "../../../lib/backend/c/pass/LLVMC/LLVMCBitTests.h"
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCCommonBranches.h"
 #include "gtest/gtest.h"
 
@@ -3180,6 +3181,222 @@ int main(void) {
 )c";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, PackedBitConditionsPreserveWordStoresAndProducerEffects) {
+  using namespace llvm;
+  LLVMContext Context;
+  Module Module("packed-condition-effects", Context);
+  Module.setDataLayout("e-p:64:64");
+  Module.setTargetTriple(Triple(sys::getDefaultTargetTriple()));
+  auto *I64 = Type::getInt64Ty(Context);
+  auto *Ptr = PointerType::getUnqual(Context);
+  auto *Observe =
+      Function::Create(FunctionType::get(I64, {I64, Ptr}, false),
+                       GlobalValue::ExternalLinkage, "bit_observe", Module);
+  auto *Mutate = Function::Create(
+      FunctionType::get(Type::getVoidTy(Context), {Ptr}, false),
+      GlobalValue::ExternalLinkage, "bit_mutate", Module);
+  SmallVector<Function *, 28> Functions;
+  SmallVector<CondBrInst *, 28> Branches;
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    for (unsigned Mode = 0; Mode != 7; ++Mode) {
+      auto *F = Function::Create(
+          FunctionType::get(I64, {I64, I64, Ptr}, false),
+          GlobalValue::ExternalLinkage,
+          "bit_reference_" + std::to_string(Functions.size()), Module);
+      Functions.push_back(F);
+      IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+      auto *Word = B.getIntNTy(Width);
+      auto *Loaded = B.CreateLoad(I64, F->getArg(2), true, "captured_word");
+      auto *X = B.CreateZExtOrTrunc(B.CreateXor(F->getArg(0), Loaded), Word);
+      auto *Y = B.CreateZExtOrTrunc(
+          B.CreateCall(Observe, {F->getArg(1), F->getArg(2)}), Word);
+      auto *Eq = B.CreateICmpEQ(X, Y);
+      auto *Less = B.CreateICmpULT(X, Y);
+      auto *SignedGreater = B.CreateICmpSGT(X, Y);
+      auto *SignedLess = B.CreateICmpSLT(X, Y);
+      auto Constant = [&](uint64_t V) { return ConstantInt::get(Word, V); };
+      Value *Packed = B.CreateZExt(Eq, Word);
+      Packed =
+          B.CreateOr(Packed, B.CreateSelect(Less, Constant(2), Constant(0)));
+      Packed = B.CreateOr(
+          Packed, B.CreateSelect(SignedGreater, Constant(0), Constant(4)));
+      Packed = B.CreateOr(
+          Packed, B.CreateAnd(B.CreateSExt(SignedLess, Word), Constant(8)));
+      Packed =
+          B.CreateOr(Packed, B.CreateAnd(B.CreateLShr(X, Constant(Width - 5)),
+                                         Constant(16)));
+      Packed =
+          B.CreateOr(Packed, B.CreateAnd(B.CreateAShr(X, Constant(Width - 6)),
+                                         Constant(32)));
+      Packed = B.CreateOr(
+          Packed, B.CreateXor(B.CreateShl(B.CreateZExt(Eq, Word), Constant(6)),
+                              Constant(64)));
+      auto *Output = B.CreateGEP(I64, F->getArg(2), B.getInt64(1));
+      B.CreateStore(B.CreateZExtOrTrunc(Packed, I64), Output, true);
+      B.CreateCall(Mutate, {F->getArg(2)});
+      Value *Condition;
+      if (Mode == 2) {
+        Condition =
+            B.CreateTrunc(B.CreateLShr(Packed, Constant(4)), B.getInt1Ty());
+      } else {
+        const uint64_t Masks[] = {2, 4, 0, 8, 64, 1, 32};
+        const uint64_t Mask = Masks[Mode];
+        auto *Masked = B.CreateAnd(Constant(Mask), Packed);
+        Condition = Mode == 1   ? B.CreateICmpNE(Constant(Mask), Masked)
+                    : Mode == 4 ? B.CreateICmpNE(Masked, Constant(0))
+                    : Mode == 5 ? B.CreateICmpEQ(Masked, Constant(Mask))
+                                : B.CreateICmpEQ(Masked, Constant(0));
+      }
+      auto *True = BasicBlock::Create(Context, "true", F);
+      auto *False = BasicBlock::Create(Context, "false", F);
+      Branches.push_back(B.CreateCondBr(Condition, True, False));
+      B.SetInsertPoint(True);
+      B.CreateRet(B.getInt64(0xfedcba9876543210ULL));
+      B.SetInsertPoint(False);
+      B.CreateRet(B.getInt64(0x1234567800000001ULL));
+    }
+  }
+  ASSERT_FALSE(verifyModule(Module, &errs()));
+  std::string Reference, Original;
+  raw_string_ostream ReferenceOS(Reference), OriginalOS(Original);
+  Module.print(ReferenceOS, nullptr);
+  for (unsigned I = 0; I != Functions.size(); ++I)
+    Functions[I]->setName("bit_projected_" + std::to_string(I));
+  Module.print(OriginalOS, nullptr);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, Options));
+  std::string Unchanged;
+  raw_string_ostream UnchangedOS(Unchanged);
+  Module.print(UnchangedOS, nullptr);
+  EXPECT_EQ(Original, Unchanged);
+  for (unsigned I = 0; I != Functions.size(); ++I) {
+    SCOPED_TRACE(I);
+    ASSERT_TRUE(neverd::llvmc::simplifyBitTests(*Functions[I]));
+    auto *Condition = dyn_cast<ICmpInst>(Branches[I]->getCondition());
+    ASSERT_NE(Condition, nullptr);
+    if ((I % 7 == 2 || I % 7 == 6) && I / 7 < 3) {
+      // Truncation exposes a narrow sign bit in the original wide SSA value.
+      // Its mask is required; the packed flags must no longer feed the test.
+      auto *Masked = dyn_cast<BinaryOperator>(Condition->getOperand(0));
+      ASSERT_NE(Masked, nullptr);
+      EXPECT_EQ(Masked->getOpcode(), Instruction::And);
+      EXPECT_EQ(cast<ConstantInt>(Masked->getOperand(1))->getZExtValue(),
+                uint64_t(1) << ((8u << (I / 7)) - 1));
+      EXPECT_EQ(cast<BinaryOperator>(Masked->getOperand(0))->getOpcode(),
+                Instruction::Xor);
+    } else {
+      EXPECT_FALSE(
+          isa<BinaryOperator>(Condition->getOperand(0)) &&
+          cast<BinaryOperator>(Condition->getOperand(0))->getOpcode() ==
+              Instruction::And);
+    }
+  }
+  ASSERT_FALSE(verifyModule(Module, &errs()));
+  Source += R"c(
+static unsigned calls;
+uint64_t bit_observe(uint64_t y,void *out) {
+  ++calls; ((uint64_t *)out)[0] ^= UINT64_C(0xfedc123456780001); return y;
+}
+void bit_mutate(void *out) { ++calls; ((uint64_t *)out)[0] += 0x713; }
+)c";
+  for (unsigned I = 0; I != Functions.size(); ++I)
+    Source += "extern uint64_t bit_reference_" + std::to_string(I) +
+              "(uint64_t,uint64_t,void*);\n";
+  Source += R"c(
+int main(void) {
+  const uint64_t edges[]={0,1,0x7f,0x80,0x7fff,0x8000,0x7fffffff,0x80000000,
+                         UINT64_C(1)<<63,UINT64_MAX};
+  uint64_t seed=1;
+  for(unsigned k=0;k<1024;k++) {
+    seed=seed*UINT64_C(6364136223846793005)+1;
+    uint64_t x=k<100 ? edges[k/10]:seed;
+    uint64_t y=k<100 ? edges[k%10]:(seed^(seed>>29));
+)c";
+  for (unsigned I = 0; I != Functions.size(); ++I) {
+    auto Index = std::to_string(I);
+    Source += "{ uint64_t a[2]={k,0},b[2]={k,0}; calls=0; uint64_t "
+              "expected=bit_reference_" +
+              Index +
+              "(x,y,a); if(calls!=2) return 1; calls=0; uint64_t "
+              "actual=bit_projected_" +
+              Index +
+              "(x,y,b); if(calls!=2 || expected!=actual || a[0]!=b[0] || "
+              "a[1]!=b[1]) return 2; }\n";
+  }
+  Source += "} return 0; }\n";
+  for (StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+}
+
+TEST(LLVMCValues, BitProjectionRetainsOpaqueValuesAndHonorsWorkBounds) {
+  using namespace llvm;
+  for (unsigned Case = 0; Case != 8; ++Case) {
+    LLVMContext Context;
+    Module Module("bit-boundaries", Context);
+    auto *I64 = Type::getInt64Ty(Context);
+    auto *F = Function::Create(
+        FunctionType::get(Type::getInt1Ty(Context), {I64, I64}, false),
+        GlobalValue::ExternalLinkage, "test", Module);
+    IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+    Value *Packed = B.CreateSelect(B.CreateICmpULT(F->getArg(0), F->getArg(1)),
+                                   B.getInt64(128), B.getInt64(0));
+    if (Case == 0)
+      Packed = B.CreateFreeze(Packed);
+    if (Case == 1)
+      Packed = B.CreateAdd(Packed, F->getArg(0));
+    if (Case == 2)
+      Packed = B.CreateShl(Packed, F->getArg(1));
+    if (Case == 3)
+      Packed = B.CreateShl(Packed, B.getInt64(64));
+    if (Case == 4)
+      Packed = B.CreateOr(Packed, F->getArg(0));
+    if (Case == 5)
+      Packed = B.CreateSelect(B.CreateICmpEQ(F->getArg(0), B.getInt64(0)),
+                              Packed, F->getArg(1));
+    if (Case == 6)
+      Packed = B.CreateOr(Packed, PoisonValue::get(I64));
+    B.CreateRet(B.CreateICmpEQ(
+        B.CreateAnd(Packed, B.getInt64(Case == 7 ? 129 : 128)), B.getInt64(0)));
+    ASSERT_FALSE(verifyModule(Module, &errs()));
+    std::string Before, After;
+    raw_string_ostream BeforeOS(Before), AfterOS(After);
+    Module.print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::simplifyBitTests(*F)) << Case;
+    Module.print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After) << Case;
+  }
+  for (unsigned Depth : {40u, 80u}) {
+    LLVMContext Context;
+    Module Module("shared-bit-dag", Context);
+    auto *F =
+        Function::Create(FunctionType::get(Type::getInt1Ty(Context),
+                                           {Type::getInt1Ty(Context)}, false),
+                         GlobalValue::ExternalLinkage, "test", Module);
+    IRBuilder<NoFolder> B(BasicBlock::Create(Context, "entry", F));
+    Value *Packed =
+        B.CreateSelect(F->getArg(0), B.getInt64(128), B.getInt64(0));
+    for (unsigned I = 0; I < Depth; ++I)
+      Packed = B.CreateOr(Packed, Packed);
+    auto *Return = B.CreateRet(
+        B.CreateICmpNE(B.CreateAnd(Packed, B.getInt64(128)), B.getInt64(0)));
+    std::string Before, After;
+    raw_string_ostream BeforeOS(Before), AfterOS(After);
+    Module.print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::simplifyBitTests(*F, 0));
+    EXPECT_FALSE(
+        neverd::llvmc::simplifyBitTests(*F, F->getInstructionCount() + 2));
+    Module.print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After);
+    EXPECT_EQ(neverd::llvmc::simplifyBitTests(*F), Depth == 40);
+    if (Depth == 40)
+      EXPECT_EQ(Return->getReturnValue(), F->getArg(0));
+    ASSERT_FALSE(verifyModule(Module, &errs()));
+  }
 }
 
 TEST(LLVMCValues, ReturnOnlyJoinsKeepEffectsAndFullStatusOnEachEdge) {

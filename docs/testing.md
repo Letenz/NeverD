@@ -1627,6 +1627,13 @@ joins, exception personalities and address-taken return blocks are refused.
 Concise GEP tests exercise 4096 address calculations per width and optimization
 level, including negative narrow indices, scaled wide indices and wraparound
 in both 32- and 64-bit address domains, with undefined-behavior traps.
+Single-bit condition tests compare 28,672 cases per O0/O2 level against
+independently compiled LLVM at 8/16/32/64 bits, including signed and unsigned
+comparisons, inverted flags, narrow sign bits, shifts and boolean truncation.
+Volatile word reads/writes and intervening observer calls must retain their
+values and counts, and caller IR must stay unchanged. Negative and budget cases
+retain freeze, variable/oversized shifts, arithmetic, independent bit sources,
+poison, multi-bit masks and overly deep graphs; shared DAGs remain bounded.
 
 ## Interpreter recovery checks
 

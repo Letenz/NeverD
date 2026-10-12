@@ -1247,6 +1247,13 @@ promotion when an incomplete native exception contract excludes optimization.
 The C emitter clones verified LLVM IR and removes dead computations before
 rendering, including in `--no-opt` mode. This source normalization preserves
 observable calls and ordered memory accesses without modifying the cached IR.
+`LLVMCBitTests` projects a single tested integer bit through casts, fixed shifts,
+selects and bitwise assembly to its existing SSA predicate. Full-word users
+retain the original value; loads, calls, PHIs, freeze and unsupported arithmetic
+are opaque leaves. Width and polarity remain explicit, including narrow sign
+bits. Memoized queries, depth limits and a shared work budget bound the rewrite;
+an incomplete query establishes no replacement. This source-only normalization
+does not infer memory values, resolve calls or add recovery evidence.
 Return-only joins select their PHI operands on the original incoming edges in
 that clone. The writer can then print an edge-owned `return` directly, avoiding
 a shared status temporary and jump label. This bounded normalization duplicates

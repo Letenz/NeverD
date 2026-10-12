@@ -19,6 +19,7 @@
 #include "../FloatingPointContract.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
+#include "../pass/LLVMC/LLVMCBitTests.h"
 #include "../pass/LLVMC/LLVMCCommonBranches.h"
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
@@ -1589,6 +1590,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
         promoteCallResultHomes(Function);
   for (auto &Function : *Projection)
     if (!ProjectionOnly || &Function == ProjectionOnly) {
+      llvmc::simplifyBitTests(Function);
       llvmc::factorCommonBranchTests(Function);
       llvmc::factorLoopPhiExpressions(Function);
       llvmc::distributeReturnEdges(Function);
