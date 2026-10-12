@@ -554,13 +554,18 @@ const std::array<MaskNativeFunction, 64> &maskNativeTable(unsigned Control,
         nativeMaskTable<C, W>(std::make_index_sequence<64>{});                 \
     return T;                                                                  \
   }
-  TABLE(0, 16)
-  TABLE(1, 16)
-  TABLE(2, 16)
-  TABLE(3, 16)
-  TABLE(4, 16) TABLE(5, 16) TABLE(6, 16) TABLE(7, 16) TABLE(4, 32) TABLE(5, 32)
+  TABLE(0, 16);
+  TABLE(1, 16);
+  TABLE(2, 16);
+  TABLE(3, 16);
+  TABLE(4, 16);
+  TABLE(5, 16);
+  TABLE(6, 16);
+  TABLE(7, 16);
+  TABLE(4, 32);
+  TABLE(5, 32);
 #undef TABLE
-      llvm_unreachable("invalid native comparison form");
+  llvm_unreachable("invalid native comparison form");
 }
 #endif
 TEST(MaskCompareConcrete, EveryPredicateMaskAndInputControlMatchesNative) {
