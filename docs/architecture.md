@@ -33,13 +33,17 @@ identity allows machine- and section-checked inspection without changing the
 session. Present mismatched or ambiguous identities fail. After explicit user
 confirmation, `PDBDebugContext::loadUserSelected` gives the selected PDB the
 same supported analysis authority as a matching companion while retaining
-its unverified identity. The C API's `neverd_session_load_pdb_ex` and explicit
-debug-search policy carry that choice; automatic discovery remains strict.
+its unverified identity. The C API's `neverd_session_load_pdb_ex` and
+`neverd_session_set_pdb_path_ex` (the CLI's `--pdb-unverified`) carry that
+choice; automatic discovery remains strict.
 Imports publish through the session's transactional PDB loader, retire old
 analysis before replacing its image/debug owners, and retain user edits. File
-stamps and the analysis mode bind the PDB to saved projects, owner snapshots
-and their read-only analysis replicas. Older display-only selections remain
-presentation aliases until the user selects the PDB again for analysis.
+stamps and the analysis mode bind the PDB to owner snapshots and their
+read-only analysis replicas. A saved project checks a matching PDB again by
+its identity and a confirmed one by its stamp; a selection that no longer
+loads opens the project without it, with a warning. Older display-only
+selections remain presentation aliases until the user selects the PDB again
+for analysis.
 
 ## System boundary
 
