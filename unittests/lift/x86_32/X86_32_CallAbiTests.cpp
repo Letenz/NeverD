@@ -331,3 +331,30 @@ int narrowarr(int a) {
 )C",
                        "narrowarr", {"narrowarr"});
 }
+
+// The same idiom on the high words, `punpckhwd %xmm1, %xmm2; psrad $16`,
+// takes XMM2's incoming words, which can carry an argument, and shifts
+// them out of every lane: a shift moves bytes, and reads none it drops.
+TEST_F(X86_32_CallAbi, BytesAShiftDropsAreNotRead) {
+  HostFlags = {"-m32", "-msse2"};
+  expectRunsLikeSource(R"C(
+int ssum16(int a) {
+  short v[13];
+  unsigned s = (unsigned)a | 1u;
+  for (int i = 0; i < 13; i++) {
+    v[i] = (short)(s >> 4);
+    s = s * 1103515245u + 12345u;
+  }
+  long long acc = 0;
+  for (int r = 0; r < 60; r++) {
+    int sum = 0;
+    for (int i = 0; i < 13; i++)
+      sum += (int)v[i];
+    acc = acc * 131 + sum;
+    v[r % 13] ^= (short)r;
+  }
+  return (int)(unsigned)(acc ^ (acc >> 32));
+}
+)C",
+                       "ssum16", {"ssum16"});
+}
