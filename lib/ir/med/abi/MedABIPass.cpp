@@ -1393,13 +1393,12 @@ void recoverCallAbi(
         // clang parked there) must NOT be filtered out as a register save:
         // every SP-relative store in the call's own block is an outgoing
         // argument.
-        if (!CI.IsIndirect && Prev.Inputs[1].Kind == MedVar::Reg &&
-            TRI.isCalleeSaveReg(Prev.Inputs[1].RegOff) &&
-            Prev.Inputs[1].SSAVer == 0) {
+        if (!CI.IsIndirect && isIncomingRegisterSave(TRI, Prev.Inputs[1])) {
           // A prologue register save spills the callee-save register's
-          // *incoming* (live-in, SSA version 0) value.  A non-zero version is a
-          // computed or loop-carried value that merely lives in a callee-save
-          // register, so it is a real outgoing argument — never filter those.
+          // *incoming* (live-in, SSA version 0) value, as `push {r11, lr}`
+          // spills the return address.  A non-zero version is a computed or
+          // loop-carried value that merely lives in a callee-save register, so
+          // it is a real outgoing argument — never filter those.
           uint64_t StoredReg = Prev.Inputs[1].RegOff;
           bool WasRedefined = false;
           for (int R = J - 1; R >= 0; --R) {

@@ -227,6 +227,10 @@ TEST_F(SourcePatchPE, WritablePointersHaveSeparateStorageAndBaseRelocations) {
     Metadata |= *Name == ".ndmeta";
   }
   EXPECT_TRUE(Data && Metadata);
+#if defined(_WIN32) && defined(_M_X64)
+  EXPECT_EQ(executePE({Original.string()}), 3);
+  EXPECT_EQ(executePE({Output.string()}), 44);
+#endif
 }
 
 TEST_F(SourcePatchPE, WrongEHModelIsRejectedBeforeWindowsCodegen) {

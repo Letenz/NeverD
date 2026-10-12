@@ -65,13 +65,21 @@ judge each change in the real window.
   tints for thunks and library functions carry about 40% less chroma than
   their earlier values, so they mark rows without competing with the text.
   Legend swatches are 8-pixel squares with a 2-pixel radius.
-- On Linux the workbench draws its own frame, after Visual Studio Code's
-  custom title bar (`TitleBar`, `WindowFrame`): the menus sit in a 35-pixel
-  title bar on the menu bar's surface, a command center names the open file
-  and opens the command palette, and the 46-pixel window controls take a light
-  wash on hover with red behind Close. The bar dims while the window is
-  inactive. Draw the frame's glyphs and shadow from `ChromeColors.def` roles
+- The workbench draws its own title bar, after Visual Studio Code's custom
+  title bar (`TitleBar`, `WindowFrame`): the menus sit in a 35-pixel title bar
+  on the menu bar's surface, a command center names the open file and opens
+  the command palette, and the 46-pixel window controls take a light wash on
+  hover with red behind Close. The bar dims while the window is inactive.
+  Dialogs take a title bar of their own, with the title in the middle and only
+  the buttons their window flags ask for (`WindowFrame::frameDialogs`). Draw
+  the bar's glyphs and the Wayland shadow from `ChromeColors.def` roles
   instead of borrowing the platform's.
+- Keep each system's own frame where it does more than draw: Linux windows
+  are frameless and draw their edges, but Windows keeps its frame for snapping,
+  shadows and resizing and loses only the caption, and macOS keeps its frame
+  and traffic lights under a transparent 28-point title bar, with the menus in
+  the menu bar. Each platform's part lives in one file under `app/platform`
+  (`WindowFramePlatform.h`).
 - Keep the signature elements. The toolbar's colored duotone icons stay: the
   user kept them over a single-accent recolor and an outline variant, and had
   earlier rejected all-gray icons as lifeless. Refine spacing, weight, and
@@ -127,9 +135,10 @@ Content-heavy dialogs should support ordinary desktop resizing unless the task
 requires fixed geometry. Set a useful initial size and a content-based minimum
 instead of locking the whole dialog with `setFixedSize`.
 
-- Resize from the window's edges and Qt's resize grip. A window that draws its
-  own frame resizes from every edge and corner, starting four pixels inside
-  its visible edge, and under Wayland from its shadow band too. Let additional
+- Resize from the window's edges and Qt's resize grip. A frameless Linux
+  window resizes from every edge and corner, starting four pixels inside its
+  visible edge, and under Wayland from its shadow band too; on Windows the
+  system frame resizes all but the top edge. Let additional
   width expose more content and additional height expose more rows. Stable
   navigation or action panes can retain their width while the content pane
   expands.

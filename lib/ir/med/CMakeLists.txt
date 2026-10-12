@@ -65,3 +65,9 @@ add_neverd_component_library(NeverDIRMed
   Loader
   Sigs
 )
+
+# A class/struct mismatch in a forward declaration changes MSVC's decorated
+# names between include orders and can leave the shared engine unlinked.
+if(MSVC)
+  target_compile_options(NeverDIRMed PRIVATE /we4099)
+endif()

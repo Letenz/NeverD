@@ -145,3 +145,44 @@ static double d10(double a, double b, double c, double d, double e, double f,
 )C",
       "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
 }
+
+// Twelve variadic ints: x1-x7 and five on the stack, which the callee's
+// va_arg walk reads in place above its frame.  The callee takes them as
+// trailing parameters, seeded where the walk reads them.
+TEST_F(AArch64_HighCExecution, AVariadicCalleeReadsItsStackArgumentsInPlace) {
+  expectRunsLikeSource(R"C(
+int vmany(int n, ...) __attribute__((noinline));
+int vmany_e(int x) {
+  unsigned u = (unsigned)x;
+  return vmany(12, (int)u, (int)(u + 1u), (int)(u * 2u), (int)(u ^ 3u),
+               (int)(u - 4u), (int)(u * 5u), (int)(u + 6u), (int)(u ^ 7u),
+               (int)(u - 8u), (int)(u * 9u), (int)(u + 10u), (int)(u ^ 11u));
+}
+int vmany(int n, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 131 + __builtin_va_arg(ap, int);
+  __builtin_va_end(ap);
+  return s;
+}
+)C",
+                       "vmany_e", {"vmany_e", "vmany"});
+}
+
+// FCVTZS from a half register converts the half's value, which a float
+// holds exactly: the C converts it through float with the same saturation.
+TEST_F(AArch64_HighCExecution, AHalfConvertsToAnIntegerThroughFloat) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-march=armv8.2-a+fp16"}, R"C(
+int halfint(int a) {
+  unsigned short u = (unsigned short)a;
+  _Float16 h;
+  __builtin_memcpy(&h, &u, sizeof h);
+  return (int)h;
+}
+)C",
+      "halfint", {"halfint"},
+      {0, 0x0001, 0x3C00, 0x4300, 0xC100, 0x5640, 0x7BFF});
+}

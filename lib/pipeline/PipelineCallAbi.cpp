@@ -651,6 +651,16 @@ void matchCallsToCalleeSignatures(const BinaryImage &Img,
         continue;
       if (CI.Args.size() > Callee.Params.size())
         CI.Args.resize(Callee.Params.size());
+      // The callee reads the scalar in an argument register's low lane: an
+      // SSE register's other bytes, which a scalar instruction leaves as they
+      // were, pass nothing.
+      CI.ArgReadBytes.assign(CI.Args.size(), 0);
+      for (size_t K = 0; K < CI.Args.size(); ++K)
+        if (const MedVar &Arg = CI.Args[K]; Arg.Kind == MedVar::Reg)
+          if (const auto Scalar = Callee.FPParamScalarBytes.find(Arg.RegOff);
+              Scalar != Callee.FPParamScalarBytes.end() &&
+              Scalar->second < Arg.Size)
+            CI.ArgReadBytes[K] = Scalar->second;
     }
 }
 
