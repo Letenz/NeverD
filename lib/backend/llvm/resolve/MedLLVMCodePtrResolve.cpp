@@ -94,20 +94,21 @@ llvm::Constant *MedLLVMEmitter::resolveLiftedFunctionInterior(va_t Address) {
   // The offset fallback is justified by COFF function extents. Other
   // formats require an exact lifted block identity for an interior target.
   if (!Mod || !Ctx || TargetFormat != BinaryFormat::COFF ||
-      EmittedFuncCodeEnds.empty())
+      EmittedFuncCodeRanges.empty())
     return nullptr;
   std::optional<va_t> BestEntry;
   va_t BestSpan = ~va_t{0};
-  for (const auto &[Entry, End] : EmittedFuncCodeEnds) {
-    if (Address < Entry || Address >= End)
-      continue;
-    const va_t Span = End - Entry;
-    if (!BestEntry || Span < BestSpan ||
-        (Span == BestSpan && Entry > *BestEntry)) {
-      BestEntry = Entry;
-      BestSpan = Span;
+  for (const auto &[Entry, Ranges] : EmittedFuncCodeRanges)
+    for (const auto &[Begin, End] : Ranges) {
+      if (Address < Begin || Address >= End)
+        continue;
+      const va_t Span = End - Begin;
+      if (!BestEntry || Span < BestSpan ||
+          (Span == BestSpan && Entry > *BestEntry)) {
+        BestEntry = Entry;
+        BestSpan = Span;
+      }
     }
-  }
   if (!BestEntry && Img) {
     for (const auto &Rec : Img->COFFPDataRecords) {
       const va_t Begin = Img->Base + Rec.BeginRVA;
@@ -2688,6 +2689,15 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
           Identity,
           sizeToType(V.Size > 0 ? V.Size : static_cast<uint16_t>(PointerSize)),
           RequireCodeRole ? "icall.target" : "code.value");
+    // A string literal among the code is data a symbol names.
+    if (!RequireCodeRole)
+      if (llvm::Constant *Literal =
+              resolveSymbolStringLiteral(*Proof.CommonTarget))
+        return Builder.CreatePtrToInt(
+            Literal,
+            sizeToType(V.Size > 0 ? V.Size
+                                  : static_cast<uint16_t>(PointerSize)),
+            "literal");
   }
 
   if (Proof.AllFunctionEntries && Proof.SawFunctionIdentity &&

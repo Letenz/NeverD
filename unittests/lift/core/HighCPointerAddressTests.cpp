@@ -32,6 +32,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
@@ -41,6 +42,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/Object/COFF.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
@@ -48,6 +50,7 @@
 #include "llvm/Support/ModRef.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/Win64EH.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -34883,14 +34886,15 @@ std::string dumpMedBlockRanges(const std::vector<MedFunc> &Funcs) {
   return Out;
 }
 
-std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true) {
+std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true,
+                              DebugContext *Dbg = nullptr) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.NoOpt = NoOpt;
   Opts.LiftMode = true;
   Opts.OnlyFunctionEntries.insert(Entry);
-  auto Result = Pipeline().run(Img, Ctx, Opts);
+  auto Result = Pipeline().run(Img, Ctx, Opts, Dbg);
   if (!Result.Success || !Result.LlvmModule)
     return Result.Error;
   llvm::Function *Keep = nullptr;
@@ -34916,8 +34920,7 @@ std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true) {
   Options.TheArch = Img.Arch;
   Options.Format = Img.Format;
   Options.Image = &Img;
-  if (!LLVMCEmitter().emit(*Result.LlvmModule, OS, Options, nullptr, &Img,
-                           Keep))
+  if (!LLVMCEmitter().emit(*Result.LlvmModule, OS, Options, Dbg, &Img, Keep))
     return {};
   OS.flush();
   return Source;
@@ -43477,6 +43480,169 @@ TEST(HighCPointerAddresses, ColdFragmentScopeStructuresItsTry) {
   const std::string Unchained = highcOnlyFunction(Build(false), Entry);
   EXPECT_NE(Unchained.find("unstructured SEH region"), std::string::npos)
       << Unchained;
+}
+
+/// An x64 PE laid out as MSVC lays out a kernel's code: the function at
+/// 0x140001000 jumps to a cold part at 0x140001100, which passes the function
+/// at 0x140001180 the literal "Cold path\n" at 0x140001080, between the two.
+/// The cold part's unwind record chains to the function's.
+std::vector<uint8_t> makeColdPartLiteralPE() {
+  constexpr uint32_t Function = 0x1000, Literal = 0x1080, Cold = 0x1100,
+                     Print = 0x1180, UnwindInfo = 0x2000, Chained = 0x2010,
+                     Records = 0x3000;
+  constexpr size_t PE = 0x80, FileHeader = PE + 4,
+                   Optional =
+                       FileHeader + sizeof(llvm::object::coff_file_header),
+                   Directories =
+                       Optional + sizeof(llvm::object::pe32plus_header),
+                   DirectoryCount = 16,
+                   SectionHeaders =
+                       Directories +
+                       DirectoryCount * sizeof(llvm::object::data_directory);
+  std::vector<uint8_t> Bytes(0x800, 0);
+  const auto Write = [&](size_t Offset, const auto &Object) {
+    std::memcpy(Bytes.data() + Offset, &Object, sizeof(Object));
+  };
+  // Each section is 0x200 bytes, at RVA 0x1000 * (I + 1) and file offset
+  // 0x200 * (I + 1).
+  const auto FileOffset = [](uint32_t RVA) {
+    return 0x200 * (RVA / 0x1000) + RVA % 0x1000;
+  };
+  const auto Code = [&](uint32_t RVA, std::initializer_list<uint8_t> Values) {
+    std::copy(Values.begin(), Values.end(), Bytes.begin() + FileOffset(RVA));
+  };
+  const auto Rel32 = [&](uint32_t At, uint32_t Target) {
+    // The displacement ends its instruction.
+    Write(FileOffset(At), llvm::support::ulittle32_t(Target - (At + 4)));
+  };
+
+  llvm::object::dos_header DOS{};
+  DOS.Magic[0] = 'M';
+  DOS.Magic[1] = 'Z';
+  DOS.AddressOfNewExeHeader = PE;
+  Write(0, DOS);
+  std::memcpy(Bytes.data() + PE, "PE\0\0", 4);
+  llvm::object::coff_file_header File{};
+  File.Machine = llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
+  File.NumberOfSections = 3;
+  File.SizeOfOptionalHeader =
+      sizeof(llvm::object::pe32plus_header) +
+      DirectoryCount * sizeof(llvm::object::data_directory);
+  File.Characteristics = llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE |
+                         llvm::COFF::IMAGE_FILE_LARGE_ADDRESS_AWARE;
+  Write(FileHeader, File);
+  llvm::object::pe32plus_header Header{};
+  Header.Magic = llvm::COFF::PE32Header::PE32_PLUS;
+  Header.AddressOfEntryPoint = Function;
+  Header.ImageBase = 0x140000000;
+  Header.SectionAlignment = 0x1000;
+  Header.FileAlignment = 0x200;
+  Header.SizeOfImage = 0x4000;
+  Header.SizeOfHeaders = 0x200;
+  Header.Subsystem = llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_CUI;
+  Header.NumberOfRvaAndSize = DirectoryCount;
+  Write(Optional, Header);
+  llvm::object::data_directory Exceptions{};
+  Exceptions.RelativeVirtualAddress = Records;
+  Exceptions.Size = 2 * sizeof(llvm::Win64EH::RuntimeFunction);
+  Write(Directories +
+            llvm::COFF::EXCEPTION_TABLE * sizeof(llvm::object::data_directory),
+        Exceptions);
+  const std::pair<llvm::StringLiteral, uint32_t> Sections[] = {
+      {".text", llvm::COFF::IMAGE_SCN_CNT_CODE |
+                    llvm::COFF::IMAGE_SCN_MEM_READ |
+                    llvm::COFF::IMAGE_SCN_MEM_EXECUTE},
+      {".rdata", llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                     llvm::COFF::IMAGE_SCN_MEM_READ},
+      {".pdata", llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                     llvm::COFF::IMAGE_SCN_MEM_READ}};
+  for (size_t I = 0; I < std::size(Sections); ++I) {
+    llvm::object::coff_section Section{};
+    std::memcpy(Section.Name, Sections[I].first.data(),
+                Sections[I].first.size());
+    Section.VirtualSize = 0x200;
+    Section.VirtualAddress = 0x1000 * (I + 1);
+    Section.SizeOfRawData = 0x200;
+    Section.PointerToRawData = 0x200 * (I + 1);
+    Section.Characteristics = Sections[I].second;
+    Write(SectionHeaders + I * sizeof(Section), Section);
+  }
+
+  std::fill_n(Bytes.begin() + FileOffset(Function), 0x200, 0xcc);
+  Code(Function, {0x48, 0x83, 0xec, 0x28, // sub rsp, 28h
+                  0x85, 0xc9,             // test ecx, ecx
+                  0x0f, 0x85});           // jne cold
+  Rel32(Function + 8, Cold);
+  Code(Function + 12, {0x31, 0xc0,             // xor eax, eax
+                       0x48, 0x83, 0xc4, 0x28, // add rsp, 28h
+                       0xc3});                 // ret
+  std::memcpy(Bytes.data() + FileOffset(Literal), "Cold path\n", 11);
+  Code(Cold, {0x48, 0x8d, 0x0d}); // lea rcx, [rip + literal]
+  Rel32(Cold + 3, Literal);
+  Code(Cold + 7, {0xe8}); // call print
+  Rel32(Cold + 8, Print);
+  Code(Cold + 12, {0x48, 0x83, 0xc4, 0x28, // add rsp, 28h
+                   0xc3});                 // ret
+  Code(Print, {0x0f, 0xb6, 0x01,           // movzx eax, byte [rcx]
+               0xc3});                     // ret
+
+  // The function's unwind information: version 1, a four-byte prologue and
+  // its one code, `sub rsp, 28h` at offset 4.  The cold part's has no codes
+  // of its own and chains to the function's record.
+  const llvm::Win64EH::RuntimeFunction Body{
+      llvm::support::ulittle32_t(Function),
+      llvm::support::ulittle32_t(Function + 0x13),
+      llvm::support::ulittle32_t(UnwindInfo)};
+  const llvm::Win64EH::RuntimeFunction Part{
+      llvm::support::ulittle32_t(Cold), llvm::support::ulittle32_t(Cold + 17),
+      llvm::support::ulittle32_t(Chained)};
+  Code(UnwindInfo, {0x01, 0x04, 0x01, 0x00, 0x04,
+                    llvm::Win64EH::UOP_AllocSmall | (0x28 / 8 - 1) << 4});
+  Code(Chained, {0x01 | llvm::Win64EH::UNW_ChainInfo << 3, 0x00, 0x00, 0x00});
+  Write(FileOffset(Chained) + 4, Body);
+  Write(FileOffset(Records), Body);
+  Write(FileOffset(Records) + sizeof(Body), Part);
+  return Bytes;
+}
+
+TEST(LLVMCPointerAddresses, ALiteralBetweenAFunctionsPartsIsNoPartOfIt) {
+  // CcInsertIntoCleanSharedCacheMapList's shape: a cold part far below the
+  // function's body passes DbgPrint a literal MSVC placed between the two.
+  // The function's blocks run on to its cold part, but what lies between its
+  // parts is none of its code: the address is the literal the PDB names, and
+  // with no name LLVM emission refuses it rather than take it for a label of
+  // the function (`(uintptr_t)(sub_140001000) + 0x80`).
+  constexpr va_t Entry = 0x140001000, Literal = 0x140001080;
+  const std::vector<uint8_t> Bytes = makeColdPartLiteralPE();
+  auto Img = loadBinaryBuffer(llvm::MemoryBufferRef(
+      llvm::StringRef(reinterpret_cast<const char *>(Bytes.data()),
+                      Bytes.size()),
+      "cold-part-literal.exe"));
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+
+  const std::string Unnamed = llvmcOnlyFunction(*Img, Entry);
+  EXPECT_EQ(Unnamed.find("(sub_140001000) +"), std::string::npos) << Unnamed;
+  EXPECT_EQ(Unnamed.find("sub_140001000(uint32_t arg0) {"), std::string::npos)
+      << Unnamed;
+
+  // ntoskrnl's PDB keeps its publics apart, and names one only when asked
+  // about its address, as `--func` asks.
+  class PublicsDbg : public NullDebugContext {
+  public:
+    std::optional<DataObjectSym> resolveDataObject(va_t Addr) const override {
+      if (Addr != Literal)
+        return std::nullopt;
+      DataObjectSym Text;
+      Text.Name = "??_C@_0L@ABCDEFGH@Cold?5path?6@";
+      Text.Addr = Literal;
+      return Text;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  const std::string Named =
+      llvmcOnlyFunction(std::move(*Img), Entry, /*NoOpt=*/true, &Dbg);
+  EXPECT_NE(Named.find("\"Cold path\\n\""), std::string::npos) << Named;
+  EXPECT_EQ(Named.find("(sub_140001000) +"), std::string::npos) << Named;
 }
 
 TEST(HighCPointerAddresses, SplitScopeRangesFormOneTry) {

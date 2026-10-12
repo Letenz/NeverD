@@ -676,6 +676,7 @@ struct Session {
     for (const auto &[Addr, Name] : Img.getImportAddressNames())
       ImportMap.emplace_back(Addr, Name);
     MedLLVMEmitter Emitter;
+    Emitter.setDebugContext(Dbg.get());
     // Native source views need surviving instruction observations even when
     // this function contains no recognized library operation.
     Sources = std::make_shared<LLVMSourceMap>();

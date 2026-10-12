@@ -81,7 +81,8 @@ bool Pipeline::requiresSerialLLVMEmission(const std::vector<MedFunc> &Funcs,
 
 bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                                 const PipelineOptions &Opts,
-                                PipelineResult &Result) {
+                                PipelineResult &Result,
+                                const DebugContext *Dbg) {
   [[maybe_unused]] const char *ModeName = Opts.PatchMode ? "patch" : "lift";
   LLVM_DEBUG(llvm::dbgs() << "pipeline: " << ModeName
                           << " mode -- MedIR -> LLVM IR, skipping HighIR\n");
@@ -203,7 +204,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     LLVMEmissionResult Emission = emitLLVMSharded(
         Result.MedFuncs, Ctx, Img.Arch, ImportMap, Img, Img.abiFormat(),
         Opts.NoOpt, Workers, !Result.LibraryRecognitions.empty(),
-        Result.LibraryRecognitions);
+        Result.LibraryRecognitions, Dbg);
     Result.BackendUnhandledValueIntrinsics = Emission.UnhandledValueIntrinsics;
     Result.LLVMVerifierFailed = Emission.LLVMVerifierFailed;
     Result.LlvmModule = std::move(Emission.Module);
@@ -214,6 +215,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     }
   } else {
     MedLLVMEmitter MedEmitter;
+    MedEmitter.setDebugContext(Dbg);
     if (!Result.LibraryRecognitions.empty()) {
       Result.LLVMSources = std::make_shared<LLVMSourceMap>();
       MedEmitter.setSourceMap(Result.LLVMSources.get());
