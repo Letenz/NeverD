@@ -67,6 +67,9 @@ std::set<va_t> findFrameLocalLeafCallees(const std::vector<MedFunc> &Funcs,
 // \p CalleeIntRegs gives the integer argument registers, in order, of each
 // direct callee that takes them in another order than the convention's
 // (MedFunc::IntegerArgumentRegisters); a call to it passes them so.
+// \p VectorArgumentCallees marks the variadic callees that take every
+// argument register (MedFunc::takesVectorArgumentRegisters); a call to one
+// passes each register, zero where it sets none, before its stack arguments.
 // LowToMed runs before whole-program return types are known.  It can
 // therefore leave a scalar-FP call modeled as defining the integer return
 // register: when the result is read only by the next call's implicit XMM0/V0
@@ -92,7 +95,8 @@ void recoverCallAbi(
     std::map<va_t, bool> *CalleeIsVariadic = nullptr,
     const std::map<va_t, bool> *CalleeConsumesVaList = nullptr,
     const std::set<va_t> *FrameLocalLeafCallees = nullptr,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs = nullptr);
+    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs = nullptr,
+    const std::set<va_t> *VectorArgumentCallees = nullptr);
 
 /// The integer argument layout \p Func takes its register arguments in: its
 /// own register order (MedFunc::IntegerArgumentRegisters) where it has one,

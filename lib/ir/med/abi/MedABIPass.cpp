@@ -424,18 +424,19 @@ IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
   return Layout;
 }
 
-void recoverCallAbi(
-    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
-    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-    std::map<va_t, int> *CalleeTotalArity,
-    const std::map<va_t, int> *CalleeFPArity,
-    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-    const std::map<va_t, bool> *CalleeHasSret,
-    std::map<va_t, bool> *CalleeIsVariadic,
-    const std::map<va_t, bool> *CalleeConsumesVaList,
-    const std::set<va_t> *FrameLocalLeafCallees,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs) {
+void recoverCallAbi(MedFunc &Func, Arch TheArch,
+                    const std::map<va_t, std::string> &FuncNames,
+                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+                    std::map<va_t, int> *CalleeTotalArity,
+                    const std::map<va_t, int> *CalleeFPArity,
+                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+                    const std::map<va_t, bool> *CalleeHasSret,
+                    std::map<va_t, bool> *CalleeIsVariadic,
+                    const std::map<va_t, bool> *CalleeConsumesVaList,
+                    const std::set<va_t> *FrameLocalLeafCallees,
+                    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
+                    const std::set<va_t> *VectorArgumentCallees) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -2126,9 +2127,8 @@ void recoverCallAbi(
       // register, which a call passes in that order before its stack
       // arguments.  One the caller never set passes zero: the callee only
       // saves it, and va_arg reads no more arguments than a caller passes.
-      if (!CI.IsIndirect && CalleeHasFP && CalleeIsVariadic &&
-          CalleeIsVariadic->count(CI.TargetAddr) &&
-          CalleeIsVariadic->at(CI.TargetAddr)) {
+      if (!CI.IsIndirect && CalleeHasFP && VectorArgumentCallees &&
+          VectorArgumentCallees->count(CI.TargetAddr)) {
         while (static_cast<int>(IntPart.size()) < IntCap)
           IntPart.push_back(
               MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize)));
@@ -2573,7 +2573,7 @@ void finalizeVariadicCallees(std::vector<MedFunc> &Funcs, Arch TheArch,
       if (P.RegOff != kNoParamReg &&
           (std::find(CalleeIntParamRegs.begin(), CalleeIntParamRegs.end(),
                      P.RegOff) != CalleeIntParamRegs.end() ||
-           (Callee.VariadicFirstVectorRegister >= 0 &&
+           (Callee.takesVectorArgumentRegisters() &&
             TRI.isFPArgReg(P.RegOff, Fmt))))
         ++RegParamCount;
       if (P.Id > MaxId)

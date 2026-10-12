@@ -1264,7 +1264,7 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // promoted to double, and va_arg reads them from the area.
     if (!Func.IsVariadic) {
       detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
-    } else if (Func.VariadicFirstVectorRegister >= 0) {
+    } else if (Func.takesVectorArgumentRegisters()) {
       detectXMMParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
       const auto VectorRegs = TRI.floatingParamRegs(TargetFormat);
       size_t Passed = 0;

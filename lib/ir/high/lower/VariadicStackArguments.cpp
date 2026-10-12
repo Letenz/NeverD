@@ -129,8 +129,7 @@ void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch) {
   const auto &TRI = getTargetRegInfo(TheArch);
   std::map<va_t, MedFunc *> Callees;
   for (MedFunc &F : Funcs)
-    if (F.IsVariadic && F.VariadicFirstVectorRegister >= 0 &&
-        F.VariadicOverflowCount == 0)
+    if (F.takesVectorArgumentRegisters() && F.VariadicOverflowCount == 0)
       Callees[F.Entry] = &F;
   if (Callees.empty() || TRI.PointerSize <= 0)
     return;

@@ -185,7 +185,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
   std::map<va_t, int> VariadicVectorCallees;
   for (const MedFunc &MF : Result.MedFuncs)
-    if (MF.IsVariadic && MF.VariadicFirstVectorRegister >= 0)
+    if (MF.takesVectorArgumentRegisters())
       VariadicVectorCallees[MF.Entry] = MF.VariadicOverflowCount;
 
   const size_t Total = Result.MedFuncs.size();
