@@ -4,8 +4,9 @@ executed.
 
 The first function's record covers the int3 its compiler pads it with after
 its return; the second jumps to a cold part far below it, which a record
-chained to its own covers.  The entry point is a third, which analysis sizes
-by its code rather than by its record.
+chained to its own covers, and which takes the address of a string.  The
+entry point is a third, which analysis sizes by its code rather than by its
+record.
 """
 from pathlib import Path
 import struct
@@ -15,6 +16,8 @@ from transport_test import Client
 
 BASE = 0x140000000
 PADDED, SPLIT, ENTRY, COLD = 0x1000, 0x1010, 0x1020, 0x1100
+TEXT = 0x2100
+COLD_SIZE = 10
 UNW_FLAG_CHAININFO = 4
 
 
@@ -56,15 +59,17 @@ def image():
     code(PADDED, b"\x48\xc7\xc0\x2a\x00\x00\x00\xc3\xcc")  # mov rax, 42; ret; int3
     code(SPLIT, b"\xe9" + struct.pack("<i", COLD - (SPLIT + 5)))  # jmp cold
     code(ENTRY, b"\xc3")  # ret
-    code(COLD, b"\x31\xc0\xc3")  # xor eax, eax; ret
+    # lea rcx, [rip + TEXT]; xor eax, eax; ret
+    code(COLD, b"\x48\x8d\x0d" + struct.pack("<i", TEXT - (COLD + 7)) + b"\x31\xc0\xc3")
     rdata = 0x400
     data[rdata:rdata + 4] = bytes([1, 0, 0, 0])
     data[rdata + 0x10:rdata + 0x14] = bytes([1, 0, 0, 0])
     data[rdata + 0x20:rdata + 0x24] = bytes([1 | UNW_FLAG_CHAININFO << 3, 0, 0, 0])
     struct.pack_into("<III", data, rdata + 0x24, SPLIT, SPLIT + 5, 0x2010)
     data[rdata + 0x30:rdata + 0x34] = bytes([1, 0, 0, 0])
+    data[rdata + TEXT - 0x2000:rdata + TEXT - 0x2000 + 13] = b"ColdPathText\0"
     records = ((PADDED, PADDED + 9, 0x2000), (SPLIT, SPLIT + 5, 0x2010),
-               (ENTRY, ENTRY + 1, 0x2030), (COLD, COLD + 3, 0x2020))
+               (ENTRY, ENTRY + 1, 0x2030), (COLD, COLD + COLD_SIZE, 0x2020))
     for index, record in enumerate(records):
         struct.pack_into("<III", data, 0x600 + 12 * index, *record)
     u32(directories + 3 * 8, 0x3000)
@@ -105,8 +110,15 @@ def run(worker):
             assert "; END OF FUNCTION CHUNK FOR sub_140001010" in texts, texts
             assert any(text.startswith("loc_140001100:") for text in texts), texts
             body = [line for line in cold if line["kind"] == "insn"
-                    and BASE + COLD <= int(line["address"], 16) < BASE + COLD + 3]
-            assert len(body) == 2 and all(line["function_address"] == hex(BASE + SPLIT) for line in body), body
+                    and BASE + COLD <= int(line["address"], 16) < BASE + COLD + COLD_SIZE]
+            assert len(body) == 3 and all(line["function_address"] == hex(BASE + SPLIT) for line in body), body
+
+            # The part's reference to the string is its function's: the
+            # string lists it, and so do its references.
+            refs = client.call("xrefs", {"address": hex(BASE + TEXT)})["payload"]["items"]
+            assert any(item["from"] == hex(BASE + COLD) for item in refs), refs
+            strings = client.call("string_references", {"filter": "ColdPath"})["payload"]["items"]
+            assert any(item["address"] == hex(BASE + COLD) for item in strings), strings
     print("x64 PE padding and chained chunks list as IDA lists them")
 
 

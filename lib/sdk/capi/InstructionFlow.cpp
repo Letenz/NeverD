@@ -323,6 +323,12 @@ bool decodeFunctions(
   // A function without a recorded size is decoded only up to its first
   // terminator; this bounds a corrupt or missing extent.
   constexpr uint64_t MaxUnsizedInstructions = 65536;
+  // The parts of a function its unwind records keep apart from its body,
+  // past other functions' code, are its code too: MSVC moves cold paths
+  // there.
+  std::map<va_t, std::vector<ExceptionAddressRange>> Chunks;
+  for (const auto &Chunk : Img.ExceptionMetadata.outlyingChunks())
+    Chunks[Chunk.Function].push_back(Chunk.Range);
   std::atomic<bool> DecoderFailed{false};
   parallelForEach(Page.Functions.size(), [&](auto Claim, size_t Total) {
     Decoder Local;
@@ -339,6 +345,15 @@ bool decodeFunctions(
                                 return F.Size > 0 ||
                                        !Local.isFunctionTerminator(DI);
                               });
+      if (const auto It = Chunks.find(F.Entry); It != Chunks.end())
+        for (const ExceptionAddressRange &Range : It->second)
+          (void)decodeNativeRange(
+              Img, Local, Range.Begin, Range.End - Range.Begin,
+              Range.End - Range.Begin,
+              [&](const DecodedInsn &DI, const uint8_t *, int) {
+                Visit(Index, Local, DI);
+                return true;
+              });
     }
   });
   return !DecoderFailed;
