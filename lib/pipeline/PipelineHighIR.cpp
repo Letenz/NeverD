@@ -127,6 +127,10 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     recoverModuleCallAbi(Img, Result, AllFuncNames);
     matchCallsToCalleeSignatures(Img, Result);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
+    // A variadic callee takes its call sites' overflow arguments as trailing
+    // stack parameters, which MedToHigh seeds where its va_arg walk reads
+    // them, as lift mode does for the LLVM emitter.
+    finalizeVariadicCallees(Result.MedFuncs, Img.Arch, Img.abiFormat());
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {
