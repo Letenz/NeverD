@@ -1394,6 +1394,84 @@ TEST_F(WebSDK, ClientFeaturePagesKeepConfidenceAnchorsAndPrivateValues) {
             "unknown_source");
 }
 
+TEST_F(WebSDK, DesktopBridgePagesKeepPrivateTargetsAndSourceAnchors) {
+  write("window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+        "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY_VALUE);");
+  commit(preview());
+  const auto Source = field(analyze("1", rootID("1")), "source_id");
+  const auto Summary = navigation("1", Source);
+  const auto *Bridge = Summary.getAsObject()->getObject("desktop_bridges");
+  ASSERT_NE(Bridge, nullptr);
+  EXPECT_EQ(Bridge->getInteger("record_count"), 2);
+  EXPECT_EQ(Bridge->getBoolean("bridge_inventory_complete"), false);
+  EXPECT_EQ(Bridge->getString("native_target"), "not_resolved");
+  const auto Page = navigationRecords("1", Source, "desktop_bridges", 0, 1);
+  ASSERT_EQ(Page.getAsObject()->getArray("items")->size(), 1);
+  const auto &Row = (*Page.getAsObject()->getArray("items"))[0];
+  EXPECT_EQ(field(Row, "form"), "window_ipc_message");
+  EXPECT_EQ(field(Row, "command_status"), "literal_string_redacted");
+  EXPECT_EQ(field(Row, "root_resolution"), "external");
+  EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), 1);
+  const auto Rest = navigationRecords("1", Source, "desktop_bridges", 1, 1);
+  EXPECT_EQ(field((*Rest.getAsObject()->getArray("items"))[0], "form"),
+            "window_go_package_struct_method");
+  EXPECT_EQ(Rest.getAsObject()->getBoolean("page_complete"), true);
+  const auto At = std::stoull(field(Row, "byte_offset"));
+  const auto Size = std::stoull(field(Row, "byte_length"));
+  EXPECT_EQ(field(anchor("1", Source, At, Size), "status"), "ok");
+  for (const auto *Reply : {&Summary, &Page, &Rest})
+    EXPECT_EQ(llvm::formatv("{0}", *Reply).str().find("CANARY"),
+              std::string::npos);
+  EXPECT_EQ(errorCode(navigationRecords("1", Source, "desktop_bridges", 3, 1)),
+            "invalid_page");
+  commit(preview());
+  EXPECT_EQ(errorCode(navigationRecords("1", Source, "desktop_bridges")),
+            "stale_revision");
+}
+
+#ifdef NEVERD_WEB_TEST_CLI
+TEST_F(WebSDK, CliDesktopBridgeNavigationIsOfflineAndRedacted) {
+  write("window.__TAURI_IPC__({cmd:'CANARY',...CANARY_ARGS});"
+        "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY_VALUE);");
+  const auto Output = (Root / "stdout").string();
+  const auto Errors = (Root / "stderr").string();
+  const llvm::StringRef Args[] = {NEVERD_WEB_TEST_CLI, "web", "navigate", Path,
+                                  "script"};
+  const llvm::StringRef Environment[] = {"PATH=/neverd-no-external-tools",
+                                         "NEVERD_SIGNATURE_CACHE=off"};
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                      Errors};
+  std::string LaunchError;
+  ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Environment,
+                                      Redirects, 20, 0, &LaunchError),
+            0)
+      << LaunchError;
+  std::ifstream Stdout(Output), Stderr(Errors);
+  const std::string Out{std::istreambuf_iterator<char>(Stdout), {}};
+  const std::string Err{std::istreambuf_iterator<char>(Stderr), {}};
+  EXPECT_EQ(Out.find("CANARY"), std::string::npos);
+  EXPECT_TRUE(Err.empty()) << Err;
+  std::istringstream Lines(Out);
+  std::string Line;
+  bool BridgesSeen = false;
+  while (std::getline(Lines, Line)) {
+    auto Parsed = llvm::json::parse(Line);
+    ASSERT_TRUE(bool(Parsed));
+    const auto *Object = Parsed->getAsObject();
+    ASSERT_NE(Object, nullptr);
+    if (Object->getString("record_kind") != "desktop_bridges")
+      continue;
+    const auto *Items = Object->getArray("items");
+    ASSERT_NE(Items, nullptr);
+    ASSERT_EQ(Items->size(), 2u);
+    EXPECT_EQ(field((*Items)[0], "recognition_status"), "unresolved_shape");
+    EXPECT_EQ(field((*Items)[1], "form"), "window_go_package_struct_method");
+    BridgesSeen = true;
+  }
+  EXPECT_TRUE(BridgesSeen);
+}
+#endif
+
 TEST_F(WebSDK,
        SourceAnchorsDistinguishOriginalBytesAndRedactedDisplayCoverage) {
   const std::string Text = "const SECRET = 'PRIVATE😀';\r\n";

@@ -1627,3 +1627,5 @@ ctest --test-dir build-source -L \
   '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
   --output-on-failure --parallel 4
 ```
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*` 检查 CPL0 IF 清除／设置与 CPL3 反向控制、profile 匹配和摘要区分、TF/AC/IOPL 拒绝、关闭普通观察后仍必须检查最终 IF 依赖、恢复及精确／少一操作预算。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` 也检查该原生内核 profile 不能静默选择用户态源码 ABI。生产未定义指令 admission 与驱动恢复 guards 未改变。

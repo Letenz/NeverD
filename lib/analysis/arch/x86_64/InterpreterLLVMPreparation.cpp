@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "X64UserFlags.h"
+#include "X64MachineFlags.h"
 
 #include "neverd/analysis/arch/x86_64/InterpreterLLVMRefinement.h"
 
@@ -179,7 +179,7 @@ llvm::Error canonicalEntry(InterpreterMachineStateModel &Model,
   };
   const auto Flags = NdVar::reg(128, 8);
   Emit(NdOp::INT_AND, Flags,
-       {Flags, NdVar::scalar(detail::X64UserFlags::EntryMask, 8)});
+       {Flags, NdVar::scalar(detail::X64MachineFlags::EntryMask, 8)});
   Emit(NdOp::INT_OR, Flags, {Flags, NdVar::scalar(2, 8)});
   Emit(NdOp::BRANCH, {}, {NdVar::scalar(OldEntry, 8)});
   LowInstructionBoundary IB;

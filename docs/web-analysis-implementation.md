@@ -3300,3 +3300,68 @@ Logs: `/tmp/neverd-tauri-{dev-integration,integrated-fixed-build,clean-discovery
 integrated-clean-web-tests,integrated-native-transports-tests,
 integrated-gui-{build,tests},published-format,integrated-provenance,
 integrated-capabilities}.log`.
+
+Two further normal integration merges retain the qualified Web changes while
+including `origin/dev` at `c01e257c9` and `0b783ff55`. The second shared rebuild
+passes 855 steps, followed by five native-projection cases, 53 selected Web/SDK
+cases and all four transports (2.97 seconds). The upstream capability-declaration
+repair resolves the earlier unrelated exclusions; the manifest now validates
+all 23 capabilities. The third six-step rebuild, five native cases and four
+Tauri SDK cases with the real archive enabled pass. Commit
+`84af5be4ad75e5859ce229dd7c0e197e525439a4` is normally pushed to `dev` and its exact
+remote head is checked. No force push or issue-state mutation is performed.
+Logs: `/tmp/neverd-tauri-{second-{integrated-build,native-tests,sdk-tests,
+transports-tests,capabilities},third-{integrated-build,native-tests,sdk-tests}}.log`.
+
+### Direct desktop bridge syntax and preserved-source anchors
+
+On the published `84af5be4a` baseline, the independent
+`tauri-1-wails-2-direct-bridge-syntax-v1` owner adds redacted direct Tauri 1 IPC/
+global invoke and Wails 2 target syntax to existing navigation pages. The
+source/bindings/navigation owners retain authority for parsing, lexical roots
+and generic call identities. Bridge publication does not authenticate APIs,
+resolve native targets, infer runtime activation or publish command/argument
+values. Record/work refusal clears only bridge candidates. Ordinary constructors,
+tags and dynamic imports remain valid unrelated navigation entries; changed
+callee/child agreement or call-kind models are refused explicitly.
+
+The real decoded Tauri member 6 (85,197 bytes, hash pinned in the
+[bridge profile](web-desktop-bridge-profile.md)) has one direct IPC call at
+decoded byte offset 3,013/length 53. Its spread message remains unresolved.
+The SDK source anchor links that span to native-container Brotli offset
+5,069,463/length 24,569 and the retained old-GNU archive parent. All nine
+readable Tauri JS exports still reparse with matching structure. A real CLI
+`web navigate` run over this same preserved decoded member succeeds with an
+unusable external-tool PATH and empty stderr; its metadata receipt is
+`/tmp/neverd-desktop-bridge-actual-navigation.jsonl`.
+
+The 62-step shared/CLI/transport build passes, five core bridge cases pass
+(including actual preserved JS), six selected SDK cases pass, and all four
+worker/MCP transport cases pass (4.78 seconds). The complete owning Web run is
+**755 passes / 28 explicit skips out of 783 distinct cases** (73.58 seconds),
+with all eight Claude platform captures and the preserved Tauri corpus enabled.
+The same absent optional corpora and ASAR omission-only boundary account for
+the skips; missing samples are not replaced. Parser omission passes its
+155-step build, five selected SDK cases with real Tauri enabled, and all four
+transports (14.60 seconds). The restored 161-step build and all fifteen focused
+core/SDK/transport cases pass (11.70 seconds), with both Web/JS options ON.
+Changed C++ passes LLVM formatting and whitespace checks; provenance scans
+7,504 worktree files and the capability manifest validates all 23 capabilities.
+Logs: `/tmp/neverd-desktop-bridge-{parity-build,final-{source,sdk}-tests,
+transports-tests,owning-web-tests,nojs-{configure,build,sdk-tests,
+transports-tests},restored-{configure,build,focused-tests},format,
+provenance,capabilities}.log`.
+
+Normal integration with `origin/dev` at `be72c8ee4` preserves every Web bridge
+reader and test unchanged. The 64-step shared rebuild and integrated native
+targets pass. The complete owning Web run remains **755 passes / 28 skips out
+of 783 distinct cases** (90.24 seconds). Five native-projection cases, the
+immutable native-buffer boundary and four transports all pass (4.05 seconds).
+The correct `neverd-gui-web-tests` owner and Qt app rebuild successfully; the
+offline package review test passes (4.27 seconds). The earlier GUI build request
+used a nonexistent target name and is not evidence. Provenance again scans
+7,504 files, capabilities validate all 23 declarations, and both Web/JS options
+remain ON. Integration head is `6fd1505fa4e082a742ab35e1e1f98916f7ba2f81` before
+this receipt-only documentation commit. Logs:
+`/tmp/neverd-desktop-bridge-integrated-{build,native-build,owning-web-tests,
+native-transports-tests,gui-{build,tests},provenance,capabilities}.log`.
