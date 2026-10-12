@@ -13,6 +13,7 @@
 
 #include "neverd/web/Error.h"
 #include "neverd/web/NativeInput.h"
+#include "neverd/web/Tauri.h"
 
 #include <cstdint>
 #include <memory>
@@ -222,6 +223,17 @@ public:
   std::string extractWails(std::string_view ExpectedRevision,
                            std::string_view ArtifactID,
                            std::string_view Profile);
+  /// Initializer is an SDK/native projection, never user-supplied JSON.
+  std::string extractTauri(std::string_view ExpectedRevision,
+                           std::string_view ArtifactID,
+                           const TauriInitializer &Initializer,
+                           std::string_view Profile);
+  std::string tauriRecords(std::string_view ExpectedRevision,
+                           std::string_view ExtractionID, uint64_t Offset,
+                           uint64_t Limit) const;
+  std::string exportTauri(std::string_view ExpectedRevision,
+                          std::string_view ExtractionID,
+                          std::string_view OutputDirectory);
   std::string wailsRecords(std::string_view ExpectedRevision,
                            std::string_view ExtractionID,
                            std::string_view RecordKind, uint64_t Offset,

@@ -197,6 +197,240 @@ class WorkbenchTests : public QObject {
   Q_OBJECT
   QTemporaryDir settingsDirectory_;
 private slots:
+  void xrefsReturnToTheOriginatingCodeWindow_data() {
+    QTest::addColumn<QString>("scenario");
+    for (const auto *scenario :
+         {"source", "llvmc", "low", "secondary-source", "published-address",
+          "call-token", "unmapped", "assembly"})
+      QTest::newRow(scenario) << QString::fromLatin1(scenario);
+  }
+
+  void xrefsReturnToTheOriginatingCodeWindow() {
+    QFETCH(QString, scenario);
+    QTemporaryDir directory;
+    Workbench bench;
+    const auto path = writeFixture(
+        directory, scenario == "unmapped"            ? "xrefs-unmapped.bin"
+                   : scenario == "published-address" ? "xrefs-address.bin"
+                                                     : "xrefs-code.bin");
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *primary = bench.codeView(QStringLiteral("source"));
+    QVERIFY(primary);
+    bench.action(ActionId::ViewLowIR)->trigger();
+    auto *secondary = bench.codeView(QStringLiteral("low"));
+    QVERIFY(secondary);
+    const bool useSecondary = scenario == "llvmc" || scenario == "low" ||
+                              scenario == "secondary-source";
+    auto *origin = useSecondary ? secondary : primary;
+    auto *other = useSecondary ? primary : secondary;
+    const QString representation = scenario == "llvmc" || scenario == "low"
+                                       ? scenario
+                                       : QStringLiteral("source");
+    origin->setRepresentation(representation);
+    origin->showFunction(scenario == "call-token" ? Base + 0x160
+                                                  : Base + 0x140);
+    other->showFunction(Base + 0x180);
+    QTRY_VERIFY(!origin->text()->loading() && !other->text()->loading());
+    for (auto *button : origin->findChildren<QToolButton *>())
+      if (button->toolTip().startsWith(QStringLiteral("Keep this function")))
+        button->setChecked(true);
+    QVERIFY(origin->locked());
+    // Assembly has an independent location when the source query starts.
+    assembly->navigate(Base + 0x1a0);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x1a0));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    auto *code = origin->text();
+    const int row = scenario == "call-token" ? 1 : 0;
+    code->setCursorLine(row);
+    const QString line = code->selectedText();
+    const QString token = scenario == "published-address"
+                              ? QStringLiteral("display_function")
+                              : QStringLiteral("function_20");
+    const int column = int(line.indexOf(token));
+    QVERIFY(column >= 0);
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const QPoint point(qRound(6 + (5 + column + 2) * metrics.horizontalAdvance(
+                                                         QLatin1Char('M'))),
+                       qRound((row - code->verticalScrollBar()->value() + 0.5) *
+                              std::ceil(metrics.lineSpacing())));
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, {}, point);
+    QCOMPARE(code->currentToken(), token);
+    QTRY_VERIFY(code->hasFocus());
+    if (scenario == "published-address") {
+      const auto target = code->renameTarget();
+      QVERIFY(target);
+      QCOMPARE(addressValue(target->value("address")),
+               std::optional<Address>(Base + 0x140));
+    }
+    QSignalSpy mapped(code, &CodeText::addressSelected);
+    bool chosen = false, correctTarget = false;
+    QString dialogState;
+    QTimer chooser;
+    connect(&chooser, &QTimer::timeout, this, [&] {
+      auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+      auto *list = dialog ? dialog->findChild<ChooserView *>() : nullptr;
+      if (!list || list->model().kind() != ChooserKind::CrossReferences)
+        return;
+      dialogState = QStringLiteral("%1, %2 rows")
+                        .arg(dialog->windowTitle())
+                        .arg(list->model().total());
+      for (auto *label : list->findChildren<QLabel *>())
+        dialogState += QLatin1Char('\n') + label->text();
+      correctTarget =
+          dialog->windowTitle().contains(displayAddress(Base + 0x140, 16));
+      for (int i = 0; i < list->model().total(); ++i)
+        if (list->model().addressAt(i) == Base + 0x163) {
+          chooser.stop();
+          chosen = true;
+          list->table()->setCurrentIndex(list->model().index(i, 0));
+          QTest::keyClick(list->table(), Qt::Key_Return);
+          return;
+        }
+    });
+    chooser.start(5);
+    QTimer timeout;
+    connect(&timeout, &QTimer::timeout, this, [] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget()))
+        dialog->reject();
+    });
+    timeout.setSingleShot(true);
+    timeout.start(OpenTimeoutMs);
+    if (scenario == "assembly") {
+      assembly->navigate(Base + 0x140);
+      QTRY_COMPARE(assembly->currentFunction(),
+                   std::optional<Address>(Base + 0x140));
+      assembly->focusContent();
+      QTRY_VERIFY(assembly->listing()->hasFocus());
+      QTest::keyClick(assembly->listing(), Qt::Key_X);
+    } else {
+      QTest::keyClick(code, Qt::Key_X);
+    }
+    QTRY_VERIFY2_WITH_TIMEOUT(
+        chosen,
+        qPrintable(dialogState + QLatin1Char('\n') +
+                   bench.window->findChild<OutputWindow *>()
+                       ->findChild<QPlainTextEdit *>()
+                       ->toPlainText()),
+        OpenTimeoutMs);
+    QVERIFY(correctTarget);
+    if (scenario == "assembly") {
+      QTRY_COMPARE(assembly->currentAddress(),
+                   std::optional<Address>(Base + 0x163));
+      QTRY_VERIFY(assembly->listing()->hasFocus());
+      QCOMPARE(code->function(), std::optional<Address>(Base + 0x140));
+      QVERIFY(mapped.isEmpty());
+      return;
+    }
+    QTRY_COMPARE(code->function(), std::optional<Address>(Base + 0x160));
+    QTRY_VERIFY(!code->loading() && !mapped.isEmpty());
+    QCOMPARE(origin->representation(), representation);
+    QVERIFY(origin->locked());
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(other->text()->function(), std::optional<Address>(Base + 0x180));
+    if (scenario == "unmapped") {
+      QVERIFY(!mapped.back().at(1).toBool());
+      QVERIFY(!code->currentAddress());
+      QVERIFY(bench.window->findChild<OutputWindow *>()
+                  ->findChild<QPlainTextEdit *>()
+                  ->toPlainText()
+                  .contains(QStringLiteral(
+                      "This instruction has no source-line address mapping.")));
+    } else {
+      QCOMPARE(code->currentAddress(), std::optional<Address>(Base + 0x163));
+      QVERIFY(code->selectedText().contains(QStringLiteral("return ") + token));
+    }
+  }
+
+  void staleCodeXrefQueriesDoNotOpenDialogs_data() {
+    QTest::addColumn<QString>("change");
+    for (const auto *change :
+         {"function", "representation", "navigation", "session", "hidden"})
+      QTest::newRow(change) << QString::fromLatin1(change);
+  }
+
+  void staleCodeXrefQueriesDoNotOpenDialogs() {
+    QFETCH(QString, change);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "xrefs-delayed.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x140);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    // IR has no pre-resolved source edit targets, so X resolves the name
+    // asynchronously rather than using an address published with the text.
+    bench.action(ActionId::ViewLowIR)->trigger();
+    auto *view = bench.codeView(QStringLiteral("low"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY(!code->loading());
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    code->setCursorLine(1);
+    const int column = int(code->selectedText().indexOf("delayed_function"));
+    QVERIFY(column >= 0);
+    QTest::mouseClick(
+        code->viewport(), Qt::LeftButton, {},
+        QPoint(qRound(6 + (5 + column + 2) * metrics.horizontalAdvance('M')),
+               qRound((1 - code->verticalScrollBar()->value() + 0.5) *
+                      std::ceil(metrics.lineSpacing()))));
+    QCOMPARE(code->currentToken(), QStringLiteral("delayed_function"));
+    QTRY_VERIFY(code->hasFocus());
+    QSignalSpy messages(&bench.session, &Session::message);
+    bool dialogOpened = false;
+    QTimer guard;
+    connect(&guard, &QTimer::timeout, this, [&] {
+      if (auto *dialog =
+              qobject_cast<QDialog *>(QApplication::activeModalWidget())) {
+        dialogOpened = true;
+        dialog->reject();
+      }
+    });
+    guard.start(5);
+    bench.action(ActionId::JumpXrefOperand)->trigger();
+    const auto started = [&] {
+      for (const auto &row : messages)
+        if (row.first().toString().contains("fixture delayed lookup started"))
+          return true;
+      return false;
+    };
+    QTRY_VERIFY(started());
+    if (change == "function")
+      view->showFunction(Base + 0x180);
+    else if (change == "representation")
+      view->setRepresentation(QStringLiteral("llvmc"));
+    else if (change == "navigation")
+      assembly->navigate(Base + 0x180);
+    else if (change == "session")
+      bench.session.closeFile();
+    else
+      view->hide();
+    QTest::qWait(600);
+    QVERIFY(!dialogOpened);
+    QVERIFY(!QApplication::activeModalWidget());
+    if (change == "session") {
+      QVERIFY(!bench.session.loaded());
+    } else {
+      QCOMPARE(code->function(),
+               std::optional<Address>(change == "function" ? Base + 0x180
+                                                           : Base + 0x140));
+      QCOMPARE(assembly->currentFunction(),
+               std::optional<Address>(change == "navigation" ? Base + 0x180
+                                                             : Base + 0x140));
+    }
+  }
+
   void copyingCharacterSelections_data() {
     QTest::addColumn<QString>("view");
     QTest::addColumn<bool>("reverse");

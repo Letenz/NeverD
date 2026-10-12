@@ -171,6 +171,37 @@ Session::Impl::artifactView(std::string_view SelectionID) const {
       if (R.ID == SelectionID && R.selectable())
         return Select(R, "pkg_prelude");
   }
+  for (const auto &[ID, E] : TauriExtractions)
+    for (const auto &M : E.Members)
+      if (M.ID == SelectionID) {
+        auto Parent = artifactView(E.ArtifactID);
+        if (!Parent)
+          throw Error("tauri_parent_bytes_unavailable");
+        return ArtifactView{
+            M.Content, M.BlobHash, 0,
+            llvm::json::Object{
+                {"kind", "tauri_decoded_member"},
+                {"container_artifact_id", E.ArtifactID},
+                {"storage_artifact_id",
+                 Parent->Origin.getString("storage_artifact_id")
+                     .value_or("")
+                     .str()},
+                {"extraction_id", E.ID},
+                {"selection_id", M.ID},
+                {"profile", E.Profile},
+                {"codec", "brotli-rfc7932"},
+                {"byte_offset", nullptr},
+                {"expanded_byte_offset", "0"},
+                {"byte_offset_basis", "expanded_stream"},
+                {"byte_length", std::to_string(M.Content.size())},
+                {"stored_container_offset", std::to_string(M.Offset)},
+                {"stored_byte_length", std::to_string(M.Stored.size())},
+                {"stored_sha256", M.StoredHash},
+                {"initializer_address", std::to_string(E.Initializer.Start)},
+                {"runtime_filesystem_binding", "not_checked"},
+                {"container_origin", std::move(Parent->Origin)}},
+            false};
+      }
   for (const auto &[ID, E] : WailsExtractions)
     for (const auto &M : E.Members)
       if (M.ID == SelectionID && !M.Directory) {
@@ -275,6 +306,10 @@ Session::Impl::artifactView(std::string_view SelectionID) const {
 
 std::optional<Snapshot>
 Session::Impl::memberNamespace(std::string_view SelectionID) const {
+  for (const auto &[ID, E] : TauriExtractions)
+    if (std::any_of(E.Members.begin(), E.Members.end(),
+                    [&](const auto &M) { return M.ID == SelectionID; }))
+      return tauriNamespace(E);
   for (const auto &[ID, E] : WailsExtractions)
     for (const auto &M : E.Members)
       if (M.ID == SelectionID && !M.Directory)

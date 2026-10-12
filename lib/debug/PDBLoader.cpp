@@ -34,6 +34,7 @@
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptor.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
+#include "llvm/DebugInfo/PDB/Native/GlobalsStream.h"
 #include "llvm/DebugInfo/PDB/Native/ISectionContribVisitor.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
@@ -186,6 +187,45 @@ pdb_loader_detail::parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream,
                                    "pdb: invalid public symbol record");
   Out.Name = llvm::StringRef(Name, NameLen);
   return llvm::Error::success();
+}
+
+llvm::Expected<bool>
+pdb_loader_detail::parseProcRefAt(llvm::ArrayRef<uint8_t> Stream,
+                                  uint32_t Offset, ParsedProcRef &Out) {
+  constexpr uint32_t PrefixSize =
+      static_cast<uint32_t>(sizeof(llvm::codeview::RecordPrefix));
+  // SumName, the record's offset and the module, before the name.
+  constexpr uint32_t HeaderSize = 4 + 4 + 2;
+  const auto boundaryError = [] {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: Globals GSI offset is not an exact "
+                                   "symbol record boundary");
+  };
+  if (Offset > Stream.size() || Stream.size() - Offset < PrefixSize)
+    return boundaryError();
+  const uint8_t *const Bytes = Stream.data() + Offset;
+  const uint16_t RecordLen = llvm::support::endian::read16le(Bytes);
+  const uint16_t Kind = llvm::support::endian::read16le(Bytes + 2);
+  const uint32_t Total = static_cast<uint32_t>(RecordLen) + 2;
+  if (RecordLen < 2 || Stream.size() - Offset < Total)
+    return boundaryError();
+  if (Kind != static_cast<uint16_t>(llvm::codeview::SymbolKind::S_PROCREF) &&
+      Kind != static_cast<uint16_t>(llvm::codeview::SymbolKind::S_LPROCREF))
+    return false;
+  if (Total < PrefixSize + HeaderSize + 1)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: invalid procedure reference record");
+  const uint8_t *const Body = Bytes + PrefixSize;
+  Out.Offset = llvm::support::endian::read32le(Body + 4);
+  Out.Module = llvm::support::endian::read16le(Body + 8);
+  const char *const Name = reinterpret_cast<const char *>(Body + HeaderSize);
+  const size_t MaxName = Total - PrefixSize - HeaderSize;
+  const size_t NameLen = ::strnlen(Name, MaxName);
+  if (NameLen == MaxName)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: invalid procedure reference record");
+  Out.Name = llvm::StringRef(Name, NameLen);
+  return true;
 }
 
 void pdb_loader_detail::FunctionNameRegistry::observe(va_t Address,
@@ -505,7 +545,56 @@ bool isProcedureIdSymbol(llvm::codeview::SymbolKind Kind) {
          Kind == SymbolKind::S_LPROC32_DPC_ID;
 }
 
+/// Where the procedure \p Ref names in \p Module's symbols begins: one
+/// record read where the reference points.
+std::optional<pdb_loader_detail::ProcedureStart>
+readReferencedProcedure(const llvm::pdb::ModuleDebugStreamRef &Module,
+                        const pdb_loader_detail::ParsedProcRef &Ref) {
+  // The offset counts from the start of the module's symbols, before the
+  // first record (the array's skew).
+  const llvm::codeview::CVSymbolArray &Records = Module.getSymbolArray();
+  if (Ref.Offset < Records.skew())
+    return std::nullopt;
+  const llvm::BinaryStreamRef Stream = Records.getUnderlyingStream();
+  llvm::ArrayRef<uint8_t> Prefix;
+  if (auto Err = Stream.readBytes(
+          Ref.Offset, sizeof(llvm::codeview::RecordPrefix), Prefix)) {
+    llvm::consumeError(std::move(Err));
+    return std::nullopt;
+  }
+  const uint16_t RecordLen = llvm::support::endian::read16le(Prefix.data());
+  llvm::ArrayRef<uint8_t> Record;
+  if (auto Err = Stream.readBytes(
+          Ref.Offset, static_cast<uint32_t>(RecordLen) + 2, Record)) {
+    llvm::consumeError(std::move(Err));
+    return std::nullopt;
+  }
+  return pdb_loader_detail::parseReferencedProcedure(Record, Ref.Name);
+}
+
 } // namespace
+
+std::optional<pdb_loader_detail::ProcedureStart>
+pdb_loader_detail::parseReferencedProcedure(llvm::ArrayRef<uint8_t> Record,
+                                            llvm::StringRef Name) {
+  if (Record.size() < sizeof(llvm::codeview::RecordPrefix))
+    return std::nullopt;
+  const uint16_t RecordLen = llvm::support::endian::read16le(Record.data());
+  const auto Kind = static_cast<llvm::codeview::SymbolKind>(
+      llvm::support::endian::read16le(Record.data() + 2));
+  if (RecordLen < 2 || Record.size() != static_cast<size_t>(RecordLen) + 2 ||
+      !isProcedureSymbol(Kind))
+    return std::nullopt;
+  auto Proc = llvm::codeview::SymbolDeserializer::deserializeAs<
+      llvm::codeview::ProcSym>(llvm::codeview::CVSymbol(Record));
+  if (!Proc) {
+    llvm::consumeError(Proc.takeError());
+    return std::nullopt;
+  }
+  if (Proc->Name != Name)
+    return std::nullopt;
+  return ProcedureStart{Proc->Segment, Proc->CodeOffset};
+}
 
 void pdb_loader_detail::publishNamedOffset(
     std::map<int64_t, VariableSym> &Slots, std::set<int64_t> &Ambiguous,
@@ -1788,6 +1877,65 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
           const uint32_t Done = I + 1;
           if (Done == PubCount || (Done % 4096u) == 0)
             Progress.report("debug", Done, PubCount, "pdb publics");
+        }
+
+        // Names of the procedures the publics leave out, static ones (an SEH
+        // filter such as `IopTimerDispatch$filt$2`), through the globals'
+        // references into the module symbol streams: one record each rather
+        // than a walk of every module.  Phase A keeps them names only, as it
+        // keeps the publics; their lengths stay unauthenticated.
+        if (PDB.hasPDBGlobalsStream()) {
+          auto GlobalsOr = PDB.getPDBGlobalsStream();
+          if (!GlobalsOr)
+            return pdbLoadError("cannot read Globals stream: " +
+                                llvm::toString(GlobalsOr.takeError()));
+          std::map<uint16_t, std::vector<pdb_loader_detail::ParsedProcRef>>
+              RefsByModule;
+          for (const uint32_t Off : GlobalsOr->getGlobalsTable()) {
+            pdb_loader_detail::ParsedProcRef Ref;
+            llvm::Expected<bool> IsRef =
+                pdb_loader_detail::parseProcRefAt(SymBytes, Off, Ref);
+            if (!IsRef)
+              return IsRef.takeError();
+            if (*IsRef && Ref.Module != 0)
+              RefsByModule[Ref.Module - 1].push_back(Ref);
+          }
+          pdb_loader_detail::FunctionNameRegistry ProcedureNames;
+          std::set<va_t> ProcedureAddresses;
+          const uint32_t ModuleCount = DBI.modules().getModuleCount();
+          for (const auto &[ModuleIndex, Refs] : RefsByModule) {
+            // A public PDB can keep the references and drop the module.
+            if (ModuleIndex >= ModuleCount ||
+                DBI.modules()
+                        .getModuleDescriptor(ModuleIndex)
+                        .getModuleStreamIndex() ==
+                    llvm::pdb::kInvalidStreamIndex)
+              continue;
+            auto ModuleOr = Native->getModuleDebugStream(ModuleIndex);
+            if (!ModuleOr) {
+              llvm::consumeError(ModuleOr.takeError());
+              continue;
+            }
+            for (const auto &Ref : Refs) {
+              const auto Start = readReferencedProcedure(*ModuleOr, Ref);
+              const va_t VA =
+                  Start ? ResolveVA(Start->Segment, Start->Offset) : 0;
+              if (VA == 0)
+                continue;
+              // Publics name the linked functions as callers spell them; a
+              // procedure's own, undecorated name only fills in the rest.
+              if (!FunctionAddresses.count(VA)) {
+                ProcedureAddresses.insert(VA);
+                ProcedureNames.observe(VA, Ref.Name);
+              }
+            }
+          }
+          for (const va_t VA : ProcedureAddresses)
+            if (const std::optional<std::string> Name =
+                    ProcedureNames.name(VA)) {
+              FunctionAddresses.insert(VA);
+              FunctionNames.observe(VA, *Name);
+            }
         }
       }
     }

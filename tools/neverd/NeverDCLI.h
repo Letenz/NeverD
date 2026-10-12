@@ -225,6 +225,7 @@ int runWebSEA();
 int runWebNexe();
 int runWebPkg();
 int runWebWails();
+int runWebTauri();
 int runWebReadableExport();
 
 extern llvm::cl::opt<bool> Devirtualize;

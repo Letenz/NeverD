@@ -224,6 +224,13 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "digest. Asset-server bindings and native bridges remain unverified.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_wails_records", "extraction_id", true, 128);
+  Add("web_tauri_extract",
+      "Select native initializer instructions and validate one complete "
+      "PHF/Brotli "
+      "asset table. Runtime type, reachability and mounts remain unknown.",
+      {decimal("revision"), text("artifact_id"), text("profile"),
+       decimal("initializer_address")});
+  Page("web_tauri_records", "extraction_id", false, 128);
   Add("web_asar_extract",
       "Extract admitted ASAR members with an optional captured unpacked "
       "directory.",

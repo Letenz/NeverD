@@ -11,6 +11,8 @@ NeverD compiles a replacement with the selected compiler and installs it at an e
 
 Choose `--compiler=clang`, `--compiler=gcc` or `--compiler=neverc`. Clang and ordinary NeverC can produce LLVM IR; the `object` artifact preserves native producer instructions. The CLI selects objects for GCC. The Python SDK needs an explicit `artifact="object"` for GCC. A selected compiler never silently falls back.
 
+Use `--compiler-arg` or SDK `compiler_args` for includes, macro definitions and supported source options. Target/output overrides and response-file tokens (`@file`) are refused in all positions, including separate option values. Ordinary `-I` paths and `-D` definitions remain supported.
+
 Use authenticated entries for the example addresses. The replacement declaration must match the original machine ABI, including calling convention and structure layouts; an address cannot prove that declaration. C++ needs `--language=c++` and the correct Clang++/G++ executable. Prefer an `extern "C"` entry or pass the exact mangled symbol. Extra helpers are allowed. Both `--entry` and `--func` select the replacement explicitly. The legacy `--from-c` address is also honored.
 
 ```sh

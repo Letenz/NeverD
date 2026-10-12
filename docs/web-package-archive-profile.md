@@ -10,7 +10,10 @@ archive utility, hash utility, script or network request runs.
 
 ## Archive admission
 
-`ustar-pax-single-gzip-v1` uses native linked zlib for a **single** gzip stream.
+`ustar-pax-single-gzip-v1` and `gnu-oldtar-basic-single-gzip-v1` use native linked
+zlib for a **single** gzip stream. The first expanded header selects one uniform
+tar dialect; mixed USTAR/GNU headers refuse. The selected profile participates
+in archive and member identities. Capabilities list both in `tar_profiles`.
 CRC and ISIZE must validate, all compressed bytes must be consumed, and a
 concatenated stream or trailing data is refused. The bounded expanded stream
 lives in a private, immediately unlinked spool. No member path becomes a host
@@ -31,6 +34,15 @@ Global PAX, GNU long-name/base-256/sparse extensions, device/FIFO types and
 other tar dialects are unsupported. Padding and the terminal stream must be
 zero, with at least two terminal 512-byte blocks. This fixed profile is
 narrower than general tar utilities; unsupported archives fail.
+The separately admitted old GNU **basic** header uses the eight bytes
+`ustar  \0`. Its octal atime/ctime fields at 345/357 are timestamp metadata,
+never a USTAR pathname prefix. Bytes 369–511 must all be zero; sparse,
+multi-volume and other extensions refuse. Regular files, directories and
+metadata-only links share existing admission; local PAX and GNU L/K/S/D/M/V/g
+records remain unsupported. Full checksum, path, zero padding/tail and gzip
+rules still apply. [GNU header format](https://github.com/gnu-mirror-unofficial/tar/blob/master/src/tar.h).
+The [Tauri qualification](web-tauri-profile.md) pins a real uniform old-GNU
+release archive and its expanded/native member bytes.
 The final effective member names pass the same ICU 77.1 portable path policy
 as ASAR. Traversal, absolute paths, separators, reserved names, normalized
 Unicode/case aliases, duplicate entries and file/link ancestors are refused,

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
+<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
 
 [← Documentation Index](README.md)
 
@@ -12,6 +12,8 @@ NeverD は指定したコンパイラで置換関数をコンパイルし、明�
 ## コンパイラの選択
 
 `--compiler=clang`、`--compiler=gcc`、`--compiler=neverc` を選択します。Clang と通常モードの NeverC は LLVM IR を生成できます。`object` は生成された機械命令を保持します。CLI は GCC に対してオブジェクトを既定で選び、Python SDK では `artifact="object"` の指定が必要です。他のコンパイラへの暗黙のフォールバックはありません。
+
+インクルードパス、マクロ定義、対応するソースオプションには `--compiler-arg` または SDK の `compiler_args` を使います。ターゲットや出力モードの上書きとレスポンスファイルのトークン（`@file`）は、独立したオプションの値を含め、どの引数位置でも拒否されます。通常の `-I` パスと `-D` 定義は引き続き使用できます。
 
 例のアドレスは確認済みの元関数入口に置き換えてください。置換関数の宣言は呼出規約と構造体配置を含む元の機械 ABI と一致する必要があり、アドレスだけでは証明できません。C++ は `--language=c++` と適切な Clang++/G++ を使います。入口は `extern "C"` にするか、正確な修飾名を指定してください。補助関数は追加できます。`--entry` と `--func` で置換対象を明示し、従来の `--from-c` も指定アドレスを尊重します。
 

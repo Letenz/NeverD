@@ -13,6 +13,7 @@
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/TauriFixture.h"
 #include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
@@ -111,7 +112,7 @@ void discovery(Harness &H, const Json &Caps) {
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
     const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
-                         Name == "native_analyze" ||
+                         Name == "tauri_export" || Name == "native_analyze" ||
                          Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
@@ -1013,6 +1014,46 @@ int main() {
                     {"source_type", "module"}});
         require(S.at("parse_status") == "parsed",
                 "Wails member source is unavailable");
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "tauri_extract") != Ops.end()) {
+      F.write("sea", neverd::web::tauri_test::image());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "tauri-phf-0.10-macho-x64-five-store-brotli-v1"},
+          {"initializer_address", "4294967552"}};
+      const auto E = H.same("web_tauri_extract", Args);
+      require(E.at("member_count") == 2 &&
+                  E.at("phf_lookup_status") == "all_keys_match_rows",
+              "Tauri native initializer evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"offset", 0},
+                      {"limit", 1}};
+      const auto M = H.same("web_tauri_records", Page);
+      require(M.at("next_offset") == 1 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Tauri page differs or exposes private bytes");
+      auto Invalid = Args;
+      Invalid["table"] = Json::object();
+      invalid([&] { H.get("web_tauri_extract", Invalid); });
+      Invalid = Page;
+      Invalid["limit"] = 129;
+      invalid([&] { H.get("web_tauri_records", Invalid); });
+      auto BadPC = Args;
+      BadPC["initializer_address"] = "4294967553";
+      H.fail("web_tauri_extract", BadPC,
+             "native_store_instruction_boundary_required");
+      if (HasParser) {
+        const auto Source =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(Source.at("parse_status") == "parsed",
+                "Tauri source selection unavailable");
       }
     }
     offlineAdvisories();

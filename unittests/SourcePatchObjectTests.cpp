@@ -173,6 +173,20 @@ TEST_F(SourcePatchObject, NativeCompilerAndPrecompiledInputShareTheInstaller) {
   EXPECT_EQ(read(Output), First);
 }
 
+TEST_F(SourcePatchObject, SourceCompilerCannotExpandResponseFileValues) {
+  const auto Response = Directory / "extra arguments.rsp";
+  std::ofstream(Response) << "unused-directory -DBASE=37\n";
+  const std::string ResponseArgument = "@" + Response.string();
+  const char *Arguments[] = {"-I", ResponseArgument.c_str()};
+  Options.input_kind = NEVERD_SOURCE_PATCH_SOURCE;
+  Options.compiler_path = NEVERD_TEST_CLANG;
+  Options.compiler_args = Arguments;
+  Options.compiler_arg_count = 2;
+  EXPECT_EQ(patch("int replacement(int x) { return x+BASE; }"), 0);
+  EXPECT_NE(error().find("response files"), std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(Output));
+}
+
 TEST_F(SourcePatchObject, NeverCEntryTableCannotLoseItsLoadTimeRelocations) {
   const char *NeverC = std::getenv("NEVERD_TEST_NEVERC");
   if (!NeverC || !*NeverC)

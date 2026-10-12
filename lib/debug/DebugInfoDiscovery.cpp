@@ -50,6 +50,36 @@ void recordDebugDataPointerTargets(BinaryImage &Img, const DebugContext &Dbg,
   });
 }
 
+/// Drop the functions the loader only guessed after padding where \p Dbg
+/// names a data object, the image's own data symbols (\p DataByAddr) among
+/// them: a string literal that an executable section keeps begins no
+/// function, however its first bytes read as a prologue.
+void dropDebugDataBoundaryGuesses(BinaryImage &Img, const DebugContext &Dbg,
+                                  const std::map<va_t, size_t> &DataByAddr) {
+  const auto IsGuess = [](const Symbol &Sym) {
+    return Sym.IsFunc && Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name);
+  };
+  // What else says a function begins there, which the data does not refute.
+  std::set<va_t> Confirmed;
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && !IsGuess(Sym))
+      Confirmed.insert(Sym.Addr);
+  for (const auto &[Start, End] : Img.KnownCodeRanges)
+    if (!Img.ContinuationCodeStarts.count(Start))
+      Confirmed.insert(Start);
+  std::set<va_t> Refuted;
+  for (const Symbol &Sym : Img.Symbols)
+    if (IsGuess(Sym) && !Confirmed.count(Sym.Addr) &&
+        (DataByAddr.count(Sym.Addr) != 0 ||
+         (Dbg.resolveDataObject(Sym.Addr) && !Dbg.resolveFunction(Sym.Addr))))
+      Refuted.insert(Sym.Addr);
+  if (Refuted.empty())
+    return;
+  llvm::erase_if(Img.Symbols, [&](const Symbol &Sym) {
+    return IsGuess(Sym) && Refuted.count(Sym.Addr) != 0;
+  });
+}
+
 bool isReadableFile(const std::filesystem::path &P) {
   if (P.empty())
     return false;
@@ -340,6 +370,7 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
 
   if (DbgFuncs.empty()) {
     recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
+    dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
     return 0;
   }
 
@@ -387,6 +418,7 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
   }
 
   recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
+  dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

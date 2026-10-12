@@ -3838,7 +3838,7 @@ TEST(SourceABI, UnsupportedArithmeticNeverManufacturesAZeroResult) {
       M.Name = "unknown_arithmetic";
       M.ReturnType = NdType::makeInt(8, false);
       MedOp Arithmetic;
-      Arithmetic.Opcode = Mutation == 0 ? NdOp::FLOAT_MIN : NdOp::FLOAT_FMA;
+      Arithmetic.Opcode = Mutation == 0 ? NdOp::EXTRACT : NdOp::FLOAT_FMA;
       Arithmetic.Output.Kind = MedVar::Reg;
       Arithmetic.Output.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
       Arithmetic.Output.Id = 30;
