@@ -64,6 +64,13 @@ add_neverd_component_library(NeverDWeb
   desktop/Manifest.cpp
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
+  desktop/wails/ELF.cpp
+  desktop/wails/BuildInfo.cpp
+  desktop/wails/Tables.cpp
+  desktop/wails/Contents.cpp
+  desktop/wails/Reader.cpp
+  SessionWails.cpp
+  SessionWailsExport.cpp
   SessionDesktop.cpp
   SessionElectron.cpp
   SessionElectronIPC.cpp
