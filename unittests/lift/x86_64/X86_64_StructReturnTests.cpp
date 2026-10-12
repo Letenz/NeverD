@@ -111,3 +111,52 @@ v4su mk4(unsigned x) {
                             "use4", {"use4", "mk4", "v4su"},
                             {-3, 0, 1, 77, 0x12345678});
 }
+
+// A float takes the low half of xmm0's eightbyte; the rest is the record's
+// padding, which the register held on entry, and returns as zero.
+TEST_F(X86_64_StructReturn, AFloatAndADoubleReturnWithoutTheirPadding) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct { float f; double d; } fd;
+fd mkfd(int x) __attribute__((noinline));
+int retfd(int x) {
+  fd r = mkfd(x);
+  return (int)r.f ^ ((int)r.d * 5);
+}
+fd mkfd(int x) {
+  fd r;
+  r.f = (float)(x >> 3);
+  r.d = (double)(x >> 1) + 1.5;
+  return r;
+}
+)C",
+                            "retfd", {"retfd", "mkfd", "fd"},
+                            {-3, 0, 1, 77, 0x34567});
+}
+
+// Three floats fill xmm0's eightbyte and half of xmm1's, where `cvtsi2ss`
+// writes the low float over the rest of what xmm1 held on entry.
+TEST_F(X86_64_StructReturn, ThreeFloatsReturnWithoutTheirPadding) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct { float a, b, c; } f3;
+f3 mkf3(int x) __attribute__((noinline));
+int retf3(int x) {
+  unsigned h = (unsigned)x, acc = 0;
+  for (int i = 0; i < 96; i++) {
+    h = h * 1103515245u + 12345u;
+    f3 r = mkf3((int)h);
+    acc = acc * 131u + (unsigned)((int)r.a ^ ((int)r.b * 3) ^ ((int)r.c * 5)) +
+          (unsigned)i;
+  }
+  return (int)acc;
+}
+f3 mkf3(int x) {
+  f3 r;
+  r.a = (float)(x >> 2);
+  r.b = (float)(x >> 5);
+  r.c = (float)(x >> 1);
+  return r;
+}
+)C",
+                            "retf3", {"retf3", "mkf3", "f3"},
+                            {-3, 0, 1, 77, 0x56789});
+}
