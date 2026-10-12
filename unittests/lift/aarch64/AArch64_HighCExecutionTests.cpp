@@ -11,6 +11,9 @@
 
 #include "HighCHostExecution.h"
 
+#include <fstream>
+#include <iterator>
+
 class AArch64_HighCExecution : public HighCHostExecutionTest {
 protected:
   void expectRunsLikeSource(const std::string &Kernel, const std::string &Entry,
@@ -361,4 +364,30 @@ int i64f(int a) {
 }
 )C",
                        "i64f", {"i64f"});
+}
+
+// `subs w8, w8, #8; b.lt` tests N != V of one subtraction: the loop runs
+// while i < 8.  Spelled as the sign of i - 8 against __builtin_sub_overflow,
+// such a condition crashed Clang 23's loop passes (c_crc8); it is the signed
+// compare.
+TEST_F(AArch64_HighCExecution, FlagsOfASubtractionCompareSigned) {
+  KernelOptimization = "-O0";
+  expectRunsLikeSource(R"C(
+int crc8(int a) {
+  unsigned char crc = 0, b = (unsigned char)a;
+  for (int i = 0; i < 8; i++) {
+    if ((crc ^ b) & 0x80)
+      crc = (unsigned char)((crc << 1) ^ 7);
+    else
+      crc = (unsigned char)(crc << 1);
+    b = (unsigned char)(b << 1);
+  }
+  return crc;
+}
+)C",
+                       "crc8", {"crc8"});
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_EQ(C.find("__builtin_sub_overflow"), std::string::npos) << C;
 }
