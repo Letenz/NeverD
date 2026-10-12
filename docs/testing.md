@@ -62,6 +62,12 @@ policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
 
+`SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
+fresh native decoding, preserves renamed source, and checks changed function
+addresses, extents and inventories. It also covers edits, policy/signature
+changes, feature changes between selections, failed loads and same-address
+image replacement. Width changes discard source using the preceding data names.
+
 With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
 the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages

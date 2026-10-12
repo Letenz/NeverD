@@ -13,7 +13,6 @@
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/Parallel.h"
 
-#include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -380,17 +379,17 @@ const DataAccessWidths *Session::dataAccessWidths() {
       !synchronizeFunctions())
     return nullptr;
   // The widths are read from the functions' extents.
-  llvm::hash_code Extents = llvm::hash_value(Functions.size());
+  std::vector<std::pair<va_t, uint64_t>> Extents;
+  Extents.reserve(Functions.size());
   for (const FuncInfo &F : Functions)
-    Extents = llvm::hash_combine(Extents, F.Entry, F.Size);
-  const uint64_t Fingerprint = static_cast<size_t>(Extents);
-  if (AccessWidths && AccessWidthsFunctions == Fingerprint)
+    Extents.emplace_back(F.Entry, F.Size);
+  if (AccessWidths && AccessWidthsFunctions == Extents)
     return &*AccessWidths;
   // C kept from before names data by the widths of other functions.
   if (AccessWidths)
     forgetEmittedSources();
   AccessWidths = collectDataAccessWidths(Img, Functions);
-  AccessWidthsFunctions = Fingerprint;
+  AccessWidthsFunctions = std::move(Extents);
   return AccessWidths ? &*AccessWidths : nullptr;
 }
 
