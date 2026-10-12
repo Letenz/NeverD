@@ -4,8 +4,8 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "gtest/gtest.h"
 #include "HvfTestPolicy.h"
+#include "gtest/gtest.h"
 
 #include "neverd/emulation/CPU.h"
 
@@ -124,6 +124,47 @@ TEST_P(InstructionFetch, AlternatingFormsKeepFreshOperandsAndRelativeBranches) {
   EXPECT_EQ(value(Source), MixedByte);
   EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, sizeof(uint32_t))),
             MixedMemory);
+}
+
+TEST_P(InstructionFetch, RepeatedOperandsSurviveCodeWorkingSetEviction) {
+  const auto Mixed = bytes(MixedX64, MixedARM);
+  const auto Nop = bytes(NopX64, NopARM);
+  std::vector<uint8_t> WorkingSet;
+  for (uint64_t I = 0; I < 2 * PageSize; I += Nop.size())
+    WorkingSet.insert(WorkingSet.end(), Nop.begin(), Nop.end());
+  llvm::cantFail(CPU->map(Code + PageSize, WorkingSet.size(),
+                          Read | Write | Execute | UserAccessible));
+  llvm::cantFail(CPU->write(Code + PageSize, WorkingSet));
+  for (unsigned Round = 0; Round != 4; ++Round) {
+    if (Round == 2) {
+      const auto Exit =
+          run(Code + PageSize, Code + PageSize + WorkingSet.size() - nopSize());
+      ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+    }
+    unsigned Seen = 0, Reads = 0, Writes = 0;
+    BackendHooks Hooks;
+    Hooks.Instruction = [&](uint64_t, uint32_t) { ++Seen; };
+    Hooks.Read = [&](uint64_t A, uint32_t N) {
+      EXPECT_EQ(A, Data);
+      EXPECT_EQ(N, sizeof(uint8_t));
+      ++Reads;
+    };
+    Hooks.Write = [&](uint64_t A, uint32_t N, uint64_t V) {
+      EXPECT_EQ(A, Data);
+      EXPECT_EQ(N, sizeof(uint32_t));
+      EXPECT_EQ(V, MixedMemory);
+      ++Writes;
+    };
+    const auto Exit = program(Mixed, std::move(Hooks));
+    ASSERT_EQ(Exit.Kind, ExecutionExitKind::Stopped) << Exit.Diagnostic;
+    EXPECT_EQ(Seen, MixedObservations);
+    EXPECT_EQ(Reads, 1u);
+    EXPECT_EQ(Writes, 1u);
+    EXPECT_EQ(value(Result), MixedResult);
+    EXPECT_EQ(value(Source), MixedByte);
+    EXPECT_EQ(llvm::cantFail(CPU->readInteger(Data, sizeof(uint32_t))),
+              MixedMemory);
+  }
 }
 
 TEST_P(InstructionFetch, GuestAliasStoreChangesTheNextInstruction) {

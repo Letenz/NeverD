@@ -75,10 +75,7 @@ public:
 
 protected:
   CheckedBackend(unsigned MaxInstructionBytes, unsigned InstructionAlignment,
-                 bool UserMode, bool Direct = false)
-      : UserMode(UserMode), Direct(Direct),
-        InstructionBytes(MaxInstructionBytes),
-        InstructionAlignment(InstructionAlignment) {}
+                 bool UserMode, bool Direct = false);
   llvm::Error initializeDecoder(cs_arch, cs_mode);
   llvm::Expected<bool> decodeInstruction(uint64_t PC);
   const cs_insn &decodedInstruction() const { return *Decoded; }
@@ -129,8 +126,11 @@ protected:
   uint64_t WatchEpoch = 0;
 
 private:
+  struct InstructionCache;
+  std::unique_ptr<InstructionCache> CachedInstructions;
   llvm::Error runImpl(uint64_t PC, bool &Started, bool &BackendFailed);
-  // Storage only: bytes, permissions and decoding are refreshed on every step.
+  // Bytes and permissions are refreshed on every step; cached detail owns
+  // its complete instruction and is reused only after matching those bytes.
   // The execution lease rejects recursive entry before this storage is touched.
   std::vector<uint8_t> InstructionBytes;
   cs_insn *Decoded = nullptr;

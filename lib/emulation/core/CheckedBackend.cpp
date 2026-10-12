@@ -12,9 +12,29 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <array>
 #include <iterator>
 
 namespace neverd::emulation {
+struct CheckedBackend::InstructionCache {
+  cs_detail *DecoderDetail = nullptr;
+  struct Entry {
+    cs_insn Instruction;
+    cs_detail Detail;
+  };
+  std::array<std::unique_ptr<Entry>, execution_limits::InstructionCacheEntries>
+      Entries;
+  std::unique_ptr<Entry> &slot(uint64_t PC) {
+    return Entries[((PC >> 2) ^ (PC >> 12)) % Entries.size()];
+  }
+};
+
+CheckedBackend::CheckedBackend(unsigned MaxInstructionBytes,
+                               unsigned InstructionAlignment, bool UserMode,
+                               bool Direct)
+    : UserMode(UserMode), Direct(Direct), InstructionBytes(MaxInstructionBytes),
+      InstructionAlignment(InstructionAlignment) {}
+
 bool CheckedBackend::executionWatched(uint64_t Address) const {
   const auto I = llvm::upper_bound(
       ExecutionWatches, Address, [](uint64_t Address, const ExecutionWatch &W) {
@@ -46,11 +66,16 @@ llvm::Error CheckedBackend::initializeDecoder(cs_arch Arch, cs_mode Mode) {
   Decoded = cs_malloc(Decoder);
   if (!Decoded)
     return error(diagnostic::Decode);
+  CachedInstructions = std::make_unique<InstructionCache>();
+  CachedInstructions->DecoderDetail = Decoded->detail;
   return llvm::Error::success();
 }
 CheckedBackend::~CheckedBackend() {
-  if (Decoded)
+  if (Decoded) {
+    if (CachedInstructions)
+      Decoded->detail = CachedInstructions->DecoderDetail;
     cs_free(Decoded, 1);
+  }
   if (Decoder)
     cs_close(&Decoder);
 }
@@ -248,8 +273,28 @@ llvm::Expected<bool> CheckedBackend::decodeInstruction(uint64_t PC) {
           Permissions))
     return std::move(E);
   const uint8_t *Input = InstructionBytes.data();
+  auto &Cached = CachedInstructions->slot(PC);
+  if (Cached && Cached->Instruction.address == PC &&
+      Cached->Instruction.size <= Count &&
+      std::equal(Cached->Instruction.bytes,
+                 Cached->Instruction.bytes + Cached->Instruction.size, Input)) {
+    // The current readable/executable prefix was fetched above. Metadata is
+    // owned, including printer-adjusted aliases and complete operand detail;
+    // neither an old permission nor a borrowed decoder packet is reused.
+    *Decoded = Cached->Instruction;
+    Decoded->detail = &Cached->Detail;
+    return true;
+  }
+  Decoded->detail = CachedInstructions->DecoderDetail;
   uint64_t DecodePC = PC;
-  return cs_disasm_iter(Decoder, &Input, &Count, &DecodePC, Decoded);
+  if (!cs_disasm_iter(Decoder, &Input, &Count, &DecodePC, Decoded))
+    return false;
+  if (!Cached)
+    Cached = std::make_unique<InstructionCache::Entry>();
+  Cached->Instruction = *Decoded;
+  Cached->Instruction.detail = nullptr;
+  Cached->Detail = *Decoded->detail;
+  return true;
 }
 
 llvm::Expected<uint32_t> CheckedBackend::instructionSize(uint64_t Address) {
