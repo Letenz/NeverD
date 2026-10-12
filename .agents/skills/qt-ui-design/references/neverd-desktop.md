@@ -1,8 +1,9 @@
 # NeverD desktop design profile
 
 Use this profile for NeverD's Qt desktop UI. It captures decisions established
-through the Quick Start iterations, including user feedback and actual Qt
-renders. These are product defaults, not a universal definition of good taste.
+through the Quick Start iterations and the workbench refinement pass, including
+user feedback and actual Qt renders. These are product defaults, not a
+universal definition of good taste.
 Carry forward choices the user has accepted; change them when new evidence or
 an explicit request warrants it.
 
@@ -27,6 +28,55 @@ Build refinement through proportion, alignment, typography, and coherent states.
   fill for the default action or selected file. A thin, visible neutral keyboard
   focus outline is appropriate; a persistent bright blue frame is too dominant
   for these small action glyphs. Keep focus reachable and perceivable.
+
+## Workbench chrome
+
+The workbench keeps IDA's layout, menus, and shortcuts with Visual Studio
+Code's Dark+ and Light+ colors. When asked for more refinement, the user wanted
+the overall style unchanged, so refine within it instead of restyling it, and
+judge each change in the real window.
+
+- Treat the accent as a state color. Selection, keyboard focus, the current
+  position, and progress may use it; chrome surfaces may not. A full-width
+  accent status bar read as decoration, so the status bar shares the windows'
+  surface below a hairline, as in Visual Studio Code's Modern themes
+  (`StatusBar`, `StatusBarText`, `StatusBarBorder`).
+- Let the chrome read as few surfaces. The menu bar shares the toolbar's
+  surface, so the band above the windows reads as one piece. Separate regions
+  with 1-pixel hairlines (`Separator`, `StatusBarBorder`) instead of boxes,
+  raised panels, or shadows.
+- Quiet secondary text with color, not with a smaller size. Status lines,
+  legends, and counts that describe rather than act use `SecondaryText`. Build
+  a view's status line with `makeStatusLine()` in `ShrinkableRow.h`, so its
+  margins and color match the other views.
+- Show a control when it helps. A dock tab shows its close button only while it
+  is current or hovered, and the hidden button keeps its space so the tabs do
+  not shift (`DockTabBar` in `Docking.cpp`). Access-key underlines appear only
+  while Alt is held or a menu opened from the keyboard is showing
+  (`WorkbenchStyle`), as on Windows and GNOME.
+- Give popups room and a soft shape. Menus have a 4-pixel inset, item
+  highlights with a 3-pixel radius, and separators inset from the menu's
+  edges; tooltips pad their text. Keep radii small and consistent, and do not
+  round docks or views.
+- Keep categorical colors related. The navigation band's dark colors were
+  harmonized in OKLCH: each category keeps its hue while lightness and chroma
+  stay within one band, and the regular-function color no longer reuses the
+  accent. Row
+  tints for thunks and library functions carry about 40% less chroma than
+  their earlier values, so they mark rows without competing with the text.
+  Legend swatches are 8-pixel squares with a 2-pixel radius.
+- Keep the signature elements. The toolbar's colored duotone icons stay: the
+  user kept them over a single-accent recolor and an outline variant, and had
+  earlier rejected all-gray icons as lifeless. Refine spacing, weight, and
+  states around them instead of recoloring them.
+
+Use Visual Studio Code as a reference for technique, not as a palette to copy
+wholesale. The installed build keeps its themes in
+`/usr/share/code/resources/app/extensions/theme-defaults/themes/`;
+`dark_modern.json` and `2026-dark.json` show how it separates surfaces with
+borders, quiets secondary text, and reserves the accent. Give every new color
+a role in `ChromeColors.def` or `ThemeColors.def` with light and dark values;
+style sheets and paint code read roles, never color literals.
 
 ## Hierarchy and proportion
 
@@ -99,6 +149,15 @@ diff does not establish the appearance of a Qt widget.
 4. Use existing theme/icon checks and focused interaction regressions. Add a
    test for observable behavior such as drag resizing, not for a preferred
    color literal or a screenshot's exact pixel arrangement.
+5. Compare before and after under one layout. Capture both builds from copies
+   of `NeverD.conf` and `desktop.json` in an isolated configuration directory,
+   because the user's live layout changes between runs, and wait until slow
+   regions such as the navigation band have painted.
+6. Test window-manager behavior, such as edge resizing, maximizing, full
+   screen, and dialog attachment, under a real compositor with the desktop
+   session's `XDG_CURRENT_DESKTOP` and `XDG_SESSION_TYPE`. Xvfb has no window
+   manager, and without those variables Qt picks a different window
+   decoration and the GNOME-specific code stays off.
 
 When reporting an audit, connect each finding to its consequence and proposed
 change: for example, a timestamp beside the filename hides a build suffix, so
@@ -117,7 +176,15 @@ perfect aesthetics or using decorative effects as a substitute for hierarchy.
 - [Microsoft: icon design](https://learn.microsoft.com/en-us/visualstudio/extensibility/ux-guidelines/images-and-icons-for-visual-studio#style-details)
   — simple metaphors and consistent visual weight across a family.
 - [Qt: QDialog resize grip](https://doc.qt.io/qt-6/qdialog.html#sizeGripEnabled-prop).
+- [Visual Studio Code: theme color reference](https://code.visualstudio.com/api/references/theme-color)
+  — the roles behind its surfaces, borders, and state colors.
+- [CSS Color 4: OKLab and OKLCH](https://www.w3.org/TR/css-color-4/#ok-lab)
+  — a perceptual space for related categorical colors.
 - Local examples: [QuickStartDialog.cpp](../../../../tools/neverd-gui/app/QuickStartDialog.cpp),
   [ChromeColors.def](../../../../tools/neverd-gui/app/ChromeColors.def),
-  [IconSet.def](../../../../tools/neverd-gui/app/IconSet.def), and
+  [ThemeColors.def](../../../../tools/neverd-gui/app/ThemeColors.def),
+  [theme.qss](../../../../tools/neverd-gui/resources/theme.qss),
+  [IconSet.def](../../../../tools/neverd-gui/app/IconSet.def),
+  [Docking.cpp](../../../../tools/neverd-gui/app/Docking.cpp),
+  [WorkbenchStyle.cpp](../../../../tools/neverd-gui/app/WorkbenchStyle.cpp), and
   [GUI testing guidance](../../../../docs/testing.md#gui-function-lists-and-navigation).
