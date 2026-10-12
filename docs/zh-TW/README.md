@@ -1,6 +1,6 @@
 **語言**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
+<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
 
 [← NeverD 專案](project.md)
 
@@ -17,6 +17,7 @@
 | [專案說明（繁體中文）](project.md) | 概覽、快速開始、建置、SDK、CLI |
 | [貢獻指南](CONTRIBUTING.md) | 開發環境、建置設定、工作流程、風格與 PR 要求 |
 | [架構](architecture.md) | IR 路徑、元件邊界、嚴格提升、支援深度與修改位置 |
+| [原始碼與原生物件 patch](source-patching.md) | 編譯器選擇、原生物件、位址繫結、例外、發佈交易與已驗證設定 |
 | [離線 Web 分析（英文）](../web-analysis.md) | C++ 製品、原始碼、繫結與映射檢查，中繼資料策略、SDK 與目前驗證範圍 |
 | [JavaScript 基礎重寫（英文）](../web-source-rewrite-profile.md) | 明確處理步驟、局部替換檢查、精確逆轉換與受驗證憑據約束的本機匯出 |
 | [Bun 獨立程式設定（英文）](../web-bun-profile.md) | 限定範圍的 x64/ARM64 ELF、單架構 Mach-O 與 PE 擷取、原始範圍及固定測試樣本的來源 |

@@ -1787,3 +1787,19 @@ Le regressioni dell’osservatore delle scritture verificano la visibilità prim
 `RegistrationCallNoReturn` rifiuta estensioni, destinazioni o intervalli di operazioni modificati, chiamate condizionali e architetture o formati errati. Il test PE32 riallineato copre una chiamata terminale provata indipendentemente e una continuazione ordinaria la cui rimozione richiede una prova attuale; una prova di memoria non valida non ricrea un arco già assente.
 
 `SafeSEHReference.*` verifica l’appartenenza a SafeSEH immutabile, memoria malformata o ambigua, rilocazioni, altre architetture/formati e l’ordine delle dichiarazioni tra frammenti. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` usa `NEVERD_NONLOCAL_FINALLY_INPUTS` per verificare 32 combinazioni LLVM di fixture MSVC native x86/x64, O0/O2 e GS, con e senza ottimizzazione sorgente. Verifica LLVM e le firme delle chiamate risolte, richiedendo che la ricostruzione EH nativa x86 non supportata sia ancora rifiutata. Il job Windows EH dedicato scarica l’artefatto nativo ed esegue la matrice; senza la directory di input, il test viene esplicitamente saltato.
+
+## Patch da sorgenti e oggetti nativi
+
+`CPU` indica installazione ed esecuzione isolata delle funzioni; `REFUSED` indica un contratto di installazione mancante. ARM32 ELF richiede registrazione EHABI; Mach-O a 32 bit richiede contratti verificati di loader, frontend e unwinding; l’installazione PE da sorgente richiede attualmente x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[Patch da sorgenti e oggetti nativi](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

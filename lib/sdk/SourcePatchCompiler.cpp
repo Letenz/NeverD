@@ -3,6 +3,7 @@
 #include "SourcePatchCompiler.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/codegen/SourcePatch.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
@@ -125,8 +126,9 @@ compileSourcePatch(llvm::StringRef Source,
       Options.language != NEVERD_SOURCE_PATCH_C)
     return compilerError(
         "NeverC C++ source is not an admitted language profile");
-  if (Format == BinaryFormat::MachO && Architecture == Arch::ARM)
-    return compilerError("ARM Mach-O requires a verified watchOS frontend ABI");
+  if (!Object)
+    if (auto Error = validateSourcePatchTarget(Architecture, Format))
+      return std::move(Error);
   const char *Target = llvmCodegenTriple(Architecture, Format);
   if (!Target)
     return compilerError("unsupported native target");

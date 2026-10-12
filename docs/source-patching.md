@@ -1,88 +1,71 @@
+**Languages**: [English](source-patching.md) | [简体中文](zh-CN/source-patching.md) | [繁體中文](zh-TW/source-patching.md) | [日本語](ja/source-patching.md) | [한국어](ko/source-patching.md) | [Français](fr/source-patching.md) | [Deutsch](de/source-patching.md) | [Español](es/source-patching.md) | [Italiano](it/source-patching.md) | [Русский](ru/source-patching.md) | [العربية](ar/source-patching.md)
+
+[← Documentation Index](README.md)
+
 # Source and native object patches
 
-NeverD can compile a replacement with a selected compiler, bind its exact entry
-symbol to an original function address, and install it in a new binary. The
-compiler owns the replacement's language semantics. NeverD owns address binding,
-placement, relocation, unwind registration, entry redirection and publication.
-This route does not decompile and rebuild the rest of the program.
+NeverD compiles a replacement with the selected compiler and installs it at an explicit original function entry. The compiler owns C/C++ semantics; NeverD owns address binding, relocation, storage, unwind records and publication. Binary repair and lifted rewrites retain their own pipeline. The rest of the program is not rebuilt.
 
+<!-- i18n-section: compiler -->
 ## Compiler selection
 
+Choose `--compiler=clang`, `--compiler=gcc` or `--compiler=neverc`. Clang and ordinary NeverC can produce LLVM IR; the `object` artifact preserves native producer instructions. The CLI selects objects for GCC. The Python SDK needs an explicit `artifact="object"` for GCC. A selected compiler never silently falls back.
+
+Use authenticated entries for the example addresses. The replacement declaration must match the original machine ABI, including calling convention and structure layouts; an address cannot prove that declaration. C++ needs `--language=c++` and the correct Clang++/G++ executable. Prefer an `extern "C"` entry or pass the exact mangled symbol. Extra helpers are allowed. Both `--entry` and `--func` select the replacement explicitly. The legacy `--from-c` address is also honored.
+
 ```sh
-# Clang C, through LLVM IR
+# Clang C -> LLVM IR
 neverd patch app --from-source=replacement.c --entry=replacement \
   --func=0x401140 --compiler=clang --compiler-path=/path/to/clang \
-  --patch-report -o app.patched
+  --patch-report -o app.clang
 
-# NeverC ordinary C compilation, preserving the produced native machine code
+# NeverC ordinary C -> native object
 neverd patch app --from-source=replacement.c --entry=replacement \
   --func=0x401140 --compiler=neverc --compiler-path=/path/to/neverc \
   --artifact=object --patch-report -o app.neverc
 
-# GCC uses native objects by default in the CLI
+# GCC -> native object (CLI default for GCC)
 neverd patch app --from-source=replacement.c --entry=replacement \
-  --func=0x401140 --compiler=gcc --compiler-path=/path/to/x86_64-linux-gnu-gcc \
+  --func=0x401140 --compiler=gcc --compiler-path=/path/to/gcc \
   --patch-report -o app.gcc
 
-# An independently compiled native object uses the same installer
+# Independently compiled ELF x64 object
 clang --target=x86_64-unknown-linux-gnu -fPIC -fno-lto -c replacement.c -o replacement.o
 neverd patch app --from-object=replacement.o --entry=replacement \
   --func=0x401140 --patch-report -o app.object
 ```
 
-Addresses above are examples; use authenticated function entries from the input.
-The replacement declaration must match the original machine ABI, including
-argument/return conventions and structure layouts. A stripped binary generally
-cannot prove a complete C++ type declaration. An address is target selection,
-not proof of that declaration.
+<!-- i18n-section: profiles -->
+## Verified profiles and limits
 
-Use `--language=c++ --compiler=clang --compiler-path=/path/to/clang++` for C++.
-Use `--compiler=gcc --compiler-path=/path/to/g++ --language=c++` for G++ native
-objects. An `extern "C"` entry makes naming explicit; otherwise pass the exact
-mangled symbol. Overloads and multiple externally visible definitions are not
-guessed. A replacement can have additional helper functions without replacing
-original functions with similar names.
-
-`--from-c` retains the C-only compatibility entry. Its nonzero `--func` address
-now actually selects the original function. Requests that formerly reported
-success after installing zero entry jumps now fail. New requests should specify
-both `--entry` and `--func`. New APIs represent address presence separately from
-address zero. Legacy name matching remains centralized for requests without
-explicit mappings; native objects require explicit mappings.
-
-## Current profiles
-
-| Producer | Artifact | Target and language verified |
+| Producer | Artifact | Verified OS runtime profile |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O ARM64 C/C++; PE x64 C/C++ FH3 |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x64 C/C++ FH3 |
 | Clang 22.1.6 | Native object | ELF x64 C/C++ |
-| GCC/G++ 13.3.0 | Native object | ELF x64 C/C++ with a matching Itanium ABI runtime |
-| NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O ARM64 C |
+| GCC/G++ 13.3.0 | Native object | ELF x64 C/C++ with a compatible Itanium runtime |
+| NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
-These are fixed profiles, not compatibility promises for every compiler version,
-flag or binary. The checked target, actual compiler path/version, arguments,
-artifact, requested bindings and installed addresses appear in the JSON report.
-Native objects additionally have a SHA-256 digest. An external object has an
-unknown producer; its file name does not establish compiler identity.
+These are checked profiles, not promises for every compiler version or option. `dyncode` and NeverC C++ are not admitted. GCC cannot produce LLVM IR. Native COFF/Mach-O objects are not admitted; native object installation requires ELF x64. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
 
-The IR route uses NeverD's LLVM code generator. Native objects retain producer
-machine instructions and section contents, changing only admitted relocation
-fields and the original entries. NeverC's `-fpatchable-function-entry=16` has been
-checked through this route: every non-relocation text byte, including the
-compiler's added entry padding, survived installation. Other MIR/obfuscation
-transformations need their own relocation and runtime verification.
+The separate CPU matrix exercises four architectures (`x86`, `x64`, `ARM32`, `ARM64`) and three formats (`ELF`, `PE`, `Mach-O`), checking source installation or explicit refusal. Isolated CPU execution does not certify an OS loader, C++ unwinder or arbitrary ABI. Use the OS runtime profiles above for those claims.
 
-NeverC is optional. Ordinary NeverC compilation does not enable dyncode. Explicit
-`--compile-mode=dyncode` currently fails because its code-block/runtime contract
-has not been adapted. NeverC C++ is not an admitted source profile. GCC cannot
-produce the LLVM IR artifact. COFF/Mach-O native objects are not admitted.
-Additional architectures are outside the runtime-verified source profiles;
-matching a target triple alone does not establish runtime support. Additional
-Windows EH encodings need their own contracts and runtime profiles. The existing
-lifted rewrite path retains its existing rules.
+| Format | `x86` | `x64` | `ARM32` | `ARM64` |
+|---|---|---|---|---|
+| `ELF` | `CPU` | `CPU` | `REFUSED` | `CPU` |
+| `PE` | `REFUSED` | `CPU` | `REFUSED` | `REFUSED` |
+| `Mach-O` | `REFUSED` | `CPU` | `REFUSED` | `CPU` |
 
-## References and storage
+`CPU` means source installation and isolated function execution; `REFUSED` means an explicit missing installation contract. ARM32 ELF needs EHABI registration; 32-bit Mach-O needs a verified loader/frontend/unwind contract; PE source installation currently requires x64.
+
+The CPU matrix uses freestanding arithmetic, branches and helper calls. ELF x86/ARM64 data references and ARM64 C++ imports are not certified by those results; the additional runtime probes refused their unsupported relocation contracts.
+
+<!-- i18n-section: references -->
+## Original references and storage
+
+Bindings refer to external declarations: `function` requires an authenticated original function/import stub; `data` requires writable storage; `const` requires a const IR declaration. Object data bindings need a nonzero extent. Extents cannot cross storage boundaries or grant writes to RELRO. Calls to the original body of the function being replaced are refused: no saved-prologue callback trampoline exists in this profile.
+
+New code stays RX and new mutable state stays RW. Only existing imports are reused. GOT/IAT slots and callable stubs retain distinct meanings. Mach-O needs unused load-command space, for example `-Wl,-headerpad,0x400`; PE needs unused section-header space. Insufficient space fails. ELF `.data.rel.ro` and original CET/IBT protections require additional contracts and are currently refused.
 
 ```sh
 neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140 \
@@ -92,123 +75,21 @@ neverd patch app --from-source=replacement.c --entry=replacement --func=0x401140
   --patch-report -o app.bound
 ```
 
-Bindings name external declarations. `function` requires an authenticated
-original entry or import stub. `data` requires writable original storage;
-`const` requires a const declaration on the IR route. Data extents cannot cross
-a section/segment boundary or promise writable access to RELRO. Object data
-bindings require an explicit nonzero size; IR bindings can infer a declaration's
-allocation size. New writable globals and zero-initialized state occupy a
-separate RW allocation, and code remains RX. ELF absolute data/function pointers
-are registered with the dynamic loader, retaining the original dynamic symbol
-indices and their version/dependency relationships.
+Mach-O unwind-table growth also requires unused adjacent file and virtual space; header padding alone does not reserve it. The verified fixtures keep these requirements distinct.
 
-A callable import stub, a GOT/IAT pointer slot and the pointed-to address have
-different meanings. The resolver preserves that distinction. Only existing
-imports are reused; it does not add arbitrary libraries or import-table entries.
-Missing runtime symbols fail, including stack-protection and exception symbols.
-The installer does not disable those requirements to make a patch fit.
+<!-- i18n-section: exceptions -->
+## C++ exceptions
 
-An explicit binding to the original body of a replaced function is rejected.
-There is no saved-prologue callback trampoline in this profile. Calls through the
-original entry reach the replacement after installation.
+ELF uses compiler FDE/LSDA data; Mach-O uses compact unwind/DWARF. PE x64 admits compiler FH3 tables with a compatible existing MSVC runtime and type identities. Type-info data may need explicit bindings. FH4, custom personalities, SEH source and active CFG/EHCont/XFG modes are refused; original protection flags are preserved.
 
-Mach-O writable storage currently needs enough unused load-command header space
-for the new segments. Test inputs reserve it with `-Wl,-headerpad,0x400` or more.
-Insufficient space fails before publication. Existing code is not moved to
-manufacture that space.
+Runtime cases cover normal return, internal catch, a new throw caught by an original caller, an original callee throwing through the replacement, exactly-once RAII cleanup, rethrow, noexcept termination and untouched original functions. The original caller must already allow propagation: a patch cannot restore catches that the original compiler eliminated around a proven no-throw function.
 
-PE x64 source patches put new code in RX storage, mutable state in RW storage,
-and merged runtime/base-relocation tables in read-only storage. Original runtime
-rows and base relocations remain intact. The image must have unused section-header
-space. Active CFG, EH continuation protection, XFG and other guard modes require
-additional compiler/installer contracts and are rejected without changing flags.
-Informational CRT instrumentation flags alone do not enable these modes.
+<!-- i18n-section: publication -->
+## SDK and publication
 
-The native ELF object reader retains an entire single object, including validated
-COMDAT groups and link-order members. It supports bounded x64 PC32/PLT32, GOTPCREL
-(including GOTPCRELX forms), and writable 64-bit pointer relocations. It validates
-CFI ranges against exact object function symbols. Unknown relocations, malformed
-symbols, overlapping writes, TLS, IFUNC, common symbols, LTO, archives, unresolved
-weak references and dynamic initializer/finalizer sections fail clearly.
-Post-relocation read-only allocations such as `.data.rel.ro` need additional
-RELRO registration and are currently rejected. CET/IBT original images require
-an ENDBR-preserving entry scheme and are currently rejected without changing
-protection flags.
+The append-only C API is `neverd_patch_source` with `neverd_source_patch_options_v1`; `neverd_patch_source_report` returns the receipt. Object input supplies its byte length. The legacy `neverd_patch_from_c` remains available.
 
-## Exception behavior
-
-ELF uses the compiler's FDE/LSDA records and a rebuilt registered search table.
-Mach-O uses compiler-generated compact-unwind/DWARF data. The checked runtime
-cases cover normal returns, internal catch, a new throw caught by an original
-caller, an original callee throwing through the replacement, exactly-once RAII
-cleanup, rethrow, noexcept termination and untouched original functions.
-
-PE uses the compiler's new x64 unwind programs and C++ FH3 state/handler tables.
-Compiler function/funclet ranges authenticate these new records; original lifted
-EH identities are neither copied nor fabricated. The checked producer is Clang
-with the MSVC ABI and an existing compatible runtime. Type-info vtables and shared
-data may need explicit bindings, for example
-`--bind=const:??_7type_info@@6B@=0x140003008:8` (an example address, not a default).
-The private type descriptors emitted by the compiler receive writable storage
-and load-time base relocations. FH4, custom personalities and SEH source profiles
-are not admitted by this path.
-
-The original call site must already permit exception propagation. A compiler may
-remove catches or cleanups around an original function it proves cannot throw;
-installing a new throwing function does not recreate those removed caller paths.
-The fixed C++ fixtures therefore use an originally throwing target. The original
-runtime must provide matching personality functions, type identities and any
-stack-protection dependencies. Symbol-name equality alone is not a general ABI
-compatibility proof.
-
-Linux x64 runtime evidence on the development Mac uses Docker and the Linux
-dynamic loader (`/lib64/ld-linux-x86-64.so.2`). This exercises the Linux exception
-runtime but is not evidence of direct launch on x64 hardware. Some emulators
-provide an incorrect `AT_PHDR` for a moved program-header table; explicit loader
-launch was used for those environments. The native Linux test suite also runs
-ordinary launches when executing on Linux x64.
-
-PE runtime evidence currently uses Wine 11's Windows exception runtime in an
-x64 Docker environment. Its seven C++ scenarios are also available as an optional
-test on a Windows x64 host/runner. This is not a claim of Windows hardware
-coverage or forced-ASLR execution. On the development emulator, Wine required
-its preloader to be disabled and the Linux ELF loader to be invoked explicitly.
-
-### LLVM dependency correction
-
-The address-model backend in the r3 and pinned r4 LLVM releases interprets the
-x64 PLT specifier as an AArch64 page modifier. Late compiler calls such as
-`_Unwind_Resume` can therefore receive a wrong displacement. NeverD checks these
-encoded source-patch references and refuses an invalid image.
-
-The scoped backend correction is included in
-[`cmake/patches/llvm-aarch64-specifier-scope.patch`](../cmake/patches/llvm-aarch64-specifier-scope.patch).
-The integrated build applies this correction to a build-directory copy of the
-single LLVM source file. It preserves the submodule checkout and revision, and
-accepts an already corrected source. An unrecognized source fails configuration
-instead of silently skipping the correction. Use an integrated build:
-
-```sh
-cmake -S . -B build-source -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=OFF \
-  -DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=/path/to/clang
-cmake --build build-source --target neverd NeverDSourcePatchTests \
-  NeverDNativeExceptionRewriteContractTests --parallel 4
-```
-
-Point the test compiler setting at a compatible Clang (22.1.6 was verified),
-which may differ from the system compiler used to build NeverD itself.
-The shared prebuilt cache is not rewritten. Its r3/r4 backend remains subject to
-the displacement check and may refuse an IR patch. The native object route does
-not recompile through this LLVM MC path. The standalone patch can also be applied
-when building the LLVM fork outside NeverD.
-
-## SDK and transaction behavior
-
-The append-only C API is `neverd_patch_source` with
-`neverd_source_patch_options_v1`; `neverd_patch_source_report` returns the JSON
-receipt. The caller supplies byte length explicitly for object input. The legacy
-`neverd_patch_from_c` symbol remains available.
+Inputs are snapshotted. The candidate is staged beside the destination, reloaded and checked against every requested entry before exclusive publication. Existing files and symlink aliases are not overwritten. One missing mapping fails the entire request. `--mode=inplace` is refused. Session IR transforms cannot be applied to native objects. Mach-O uses strict signature verification/resigning; signed PE is not silently stripped.
 
 ```python
 report = session.patch_source(
@@ -219,67 +100,25 @@ report = session.patch_source(
 )
 ```
 
-Inputs are snapshotted; the candidate is staged beside the destination, checked
-against every requested installation, reloaded, and published exclusively only
-after its exact entry bytes and executable destinations agree with the receipt.
-Any missing mapping fails the whole request. Existing output files and symlink
-aliases are not overwritten. Mach-O ad-hoc signatures use the existing strict
-resigning/verification path; signatures requiring a separate signing workflow
-are refused. Signed PE input is not silently stripped.
+<!-- i18n-section: verification -->
+## Building and verification
 
-`--mode=inplace` is explicitly rejected for these inputs. Session LLVM IR
-transforms apply to IR artifacts; they cannot be requested for native objects.
-Compiler options are argument arrays, with target/output modes owned by each
-adapter. Selected compilers never silently fall back to another executable.
+Use a compatible source producer through `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (Clang 22.1.6 was checked). Integrated LLVM receives a scoped correction in a build-directory copy; the submodule and shared prebuilt cache remain unchanged. The r3/r4 prebuilt x64 PLT bug can cause an IR patch to be refused; native objects avoid that MC path. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires the exact corrected PLT producer.
 
-## Validation record (2026-10-12)
+`NeverDSourcePatchTests` contains native C/API/object/EH cases; `NeverDSourcePatchMatrixTests` checks all target combinations through Unicorn. `SourcePatchPE` runs seven C++ scenarios when `NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and `NEVERD_TEST_WINDOWS_SDK_LIB` are supplied. Non-Windows hosts also need `NEVERD_TEST_WINDOWS_RUNNER`. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing runtime inputs fail. The dedicated Windows workflow requires native execution and rejects skipped cases.
 
-Before integration with the refreshed `dev`, the focused
-source/native-exception/COFF suites ran 313 checks: 311 passed and
-two Linux-only checks were skipped on the development Mac. The integrated build
-with the corrected LLVM dependency ran 29,577 registered checks: 29,480 passed,
-31 were skipped, 64 failed and two timed out. All 66 failures/timeouts were also
-reproduced against the original baseline; no new failure was found in this run.
-The 3,216 composed semantic cases across four architectures and three formats
-passed. These semantic checks do not extend the runtime-verified profile table.
+Linux evidence from the development Mac uses Docker and an explicit Linux loader; PE evidence uses Wine 11. Mach-O ARM64 runs on the Mac itself. Native Windows CI results must be checked separately; a configured job is not a passing run. Historical counts, baseline failures and emulator limits are in [the detailed contracts and validation record](source-patching-details.md).
 
-The Python SDK checks against the built shared library ran 154 tests: 109 passed
-and 45 lacked the required platform or fixture. The ABI audit and mypy passed.
-Runtime evidence and its platform limits are described above; skipped coverage
-and reproduced baseline failures are not counted as passes.
+```sh
+cmake -S . -B build-source -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=OFF \
+  -DNEVERD_ENABLE_SEMANTIC_TESTS=ON \
+  -DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=/path/to/clang
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```
 
-The integration checkpoint at `ce298f758` uses the pinned r4 LLVM with the
-build-directory correction. Its source, native-exception, COFF and
-plugin suites ran 475 registered test executions: 473 passed and two Linux-only
-checks were skipped on the Mac. There are 330 distinct test names; shared
-checks run in both the lift and focused exception binaries. The required exact
-PLT producer check passed with `NEVERD_TEST_REQUIRE_FIXED_LLVM=1`. Another 364
-format and shared IR checks passed, including the newly integrated return-proof
-and cleanup regressions.
-
-All 3,216 composed semantic cases across four architectures and three formats
-passed at this checkpoint, with no skips. These checks cover the shared rewrite
-pipeline and do not extend the runtime-verified source profiles.
-
-After incorporating the later C-output changes through `a5f9115d3`, the final
-build repeated the 475 focused executions with the same 473 passes and two
-Linux-only skips. All five incoming image-table and signed-comparison tests
-also passed. The composed matrix above was run at the earlier checkpoint.
-The subsequent integration through `1a131e7dd` repeated the same focused result
-and both seven-scenario Linux exception runs. Its computed-goto regression
-passed; the ARM32 literal-pool runtime test failed because the macOS linker
-cannot link `armv4t`, another host-profile limitation.
-
-The final CLI's Clang IR and GCC object replacements each passed seven Linux
-C++ exception scenarios in Docker. The GCC input retains stack protection.
-The PE FH3 runtime test passed its seven scenarios under Wine. These remain
-emulated/runtime evidence with the platform limits above. The final shared
-library's Python SDK run passed 110 of 165 tests, with 55 explicit skips. ABI
-audit, mypy, formatting and documentation checks passed.
-
-Two additional upstream source tests could not pass in this local profile:
-`AArch64_HighCExecution.FMaxAndFMinPropagateANaN` needs a Clang supporting
-`__builtin_elementwise_minimum/maximum`; the configured system Clang lacks
-them. `HighCPointerAddresses.AnX87StoreWritesItsTenBytes` tries to compile x87
-assembly with the ARM64 host compiler. These environment failures are recorded
-separately and are not counted as passes.
+The scoped LLVM copy also corrects Mach-O x64 GOT data references: Clang’s typed-catch table is relative to the end of its four-byte relocation word. The r3/r4 prebuilt misanchors that reference by four bytes. Publication validates the encoded field and refuses the uncorrected producer. On the development Mac, x64 Mach-O runtime cases use Rosetta 2; ARM64 cases execute directly.

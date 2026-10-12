@@ -102,3 +102,23 @@ int extremes(int a) {
 )C",
                        "extremes", {"extremes"});
 }
+
+// `fcsel ..., gt` after an `fcmp` selects when Z is clear and N equals V.
+// V is the unordered test, `!(a == b || a < b || b < a)`, which prints as
+// a conjunction: compared with N it keeps its parentheses.
+TEST_F(AArch64_HighCExecution, AGreaterThanAfterFcmpGroupsTheUnorderedTest) {
+  expectRunsLikeSource(R"C(
+int minmax(int a) {
+  float mn = 1e30f, mx = -1e30f;
+  for (int i = 0; i < 200; i++) {
+    float x = (float)((int)(a * (i * 7 + 1)) % 2003 - 1000);
+    if (x < mn)
+      mn = x;
+    if (x > mx)
+      mx = x;
+  }
+  return (int)(mx - mn);
+}
+)C",
+                       "minmax", {"minmax"});
+}

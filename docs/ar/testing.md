@@ -1716,3 +1716,19 @@ guest/Python5,000,000us / quantum1024 / public10s
 يرفض `RegistrationCallNoReturn` حدود التعليمات والأهداف ونطاقات العمليات المعدلة والاستدعاءات الشرطية والاستخدام مع معمارية أو صيغة غير صحيحة. يتحقق اختبار PE32 ذي المكدس المعاد محاذاته من استدعاء نهائي مثبت بصورة مستقلة ومن حافة متابعة عادية تتطلب دليلاً حالياً لإزالتها؛ ولا يعيد دليل ذاكرة غير صالح إنشاء حافة غائبة.
 
 تفحص `SafeSEHReference.*` العضوية في جدول SafeSEH غير قابل للتغيير والتخزين المشوه أو الملتبس وإعادة التموضع والمعماريات والصيغ الأخرى وترتيب التصريحات بين الأجزاء. يستخدم `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` المتغير `NEVERD_NONLOCAL_FINALLY_INPUTS` لفحص 32 تركيبة LLVM لعينات MSVC الأصلية على x86/x64 مع O0/O2 وGS ومع تفعيل تحسين المصدر وتعطيله. يتحقق من LLVM وتواقيع الاستدعاءات المحلولة، مع استمرار رفض إعادة بناء x86 EH الأصلي غير المدعوم. تنزل مهمة Windows EH المخصصة ملف العينات الأصلي وتنفذ المصفوفة؛ ويُتجاوز الاختبار صراحة عند غياب مجلد الإدخال.
+
+## تصحيحات المصدر والكائنات الأصلية
+
+تعني `CPU` تثبيت المصدر وتنفيذ الدالة المعزولة، وتعني `REFUSED` رفضاً صريحاً لغياب عقد التثبيت. تحتاج ARM32 ELF إلى تسجيل EHABI؛ وتحتاج Mach-O ذات 32 بت إلى عقود محمل وواجهة ترجمة وفك مكدس متحققة؛ ويتطلب تثبيت مصدر PE حالياً x64.
+
+`NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+[تصحيحات المصدر والكائنات الأصلية](source-patching.md)
+
+```sh
+cmake --build build-source --target NeverDSourcePatchTests \
+  NeverDSourcePatchMatrixTests --parallel 4
+ctest --test-dir build-source -L \
+  '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
+  --output-on-failure --parallel 4
+```

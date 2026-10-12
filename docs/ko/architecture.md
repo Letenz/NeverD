@@ -8,6 +8,10 @@
 설명합니다. 의도적으로 NeverD 소유 코드만 다루며 LLVM, Capstone, Unicorn
 서브모듈은 각자의 내부 아키텍처를 유지합니다.
 
+## 소스 및 오브젝트 대체 경계
+
+`SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
+
 ## 시스템 경계
 
 ```mermaid

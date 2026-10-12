@@ -21,10 +21,10 @@ llvm::json::Object summary(const WailsExtraction &E, uint64_t Revision) {
       {"extraction_id", E.ID},
       {"artifact_id", E.ArtifactID},
       {"container_sha256", E.BlobHash},
-      {"profile", std::string(WailsProfile)},
-      {"container_format", "elf"},
-      {"architecture", "x64"},
-      {"platform", "linux"},
+      {"profile", E.Profile},
+      {"container_format", E.ContainerFormat},
+      {"architecture", E.Architecture},
+      {"platform", E.Platform},
       {"declared_go_version", "go1.25.7"},
       {"declared_wails_version", "v2.11.0"},
       {"producer_version_verified", false},
@@ -56,11 +56,9 @@ std::string Session::extractWails(std::string_view Revision,
                                   std::string_view Profile) {
   std::lock_guard Lock(State->Mutex);
   State->requireRevision(Revision);
-  if (Profile != WailsProfile)
-    throw Error("wails_unsupported_profile");
   uint64_t PrivateBytes = 0;
   for (const auto &[ID, E] : State->WailsExtractions) {
-    if (E.ArtifactID == ArtifactID)
+    if (E.ArtifactID == ArtifactID && E.Profile == Profile)
       return json(summary(E, State->Revision));
     PrivateBytes += E.PrivateBytes;
   }
