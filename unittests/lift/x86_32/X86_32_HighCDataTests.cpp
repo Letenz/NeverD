@@ -36,3 +36,37 @@ int mix(int a) {
 )C",
                             "mix", {"mix"}, {-3, 0, 1, 7, 77, 0x12345});
 }
+
+// `movw %bx, 8(%esp)` stores the low half of a value the function computed
+// in EBX, a callee-saved register, into a local array.  The view is version 0
+// of its own register, like an entry value, but no save of one: the store
+// stays, and a later copy of the element reads it.
+TEST_F(X86_32_HighCData, AViewOfACalleeSavedRegisterStoredInALocalStays) {
+  // The C computes 32-bit frame addresses.
+  HostFlags = {"-m32"};
+  expectHighCRunsLikeSource({"-target", "i386-linux-gnu", "-march=pentium4"},
+                            R"C(
+struct ag { unsigned x; unsigned short y; unsigned char z; };
+int agg(int a) {
+  unsigned s = (unsigned)a | 1u;
+  struct ag arr[5];
+  unsigned long long acc = 0;
+  for (int i = 0; i < 5; i++) {
+    arr[i].x = s * ((unsigned)i + 1u);
+    arr[i].y = (unsigned short)(s >> i);
+    arr[i].z = (unsigned char)(s >> (8 + i));
+  }
+  for (int i = 0; i < 160; i++) {
+    s = s * 1103515245u + 12345u;
+    unsigned d = (s >> 4) % 5u, src = (s >> 8) % 5u;
+    arr[d] = arr[src];
+    arr[d].x += s;
+    arr[d].y ^= (unsigned short)i;
+    acc += (unsigned long long)arr[d].x + arr[d].y + arr[d].z;
+    acc ^= acc >> 5;
+  }
+  return (int)(acc + arr[0].x);
+}
+)C",
+                            "agg", {"agg"}, {-3, 4, 32, 39, 53, 60, 74});
+}
