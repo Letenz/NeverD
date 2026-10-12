@@ -60,6 +60,9 @@ target_include_directories(neverd_gui_app PUBLIC
   "${neverd_docking_SOURCE_DIR}/src")
 target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core neverd_gui_web Qt6::Widgets Qt6::Svg
   Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)
+# A window that draws its own frame tells the Wayland compositor where its
+# shadow ends through Qt's private native window interface.
+target_link_libraries(neverd_gui_app PRIVATE Qt6::GuiPrivate)
 file(GLOB NEVERD_GUI_ICONS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.svg")
 qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd

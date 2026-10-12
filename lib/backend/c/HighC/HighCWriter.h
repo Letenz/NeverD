@@ -819,6 +819,9 @@ public:
   /// The helper of each x86 saturating lane operation and lane width
   /// (X86SaturatingLanes.def).
   std::map<std::pair<Intrinsic, unsigned>, std::string> SaturatingLaneHelpers;
+  /// The scalar LSE builtins of NeverD's Clang the output calls, each given
+  /// a definition for other compilers (ScalarLSEFallbacks.def).
+  std::set<Intrinsic> ScalarLSEBuiltins;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>

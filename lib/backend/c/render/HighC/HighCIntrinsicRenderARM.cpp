@@ -16,8 +16,11 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <iterator>
+#include <set>
+#include <string>
 
 namespace neverd {
 
@@ -1010,6 +1013,87 @@ std::string renderARMAsmStatement(const char *Mnemonic,
   }
   return std::string("__asm__ volatile(\"") + Mnemonic + "\" : : " + Inputs +
          " : \"memory\")";
+}
+
+namespace {
+struct ScalarLSEFallback {
+  Intrinsic Id;
+  const char *Operation;
+  bool Signed;
+  bool Complement;
+};
+
+constexpr ScalarLSEFallback ScalarLSEFallbacks[] = {
+#define NEVERD_SCALAR_LSE(ID, Operation, Signed, Complement)                   \
+  {Intrinsic::ID, Operation, Signed, Complement},
+#include "neverd/backend/c/render/HighC/ScalarLSEFallbacks.def"
+};
+
+const ScalarLSEFallback *scalarLSEFallback(Intrinsic Id) {
+  const auto *It = llvm::find_if(ScalarLSEFallbacks,
+                                 [&](const auto &F) { return F.Id == Id; });
+  return It == std::end(ScalarLSEFallbacks) ? nullptr : It;
+}
+} // namespace
+
+bool isScalarLSEBuiltin(Intrinsic Id) { return scalarLSEFallback(Id); }
+
+void writeScalarLSEFallbacks(llvm::raw_ostream &OS,
+                             const std::set<Intrinsic> &Ids) {
+  static constexpr unsigned Widths[] = {8, 16, 32, 64};
+  bool Guarded = false;
+  for (Intrinsic Id : Ids) {
+    const ScalarLSEFallback *F = scalarLSEFallback(Id);
+    const char *Builtin = intrinsicCName(Id);
+    if (!F || !Builtin)
+      continue;
+    if (!Guarded) {
+      OS << "#ifndef __has_builtin\n#define __has_builtin(x) 0\n#endif\n";
+      Guarded = true;
+    }
+    const std::string Value = F->Complement ? "~(uint64_t)(value)" : "(value)";
+    // One access per width the instruction has, picked by the constant
+    // width operand; the old value returns zero-extended.
+    auto Define = [&](auto Access) {
+      OS << "#define " << Builtin << "(value, pointer, bytes, order) \\\n  (";
+      for (unsigned Bits : Widths) {
+        const std::string Width = std::to_string(Bits);
+        const std::string Type = (F->Signed ? "int" : "uint") + Width + "_t";
+        if (Bits != Widths[std::size(Widths) - 1])
+          OS << "(bytes) == " << Bits / 8 << " ? ";
+        OS << "(uint64_t)(uint" << Width << "_t)" << Access(Type)
+           << (Bits != Widths[std::size(Widths) - 1] ? " : \\\n   " : ")\n");
+      }
+    };
+    auto AtomicBuiltin = [&](const std::string &Type) {
+      return std::string("__atomic_fetch_") + F->Operation + "((" + Type +
+             " *)(pointer), (" + Type + ")" + Value + ", (order))";
+    };
+    const llvm::StringRef Operation = F->Operation;
+    const bool Extremum = Operation == "max" || Operation == "min";
+    OS << "#if !__has_builtin(" << Builtin << ")\n";
+    if (Extremum)
+      OS << "#if __has_builtin(__atomic_fetch_" << Operation << ")\n";
+    Define(AtomicBuiltin);
+    if (Extremum) {
+      OS << "#else\n";
+      Define([&](const std::string &Type) {
+        return "__extension__({ " + Type + " *nd_lse_p = (" + Type +
+               " *)(pointer); " + Type + " nd_lse_v = (" + Type + ")" + Value +
+               "; " + Type +
+               " nd_lse_old = __atomic_load_n(nd_lse_p, __ATOMIC_RELAXED); "
+               "while (!__atomic_compare_exchange_n(nd_lse_p, &nd_lse_old, "
+               "nd_lse_old " +
+               (Operation == "max" ? ">" : "<") +
+               " nd_lse_v ? nd_lse_old : nd_lse_v, 0, (order), "
+               "__ATOMIC_RELAXED)) {} nd_lse_old; })";
+      });
+      OS << "#endif\n";
+    }
+    OS << "#endif\n";
+  }
+  if (Guarded)
+    OS << "\n";
 }
 
 } // namespace neverd

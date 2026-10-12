@@ -8,7 +8,8 @@ namespace neverd::gui::gnome {
 /// window only from a few pixels outside its visible edge.  This lets the
 /// last pixels inside the left, right and bottom edges of \p window resize
 /// it too, under the matching cursor, as GNOME's own windows allow.
-/// Elsewhere it does nothing: the window manager's frame resizes windows.
+/// Elsewhere it does nothing: the window manager's frame resizes windows,
+/// and a window that draws its own frame (WindowFrame) resizes itself.
 void widenResizeEdges(QWidget &window);
 
 /// QtWayland tells the compositor a dimension has no maximum only when Qt's

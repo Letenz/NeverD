@@ -447,6 +447,7 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
   FloatToIntegerHelpers.clear();
   LeadingZeroHelpers.clear();
   SaturatingLaneHelpers.clear();
+  ScalarLSEBuiltins.clear();
   PartialIntegerBytes.clear();
   SegmentedMemoryTypes.clear();
   AtomicLoadTypes.clear();
@@ -514,6 +515,8 @@ void HighCWriter::collectMemoryTypes(const std::vector<HighFunc> &Funcs) {
         It->second = GlobalIdentifierAllocator.allocate(
             "neverd_clz" + std::to_string(Bits), "nd_clz");
     }
+    if (E.Kind == ExprKind::Call && isScalarLSEBuiltin(E.IntrinsicId))
+      ScalarLSEBuiltins.insert(E.IntrinsicId);
     if (const auto Bits = x86SaturatingLaneBits(E)) {
       auto [It, Inserted] =
           SaturatingLaneHelpers.try_emplace({E.IntrinsicId, *Bits});
@@ -678,6 +681,7 @@ void HighCWriter::writeMemoryHelpers() {
   }
   for (const auto &[Key, Name] : SaturatingLaneHelpers)
     writeX86SaturatingLaneHelper(OS, Name, Key.first, Key.second);
+  writeScalarLSEFallbacks(OS, ScalarLSEBuiltins);
   // The accesses' types or assumptions are written only when an access can
   // name a type; otherwise every access keeps its portable byte copy.
   UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;

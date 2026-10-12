@@ -94,7 +94,8 @@ private:
 } // namespace
 
 void widenResizeEdges(QWidget &window) {
-  if (!onGnomeWayland())
+  // A window that draws its own frame resizes from its own edges.
+  if (!onGnomeWayland() || window.windowFlags() & Qt::FramelessWindowHint)
     return;
   if (QWindow *handle = window.windowHandle())
     new ResizeEdges(window, *handle);
