@@ -1709,3 +1709,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` は解析完了後の誤った番兵、循環、前方・範囲外リンク、無効な初期レベルとハンドラー/フィルターの役割を検査します。初期有効スコープと空の表の対照例で EH3/EH4 の有効な番兵を保持します。 幅を超えるハンドラーとフィルターのアドレスも、事実を公開せず拒否します。
 
 ソースの登録状態ソルバーは、オブジェクトの借用、catch オブジェクトの構築、local-finally の書き込みに共通の管理領域境界チェックを使います。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` と `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` は、EH3/EH4 の SavedESP、例外ポインター、cookie スロットに対する読み取り、書き込み、部分的な重なりを検証します。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` は、後続の再読み取りに依存せず、保存された入口フレームを保護します。隣接する通常のオブジェクトは引き続き借用できます。
+
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` は、モジュール全体と選択関数の出力で、ブロックアドレスの返却、整数変換、アドレス演算、入れ子の表初期値を拒否します。32/64 ビット、両エンディアン、ELF/COFF/Mach-O を検証します。未対応のシンボル定数も null に置き換えず明示的に拒否します。これは出力拒否の契約であり、移植可能なネイティブ再開の実装ではありません。

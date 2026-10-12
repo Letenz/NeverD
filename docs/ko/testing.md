@@ -1699,3 +1699,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts`는 파싱 완료 후에도 잘못된 센티널, 순환, 전방/범위 밖 링크, 잘못된 초기 단계와 처리기/필터 역할을 검사합니다. 초기 활성 범위와 빈 테이블 대조 사례는 EH3/EH4의 유효한 센티널을 보존합니다. 포인터 폭을 넘는 처리기와 필터 주소도 사실을 공개하지 않고 거부합니다.
 
 소스 등록 상태 솔버는 객체 대여, catch 객체 생성, local-finally 쓰기에 동일한 관리 영역 경계 검사를 적용합니다. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers`와 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells`는 EH3/EH4의 SavedESP, 예외 포인터, cookie 슬롯에 대한 읽기, 쓰기 및 부분 겹침을 검사합니다. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors`는 이후의 재로드에 의존하지 않고 저장된 진입 프레임을 보호합니다. 인접한 일반 객체는 계속 대여할 수 있습니다.
+
+`LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants`는 전체 모듈과 선택 함수 출력에서 블록 주소 반환, 정수 변환, 주소 연산 및 중첩 테이블 초기화를 거부합니다. 32/64비트, 두 바이트 순서 및 ELF/COFF/Mach-O 설정을 검사합니다. 지원하지 않는 심볼 상수도 널 포인터로 바꾸지 않고 명시적으로 거부합니다. 이는 출력 거부 계약이며 이식 가능한 네이티브 재개의 구현은 아닙니다.
