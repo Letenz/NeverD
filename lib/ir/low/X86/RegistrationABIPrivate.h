@@ -7,12 +7,19 @@
 #ifndef NEVERD_IR_LOW_X86_REGISTRATIONABIPRIVATE_H
 #define NEVERD_IR_LOW_X86_REGISTRATIONABIPRIVATE_H
 
+#include "RegistrationFrame.h"
+
 #include "neverd/ir/low/RegistrationABI.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <set>
 #include <utility>
+
+namespace neverd {
+class Decoder;
+struct LowInstructionBoundary;
+} // namespace neverd
 
 namespace neverd::registration_abi {
 
@@ -39,6 +46,9 @@ collectRegistrationRuntimeThrowInfos(const LowFunc &Function,
                                      const BinaryImage &Image, size_t &Work);
 
 bool chargeDecodedCallee(size_t &Work, const LowFunc &Function);
+bool hasImmutableCalleeInstruction(const BinaryImage &Image,
+                                   const LowInstructionBoundary &Boundary,
+                                   Decoder &Dec);
 bool collectCalleeCodeRanges(const LowFunc &Function, const BinaryImage &Image,
                              size_t &Work,
                              std::vector<ExceptionAddressRange> &Ranges);
@@ -62,11 +72,16 @@ std::optional<uint16_t> parentPopBytes(const LowFunc &Function,
 std::optional<uint32_t>
 checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target);
 bool callerPCIsNotReadBack(const ImageFrameEffects &Effects);
-bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
-                           size_t &Work, ImageFrameEffects &Effects,
-                           bool BorrowECX = false,
-                           RegistrationThrowCalleeABI *ThrowProof = nullptr,
-                           bool *IndependentScalarReturn = nullptr);
+bool hasConditionalCallFrame(const BinaryImage &Image, const LowOp &Op,
+                             const registration_state::FrameState &State,
+                             size_t &Work);
+bool hasPrivateCallerFrame(
+    const LowFunc &Function, const BinaryImage &Image, size_t &Work,
+    ImageFrameEffects &Effects, bool BorrowECX = false,
+    RegistrationThrowCalleeABI *ThrowProof = nullptr,
+    bool *IndependentScalarReturn = nullptr,
+    const std::map<int32_t, registration_state::FrameValue> *ScalarArguments =
+        nullptr);
 
 } // namespace neverd::registration_abi
 

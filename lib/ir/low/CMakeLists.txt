@@ -17,6 +17,8 @@ add_neverd_component_library(NeverDIRLowValidation
 add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationState.cpp
   X86/RegistrationStateCalls.cpp
+  X86/RegistrationStateConditional.cpp
+  X86/RegistrationStateBoundCall.cpp
   X86/RegistrationStateCxx.cpp
   X86/RegistrationStateObject.cpp
   X86/RegistrationStateResume.cpp
@@ -70,6 +72,8 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationThrowImportABI.cpp
   X86/RegistrationRuntimeThrowInfo.cpp
   X86/RegistrationCalleeFrame.cpp
+  X86/RegistrationConditionalCall.cpp
+  X86/RegistrationConditionalCallee.cpp
   X86/RegistrationCalleeIndex.cpp
   X86/RegistrationCalleeStack.cpp
   X86/RegistrationSEHControl.cpp

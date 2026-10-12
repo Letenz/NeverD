@@ -5134,6 +5134,24 @@ prove the replacement runtime objects. This supplies the exception-field part
 of the PE32 helper analysis; incoming object arguments and their caller bounds
 still require separate proof.
 
+`RegistrationConditionalCallee` specializes an original EH3 helper from the
+caller's actual stack cells. It authenticates the physical CALL, complete
+immutable callee instructions and ordinary near returns. Incoming scalar words
+and four-byte caller objects occupy separate coordinates; object bounds exclude
+argument storage, return PCs and registration administration.
+`RegistrationStateConditional` uses the same state solver for its body, filters
+and finally invocations. Private reads require allocation and initialization;
+an except entry may read its initialized SavedESP slot before restoring SP.
+An ordinary return must restore the actual stack and nonvolatile register
+identities. `RegistrationConditionalCall` inspects nested scalar helpers and
+only admits a closed RaiseException invocation with no argument array. Unknown
+calls and unbounded writes refuse the specialization. Object writes withdraw
+pre-call constants on both ordinary and exceptional paths. Nested CFG state
+analysis and failed proofs count against the same callee work budget.
+These are source-analysis facts; native lowering rejects them until a replacement
+call plan is proved. Jump-buffer resumption and the complete xcpt4 proof remain
+required.
+
 A termination-only SEH function has no dispatcher-entered except body. Its
 returning-stack proof follows its ordinary entry and checks every finally's
 actual near return independently. A finally that writes the established frame

@@ -7,6 +7,7 @@
 #ifndef NEVERD_IR_LOW_X86_REGISTRATIONSTATESOLVER_H
 #define NEVERD_IR_LOW_X86_REGISTRATIONSTATESOLVER_H
 
+#include "RegistrationConditionalFrame.h"
 #include "RegistrationFrame.h"
 
 #include "neverd/ir/RegistrationState.h"
@@ -115,8 +116,11 @@ public:
       const std::vector<RegistrationCleanupFrameContract> *Cleanups,
       const std::vector<RegistrationCalleeStackContract> *Stacks,
       const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
-      const std::vector<RegistrationSEHControlContract> *SEHControls);
+      const std::vector<RegistrationSEHControlContract> *SEHControls,
+      ConditionalFrame *Conditional = nullptr,
+      const BoundCalleeProver *BoundCallees = nullptr);
   RegistrationStateAnalysis run();
+  size_t workUsed() const { return WorkUsed; }
 
 private:
   bool initialize();
@@ -178,6 +182,15 @@ private:
   bool runtimeObjectIsLive(const Domain &State,
                            std::pair<uint32_t, uint32_t> Identity);
   bool transferBlock(size_t I, const Domain &Before, BlockFacts &Facts);
+  bool transferBoundSEHCallee(size_t I, const Domain &Before, Domain &After,
+                              const LowOp &Op, const BlockFacts &Facts,
+                              std::optional<FrameValue> &CallSP,
+                              std::optional<Domain> &CallException);
+  bool checkConditionalMemory(const FrameState &State, const LowOp &Op,
+                              const FrameTransfer &Transfer,
+                              const std::set<int32_t> *Initialized = nullptr);
+  bool conditionalReturn(const Domain &State, const LowOp &Op);
+  bool conditionalCall(const FrameState &State, const LowOp &Op);
   void dispatchBlock(size_t I, const Domain &Before, const BlockFacts &Facts);
   std::vector<RegistrationCxxSearch> cxxSearches(const Domain &State,
                                                  bool Invalid);
@@ -218,6 +231,8 @@ private:
   const std::vector<RegistrationCalleeStackContract> *Stacks;
   const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds;
   const std::vector<RegistrationSEHControlContract> *SEHControls;
+  ConditionalFrame *Conditional;
+  const BoundCalleeProver *BoundCallees;
   const bool KnownCxx;
   const bool EH4;
   const bool CheckCalls;

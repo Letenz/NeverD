@@ -3160,6 +3160,14 @@ TEST(WindowsRegistrationNative,
   }
 }
 
+TEST(WindowsRegistrationNative, BoundSEHHelpersRequireAReplacementCallReceipt) {
+  RegistrationNativeFixture F;
+  F.Source.RegistrationStates->HasBoundSEHCallees = true;
+  const auto Before = F.print();
+  EXPECT_FALSE(F.lower());
+  EXPECT_EQ(F.print(), Before);
+}
+
 TEST(WindowsRegistrationNative, ReplaysPreservedCalleeReturnCleanup) {
   for (bool CalleePop : {false, true}) {
     BinaryImage Image;

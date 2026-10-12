@@ -86,7 +86,13 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
             (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE))
           return false;
         const auto Address = Transfer.read(*Memory.Address);
-        if (Address.CallbackAddress) {
+        if (Conditional && Address.Offset && *Address.Offset >= 4) {
+          if (!checkConditionalMemory(State, Op, Transfer))
+            return false;
+          if (Op.Opcode == NdOp::STORE)
+            State.store(*Address.Offset, Memory.AccessSize,
+                        Transfer.read(*Memory.StoredValue));
+        } else if (Address.CallbackAddress) {
           if (!charge(Memory.AccessSize) ||
               !State.callbackMemoryIsPrivate(*Address.CallbackAddress,
                                              Memory.AccessSize,

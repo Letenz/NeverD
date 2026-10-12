@@ -71,15 +71,22 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
           Check &&
           coff_loader::hasCheckedX86CookieCheckSuccessPath(*CurrentImg, *Check))
         CookieCheckVA = *Check;
-    Func.RegistrationStates = analyzeRegistrationStates(
-        Func,
-        CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
-            ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
-            : 0,
-        CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
-        CheckCalls && Cleanups ? &*Cleanups : nullptr,
-        Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
-        SEHControls ? &*SEHControls : nullptr);
+    if (CurrentImg && !Metadata.Cxx &&
+        Metadata.Personality == ExceptionPersonality::ExceptHandler3)
+      Func.RegistrationStates = analyzeCheckedX86SEHStates(
+          *CurrentImg, Func, Stacks ? &*Stacks : nullptr,
+          LocalUnwinds ? &*LocalUnwinds : nullptr,
+          SEHControls ? &*SEHControls : nullptr, CalleeIndex);
+    else
+      Func.RegistrationStates = analyzeRegistrationStates(
+          Func,
+          CurrentImg && CurrentImg->DynInfo.SecurityCookieRVA
+              ? CurrentImg->Base + CurrentImg->DynInfo.SecurityCookieRVA
+              : 0,
+          CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
+          CheckCalls && Cleanups ? &*Cleanups : nullptr,
+          Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
+          SEHControls ? &*SEHControls : nullptr);
     if (CurrentImg && !SEHControls) {
       Func.RegistrationStates->Complete = false;
       Func.RegistrationStates->SEHInvocationExitsComplete = false;

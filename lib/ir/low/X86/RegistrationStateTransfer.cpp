@@ -31,6 +31,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   if (!charge(Before.catchCellCount() + 1))
     return true;
   Domain After = Before;
+  std::optional<Domain> CallException;
   FrameTransfer Transfer(
       After.Frame, *Chain.RegistrationOffset, EH4 ? SecurityCookieVA : 0,
       Chain.RealignedFrame ? &*Chain.RealignedFrame : nullptr);
@@ -71,6 +72,11 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (!charge(1 + RegisterBytes + MemoryWork))
       break;
     const FrameValue Value = Transfer.evaluate(Op, After.Installed);
+    if (Conditional &&
+        (!checkConditionalMemory(After.Frame, Op, Transfer,
+                                 &After.InitializedFrameBytes) ||
+         !conditionalReturn(After, Op) || !conditionalCall(After.Frame, Op)))
+      Invalidate();
     FrameValue RuntimeValue;
     if (CheckRuntimeObjects) {
       if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
@@ -361,10 +367,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           if (!charge(After.Frame.memoryAccessWork(Address, Width, true) + 1))
             break;
           After.Frame.store(*Address.Offset, Width, Stored);
-          if (CheckCalls) {
-            const auto SP = parentStackOffset(After);
+          if (CheckCalls || Conditional) {
+            auto SP = parentStackOffset(After);
+            if (Conditional && !SP && After.Frame.CallbackEntry)
+              SP = After.Frame.load(*Chain.RegistrationOffset - 8, 4).Offset;
             const int64_t End = int64_t(*Address.Offset) + Width;
-            if (SP && *Address.Offset >= *SP && End <= 0) {
+            if (SP && *Address.Offset >= *SP && End <= (Conditional ? 4 : 0)) {
               if (!charge(Width))
                 break;
               for (int64_t Byte = *Address.Offset; Byte < End; ++Byte)
@@ -420,6 +428,9 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       }
     if (auto SP = transferLocalUnwind(I, After, Op, Facts))
       CallSP = *SP;
+    if (!transferBoundSEHCallee(I, Before, After, Op, Facts, CallSP,
+                                CallException))
+      break;
     if (SEHControls && !KnownCxx && Before.Callback &&
         Before.Activation.Entry &&
         FinallyTargets.count(*Before.Activation.Entry) &&
@@ -500,7 +511,11 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     }
     if (CallSP)
       After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride] = *CallSP;
-    if (CheckCalls && Op.Output.isReg() &&
+    if ((CheckCalls || Conditional) &&
+        !(Conditional &&
+          After.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
+              .CallbackAddress) &&
+        Op.Output.isReg() &&
         Op.Output.Offset / x86reg::GeneralRegStride ==
             x86reg::RSP / x86reg::GeneralRegStride) {
       const auto SP = parentStackOffset(After);
@@ -540,7 +555,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   }
   if (CatchReturn)
     resumeCxxCatch(After, *CatchReturn);
-  dispatchBlock(I, Before, Facts);
+  dispatchBlock(I, CallException ? *CallException : Before, Facts);
   return true;
 }
 

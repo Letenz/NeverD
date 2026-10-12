@@ -2908,6 +2908,16 @@ Missing instruction slices in either caller or callee, a symmetrically removed
 callee branch edge, and a wholly removed caller branch arm cannot hide the path
 that overwrites a saved cell. Complete caller diamonds retain their frame proof.
 
+`RegistrationConditionalFrame` checks the pinned PE32 xcpt4 helper's incoming
+counter, search filter and finally effects. Its controls reject truncated object
+bounds, aliases to return-PC or argument storage, pointer-bearing object cells,
+uninitialized private reads, unknown nested calls, exhausted work, writable code,
+far returns and a missing ordinary return. A filter or finally return alone
+cannot establish a returning helper. `WindowsRegistrationNative` also checks
+that source helper facts cannot mutate native IR without a replacement call
+receipt. These focused checks do not establish full xcpt4 or nonlocal-jump
+support.
+
 CRT source regressions use synthetic tables and the pinned Windows corpus:
 
 ```bash

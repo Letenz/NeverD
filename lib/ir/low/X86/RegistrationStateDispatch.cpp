@@ -203,6 +203,17 @@ void RegistrationStateSolver::seedEntries() {
   // them with zero and then expose the invented value.
   for (auto &Register : Initial.Frame.Registers)
     Register.MayBeFrame = true;
+  if (Conditional) {
+    for (unsigned Index = 0; Index != Initial.Frame.Registers.size(); ++Index)
+      Initial.Frame.Registers[Index].SavedRegister = uint8_t(Index + 1);
+    FrameValue PC;
+    PC.MayBeFrame = PC.ReturnPC = true;
+    Initial.Frame.Cells[4] = PC;
+    for (const auto &[Offset, Value] : Conditional->Arguments)
+      Initial.Frame.store(Offset, 4, Value);
+    for (const auto &[Offset, Value] : Conditional->ObjectCells)
+      Initial.Frame.store(Offset, 4, Value);
+  }
   Initial.Frame.OtherRegistersMayBeFrame = true;
   // After push EBP, the canonical direct prologue establishes EBP at this
   // incoming SP minus four bytes. Do not assume later reads still name it.

@@ -18,6 +18,15 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct RegistrationStateAnalysis;
+class RegistrationCallCalleeIndex;
+
+RegistrationStateAnalysis analyzeCheckedX86SEHStates(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::vector<RegistrationCalleeStackContract> *Stacks,
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *Controls,
+    RegistrationCallCalleeIndex *Index = nullptr);
 
 /// Prove the entry ESP is restored at every ordinary near return and that
 /// all return-pop immediates agree. Unchecked calls invalidate ESP; an explicit
@@ -144,6 +153,9 @@ public:
   RegistrationCallCalleeIndex &
   operator=(const RegistrationCallCalleeIndex &) = delete;
   bool ownsImage(const BinaryImage &Other) const { return &Image == &Other; }
+  /// Bill decoded state propagation, including unsuccessful helper analyses,
+  /// to this invocation closure's cumulative work budget.
+  bool chargeStateWork(size_t Amount);
   std::optional<uint32_t> stackPop(va_t Target);
   std::optional<std::vector<RegistrationCalleeFrameContract>>
   contracts(const LowFunc &Function);

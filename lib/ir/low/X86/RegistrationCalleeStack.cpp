@@ -18,28 +18,10 @@
 #include <map>
 #include <set>
 
-namespace neverd {
-namespace {
-using registration_abi::chargeCalleeWork;
-using registration_state::FrameState;
-using registration_state::FrameTransfer;
-using registration_state::FrameValue;
-
-std::optional<uint32_t> nearReturnPop(const BinaryImage &Image, va_t Address) {
-  const auto Byte = readImmutableCodeBytes(Image, Address, 1);
-  if (!Byte || ((*Byte)[0] != 0xc3 && (*Byte)[0] != 0xc2))
-    return std::nullopt;
-  if ((*Byte)[0] == 0xc3)
-    return 0;
-  const auto Encoding = readImmutableCodeBytes(Image, Address, 3);
-  if (!Encoding)
-    return std::nullopt;
-  return readLE<uint16_t>(Encoding->data() + 1);
-}
-
-bool hasImmutableInstruction(const BinaryImage &Image,
-                             const LowInstructionBoundary &Boundary,
-                             Decoder &Decoder) {
+namespace neverd::registration_abi {
+bool hasImmutableCalleeInstruction(const BinaryImage &Image,
+                                   const LowInstructionBoundary &Boundary,
+                                   Decoder &Decoder) {
   if (readImmutableCodeBytes(Image, Boundary.Address, Boundary.Size))
     return true;
   const auto *Bytes = Image.readVA(Boundary.Address, Boundary.Size);
@@ -62,6 +44,27 @@ bool hasImmutableInstruction(const BinaryImage &Image,
   return readImmutablePE32CodeBytes(Image, Boundary.Address, Boundary.Size,
                                     AbsoluteOperands)
       .has_value();
+}
+
+} // namespace neverd::registration_abi
+
+namespace neverd {
+namespace {
+using registration_abi::chargeCalleeWork;
+using registration_state::FrameState;
+using registration_state::FrameTransfer;
+using registration_state::FrameValue;
+
+std::optional<uint32_t> nearReturnPop(const BinaryImage &Image, va_t Address) {
+  const auto Byte = readImmutableCodeBytes(Image, Address, 1);
+  if (!Byte || ((*Byte)[0] != 0xc3 && (*Byte)[0] != 0xc2))
+    return std::nullopt;
+  if ((*Byte)[0] == 0xc3)
+    return 0;
+  const auto Encoding = readImmutableCodeBytes(Image, Address, 3);
+  if (!Encoding)
+    return std::nullopt;
+  return readLE<uint16_t>(Encoding->data() + 1);
 }
 
 struct StackBody {
@@ -99,7 +102,8 @@ struct StackBody {
       return It->second;
     for (const auto &Boundary : Blocks.at(Id)->InstructionBoundaries)
       if (!chargeCalleeWork(Work, 1) ||
-          !hasImmutableInstruction(Image, Boundary, Dec))
+          !registration_abi::hasImmutableCalleeInstruction(Image, Boundary,
+                                                           Dec))
         return false;
     return It->second = true;
   }

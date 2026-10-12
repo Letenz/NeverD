@@ -203,6 +203,8 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
   bool SEHExceptionAccessesComplete = true;
   std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
+  /// Invocation-specialized original helpers require a separate native plan.
+  bool HasBoundSEHCallees = false;
   /// Complete chain access ownership, including decoded boundaries and
   /// operation identities, available only with a complete registration
   /// lifetime and callback state proof. This is not a native output receipt.

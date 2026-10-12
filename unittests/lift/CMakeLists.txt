@@ -1,9 +1,14 @@
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   eh/SEHRuntimeMemoryTests.cpp
   eh/RegistrationSEHControlTests.cpp
+  eh/RegistrationConditionalFrameTests.cpp
   LINK_COMPONENTS Pipeline)
 target_include_directories(NeverDSEHRuntimeMemoryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/pipeline)
+if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
+  target_compile_definitions(NeverDSEHRuntimeMemoryTests PRIVATE
+    NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
+endif()
 
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp

@@ -158,7 +158,7 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
   // Physical finally invocation exits carry source state-flow evidence. The
   // current native SEH plan has no replacement return-PC/resumption receipt
   // or physical object receipt for runtime exception-field accesses.
-  if (!States.SEHInvocationExitsComplete ||
+  if (States.HasBoundSEHCallees || !States.SEHInvocationExitsComplete ||
       !States.SEHInvocationExits.empty() ||
       !States.SEHExceptionAccessesComplete ||
       !States.SEHExceptionAccesses.empty())

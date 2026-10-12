@@ -21,11 +21,13 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
     const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
-    const std::vector<RegistrationSEHControlContract> *SEHControls)
+    const std::vector<RegistrationSEHControlContract> *SEHControls,
+    ConditionalFrame *Conditional, const BoundCalleeProver *BoundCallees)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
       CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),
       Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
+      Conditional(Conditional), BoundCallees(BoundCallees),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
