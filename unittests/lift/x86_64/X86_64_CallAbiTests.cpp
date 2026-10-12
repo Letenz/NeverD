@@ -184,3 +184,31 @@ static double sb4(B4 s, double e) {
                             "bcast", {"bcast", "sb4", "B4"},
                             {0, 1, -1, 0x10, 77, 1000});
 }
+
+// A pointer walking a string is compared against its end through `~W`, the
+// bitwise complement of the string's address: the operator takes the address
+// as the integer it is, never the array.
+TEST_F(X86_64_CallAbi, AComplementOfAStringAddressIsAnInteger) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static const char W[] = "the_quick_brown_fox_jumps_over_the_lazy_dog_0123";
+int strroll(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  const int N = (int)(sizeof(W) - 1);
+  for (int it = 0; it < 16; it++) {
+    s = s * 1103515245u + 12345u;
+    const char *p = W + ((s >> 6) % (unsigned)N);
+    unsigned r = 0;
+    for (int k = 0; k < 12; k++) {
+      r = r * 31u + (unsigned)(unsigned char)*p;
+      p++;
+      if (!*p)
+        p = W;
+    }
+    h = h * 131u + r;
+    h ^= h >> 10;
+  }
+  return (int)h;
+}
+)C",
+                            "strroll", {"strroll", "W"}, {0, 1, -1, 0x44, 77});
+}
