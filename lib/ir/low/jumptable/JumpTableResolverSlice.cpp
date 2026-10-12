@@ -195,6 +195,79 @@ bool intrinsicMayClobberFrameMemory(const LowOp &Op) {
   }
 }
 
+// Required shapes for scalar records retained by the resolver. Unknown
+// opcodes acquire no shape or numerical semantics from this table.
+static std::optional<unsigned> resolverExplicitInputCount(NdOp Opcode) {
+  unsigned Required = 0;
+  switch (Opcode) {
+  case NdOp::COPY:
+  case NdOp::INT_ZEXT:
+  case NdOp::INT_SEXT:
+  case NdOp::INT_NEGATE:
+  case NdOp::INT_NOT:
+  case NdOp::BOOL_NOT:
+  case NdOp::INT_NEG2:
+  case NdOp::POPCOUNT:
+  case NdOp::LZCOUNT:
+  case NdOp::CAST:
+    Required = 1;
+    break;
+  case NdOp::INT_ADD:
+  case NdOp::INT_SUB:
+  case NdOp::INT_AND:
+  case NdOp::INT_OR:
+  case NdOp::INT_XOR:
+  case NdOp::INT_LEFT:
+  case NdOp::INT_RIGHT:
+  case NdOp::INT_ASHR:
+  case NdOp::INT_MULT:
+  case NdOp::INT_DIV:
+  case NdOp::INT_SDIV:
+  case NdOp::INT_REM:
+  case NdOp::INT_SREM:
+  case NdOp::INT_EQUAL:
+  case NdOp::INT_NOTEQUAL:
+  case NdOp::INT_LESS:
+  case NdOp::INT_SLESS:
+  case NdOp::INT_LESSEQUAL:
+  case NdOp::INT_SLESSEQUAL:
+  case NdOp::INT_CARRY:
+  case NdOp::INT_SOVF:
+  case NdOp::INT_SBOR:
+  case NdOp::BOOL_AND:
+  case NdOp::BOOL_OR:
+  case NdOp::BOOL_XOR:
+  case NdOp::CONCAT:
+  case NdOp::SUBBYTES:
+    Required = 2;
+    break;
+  case NdOp::SELECT:
+  case NdOp::EXTRACT:
+    Required = 3;
+    break;
+  case NdOp::INSERT:
+    Required = 4;
+    break;
+  default:
+    return std::nullopt;
+  }
+  return Required;
+}
+
+static bool resolverHasCompleteExplicitInputs(const LowOp &Op) {
+  const std::optional<unsigned> Required =
+      resolverExplicitInputCount(Op.Opcode);
+  if (!Required || Op.Output.Size == 0 || Op.NumInputs > std::size(Op.Inputs) ||
+      Op.NumInputs != *Required)
+    return false;
+  for (unsigned I = 0; I < *Required; ++I)
+    if (Op.Inputs[I].Size == 0 ||
+        (!Op.Inputs[I].isReg() && !Op.Inputs[I].isTemp() &&
+         !Op.Inputs[I].isConst()))
+      return false;
+  return true;
+}
+
 /// Architecture-neutral snapshot of the instruction facts needed by the
 /// jump-table provenance proof.  Keeping this separate from CFGBuilder's
 /// private InsnRecord lets the graph/data-flow implementation stay local to
@@ -530,6 +603,10 @@ static ResolverFlowGraph buildResolverFlowGraph(
                                              Insn->Addr);
       }
       for (const LowOp &Op : Insn->Ops) {
+        if (!consumeWork(10) || Op.NumInputs > std::size(Op.Inputs) ||
+            (resolverExplicitInputCount(Op.Opcode) &&
+             !resolverHasCompleteExplicitInputs(Op)))
+          return failIncomplete();
         if (!consumeWork())
           return failIncomplete();
         if (Block.Ops.size() >=

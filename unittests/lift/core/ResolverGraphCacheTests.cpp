@@ -345,6 +345,24 @@ struct ResolverGraphCacheTestAccess {
     B.Insns.at(0x100).Ops.front().Inputs[0] = NdVar::cst(8, 8);
   }
 
+  static void malformedScalar(CFGBuilder &B, unsigned Variant) {
+    auto &Op = B.Insns.at(0x100).Ops.front();
+    if (Variant == 0) {
+      Op.Opcode = NdOp::INT_ADD;
+      // Missing second input must not become an independent scalar root.
+    } else if (Variant == 1) {
+      Op.Opcode = NdOp::SELECT;
+      Op.addInput(NdVar::scalar(7, 8));
+    } else if (Variant == 2)
+      Op.NumInputs = std::size(Op.Inputs) + 1;
+    else if (Variant == 3)
+      Op.Inputs[0].Size = 0;
+    else if (Variant == 4)
+      Op.Output.Size = 0;
+    else
+      Op.Inputs[0].Space = VnodeSpace::RAM;
+  }
+
   static void addBackedge(CFGBuilder &B) {
     auto &R = B.Insns.at(0x103);
     R.IsRet = false;
@@ -1679,6 +1697,38 @@ TEST(ResolverValueQueryCache, OversizedCompletedInputRunsWithoutRetention) {
   ASSERT_GT(Access::stats(B)[1], 0u);
   EXPECT_EQ(Access::batch(B, {Q}), Small);
   EXPECT_EQ(Access::stats(B)[0], 1u);
+}
+
+TEST(ResolverValueQueryCache, MalformedScalarRecordsCannotPublishProofs) {
+  for (const auto Architecture :
+       {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Architecture;
+      Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                       ? Bitness::Bits32
+                       : Bitness::Bits64;
+      Image.Format = Format;
+      SCOPED_TRACE(static_cast<unsigned>(Architecture));
+      SCOPED_TRACE(static_cast<unsigned>(Format));
+      for (unsigned Variant = 0; Variant != 6; ++Variant) {
+        SCOPED_TRACE(Variant);
+        CFGBuilder B;
+        Access::seed(B, Image);
+        const auto Valid = Access::batch(B, {Access::valueQuery()});
+        ASSERT_TRUE(Valid.Complete);
+        ASSERT_EQ(Valid.Values, (std::vector<bool>{true}));
+        Access::malformedScalar(B, Variant);
+        const auto Refused = Access::batch(B, {Access::valueQuery()});
+        EXPECT_FALSE(Refused.Complete);
+        EXPECT_EQ(Refused.Values, (std::vector<bool>{false}));
+        EXPECT_EQ(Refused.QueryComplete, (std::vector<bool>{false}));
+        EXPECT_EQ(Access::batch(B, {Access::valueQuery()}), Refused);
+        Access::clear(B);
+        EXPECT_EQ(Access::batch(B, {Access::valueQuery()}), Refused);
+      }
+    }
 }
 
 } // namespace

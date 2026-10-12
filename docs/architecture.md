@@ -898,6 +898,14 @@ debits the candidate evidence account, so the finite prefix itself bounds
 these walks. Recursive expression and selector proofs retain their separate
 depth limits; longer copies grant no address, target or domain authority.
 
+The frozen resolver graph validates scalar operation shapes before retaining
+their records. Known integer/boolean operations require their complete explicit
+input count, nonzero operand/result widths and scalar operand spaces; every
+opcode must fit the LowOp input array. Malformed records make the graph
+incomplete rather than supplying an unconstrained value or a negative dependency
+certificate. Validation debits the same shared graph work account on cold and
+cached queries; unsupported opcodes acquire no semantics from this check.
+
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
 same frame state for each query. Every incoming value must agree; unanchored

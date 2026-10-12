@@ -909,6 +909,8 @@ GoogleTest 发现使用 `DISCOVERY_MODE PRE_TEST`，因此 CTest 枚举前必须
 
 `ModuleJumpTableBudget.*` 使用真实 ELF 表清单，分别检查 400000 操作的输入边界、扫描、来源保留、队列及累计传递额度。测试覆盖两种函数顺序、无关代码 occurrence、没有内存消费者的同字段独立上下文、缺失的 PC-relative 来源、重复长块、最终记录及跨函数耗尽。耗尽时必须保留非空请求集的全部重定位槽；已有跨目标跳转表与返回代码测试继续检查共享收集器的语义。
 
+`ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` 在 x86/x64/ARM/AArch64 与 ELF/COFF/Mach-O 配置下检查缺失 ADD/SELECT 输入、输入数组溢出、零宽度及内存空间标量输入。每个用例先建立有效缓存，再修改等大小记录，要求冷/热查询均返回不完整；合法输入仍能证明其值，畸形输入不得成为已完成的负证明。
+
 `ModuleAdjacentTable.*` 使用真实 ELF32/ELF64 相邻绝对表及两种函数顺序，覆盖最终 x87 返回、独立根、未拆块且绕过 mask 的块内跳转、物理续接间隙、TOP 克隆、畸形地址操作数、改变的 LOAD 地址/宽度和 FS/GS 地址域。地址逃逸、来源别名、重复来源及无 LOAD 的独立上下文均保留前表；后者仅删除 occurrence、保持 LowOps 不变作为对照。三表大预算正例和累计耗尽反例验证早先授权被撤销。扩大物理包络的测试验证最终保留（含后续 LOAD/别名否决），并未单独隔离包络比较。真实 CLI HighC 及优化/不优化 LLVMC 结果在宿主 O0/O2 执行全部 mask 输入类别。这些 fixture 尚未证明新查询对异常图或其他架构的支持。
 
 CI 在 Linux、macOS 和 Windows 上以 Release 开启测试构建，先审核发现的测试清单，

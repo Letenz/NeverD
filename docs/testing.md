@@ -1340,6 +1340,13 @@ all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
 The existing deep-arithmetic narrow guards must retain their exact-definition
 proof before the batched extension-range fallback is considered.
 
+`ResolverValueQueryCache.MalformedScalarRecordsCannotPublishProofs` verifies
+missing ADD/SELECT inputs, input-array overflow, zero widths and a memory-space
+scalar input across x86/x64/ARM/AArch64 and ELF/COFF/Mach-O metadata. Each case
+first populates a valid cache, mutates an equally sized record, and requires
+incomplete results on warm and cold queries. Valid input must still prove its
+value; malformed input cannot become a completed negative proof.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer
