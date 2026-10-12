@@ -1512,6 +1512,15 @@ either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
 
+An x86 function whose whole body is one direct unconditional jump, after an
+optional `endbr` marker, passes its caller's return address, stack and
+arguments on untouched, so function detection makes the jump target an entry
+on the forwarder's evidence. GCC's `frame_dummy` (`endbr64; jmp
+register_tm_clones`) is the usual case: in a stripped image nothing else names
+the target, whose body the forwarder would otherwise absorb. A target between
+the forwarder and the next entry is the forwarder's own code, such as a loop
+entered at its test, and stays inside it.
+
 At a validated source-call boundary, an exact integer constant zero may supply
 a pointer parameter even when the machine expression uses a narrower integer
 carrier than the declared pointer. Generated C emits an explicit null pointer
