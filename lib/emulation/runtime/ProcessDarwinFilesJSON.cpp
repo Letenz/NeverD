@@ -410,6 +410,9 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     } else if (Name == field::FileOwnershipMutations) {
       if (auto E = TimedObjectProvider(V, Name, Out.OwnershipMutations))
         return E;
+    } else if (Name == field::FileTimestampMutations) {
+      if (auto E = TimedObjectProvider(V, Name, Out.TimestampMutations))
+        return E;
     } else if (Name == field::DescriptorLimit) {
       auto N = V.getAsUINT64();
       if (!N || *N > UINT32_MAX)

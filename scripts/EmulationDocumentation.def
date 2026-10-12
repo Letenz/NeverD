@@ -58,7 +58,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all52 other file routes closed before preflight")
+                           "all54 other file routes closed before preflight")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
@@ -1949,7 +1949,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "no physical durability claim")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "normal XNU entry tests cancellation")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "all52 other logical file routes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all54 other logical file routes")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free68 service records")
 
@@ -2152,3 +2152,57 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "direct barrier from mount promotion")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "native Intel and physical iOS unverified / "
                                    "full Apple frameworks remain incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DarwinFileTimestampMutationOptions / timestamp_mutations / "
+            "objects / created_regular_objects defaultfalse")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "utimes138 and futimes139 / LP64 two timeval records32 bytes / "
+            "signed64 seconds signed32 microseconds ignored padding")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual request-storage rule / signed wide nanoseconds saturated "
+            "to int64 / floor-normalized seconds nanoseconds")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "birth reduction only for earlier nonnegative resulting mtime "
+            "including zero / negative mtime preserves birth")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "fixed virtual ctime is separate from request conversion and "
+            "current-time sample / no host filesystem identity inferred")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "NULL uses only explicit TimeOfDay / zero sample valid / missing "
+            "sample stays unknown / no timezone or Mach prerequisite")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "utimes pathname before input / futimes input before low32 FD / "
+            "fully unmapped EFAULT14 / partial input unsupported")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "explicit effective ownership even equal times EPERM1 / current-time owner "
+    "or proved ordinary POSIX write / group knowledge preserved")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "all54 other file routes closed before preflight / both static "
+            "queries reject even empty timestamp declaration")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "ordinary regular Contents grants retain actual dup link rename "
+            "held-zero-name lifetime / replacement names inherit none")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "opaque kind unsupported / native pipe EINVAL22 does not identify "
+            "model kind / directories and symbolic vnodes outside provider")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "62 private identities / pages4096 and16384 / full160-byte stat "
+            "guards / independent dirty bytes locks xattrs and real VM")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "TimestampMutationsKeepExplicitClockAndObjectAuthority / 124 "
+            "authored common services / main48 stdout T")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-timestamp-creation / ten authored services / main49 / "
+            "literal320 guarded bytes / explicit plus NULL request")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "351 accepted original ARM64 O0 O1 O2 observations / signed micros "
+            "saturation and birth limits belong to captured host")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native-common71 / mandatory86 per platform / "
+                           "matching ARM64 native required258 identities")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "native Intel and physical iOS unverified / original five-second native "
+    "and guest bounds unchanged / full Apple frameworks incomplete")

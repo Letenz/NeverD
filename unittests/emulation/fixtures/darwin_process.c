@@ -8240,6 +8240,134 @@ static __attribute__((noinline)) int virtual_full_barrier_creation(void) {
   return 0;
 }
 
+/* Original SDK-free ordinary timestamp controls. The declared virtual storage
+ * contract is separate from these captures on the native test filesystem. */
+static int timestamp_result(u64 number, u64 object, u64 input, u64 expected) {
+  unsigned error;
+  const u64 value = call(number, object, input, -1UL, -1UL, -1UL, -1UL, &error);
+  if (value != expected || error != !!expected)
+    return 330;
+#if defined(__aarch64__)
+  if (secondary)
+    return 330;
+#else
+  if (secondary != (expected ? -1UL : 0))
+    return 330;
+#endif
+  return 0;
+}
+static int timestamp_capture(u64 fd, union full_barrier_stat_guard *out) {
+  return full_barrier_capture(fd, out);
+}
+static int timestamp_same(const union full_barrier_stat_guard *a,
+                          const union full_barrier_stat_guard *b) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a->words[i] != b->words[i])
+      return 331;
+  return 0;
+}
+static int timestamp_change(const union full_barrier_stat_guard *before,
+                            const union full_barrier_stat_guard *after,
+                            u64 seconds, u64 nanos) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if ((i < 5 || i > 12) && before->words[i] != after->words[i])
+      return 332;
+  if (after->words[5] != seconds || after->words[6] != nanos ||
+      after->words[7] != seconds || after->words[8] != nanos)
+    return 332;
+  u64 bs = before->words[11], bn = before->words[12];
+  if ((long)seconds >= 0 &&
+      ((long)seconds < (long)bs || (seconds == bs && nanos < bn))) {
+    bs = seconds;
+    bn = nanos;
+  }
+  if (after->words[11] != bs || after->words[12] != bn)
+    return 332;
+  return 0;
+}
+static __attribute__((noinline)) int
+ordinary_timestamp_mutations(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 333;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || a == b)
+    return 333;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b || file_sync_offset(d, 0))
+    return 333;
+  if (call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 333;
+  const u64 flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 333;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 secs[] = {11, 0, 0, 0, 0x7fffffffffffffffUL, 0x8000000000000000UL};
+  const unsigned usecs[] = {12,          0xffffffffu, 0x80000000u,
+                            0x7fffffffu, 0x7fffffffu, 0x80000000u};
+  const u64 wanted_secs[] = {11,   -1UL,         (u64)-2148,
+                             2147, 9223372036UL, (u64)-9223372037L};
+  const u64 wanted_nanos[] = {12000,     999999000, 516352000,
+                              483647000, 854775807, 145224192};
+  for (unsigned n = 0; n != 6; ++n)
+    for (unsigned route = 0; route != 2; ++route) {
+      const u64 high = highs[n % 3];
+      u64 times[4] = {secs[n], 0xffffffff00000000UL | usecs[n], secs[n],
+                      0x13579bdf00000000UL | usecs[n]};
+      const u64 saved0 = times[0], saved1 = times[1], saved2 = times[2],
+                saved3 = times[3];
+      union full_barrier_stat_guard before, after, other;
+      if (timestamp_capture(a, &before) ||
+          timestamp_result(high | (route ? 139 : 138),
+                           route ? high | d : (u64)path, (u64)times, 0) ||
+          times[0] != saved0 || times[1] != saved1 || times[2] != saved2 ||
+          times[3] != saved3 || timestamp_capture(a, &after) ||
+          timestamp_change(&before, &after, wanted_secs[n], wanted_nanos[n]) ||
+          timestamp_capture(b, &other) || timestamp_same(&after, &other) ||
+          timestamp_capture(d, &other) || timestamp_same(&after, &other) ||
+          file_sync_offset(d, 2) || file_sync_offset(b, 0) ||
+          full_barrier_flags(a, flags) || full_barrier_flags(b, flags))
+        return 334;
+    }
+  u64 times[4] = {11, 12, 11, 12};
+  union full_barrier_stat_guard before, after;
+  if (timestamp_capture(b, &before) || timestamp_result(138, (u64) "", 1, 2) ||
+      timestamp_result(139, -1UL, 1, 14) ||
+      timestamp_result(139, -1UL, (u64)times, 9) ||
+      timestamp_capture(b, &after) || timestamp_same(&before, &after))
+    return 335;
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      timestamp_result(139, a, (u64)times, 9) ||
+      call(6, d, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(6, b, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "T", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 336;
+  return 0;
+}
+/* Virtual fixed ctime/current sample and created-record bytes are not native
+ * clock or creation oracles. Both complete records and guards are emitted. */
+static __attribute__((noinline)) int virtual_timestamp_creation(void) {
+  unsigned error;
+  const u64 fd = call(5, (u64) "/fresh", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary)
+    return 337;
+  union full_barrier_stat_guard before, after;
+  u64 times[4] = {11, 0xffffffff0000000cUL, 13, 0x13579bdf0000000eUL};
+  if (timestamp_capture(fd, &before) ||
+      timestamp_result(139, fd, (u64)times, 0) ||
+      timestamp_capture(fd, &after) || timestamp_result(139, fd, 0, 0) ||
+      timestamp_capture(fd, &after) || call(6, fd, 0, 0, 0, 0, 0, &error) ||
+      error || secondary || timestamp_result(139, fd, (u64)times, 9) ||
+      call(4, 1, (u64)before.bytes, 160, 0, 0, 0, &error) != 160 || error ||
+      secondary || call(4, 1, (u64)after.bytes, 160, 0, 0, 0, &error) != 160 ||
+      error || secondary)
+    return 338;
+  return 0;
+}
+
 /* Original SDK-free completion on explicitly declared created regular objects.
  */
 union created_sync_stat_guard {
@@ -8718,6 +8846,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "ordinary-timestamp-mutations")) {
+    const int status = argc < 3 ? 329 : ordinary_timestamp_mutations(argv[2]);
+    return status ? status : 48;
+  }
+  if (equal(argv[1], "virtual-timestamp-creation")) {
+    const int status = virtual_timestamp_creation();
+    return status ? status : 49;
+  }
   if (equal(argv[1], "ordinary-full-barrier-synchronization")) {
     const int status = argc < 3 ? 310 : full_barrier_synchronization(argv[2]);
     return status ? status : 46;

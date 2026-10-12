@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 62ef0f8494149bbb2b6483560dffbb5ec96f8e589d75360e84f6d40aa6426704 -->
+<!-- i18n-source: 62f041d4fac27029f3fa4b8d6a91bd2397b92d3a3cabc1b54701de985413abb6 -->
 
 [← 文档索引](README.md)
 
@@ -1285,7 +1285,7 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all52 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all54 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
 64 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
@@ -1355,7 +1355,7 @@ OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
 ARM64 matching native mandatory237 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all52 other file routes closed before preflight / static query declarations incompatible
+all54 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
@@ -1386,7 +1386,7 @@ separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
 ARM64 matching native mandatory237 / actual successful execution required
 720 owner observations / 702 literal controls and 18 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all52 other file routes closed before preflight / static query declarations incompatible
+all54 other file routes closed before preflight / static query declarations incompatible
 no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1417,7 +1417,7 @@ runtime hardlink rename held zero-name unlink keep object grant
 created or reused names do not inherit provider grants / path registry not lock authority
 flock preserves bytes cursors stat xattrs and allocation / successful lock sets persistent FWASLOCKED0x4000
 mode ownership data namespace policies independent / invalidated records never restored
-all52 other file routes closed before preflight / either static query rejects even empty declaration
+all54 other file routes closed before preflight / either static query rejects even empty declaration
 SDK-free77 service records / 13 guarded full stat observations / separate main return39
 OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime
 64 current native-common cases / 79 mandatory workloads per platform
@@ -1452,7 +1452,7 @@ created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
-all52 other logical file routes closed before preflight / both static queries reject empty declaration
+all54 other logical file routes closed before preflight / both static queries reject empty declaration
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
@@ -1491,7 +1491,7 @@ created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
-all52 other logical file routes closed before preflight / both static queries reject empty declarations
+all54 other logical file routes closed before preflight / both static queries reject empty declarations
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
@@ -1527,7 +1527,7 @@ Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and
 closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
 bytes stat cursor flags xattrs allocation namespace locks unchanged / no observation restoration
 completion grants supply no mode ownership xattr flock or general DAC authority
-both immutable query environments reject even false declarations / all52 other logical routes remain closed
+both immutable query environments reject even false declarations / all54 other logical routes remain closed
 SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
 CreatedRegularSynchronizationKeepsIndependentProvidersAndState
 68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
@@ -1562,7 +1562,7 @@ nonblocking conflict35 before old-lock removal / failed upgrade retains shared l
 last description close releases lock / VM Contents lease cannot retain lock or revive closed FD9
 flock preserves bytes stat cursor xattrs allocation namespace and observation validity
 mode ownership completion xattr permissions remain independent / no general DAC grant
-both static query declarations reject even false environment / all52 other file routes closed
+both static query declarations reject even false environment / all54 other file routes closed
 SDK-free131 service records / 12 guarded full stat observations / separate main return43 / stdout L
 CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus
 68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
@@ -1626,3 +1626,31 @@ native Intel and physical iOS unverified / full Apple frameworks remain incomple
 ```
 
 The native constants and descriptor behavior are checked against [Apple XNU xnu-11417.140.69 kern_descrip.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c) and [fcntl.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h). Native non-vnode EBADF observations do not identify opaque model-native kinds.
+
+
+## Explicit ordinary timestamp mutations
+
+明确声明的时间修改提供器独立授权普通文件。既有对象与成功新建普通文件的授权分开；创建开关默认关闭，开启时需要完整创建策略。NULL 请求只使用单独声明的当前时间样本。请求时间的存储规则与固定的虚拟 ctime 是不同观察。模型不读取宿主时钟或文件系统，完整 macOS/iOS 框架环境仍未完成。
+
+
+```text
+DarwinFileTimestampMutationOptions / timestamp_mutations / objects / created_regular_objects defaultfalse
+utimes138 and futimes139 / LP64 two timeval records32 bytes / signed64 seconds signed32 microseconds ignored padding
+virtual request-storage rule / signed wide nanoseconds saturated to int64 / floor-normalized seconds nanoseconds
+birth reduction only for earlier nonnegative resulting mtime including zero / negative mtime preserves birth
+fixed virtual ctime is separate from request conversion and current-time sample / no host filesystem identity inferred
+NULL uses only explicit TimeOfDay / zero sample valid / missing sample stays unknown / no timezone or Mach prerequisite
+utimes pathname before input / futimes input before low32 FD / fully unmapped EFAULT14 / partial input unsupported
+explicit effective ownership even equal times EPERM1 / current-time owner or proved ordinary POSIX write / group knowledge preserved
+all54 other file routes closed before preflight / both static queries reject even empty timestamp declaration
+ordinary regular Contents grants retain actual dup link rename held-zero-name lifetime / replacement names inherit none
+opaque kind unsupported / native pipe EINVAL22 does not identify model kind / directories and symbolic vnodes outside provider
+62 private identities / pages4096 and16384 / full160-byte stat guards / independent dirty bytes locks xattrs and real VM
+TimestampMutationsKeepExplicitClockAndObjectAuthority / 124 authored common services / main48 stdout T
+virtual-timestamp-creation / ten authored services / main49 / literal320 guarded bytes / explicit plus NULL request
+351 accepted original ARM64 O0 O1 O2 observations / signed micros saturation and birth limits belong to captured host
+native-common71 / mandatory86 per platform / matching ARM64 native required258 identities
+native Intel and physical iOS unverified / original five-second native and guest bounds unchanged / full Apple frameworks incomplete
+```
+
+The original model references [pinned XNU syscall/vnode ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [ordinary WRITE_ATTRIBUTES authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). The discovered futimes number is139; the rejected206 probe is retained as failure evidence. No XNU implementation was copied.

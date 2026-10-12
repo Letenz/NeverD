@@ -229,6 +229,25 @@ struct DarwinOwnershipMutationOptions {
   bool CreatedRegularObjects = false;
 };
 
+/// Explicit ordinary regular-vnode timestamp provider on a writable nonopaque
+/// mount. No ACL, MAC, privilege bypass, revocation, leases, notifications or
+/// other setattr lifecycle. This declares virtual storage of requested times:
+/// signed seconds/microseconds become signed nanoseconds saturated to int64,
+/// then floor-normalized; earlier nonnegative mtime reduces known birthtime.
+/// These rules identify no host filesystem and grant no data/namespace rights.
+struct DarwinFileTimestampMutationOptions {
+  /// Initial ordinary regular objects and separately fixed resulting ctime.
+  /// Empty declares only the environment. Grants follow actual Contents
+  /// through links/rename/held unlink, never replacement names. Execution
+  /// cannot restore invalidated complete metadata.
+  std::map<std::string, DarwinFileTime> Objects;
+  /// Independent new-regular grant; true requires complete CreationPolicy and
+  /// uses its Mutation.Time as ctime. Existing objects/directories/links
+  /// receive none. NULL requests use only the separately supplied TimeOfDay
+  /// sample.
+  bool CreatedRegularObjects = false;
+};
+
 /// Explicit whole-file flock provider for ordinary regular objects.
 /// Initial locks are empty; every owner is a modeled current open description.
 /// No external peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC,
@@ -323,6 +342,9 @@ struct DarwinFileOptions {
   /// coexist with mode authority, but either immutable query environment
   /// rejects it.
   std::optional<DarwinOwnershipMutationOptions> OwnershipMutations;
+  /// Independent utimes/futimes authority; absence stays unknown. Both static
+  /// query environments reject this declaration, including an empty list.
+  std::optional<DarwinFileTimestampMutationOptions> TimestampMutations;
   /// Independent flock authority; absence is unknown. Either static query
   /// environment rejects this declaration, including an empty object list.
   std::optional<DarwinAdvisoryLockOptions> AdvisoryLocks;

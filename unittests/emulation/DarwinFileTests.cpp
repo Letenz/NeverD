@@ -4102,8 +4102,9 @@ TEST_P(DarwinFileTest, OwnerQueriesCloseEveryOtherDispatchedFileRoute) {
         ServiceKind::PathConf,      ServiceKind::FpathConf,
         ServiceKind::Stat64,        ServiceKind::Fstat64,
         ServiceKind::Lstat64,       ServiceKind::Flock,
-        ServiceKind::Fsync,         ServiceKind::Fdatasync};
-    static_assert(std::size(Closed) == 52);
+        ServiceKind::Fsync,         ServiceKind::Fdatasync,
+        ServiceKind::Utimes,        ServiceKind::Futimes};
+    static_assert(std::size(Closed) == 54);
     std::array<uint8_t, 64> Before, After;
     llvm::cantFail(Space->read(Base, Before));
     for (auto Service : Closed) {

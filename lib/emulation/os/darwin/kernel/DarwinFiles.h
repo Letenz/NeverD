@@ -30,7 +30,8 @@ public:
   llvm::Expected<std::optional<ServiceResult>>
   handle(ServiceKind Kind, const ProcessServiceEvent &Event,
          ProcessResult &Result,
-         const std::optional<DarwinSystemOptions> &System = std::nullopt);
+         const std::optional<DarwinSystemOptions> &System = std::nullopt,
+         const std::optional<DarwinTimeOptions> &Time = std::nullopt);
   struct Mapping {
     llvm::ArrayRef<uint8_t> Bytes;
     /// The VM owner retains this lease until every mapped range is unmapped.
@@ -71,13 +72,16 @@ private:
     ModeSearch,
     ModeChange,
     OwnershipSearch,
-    OwnershipChange
+    OwnershipChange,
+    TimestampSearch,
+    TimestampChangeExplicit,
+    TimestampChangeCurrent
   };
   struct OwnershipRequest {
     uint32_t UID;
     uint32_t GID;
   };
-  enum class LookupAuthorization { Query, Mode, Ownership };
+  enum class LookupAuthorization { Query, Mode, Ownership, Timestamp };
   using Authorization = std::variant<std::monostate, uint32_t, const char *>;
   // Retaining a terminal link and refusing required expansion are separate
   // namei policies. AT_SYMLINK_NOFOLLOW_ANY uses both; ordinary open uses only
@@ -175,6 +179,7 @@ private:
     const DarwinFileMutationPolicy *Policy = nullptr;
     const DarwinFileTime *ModeTime = nullptr;
     const DarwinFileTime *OwnershipTime = nullptr;
+    const DarwinFileTime *TimestampTime = nullptr;
     bool AdvisoryLocks = false;
     bool Synchronization = false;
     bool DataSynchronization = false;
@@ -320,6 +325,10 @@ private:
   llvm::Expected<std::optional<ServiceResult>>
   changeOwnership(ServiceKind Service, const ProcessServiceEvent &Event,
                   ProcessResult &Result);
+  llvm::Expected<std::optional<ServiceResult>>
+  changeTimes(ServiceKind Service, const ProcessServiceEvent &Event,
+              ProcessResult &Result,
+              const std::optional<DarwinTimeOptions> &Time);
   llvm::Expected<std::optional<ServiceResult>>
   advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

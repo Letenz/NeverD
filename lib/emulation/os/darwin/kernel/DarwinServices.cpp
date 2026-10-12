@@ -198,6 +198,8 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Lseek:
   case ServiceKind::Dup:
   case ServiceKind::Dup2:
+  case ServiceKind::Utimes:
+  case ServiceKind::Futimes:
   case ServiceKind::Fdatasync:
   case ServiceKind::Fsync:
   case ServiceKind::Flock:
@@ -219,7 +221,8 @@ dispatchService(ServiceKind Kind, ExecutionBackend &CPU, DarwinMemory &Memory,
   case ServiceKind::Stat64:
   case ServiceKind::Fstat64:
   case ServiceKind::Lstat64:
-    return Files.handle(Kind, Event, Result, Options.DarwinSystem);
+    return Files.handle(Kind, Event, Result, Options.DarwinSystem,
+                        Options.DarwinTime);
   case ServiceKind::GetPID:
     return std::optional<ServiceResult>({ProcessID, false});
   case ServiceKind::GetPPID:

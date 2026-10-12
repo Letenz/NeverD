@@ -17,6 +17,7 @@
 #include "DarwinSystemTestData.h"
 #include "DarwinTestImage.h"
 #include "DarwinTimeTestData.h"
+#include "DarwinTimestampMutationTestData.h"
 #include "HvfTestPolicy.h"
 #include "gtest/gtest.h"
 #include "os/darwin/process/DarwinProcess.h"
@@ -2809,6 +2810,87 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
   EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess, TimestampMutationsKeepExplicitClockAndObjectAuthority) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.emplace().TimeOfDay = DarwinTimeOfDay{0, 0};
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto Common = darwin_test::timestampServices(),
+             Virtual = darwin_test::createdTimestampServices();
+  const auto Bytes = darwin_test::createdTimestampRecords();
+  const std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                            Bytes.size());
+  ASSERT_EQ(Common.size(), 124u);
+  ASSERT_EQ(Virtual.size(), 10u);
+  for (bool Created : {false, true}) {
+    const char *Mode =
+        Created ? "virtual-timestamp-creation" : "ordinary-timestamp-mutations";
+    const auto &Wanted = Created ? Virtual : Common;
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = Created ? darwin_test::createdTimestampOptions()
+                                    : darwin_test::timestampOptions();
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, Created ? 49 : 48);
+      EXPECT_EQ(R->StandardOutput, Created ? Literal : "T");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Input)
+          EXPECT_EQ(E.Arguments[1], *W.Input);
+        const auto N = W.Number & 0xffffff;
+        if (N == 138 || N == 139)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+    for (bool Missing : {false, true}) {
+      Options.DarwinFiles = Created ? darwin_test::createdTimestampOptions()
+                                    : darwin_test::timestampOptions();
+      if (Missing)
+        Options.DarwinFiles->TimestampMutations.reset();
+      else {
+        Options.DarwinFiles->TimestampMutations->Objects.clear();
+        Options.DarwinFiles->TimestampMutations->CreatedRegularObjects = false;
+      }
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R));
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(
+          R->Diagnostic,
+          Missing
+              ? "Darwin ordinary timestamp environment is not configured"
+              : "Darwin regular-object timestamp provider is not configured");
+      ASSERT_EQ(R->Services.size(), Created ? 3u : 8u);
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_FALSE(R->Services.back().Error);
+    }
+  }
+  Options.DarwinFiles = darwin_test::createdTimestampOptions();
+  Options.DarwinTime.reset();
+  auto R = run("virtual-timestamp-creation");
+  ASSERT_TRUE(bool(R));
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+  EXPECT_EQ(R->Diagnostic, "Darwin time_of_day is not configured");
+  ASSERT_EQ(R->Services.size(), 5u);
+  EXPECT_EQ(R->Services.back().Arguments[1], 0u);
 }
 
 TEST_P(DarwinProcess, FullAndBarrierSynchronizationKeepIndependentObjectState) {

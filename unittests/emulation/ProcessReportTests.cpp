@@ -10,6 +10,7 @@
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
+#include "DarwinTimestampMutationTestData.h"
 #include "LinuxFileTestMetadata.h"
 #include "gtest/gtest.h"
 
@@ -29,6 +30,92 @@ namespace field = process_report;
 #define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "FaultReportCases.def"
 #undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport, DarwinTimestampDeclarationUsesStrictSharedTimedObjects) {
+  for (bool Text : {false, true}) {
+    auto Files =
+        llvm::cantFail(llvm::json::parse(darwin_test::TimestampFilesJSON));
+    if (Text)
+      (*(*Files.getAsObject()
+              ->getObject("timestamp_mutations")
+              ->getArray("objects"))[0]
+            .getAsObject())["time"] =
+          llvm::json::Object{{"seconds", "111"}, {"nanoseconds", "112"}};
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(Files)}}))
+            .str());
+    ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+    ASSERT_TRUE(P->DarwinFiles->TimestampMutations);
+    EXPECT_EQ(P->DarwinFiles->TimestampMutations->Objects.at("/data").Seconds,
+              111);
+    EXPECT_EQ(
+        P->DarwinFiles->TimestampMutations->Objects.at("/data").Nanoseconds,
+        112);
+    EXPECT_FALSE(P->DarwinFiles->TimestampMutations->CreatedRegularObjects);
+    EXPECT_FALSE(P->DarwinFiles->ModeMutations);
+    EXPECT_FALSE(P->DarwinFiles->OwnershipMutations);
+  }
+}
+TEST(ProcessReport, DarwinTimestampRejectsMalformedUnknownSecurityAndClosure) {
+  for (
+      const char *Bad :
+      {R"({})", R"({"objects":null})", R"({"objects":["/data"]})",
+       R"({"objects":[{"path":"/data"}]})",
+       R"({"objects":[{"path":"/data","time":{"seconds":1,"nanoseconds":-1}}]})",
+       R"({"objects":[{"path":"relative","time":{"seconds":1,"nanoseconds":2}}]})",
+       R"({"objects":[],"created_regular_objects":1})",
+       R"({"objects":[],"created_regular_objects":null})",
+       R"({"objects":[],"created_regular_objects":"true"})",
+       R"({"objects":[],"created_regular_objects":true})",
+       R"({"objects":[],"extra":false})"}) {
+    auto Files =
+        llvm::cantFail(llvm::json::parse(darwin_test::TimestampFilesJSON));
+    (*Files.getAsObject())["timestamp_mutations"] =
+        llvm::cantFail(llvm::json::parse(Bad));
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(Files)}}))
+            .str());
+    ASSERT_FALSE(bool(P)) << Bad;
+    EXPECT_FALSE(llvm::toString(P.takeError()).empty());
+  }
+  for (unsigned V = 0; V != 5; ++V) {
+    auto Files =
+        llvm::cantFail(llvm::json::parse(darwin_test::TimestampFilesJSON));
+    auto &F = *Files.getAsObject();
+    if (V < 2) {
+      F["authorization"] =
+          V ? "static-owner-queries" : "static-ordinary-queries";
+      F["timestamp_mutations"] =
+          llvm::json::Object{{"objects", llvm::json::Array{}}};
+    }
+    if (V == 2) {
+      auto &M = *(*F.getArray("files"))[0].getAsObject()->getObject("metadata");
+      M["flags"] = 1;
+    }
+    if (V == 3) {
+      auto Copy = (*F.getObject("timestamp_mutations")->getArray("objects"))[0];
+      F.getObject("timestamp_mutations")
+          ->getArray("objects")
+          ->push_back(std::move(Copy));
+    }
+    if (V == 4) {
+      llvm::json::Array Many;
+      for (unsigned I = 0; I != 257; ++I)
+        Many.push_back(llvm::json::Object{
+            {"path", "/data"},
+            {"time", llvm::json::Object{{"seconds", 1}, {"nanoseconds", 2}}}});
+      (*F.getObject("timestamp_mutations"))["objects"] = std::move(Many);
+    }
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(Files)}}))
+            .str());
+    ASSERT_FALSE(bool(P));
+    EXPECT_FALSE(llvm::toString(P.takeError()).empty());
+  }
+}
 
 TEST(ProcessReport, DarwinFullBarrierDeclarationsRemainIndependentAndStrict) {
   for (const char *Purpose :

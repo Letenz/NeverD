@@ -130,9 +130,10 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.MovableDirectories.empty() ||
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
-       Options.OwnershipMutations || Options.AdvisoryLocks ||
-       Options.Synchronization || Options.DataSynchronization ||
-       Options.FullSynchronization || Options.BarrierSynchronization))
+       Options.OwnershipMutations || Options.TimestampMutations ||
+       Options.AdvisoryLocks || Options.Synchronization ||
+       Options.DataSynchronization || Options.FullSynchronization ||
+       Options.BarrierSynchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -390,6 +391,9 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations,
                                    diagnostic::FileOwnershipOption))
+    return E;
+  if (auto E = AdmitOrdinaryGrants(Options.TimestampMutations,
+                                   diagnostic::FileTimestampOption))
     return E;
   const auto AdmitObjectProvider = [&](const auto &Environment,
                                        const char *Reason) -> llvm::Error {
@@ -708,6 +712,11 @@ void DarwinFiles::initializeNamespace() {
       const auto Time = Options->OwnershipMutations->Objects.find(Path);
       if (Time != Options->OwnershipMutations->Objects.end())
         Node->OwnershipTime = &Time->second;
+    }
+    if (Options->TimestampMutations) {
+      const auto Time = Options->TimestampMutations->Objects.find(Path);
+      if (Time != Options->TimestampMutations->Objects.end())
+        Node->TimestampTime = &Time->second;
     }
     Nodes.emplace(Path, std::make_shared<FileEntry>(std::move(Node)));
   }
@@ -1064,22 +1073,29 @@ DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Request,
                     Purpose == AuthorizationPurpose::ModeChange;
   const bool Owner = Purpose == AuthorizationPurpose::OwnershipSearch ||
                      Purpose == AuthorizationPurpose::OwnershipChange;
+  const bool Timestamp =
+      Purpose == AuthorizationPurpose::TimestampSearch ||
+      Purpose == AuthorizationPurpose::TimestampChangeExplicit ||
+      Purpose == AuthorizationPurpose::TimestampChangeCurrent;
   if ((Purpose == AuthorizationPurpose::OwnershipChange) != bool(Ownership))
     return diagnostic::FileOwnershipRequest;
-  if (Mode || Owner) {
+  if (Mode || Owner || Timestamp) {
     if (!Options || (Mode && !Options->ModeMutations) ||
-        (Owner && !Options->OwnershipMutations))
-      return Owner ? diagnostic::FileOwnershipEnvironment
-                   : diagnostic::FileModeEnvironment;
+        (Owner && !Options->OwnershipMutations) ||
+        (Timestamp && !Options->TimestampMutations))
+      return Timestamp ? diagnostic::FileTimestampEnvironment
+             : Owner   ? diagnostic::FileOwnershipEnvironment
+                       : diagnostic::FileModeEnvironment;
     User = Subject::Effective;
     if (!Metadata || Metadata->Flags || (Metadata->Mode & 07000))
-      return Owner ? diagnostic::FileOwnershipSecurityAttributes
-                   : diagnostic::FileModeSecurityAttributes;
+      return Timestamp ? diagnostic::FileTimestampSecurityAttributes
+             : Owner   ? diagnostic::FileOwnershipSecurityAttributes
+                       : diagnostic::FileModeSecurityAttributes;
     if (Purpose == AuthorizationPurpose::ModeChange && (Request & 07000))
       return diagnostic::FileModePermissions;
   }
   const bool Ordinary =
-      Mode || Owner ||
+      Mode || Owner || Timestamp ||
       Options->Authorization == DarwinFileAuthorization::StaticOrdinaryQueries;
   if (!Credentials)
     return Ordinary ? diagnostic::FileOrdinaryAuthorizationCredentials
@@ -1123,6 +1139,16 @@ DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Request,
       return uint32_t(OperationNotPermitted);
     return std::monostate{};
   }
+  // Explicit utimes requires ownership even when both observations are equal.
+  // NULL requests WRITE_ATTRIBUTES: the owner is implicitly authorized and
+  // an ordinary nonowner uses the shared POSIX VWRITE/group decision below.
+  if (Purpose == AuthorizationPurpose::TimestampChangeExplicit)
+    return UID == Metadata->UID
+               ? Authorization(std::monostate{})
+               : Authorization(uint32_t(OperationNotPermitted));
+  if (Purpose == AuthorizationPurpose::TimestampChangeCurrent &&
+      UID == Metadata->UID)
+    return std::monostate{};
   const auto Actions = Request;
   const auto Decision = [](bool Allowed) -> Authorization {
     if (!Allowed)
@@ -1148,8 +1174,9 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
     bool CheckDirectoryPrefix, Subject User, LookupAuthorization Scope) {
   const bool ModeAuthorization = Scope == LookupAuthorization::Mode;
   const bool OwnershipAuthorization = Scope == LookupAuthorization::Ownership;
+  const bool TimestampAuthorization = Scope == LookupAuthorization::Timestamp;
   const bool MutationAuthorization =
-      ModeAuthorization || OwnershipAuthorization;
+      ModeAuthorization || OwnershipAuthorization || TimestampAuthorization;
   const bool AuthorizedLookup = queryEnvironment() || MutationAuthorization;
   if (!Options && !MutationAuthorization)
     return diagnostic::FileInputs;
@@ -1170,7 +1197,9 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
   std::string Path = std::move(std::get<std::string>(*Imported));
   if (!Options)
     return Path.empty() ? Lookup(uint32_t(NoEntry))
-                        : Lookup(OwnershipAuthorization
+                        : Lookup(TimestampAuthorization
+                                     ? diagnostic::FileTimestampEnvironment
+                                 : OwnershipAuthorization
                                      ? diagnostic::FileOwnershipEnvironment
                                      : diagnostic::FileModeEnvironment);
   const bool Absolute = llvm::StringRef(Path).starts_with('/');
@@ -1233,9 +1262,10 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
         }
         auto Authorization = authorize(
             Metadata, 1, User,
-            OwnershipAuthorization ? AuthorizationPurpose::OwnershipSearch
-            : ModeAuthorization    ? AuthorizationPurpose::ModeSearch
-                                   : AuthorizationPurpose::Query);
+            TimestampAuthorization   ? AuthorizationPurpose::TimestampSearch
+            : OwnershipAuthorization ? AuthorizationPurpose::OwnershipSearch
+            : ModeAuthorization      ? AuthorizationPurpose::ModeSearch
+                                     : AuthorizationPurpose::Query);
         if (auto *Error = std::get_if<uint32_t>(&Authorization))
           return *Error;
         if (auto *Reason = std::get_if<const char *>(&Authorization))
@@ -2581,6 +2611,9 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     if (Options->OwnershipMutations &&
         Options->OwnershipMutations->CreatedRegularObjects)
       Node->OwnershipTime = &Policy.Mutation.Time;
+    if (Options->TimestampMutations &&
+        Options->TimestampMutations->CreatedRegularObjects)
+      Node->TimestampTime = &Policy.Mutation.Time;
     // These independent creation providers belong only to this newly admitted
     // ordinary regular object, never to an old name or initial grant.
     Node->AdvisoryLocks =
@@ -2806,7 +2839,8 @@ std::optional<ServiceResult> DarwinFiles::pathconf(const Description &File,
 llvm::Expected<std::optional<ServiceResult>>
 DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
                     ProcessResult &Result,
-                    const std::optional<DarwinSystemOptions> &System) {
+                    const std::optional<DarwinSystemOptions> &System,
+                    const std::optional<DarwinTimeOptions> &Time) {
   const auto &A = Event.Arguments;
   if (queryEnvironment()) {
     // Closed by default, including new file routes. Only queries and the
@@ -2846,6 +2880,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return synchronize(SynchronizationKind::File, Event, Result);
   if (Service == ServiceKind::Fdatasync)
     return synchronize(SynchronizationKind::Data, Event, Result);
+  if (Service == ServiceKind::Utimes || Service == ServiceKind::Futimes)
+    return changeTimes(Service, Event, Result, Time);
   if (Service == ServiceKind::Flock)
     return advisoryLock(Event, Result);
   if (Service == ServiceKind::Poll)

@@ -227,6 +227,8 @@ NEVERD_DARWIN_SERVICE(Fcntl, 92, Int)
 NEVERD_DARWIN_SERVICE(Flock, 131, Int)
 NEVERD_DARWIN_SERVICE(Fsync, 95, Int)
 NEVERD_DARWIN_SERVICE(Fdatasync, 187, Int)
+NEVERD_DARWIN_SERVICE(Utimes, 138, Int)
+NEVERD_DARWIN_SERVICE(Futimes, 139, Int)
 NEVERD_DARWIN_SERVICE(Pread, 153, Wide)
 NEVERD_DARWIN_SERVICE(Pwrite, 154, Wide)
 NEVERD_DARWIN_SERVICE(Lseek, 199, Wide)
@@ -525,6 +527,25 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     FileOwnershipProvider,
     "Darwin regular-object ownership provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampOption,
+    "Darwin timestamp grants require complete ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampEnvironment,
+    "Darwin ordinary timestamp environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampSecurityAttributes,
+                         "Darwin timestamp authorization requires current "
+                         "ordinary security attributes")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampTarget,
+    "Darwin timestamp mutation requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampKind, "Darwin timestamp mutation requires a known vnode kind")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileTimestampProvider,
+    "Darwin regular-object timestamp provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampInput,
+                         "Darwin partial timestamp input is not implemented")
 NEVERD_DARWIN_DIAGNOSTIC(FileAdvisoryLockOption,
                          "Darwin advisory lock grants require complete "
                          "ordinary initial regular objects")
