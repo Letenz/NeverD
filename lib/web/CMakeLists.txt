@@ -180,6 +180,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/SourceInterfaces.cpp
     interfaces/SourceContext.cpp
     interfaces/SourceFetch.cpp
+    interfaces/SourceWrappers.cpp
     interfaces/SourceXHR.cpp
     interfaces/RelationContext.cpp
     interfaces/RequestLinks.cpp
