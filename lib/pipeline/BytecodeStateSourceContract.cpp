@@ -217,7 +217,7 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
       if (!Import ||
           !keys(*Import, {"selector", "pointer_source", "name", "parameters",
                           "result", "variadic_fixed", "void_result", "defaults",
-                          "target_argument"}) ||
+                          "target_argument", "pass_context"}) ||
           (G.FunctionPointer ? bool(Import->get("selector"))
                              : !number(*Import, "selector")) ||
           (bool(Import->get("name")) == bool(Import->get("target_argument"))) ||
@@ -225,6 +225,12 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
         return invalid("incomplete imported signature");
       StateSourceImport Native;
       Native.Selector = number(*Import, "selector").value_or(0);
+      if (auto *Value = Import->get("pass_context")) {
+        auto Pass = Value->getAsBoolean();
+        if (!Pass)
+          return invalid("pass_context requires a boolean");
+        Native.PassContext = *Pass;
+      }
       if (Import->get("variadic_fixed")) {
         auto Fixed = number(*Import, "variadic_fixed");
         if (!Fixed || !*Fixed || *Fixed > 16)

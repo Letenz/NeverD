@@ -1703,6 +1703,22 @@ captured operands whose slots are overwritten, optional pointers, padding beyond
 the available bank slots, signed narrow results, all four store widths, full
 unaligned banks, guest effects and failure statuses. Python static/callback
 producers share padding and target admission through the native C API.
+Context-forwarding cases reject absent, non-pointer, variadic and excess gateway
+parameters before mutation, including conflicting signed declarations after
+receiver insertion. Windows x64 and ARM64 IR cover named, pointer-candidate,
+forwarded-target and string calls. The compiled oracle compares 6144 cases at
+each O0/O2 level with undefined-behavior traps and uninitialized-variable errors:
+distinct and null receivers, receiver/guest aliases, mutations before the call,
+reentrant calls using another receiver, signed arguments/results, defaults,
+variadics, full unaligned banks and fallback status/effects. Python static and
+callback producers share strict boolean parsing and missing-context rejection.
+These tests establish explicit receiver forwarding, not original object layouts
+or native Windows runtime behavior.
+Guest-selector tests check endian-aware slices and unrelated offsets. Their
+4096-case independent LLVM/C oracle at O0/O2 changes the bank-held base, guest
+bytes and argument count across an opaque call. Both successful guarded calls
+and full-status fallbacks preserve unaligned banks, guest bytes and call traces
+with undefined-behavior traps.
 `LLVMCValues.PreservedIndirectChainsKeepLoadsStoresAndCapturedTargets` checks
 1024 nested-pointer cases at each O0/O2 level against independently compiled
 LLVM, with undefined-behavior traps. It preserves observable target snapshots

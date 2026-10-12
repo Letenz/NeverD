@@ -73,6 +73,11 @@ struct StateSourceImport {
   /// not variadic or defaulted, and null retains the original gateway.
   /// This asserts the target's callable ABI; it supplies no symbol identity.
   std::optional<unsigned> TargetArgument;
+  /// Prepend the gateway's opaque second pointer operand to the native call.
+  /// It is captured unchanged, including null. Parameters, defaults and bank
+  /// argument indices still describe only the explicitly supplied operands.
+  /// The producer owns the receiver ABI and its observable context effects.
+  bool PassContext = false;
 };
 struct StateSourceImage {
   StateSourceSlot Base;

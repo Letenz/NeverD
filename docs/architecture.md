@@ -968,6 +968,13 @@ write. Unknown arity gets a runtime guard
 and original-call fallback. Unknown targets retain the original
 gateway and status. The bytecode JSON adapter owns schema parsing; observers
 remain conditional evidence and cannot supply these assertions implicitly.
+Explicit context forwarding prepends the captured gateway receiver to a native
+call. The same owner validates the two-pointer gateway ABI and maps physical
+parameter types, signed hints, variadic prefixes and string indices after
+receiver insertion or target removal. It never reads receiver fields, assumes
+a nonnull receiver or substitutes a sampled receiver value. The producer owns
+the imported operation's receiver ABI and effects; the isolated-bank assertion
+does not imply separation between context and guest memory.
 Bounded low-byte load slices preserve the original read point and byte order;
 the shared optimizer forwards their exact writers. `LLVMSourceTypeHints.h` owns
 the spelling attributes that carry explicit signed import declarations across
@@ -997,6 +1004,11 @@ gateway. No candidate replaces an SSA operand or establishes a memory fact.
 PHI and select arms can also nominate a candidate under the same work bounds;
 literal seeds are preferred over loop backedges. This is not a join-equality
 proof, and each execution still compares the current captured selector.
+Scalar candidates can also follow dominating guest stores with the same
+syntactic address or a base reloaded from the same bank slot. This bounded
+lineage search permits a changed base or overwritten guest bytes; it adds no
+read and proves neither address nor value equality. Endian-aware store slices
+only nominate a selector, which retains the mandatory runtime identity guard.
 Explicit variadic import contracts retain a fixed declaration prefix and a
 complete supplied-operand list. The same owner materializes the LLVM variadic
 signature and promoted scalar hints; the C emitter validates those hints and

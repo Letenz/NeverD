@@ -453,6 +453,140 @@ TEST(StateSource, PartialSelectorsUseTheOriginalSnapshotOnBothByteOrders) {
     }
 }
 
+std::string guestSelectorProgram() {
+  return R"(
+declare i64 @gateway(ptr, ptr)
+declare i64 @change_guest(ptr, ptr)
+define i64 @work(ptr %state, ptr %context) {
+  %base1 = load i64, ptr %state, align 1
+  %address1 = add i64 %base1, 16
+  %p1 = inttoptr i64 %address1 to ptr
+  store i32 7, ptr %p1, align 1
+  call i64 @change_guest(ptr %state, ptr %context)
+  %base2 = load i64, ptr %state, align 1
+  %address2 = add i64 %base2, 16
+  %p2 = inttoptr i64 %address2 to ptr
+  %selector = load i32, ptr %p2, align 1
+  %sel = getelementptr i8, ptr %state, i64 32
+  store i32 %selector, ptr %sel, align 1
+  %off = getelementptr i8, ptr %state, i64 40
+  store i64 24, ptr %off, align 1
+  %width = getelementptr i8, ptr %state, i64 48
+  store i64 8, ptr %width, align 1
+  %status = call i64 @gateway(ptr %state, ptr %context)
+  ret i64 %status
+})";
+}
+TEST(StateSource, GuestSelectorLineageKeepsEndianSlicesAndRuntimeGuards) {
+  for (bool Big : {false, true})
+    for (bool Mismatch : {false, true}) {
+      llvm::LLVMContext C;
+      auto Text = guestSelectorProgram();
+      cell_test::replace(Text, "store i32 7, ptr %p1",
+                         "store i64 1234605616436508552, ptr %p1");
+      cell_test::replace(Text, "%address2 = add i64 %base2, 16",
+                         Mismatch ? "%address2 = add i64 %base2, 32"
+                                  : "%address2 = add i64 %base2, 18");
+      cell_test::replace(Text, "%selector = load i32", "%selector = load i16");
+      cell_test::replace(Text, "store i32 %selector", "store i16 %selector");
+      auto M = cell_test::parse(C, Text);
+      ASSERT_TRUE(M);
+      M->setDataLayout(Big ? "E-p:64:64-i64:64" : "e-p:64:64-i64:64");
+      auto Contract = contract();
+      Contract.Gateways[0].Selector->Bytes = 2;
+      Contract.Gateways[0].Imports[0].Selector = Big ? 0x3344 : 0x5566;
+      auto R = prepareStateSourceRecovery(*M, Contract);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      optimize(*M);
+      auto E = finishStateSourceRecovery(*M, *R);
+      ASSERT_FALSE(E) << llvm::toString(std::move(E));
+      EXPECT_EQ(R->RewrittenCalls, Mismatch ? 0u : 1u);
+      EXPECT_EQ(R->GuardedCalls, Mismatch ? 0u : 1u);
+    }
+}
+TEST_F(StateSourceCompiled, GuestSelectorCandidatesGuardChangedBasesAndBytes) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  llvm::LLVMContext C;
+  auto M = cell_test::parse(C, guestSelectorProgram());
+  ASSERT_TRUE(M);
+  M->getFunction("work")->setName("before");
+  auto Original = tmpFile("guest-selector-before.ll");
+  std::ofstream(Original) << test::printHostCompilerFixture(*M);
+  M->getFunction("before")->setName("after");
+  auto R = prepareStateSourceRecovery(*M, contract());
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  optimize(*M);
+  auto E = finishStateSourceRecovery(*M, *R);
+  ASSERT_FALSE(E) << llvm::toString(std::move(E));
+  ASSERT_EQ(R->RewrittenCalls, 1u);
+  ASSERT_EQ(R->GuardedCalls, 1u);
+  optimize(*M);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+  auto After = tmpFile("guest-selector-after.c");
+  std::ofstream(After) << Source;
+  auto Harness = tmpFile("guest-selector-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t before(void*,void*),after(void*,void*);
+static uint64_t get(const void *s,unsigned o) { uint64_t v;memcpy(&v,(const char*)s+o,8);return v; }
+static void put(void *s,unsigned o,uint64_t v,unsigned n) { memcpy((char*)s+o,&v,n); }
+static unsigned mode,calls,gateways;
+static uint64_t trace;
+static unsigned char guest[64];
+int32_t example_query(uint64_t x) { ++calls;trace=trace*31+x;guest[1]^=(unsigned char)x;return (int32_t)(x^0x81234567); }
+uint64_t change_guest(void *s,void *ctx) {
+ (void)ctx;
+ if(mode&1) put(s,0,(uintptr_t)(guest+32),8);
+ unsigned char *p=(void*)(uintptr_t)get(s,0);
+ if(mode&2) put(p,16,9,1);
+ if(mode&4) put(p,16,7,4);
+ return 0;
+}
+uint64_t gateway(void *s,void *ctx) {
+ (void)ctx;++gateways;
+ if((uint32_t)get(s,32)!=7 || (uint32_t)get(s,56)!=1) {
+  guest[3]++;put(s,24,0xabcdef,3);return UINT64_C(0xfeed000012345678);
+ }
+ uint64_t x=get(s,8),off=get(s,40),width=get(s,48);put(s,56,0,8);
+ put(s,(unsigned)off,(uint64_t)(int64_t)example_query(x),(unsigned)width);return 0;
+}
+int main(void) {
+ unsigned fast=0,slow=0;
+ for(unsigned k=0;k<4096;k++) {
+  unsigned char a[80],b[80],observed[64],initial[64];
+  for(unsigned j=0;j<80;j++) a[j]=(unsigned char)(k*7+j*13);
+  for(unsigned j=0;j<64;j++) initial[j]=(unsigned char)(k*11+j*5);
+  unsigned off=k&15;mode=(k/16)%8;
+  put(a+off,0,(uintptr_t)guest,8);put(a+off,8,(uint64_t)k*0x192ad76fULL,8);put(a+off,56,(k/128)%2,8);
+  memcpy(b,a,80);memcpy(guest,initial,64);calls=gateways=0;trace=0;
+  uint64_t ra=before(a+off,0),ta=trace;unsigned ca=calls;memcpy(observed,guest,64);
+  memcpy(guest,initial,64);calls=gateways=0;trace=0;uint64_t rb=after(b+off,0);
+  if(ra!=rb || ta!=trace || ca!=calls || memcmp(a,b,80) || memcmp(guest,observed,64)) return 1;
+  if(gateways) ++slow;else ++fast;
+ }
+ return !(fast && slow);
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable = tmpFile(std::string("guest-selector-oracle") + Level +
+                              test::executableSuffix());
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Level, "-fsanitize=undefined",
+                       "-fsanitize-trap=all", Original.string(), After.string(),
+                       Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
+}
+
 TEST(StateSource, StringSpellingRequiresAReadOnlyGlobalAndACallSiteContract) {
   for (unsigned Case = 0; Case < 4; ++Case) {
     llvm::LLVMContext C;
@@ -1119,6 +1253,244 @@ TEST(StateSource, ForwardedCallsKeepCapturedTargetsAndSignedSignatures) {
       EXPECT_NE(Source.find("gateway(state, context)"), std::string::npos);
       EXPECT_EQ(Source.find("invented_symbol"), std::string::npos);
     }
+}
+TEST(StateSource, ContextForwardingRejectsMissingOrIncompatibleGatewayABI) {
+  for (unsigned Case = 0; Case != 6; ++Case) {
+    SCOPED_TRACE(Case);
+    llvm::LLVMContext C;
+    auto Text = program();
+    auto Contract = contract();
+    Contract.Gateways[0].Imports[0].PassContext = true;
+    if (Case < 5) {
+      const char *Declarations[] = {"ptr", "ptr, i64", "ptr, ptr addrspace(1)",
+                                    "ptr, ptr, ptr", "ptr, ..."};
+      const char *Operands[] = {"ptr %state_pointer",
+                                "ptr %state_pointer, i64 0",
+                                "ptr %state_pointer, ptr addrspace(1) null",
+                                "ptr %state_pointer, ptr %context, ptr null",
+                                "ptr %state_pointer, ptr %context"};
+      cell_test::replace(Text, "@gateway(ptr, ptr)",
+                         std::string("@gateway(") + Declarations[Case] + ")");
+      cell_test::replace(Text, "@gateway(ptr %state_pointer, ptr %context)",
+                         std::string("@gateway(") + Operands[Case] + ")");
+      if (Case == 4)
+        cell_test::replace(Text, "call i64 @gateway",
+                           "call i64 (ptr, ...) @gateway");
+    } else {
+      auto Other = Contract.Gateways[0].Imports[0];
+      Other.Selector = 8;
+      Other.Parameters = {StateSourceType::I64};
+      Contract.Gateways[0].Imports.push_back(Other);
+    }
+    auto M = cell_test::parse(C, Text);
+    ASSERT_TRUE(M);
+    auto Before = cell_test::print(*M);
+    auto R = prepareStateSourceRecovery(*M, Contract);
+    ASSERT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+    EXPECT_EQ(cell_test::print(*M), Before);
+  }
+}
+
+TEST(StateSource, ContextForwardingKeepsPointerStringAndSignedArgumentIndices) {
+  for (unsigned Case = 0; Case != 4; ++Case)
+    for (const char *Triple :
+         {"x86_64-pc-windows-msvc", "aarch64-unknown-linux-gnu"}) {
+      SCOPED_TRACE(::testing::Message() << Case << " " << Triple);
+      llvm::LLVMContext C;
+      auto Text = Case == 0   ? program()
+                  : Case == 1 ? forwardedProgram()
+                  : Case == 2 ? pointerProgram()
+                              : stringProgram();
+      auto Contract = Case == 0   ? contract()
+                      : Case == 1 ? forwardedContract()
+                      : Case == 2 ? pointerContract()
+                                  : stringContract();
+      auto &I = Contract.Gateways[0].Imports[0];
+      I.PassContext = true;
+      if (Case == 0)
+        I.Parameters[0] = StateSourceType::I32;
+      auto M = cell_test::parse(C, Text);
+      ASSERT_TRUE(M);
+      M->setTargetTriple(llvm::Triple(Triple));
+      auto R = prepareStateSourceRecovery(*M, Contract);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      optimize(*M);
+      auto E = finishStateSourceRecovery(*M, *R);
+      ASSERT_FALSE(E) << llvm::toString(std::move(E));
+      ASSERT_EQ(R->RewrittenCalls, 1u);
+      optimize(*M);
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions Options;
+      Options.PreserveLLVMFunctionTypes = true;
+      Options.UseUnalignedPointers = true;
+      ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+      if (Case == 0)
+        EXPECT_NE(Source.find("int32_t example_query(void*, int32_t)"),
+                  std::string::npos)
+            << Source;
+      if (Case == 1)
+        EXPECT_NE(Source.find("int16_t (*)(void*, int8_t, void*, int16_t)"),
+                  std::string::npos)
+            << Source;
+      if (Case == 3)
+        EXPECT_NE(Source.find("lookup_item(context, \"example.dll\""),
+                  std::string::npos)
+            << Source;
+    }
+}
+
+TEST_F(StateSourceCompiled,
+       ContextForwardingPreservesReceiversAliasesAndReentry) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  std::vector<std::string> Files;
+  for (unsigned Mode = 0; Mode != 3; ++Mode) {
+    llvm::LLVMContext C;
+    auto M = cell_test::parse(C, forwardedProgram());
+    ASSERT_TRUE(M);
+    std::string Suffix = std::to_string(Mode);
+    M->getFunction("work")->setName("before" + Suffix);
+    auto Original = tmpFile("context-before" + Suffix + ".ll");
+    std::ofstream(Original) << test::printHostCompilerFixture(*M);
+    Files.push_back(Original.string());
+    M->getFunction("before" + Suffix)->setName("after" + Suffix);
+    auto Contract = forwardedContract();
+    auto &G = Contract.Gateways[0];
+    auto &I = G.Imports[0];
+    I.PassContext = true;
+    if (Mode != 1) {
+      I.Name = Mode == 0 ? "receiver_query" : "receiver_variadic";
+      I.TargetArgument.reset();
+      G.Arguments = {{8, 8}, {16, 8}};
+      I.Parameters = {StateSourceType::I8, StateSourceType::Pointer,
+                      StateSourceType::I16};
+      I.Defaults = {0, 0x8123};
+      if (Mode == 2) {
+        G.Arguments.push_back({24, 8});
+        I.Parameters = {StateSourceType::I32, StateSourceType::Pointer,
+                        StateSourceType::I32};
+        I.Defaults.clear();
+        I.VariadicFixedParameters = 1;
+      }
+    } else
+      I.Defaults = {0, 0x8123};
+    auto R = prepareStateSourceRecovery(*M, Contract);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    optimize(*M);
+    auto E = finishStateSourceRecovery(*M, *R);
+    ASSERT_FALSE(E) << llvm::toString(std::move(E));
+    ASSERT_EQ(R->RewrittenCalls, 1u);
+    ASSERT_EQ(R->GuardedCalls, 1u);
+    optimize(*M);
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    Options.UseUnalignedPointers = true;
+    Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+    ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+    auto After = tmpFile("context-after" + Suffix + ".c");
+    std::ofstream(After) << Source;
+    Files.push_back(After.string());
+  }
+  auto Harness = tmpFile("context-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
+extern uint64_t before0(void*,void*),before1(void*,void*),before2(void*,void*);
+extern uint64_t after0(void*,void*),after1(void*,void*),after2(void*,void*);
+static uint64_t get(const void *s,unsigned o) { uint64_t v;memcpy(&v,(const char*)s+o,8);return v; }
+static void put(void *s,unsigned o,uint64_t v,unsigned n) { memcpy((char*)s+o,&v,n); }
+struct receiver { uint64_t identity,value,trace; unsigned calls,depth; };
+static struct receiver contexts[2];
+static unsigned mode,change,calls,gateways;
+static uint64_t trace;
+static uint64_t (*run)(void*,void*);
+static int16_t query(void *ctx,int32_t x,void *p,int32_t pad);
+int16_t receiver_query(void *ctx,int8_t x,void *p,int16_t pad) { return query(ctx,x,p,pad); }
+int16_t receiver_variadic(void *ctx,int32_t x,...) {
+ va_list ap;va_start(ap,x);void *p=va_arg(ap,void*);int32_t pad=va_arg(ap,int);va_end(ap);
+ return query(ctx,x,p,pad);
+}
+static int16_t query(void *ctx,int32_t x,void *p,int32_t pad) {
+ ++calls;trace=trace*131+(uint64_t)(int64_t)x+(uint64_t)(int64_t)pad;
+ struct receiver *r=ctx;
+ if(r) {
+  ++r->calls;r->trace=r->trace*31+r->identity;r->value+=(uint32_t)x;
+  if(r->depth) {
+   r->depth=0;
+   unsigned char nested[64]={0};put(nested,0,(uintptr_t)receiver_query,8);
+   put(nested,8,77,8);put(nested,24,0x8123,8);put(nested,56,mode==0 ? 2 : 3,8);
+   struct receiver *other=r==contexts ? contexts+1 : contexts;
+   uint64_t status=run(nested,other);r->trace^=status^get(nested,24);
+  }
+ }
+ if(p) { uint64_t v;memcpy(&v,p,8);v^=(uint32_t)pad;memcpy(p,&v,8); }
+ return (int16_t)((uint32_t)x^(uint32_t)pad^(r ? r->value : 0x9153));
+}
+uint64_t change_target(void *s,void *ctx) {
+ if(ctx) ((struct receiver*)ctx)->value^=0xabc;
+ if(change==1) put(s,32,9,8);
+ if(change==2) put(s,0,0,8);
+ return 0;
+}
+uint64_t gateway(void *s,void *ctx) {
+ ++gateways;
+ uint64_t target=get(s,0),x=get(s,8),p=get(s,16),off=get(s,40),width=get(s,48),pad=get(s,24);
+ uint32_t n=(uint32_t)get(s,56);
+ if((uint32_t)get(s,32)!=7 || (mode==0 && (n<1 || n>2)) ||
+    (mode==1 && (n<2 || n>3 || !target)) || (mode==2 && n!=3)) {
+  put(s,24,0x123456,3);return UINT64_C(0xfedcba9876543210);
+ }
+ put(s,0,0,8);put(s,8,0,8);put(s,16,0,8);put(s,56,0,8);
+ int16_t v;
+ if(mode==0) v=receiver_query(ctx,(int8_t)x,n==2 ? (void*)(uintptr_t)p : 0,(int16_t)0x8123);
+ else if(mode==1) v=((int16_t(*)(void*,int8_t,void*,int16_t))(uintptr_t)target)(ctx,(int8_t)x,n==3 ? (void*)(uintptr_t)p : 0,(int16_t)0x8123);
+ else v=receiver_variadic(ctx,(int32_t)x,(void*)(uintptr_t)p,(int32_t)pad);
+ put(s,(unsigned)off,(uint64_t)(int64_t)v,(unsigned)width);return 0;
+}
+int main(void) {
+ uint64_t (*before[])(void*,void*)={before0,before1,before2};
+ uint64_t (*after[])(void*,void*)={after0,after1,after2};
+ unsigned fast=0,slow=0,reentry=0;
+ for(mode=0;mode<3;mode++) for(unsigned k=0;k<2048;k++) {
+  unsigned char a[80],b[80];for(unsigned j=0;j<80;j++) a[j]=(unsigned char)(k*7+j*13);
+  unsigned off=k&15;change=(k/16)%3;
+  struct receiver initial[2]={{17,k,0,0,(k/2)&1},{83,k+3,0,0,0}},observed[2];
+  void *ctx=k%5 ? contexts+(k%2) : 0;
+  put(a+off,0,(uintptr_t)receiver_query,8);put(a+off,8,(uint64_t)k*0x192ad76fULL,8);
+  put(a+off,16,(uintptr_t)&contexts[(k/2)%2].value,8);put(a+off,24,0x8123,8);
+  put(a+off,56,(k/64)%5,8);memcpy(b,a,80);memcpy(contexts,initial,sizeof(contexts));
+  run=before[mode];calls=gateways=0;trace=0;uint64_t ra=run(a+off,ctx),ta=trace;
+  unsigned ca=calls;memcpy(observed,contexts,sizeof(contexts));
+  run=after[mode];calls=gateways=0;trace=0;memcpy(contexts,initial,sizeof(contexts));
+  uint64_t rb=run(b+off,ctx);
+  if(ra!=rb || ta!=trace || ca!=calls || memcmp(contexts,observed,sizeof(contexts)) || memcmp(a,b,80)) {
+   fprintf(stderr,"mode=%u case=%u status=%llu/%llu trace=%llu/%llu calls=%u/%u context=%d bank=%d\n",
+     mode,k,(unsigned long long)ra,(unsigned long long)rb,(unsigned long long)ta,(unsigned long long)trace,
+     ca,calls,memcmp(contexts,observed,sizeof(contexts)),memcmp(a,b,80));return 1;
+  }
+  if(gateways) ++slow;else ++fast;if(calls>1) ++reentry;
+ }
+ return !(fast && slow && reentry);
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable = tmpFile(std::string("context-oracle") + Level +
+                              test::executableSuffix());
+    std::vector<std::string> Args = {"-std=c11", Level, "-Werror=uninitialized",
+                                     "-fsanitize=undefined",
+                                     "-fsanitize-trap=all"};
+    Args.insert(Args.end(), Files.begin(), Files.end());
+    Args.insert(Args.end(), {Harness.string(), "-o", Executable.string()});
+    auto Built = exec(NEVERD_TEST_CLANG, Args);
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
 }
 TEST_F(StateSourceCompiled,
        ForwardedCallsPreservePaddingSnapshotsAndFullFailureEffects) {

@@ -89,13 +89,24 @@ bool identifier(llvm::StringRef Name) {
                      true)
               .Default(false);
 }
+std::vector<StateSourceType> nativeParameters(const StateSourceImport &I,
+                                              bool FixedOnly = false) {
+  std::vector<StateSourceType> Parameters;
+  if (I.PassContext)
+    Parameters.push_back(StateSourceType::Pointer);
+  unsigned Count = FixedOnly
+                       ? I.VariadicFixedParameters.value_or(I.Parameters.size())
+                       : I.Parameters.size();
+  for (unsigned P = 0; P < Count; ++P)
+    if (I.TargetArgument != P)
+      Parameters.push_back(I.Parameters[P]);
+  return Parameters;
+}
 llvm::FunctionType *signature(llvm::LLVMContext &C,
                               const StateSourceImport &I) {
   std::vector<llvm::Type *> Parameters;
-  unsigned Fixed = I.VariadicFixedParameters.value_or(I.Parameters.size());
-  for (unsigned P = 0; P < Fixed; ++P)
-    if (I.TargetArgument != P)
-      Parameters.push_back(type(C, I.Parameters[P]));
+  for (auto T : nativeParameters(I, true))
+    Parameters.push_back(type(C, T));
   return llvm::FunctionType::get(type(C, I.Result), Parameters,
                                  I.VariadicFixedParameters.has_value());
 }
@@ -371,17 +382,84 @@ llvm::LoadInst *pointerLoad(llvm::Value *V) {
     return nullptr;
   return Load;
 }
-// Bank transport across an opaque call does not prove the current value.
-// Follow bounded dominating stores only to choose a candidate; the actual
-// captured target and arity are still checked before invoking that candidate.
-llvm::StoreInst *advisoryBankStore(llvm::LoadInst &Load, llvm::Value *Bank,
-                                   llvm::DominatorTree &DT,
-                                   const llvm::DataLayout &DL,
-                                   unsigned &Budget) {
+struct AdvisoryAddress {
+  llvm::Value *Root;
+  std::optional<int64_t> LoadedBankSlot;
+  uint64_t Offset = 0;
+};
+// Repeated loads of a bank-held base can nominate an old guest writer even if
+// a call changed the base or guest bytes. This is lineage, never alias or value
+// equality. The eventual comparison uses the original captured selector.
+std::optional<AdvisoryAddress>
+advisoryAddress(llvm::Value *V, llvm::Value *Bank, const llvm::DataLayout &DL,
+                unsigned &Budget, unsigned Depth = 0) {
+  if (!Budget || Depth >= 64)
+    return {};
+  --Budget;
+  auto FullWidth = [](llvm::Type *T) {
+    return T->isIntegerTy(64) ||
+           (T->isPointerTy() && T->getPointerAddressSpace() == 0);
+  };
+  if (!FullWidth(V->getType()))
+    return {};
+  auto Next = [&](llvm::Value *Base, uint64_t Offset = 0) {
+    auto A = advisoryAddress(Base, Bank, DL, Budget, Depth + 1);
+    if (A)
+      A->Offset += Offset;
+    return A;
+  };
+  if (auto *Cast = llvm::dyn_cast<llvm::CastInst>(V))
+    if (FullWidth(Cast->getOperand(0)->getType()) &&
+        (Cast->getOpcode() == llvm::Instruction::BitCast ||
+         Cast->getOpcode() == llvm::Instruction::PtrToInt ||
+         Cast->getOpcode() == llvm::Instruction::IntToPtr))
+      return Next(Cast->getOperand(0));
+  if (auto *G = llvm::dyn_cast<llvm::GetElementPtrInst>(V)) {
+    llvm::APInt Offset(64, 0);
+    if (G->accumulateConstantOffset(DL, Offset))
+      return Next(G->getPointerOperand(), Offset.getZExtValue());
+  }
+  if (auto *B = llvm::dyn_cast<llvm::BinaryOperator>(V)) {
+    if (B->getOpcode() == llvm::Instruction::Add ||
+        B->getOpcode() == llvm::Instruction::Sub) {
+      auto *K = llvm::dyn_cast<llvm::ConstantInt>(B->getOperand(1));
+      auto *Base = B->getOperand(0);
+      if (!K && B->getOpcode() == llvm::Instruction::Add) {
+        K = llvm::dyn_cast<llvm::ConstantInt>(B->getOperand(0));
+        Base = B->getOperand(1);
+      }
+      if (K)
+        return Next(Base, B->getOpcode() == llvm::Instruction::Sub
+                              ? uint64_t(0) - K->getZExtValue()
+                              : K->getZExtValue());
+    }
+  }
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(V))
+    if (Load->isSimple())
+      if (auto Slot = displacement(Load->getPointerOperand(), Bank, DL))
+        return AdvisoryAddress{Bank, Slot};
+  return AdvisoryAddress{V, std::nullopt};
+}
+struct AdvisoryStore {
+  llvm::StoreInst *Store;
+  unsigned ByteOffset;
+};
+// Follow bounded dominating writers only to nominate a guarded candidate.
+// Pointer provenance stays bank-only; scalar selectors may additionally use
+// guest writers sharing an advisory address lineage. Neither search adds reads.
+std::optional<AdvisoryStore>
+advisoryStore(llvm::LoadInst &Load, llvm::Value *Bank, llvm::DominatorTree &DT,
+              const llvm::DataLayout &DL, unsigned &Budget,
+              bool IncludeGuest = false) {
+  auto Address =
+      IncludeGuest ? advisoryAddress(Load.getPointerOperand(), Bank, DL, Budget)
+                   : std::optional<AdvisoryAddress>();
   auto Offset = displacement(Load.getPointerOperand(), Bank, DL);
+  if (!IncludeGuest && Offset)
+    Address = AdvisoryAddress{Bank, std::nullopt, uint64_t(*Offset)};
   auto Size = DL.getTypeStoreSize(Load.getType());
-  if (!Offset || Size.isScalable() || Size.getFixedValue() > 8)
-    return nullptr;
+  if (!Address || Size.isScalable() || Size.getFixedValue() > 8)
+    return {};
   auto *Block = Load.getParent();
   auto Position = Load.getIterator();
   while (Block && Budget) {
@@ -391,23 +469,30 @@ llvm::StoreInst *advisoryBankStore(llvm::LoadInst &Load, llvm::Value *Bank,
       auto *Store = llvm::dyn_cast<llvm::StoreInst>(&*Position);
       if (!Store || !Store->isSimple())
         continue;
-      auto StoredOffset = displacement(Store->getPointerOperand(), Bank, DL);
+      auto StoredAddress =
+          IncludeGuest
+              ? advisoryAddress(Store->getPointerOperand(), Bank, DL, Budget)
+              : std::optional<AdvisoryAddress>();
+      if (!IncludeGuest)
+        if (auto At = displacement(Store->getPointerOperand(), Bank, DL))
+          StoredAddress = AdvisoryAddress{Bank, std::nullopt, uint64_t(*At)};
       auto StoredSize =
           DL.getTypeStoreSize(Store->getValueOperand()->getType());
-      if (!StoredOffset || *StoredOffset > *Offset || StoredSize.isScalable() ||
-          StoredSize.getFixedValue() > 8)
+      if (!StoredAddress || StoredAddress->Root != Address->Root ||
+          StoredAddress->LoadedBankSlot != Address->LoadedBankSlot ||
+          StoredSize.isScalable() || StoredSize.getFixedValue() > 8)
         continue;
-      uint64_t Delta = *Offset - *StoredOffset;
+      uint64_t Delta = Address->Offset - StoredAddress->Offset;
       if (Delta <= StoredSize.getFixedValue() &&
           Size.getFixedValue() <= StoredSize.getFixedValue() - Delta)
-        return Store;
+        return AdvisoryStore{Store, unsigned(Delta)};
     }
     auto *Node = DT.getNode(Block);
     Block = Node && Node->getIDom() ? Node->getIDom()->getBlock() : nullptr;
     if (Block)
       Position = Block->end();
   }
-  return nullptr;
+  return {};
 }
 llvm::LoadInst *pointerCandidateLoad(llvm::Value *V, llvm::Value *Bank,
                                      llvm::DominatorTree &DT,
@@ -421,17 +506,18 @@ llvm::LoadInst *pointerCandidateLoad(llvm::Value *V, llvm::Value *Bank,
     auto Offset = displacement(Load->getPointerOperand(), Bank, DL);
     if (!Offset)
       return Load;
-    auto *Stored = advisoryBankStore(*Load, Bank, DT, DL, Budget);
+    auto Stored = advisoryStore(*Load, Bank, DT, DL, Budget);
     if (!Stored)
       return nullptr;
-    V = Stored->getValueOperand();
+    V = Stored->Store->getValueOperand();
   }
   return nullptr;
 }
 // Recover a possible scalar selector from its current SSA expression and old
-// bank writers. Byte order determines slices, but intervening clobbers are NOT
-// ruled out. No inferred value replaces an operand: the captured selector must
-// equal the candidate at runtime before its declared import can run.
+// bank/guest writers. Byte order determines slices, but intervening clobbers
+// are NOT ruled out. No inferred value replaces an operand: the captured
+// selector must equal the candidate at runtime before its declared import can
+// run.
 llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
                                      llvm::DominatorTree &DT,
                                      const llvm::DataLayout &DL,
@@ -470,14 +556,12 @@ llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (!Load->isSimple() || Load->getType()->getIntegerBitWidth() % 8)
       return nullptr;
-    auto *Store = advisoryBankStore(*Load, Bank, DT, DL, Budget);
-    auto *K = Store ? Next(Store->getValueOperand()) : nullptr;
+    auto Store = advisoryStore(*Load, Bank, DT, DL, Budget, true);
+    auto *K = Store ? Next(Store->Store->getValueOperand()) : nullptr;
     if (!K || K->getBitWidth() % 8)
       return nullptr;
     unsigned Width = Load->getType()->getIntegerBitWidth();
-    auto At = *displacement(Load->getPointerOperand(), Bank, DL);
-    auto From = *displacement(Store->getPointerOperand(), Bank, DL);
-    unsigned Shift = 8 * (At - From);
+    unsigned Shift = 8 * Store->ByteOffset;
     if (DL.isBigEndian())
       Shift = K->getBitWidth() - Width - Shift;
     return llvm::ConstantInt::get(V->getContext(),
@@ -723,6 +807,17 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     std::set<uint64_t> Selectors;
     std::set<std::pair<unsigned, unsigned>> PointerSources;
     for (const auto &I : G.Imports) {
+      if (I.PassContext) {
+        auto *Gateway = M.getFunction(G.Name);
+        if (Gateway &&
+            (Gateway->isVarArg() || Gateway->arg_size() != 2 ||
+             !Gateway->getArg(0)->getType()->isPointerTy() ||
+             Gateway->getArg(0)->getType()->getPointerAddressSpace() != 0 ||
+             !Gateway->getArg(1)->getType()->isPointerTy() ||
+             Gateway->getArg(1)->getType()->getPointerAddressSpace() != 0))
+          return invalid(
+              "context forwarding requires a two-argument pointer gateway");
+      }
       if ((I.TargetArgument ? !I.Name.empty() : !identifier(I.Name)) ||
           Gateways.count(I.Name) ||
           (!G.FunctionPointer && (!Selectors.insert(I.Selector).second ||
@@ -782,9 +877,8 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
       auto [At, Added] = Names.emplace(I.Name, &I);
       if ((!Added && (signature(M.getContext(), *At->second) != T ||
                       At->second->Result != I.Result ||
-                      !std::equal(I.Parameters.begin(),
-                                  I.Parameters.begin() + T->getNumParams(),
-                                  At->second->Parameters.begin()))) ||
+                      nativeParameters(I, true) !=
+                          nativeParameters(*At->second, true))) ||
           (M.getNamedValue(I.Name) &&
            (!M.getFunction(I.Name) ||
             M.getFunction(I.Name)->getFunctionType() != T ||
@@ -1198,6 +1292,7 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         for (auto W : G.Writes)
           write(B, Call->getArgOperand(0), W.Slot, B.getInt64(W.Value), Scope);
         auto *FT = signature(M.getContext(), *Import);
+        auto ParameterTypes = nativeParameters(*Import);
         llvm::Value *Callee;
         if (Import->TargetArgument) {
           Callee = Args[*Import->TargetArgument];
@@ -1208,11 +1303,13 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           if (signedType(Import->Result))
             Declaration->addFnAttr(LLVMSourceSignedResult);
           for (unsigned I = 0; I < Declaration->arg_size(); ++I)
-            if (signedType(Import->Parameters[I]))
+            if (signedType(ParameterTypes[I]))
               Declaration->addParamAttr(
                   I, llvm::Attribute::get(M.getContext(),
                                           LLVMSourceSignedParameter));
         }
+        if (Import->PassContext)
+          Args.insert(Args.begin(), Call->getArgOperand(1));
         llvm::FunctionCallee Target(FT, Callee);
         auto *Native =
             B.CreateCall(Target, Args,
@@ -1223,8 +1320,9 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           Native->addFnAttr(
               llvm::Attribute::get(M.getContext(), LLVMSourceSignedResult));
         auto NativeIndex = [&](unsigned I) {
-          return I - unsigned(Import->TargetArgument &&
-                              I > *Import->TargetArgument);
+          return unsigned(Import->PassContext) + I -
+                 unsigned(Import->TargetArgument &&
+                          I > *Import->TargetArgument);
         };
         for (unsigned I = 0; I < Import->Parameters.size(); ++I) {
           if (Import->TargetArgument == I)

@@ -319,6 +319,31 @@ callable. This mode cannot use `name`, `pointer_source`, a pointer gateway,
 variadics, a defaulted target or a string contract on the target. It introduces
 no guest-memory read to discover the callee.
 
+An import may set `pass_context: true` to prepend the gateway's opaque context
+pointer to its native call. With `--with-context`, a declaration such as
+`{"selector": 7, "name": "receiver_query", "parameters": ["i16"],
+"result": "i16", "pass_context": true}` emits a call with the signature
+`int16_t receiver_query(void *context, int16_t value)`. The gateway must have
+exactly two pointer arguments. Without that ABI, recovery rejects the contract
+before changing the module. The default is false; non-boolean values are errors.
+
+The receiver is the original call operand, including null, and is never read
+or replaced by a global or observed value. The producer must define the
+receiver-aware binding and its effects. No object layout or original method
+identity is inferred. `parameters`, `defaults`, `variadic_fixed`,
+`target_argument`, argument counts and string indices still refer to the bank
+operands; the added pointer consumes no bank slot. Named, pointer-candidate and
+forwarded-target calls share this rule. Context may alias guest memory under
+the isolated-bank contract, so its effects remain ordinary call effects.
+
+Scalar candidate selection can follow an earlier guest store when its address
+has the same syntactic root or reloads its base from the same bank slot. This
+is an advisory source for a runtime comparison, including after intervening
+calls. Changed bases, overwritten bytes and different selectors still use the
+captured value and original fallback; no guest load is introduced or removed
+by this search. Unrelated roots, unsupported expressions or an exhausted work
+budget keep the gateway.
+
 Gateway `indirect_arguments` lists argument indices whose slots contain byte
 offsets into the bank. Each points to an eight-byte value captured before fixed
 writes. Unknown or out-of-bounds offsets preserve the original gateway; the

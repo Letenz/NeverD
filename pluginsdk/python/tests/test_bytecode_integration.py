@@ -223,6 +223,54 @@ class BytecodeIntegrationTests(unittest.TestCase):
                 recover_bytecode(b"A\xfe", profile, functions,
                                  **dict(options, source_contracts=bad))
 
+    def test_source_context_is_forwarded_only_by_an_explicit_contract(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}
+        def operand(space, size, value):
+            return {"space": space, "size": size, "value": {"addend": value}}
+        copies = [{"op": "COPY", "output": operand("reg", 8, offset),
+                   "inputs": [operand("const", 8, value)]}
+                  for offset, value in ((8, 7), (16, 32), (24, 8), (40, 0xFFFF))]
+        recipes = {
+            0x41: {"size": 1, "operations": copies + [{"op": "CALL", "inputs": [
+                operand("const", 8, 8192)]}]},
+            0xFE: {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]},
+        }
+        profile = dict(layout, encodings=[dict(recipe, match=[{"offset": 0, "value": op}])
+                                         for op, recipe in recipes.items()])
+        slot = lambda offset: {"offset": offset, "bytes": 8}
+        contract = {"schemaVersion": 1, "state_bytes": 48, "isolated_bank": True,
+                    "zero_status_gateways": True, "gateways": [{
+                        "name": "runtime_service", "selector": slot(8),
+                        "arguments": [slot(40)], "result_offset": slot(16),
+                        "result_bytes": slot(24), "writes": [], "imports": [{
+                            "selector": 7, "name": "receiver_query", "pass_context": True,
+                            "parameters": ["i16"], "result": "i16"}]}]}
+        options = dict(bindings=[{"address": 8192, "name": "runtime_service"}],
+                       output="llvmc", optimize=True, with_context=True,
+                       source_contracts=contract, api=api)
+        functions = [{"entry": 0, "end": 2, "name": "source_query"}]
+        static = recover_bytecode(b"A\xfe", profile, functions, **options)
+        dynamic = recover_bytecode_with_decoder(b"A\xfe", layout, functions,
+                                                lambda data, pc: recipes[data[0]], **options)
+        self.assertEqual(static, dynamic)
+        self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls), (1, 0))
+        self.assertIn("int16_t receiver_query(void*, int16_t)", static.source)
+        self.assertIn("receiver_query(context, (int16_t)(-1))", static.source)
+        with self.assertRaisesRegex(NeverDError, "context forwarding"):
+            recover_bytecode(b"A\xfe", profile, functions, **dict(options, with_context=False))
+        for invalid in (0, 1, "true", None, [], {}):
+            bad = copy.deepcopy(contract)
+            bad["gateways"][0]["imports"][0]["pass_context"] = invalid
+            with self.assertRaisesRegex(NeverDError, "pass_context"):
+                recover_bytecode(b"A\xfe", profile, functions,
+                                 **dict(options, source_contracts=bad))
+        plain = copy.deepcopy(contract)
+        plain["gateways"][0]["imports"][0]["pass_context"] = False
+        result = recover_bytecode(b"A\xfe", profile, functions,
+                                  **dict(options, source_contracts=plain, with_context=False))
+        self.assertIn("int16_t receiver_query(int16_t)", result.source)
+
     def test_scalar_candidates_keep_a_runtime_selector_guard(self):
         api = self.load_api()
         layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}
