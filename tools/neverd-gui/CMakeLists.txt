@@ -157,6 +157,8 @@ if(BUILD_TESTING)
 
   qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
   target_link_libraries(neverd-gui-unit-tests PRIVATE neverd_gui_app Qt6::Test)
+  # A console program on Windows too, so CTest records what failed.
+  set_target_properties(neverd-gui-unit-tests PROPERTIES WIN32_EXECUTABLE FALSE)
   add_test(NAME NeverDGuiUnits COMMAND neverd-gui-unit-tests)
   set_tests_properties(NeverDGuiUnits PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
@@ -169,8 +171,9 @@ if(BUILD_TESTING)
     add_dependencies(neverd-gui-tests neverd-worker-test-server)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
+    # About a minute on a Linux runner and twice that on macOS and Windows.
     set_tests_properties(NeverDGuiController PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
       --worker $<TARGET_FILE:neverd-worker-test-server>)
     set_tests_properties(NeverDGuiWidgets PROPERTIES

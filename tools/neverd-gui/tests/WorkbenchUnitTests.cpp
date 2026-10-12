@@ -252,7 +252,10 @@ private slots:
   }
 
   void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
-    const QFont font(QStringLiteral("Consolas"), 10);
+    // The code views' font: Consolas where it exists, else the system's
+    // fixed font.
+    QFont font = Theme::defaultCodeFont();
+    font.setPointSize(10);
     const auto color = [](int role) {
       return QColor::fromHsv((role * 30) % 360, 160, 230);
     };
