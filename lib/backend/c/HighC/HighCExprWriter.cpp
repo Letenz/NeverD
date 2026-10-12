@@ -5074,16 +5074,26 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
         const HighExpr *Inner = peelIntegerViewOps(&E);
         if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
           return false;
-        if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::INT_ADD &&
-            Inner->Operands.size() == 2 && Inner->Operands[0] &&
-            Inner->Operands[1])
-          return Collect(*Inner->Operands[0], Depth + 1) &&
-                 Collect(*Inner->Operands[1], Depth + 1);
+        if (Inner->Kind == ExprKind::BinOp && Inner->Operands.size() == 2 &&
+            Inner->Operands[0] && Inner->Operands[1]) {
+          if (Inner->Op == NdOp::INT_ADD)
+            return Collect(*Inner->Operands[0], Depth + 1) &&
+                   Collect(*Inner->Operands[1], Depth + 1);
+          // A number taken off a sum leaves its terms: `SA[i - 1]` reads
+          // `SA + i - 1`.
+          if (Inner->Op == NdOp::INT_SUB)
+            if (const HighExpr *Taken =
+                    peelIntegerViewOps(Inner->Operands[1].get());
+                Taken && Taken->Kind == ExprKind::Const &&
+                !isExactAddressProvenance(Taken->ConstProvenance))
+              return Collect(*Inner->Operands[0], Depth + 1);
+        }
         Terms.push_back(Inner);
         return true;
       };
   const HighExpr *Inner = peelIntegerViewOps(&Address);
-  if (!Inner || Inner->Kind != ExprKind::BinOp || Inner->Op != NdOp::INT_ADD ||
+  if (!Inner || Inner->Kind != ExprKind::BinOp ||
+      (Inner->Op != NdOp::INT_ADD && Inner->Op != NdOp::INT_SUB) ||
       !Collect(Address, 0))
     return nullptr;
   // One term is the object's address and another varies.  A number equal to
