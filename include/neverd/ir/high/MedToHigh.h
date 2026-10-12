@@ -313,6 +313,21 @@ private:
 
   ExprPtr medOpToExpr(const MedOp &Op);
   ExprPtr medOpToExprImpl(const MedOp &Op);
+  /// \p Op as stack the function allocates at run time (MedDynamicStack.h):
+  /// `sp - size` that becomes the stack pointer is storage the C allocates,
+  /// and a later `old_sp - size` the variable holding it; null otherwise.
+  ExprPtr dynamicStackExpr(const MedOp &Op);
+  void indexDynamicStack();
+  const MedFunc *DynamicStackFor = nullptr;
+  /// Each allocation's size, and the place of every operation that may
+  /// allocate or compute an allocation's base again, in block order.
+  std::map<const MedOp *, MedVar> DynamicStackAllocations;
+  std::map<const MedOp *, size_t> DynamicStackPlaces;
+  /// The first allocation of each size root: its place and its result.
+  std::map<std::pair<int, int>, std::pair<size_t, MedVar>> DynamicStackBases;
+  std::map<std::tuple<int, int, int>, const PhiNode *> DynamicStackPhis;
+  /// The allocation result each later base computation reads.
+  std::map<const MedOp *, MedVar> DynamicStackBaseUses;
   ExprPtr medvarToExpr(const MedVar &V);
   /// i386 ELF PIC (I386PicAddresses.cpp): the values the CFG proved to be the
   /// GOT base of an unlinked object, at address zero, and the sums of the

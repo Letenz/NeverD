@@ -109,6 +109,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
   x86_64/X86_64_DoubleShiftTests.cpp
+  x86_64/X86_64_DynamicStackTests.cpp
   x86_64/X86_64_ExtensionInvariantTests.cpp
   x86_64/X86_64_FlagOpsTests.cpp
   x86_64/X86_64_FlagsMiscTests.cpp
