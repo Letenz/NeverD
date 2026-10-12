@@ -19,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
@@ -2323,6 +2324,35 @@ void recoverCallAbi(
   else if (!PromoteOrder.empty())
     IntegerLayout.Registers = PromoteOrder;
   IntParamRegs = IntegerLayout.Registers;
+
+  // A struct return field this function passes through unchanged holds the
+  // argument its caller passed in that register: `struct dd f(double a,
+  // double b){return (struct dd){a, b};}` is a lone `ret`.  Surface it as a
+  // forwarder's parameter, with each FP argument register before it (the
+  // integer promotion below fills its own gaps), so the return reads the
+  // argument and its callers pass it rather than an uninitialised register.
+  for (const MedReturnReg &Field : Func.MultiReturn) {
+    if (!returnsArgumentUnchanged(Func, Field, TRI, Fmt))
+      continue;
+    MedVar LiveIn;
+    LiveIn.Kind = MedVar::Reg;
+    LiveIn.SSAVer = 0;
+    LiveIn.TheArch = TheArch;
+    if (!Field.IsFP) {
+      if (regToIntArgIdx(Field.RegOff) < 0)
+        continue;
+      LiveIn.RegOff = Field.RegOff;
+      LiveIn.Size = static_cast<uint16_t>(TRI.PointerSize);
+      PromoteParams.emplace(Field.RegOff, LiveIn);
+      continue;
+    }
+    const unsigned Index = *argumentRegisterIndex(TRI, Fmt, Field.RegOff, true);
+    for (unsigned K = 0; K <= Index && K < FPParamRegs.size(); ++K) {
+      LiveIn.RegOff = FPParamRegs[K];
+      LiveIn.Size = Field.Size;
+      PromoteFPParams.emplace(static_cast<int>(K), LiveIn);
+    }
+  }
 
   // Surface forwarded incoming registers as parameters.  A pure forwarder
   // `f(a){return g(a);}` never reads its argument register (it flows straight
