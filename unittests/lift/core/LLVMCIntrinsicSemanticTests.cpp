@@ -166,6 +166,66 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
   }
 }
 
+TEST(LLVMCIntrinsicSemantics,
+     IntegerAbsPreservesSignedMinimumWithoutCOverflow) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("integer-abs", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> B(Context);
+  const auto Producer = Module.getOrInsertFunction(
+      "produce_integer", B.getInt64Ty(), B.getInt64Ty());
+  std::string Driver;
+  for (unsigned Bits : {1U, 7U, 8U, 16U, 32U, 64U})
+    for (bool Poison : {false, true}) {
+      const std::string Name =
+          "abs_" + std::to_string(Bits) + "_" + std::to_string(Poison);
+      auto *Fn = llvm::Function::Create(
+          llvm::FunctionType::get(B.getInt64Ty(),
+                                  {B.getInt64Ty(), B.getPtrTy()}, false),
+          llvm::GlobalValue::ExternalLinkage, Name, Module);
+      B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+      auto *Input = B.CreateTruncOrBitCast(
+          B.CreateCall(Producer, {Fn->getArg(0)}), B.getIntNTy(Bits));
+      auto *Abs = llvm::Intrinsic::getOrInsertDeclaration(
+          &Module, llvm::Intrinsic::abs, {Input->getType()});
+      auto *Result = B.CreateZExtOrBitCast(
+          B.CreateCall(Abs, {Input, B.getInt1(Poison)}), B.getInt64Ty());
+      B.CreateStore(Result, Fn->getArg(1));
+      B.CreateRet(Result);
+      const uint64_t Mask = Bits == 64 ? UINT64_MAX : (UINT64_C(1) << Bits) - 1;
+      const uint64_t Sign = UINT64_C(1) << (Bits - 1);
+      Driver += "{ const uint64_t mask = UINT64_C(" + std::to_string(Mask) +
+                "), sign = UINT64_C(" + std::to_string(Sign) + ");\n";
+      Driver += R"(
+  const uint64_t inputs[] = {0, 1, 2, UINT64_MAX, sign-1, sign, sign+1};
+  for (unsigned i=0; i<sizeof(inputs)/sizeof(inputs[0]); ++i) {
+    const uint64_t value = inputs[i] & mask;
+)";
+      if (Poison)
+        Driver += "    if (value == sign) continue;\n";
+      Driver += "    uint64_t stored = 0; calls = 0;\n";
+      Driver +=
+          "    const uint64_t result = " + Name + "(inputs[i], &stored);\n";
+      Driver += R"(
+    const uint64_t expected = ((value & sign) ? UINT64_C(0)-value : value) & mask;
+    if (result != expected || stored != expected || calls != 1) return 1;
+  }
+}
+)";
+    }
+  ASSERT_FALSE(llvm::verifyModule(Module));
+  const std::string Text = emit(Module);
+  EXPECT_EQ(Text.find("llvm_abs"), std::string::npos) << Text;
+  const std::string Source =
+      "#include <stdint.h>\n#include <stdbool.h>\n" + Text +
+      "\nstatic volatile unsigned calls;\n"
+      "uint64_t produce_integer(uint64_t value) { ++calls; return value; }\n"
+      "int main(void) {\n" +
+      Driver + "return 0;\n}\n";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    compileAndCheck(Source, false, {}, Optimization, true);
+}
+
 TEST(LLVMCIntrinsicSemantics, SaturatingConversionsClampBeforeCasting) {
   llvm::LLVMContext Context;
   llvm::Module Module("saturating-conversions", Context);

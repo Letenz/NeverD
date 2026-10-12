@@ -2225,6 +2225,28 @@ not establish complete source TOP/tag/condition-code or fault-order semantics.
 Reserved control fields remain outside concrete admission. Swift refuses this
 completion surface until it has an equivalent lowering.
 
+`CFGBuilderX86Fpu` also owns binary80 FABS/FCHS admission and bit lowering.
+Its existing all-path tag solver requires a full source slot before replacing
+the sign operation with integer pieces. A sign change cannot establish a tag
+from an empty or unknown input, including joins and reset backedges. Unsupported
+paths retain their instruction audit. LLVM and both C routes consume the same
+raw lowering, preserving the other 79 bits without host long double. The lifter
+retains the pending-exception wait and defined C1 clear; FNINIT publishes its
+actual zero status to SSA consumers. The generic concrete FLOAT_NEG/FLOAT_ABS
+value owner handles known binary32/64/80 images without numerical conversion.
+This does not establish complete x87 architectural state or general arithmetic.
+
+The same tag solver admits FILD only when every incoming path proves its push
+destination empty; an ABI entry alone supplies no tag proof. The successful
+16/32/64-bit signed load becomes an exact raw binary80 image and clears C1 in
+shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
+the signed minimum without overflow. Waiting precedes the source memory load.
+Unknown/occupied destinations remain incomplete instead of inventing stack
+overflow behavior. The pure concrete integer-to-binary80 conversion uses exact
+APFloat semantics and preserves floating state independently of that machine
+instruction admission. General x87 TOP/tag/status and fault ordering remain
+outside this projection.
+
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
 containing raw result bits and outgoing MXCSR, and commit that state. SUBBYTES
