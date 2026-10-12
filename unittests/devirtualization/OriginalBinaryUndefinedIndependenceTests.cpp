@@ -59,9 +59,9 @@ struct Program {
                                                        Contract, Limits);
   }
 
-  void flagsProfile() {
-    Options.X64FlagsProfile = Contract.X64FlagsProfile =
-        InterpreterMachineStateProfile::UserX64NoFaultV1;
+  void flagsProfile(InterpreterMachineStateProfile Profile =
+                        InterpreterMachineStateProfile::UserX64NoFaultV1) {
+    Options.X64FlagsProfile = Contract.X64FlagsProfile = Profile;
   }
 
   void append(std::initializer_list<uint8_t> Bytes) {
@@ -1439,6 +1439,93 @@ TEST(OriginalBinaryUndefinedIndependence, PackedFlagsRequireMatchingOptIn) {
   expectRefusal(P, Status::Invalid);
 }
 
+Program interruptFlagWrite(uint32_t Value) {
+  Program P({0xb9}); // MOV ECX, image; PUSH RCX; POPFQ; PUSHFQ; POP RAX.
+  P.immediate(Value);
+  P.append({0x51, 0x9d, 0x9c, 0x58, 0x25});
+  P.immediate(0x200); // AND EAX,IF; require the value written by CPL=0 POPFQ.
+  P.requireEAX(Value & 0x200);
+  for (unsigned R = 1; R != 16; ++R)
+    P.Contract.ReturnRegisters.push_back({R * 8, 8});
+  for (auto Flag : {x86reg::CF, x86reg::PF, x86reg::AF, x86reg::ZF, x86reg::SF,
+                    x86reg::DF, x86reg::OF})
+    P.Contract.ReturnRegisters.push_back({Flag, 1});
+  P.Contract.NativePreservedState = LowIRNativePreservationRequirement{
+      LowPreservedStateSet::LegacyIntegerOpaqueV1,
+      LowIRNativePreservationQuantifier::AllUndefinedChoices};
+  return P;
+}
+
+TEST(OriginalBinaryUndefinedIndependence, KernelPackedFlagsWriteInterruptFlag) {
+  for (uint32_t Value : {0u, 0x200u}) {
+    SCOPED_TRACE(Value);
+    auto P = interruptFlagWrite(Value);
+    P.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+    const auto Kernel = P.check();
+    ASSERT_TRUE(Kernel.proved()) << Kernel.Proof.Diagnostic;
+    EXPECT_EQ(Kernel.Certificate->LowIR.Contract.X64FlagsProfile,
+              InterpreterMachineStateProfile::KernelX64NoFaultV1);
+    ASSERT_TRUE(Kernel.Certificate->LowIR.NativePreservation.has_value());
+    EXPECT_EQ(Kernel.Certificate->LowIR.NativeFlagTransitions.size(), 2U);
+    // Entry IF is shared but arbitrary. CPL=3 preserves it, so one admitted
+    // entry state reaches the trap instead of meeting the supervisor oracle.
+    P.flagsProfile();
+    expectRefusal(P, Status::ContractViolation);
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     KernelPackedFlagsRequireMatchingOptIn) {
+  Program P({0x9c, 0x58, 0xc3});
+  P.Options.X64FlagsProfile =
+      InterpreterMachineStateProfile::KernelX64NoFaultV1;
+  expectRefusal(P, Status::Invalid);
+  P.Contract.X64FlagsProfile = InterpreterMachineStateProfile::UserX64NoFaultV1;
+  expectRefusal(P, Status::Invalid);
+  P.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+  const auto Kernel = P.check();
+  ASSERT_TRUE(Kernel.proved()) << Kernel.Proof.Diagnostic;
+  P.flagsProfile();
+  const auto User = P.check();
+  ASSERT_TRUE(User.proved()) << User.Proof.Diagnostic;
+  EXPECT_NE(Kernel.Certificate->InputDigest, User.Certificate->InputDigest);
+  EXPECT_NE(Kernel.Certificate->LowIR.InputDigest,
+            User.Certificate->LowIR.InputDigest);
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     KernelPackedFlagsRejectProfileChanges) {
+  for (uint32_t Image : {0x1000u, 0x2000u, 0x3000u, 0x100u, 0x40000u}) {
+    SCOPED_TRACE(Image);
+    Program P({0xb8});
+    P.immediate(Image);
+    P.append({0x50, 0x9d, 0xb8, 0, 0, 0, 0, 0xc3});
+    P.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+    expectRefusal(P, Status::ContractViolation);
+    if (Image & 0x3000) {
+      // CPL=3 ignores popped IOPL; it does not share the kernel restriction.
+      P.flagsProfile();
+      const auto User = P.check();
+      ASSERT_TRUE(User.proved()) << User.Proof.Diagnostic;
+    }
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence, KernelPackedFlagsBindAndChargeWork) {
+  auto P = interruptFlagWrite(0x200);
+  P.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+  const auto Good = P.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  LowIRIndependenceLimits Limits;
+  Limits.MaxOperations = Good.Proof.Operations;
+  ASSERT_TRUE(P.check(Limits).proved());
+  --Limits.MaxOperations;
+  expectRefusal(P, Status::BudgetExceeded, Limits);
+  P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile =
+      static_cast<InterpreterMachineStateProfile>(255);
+  expectRefusal(P, Status::Invalid);
+}
+
 TEST(OriginalBinaryUndefinedIndependence, PackedFlagsKeepSnapshotCorrelation) {
   // Two unchanged snapshots must agree, including symbolic IF/NT/ID at entry.
   // pushfq; pop rax; pushfq; pop rcx; cmp rax,rcx; jne trap; ret; int3.
@@ -1546,6 +1633,45 @@ TEST(OriginalBinaryUndefinedIndependence, PackedFlagsAlwaysObserveFinalSystem) {
     auto Restore = arbitraryFlagToSystem(Bit, false, true);
     const auto Restored = Restore.check();
     ASSERT_TRUE(Restored.proved()) << Restored.Proof.Diagnostic;
+  }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     KernelPackedFlagsAlwaysObserveFinalInterruptFlag) {
+  auto Bad = arbitraryFlagToSystem(9, false, false);
+  Bad.Contract.ReturnRegisters.clear();
+  Bad.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+  const auto Refused = Bad.check();
+  EXPECT_EQ(Refused.Proof.Status, Status::Dependent)
+      << Refused.Proof.Diagnostic;
+  EXPECT_NE(Refused.Proof.Diagnostic.find("final system flags"),
+            std::string::npos);
+  EXPECT_FALSE(Refused.Certificate.has_value());
+  expectRefusal(Bad, Status::Dependent);
+  Bad.flagsProfile();
+  const auto User = Bad.check();
+  ASSERT_TRUE(User.proved()) << User.Proof.Diagnostic;
+  auto Restore = arbitraryFlagToSystem(9, false, true);
+  Restore.Contract.ReturnRegisters.clear();
+  Restore.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+  const auto Good = Restore.check();
+  ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
+     KernelPackedFlagsCheckBothUndefinedIOPLChoices) {
+  for (unsigned Bit : {12u, 13u}) {
+    SCOPED_TRACE(Bit);
+    auto Good = arbitraryFlagToSystem(Bit, true, false);
+    Good.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+    const auto Valid = Good.check();
+    ASSERT_TRUE(Valid.proved()) << Valid.Proof.Diagnostic;
+    auto Bad = arbitraryFlagToSystem(Bit, false, false);
+    Bad.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
+    expectRefusal(Bad, Status::ContractViolation);
+    Bad.flagsProfile();
+    const auto User = Bad.check();
+    ASSERT_TRUE(User.proved()) << User.Proof.Diagnostic;
   }
 }
 

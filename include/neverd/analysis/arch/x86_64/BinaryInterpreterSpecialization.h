@@ -96,10 +96,13 @@ struct BinaryUndefinedIndependenceResult {
 /// Entry constants, byte order, X64FlagsProfile and optional frame-entry
 /// alignment must match Options. Alignment restricts only the shared entry
 /// root; it does not rewrite its value or supply memory/ABI evidence.
-/// Selecting UserX64NoFaultV1 explicitly enables shared, persistent
+/// Selecting UserX64NoFaultV1 or KernelX64NoFaultV1 enables shared, persistent
 /// PUSHFQ/POPFQ system state, canonical entry flag bits and mandatory final
 /// system-state equality. Every POPFQ must satisfy the TF/AC restriction in
-/// both executions. Exact provider-marked CET-disabled RDSSP projections and
+/// both executions. The kernel profile additionally requires IOPL=0 throughout
+/// and models IF as writable; the user profile preserves IF. The kernel profile
+/// supplies no kernel API, resource, IRQL, exception or source-ABI certificate.
+/// Exact provider-marked CET-disabled RDSSP projections and
 /// unreachable INCSSP #UD boundaries retain Missing sidecars and require
 /// separate profile receipts; feasible INCSSP always violates the nonfaulting
 /// contract. No other CET operation is authorized. Otherwise only Contract's
@@ -128,7 +131,7 @@ struct BinaryLowIRRefinementResult {
 
 /// Prove a deterministic LowIR candidate matches complete finite original
 /// native executions under an explicit constructive undefined-value witness.
-/// Requires matching UserX64NoFaultV1 flag profiles in Options and Contract.
+/// Requires matching supported x64 flag profiles in Options and Contract.
 /// Uses the same original instruction audit, physical CALL/RET, immutable
 /// memory, flags profile and mandatory stack/return-slot preservation as the
 /// independence checker. The candidate may have different control structure;
