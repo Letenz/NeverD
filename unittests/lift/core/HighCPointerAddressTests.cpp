@@ -1751,6 +1751,86 @@ TEST(LLVMCPointerAddresses, DataOnlyAddressedIsDeclared) {
       << Source;
 }
 
+TEST(LLVMCPointerAddresses, OneFunctionDeclaresTheImagesPointerStorage) {
+  // ntoskrnl's .data holds relocated pointers, so LLVM emission mirrors the
+  // whole run as one global, its pointers relocated to what they reach.  A
+  // function that reads a byte of it does not own the run: its C declares
+  // the storage rather than printing every pointer of a section, and the
+  // names those reach, which it never declared (19 MB, and no C).
+  BinaryImage Img =
+      makeImageObjectFixture(0x140C00000, std::vector<uint8_t>(16, 0), true);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-storage-mirror", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Function *Elsewhere = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "elsewhere", Module);
+  auto *StorageTy = llvm::StructType::get(Context, {I64, I64});
+  auto *Storage = new llvm::GlobalVariable(
+      Module, StorageTy, /*isConstant=*/false,
+      llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantStruct::get(
+          StorageTy, {llvm::ConstantExpr::getPtrToInt(Elsewhere, I64),
+                      llvm::ConstantInt::get(I64, 7)}),
+      "__nd_codeptr_140C00000");
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "read_flag", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Flag =
+      Builder.CreateLoad(I8, llvm::ConstantExpr::getGetElementPtr(
+                                 I8, Storage, llvm::ConstantInt::get(I64, 8)));
+  Flag->setVolatile(true);
+  Builder.CreateRet(Builder.CreateZExt(Flag, I64));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
+  OS.flush();
+  EXPECT_EQ(Source.find("elsewhere"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_nd_codeptr_140C00000 ="), std::string::npos)
+      << Source;
+
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror", "c",
+                                                  SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror",
+                                                  "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream File(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    File << Source;
+  }
+  llvm::SmallVector<llvm::StringRef, 4> Arguments{Compiler, "-std=c11",
+                                                  "-fsyntax-only", SourcePath};
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  std::string Error;
+  const int CompileStatus = llvm::sys::ExecuteAndWait(
+      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
+  EXPECT_EQ(CompileStatus, 0)
+      << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
+      << Source;
+}
+
 TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
   BinaryImage Img = makeImageObjectFixture(
       0x140003400, {0x25, 0x00, 0x73, 0x00, 0x00, 0x00}, false);
@@ -2234,7 +2314,10 @@ TEST(LLVMCPointerAddresses, CtorReturnPrintsObjectAddress) {
   OS.flush();
   EXPECT_NE(Source.find("CStringT_ctor(&key0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= CStringT_ctor("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("use_key(&key0)"), std::string::npos) << Source;
+  // use_key is declared to take an integer, which C converts no address to.
+  EXPECT_NE(Source.find("use_key((uint64_t)(uintptr_t)(&key0))"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, UnreadCtorInReturningFunctionIsStatement) {

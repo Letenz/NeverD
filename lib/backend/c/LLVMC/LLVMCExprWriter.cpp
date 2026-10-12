@@ -3428,12 +3428,15 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
   }
   HasCIntrinsics = true;
   std::string Ptr = valueStr(AI.getPointerOperand());
+  bool TypedPointer = false;
   if (AI.getType()->isIntegerTy()) {
     const uint16_t Width =
         static_cast<uint16_t>(AI.getType()->getIntegerBitWidth() / 8);
     if (auto Acc = typedRecordAccess(AI.getPointerOperand(), Width,
-                                     /*EnterNestedAtZero=*/false))
+                                     /*EnterNestedAtZero=*/false)) {
       Ptr = "&" + Acc->Text;
+      TypedPointer = true;
+    }
   }
   std::string Val = valueStr(AI.getValOperand());
   if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(
@@ -3472,6 +3475,10 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
            OldName + ", " + NextName + ", 0, " + Ord +
            ", __ATOMIC_RELAXED)); " + OldName + "; })";
   }
+  // The builtins take their width from what the pointer points to, which
+  // an address spelled as `void *` or an integer does not say.
+  if (!TypedPointer)
+    Ptr = "(" + typeToCLLVM(AI.getType()) + " *)(" + Ptr + ")";
   return std::string(Op) + "(" + Ptr + ", " + Val + ", " + Ord + ")";
 }
 
