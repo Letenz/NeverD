@@ -1030,7 +1030,7 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
       return;
     if (const auto *CI = llvm::dyn_cast<llvm::ConstantInt>(C)) {
       if (const auto Addr = codeSectionAddress(*CI);
-          Addr && isCodeSectionData(Dbg, *Addr))
+          Addr && isCodeSectionData(Img, *Addr))
         DeclareAddressed(*Addr, namedImageObject(*Addr));
       return;
     }

@@ -11,7 +11,9 @@ leur propre architecture interne.
 
 ## Frontière du remplacement source et objet
 
-`SourcePatchCompiler` gère l’identité du compilateur et le choix de l’artefact. `validateSourcePatchTarget` est l’admission commune de la source et de l’IR fourni ; le triplet seul ne prouve pas le support. `bindSourcePatch` authentifie les entrées IR ; `PatchObject` gère les sections natives, les relocations et les preuves de plage FDE. `publishSourcePatch` prépare, vérifie et publie la transaction exacte. `COFFSourceImage` gère le nouveau stockage et les tables de déroulement PE x64 ; les réécritures levées gardent leurs preuves EH originales distinctes. Voir [les correctifs source](source-patching.md).
+`SourcePatchCompiler` gère l’identité du compilateur et le choix de l’artefact. `validateSourcePatchTarget` est l’admission commune de la source et de l’IR fourni ; le triplet seul ne prouve pas le support. `bindSourcePatch` authentifie les entrées IR ; `PatchObject` gère les sections natives, les relocations et les preuves de plage FDE. `publishSourcePatch` prépare, vérifie et publie la transaction exacte. `COFFSourceImage` gère le nouveau stockage et les tables de déroulement PE x86/x64/ARM32/ARM64 ; les réécritures levées gardent leurs preuves EH originales distinctes. Voir [les correctifs source](source-patching.md).
+
+`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles.
 
 ## Frontière du système
 

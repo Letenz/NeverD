@@ -315,7 +315,7 @@ bool LLVMCWriter::isImageDataAddress(va_t Addr) const {
     return false;
   // Data the debug information places among the code is data.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return isCodeSectionData(Dbg, Addr);
+    return isCodeSectionData(Img, Addr);
   return true;
 }
 
@@ -339,7 +339,7 @@ LLVMCWriter::codeSectionAddressText(const llvm::ConstantInt &CI) const {
   std::string Text;
   if (auto Literal = stringLiteralAt(Img, Dbg, *Addr, /*AllowEmpty=*/true))
     Text = std::move(*Literal);
-  else if (isCodeSectionData(Dbg, *Addr))
+  else if (isCodeSectionData(Img, *Addr))
     Text = "&" + namedImageObject(*Addr);
   else
     return std::nullopt;

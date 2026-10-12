@@ -7,6 +7,7 @@
 #include "neverd/backend/codegen/ELF/ELFSourceSymbols.h"
 
 #include "neverd/backend/codegen/ELF/ELFSourceRelocations.h"
+#include "neverd/object/ELFLayout.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
@@ -55,7 +56,27 @@ readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
 }
 
 llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
-  if (Original.Format != BinaryFormat::ELF || Original.Arch != Arch::X64)
+  if (Original.Format != BinaryFormat::ELF)
+    return llvm::Error::success();
+  if (Original.Arch == Arch::ARM) {
+    bool Dynamic = false;
+    forEachELFPhdr(Original.Raw.data(), Original.Raw.size(),
+                   [&](const ELFPhdrFields &P, const uint8_t *, bool) {
+                     Dynamic |= P.Type == llvm::ELF::PT_DYNAMIC;
+                   });
+    if (!Dynamic)
+      for (const auto &S : Original.Symbols)
+        if (Original.isCodeAddress(S.Addr) &&
+            (S.Name == "__gnu_Unwind_Find_exidx" ||
+             S.Name == "_Unwind_RaiseException" ||
+             llvm::StringRef(S.Name).starts_with("__aeabi_unwind_cpp_pr")))
+          return llvm::createStringError(
+              llvm::errc::not_supported,
+              "static ARM unwinder may retain a baked exidx registry; "
+              "replacement requires dynamic PT_ARM_EXIDX discovery");
+    return llvm::Error::success();
+  }
+  if (Original.Arch != Arch::X64)
     return llvm::Error::success();
   auto OriginalELF = llvm::object::ELFFile<llvm::object::ELF64LE>::create(
       llvm::StringRef(reinterpret_cast<const char *>(Original.Raw.data()),
@@ -96,11 +117,15 @@ llvm::Expected<std::optional<uint64_t>> resolveELFSourceSymbol(
   if (!Image.isELF() || Request.Symbol.empty() || Request.IsSubtrahend)
     return Fail("unsupported image or subtractive external reference");
   const llvm::StringRef Specifier = Request.SpecifierName;
+  const bool AArch64Call = Image.Arch == Arch::AArch64 &&
+                           Request.Specifier == 1 &&
+                           (Request.FixupKindName.contains("call26") ||
+                            Request.FixupKindName.contains("branch26"));
   const bool Slot = Specifier == "GOTPCREL" ||
                     Specifier == "GOTPCREL_NORELAX" || Specifier == "GOT" ||
                     Specifier == "GOT_PAGE" || Specifier == "GOT_LO12";
   if (!Slot && Specifier != "PLT" &&
-      !(Request.Specifier == 0 && Specifier.empty()))
+      !(Request.Specifier == 0 && Specifier.empty()) && !AArch64Call)
     return Fail("unsupported relocation specifier: " + Specifier);
 
   if (auto VA = parseNdDataSymbol(Request.Symbol)) {

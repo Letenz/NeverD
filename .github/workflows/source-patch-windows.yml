@@ -12,7 +12,14 @@ on:
       - 'lib/backend/codegen/CompiledImage.cpp'
       - 'cmake/NeverDLLVMAddressModel.cmake'
       - 'cmake/patches/llvm-aarch64-specifier-scope.patch'
-      - 'lib/backend/codegen/COFF/COFFSource*'
+      - 'lib/backend/codegen/COFF/COFF*'
+      - 'lib/backend/codegen/ELF/ELF*'
+      - 'lib/backend/codegen/MachO/MachO*'
+      - 'lib/backend/codegen/PatchObject.cpp'
+      - 'lib/backend/codegen/CMakeLists.txt'
+      - 'include/neverd/backend/codegen/**'
+      - 'include/neverd/support/BranchEncoding.h'
+      - 'include/neverd/support/TargetCodegenInfo.h'
       - 'unittests/SourcePatch*'
       - 'unittests/CMakeLists.txt'
       - 'include/neverd/ir/med/MedSyscallConvention.h'
@@ -27,7 +34,14 @@ on:
       - 'lib/backend/codegen/CompiledImage.cpp'
       - 'cmake/NeverDLLVMAddressModel.cmake'
       - 'cmake/patches/llvm-aarch64-specifier-scope.patch'
-      - 'lib/backend/codegen/COFF/COFFSource*'
+      - 'lib/backend/codegen/COFF/COFF*'
+      - 'lib/backend/codegen/ELF/ELF*'
+      - 'lib/backend/codegen/MachO/MachO*'
+      - 'lib/backend/codegen/PatchObject.cpp'
+      - 'lib/backend/codegen/CMakeLists.txt'
+      - 'include/neverd/backend/codegen/**'
+      - 'include/neverd/support/BranchEncoding.h'
+      - 'include/neverd/support/TargetCodegenInfo.h'
       - 'unittests/SourcePatch*'
       - 'unittests/CMakeLists.txt'
       - 'include/neverd/ir/med/MedSyscallConvention.h'
@@ -46,7 +60,7 @@ concurrency:
 jobs:
   native-pe:
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - name: Checkout pinned dependencies
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,12 +115,12 @@ jobs:
           & $env:NEVERD_SOURCE_CLANG --version
           cmake -S . -B build-source-windows -G Ninja `
             -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl `
-            -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=ON `
+            -DBUILD_TESTING=ON -DNEVERD_LLVM_PREBUILT=OFF `
             -DNEVERD_ENABLE_SEMANTIC_TESTS=ON -DNEVERD_ENABLE_WEB_ANALYSIS=OFF `
             -DNEVERD_ENABLE_PYTHON_PLUGINS=OFF `
             "-DNEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE=$env:NEVERD_SOURCE_CLANG"
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
-          cmake --build build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests --parallel 4
+          cmake --build build-source-windows --target NeverDSourcePatchTests NeverDSourcePatchMatrixTests --parallel 2
           if ($LASTEXITCODE -ne 0) { throw 'Focused build failed' }
 
       - name: Execute PE under Windows and the four-architecture matrix
@@ -117,7 +131,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'PE source patch tests failed' }
           & build-source-windows/bin/NeverDSourcePatchMatrixTests.exe '--gtest_output=xml:build-source-windows/target-matrix.xml'
           if ($LASTEXITCODE -ne 0) { throw 'Source target matrix failed' }
-          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[16,48], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
+          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[16,143], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
           if ($LASTEXITCODE -ne 0) { throw 'Incomplete native qualification' }
 
       - name: Preserve native runtime evidence
