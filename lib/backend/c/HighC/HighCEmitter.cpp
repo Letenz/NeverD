@@ -2280,8 +2280,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes,
                                  bool AddedBack) {
-    const auto Object = sizedObjectAt(Table);
+    auto Object = sizedObjectAt(Table);
     const Section *Sec = Opts.Image->getSectionFor(Table);
+    // A table no symbol sizes (clang's `.Lswitch.table`) that code adds its
+    // entries back to spans what the code indexes of it.
+    if (AddedBack && (!Object || Object->first != Table))
+      if (const auto It = ImageObjects.find(Table);
+          It != ImageObjects.end() && It->second.IndexedBytes)
+        Object = std::make_pair(Table, It->second.IndexedBytes);
     if (!Object || Object->first != Table ||
         (EntryBytes != 4 && EntryBytes != 8))
       return;
@@ -2294,9 +2300,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if (!Proven &&
         (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA))
       return;
-    va_t End = Table + Object->second;
-    for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
-         Slot += EntryBytes) {
+    // A proven table may also reach targets before it (clang puts strings
+    // ahead of the table in its section): one object then spans from the
+    // first of them, so that the table and its targets keep their distance.
+    const va_t TableEnd = Table + Object->second;
+    va_t Start = Table, End = TableEnd;
+    for (va_t Slot = Table; Slot + EntryBytes <= TableEnd; Slot += EntryBytes) {
       const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
       if (!Bytes || (!Proven && Opts.Image->hasRelocationProvenanceAt(Slot)))
         return;
@@ -2304,11 +2313,16 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           EntryBytes == 4 ? static_cast<int64_t>(
                                 static_cast<int32_t>(readLE<uint32_t>(Bytes)))
                           : static_cast<int64_t>(readLE<uint64_t>(Bytes));
-      if (Offset < static_cast<int64_t>(Object->second) ||
-          (Proven &&
-           Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes)))
+      const bool Before = Offset < 0;
+      const uint64_t Distance = Before ? uint64_t(0) - uint64_t(Offset)
+                                       : static_cast<uint64_t>(Offset);
+      if (Before
+              ? !Proven || Distance > Table ||
+                    Distance > limits::kMaxRelativeTableSpanBytes
+              : Distance < Object->second ||
+                    (Proven && Distance >= limits::kMaxRelativeTableSpanBytes))
         return;
-      const va_t Target = Table + static_cast<va_t>(Offset);
+      const va_t Target = Before ? Table - Distance : Table + Distance;
       va_t TargetEnd = 0;
       if (const auto TargetObject = sizedObjectAt(Target);
           TargetObject && TargetObject->first == Target)
@@ -2318,13 +2332,20 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         TargetEnd = Target + *String;
       else
         return;
-      if (Proven ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
-                 : TargetEnd > Sec->VA + Sec->Size)
+      if (Before
+              ? TargetEnd > Table
+              : (Proven ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
+                        : TargetEnd > Sec->VA + Sec->Size))
         return;
+      Start = std::min<va_t>(Start, Target);
       End = std::max<va_t>(End, TargetEnd);
     }
     ImageObject &Obj = ImageObjects[Table];
     Obj.IndexedBytes = std::max<uint64_t>(Obj.IndexedBytes, End - Table);
+    if (Start < Table) {
+      ImageObject &Span = ImageObjects[Start];
+      Span.IndexedBytes = std::max<uint64_t>(Span.IndexedBytes, End - Start);
+    }
   };
   // A variable holding an entry of an indexed image table: code that adds
   // it back to the table (`e = table[i]; *(table + e)`) reads a relative
@@ -2342,6 +2363,28 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (const HighExpr *Entries = indexedImageBase(*Load->Operands[0]))
         TableEntryVars[varKey(S.Dst->Var)] = {Entries->ConstVal,
                                               Load->Type->Size};
+    });
+  // An entry added back to its table in an assignment proves the table
+  // relative however the sum is used (`p = table + e; *p`).
+  std::set<std::pair<va_t, uint16_t>> AddedBackTables;
+  for (const HighFunc &Func : Funcs)
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Val)
+        return;
+      const HighExpr *Sum = peelIntegerViewOps(S.Val.get());
+      if (!Sum || Sum->Kind != ExprKind::BinOp || Sum->Op != NdOp::INT_ADD ||
+          Sum->Operands.size() != 2 || !Sum->Operands[0] || !Sum->Operands[1])
+        return;
+      for (unsigned I = 0; I < 2; ++I) {
+        const auto Table = constAddress(*Sum->Operands[I]);
+        const HighExpr *Entry = peelIntegerViewOps(Sum->Operands[1 - I].get());
+        if (!Table || !Entry ||
+            (Entry->Kind != ExprKind::Var && Entry->Kind != ExprKind::Phi))
+          continue;
+        if (const auto It = TableEntryVars.find(varKey(Entry->Var));
+            It != TableEntryVars.end() && It->second.first == *Table)
+          AddedBackTables.insert(It->second);
+      }
     });
   // The constant addresses the code reads or writes at, as opposed to those
   // it uses as values.
@@ -2611,6 +2654,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // A table the code keeps only the address of, through a variable it
   // indexes, may be relative all the same: every entry an offset to a sized
   // object after it.
+  for (const auto &[Table, EntryBytes] : AddedBackTables)
+    NoteRelativeTargets(Table, EntryBytes, /*AddedBack=*/true);
   for (auto &[Addr, Obj] : ImageObjects)
     if (Obj.AddressTaken)
       NoteRelativeTargets(Addr, 4, /*AddedBack=*/false);
