@@ -26,6 +26,7 @@
 #include "LLVMCFrameLayout.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCScalarUnary.h"
+#include "LLVMCStackAllocation.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Common.h"
@@ -1148,6 +1149,8 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
     }
     if (Fn.isIntrinsic())
       continue;
+    if (llvmc::isCStackAllocationFunction(Fn))
+      continue;
     if (!OnlyFunction && GuardAnalysisOnlyFunctions &&
         !isReferencedByExecutableProjection(Fn))
       continue;
@@ -1594,6 +1597,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
   if (llvm::verifyModule(Mod, &llvm::errs()))
     return false;
   validateArrayValueBoundaries(Mod, Only);
+  llvmc::validateCStackAllocations(Mod, Only);
   // Source normalization must not mutate the caller's IR. Remove dead
   // computations left by recovered control flow even when semantic
   // optimization is disabled; they can otherwise reference unneeded image
@@ -1632,6 +1636,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     lowerCIntegerReductions(*Projection);
     lowerPackedVectorBitcasts(*Projection);
   }
+  llvmc::lowerCStackAllocations(*Projection, ProjectionOnly);
   // Native image/debug projections keep their separate source contracts.
   // Pure scalar loop recovery proves its exact replacement before publishing
   // into this private clone and retains the existing path on refusal.

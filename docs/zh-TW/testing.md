@@ -1676,3 +1676,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+`NeverDLLVMCAllocaTests` 將原 LLVM 與輸出 C 在 O0/O2 下編譯執行並啟用未定義行為陷阱，觀察完整動態範圍、含填補的元素步長、16/32/64 位元組對齊、同時與迴圈配置的獨立性，以及數量產生呼叫只求值一次。一般及保留型別的 C 路徑都保留儲存；未支援或溢位的配置形狀與明確堆疊儲存/還原在死碼刪除前拒絕。這些測試驗證 C 配置行為，不證明原堆疊位址或例外框架身分。

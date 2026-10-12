@@ -1730,3 +1730,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+`NeverDLLVMCAllocaTests` は元の LLVM と生成 C を O0/O2、未定義動作トラップ付きで実行します。全動的範囲、パディングを含む要素幅、16/32/64 バイト整列、同時・ループ割り当ての独立性、要素数を返す呼び出しの一回評価を検証します。通常と型保持の C 経路を確認し、未対応・オーバーフローする割り当てと明示的 stack save/restore は DCE 前に拒否します。元のスタックアドレスや例外フレーム同一性は保証しません。

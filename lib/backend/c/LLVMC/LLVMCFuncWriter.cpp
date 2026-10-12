@@ -14,6 +14,7 @@
 
 #include "../VariadicImportStub.h"
 #include "../X86GetPcThunk.h"
+#include "LLVMCStackAllocation.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/backend/RewriteSourceIdentity.h"
@@ -667,6 +668,10 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
     for (llvm::Instruction &Inst : BB) {
       auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
       if (!Call || Call->getType()->isVoidTy() || Call->use_empty())
+        continue;
+      // Allocation owns statement-local count/overflow/alignment operations
+      // and must execute at its original position, even with one printed use.
+      if (llvmc::cStackAllocation(*Call))
         continue;
       if (llvm::isa<llvm::IntrinsicInst>(Call) ||
           llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()) ||

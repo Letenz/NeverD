@@ -1755,3 +1755,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+تشغّل `NeverDLLVMCAllocaTests` LLVM الأصلي وC الناتج عند O0/O2 مع مصائد السلوك غير المعرّف. تفحص النطاق الكامل وخطوة العنصر مع الحشو ومحاذاة 16/32/64 واستقلال التخصيصات المتزامنة وداخل الحلقات وتقييم منتج العدد مرة واحدة. تحافظ مسارات C العادية وحفظ الأنواع على التخزين؛ تُرفض العقود غير المدعومة والتجاوز وحفظ/استعادة المكدس قبل DCE. لا تثبت عناوين المكدس الأصلية أو هوية إطارات الاستثناء.

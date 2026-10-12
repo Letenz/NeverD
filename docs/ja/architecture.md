@@ -1526,3 +1526,5 @@ DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマス�
 ドライバーローダーは検証済みファイルの SHA-256 に再配置の事実を結び付けます。PE 再構築は所有された事実を使用し、診断用 DIR64 レコードを出力する前にインポート修復やメタデータ整形で置換したフィールドを除外します。この層は生成ポインターの再配置を推測せず、カーネル実行時の拒否を解除しません。
 
 `isCanonicalX87Wait` は通常の registration 転送と検証済み local-finally の戻りで、正常経路のフレーム保持規則を共有します。FWAIT 操作と例外ディスパッチは保持されます。他の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
+
+`LLVMCStackAllocation` は非入口および要素数付きスタック割り当てを private C clone で管理し、DataLayout の割り当て幅、符号なし要素数、アラインメント、実行位置を保持します。副作用付きの private call は元の位置で通常の `__builtin_alloca` を出力し、サイズのオーバーフローを検査して追加バイト内で整列します。Clang/GCC で寿命は関数の復帰まで続きます。入口の単一オブジェクトは通常のローカル宣言を保持します。過大な整数幅、scalable storage、非既定アドレス空間、inalloca/swifterror、明示的 stack save/restore および入力 IR の private marker は正規化前に拒否します。元の IR は変更しません。

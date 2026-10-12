@@ -1831,3 +1831,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+`NeverDLLVMCAllocaTests` ejecuta LLVM original y C generado en O0/O2 con trampas de comportamiento indefinido. Observa rangos completos, paso con relleno, alineación 16/32/64, independencia de asignaciones simultáneas/en bucle y evaluación única del productor de cantidad. Las rutas C normales y con tipos conservados retienen almacenamiento; contratos no admitidos, desbordamientos y stack save/restore se rechazan antes de DCE. No certifica direcciones originales de pila ni identidad de marcos de excepción.
