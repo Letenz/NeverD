@@ -2447,16 +2447,23 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     (void)Binding;
     PointerSlots.insert(Slot);
   }
-  auto Extent = [](const ImageObject &Obj) -> uint64_t {
-    return std::max<uint64_t>(Obj.IndexedBytes,
-                              Obj.String ? Obj.ArrayBytes
-                                         : (Obj.Type ? Obj.Type->Size : 0));
+  // An object the code keeps the address of reaches each of its slots
+  // through that address, whichever the code indexes (`T = c ? FA : FB;
+  // T[i]` indexes neither table directly): its symbol sizes it.
+  auto Extent = [&](va_t Addr, const ImageObject &Obj) -> uint64_t {
+    uint64_t Bytes = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
+    if (Obj.AddressTaken)
+      if (const auto Sized = sizedObjectAt(Addr); Sized && Sized->first == Addr)
+        Bytes = std::max<uint64_t>(Bytes, Sized->second);
+    return Bytes;
   };
   std::set<va_t> NotedSlots;
   for (bool Changed = !PointerSlots.empty(); Changed;) {
     Changed = false;
     for (auto &[Addr, Obj] : ImageObjects) {
-      const uint64_t Size = Extent(Obj);
+      const uint64_t Size = Extent(Addr, Obj);
       for (auto Slot = PointerSlots.lower_bound(Addr);
            Slot != PointerSlots.end() && *Slot - Addr < Size &&
            *Slot - Addr + PointerBytes <= Size;
