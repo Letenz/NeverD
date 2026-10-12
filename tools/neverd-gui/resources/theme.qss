@@ -23,7 +23,7 @@ QToolButton { background: transparent; color: ${WindowText}; border: 1px solid t
 QToolButton:hover { background: ${ToolBarHover}; }
 QToolButton:pressed, QToolButton:checked { background: ${Highlight}; color: ${HighlightedText}; }
 QToolButton::menu-indicator { image: none; width: 0; }
-QStatusBar { background: ${StatusBar}; color: ${StatusBarText}; min-height: 22px; }
+QStatusBar { background: ${StatusBar}; color: ${StatusBarText}; min-height: 22px; border-top: 1px solid ${StatusBarBorder}; }
 QStatusBar QLabel { color: ${StatusBarText}; padding: 0 8px; }
 QStatusBar::item { border: none; }
 QTreeView, QListView, QTableView { background: ${Base}; alternate-background-color: ${AlternateBase}; color: ${Text}; border: none; selection-background-color: ${Highlight}; selection-color: ${HighlightedText}; outline: none; }
