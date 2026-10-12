@@ -1375,6 +1375,11 @@ private:
     /// of Alternatives.  This is used to bind i386 outgoing stack arguments to
     /// the current CALL epoch rather than a lexical historical STORE.
     FrameMemoryMatches,
+    /// Prove a finite set for an actual CFG predecessor join, retaining
+    /// compound edge predicates on each incoming value. This guard fallback
+    /// does not replace ordinary mask/group domain ownership or treat a
+    /// logical predicate union as a control-flow join.
+    JoinedUnsignedFeasibleSet,
   };
 
   struct JumpTableValueQuery {
