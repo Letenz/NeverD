@@ -926,6 +926,11 @@ against the actual imported function address and checks arity before making a
 direct call; null or changed targets keep the original gateway. Candidate bytes
 and sampled resolver addresses never establish function identity, and the
 candidate search introduces no guest-memory reads.
+Scalar selectors share that bounded advisory bank-writer search. Integer
+expressions and endian-aware slices can identify a candidate import after an
+opaque call, but cannot establish its current identity. A comparison of the
+captured selector authorizes the direct arm; a mismatch retains the original
+gateway. No candidate replaces an SSA operand or establishes a memory fact.
 Explicit variadic import contracts retain a fixed declaration prefix and a
 complete supplied-operand list. The same owner materializes the LLVM variadic
 signature and promoted scalar hints; the C emitter validates those hints and

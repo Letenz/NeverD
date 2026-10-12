@@ -252,16 +252,26 @@ For example, a caller-defined 64-byte bank can describe one service as follows:
 byte offset and write width, not the destination itself. Each slot has a byte
 width of 1, 2, 4 or 8. All accesses must fit the declared bank. A missing
 `selector` means selector zero; a missing `argument_count` means the number of
-argument slots. The selector, result offset and width must be constants
+argument slots. The result offset and width must be constants
 proven at the actual call site by the shared optimizer. A dynamic argument count
 gets a runtime comparison: the matching arm uses the imported call and the other
-arm retains the original gateway and status. Dynamic or unlisted selectors,
+arm retains the original gateway and status. The selector must be proven at the
+site or checked against an advisory candidate as described below. Unlisted selectors,
 incompatible constant counts and invalid destinations keep the original state
 gateway. A signed result is extended before the exact-width
 bank write; a void result writes zero by default. Supported source types are `u32`, `u64`,
 `i32`, `i64`, `pointer`, and result-only `void`. Exceptional call edges,
 observable state addresses and unbounded bank addressing are unsupported.
 This route currently requires integral 64-bit pointers and indices.
+
+For a dynamic selector, NeverD may follow bounded dominating bank stores and
+integer expressions to select one declared import as a candidate. Intervening
+calls and writes may have changed that value; the old writer is not a constant
+or preservation fact. The actual captured selector is compared with the
+candidate's service number before using the imported call. Other values retain
+the original gateway, status and bank effects. Candidate discovery adds no
+memory reads and uses the target byte order for partial-width transport. Without
+a declared candidate, the gateway remains unchanged.
 
 A void import may declare `"void_result": "unspecified"` when its gateway
 captures physical return-register bits that the native void operation does not

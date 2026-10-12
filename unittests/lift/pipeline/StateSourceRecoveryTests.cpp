@@ -225,6 +225,149 @@ TEST(StateSource,
     }
 }
 
+std::string selectorProgram() {
+  auto Text = program();
+  cell_test::replace(Text, "store i64 16, ptr %off, align 1",
+                     "%clobber = call i64 @opaque(ptr %state, ptr %context)\n"
+                     "  store i64 16, ptr %off, align 1");
+  Text.resize(Text.find("next:\n") + 6);
+  return Text + "  %value = load i64, ptr %r, align 1\nret i64 %value\n}\n";
+}
+
+TEST(StateSource, ScalarCandidatesGuardCurrentSelectorsAcrossOpaqueCalls) {
+  for (bool BigEndian : {false, true})
+    for (unsigned Case = 0; Case < 5; ++Case) {
+      SCOPED_TRACE(Case);
+      llvm::LLVMContext C;
+      auto Text = selectorProgram();
+      auto Contract = contract();
+      Contract.Gateways[0].ArgumentCount = {56, 8};
+      Contract.Gateways[0].Selector = {32, 8};
+      if (Case == 1)
+        Contract.Gateways[0].Selector = {BigEndian ? 36u : 32u, 4};
+      if (Case == 2)
+        cell_test::replace(Text, "store i64 7, ptr %sel",
+                           "store i64 %x, ptr %sel");
+      if (Case == 3)
+        cell_test::replace(Text, "store i64 7, ptr %sel",
+                           "store i64 8, ptr %sel");
+      if (Case == 4) {
+        // Two independent state transports, both crossing the opaque call.
+        cell_test::replace(Text, "store i64 7, ptr %sel, align 1",
+                           "store i64 7, ptr %count, align 1");
+        cell_test::replace(Text, "store i64 16, ptr %off, align 1",
+                           "%saved = load i64, ptr %count, align 1\n"
+                           "  store i64 %saved, ptr %sel, align 1\n"
+                           "  store i64 16, ptr %off, align 1");
+      }
+      auto M = cell_test::parse(C, Text);
+      ASSERT_TRUE(M);
+      M->setTargetTriple(llvm::Triple(BigEndian ? "aarch64_be-unknown-linux-gnu"
+                                                : "x86_64-pc-windows-msvc"));
+      M->setDataLayout(BigEndian ? "E-p:64:64" : "e-p:64:64");
+      auto R = prepareStateSourceRecovery(*M, Contract);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      optimize(*M);
+      const auto ProbeIR = cell_test::print(*M);
+      auto E = finishStateSourceRecovery(*M, *R);
+      ASSERT_FALSE(E) << llvm::toString(std::move(E));
+      bool Expected = Case != 2 && Case != 3;
+      EXPECT_EQ(R->RewrittenCalls, unsigned(Expected)) << ProbeIR;
+      EXPECT_EQ(R->GuardedCalls, unsigned(Expected));
+      EXPECT_EQ(R->UnresolvedCalls, unsigned(!Expected));
+      EXPECT_FALSE(llvm::verifyModule(*M));
+      const auto IR = cell_test::print(*M);
+      EXPECT_NE(IR.find("call i64 @gateway"), std::string::npos);
+      if (Expected) {
+        EXPECT_NE(IR.find("selector_matches"), std::string::npos) << IR;
+        EXPECT_NE(IR.find("call i32 @example_query"), std::string::npos);
+      }
+    }
+}
+
+TEST_F(StateSourceCompiled,
+       ScalarCandidatesKeepClobberedSelectorsAndFullBanks) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  llvm::LLVMContext C;
+  auto Text = selectorProgram();
+  cell_test::replace(Text, "store i64 1, ptr %count, align 1", "");
+  auto M = cell_test::parse(C, Text);
+  ASSERT_TRUE(M);
+  M->getFunction("work")->setName("before");
+  auto Original = tmpFile("selector-before.ll");
+  std::ofstream(Original) << test::printHostCompilerFixture(*M);
+  M->getFunction("before")->setName("after");
+  auto R = prepareStateSourceRecovery(*M, contract());
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  optimize(*M);
+  auto E = finishStateSourceRecovery(*M, *R);
+  ASSERT_FALSE(E) << llvm::toString(std::move(E));
+  ASSERT_EQ(R->RewrittenCalls, 1u);
+  ASSERT_EQ(R->GuardedCalls, 1u);
+  optimize(*M);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+  auto After = tmpFile("selector-after.c");
+  std::ofstream(After) << Source;
+  auto Harness = tmpFile("selector-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t before(void *,void *), after(void *,void *);
+static uint64_t get(const void *s,unsigned o) { uint64_t v;memcpy(&v,(const char*)s+o,8);return v; }
+static void put(void *s,unsigned o,uint64_t v,unsigned n) { memcpy((char*)s+o,&v,n); }
+static unsigned calls,gateways;
+static uint64_t selected,trace;
+static uint32_t *guest;
+int32_t example_query(uint64_t x) { ++calls;trace=x;*guest+=(uint32_t)x;return -(int32_t)(x&0xffff); }
+uint64_t opaque(void *s,void *ctx) {
+ (void)ctx;put(s,32,selected,8);put(s,8,get(s,8)^UINT64_C(0xe193024d),8);
+ *guest^=(uint32_t)selected;return selected;
+}
+uint64_t gateway(void *s,void *ctx) {
+ (void)ctx;++gateways;
+ uint64_t x=get(s,8),off=get(s,40),width=get(s,48);
+ if((uint32_t)get(s,32)!=7 || (uint32_t)get(s,56)!=1) {
+  put(s,(unsigned)off,UINT64_C(0x5a3710998ecab652),8);
+  ((unsigned char*)s)[63]^=0x31;*guest+=731;return UINT64_C(0x8000000070000019);
+ }
+ put(s,56,0,8);int32_t v=example_query(x);
+ put(s,(unsigned)off,(uint64_t)(int64_t)v,(unsigned)width);return 0;
+}
+int main(void) {
+ unsigned fast=0,slow=0;
+ const uint64_t choices[]={7,8,UINT64_MAX,UINT64_C(0x8000000000000007)};
+ for(unsigned k=0;k<2048;k++) {
+  unsigned char a[80],b[80];for(unsigned j=0;j<80;j++) a[j]=(unsigned char)(k*7+j*13);
+  unsigned off=k&15;put(a+off,0,UINT64_MAX-(uint64_t)k*0x192ad76f,8);
+  put(a+off,56,(k/64)%3,8);memcpy(b,a,sizeof(a));selected=choices[(k/16)%4];
+  uint32_t ga=k,gb=k;guest=&ga;calls=gateways=0;trace=0;
+  uint64_t ra=before(a+off,&ga),ta=trace;unsigned ca=calls;
+  guest=&gb;calls=gateways=0;trace=0;uint64_t rb=after(b+off,&gb);
+  if(ra!=rb || ta!=trace || ca!=calls || ga!=gb || memcmp(a,b,sizeof(a))) return 1;
+  if(gateways) ++slow;else ++fast;
+ }
+ return !(fast && slow);
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable = tmpFile(std::string("selector-oracle") + Level +
+                              test::executableSuffix());
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Level, "-fsanitize=undefined",
+                       "-fsanitize-trap=all", Original.string(), After.string(),
+                       Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
+}
+
 TEST(StateSource, PartialSelectorsUseTheOriginalSnapshotOnBothByteOrders) {
   for (bool Big : {false, true})
     for (unsigned Bytes : {1u, 2u, 4u}) {

@@ -358,6 +358,41 @@ llvm::LoadInst *pointerLoad(llvm::Value *V) {
 // Bank transport across an opaque call does not prove the current value.
 // Follow bounded dominating stores only to choose a candidate; the actual
 // captured target and arity are still checked before invoking that candidate.
+llvm::StoreInst *advisoryBankStore(llvm::LoadInst &Load, llvm::Value *Bank,
+                                   llvm::DominatorTree &DT,
+                                   const llvm::DataLayout &DL,
+                                   unsigned &Budget) {
+  auto Offset = displacement(Load.getPointerOperand(), Bank, DL);
+  auto Size = DL.getTypeStoreSize(Load.getType());
+  if (!Offset || Size.isScalable() || Size.getFixedValue() > 8)
+    return nullptr;
+  auto *Block = Load.getParent();
+  auto Position = Load.getIterator();
+  while (Block && Budget) {
+    while (Position != Block->begin() && Budget) {
+      --Position;
+      --Budget;
+      auto *Store = llvm::dyn_cast<llvm::StoreInst>(&*Position);
+      if (!Store || !Store->isSimple())
+        continue;
+      auto StoredOffset = displacement(Store->getPointerOperand(), Bank, DL);
+      auto StoredSize =
+          DL.getTypeStoreSize(Store->getValueOperand()->getType());
+      if (!StoredOffset || *StoredOffset > *Offset || StoredSize.isScalable() ||
+          StoredSize.getFixedValue() > 8)
+        continue;
+      uint64_t Delta = *Offset - *StoredOffset;
+      if (Delta <= StoredSize.getFixedValue() &&
+          Size.getFixedValue() <= StoredSize.getFixedValue() - Delta)
+        return Store;
+    }
+    auto *Node = DT.getNode(Block);
+    Block = Node && Node->getIDom() ? Node->getIDom()->getBlock() : nullptr;
+    if (Block)
+      Position = Block->end();
+  }
+  return nullptr;
+}
 llvm::LoadInst *pointerCandidateLoad(llvm::Value *V, llvm::Value *Bank,
                                      llvm::DominatorTree &DT,
                                      const llvm::DataLayout &DL) {
@@ -370,31 +405,60 @@ llvm::LoadInst *pointerCandidateLoad(llvm::Value *V, llvm::Value *Bank,
     auto Offset = displacement(Load->getPointerOperand(), Bank, DL);
     if (!Offset)
       return Load;
-    auto *Block = Load->getParent();
-    auto Position = Load->getIterator();
-    llvm::Value *Stored = nullptr;
-    while (Block && Budget && !Stored) {
-      while (Position != Block->begin() && Budget) {
-        --Position;
-        --Budget;
-        auto *Store = llvm::dyn_cast<llvm::StoreInst>(&*Position);
-        if (!Store || Store->isAtomic() || Store->isVolatile() ||
-            displacement(Store->getPointerOperand(), Bank, DL) != Offset ||
-            DL.getTypeStoreSize(Store->getValueOperand()->getType()) != 8)
-          continue;
-        Stored = Store->getValueOperand();
-        break;
-      }
-      auto *Node = DT.getNode(Block);
-      Block = Node && Node->getIDom() ? Node->getIDom()->getBlock() : nullptr;
-      if (Block)
-        Position = Block->end();
-    }
+    auto *Stored = advisoryBankStore(*Load, Bank, DT, DL, Budget);
     if (!Stored)
       return nullptr;
-    V = Stored;
+    V = Stored->getValueOperand();
   }
   return nullptr;
+}
+// Recover a possible scalar selector from its current SSA expression and old
+// bank writers. Byte order determines slices, but intervening clobbers are NOT
+// ruled out. No inferred value replaces an operand: the captured selector must
+// equal the candidate at runtime before its declared import can run.
+llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
+                                     llvm::DominatorTree &DT,
+                                     const llvm::DataLayout &DL,
+                                     unsigned &Budget, unsigned Depth = 0) {
+  if (!Budget || Depth >= 64 || !V->getType()->isIntegerTy() ||
+      V->getType()->getIntegerBitWidth() > 64)
+    return nullptr;
+  --Budget;
+  if (auto *K = llvm::dyn_cast<llvm::ConstantInt>(V))
+    return K;
+  auto Next = [&](llvm::Value *Op) {
+    return selectorCandidate(Op, Bank, DT, DL, Budget, Depth + 1);
+  };
+  if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(V)) {
+    if (!Load->isSimple() || Load->getType()->getIntegerBitWidth() % 8)
+      return nullptr;
+    auto *Store = advisoryBankStore(*Load, Bank, DT, DL, Budget);
+    auto *K = Store ? Next(Store->getValueOperand()) : nullptr;
+    if (!K || K->getBitWidth() % 8)
+      return nullptr;
+    unsigned Width = Load->getType()->getIntegerBitWidth();
+    auto At = *displacement(Load->getPointerOperand(), Bank, DL);
+    auto From = *displacement(Store->getPointerOperand(), Bank, DL);
+    unsigned Shift = 8 * (At - From);
+    if (DL.isBigEndian())
+      Shift = K->getBitWidth() - Width - Shift;
+    return llvm::ConstantInt::get(V->getContext(),
+                                  K->getValue().lshr(Shift).trunc(Width));
+  }
+  auto *I = llvm::dyn_cast<llvm::Instruction>(V);
+  if (!I || !llvm::isa<llvm::BinaryOperator, llvm::ICmpInst, llvm::CastInst,
+                       llvm::SelectInst>(I))
+    return nullptr;
+  llvm::SmallVector<llvm::Constant *, 4> Operands;
+  for (auto &Op : I->operands()) {
+    auto *K = Next(Op.get());
+    if (!K)
+      return nullptr;
+    Operands.push_back(K);
+  }
+  return llvm::dyn_cast_or_null<llvm::ConstantInt>(
+      llvm::ConstantFoldInstOperands(I, Operands, DL, nullptr,
+                                     /*AllowNonDeterministic=*/false));
 }
 bool pointerCandidateMatches(llvm::LoadInst &Origin, llvm::Value *Bank,
                              const StateSourceImage &Image, unsigned Offset,
@@ -897,16 +961,24 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       };
       auto Selector = Constant(0), Arity = Constant(1), Offset = Constant(2),
            Bytes = Constant(3);
+      auto CandidateSelector = Selector;
       llvm::LoadInst *PointerOrigin = nullptr;
       if (G.FunctionPointer) {
         llvm::DominatorTree DT(*Call->getFunction());
         PointerOrigin =
             pointerCandidateLoad(Call->getArgOperand(N), Call->getArgOperand(0),
                                  DT, M.getDataLayout());
+      } else if (!Selector) {
+        llvm::DominatorTree DT(*Call->getFunction());
+        unsigned Budget = 4096;
+        if (auto *K = selectorCandidate(Call->getArgOperand(N),
+                                        Call->getArgOperand(0), DT,
+                                        M.getDataLayout(), Budget))
+          CandidateSelector = K->getZExtValue();
       }
       const StateSourceImport *Import = nullptr;
       if (Call->getMetadata("neverd.state.sources_ready") &&
-          (G.FunctionPointer || Selector) && Offset && Bytes &&
+          (G.FunctionPointer || CandidateSelector) && Offset && Bytes &&
           (*Bytes == 1 || *Bytes == 2 || *Bytes == 4 || *Bytes == 8) &&
           *Offset <= R.Contract.StateBytes &&
           *Bytes <= R.Contract.StateBytes - *Offset)
@@ -921,7 +993,7 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
                                          R.Contract.Images[P.Image], P.Offset,
                                          M.getDataLayout()))
               continue;
-          } else if (I.Selector != *Selector)
+          } else if (I.Selector != *CandidateSelector)
             continue;
           Import = &I;
           break;
@@ -936,6 +1008,12 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         ScalarMatches = B.CreateICmpEQ(Call->getArgOperand(N + 1),
                                        B.getInt64(Import->Parameters.size()),
                                        "argument_count_matches");
+      if (Import && !G.FunctionPointer && !Selector)
+        ScalarMatches =
+            B.CreateAnd(ScalarMatches,
+                        B.CreateICmpEQ(Call->getArgOperand(N),
+                                       B.getInt64(Import->Selector)),
+                        "selector_matches");
       if (Import && G.FunctionPointer) {
         auto Target = M.getOrInsertFunction(Import->Name,
                                             signature(M.getContext(), *Import));

@@ -125,6 +125,45 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual((unknown.reconstructed_calls, unknown.unresolved_contract_calls), (0, 1))
         self.assertIn("runtime_service(state)", unknown.source)
 
+    def test_scalar_candidates_keep_a_runtime_selector_guard(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}
+        def operand(space, size, value):
+            return {"space": space, "size": size, "value": {"addend": value}}
+        def copy_value(offset, value):
+            return {"op": "COPY", "output": operand("reg", 8, offset),
+                    "inputs": [operand("const", 8, value)]}
+        recipes = {
+            0x41: {"size": 1, "operations": [copy_value(8, 7), {
+                "op": "CALL", "inputs": [operand("const", 8, 4096)]}]},
+            0x42: {"size": 1, "operations": [copy_value(16, 32), copy_value(24, 4),
+                copy_value(40, 99), {"op": "CALL", "inputs": [operand("const", 8, 8192)]}]},
+            0xfe: {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]},
+        }
+        profile = dict(layout, encodings=[dict(recipe, match=[{"offset": 0, "value": op}])
+                                         for op, recipe in recipes.items()])
+        slot = lambda offset: {"offset": offset, "bytes": 8}
+        contract = {"schemaVersion": 1, "state_bytes": 48, "isolated_bank": True,
+                    "zero_status_gateways": True, "gateways": [{
+                        "name": "runtime_service", "selector": slot(8),
+                        "arguments": [slot(40)], "result_offset": slot(16),
+                        "result_bytes": slot(24), "writes": [], "imports": [{
+                            "selector": 7, "name": "example_query",
+                            "parameters": ["u64"], "result": "i32"}]}]}
+        options = dict(bindings=[{"address": 4096, "name": "opaque"},
+                                {"address": 8192, "name": "runtime_service"}],
+                       output="llvmc", optimize=True, source_contracts=contract, api=api)
+        functions = [{"entry": 0, "end": 3, "name": "source_query"}]
+        static = recover_bytecode(b"AB\xfe", profile, functions, **options)
+        dynamic = recover_bytecode_with_decoder(b"AB\xfe", layout, functions,
+                                                lambda data, pc: recipes[data[0]], **options)
+        self.assertEqual(static, dynamic)
+        self.assertEqual((static.reconstructed_calls, static.guarded_contract_calls,
+                          static.unresolved_contract_calls), (1, 1, 0))
+        self.assertIn("example_query((uint64_t)(99))", static.source)
+        self.assertIn("runtime_service(state)", static.source)
+        self.assertRegex(static.source, r"== 7")
+
     def test_unspecified_void_capture_requires_a_native_overwrite_proof(self):
         api = self.load_api()
         layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}

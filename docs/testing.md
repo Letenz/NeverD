@@ -1548,6 +1548,13 @@ banks, guest effects and statuses at O0/O2 while varying the gateway's otherwise
 unspecified captured bits. It exercises both the native void arm and failed
 arity fallback. Native Python tests verify static/callback parity, the legacy
 zero policy, proof failure and strict void-policy schema admission.
+Scalar-selector cases cover both byte orders, partial slices, multiple bank
+transports, unlisted candidates and unknown writers. The compiled oracle checks
+2048 full-bank cases at O0/O2 with undefined-behavior traps, changing the selector
+across an opaque call, varying upper bits and argument counts, and comparing
+guest effects, signed results and full-width failure statuses. Native Python
+tests verify static/callback parity and preservation of the runtime guard and
+original fallback.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed
