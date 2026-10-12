@@ -5,7 +5,9 @@ executed.
 The first function's record covers the int3 its compiler pads it with after
 its return; the second jumps to a cold part far below it, which a record
 chained to its own covers.  The entry point is a third, which analysis sizes
-by its code rather than by its record.
+by its code rather than by its record.  The first two are exported, the
+second under two names, as a linker that folds identical functions exports
+them.
 """
 from pathlib import Path
 import struct
@@ -15,6 +17,8 @@ from transport_test import Client
 
 BASE = 0x140000000
 PADDED, SPLIT, ENTRY, COLD = 0x1000, 0x1010, 0x1020, 0x1100
+EXPORTS = 0x2180
+EXPORTED = (("Padded", PADDED), ("Split", SPLIT), ("SplitAlias", SPLIT))
 UNW_FLAG_CHAININFO = 4
 
 
@@ -69,6 +73,27 @@ def image():
         struct.pack_into("<III", data, 0x600 + 12 * index, *record)
     u32(directories + 3 * 8, 0x3000)
     u32(directories + 3 * 8 + 4, 12 * len(records))
+    # The export directory: its address table, sorted name pointers and
+    # ordinals, then the names.  Each name has its own ordinal, as a linker
+    # that folds two functions into one exports both.
+    def at(rva): return rdata + rva - 0x2000
+    functions = [rva for _, rva in EXPORTED]
+    table, pointers, ordinals = EXPORTS + 0x30, EXPORTS + 0x3c, EXPORTS + 0x48
+    names, module = EXPORTS + 0x50, b"parts.exe\0"
+    struct.pack_into("<IIHHIIIIIII", data, at(EXPORTS), 0, 0, 0, 0,
+                     names + sum(len(n) + 1 for n, _ in EXPORTED), 1, len(functions),
+                     len(EXPORTED), table, pointers, ordinals)
+    for index, rva in enumerate(functions):
+        u32(at(table) + 4 * index, rva)
+    cursor = names
+    for index, (name, rva) in enumerate(EXPORTED):
+        u32(at(pointers) + 4 * index, cursor)
+        u16(at(ordinals) + 2 * index, index)
+        data[at(cursor):at(cursor) + len(name) + 1] = name.encode() + b"\0"
+        cursor += len(name) + 1
+    data[at(cursor):at(cursor) + len(module)] = module
+    u32(directories, EXPORTS)
+    u32(directories + 4, cursor + len(module) - EXPORTS)
     return bytes(data)
 
 
@@ -89,6 +114,14 @@ def run(worker):
             assert {BASE + PADDED, BASE + SPLIT} <= entries, listed
             assert BASE + COLD not in entries, listed
 
+            # Exports name the functions their symbols leave unnamed, and each
+            # name a function is exported under finds it.
+            names = {int(item["address"], 16): item["name"] for item in listed}
+            assert names[BASE + PADDED] == "Padded" and names[BASE + SPLIT] == "Split", listed
+            for name, rva in EXPORTED:
+                resolved = client.call("resolve", {"query": name})
+                assert resolved["status"] == "ok" and resolved["payload"]["address"] == hex(BASE + rva), resolved
+
             # The padded function ends at its return; its int3 is padding.
             padded = [" ".join(line["text"].split()) for line in lines(client, PADDED, 40)]
             footer = next(i for i, text in enumerate(padded) if text.endswith(" endp"))
@@ -101,13 +134,13 @@ def run(worker):
             assert "jmp loc_140001100" in split, split
             cold = lines(client, COLD, 16)
             texts = [" ".join(line["text"].split()) for line in cold]
-            assert "; START OF FUNCTION CHUNK FOR sub_140001010" in texts, texts
-            assert "; END OF FUNCTION CHUNK FOR sub_140001010" in texts, texts
+            assert "; START OF FUNCTION CHUNK FOR Split" in texts, texts
+            assert "; END OF FUNCTION CHUNK FOR Split" in texts, texts
             assert any(text.startswith("loc_140001100:") for text in texts), texts
             body = [line for line in cold if line["kind"] == "insn"
                     and BASE + COLD <= int(line["address"], 16) < BASE + COLD + 3]
             assert len(body) == 2 and all(line["function_address"] == hex(BASE + SPLIT) for line in body), body
-    print("x64 PE padding and chained chunks list as IDA lists them")
+    print("x64 PE padding, chained chunks and exported names list as IDA lists them")
 
 
 if __name__ == "__main__":

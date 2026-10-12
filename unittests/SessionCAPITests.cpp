@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "InstructionFlow.h"
 #include "NativeMobileSession.h"
 #include "SessionImpl.h"
 #include "gtest/gtest.h"
@@ -2793,6 +2794,141 @@ TEST_F(SessionCAPITest, DataTakesItsListingNameWhereOnlyItsAddressIsTaken) {
         << LLVMC << takeString(neverd_last_error(Names));
     neverd_session_destroy(Names);
   }
+}
+
+std::string accessWidthCacheELF(unsigned FirstWidth = 8,
+                                unsigned SecondWidth = 8) {
+  std::string Code(0x30, '\xcc');
+  for (const auto [Offset, Width] :
+       {std::pair{0u, FirstWidth}, std::pair{0x20u, SecondWidth}}) {
+    std::string Load = Width == 8 ? std::string("\x48\x8b\x05", 3)
+                                  : std::string("\x8b\x05", 2);
+    const auto Delta = static_cast<uint32_t>(
+        DataELFData - (DataELFEntry + Offset + Load.size() + 4));
+    for (unsigned I = 0; I < 4; ++I)
+      Load += static_cast<char>(Delta >> (8 * I));
+    Load += '\xc3';
+    Code.replace(Offset, Load.size(), Load);
+  }
+  return makeDataELF(std::string(8, '\x11'), Code);
+}
+
+void seedAccessWidthFunctions(neverd_session_t Session) {
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 8),
+                       neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
+  State.resetFunctionsFromImage();
+}
+
+TEST_F(SessionCAPITest, DataAccessWidthsSurviveNavigationWithFreshSource) {
+  const auto Input = write("widths.elf", accessWidthCacheELF());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto Source = takeString(neverd_decompile(Session, DataELFEntry));
+  ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+  ASSERT_TRUE(State.AccessWidths);
+  ASSERT_EQ(State.AccessWidths->at(DataELFData), 8u);
+  const auto *Storage = &*State.AccessWidths->begin();
+  for (const auto Entry : {DataELFEntry + 0x20, DataELFEntry}) {
+    ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+    EXPECT_TRUE(State.FunctionSources.empty());
+    ASSERT_TRUE(State.AccessWidths);
+    EXPECT_EQ(&*State.AccessWidths->begin(), Storage);
+    const auto *Widths = State.dataAccessWidths();
+    ASSERT_NE(Widths, nullptr);
+    EXPECT_EQ(&*Widths->begin(), Storage);
+    const auto Fresh =
+        neverd::sdk::collectDataAccessWidths(State.Img, State.Functions);
+    ASSERT_TRUE(Fresh);
+    EXPECT_TRUE(std::equal(Widths->begin(), Widths->end(), Fresh->begin(),
+                           Fresh->end()));
+  }
+  EXPECT_EQ(takeString(neverd_decompile(Session, DataELFEntry)), Source);
+  ASSERT_EQ(neverd_rename_addr(Session, DataELFData, "named_storage"), 0);
+  const auto Renamed = takeString(neverd_decompile(Session, DataELFEntry));
+  EXPECT_NE(Renamed.find("named_storage"), std::string::npos) << Renamed;
+  EXPECT_NE(Renamed, Source);
+}
+
+TEST_F(SessionCAPITest, DataAccessWidthsCheckEveryExtentAndDiscardOldSource) {
+  const auto Input = write("widths.elf", accessWidthCacheELF(8, 4));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Functions.resize(1);
+  auto Check = [&](std::optional<unsigned> Expected) {
+    State.rememberFunctionSource(DataELFEntry,
+                                 neverd::sdk::Session::SourceRoute::PlainC,
+                                 "old width names", nullptr);
+    const auto *Widths = State.dataAccessWidths();
+    ASSERT_NE(Widths, nullptr);
+    EXPECT_EQ(Widths->at(DataELFData), Expected);
+    EXPECT_TRUE(State.FunctionSources.empty());
+  };
+  const auto *First = State.dataAccessWidths();
+  ASSERT_NE(First, nullptr);
+  ASSERT_EQ(First->at(DataELFData), 8u);
+  // Same entry count and address, different decode extent.
+  State.Functions[0].Size = 2;
+  Check(std::nullopt);
+  // Same entry count, different address and width.
+  State.Functions[0].Entry = DataELFEntry + 0x20;
+  State.Functions[0].Size = 7;
+  Check(4u);
+  // Discovery adds a conflicting access: its data name becomes unknown.
+  State.Functions.push_back({DataELFEntry, 8, "reader"});
+  Check(0u);
+}
+
+TEST_F(SessionCAPITest, DataAccessWidthsRetireOnEditsPolicyAndSignatures) {
+  const auto Input = write("widths.elf", accessWidthCacheELF());
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  auto Rebuild = [&] {
+    EXPECT_FALSE(State.AccessWidths);
+    EXPECT_TRUE(State.AccessWidthsFunctions.empty());
+    ASSERT_NE(State.dataAccessWidths(), nullptr);
+    EXPECT_EQ(State.AccessWidths->at(DataELFData), 8u);
+  };
+  ASSERT_EQ(neverd_func_create(Session, DataELFEntry + 0x10), 0);
+  Rebuild();
+  ASSERT_EQ(neverd_func_delete(Session, DataELFEntry + 0x10), 0);
+  Rebuild();
+  neverd_evm_set_strict(Session, 0);
+  Rebuild();
+  const auto Empty = Directory / "empty-signatures";
+  std::filesystem::create_directory(Empty);
+  ASSERT_GE(neverd_auto_apply_signatures(Session, Empty.string().c_str()), 0);
+  Rebuild();
+  ASSERT_EQ(neverd_prepare_function(Session, DataELFEntry), 1);
+  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  State.selectFunction(DataELFEntry + 0x20);
+  ASSERT_TRUE(State.AccessWidths);
+  State.SigDB.clear();
+  ASSERT_EQ(neverd_prepare_function(Session, DataELFEntry + 0x20), 1);
+  Rebuild();
+}
+
+TEST_F(SessionCAPITest, DataAccessWidthsRetireOnSameAddressImageReplacement) {
+  const auto Wide = write("wide.elf", accessWidthCacheELF());
+  const auto Narrow = write("narrow.elf", accessWidthCacheELF(4, 4));
+  ASSERT_EQ(neverd_session_load(Session, Wide.c_str()), 1);
+  seedAccessWidthFunctions(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  ASSERT_EQ(State.AccessWidths->at(DataELFData), 8u);
+  const auto Missing = (Directory / "missing.elf").string();
+  ASSERT_EQ(neverd_session_load(Session, Missing.c_str()), 0);
+  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  EXPECT_EQ(State.AccessWidths->at(DataELFData), 8u);
+  ASSERT_EQ(neverd_session_load(Session, Narrow.c_str()), 1);
+  EXPECT_FALSE(State.AccessWidths);
+  seedAccessWidthFunctions(Session);
+  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  EXPECT_EQ(State.AccessWidths->at(DataELFData), 4u);
 }
 
 // A universal Mach-O file of \p Slices, each at a page boundary.
