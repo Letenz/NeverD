@@ -1022,6 +1022,12 @@ public:
     uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  /// The access width that names the unnamed object \p Obj at \p Addr, as
+  /// the listing names it: the width every access the image's code states
+  /// there shares (CEmitterOptions::AccessWidths), else, without those, the
+  /// one width the emitted code accesses it with.  None names it unknown.
+  std::optional<uint64_t> dataNameWidth(va_t Addr,
+                                        const ImageObject &Obj) const;
   std::map<va_t, DataSymbolBinding> DataSymbolBindings;
   std::set<va_t> UsedDataBindings;
   std::map<std::string, std::string> ExternalDataNames;

@@ -5,6 +5,7 @@
 #include "StringReferences.h"
 #include "TextFold.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
@@ -57,8 +58,6 @@ constexpr std::size_t CommentColumn = 40;
 constexpr std::size_t MaxXrefLines = 2;
 /// The strings one neverd_strings_page_json call reads.
 constexpr int StringPageRows = 65536;
-/// The widest access a reference may name: a zmmword.
-constexpr std::uint64_t MaxAccessWidth = 64;
 constexpr std::size_t MaxPageLines = 2000;
 constexpr std::size_t MaxOpcodeBytes = 12;
 constexpr std::size_t MaxDecodeChunk = 2048;
@@ -590,8 +589,9 @@ struct Listing::Impl {
   /// The size each named object's symbol gives, where it gives one.
   std::unordered_map<std::uint64_t, std::uint64_t> dataSizes;
   /// The width of every read and write of each address the code reads or
-  /// writes, by address; 0 where those widths differ.  Built with the index.
-  std::vector<std::pair<std::uint64_t, unsigned>> accessWidths;
+  /// writes, by address; 0 where those widths differ.  Built with the index,
+  /// as the engine builds the widths that name data in the C.
+  DataAccessWidths accessWidths;
   /// The automatic data items by start; none overlaps another item.
   std::map<std::uint64_t, AutoData> autoData;
   /// Where a run of unwritten bytes stops: named data and the automatic
@@ -1307,29 +1307,15 @@ struct Listing::Impl {
   /// The widths of the code's reads and writes, from the index.
   void noteAccessWidths() {
     accessWidths.clear();
-    for (const auto &reference : references) {
-      if ((reference.kind != RefKind::Read &&
-           reference.kind != RefKind::Write) ||
-          !reference.width)
-        continue;
-      if (accessWidths.empty() || accessWidths.back().first != reference.to)
-        accessWidths.emplace_back(reference.to, reference.width);
-      else if (accessWidths.back().second != reference.width)
-        accessWidths.back().second = 0;
-    }
+    for (const auto &reference : references)
+      if (reference.kind == RefKind::Read || reference.kind == RefKind::Write)
+        accessWidths.add(reference.to, reference.width);
   }
 
   /// The width of every access to \p address, 0 where they differ, or none
   /// when the code reads and writes no data there.
   std::optional<unsigned> accessWidthAt(std::uint64_t address) const {
-    const auto it =
-        std::lower_bound(accessWidths.begin(), accessWidths.end(), address,
-                         [](const auto &entry, std::uint64_t value) {
-                           return entry.first < value;
-                         });
-    if (it == accessWidths.end() || it->first != address)
-      return std::nullopt;
-    return it->second;
+    return accessWidths.at(address);
   }
 
   /// Lays out the automatic data items. A named object is as large as its
@@ -3211,9 +3197,9 @@ struct Listing::Impl {
         if (!kind)
           continue;
         const auto width = row.size() == 4 ? jsonCount(row[3]) : 0;
-        references.push_back(
-            {jsonAddress(row[1]), jsonAddress(row[0]), *kind,
-             static_cast<std::uint8_t>(width <= MaxAccessWidth ? width : 0)});
+        references.push_back({jsonAddress(row[1]), jsonAddress(row[0]), *kind,
+                              static_cast<std::uint8_t>(
+                                  width <= MaxDataAccessWidth ? width : 0)});
       }
     const auto next = page.value("next_entry", Json());
     const auto previous = *indexCursor;
