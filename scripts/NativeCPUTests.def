@@ -2849,6 +2849,20 @@ NEVERD_NATIVE_CPU_KVM_OWNER(NeverDKvmStateTransferTests)
 #endif
 #ifdef NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST
 // Host protocol tests supplement actual non-exiting native vCPU cancellation.
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.OwnedNativeDeadlineIsAcknowledgedBeforeTheLoopRetires")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.OwnedNativeStopPreservesCompletionFailureAndNextRun")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.OwnedLoopAndNativeCompletionRejectRecursiveOwners")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.ThrowingOwnedLoopReleasesItsBorrowedCallback")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmRun.MissingOwnedLoopRejectsBeforeNativeEntry")
+NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
+    "KvmCancellation.OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
 NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST("KvmRun.RetriesTransientHostInterruptions")
 NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
     "KvmRun.RepeatedInterruptionsRespectDeadline")
@@ -2906,6 +2920,10 @@ NEVERD_NATIVE_CPU_KVM_REQUIRED_TEST(
 #endif
 #ifdef NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES
 // Ioctl capture and failed optional-capability queries must always work.
+NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES(
+    "Native/KvmStateTransfer.PublicHooksShareTheNativeExecutionOwner/",
+    "unittests/emulation/KvmStateTransferCases.def",
+    "NEVERD_KVM_STATE_BASE_PARAMETER")
 // Additional synchronized-register modes execute when the host supports them.
 NEVERD_NATIVE_CPU_KVM_REQUIRED_CASES(
     "Native/"

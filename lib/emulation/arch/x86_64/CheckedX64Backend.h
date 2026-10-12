@@ -64,6 +64,10 @@ private:
     X64MachineState CPU;
   };
   llvm::Error execute(const cs_insn &Instruction) override;
+  llvm::Error
+  withExecutionOwner(llvm::function_ref<llvm::Error()> Loop) override {
+    return Machine->withExecutionOwner(Loop);
+  }
   llvm::Error executeDirect() override;
   /// Retire one instruction through a temporary watch overlay, then rearm it.
   llvm::Error stepWatchedInstruction(bool WatchWrites = true);

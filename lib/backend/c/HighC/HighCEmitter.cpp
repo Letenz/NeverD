@@ -1858,6 +1858,10 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
       continue;
     if (CIntrinsicNames.count(Name))
       continue;
+    // A compiler builtin (`__builtin_alloca`) needs no declaration, and one
+    // would conflict with the compiler's own.
+    if (llvm::StringRef(Name).starts_with("__builtin_"))
+      continue;
 
     std::string CleanName = Name;
     if (!CleanName.empty() && CleanName[0] == '_')

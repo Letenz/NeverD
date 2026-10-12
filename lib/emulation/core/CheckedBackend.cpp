@@ -281,8 +281,19 @@ llvm::Expected<ExecutionExit> CheckedBackend::runUntilExit(uint64_t PC,
   if (Entered.test_and_set())
     return error(diagnostic::Running);
   auto Leave = llvm::scope_exit([&] { Entered.clear(); });
+  if (auto E = checkExecutionState())
+    return std::move(E);
+  if (!Memory->parallelEnabled())
+    if (auto E = mutableMemory())
+      return std::move(E);
+  auto Limit = makeExecutionDeadline(Timeout);
+  if (!Limit)
+    return Limit.takeError();
+  StopRequested = false;
+  Deadline = *Limit;
   bool Started = false, BackendFailed = false;
-  auto E = runImpl(PC, Timeout, Started, BackendFailed);
+  auto E =
+      withExecutionOwner([&] { return runImpl(PC, Started, BackendFailed); });
   if (!Started) {
     if (E)
       return std::move(E);
@@ -310,18 +321,8 @@ llvm::Error CheckedBackend::executeDirect() {
   return error(diagnostic::DirectExecutionUnsupported);
 }
 
-llvm::Error CheckedBackend::runImpl(uint64_t PC, uint64_t Timeout,
-                                    bool &Started, bool &BackendFailed) {
-  if (auto E = checkExecutionState())
-    return E;
-  if (!Memory->parallelEnabled())
-    if (auto E = mutableMemory())
-      return E;
-  auto Limit = makeExecutionDeadline(Timeout);
-  if (!Limit)
-    return Limit.takeError();
-  StopRequested = false;
-  Deadline = *Limit;
+llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
+                                    bool &BackendFailed) {
   if (auto E = Memory->parallelEnabled()
                    ? Memory->beginParallelRun({Deadline, &StopRequested})
                    : Memory->beginRun(RAMWriteTracking::Declared))

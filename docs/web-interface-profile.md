@@ -290,12 +290,13 @@ fixed lexical result-member uses and direct then-handler syntax. These are
 independently bounded syntax relations, with response API/value identity and
 execution unverified; they do not broaden HAR joins.
 
-This does not complete #717. Wrapper implementation/argument flow and general response/transformation
-tracing, schema exports, reviewed endpoint displays and
-broader host qualification remain required. Separately selected
+General aliases/value propagation and other hosts remain outside these named
+profiles. The [selected report](web-passive-report-profile.md) adds nearby
+transform syntax, observed JSON type summaries and qualified source/stream
+method candidates. Separately selected
 [SSE/JSONL/JSON-RPC/MCP-shape/log adapters](web-stream-profile.md) now provide
-passive framing and recorded-context candidates; source-to-stream correlation
-remains unsupported.
+passive framing and recorded-context candidates. None authenticates source
+execution, complete protocol behavior or server constraints.
 No Claude Code traffic or transcript is invented.
 
 With the optional `NEVERD_CLAUDE_CODE_21296_ELF` input, a C++ regression

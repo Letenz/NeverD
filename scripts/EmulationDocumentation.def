@@ -1878,3 +1878,15 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "xattr-mutations-unsupported")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "pselect394 / pselect_nocancel395")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "918 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "complete nonnull mask unsupported")
+
+#ifdef NEVERD_EMULATION_DOC_PATH
+NEVERD_EMULATION_DOC_PATH(KvmExecutionOwner, "docs/architecture.md")
+NEVERD_EMULATION_DOC_PATH(KvmExecutionOwner, "docs/testing.md")
+NEVERD_EMULATION_DOC_PATH(KvmExecutionOwner, "docs/{locale}/architecture.md")
+NEVERD_EMULATION_DOC_PATH(KvmExecutionOwner, "docs/{locale}/testing.md")
+#endif
+#ifdef NEVERD_EMULATION_DOC_TOKEN
+NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "withExecutionOwner")
+NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
+NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
+#endif

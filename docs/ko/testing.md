@@ -1714,9 +1714,11 @@ ctest --test-dir build-source -L \
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*`는 CPL0 IF 해제/설정과 CPL3 대조, profile 일치와 다이제스트 분리, TF/AC/IOPL 거부, 일반 관찰을 끈 뒤에도 필수인 최종 IF 의존성, 복원과 정확/한 연산 부족 예산을 검사합니다. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput`도 사용자 소스 ABI가 암묵적으로 선택되지 않음을 확인합니다. 운영 미정의 명령 admission 및 드라이버 복구 guards는 바뀌지 않습니다.
 
-`NeverDX86X87IntegerLoadTests`는 원본 `FILD m16/m32/m64`를 Codegen, HighC, LLVMC의 default/NoOpt 및 C O0/O2와 비교합니다. binary80, 보호 바이트, 제어 워드, 정의된 C1을 모든 RC, 유효 PC, 예외 마스크에서 검사하며 모든 16비트 입력과 넓은 정수의 2의 거듭제곱 경계를 실행합니다. 순수 변환의 상태/패딩 보존, 대기/알 수 없는 예외, 정확한 메모리 범위, 잘못된 메타데이터 및 분기, 균형/불균형 루프, 알 수 없는 호출 뒤의 빈 슬롯 증명을 검사합니다. ABI 진입만으로 빈 스택을 증명할 수 없으며 알 수 없거나 사용 중인 목적지는 완전한 함수 게시를 거부합니다. 네이티브 oracle은 x64 GCC/Clang이 필요합니다. 전체 x87 TOP/태그/상태, 스택 오버플로 에뮬레이션, 네이티브 예외/메모리 오류 우선순위 또는 Linux/macOS/x86-32 네이티브 실행을 인증하지 않습니다. `NeverDLLVMCIntrinsicSemanticTests`는 64비트까지 스칼라 `llvm.abs`를 C O0/O2와 정의되지 않은 동작 트랩으로 실행하여 정의된 부호 있는 최솟값과 단일 평가를 검사합니다.
+`NeverDX86X87IntegerLoadTests`는 원본 `FILD m16/m32/m64`를 Codegen, HighC, LLVMC의 default/NoOpt 및 C O0/O2와 비교합니다. binary80, 보호 바이트, 제어 워드, 정의된 C1을 모든 RC, 유효 PC, 예외 마스크에서 검사하며 모든 16비트 입력과 넓은 정수의 2의 거듭제곱 경계를 실행합니다. 순수 변환의 상태/패딩 보존, 대기/알 수 없는 예외, 정확한 메모리 범위, 잘못된 메타데이터 및 분기, 균형/불균형 루프, 알 수 없는 호출 뒤의 빈 슬롯 증명을 검사합니다. 함수 진입은 호출 규약이 정한 빈 레지스터 스택(슬롯 값은 정의되지 않음)에서 시작하며, 그 밖에서 알 수 없거나 사용 중인 목적지는 완전한 함수 게시를 거부합니다. 네이티브 oracle은 x64 GCC/Clang이 필요합니다. 전체 x87 TOP/태그/상태, 스택 오버플로 에뮬레이션, 네이티브 예외/메모리 오류 우선순위 또는 Linux/macOS/x86-32 네이티브 실행을 인증하지 않습니다. `NeverDLLVMCIntrinsicSemanticTests`는 64비트까지 스칼라 `llvm.abs`를 C O0/O2와 정의되지 않은 동작 트랩으로 실행하여 정의된 부호 있는 최솟값과 단일 평가를 검사합니다.
 
 ```sh
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.

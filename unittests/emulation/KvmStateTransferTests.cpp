@@ -18,6 +18,7 @@
 #include <cstdarg>
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
+#include <thread>
 
 namespace {
 std::atomic<unsigned long> FailureRequest{0};
@@ -27,6 +28,7 @@ std::atomic<std::atomic<bool> *> PrivateStop{nullptr};
 #if defined(__x86_64__)
 std::atomic<int> AllowedSync{0}, AvailableSync{0};
 std::atomic<unsigned> GeneralReads{0}, SpecialReads{0}, Entries{0};
+std::thread::id NativeEntryThread;
 #endif
 } // namespace
 
@@ -58,8 +60,10 @@ extern "C" int __wrap_ioctl(int FD, unsigned long Request, ...) {
       AvailableSync = Result > 0 ? Result & AllowedSync : 0;
       return AvailableSync;
     }
-    if (Request == KVM_RUN)
+    if (Request == KVM_RUN) {
       ++Entries;
+      NativeEntryThread = std::this_thread::get_id();
+    }
 #endif
     return __real_ioctl(FD, Request, Value);
   }
@@ -225,6 +229,49 @@ TEST_P(KvmStateTransfer, FailedReadRetainsInputAndReinstallsItBeforeRetry) {
   const auto Packed = Vector ? IncrementedPacked : InitialPacked;
   EXPECT_EQ(State.Xmm.front(), (ExecutionBackend::XmmValue{Packed, Packed}));
 }
+TEST_P(KvmStateTransfer, PublicHooksShareTheNativeExecutionOwner) {
+  auto Created = createExecutionBackend(ExecutionBackendKind::KVM,
+                                        ExecutionContract::CheckedX64, Limit);
+  ASSERT_TRUE(bool(Created)) << llvm::toString(Created.takeError());
+  auto CPU = std::move(Created->CPU);
+  llvm::cantFail(CPU->map(Code, PageSize, Read | Write | Execute));
+  llvm::cantFail(CPU->map(Data, PageSize, Read | Write));
+  const bool Vector = GetParam().Vector;
+  const auto Body = Vector ? llvm::ArrayRef<uint8_t>(IncrementVector)
+                           : llvm::ArrayRef<uint8_t>(IncrementInteger);
+  llvm::cantFail(CPU->write(Code, Body));
+  llvm::cantFail(CPU->write(Code + Body.size(), Warm));
+  llvm::cantFail(CPU->setReg(X64Register::AX, InitialInteger));
+  llvm::cantFail(CPU->setReg(X64Register::SP, Data + PageSize - WordBytes));
+  llvm::cantFail(CPU->setReg(X64Register::FLAGS, InitialFlags));
+  llvm::cantFail(CPU->setXmm(0, {InitialPacked, InitialPacked}));
+  llvm::cantFail(
+      CPU->setXmm(IncrementVectorIndex, {InitialPacked, InitialPacked}));
+  const auto Caller = std::this_thread::get_id();
+  std::thread::id HookThread;
+  NativeEntryThread = {};
+  unsigned Observed = 0;
+  BackendHooks Hooks;
+  Hooks.Instruction = [&](uint64_t Address, uint32_t) {
+    HookThread = std::this_thread::get_id();
+    ++Observed;
+    if (Address == Code + Body.size())
+      CPU->stop();
+  };
+  llvm::cantFail(CPU->installHooks(std::move(Hooks)));
+  llvm::cantFail(CPU->run(Code, Timeout));
+  EXPECT_EQ(Observed, 2u);
+  EXPECT_NE(NativeEntryThread, std::thread::id{});
+  EXPECT_EQ(HookThread, NativeEntryThread);
+  EXPECT_NE(HookThread, Caller);
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::PC)), Code + Body.size());
+  EXPECT_EQ(llvm::cantFail(CPU->reg(X64Register::AX)),
+            InitialInteger + (Vector ? 0 : IntegerIncrement));
+  const auto Packed = Vector ? IncrementedPacked : InitialPacked;
+  EXPECT_EQ(llvm::cantFail(CPU->xmm(0)),
+            (ExecutionBackend::XmmValue{Packed, Packed}));
+}
+
 TEST_P(KvmStateTransfer, PublicCancellationRetainsStateRAMAndFailurePriority) {
   auto Created = createExecutionBackend(ExecutionBackendKind::KVM,
                                         ExecutionContract::CheckedX64, Limit);

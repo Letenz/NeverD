@@ -149,6 +149,8 @@ framed parity with an unusable external-tool PATH.
 
 No real Claude Code transcript was supplied or invented. These readers can
 inspect supplied files alongside recovered source, but do not establish a
-Claude-specific stream format or source-to-message correlation. Such evidence,
-full C++ MCP server transport, schema exports and broader host qualification
-remain separate acceptance work.
+Claude-specific stream format or observed source execution. The
+[selected report](web-passive-report-profile.md) adds qualified source method
+candidates and observed HAR type summaries. The [C++ MCP transport](web-mcp-profile.md)
+is implemented independently. Broader host qualification and proprietary
+capture evidence remain explicit limitations.

@@ -87,6 +87,10 @@ protected:
   virtual uint64_t programCounter() const = 0;
   virtual void setProgramCounter(uint64_t PC) = 0;
   virtual llvm::Error execute(const cs_insn &) = 0;
+  virtual llvm::Error
+  withExecutionOwner(llvm::function_ref<llvm::Error()> Loop) {
+    return Loop();
+  }
   virtual void onGuestException() {}
   /// A direct contract admits nothing. The transport runs guest code until
   /// the processor raises an event, which this call publishes as a pending
@@ -125,8 +129,7 @@ protected:
   uint64_t WatchEpoch = 0;
 
 private:
-  llvm::Error runImpl(uint64_t PC, uint64_t Timeout, bool &Started,
-                      bool &BackendFailed);
+  llvm::Error runImpl(uint64_t PC, bool &Started, bool &BackendFailed);
   // Storage only: bytes, permissions and decoding are refreshed on every step.
   // The execution lease rejects recursive entry before this storage is touched.
   std::vector<uint8_t> InstructionBytes;

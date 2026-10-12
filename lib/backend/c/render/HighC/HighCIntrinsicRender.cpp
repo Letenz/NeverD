@@ -60,8 +60,14 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
 
   const char *AsmMn = intrinsicAsmMnemonic(Id);
   if (AsmMn) {
-    if (TheArch == Arch::X64 || TheArch == Arch::X86)
+    if (TheArch == Arch::X64 || TheArch == Arch::X86) {
+      if (GnuToolchain)
+        if (std::string Operand =
+                renderX86SystemRegisterOperand(Id, Ops, ResultBytes);
+            !Operand.empty())
+          return Operand;
       return renderX86AsmStatement(AsmMn, Ops);
+    }
     return renderARMAsmStatement(AsmMn, Ops);
   }
 

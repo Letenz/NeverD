@@ -196,6 +196,15 @@ const char *hiloCollapseExpr(Intrinsic Id);
 std::string renderX86AsmStatement(const char *Mnemonic,
                                   const std::vector<std::string> &Ops);
 
+/// The register form of a descriptor-table or machine-status register
+/// instruction (SLDT, STR, SMSW and LLDT, LTR, LMSW) as GNU inline asm that
+/// runs the instruction on a C value of its operand's width: a store's
+/// \p ResultBytes destination, or a load's 16-bit source.  Empty for any
+/// other intrinsic or shape.
+std::string renderX86SystemRegisterOperand(Intrinsic Id,
+                                           const std::vector<std::string> &Ops,
+                                           uint16_t ResultBytes);
+
 //--- Arch-specific (HighCIntrinsicRenderARM.cpp) ---
 std::string
 renderARMMultiOutput(Intrinsic IID, const std::vector<MedVar> &Outputs,
