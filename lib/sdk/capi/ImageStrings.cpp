@@ -8,11 +8,125 @@
 
 #include "SessionImpl.h"
 
+#include "neverd/loader/StringLiteralSymbols.h"
+
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/JSON.h"
 
 #include <algorithm>
 
 namespace neverd::sdk {
+namespace {
+
+/// Where \p String ends, its terminator included.
+va_t terminatedEnd(const ImageString &String) {
+  return String.Address + String.Bytes +
+         strings::encodingUnitBytes(String.Kind);
+}
+
+/// The string \p Literal holds at \p Addr, read whole in an encoding that
+/// \p Options search: ASCII or UTF-8, else the code page a scan reads it in,
+/// for bytes; UTF-16 or UTF-32 for wider characters.  None where no such
+/// encoding reads every character.  Unlike a scan's, its characters may be
+/// controls: the symbol, not their look, says the bytes are text.
+std::optional<ImageString> literalString(const BinaryImage &Img, va_t Addr,
+                                         const SymbolStringLiteral &Literal,
+                                         const strings::ScanOptions &Options) {
+  const Segment *Seg = Img.getSegmentFor(Addr);
+  if (!Seg)
+    return std::nullopt;
+  const llvm::ArrayRef<uint8_t> Terminated(Seg->Data.data() + (Addr - Seg->VA),
+                                           Literal.Bytes + Literal.UnitBytes);
+  const llvm::ArrayRef<uint8_t> Text = Terminated.drop_back(Literal.UnitBytes);
+  ImageString String;
+  String.Address = Addr;
+  String.Bytes = Literal.Bytes;
+  String.Literal = true;
+  const auto ReadsWhole = [&](strings::Encoding Kind) {
+    if (!(Options.Encodings & strings::encodingBit(Kind)))
+      return false;
+    std::string UTF8;
+    unsigned Chars = 0;
+    bool Whole = true;
+    strings::decode(Text, Kind, [&](const strings::DecodedCharacter &Read) {
+      Whole &= Read.Codes > 0;
+      for (unsigned I = 0; I < Read.Codes; ++I) {
+        char Buffer[UNI_MAX_UTF8_BYTES_PER_CODE_POINT];
+        char *End = Buffer;
+        llvm::ConvertCodePointToUTF8(Read.Code[I], End);
+        UTF8.append(Buffer, End);
+        ++Chars;
+      }
+    });
+    if (!Whole)
+      return false;
+    String.Kind = Kind;
+    String.Chars = Chars;
+    String.Text = std::move(UTF8);
+    return true;
+  };
+  switch (Literal.UnitBytes) {
+  case 1: {
+    if (llvm::all_of(Text, [](uint8_t Byte) { return Byte < 0x80; }))
+      return ReadsWhole(strings::Encoding::ASCII) ? std::optional(String)
+                                                  : std::nullopt;
+    if (ReadsWhole(strings::Encoding::UTF8))
+      return String;
+    // A code page reads it only as a scan of its bytes would.
+    strings::ScanOptions Whole = Options;
+    Whole.MinLength = 1;
+    std::optional<ImageString> Paged;
+    strings::scan(Terminated, Whole, [&](strings::FoundString &&Found) {
+      if (Found.Offset || Found.Bytes != Literal.Bytes ||
+          !strings::isLegacyEncoding(Found.Kind))
+        return;
+      String.Kind = Found.Kind;
+      String.Chars = Found.Chars;
+      String.Text = std::move(Found.Text);
+      Paged = String;
+    });
+    return Paged;
+  }
+  case 2:
+    return ReadsWhole(strings::Encoding::UTF16LE) ? std::optional(String)
+                                                  : std::nullopt;
+  case 4:
+    return ReadsWhole(strings::Encoding::UTF32LE) ? std::optional(String)
+                                                  : std::nullopt;
+  default:
+    return std::nullopt;
+  }
+}
+
+/// The strings the image's symbols name as literals, in address order, none
+/// overlapping another.
+std::vector<ImageString> literalStrings(const BinaryImage &Img,
+                                        const strings::ScanOptions &Options) {
+  std::vector<ImageString> Literals;
+  for (const Symbol &Sym : Img.Symbols) {
+    if (Sym.IsFunc)
+      continue;
+    const auto Literal = symbolStringLiteralAt(Img, Sym.Addr, Sym.Name);
+    // An empty literal holds no text for a list of strings to show.
+    if (!Literal || !Literal->Bytes)
+      continue;
+    if (auto String = literalString(Img, Sym.Addr, *Literal, Options))
+      Literals.push_back(std::move(*String));
+  }
+  std::stable_sort(Literals.begin(), Literals.end(),
+                   [](const ImageString &A, const ImageString &B) {
+                     return A.Address < B.Address;
+                   });
+  // The first literal to start keeps its bytes, as in a scan.
+  std::vector<ImageString> Kept;
+  for (auto &String : Literals)
+    if (Kept.empty() || String.Address >= terminatedEnd(Kept.back()))
+      Kept.push_back(std::move(String));
+  return Kept;
+}
+
+} // namespace
 
 std::string parseStringOptions(const char *Json,
                                strings::ScanOptions &Options) {
@@ -96,6 +210,19 @@ imageStrings(Session &S, const strings::ScanOptions &Options) {
       ScanRange(Sec.VA, Seg.Data.data() + Offset, static_cast<size_t>(Size));
     }
   }
+  // A literal a symbol names wins over text a scan reads in its bytes.
+  const auto Literals = literalStrings(S.Img, Options);
+  llvm::erase_if(Scan.Strings, [&](const ImageString &String) {
+    // The first literal that ends past the string's start.
+    const auto Literal =
+        std::upper_bound(Literals.begin(), Literals.end(), String.Address,
+                         [](va_t Address, const ImageString &Literal) {
+                           return Address < terminatedEnd(Literal);
+                         });
+    return Literal != Literals.end() &&
+           Literal->Address < terminatedEnd(String);
+  });
+  Scan.Strings.insert(Scan.Strings.end(), Literals.begin(), Literals.end());
   // Ranges are scanned in image order, which need not be address order.
   std::stable_sort(Scan.Strings.begin(), Scan.Strings.end(),
                    [](const ImageString &A, const ImageString &B) {

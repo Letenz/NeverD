@@ -1328,6 +1328,13 @@ const char *neverd_symbols_json(neverd_session_t s) {
         {"name", "function_0"},
         {"type", "function"}},
        {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}});
+  // MSVC's name of the literal L"Wide", which spells it rather than naming
+  // an object.
+  if (session(s)->path.ends_with("literal-names.bin"))
+    rows.push_back({{"addr", hexAddress(RodataBase + 8)},
+                    {"literal", true},
+                    {"name", "??_C@_19LKAMOCKA@?$AAW?$AAi?$AAd?$AAe@"},
+                    {"size", 0}});
   // The user's names of data replace the symbols' or add rows of their own.
   for (const auto &[address, name] : session(s)->names) {
     if (neverd_func_find_by_addr(s, address) >= 0)
@@ -1336,6 +1343,7 @@ const char *neverd_symbols_json(neverd_session_t s) {
     for (auto &row : rows)
       if (parseAddress(row.at("addr").get<std::string>()) == address) {
         row["name"] = name;
+        row.erase("literal");
         replaced = true;
       }
     if (!replaced)

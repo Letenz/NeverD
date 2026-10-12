@@ -1,0 +1,73 @@
+//===- StringLiteralSymbols.def - Names that spell literals -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// How a symbol name spells a string literal instead of naming an object.
+/// MSVC pools each literal under one name: a prefix for its character type,
+/// its size in bytes with the terminator, a hash, its leading bytes without
+/// the terminator, and with whole-program optimization the hash of a module:
+/// `??_C@_15OHIPBLFN@?$AAS?$AAA@` is L"SA" and
+/// `??_C@_0FA@OGCCJEAN@CC?3?5SharedCacheMap?9?$DOOpenCount?5?$DN@FNODOBFM@`
+/// an 80-byte literal that starts "CC: SharedCacheMap->OpenCount =".  Define
+/// the macros a consumer reads before including this file; the others expand
+/// to nothing.
+///
+///   NEVERD_STRING_LITERAL_PREFIX(Prefix, UnitBytes)
+///       a name that starts with Prefix spells a literal whose characters are
+///       UnitBytes wide, or 0 where its bytes decide: char, char16_t and
+///       char32_t literals share one prefix.  A wide literal spells each
+///       character high byte first.
+///   NEVERD_STRING_LITERAL_UNIT(UnitBytes)
+///       a width the characters of a literal may have where its bytes decide,
+///       in the order they are tried.
+///   NEVERD_STRING_LITERAL_ESCAPE(Spelling, Byte)
+///       `?` and Spelling spell Byte.
+///   NEVERD_STRING_LITERAL_ESCAPE_RANGE(First, Last, Byte)
+///       `?` and a character from First to Last spell the byte that far from
+///       Byte.
+///
+/// `?$` and two digits from `A` (0) to `P` (15) spell any byte, and a name
+/// spells the other bytes of a literal as themselves.
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_STRING_LITERAL_PREFIX
+#define NEVERD_STRING_LITERAL_PREFIX(Prefix, UnitBytes)
+#endif
+#ifndef NEVERD_STRING_LITERAL_UNIT
+#define NEVERD_STRING_LITERAL_UNIT(UnitBytes)
+#endif
+#ifndef NEVERD_STRING_LITERAL_ESCAPE
+#define NEVERD_STRING_LITERAL_ESCAPE(Spelling, Byte)
+#endif
+#ifndef NEVERD_STRING_LITERAL_ESCAPE_RANGE
+#define NEVERD_STRING_LITERAL_ESCAPE_RANGE(First, Last, Byte)
+#endif
+
+NEVERD_STRING_LITERAL_PREFIX("??_C@_0", 0)
+NEVERD_STRING_LITERAL_PREFIX("??_C@_1", 2)
+
+NEVERD_STRING_LITERAL_UNIT(1)
+NEVERD_STRING_LITERAL_UNIT(2)
+NEVERD_STRING_LITERAL_UNIT(4)
+
+NEVERD_STRING_LITERAL_ESCAPE('0', ',')
+NEVERD_STRING_LITERAL_ESCAPE('1', '/')
+NEVERD_STRING_LITERAL_ESCAPE('2', '\\')
+NEVERD_STRING_LITERAL_ESCAPE('3', ':')
+NEVERD_STRING_LITERAL_ESCAPE('4', '.')
+NEVERD_STRING_LITERAL_ESCAPE('5', ' ')
+NEVERD_STRING_LITERAL_ESCAPE('6', '\n')
+NEVERD_STRING_LITERAL_ESCAPE('7', '\t')
+NEVERD_STRING_LITERAL_ESCAPE('8', '\'')
+NEVERD_STRING_LITERAL_ESCAPE('9', '-')
+NEVERD_STRING_LITERAL_ESCAPE_RANGE('a', 'z', 0xE1)
+NEVERD_STRING_LITERAL_ESCAPE_RANGE('A', 'Z', 0xC1)
+
+#undef NEVERD_STRING_LITERAL_PREFIX
+#undef NEVERD_STRING_LITERAL_UNIT
+#undef NEVERD_STRING_LITERAL_ESCAPE
+#undef NEVERD_STRING_LITERAL_ESCAPE_RANGE

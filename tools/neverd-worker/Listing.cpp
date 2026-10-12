@@ -1158,7 +1158,10 @@ struct Listing::Impl {
         // The largest symbol at an address sizes its object.
         if (const auto size = jsonCount(row.value("size", Json())))
           dataSizes[address] = std::max(dataSizes[address], size);
-        dataNames.emplace(address, std::move(name));
+        // A name that spells a string literal (MSVC's `??_C@`) gives way
+        // to the string's own, as IDA names it.
+        if (!row.value("literal", false))
+          dataNames.emplace(address, std::move(name));
       }
     if (Rescan) {
       importRows = takeJson(neverd_imports_json(session));
