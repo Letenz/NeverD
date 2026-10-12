@@ -2144,6 +2144,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>Этот движок не может использовать непроверенный PDB для анализа</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>Строка</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>Столбец</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Код</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>Дождитесь загрузки функции перед поиском ссылок</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>

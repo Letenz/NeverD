@@ -962,17 +962,36 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
   if (session(s)->path.ends_with("code-edits.bin") ||
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
+      session(s)->path.ends_with("local-references.bin") ||
       session(s)->path.ends_with("tab-sync-paged.bin")) {
-    const bool paged = session(s)->path.ends_with("tab-sync-paged.bin");
+    const bool localReferences =
+        session(s)->path.ends_with("local-references.bin");
+    const bool paged =
+        localReferences || session(s)->path.ends_with("tab-sync-paged.bin");
     std::string full = "#include <stdint.h>\n"
                        "int32_t function_20(int32_t v0) {\n"
                        "  int32_t v1 = v0 + function_22();\n"
                        "  const char *message = \"v0 v1 function_22\";\n"
                        "  return v1;\n"
                        "}\n";
+    if (localReferences)
+      full = "#include <stdint.h>\n"
+             "struct Box { int64_t v7; };\n"
+             "int64_t function_20(int64_t v0) {\n"
+             "  int64_t v7 = 0;\n"
+             "  int64_t v70 = 4;\n"
+             "  struct Box box;\n"
+             "  const char *message = \"v7\"; // v7\n"
+             "  box.v7 = v70;\n"
+             "  // \xe4\xb8\xad\xe6\x96\x87 v7\n"
+             "  const char *label = \"\xe4\xb8\xad\xe6\x96\x87\"; v7 += v0;\n";
     if (paged)
-      for (int i = 6; i < 700; ++i)
-        full += "// code line " + std::to_string(i) + "\n";
+      for (int i = localReferences ? 10 : 6; i < 700; ++i)
+        full += localReferences && i == 550
+                    ? "  v7 += v0;\n"
+                    : "// code line " + std::to_string(i) + "\n";
+    if (localReferences)
+      full += "  return v7 + v7;\n}\n";
     std::vector<std::size_t> starts{0};
     for (std::size_t i = 0; i + 1 < full.size(); ++i)
       if (full[i] == '\n')
@@ -1008,7 +1027,9 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
         {"total_lines", starts.size()},
         {"complete", end == starts.size()},
         {"next_offset", end == starts.size() ? Json(nullptr) : Json(end)},
-        {"prelude", {{"lines", 1}, {"end_byte", starts[1]}}},
+        {"prelude",
+         {{"lines", localReferences ? 2 : 1},
+          {"end_byte", starts[localReferences ? 2 : 1]}}},
         {"library_regions",
          paged ? Json::array(
                      {{{"id", "late-operation"},

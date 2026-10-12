@@ -2156,6 +2156,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>السطر</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>العمود</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>الشيفرة</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>انتظر اكتمال تحميل الدالة قبل البحث عن المراجع</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>

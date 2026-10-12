@@ -1028,6 +1028,87 @@ std::optional<QJsonObject> CodeText::renameTarget() const {
   return std::nullopt;
 }
 
+namespace {
+bool sameLocalTarget(const QJsonObject &a, const QJsonObject &b) {
+  return a.value("kind").toString() == QLatin1String("local") &&
+         b.value("kind").toString() == QLatin1String("local") &&
+         !b.value("original").toString().isEmpty() &&
+         !b.value("identity").toString().isEmpty() &&
+         a.value("original") == b.value("original") &&
+         a.value("identity") == b.value("identity");
+}
+} // namespace
+
+QVector<CodeText::LocalReference>
+CodeText::localReferences(const QJsonObject &target) const {
+  QVector<LocalReference> references;
+  if (!function_ || loading_ || !sameLocalTarget(target, target))
+    return references;
+  QVector<int> starts{0};
+  for (int i = 0; i + 1 < source_.size(); ++i)
+    if (source_.at(i) == QLatin1Char('\n'))
+      starts.append(i + 1);
+  for (const auto &name : editNames_) {
+    if (!sameLocalTarget(name.target, target))
+      continue;
+    const int line =
+        int(std::upper_bound(starts.cbegin(), starts.cend(), name.begin) -
+            starts.cbegin()) -
+        1;
+    const int end =
+        line + 1 < starts.size() ? starts[line + 1] - 1 : int(source_.size());
+    references.append({line, name.begin - starts[line], name.begin, name.end,
+                       source_.mid(starts[line], end - starts[line])});
+  }
+  std::sort(references.begin(), references.end(),
+            [](const LocalReference &a, const LocalReference &b) {
+              return a.begin < b.begin;
+            });
+  return references;
+}
+
+bool CodeText::selectLocalReference(const QJsonObject &target,
+                                    const LocalReference &reference) {
+  if (!function_ || loading_ ||
+      std::none_of(
+          editNames_.cbegin(), editNames_.cend(), [&](const EditName &name) {
+            return name.begin == reference.begin && name.end == reference.end &&
+                   sameLocalTarget(name.target, target);
+          }))
+    return false;
+  if (library_.unfoldSourceLine(reference.line)) {
+    rebuildLines();
+    emit foldingChanged();
+  }
+  const int line = library_.canFold() ? library_.displayLine(reference.line)
+                                      : reference.line;
+  if (line < 0 || line >= lines_.size())
+    return false;
+  const int endColumn = reference.column + reference.end - reference.begin;
+  marked_.clear();
+  highlight_ = source_.mid(reference.begin, reference.end - reference.begin);
+  // Leave the cursor inside the name so X/N can act on it again. The anchor
+  // at its end still selects exactly the referenced identifier for copying.
+  moveCursor(line, endColumn, false);
+  moveCursor(line, reference.column, true);
+  auto &layout = lines_[line].styled.layout(Theme::instance().codeFont(),
+                                            styleStamp_, codeColor);
+  if (layout.lineCount()) {
+    const qreal left =
+        textLeft() + layout.lineAt(0).cursorToX(reference.column);
+    const qreal right = textLeft() + layout.lineAt(0).cursorToX(endColumn);
+    const qreal margin = textLeft() + horizontalScrollBar()->value();
+    auto *across = horizontalScrollBar();
+    if (left < margin)
+      across->setValue(across->value() - int(std::ceil(margin - left)));
+    else if (right > viewport()->width())
+      across->setValue(across->value() +
+                       int(std::ceil(right - viewport()->width())));
+  }
+  viewport()->update();
+  return true;
+}
+
 std::optional<QJsonObject> CodeText::commentTarget() const {
   if (!function_ || loading_ || lines_.isEmpty())
     return std::nullopt;

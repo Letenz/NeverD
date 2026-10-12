@@ -50,6 +50,18 @@ public:
   QString currentToken() const;
   /// The selected source name's image address or declared-local identity.
   std::optional<QJsonObject> renameTarget() const;
+  /// Occurrences of one declared local in the complete, unfolded source.
+  struct LocalReference {
+    int line = 0, column = 0;
+    int begin = 0, end = 0;
+    QString text;
+  };
+  QVector<LocalReference> localReferences(const QJsonObject &target) const;
+  /// Reveal and select an occurrence, expanding any fold that contains it.
+  bool selectLocalReference(const QJsonObject &target,
+                            const LocalReference &reference);
+  /// Changes when a load, cancellation or clear retires this source document.
+  quint64 documentVersion() const { return serial_; }
   /// The original source row under the cursor, independent of folding.
   std::optional<QJsonObject> commentTarget() const;
   QString selectedText() const;

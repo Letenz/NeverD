@@ -342,6 +342,14 @@ and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
+In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
+lists its occurrences in the current function, with source line, column and
+code. The list uses the variable's identity from the complete loaded document,
+so similarly spelled names, member names, strings and comments are excluded.
+Selecting an occurrence stays in the originating code window, expands any fold
+that hides the row and selects the identifier. Renamed locals keep their
+original identity. A source reload or project close retires the old list.
+
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 `hex`, `strref`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
