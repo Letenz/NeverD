@@ -165,8 +165,8 @@ KernelModel::callDriver(uint64_t Device, uint64_t IRP, ForwardingOwner Owner,
   if (!PC)
     return PC.takeError();
   if (!Provider && !*PC) {
-    const auto First = DispatchBytesWritten.begin() + *Major * 8;
-    if (std::any_of(First, First + 8, [](bool Written) { return Written; }))
+    if (anyInitialized(DispatchBytesWritten, DispatchInitialization, *Major * 8,
+                       8))
       return stackError(
           "driver explicitly registered a null dispatch callback");
   }
@@ -296,7 +296,8 @@ llvm::Error KernelModel::completeRequest(uint64_t IRP, uint8_t PriorityBoost) {
   if (PendingWdmCall || (Framework && Framework->hasPendingGuestCall()))
     return stackError("cannot replace a pending guest callback");
   for (unsigned I = 0; I < Request->IOStatusWritten.size(); ++I)
-    if ((I < 4 || I >= 8) && !Request->IOStatusWritten[I])
+    if ((I < 4 || I >= 8) && !initialized(Request->IOStatusWritten,
+                                          Request->IOStatusInitialization, I))
       return stackError(
           "completion requires initialized IoStatus.Status and Information");
   auto Status = Memory.readInteger(IRP + IRPStatusOffset, 4);

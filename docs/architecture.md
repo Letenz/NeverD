@@ -187,6 +187,8 @@ Win64 class-return projection is target-specific; a DWARF name on another
 platform cannot create a hidden result parameter. Runtime-language detection
 uses exported names as well as symbols and imports.
 
+`isCanonicalX87Wait` owns the same normal-path frame-preservation rule for ordinary registration transfer and checked local-finally returns. The FWAIT operation and exceptional dispatch remain intact. Other intrinsics and malformed shapes remain opaque; this rule grants no nonlocal finally exit or native recovery proof.
+
 Windows registration-chain EH has separate source and generated contracts.
 The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
@@ -5174,3 +5176,9 @@ Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an 
 DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.
 
 `isCheckedX86SafeSEHHandlerReference` authenticates a retained PE32 handler entry through the existing SafeSEH decoder, immutable table/header bytes and the relocated load-config pointer. LLVM declares that source identity before emitting any body, including omitted shards. Table membership establishes neither a language personality nor a callable ABI or native EH reconstruction permission; those consumers keep their independent checks.
+
+Kernel field initialization has a separate physical RAM owner. Permission validation remains pure. Successful host writes, committed checked transactions and exact software after-write events define only the bytes they committed, including same-value stores and completed fault prefixes. Temporary writes, rollback, attempts cancelled before commit and opaque invalidation define no bytes. An owning bitmap follows retained physical slices through aliases and can be queried without reading guest RAM. Software events prove their reported writes without establishing complete write coverage; typed model services keep their explicit initialization contracts.
+
+`MemoryWriteWitness` retains exact physical allocation slices and shares the committed-write invalidation authority with RAM reservations. Same-value, partial and aliased writes invalidate it; opaque execution conservatively removes the proof. Creation and queries require a stopped owner. Driver observation binds validated DIR64 fields immediately after image copy, before session fixups, and publishes owned facts only while the mapped allocation and write history still match. These facts do not cover generated pointers or supply a native kernel materializer.
+
+The driver loader binds relocation facts to the validated file SHA-256. PE rebuilding consumes the owned facts and excludes fields replaced by import or metadata formatting before emitting diagnostic DIR64 records. This owner cannot infer generated-pointer relocations or remove the kernel runtime refusal.

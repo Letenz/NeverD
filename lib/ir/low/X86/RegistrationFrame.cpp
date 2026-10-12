@@ -6,10 +6,19 @@
 
 #include "RegistrationFrame.h"
 
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/lift/X86Regs.h"
 
 namespace neverd::registration_state {
+
+bool isCanonicalX87Wait(const LowOp &Op) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
+         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Inputs[0].Offset == uint64_t(Intrinsic::X87Wait) &&
+         Op.Output == NdVar() && Op.MemoryOrdering == NdMemoryOrdering::None &&
+         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+}
 
 FrameValue join(FrameValue Left, const FrameValue &Right) {
   if (Left == Right)
