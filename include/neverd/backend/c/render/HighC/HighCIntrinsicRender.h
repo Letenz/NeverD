@@ -232,6 +232,15 @@ std::string renderNeonVectorIntrinsic(Intrinsic Id,
                                       uint16_t ResultBytes,
                                       bool &HasCIntrinsics);
 
+/// A binary16 fixed-point conversion (SCVTF, UCVTF to Hd; FCVTZS, FCVTZU
+/// from Hn, with fbits) as GNU inline asm that runs the instruction: one
+/// rounding at any fbits.  ACLE's vcvth_n_* take fbits up to 16 only, and
+/// LLVM lowers vcvth_n_f16_s32 through the 16-bit integer form.  \p Ops are
+/// the source, fbits and whether the integer is 64-bit ("1") or 32-bit
+/// ("0").  Empty for any other intrinsic or shape.
+std::string renderA64FixedHalfConversion(Intrinsic Id,
+                                         const std::vector<std::string> &Ops);
+
 /// Format a raw mnemonic + operands as a GCC-style `__asm__ volatile(...)`
 /// statement with register input constraints and a memory clobber.
 std::string renderARMAsmStatement(const char *Mnemonic,

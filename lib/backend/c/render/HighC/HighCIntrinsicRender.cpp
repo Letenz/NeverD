@@ -34,6 +34,12 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 llvm::ArrayRef<uint16_t> OperandBytes) {
   std::string Result;
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64) {
+    if (TheArch == Arch::AArch64 && GnuToolchain)
+      if (std::string Half = renderA64FixedHalfConversion(Id, Ops);
+          !Half.empty()) {
+        HasCIntrinsics = true;
+        return Half;
+      }
     Result = renderARMIntrinsicCall(Id, Ops, ResultBytes, HasCIntrinsics);
     if (Result.empty())
       Result = renderNeonVectorIntrinsic(Id, Ops, OperandBytes, ResultBytes,
