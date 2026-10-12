@@ -3111,7 +3111,9 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
       continue;
     auto Event = SourceRecorder ? SourceRecorder->function(Funcs[I].Entry)
                                 : std::nullopt;
-    if (SourceRecorder)
+    if (SourceRecorder && SourceRecorder->recordsPositions())
+      SourceRecorder->positionDefinition(Funcs[I].Entry, OS.tell());
+    else if (SourceRecorder)
       OS << SourceRecorder->definition(Funcs[I].Entry);
     if (Event)
       OS << SourceRecorder->begin(*Event);
@@ -3162,7 +3164,24 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   }
   std::string Ordinary;
   llvm::raw_string_ostream OrdinaryOS(Ordinary);
-  Render(OrdinaryOS, nullptr);
+  std::optional<CSourceRecorder> Positions;
+  if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
+    try {
+      Positions.emplace(*Opts.SourceMap, llvm::StringRef(),
+                        CSourceRecorder::Recording::Positions);
+      Positions->prepareHighSources();
+    } catch (const std::exception &) {
+      Positions.reset();
+    }
+  }
+  // Position recording adds no bytes and cannot influence expression spelling.
+  // Render failures are ordinary source failures, not optional mapping
+  // failures.
+  Render(OrdinaryOS, Positions ? &*Positions : nullptr);
+  if (Positions && Positions->finishPositions(Ordinary)) {
+    Out << Ordinary;
+    return true;
+  }
   if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
     // Without library evidence there is no independent coverage proof to
     // protect. Verify definition and instruction locations together instead

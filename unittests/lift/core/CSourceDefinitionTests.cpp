@@ -20,6 +20,7 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <limits>
 #include <stdexcept>
 
 using namespace neverd;
@@ -116,10 +117,14 @@ TEST(CSourceDefinitions, CombinedRecordingRefusesLibraryEvidence) {
                       CSourceRecorder::Recording::DefinitionsAndInstructions),
       std::invalid_argument);
   EXPECT_EQ(Map.Definitions, (std::vector<CSourceDefinition>{{0x1000, 17}}));
+  EXPECT_THROW(
+      CSourceRecorder(Map, "source", CSourceRecorder::Recording::Positions),
+      std::invalid_argument);
+  EXPECT_EQ(Map.Definitions, (std::vector<CSourceDefinition>{{0x1000, 17}}));
 }
 
 TEST(CSourceDefinitions, HighCEmptyLibraryEvidenceAvoidsAnExtraRender) {
-  HighFunc Function = returnsConstant("two_renders", 0x1000, 7);
+  HighFunc Function = returnsConstant("one_render", 0x1000, 7);
   Function.Body[0].Addr = 0x1010;
   HighSourceMap Sources = {
       {0x1000, {0x1010, 2}, {}, HighSourceKind::Statement, StmtKind::Return}};
@@ -149,7 +154,7 @@ TEST(CSourceDefinitions, HighCEmptyLibraryEvidenceAvoidsAnExtraRender) {
     llvm::raw_string_ostream MappedOS(Mapped);
     ASSERT_TRUE(HighCEmitter().emit({Function}, MappedOS, Options, &Debug));
     EXPECT_EQ(Mapped, Ordinary);
-    EXPECT_EQ(Debug.Queries, 2 * QueriesPerRender);
+    EXPECT_EQ(Debug.Queries, QueriesPerRender);
     EXPECT_EQ(Names, OrdinaryNames);
     EXPECT_EQ(Map.Names, OrdinaryNames);
     ASSERT_EQ(Map.Definitions.size(), 1u);
@@ -183,7 +188,7 @@ TEST(CSourceDefinitions, HighCEmptyLibraryEvidenceAvoidsAnExtraRender) {
   EXPECT_FALSE(Map.Regions[0].Spans.empty());
 }
 
-TEST(CSourceDefinitions, HighCFailedCombinedRecordingRecoversIndependentMaps) {
+TEST(CSourceDefinitions, HighCNavigationDoesNotRepeatTheOrdinaryRender) {
   for (bool Throw : {false, true}) {
     SCOPED_TRACE(Throw);
     HighFunc Function = returnsConstant("fallback", 0x1000, 7);
@@ -207,7 +212,7 @@ TEST(CSourceDefinitions, HighCFailedCombinedRecordingRecoversIndependentMaps) {
     std::string Mapped;
     llvm::raw_string_ostream MappedOS(Mapped);
     ASSERT_TRUE(HighCEmitter().emit({Function}, MappedOS, Options, &Debug));
-    ASSERT_TRUE(Debug.Failed);
+    ASSERT_FALSE(Debug.Failed);
     EXPECT_EQ(Mapped, Ordinary);
     ASSERT_EQ(Map.Definitions.size(), 1u);
     EXPECT_EQ(Map.Definitions[0].Entry, std::optional<va_t>(0x1000));
@@ -218,6 +223,156 @@ TEST(CSourceDefinitions, HighCFailedCombinedRecordingRecoversIndependentMaps) {
     EXPECT_TRUE(llvm::StringRef(Mapped)
                     .slice(Map.Anchors[0].Span.Begin, Map.Anchors[0].Span.End)
                     .contains("return"));
+  }
+}
+
+TEST(CSourceDefinitions, OrdinaryRenderFailureIsNotRetriedAsMappingFailure) {
+  RecordingDebugContext Debug;
+  Debug.FailAt = 1;
+  Debug.Throw = true;
+  CSourceMap Map;
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.SourceMap = &Map;
+  std::string Text;
+  llvm::raw_string_ostream OS(Text);
+  EXPECT_THROW(HighCEmitter().emit({returnsConstant("failure", 0x1000, 7)}, OS,
+                                   Options, &Debug),
+               std::runtime_error);
+  EXPECT_EQ(Debug.Queries, 1u);
+  EXPECT_TRUE(Text.empty());
+  EXPECT_TRUE(Map.Definitions.empty());
+  EXPECT_TRUE(Map.Anchors.empty());
+}
+
+TEST(CSourceDefinitions, PositionsFollowNestedBuffersAndKeepUserTextPlain) {
+  auto Function = returnsConstant("buffered", 0x1000, 7);
+  Function.Body[0].Addr = 0x1010;
+  HighSourceMap Sources = {
+      {0x1000, {0x1010, 2}, {}, HighSourceKind::Statement, StmtKind::Return}};
+  CSourceMap Map;
+  Map.HighSources = &Sources;
+  CSourceRecorder Recorder(Map, {}, CSourceRecorder::Recording::Positions);
+  Recorder.prepareHighSources();
+  const auto Event = Recorder.statement(Function.Entry, Function.Body[0]);
+  ASSERT_TRUE(Event);
+  const std::string Prelude = "/* \x1eND:0:0B\x1f 文本 */\n";
+  const std::string BodyPrefix = "{\n  uint64_t local;\n";
+  const std::string Inner = "  return 7;\n";
+  const std::string Ordinary = Prelude + BodyPrefix + Inner + "}\n";
+  std::string Scratch;
+  EXPECT_EQ(Recorder.plain(Prelude, Scratch), Prelude);
+  EXPECT_EQ(
+      Recorder.expression(Function.Entry, *Function.Body[0].RetVal, Prelude),
+      Prelude);
+  Recorder.positionDefinition(Function.Entry, Prelude.size());
+  const auto Outer = Recorder.positionBuffer();
+  const auto Nested = Recorder.positionBuffer();
+  Recorder.positionStatement(*Event, 0, Inner.size());
+  // A suppressed statement must not map the adjacent printed statement.
+  Recorder.positionStatement(*Event, Inner.size(), Inner.size());
+  Recorder.appendPositionBuffer(Nested, Inner.size(), BodyPrefix.size());
+  Recorder.appendPositionBuffer(Outer, BodyPrefix.size() + Inner.size() + 2,
+                                Prelude.size());
+  EXPECT_TRUE(Map.Definitions.empty());
+  EXPECT_TRUE(Map.Anchors.empty());
+  ASSERT_TRUE(Recorder.finishPositions(Ordinary));
+  EXPECT_EQ(Map.Definitions,
+            (std::vector<CSourceDefinition>{{0x1000, Prelude.size()}}));
+  ASSERT_EQ(Map.Anchors.size(), 1u);
+  const auto &Anchor = Map.Anchors[0];
+  EXPECT_EQ(Anchor.Function, 0x1000u);
+  EXPECT_EQ(Anchor.Occurrences,
+            (std::vector<sigs::LibraryOccurrence>{{0x1010, 2}}));
+  EXPECT_EQ(llvm::StringRef(Ordinary).slice(Anchor.Span.Begin, Anchor.Span.End),
+            Inner);
+}
+
+TEST(CSourceDefinitions, InvalidPositionsCannotPublishPartialNavigation) {
+  for (unsigned Invalid = 0; Invalid < 6; ++Invalid) {
+    SCOPED_TRACE(Invalid);
+    auto Function = returnsConstant("invalid", 0x1000, 7);
+    Function.Body[0].Addr = 0x1010;
+    HighSourceMap Sources = {
+        {0x1000, {0x1010, 2}, {}, HighSourceKind::Statement, StmtKind::Return}};
+    CSourceMap Map;
+    Map.HighSources = &Sources;
+    CSourceRecorder Recorder(Map, {}, CSourceRecorder::Recording::Positions);
+    Recorder.prepareHighSources();
+    auto Event = Recorder.statement(Function.Entry, Function.Body[0]);
+    ASSERT_TRUE(Event);
+    Recorder.positionDefinition(Function.Entry, 0);
+    Recorder.positionStatement(*Event, 0, 4);
+    switch (Invalid) {
+    case 0:
+      Recorder.positionStatement(*Event, 4, 3);
+      break;
+    case 1:
+      Recorder.positionStatement(*Event + 1, 0, 4);
+      break;
+    case 2:
+      Recorder.appendPositionBuffer(2, 4, 0);
+      break;
+    case 3:
+      Recorder.appendPositionBuffer(0, 3, 0);
+      break;
+    case 4:
+      Recorder.appendPositionBuffer(0, 4, std::numeric_limits<uint64_t>::max());
+      break;
+    case 5:
+      Recorder.positionDefinition(Function.Entry, 5);
+      break;
+    }
+    EXPECT_FALSE(Recorder.finishPositions("text"));
+    EXPECT_TRUE(Map.Anchors.empty());
+    EXPECT_TRUE(Map.Definitions.empty());
+  }
+}
+
+TEST(CSourceDefinitions, BufferedNestedStatementsMatchIndependentMarkerProof) {
+  auto Function = returnsConstant("nested", 0x1000, 7);
+  Function.Body[0].Addr = 0x1010;
+  HighStmt Conditional;
+  Conditional.Kind = StmtKind::IfElse;
+  Conditional.Addr = 0x1005;
+  Conditional.Cond = HighExpr::makeConst(1, 1);
+  Conditional.Body = Function.Body;
+  Conditional.ElseBody = Function.Body;
+  Conditional.ElseBody[0].Addr = 0x1020;
+  Conditional.ElseBody[0].RetVal = HighExpr::makeConst(11, 8);
+  Function.Body = {Conditional};
+  auto Second = returnsConstant("second", 0x2000, 9);
+  Second.Body[0].Addr = 0x2010;
+  HighSourceMap Sources;
+  for (auto [Entry, Address, Kind] :
+       {std::tuple{0x1000, 0x1005, StmtKind::IfElse},
+        std::tuple{0x1000, 0x1010, StmtKind::Return},
+        std::tuple{0x1000, 0x1020, StmtKind::Return},
+        std::tuple{0x2000, 0x2010, StmtKind::Return}})
+    Sources.push_back(
+        {va_t(Entry), {va_t(Address), 0}, {}, HighSourceKind::Statement, Kind});
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  CSourceMap Direct, Marked;
+  Direct.HighSources = Marked.HighSources = &Sources;
+  sigs::LibraryRecognition Unrelated;
+  Unrelated.Function = 0x9000;
+  const std::vector<sigs::LibraryRecognition> Library = {Unrelated};
+  Marked.Recognitions = &Library;
+  std::string DirectText, MarkedText;
+  llvm::raw_string_ostream DirectOS(DirectText), MarkedOS(MarkedText);
+  Options.SourceMap = &Direct;
+  ASSERT_TRUE(HighCEmitter().emit({Function, Second}, DirectOS, Options));
+  Options.SourceMap = &Marked;
+  ASSERT_TRUE(HighCEmitter().emit({Function, Second}, MarkedOS, Options));
+  EXPECT_EQ(DirectText, MarkedText);
+  EXPECT_EQ(Direct.Definitions, Marked.Definitions);
+  ASSERT_EQ(Direct.Anchors.size(), 4u);
+  ASSERT_EQ(Direct.Anchors.size(), Marked.Anchors.size());
+  for (size_t I = 0; I < Direct.Anchors.size(); ++I) {
+    EXPECT_EQ(Direct.Anchors[I].Span, Marked.Anchors[I].Span);
+    EXPECT_EQ(Direct.Anchors[I].Function, Marked.Anchors[I].Function);
+    EXPECT_EQ(Direct.Anchors[I].Occurrences, Marked.Anchors[I].Occurrences);
   }
 }
 
