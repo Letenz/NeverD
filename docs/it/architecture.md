@@ -11,7 +11,9 @@ architettura interna.
 
 ## Confine della sostituzione di sorgenti e oggetti
 
-`SourcePatchCompiler` gestisce identità del compilatore e scelta dell’artefatto. `validateSourcePatchTarget` ammette i target comuni a sorgenti e IR fornito; la sola tripla non prova il supporto. `bindSourcePatch` autentica gli ingressi IR; `PatchObject` gestisce sezioni native, rilocazioni e prove degli intervalli FDE. `publishSourcePatch` prepara, verifica e pubblica la transazione esatta. `COFFSourceImage` gestisce nuovo spazio e tabelle di unwinding PE x64; le riscritture del codice sollevato mantengono prove EH originali separate. Vedere [le patch da sorgente](source-patching.md).
+`SourcePatchCompiler` gestisce identità del compilatore e scelta dell’artefatto. `validateSourcePatchTarget` ammette i target comuni a sorgenti e IR fornito; la sola tripla non prova il supporto. `bindSourcePatch` autentica gli ingressi IR; `PatchObject` gestisce sezioni native, rilocazioni e prove degli intervalli FDE. `publishSourcePatch` prepara, verifica e pubblica la transazione esatta. `COFFSourceImage` gestisce nuovo spazio e tabelle di unwinding PE x86/x64/ARM32/ARM64; le riscritture del codice sollevato mantengono prove EH originali separate. Vedere [le patch da sorgente](source-patching.md).
+
+`sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive.
 
 ## Confine del sistema
 

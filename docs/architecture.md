@@ -19,10 +19,15 @@ original binding validation and the exact `publishSourcePatch` transaction.
 Lifted rewrites keep their separate original EH evidence and provenance rules.
 See [source patches](source-patching.md).
 
-`COFFSourceImage` owns installation of compiler-produced PE x64 source output:
-separate code/state/metadata permissions, retained original runtime rows,
-new base relocations, exact compiler function/funclet ranges and bounded FH3
-graphs. It rereads installed bytes and permissions before publication. These
+`COFFSourceImage` owns installation of compiler-produced PE output on x86,
+x64, ARM32 and ARM64: separate code/state/metadata permissions, retained
+original runtime rows, new base relocations, exact compiler function/funclet
+ranges and bounded x64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
+evidence and native base-relocation fields. `MachOPatchObject` authenticates
+native linker atoms and unwind records; format-owned native installers register
+DWARF/compact records without inventing MC tokens. `sourcePatchTargetTriple`
+selects ARM mode, ELF float ABI and Mach-O CPU subtype from the loaded image. The installer rereads bytes and permissions before
+publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 

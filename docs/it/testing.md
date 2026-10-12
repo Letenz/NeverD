@@ -1802,9 +1802,11 @@ Il rifiuto controllato degli shift doppi indica il conteggio mascherato e la lar
 
 ## Patch da sorgenti e oggetti nativi
 
-`CPU` indica installazione ed esecuzione isolata delle funzioni; `REFUSED` indica un contratto di installazione mancante. ARM32 ELF richiede registrazione EHABI; Mach-O a 32 bit richiede contratti verificati di loader, frontend e unwinding; l’installazione PE da sorgente richiede attualmente x64.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+`sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive. I 143 controlli CPU richiedono sorgente／IR／oggetti, quattro architetture, tre formati, stato, argomenti floating point／di stack e due spostamenti di base non nulli. I vecchi contenitori Mach-O a 32 bit conservano vero codice compilato ma non certificano un OS.
 
 [Patch da sorgenti e oggetti nativi](source-patching.md)
 

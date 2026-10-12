@@ -397,6 +397,7 @@ enum class MachOCompactUnwindRecordOrigin : uint8_t {
   Original = 0,
   Generated = 1,
   GapBoundary = 2,
+  NativeObject = 3,
 };
 
 /// One normalized final-table recipe.  Function offsets, personality slots,
@@ -758,6 +759,16 @@ llvm::Expected<MachOCompactUnwindInstallPlan> prepareMachOCompactUnwindInstall(
 llvm::Expected<MachOCompactUnwindInstallReceipt>
 applyMachOCompactUnwindInstall(std::vector<uint8_t> &Binary,
                                const MachOCompactUnwindInstallPlan &Plan);
+
+/// A native producer range has no MC range token. The object reader proves
+/// its function symbol, section extent and exact compact record before use.
+struct NativeMachOCompactRange {
+  uint64_t BeginVA = 0, EndVA = 0;
+  uint32_t Encoding = 0;
+};
+llvm::Error
+installNativeMachOCompactUnwind(std::vector<uint8_t> &Binary, Arch Architecture,
+                                llvm::ArrayRef<NativeMachOCompactRange> Ranges);
 
 } // namespace neverd
 

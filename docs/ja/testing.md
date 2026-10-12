@@ -1706,9 +1706,11 @@ MSVC の単体テストは `/bigobj` を指定し、GoogleTest と LLVM のテ�
 
 ## ソースとネイティブオブジェクトのパッチ
 
-`CPU` はソースのインストールと隔離した関数実行、`REFUSED` はインストール契約不足による明示的拒否を示します。ARM32 ELF には EHABI 登録、32 ビット Mach-O には検証済みのローダー・フロントエンド・アンワインド契約が必要です。PE のソースインストールは現在 x64 に限られます。
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。 143 件の CPU テストはソース／IR／オブジェクト、四つのアーキテクチャ、三形式、状態、浮動小数点・スタック引数、二つの非ゼロ再ベースを要求します。旧 32 ビット Mach-O コンテナは実際のコンパイラコードを保持しますが OS 検証ではありません。
 
 [ソースとネイティブオブジェクトのパッチ](source-patching.md)
 

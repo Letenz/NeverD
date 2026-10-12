@@ -1652,9 +1652,11 @@ MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實�
 
 ## 原始碼與原生物件 patch
 
-`CPU` 表示原始碼安裝與隔離函式執行；`REFUSED` 表示明確缺少安裝契約。ARM32 ELF 需要 EHABI 註冊；32 位 Mach-O 需要經驗證的載入器、前端與展開契約；PE 原始碼安裝目前要求 x64。
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+目前矩陣要求 143 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
 
 [原始碼與原生物件 patch](source-patching.md)
 

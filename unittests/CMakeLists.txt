@@ -255,6 +255,10 @@ add_subdirectory(translate)
 if(NEVERD_ENABLE_SEMANTIC_TESTS)
   add_subdirectory(semantic)
   if(TARGET neverd_shared)
+    add_neverd_tool(NeverDSourcePatchLegacyFixture
+      SourcePatchLegacyMachOFixture.cpp
+      LINK_COMPONENTS CodeGen
+      LINK_LIBS LLVMIRReader)
     add_neverd_unittest(NeverDSourcePatchMatrixTests
       SourcePatchMatrixTests.cpp
       LINK_COMPONENTS Loader
@@ -263,7 +267,9 @@ if(NEVERD_ENABLE_SEMANTIC_TESTS)
     target_include_directories(NeverDSourcePatchMatrixTests PRIVATE
       ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
     target_compile_definitions(NeverDSourcePatchMatrixTests PRIVATE
-      NEVERD_TEST_CLANG="${NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE}")
+      NEVERD_TEST_CLANG="${NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE}"
+      NEVERD_TEST_LEGACY_FIXTURE="$<TARGET_FILE:NeverDSourcePatchLegacyFixture>")
+    add_dependencies(NeverDSourcePatchMatrixTests NeverDSourcePatchLegacyFixture)
   endif()
 endif()
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)

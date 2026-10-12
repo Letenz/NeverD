@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
+<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
 
 [← Documentation Index](README.md)
 
@@ -50,19 +50,19 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 通常モード | LLVM IR | ELF x64 C、Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 通常モード | ネイティブオブジェクト | ELF x64 C |
 
-この表は検証した設定を示し、すべてのコンパイラ版やオプションの互換性を保証しません。`dyncode` と NeverC C++ は未対応です。GCC は LLVM IR を生成できません。ネイティブ COFF/Mach-O オブジェクトは未対応で、オブジェクトのインストールには ELF x64 が必要です。未知の再配置、TLS、コンストラクタ、LTO、common/IFUNC シンボル、未解決のインポートは明確に失敗します。JSON 記録にはコンパイラ、引数、束縛、インストール先を含み、ネイティブオブジェクトには SHA-256 も記録します。
+上表は検証済み OS 実行構成です。すべてのコンパイラ版やオプションを保証するものではありません。ELF、PE、Mach-O のネイティブインストーラは四つのアーキテクチャを受け付けます。`dyncode` と NeverC C++ は未対応です。GCC は一致する ELF ドライバが必要で、LLVM IR は生成できません。未知の再配置、TLS、コンストラクタ、LTO、common/IFUNC シンボル、未解決インポートは明示的に失敗します。JSON 証跡はコンパイラ、引数、バインド、設置アドレスを記録し、ネイティブオブジェクトには SHA-256 も記録します。
 
-独立した CPU マトリクスは 4 アーキテクチャ（`x86`、`x64`、`ARM32`、`ARM64`）と 3 形式（`ELF`、`PE`、`Mach-O`）のソースインストールまたは明示的な拒否を確認します。隔離した CPU 実行だけでは OS ローダー、C++ アンワインダー、任意の ABI を検証できません。それらには上表の OS 実行プロファイルを参照してください。
+CPU 行列は十二の組み合わせすべてでソース、外部 IR、ネイティブオブジェクトの設置成功を要求します。ARMv7k watchOS と ARMv7 iOS、可変／読み取り専用状態、元の浮動小数点・スタック引数バインド、ロードアドレス変更後の入口実行も検証します。CPU 実行は OS ローダー、C++ アンワインダ、任意の ABI を保証しません。上表の OS 構成を参照してください。
 
 | Format | `x86` | `x64` | `ARM32` | `ARM64` |
 |---|---|---|---|---|
-| `ELF` | `CPU` | `CPU` | `REFUSED` | `CPU` |
-| `PE` | `REFUSED` | `CPU` | `REFUSED` | `REFUSED` |
-| `Mach-O` | `REFUSED` | `CPU` | `REFUSED` | `CPU` |
+| `ELF` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `PE` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `Mach-O` | `CPU` | `CPU` | `CPU` | `CPU` |
 
-`CPU` はソースのインストールと隔離した関数実行、`REFUSED` はインストール契約不足による明示的拒否を示します。ARM32 ELF には EHABI 登録、32 ビット Mach-O には検証済みのローダー・フロントエンド・アンワインド契約が必要です。PE のソースインストールは現在 x64 に限られます。
+`CPU` はソース／IR／オブジェクトの設置、再ロード、正確な関数実行を意味します。ARM ELF はイメージから EABI5、ARM/Thumb 状態、浮動小数点 ABI を選択し、完全な整列済み `EHABI` 索引を登録します。PE は x64/ARM 実行時行と `HIGHLOW`/`DIR64`/`MOV32T` ベース再配置を保持し、x86 はコンパイラ登録コードを使います。Mach-O は CPU サブタイプに従い watchOS DWARF と iOS `SjLj` を区別します。ソースの ARM/Thumb 入口は相対分岐で、再ベースに耐えます。
 
-CPU マトリクスは独立した算術、分岐、補助関数呼出を使います。その結果は ELF x86/ARM64 のデータ参照や ARM64 C++ のインポートを検証しません。追加の実行検証では、未対応の再配置契約によりインストールが明示的に拒否されました。
+ネイティブオブジェクトは自身の境界付き関数シンボル、補助／セクション定義、アンワインド記録で範囲を検証します。MC 所有者 ID の捏造や IR 再コンパイルは行いません。COFF には正確な補助サイズまたは単一関数セクション（`-ffunction-sections`）が必要です。watchOS アダプタは実際の記録を得るため葉関数フレームを保持します。ネイティブ COFF/Mach-O 言語ハンドラは検証済みオブジェクト構成外です。C++ 例外には検証済み IR 経路を使ってください。固定 exidx レジストリを持つ静的 ARM アンワインダ、未登録 Mach-O 絶対ポインタ、未対応 RELRO は拒否します。
 
 <!-- i18n-section: references -->
 ## 元の参照と記憶領域

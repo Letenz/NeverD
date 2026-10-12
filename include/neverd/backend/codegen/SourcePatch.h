@@ -26,6 +26,10 @@ llvm::Error validateSourcePatchTarget(Arch Architecture, BinaryFormat Format);
 
 struct BinaryImage;
 
+/// Select the frontend ABI from loader-owned image evidence. The same triple
+/// must be used by the frontend, supplied-IR validation and final codegen.
+llvm::Expected<std::string> sourcePatchTargetTriple(const BinaryImage &Image);
+
 struct SourcePatchMapping {
   /// An empty name selects the sole externally visible definition.
   std::string Symbol;

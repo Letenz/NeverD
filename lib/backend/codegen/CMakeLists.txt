@@ -1,6 +1,7 @@
 add_neverd_component_library(NeverDCodeGen
   COFF/COFFExceptionPatch.cpp
   COFF/COFFSourceImage.cpp
+  COFF/COFFPatchObject.cpp
   COFF/COFFFH4Encoding.cpp
   COFF/COFFInplace.cpp
   COFF/COFFPatch.cpp
@@ -51,6 +52,7 @@ add_neverd_component_library(NeverDCodeGen
   MachO/MachOExceptionPatch.cpp
   MachO/MachOInplace.cpp
   MachO/MachOPatch.cpp
+  MachO/MachOPatchObject.cpp
   MachO/MachOReloc.cpp
   MachO/MachOSigner.cpp
   MachO/MachOSignaturePolicy.cpp

@@ -151,6 +151,7 @@ struct CompiledFixupReference {
   std::string SubtractSymbol;
   int64_t Addend = 0;
   uint32_t Specifier = 0;
+  std::string SpecifierName;
   bool IsPCRel = false;
   bool IsResolved = false;
   unsigned BitWidth = 0;
@@ -218,6 +219,9 @@ struct CompiledImage {
   /// input receives this from the lifter; explicit replacement input receives
   /// it from bindSourcePatch. Patchers join by exact SourceFunctionOwners.
   std::map<std::string, uint64_t> SourceFunctionOriginalVAs;
+  /// Compiler-selected instruction state of replacement owners. New helpers
+  /// do not inherit a state from an original image address.
+  std::map<uint64_t, InstructionMode> ReplacementFunctionModes;
   bool FunctionRangesValid = true;
   bool WinEHSemanticsValid = true;
   std::vector<std::string> Unresolved; ///< Symbols left unresolved.
@@ -465,7 +469,8 @@ public:
       llvm::ArrayRef<llvm::mc_rewrite::RewriteSourceFunctionOwner>
           SourceFunctionOwners,
       const std::map<std::string, uint64_t> &SourceFunctionOriginalVAs = {},
-      const BinaryImage *SourceImage = nullptr);
+      const BinaryImage *SourceImage = nullptr,
+      const std::map<uint64_t, InstructionMode> *ReplacementModes = nullptr);
 
   /// Common file I/O skeleton shared by all patchers: reads the input
   /// binary, calls \p PatchFn to modify the in-memory buffer and fill
