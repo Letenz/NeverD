@@ -1591,6 +1591,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     if (!ProjectionOnly || &Function == ProjectionOnly) {
       llvmc::factorCommonBranchTests(Function);
       llvmc::factorLoopPhiExpressions(Function);
+      llvmc::distributeReturnEdges(Function);
     }
   llvm::LoopAnalysisManager Loops;
   llvm::FunctionAnalysisManager Functions;

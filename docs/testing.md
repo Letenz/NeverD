@@ -1620,6 +1620,13 @@ that same slot, in either operand order.
 strings, generic builtins compiled for a different source ISA, and dead image
 address calculations. The latter must retain volatile/atomic loads and
 observable calls while leaving the input LLVM module unchanged.
+Return-only join tests compare 6144 full-status cases at each O0/O2 level against
+independently compiled LLVM, checking call counts and volatile output effects.
+They also require direct returns in the C and unchanged input IR. Effectful
+joins, exception personalities and address-taken return blocks are refused.
+Concise GEP tests exercise 4096 address calculations per width and optimization
+level, including negative narrow indices, scaled wide indices and wraparound
+in both 32- and 64-bit address domains, with undefined-behavior traps.
 
 ## Interpreter recovery checks
 

@@ -3174,18 +3174,21 @@ std::string LLVMCWriter::gepExpr(const llvm::GEPOperator &GEP) {
       Global && !Global->getValueType()->isArrayTy())
     Base = "&" + Base;
   std::string Sum = "(" + Carrier + ")(uintptr_t)(" + Base + ")";
+  const std::string Suffix = Bits == 32 ? "U" : "ULL";
   if (!Offset.isZero())
-    Sum += " + (" + Carrier + ")0x" + llvm::utohexstr(Offset.getZExtValue()) +
-           "ULL";
+    Sum += " + 0x" + llvm::utohexstr(Offset.getZExtValue()) + Suffix;
   for (const auto &[Index, Scale] : Variables) {
     // GEP indices are signed at their original width, then sign extended or
     // truncated to the pointer index width. Unsigned carrier arithmetic keeps
     // address/offset multiplication wrapping without C signed-overflow UB.
     Sum += " + (" + Carrier + ")(" +
-           signedIntegerOperand(Index, valueStr(Index)) + ") * (" + Carrier +
-           ")0x" + llvm::utohexstr(Scale.getZExtValue()) + "ULL";
+           signedIntegerOperand(Index, valueStr(Index)) + ")";
+    if (!Scale.isOne())
+      Sum += " * 0x" + llvm::utohexstr(Scale.getZExtValue()) + Suffix;
   }
-  return "(void*)(uintptr_t)(" + Carrier + ")(" + Sum + ")";
+  // Every term uses the unsigned address carrier. The sum already wraps at
+  // that width; another cast around the complete expression adds no semantics.
+  return "(void*)(uintptr_t)(" + Sum + ")";
 }
 
 std::string LLVMCWriter::aggregateMemberPath(llvm::Type *Ty,

@@ -6,6 +6,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../../lib/backend/c/LLVMC/LLVMCFrameLayout.h"
+#include "../../../lib/backend/c/pass/LLVMC/LLVMCCommonBranches.h"
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
@@ -3179,6 +3180,162 @@ int main(void) {
 )c";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, ReturnOnlyJoinsKeepEffectsAndFullStatusOnEachEdge) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+target datalayout = "e-p:64:64"
+declare i64 @observe_status(i64, ptr)
+define i64 @before(i64 %key, ptr %out) {
+entry:
+  %first = call i64 @observe_status(i64 %key, ptr %out)
+  %failed = icmp ne i64 %first, 0
+  br i1 %failed, label %common_return, label %next
+next:
+  %key2 = add i64 %key, 37
+  %second = call i64 @observe_status(i64 %key2, ptr %out)
+  %failed2 = icmp ne i64 %second, 0
+  br i1 %failed2, label %common_return, label %success
+success:
+  %p = getelementptr i64, ptr %out, i64 1
+  store volatile i64 123, ptr %p, align 8
+  br label %common_return
+common_return:
+  %joined_status = phi i64 [ %first, %entry ], [ %second, %next ], [ 0, %success ]
+  ret i64 %joined_status
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  std::string Reference;
+  llvm::raw_string_ostream ReferenceOS(Reference);
+  Module->print(ReferenceOS, nullptr);
+  Module->getFunction("before")->setName("after");
+  std::string Original;
+  llvm::raw_string_ostream OriginalOS(Original);
+  Module->print(OriginalOS, nullptr);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  EXPECT_EQ(Source.find("common_return"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("joined_status"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("goto L_return_edge"), std::string::npos) << Source;
+  std::string Unchanged;
+  llvm::raw_string_ostream UnchangedOS(Unchanged);
+  Module->print(UnchangedOS, nullptr);
+  EXPECT_EQ(Original, Unchanged);
+  Source += R"c(
+extern uint64_t before(uint64_t,void*);
+static unsigned mode,calls;
+uint64_t observe_status(uint64_t key,void *out) {
+  ++calls;uint64_t *p=out;p[0]=p[0]*31+key;
+  if(calls==mode) return key|UINT64_C(0xfedc000000000001);
+  return 0;
+}
+int main(void) {
+  for(mode=0;mode<3;mode++) for(unsigned k=0;k<2048;k++) {
+    uint64_t a[2]={k*13,0xabc},b[2]={k*13,0xabc};
+    calls=0;uint64_t x=before(k,a);unsigned n=calls;
+    calls=0;uint64_t y=after(k,b);
+    if(x!=y || calls!=n || a[0]!=b[0] || a[1]!=b[1]) return 1;
+    if(calls!=(mode==1 ? 1:2) || (mode==0 && b[1]!=123) || (mode!=0 && b[1]!=0xabc)) return 2;
+  }
+  return 0;
+}
+)c";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, Reference, true);
+}
+
+TEST(LLVMCValues, ReturnDistributionRetainsEffectsAndProtectedControlFlow) {
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(R"ir(
+declare i32 @personality(...)
+define i64 @work(i1 %choose, ptr %p) {
+entry:
+  br i1 %choose, label %left, label %right
+left:
+  br label %done
+right:
+  br label %done
+done:
+  %value = phi i64 [ 11, %left ], [ 17, %right ]
+  ret i64 %value
+}
+)ir",
+                                            Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    auto *F = Module->getFunction("work");
+    auto &Done = F->back();
+    llvm::IRBuilder<> B(Done.getTerminator());
+    if (Case == 0)
+      B.CreateStore(B.getInt64(31), F->getArg(1), true);
+    else if (Case == 1) {
+      auto *Load = B.CreateLoad(B.getInt64Ty(), F->getArg(1), true);
+      Done.getTerminator()->setOperand(0, Load);
+    } else if (Case == 2)
+      F->setPersonalityFn(Module->getFunction("personality"));
+    else
+      new llvm::GlobalVariable(
+          *Module, B.getPtrTy(), true, llvm::GlobalValue::ExternalLinkage,
+          llvm::BlockAddress::get(F, &Done), "return_address");
+    ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
+    std::string Before;
+    llvm::raw_string_ostream BeforeOS(Before);
+    Module->print(BeforeOS, nullptr);
+    EXPECT_FALSE(neverd::llvmc::distributeReturnEdges(*F));
+    std::string After;
+    llvm::raw_string_ostream AfterOS(After);
+    Module->print(AfterOS, nullptr);
+    EXPECT_EQ(Before, After);
+  }
+}
+
+TEST(LLVMCValues, ConciseGEPsKeepSignedIndicesAndAddressWidthWrapping) {
+  for (unsigned Bits : {32u, 64u}) {
+    llvm::LLVMContext Context;
+    llvm::SMDiagnostic Error;
+    auto Module = llvm::parseAssemblyString(R"ir(
+define i64 @address_bits(ptr %base, i8 %small, i64 %wide) {
+  %a = getelementptr [16 x i32], ptr %base, i64 %wide, i8 %small
+  %b = getelementptr i8, ptr %a, i64 -19
+  %bits = ptrtoint ptr %b to i64
+  ret i64 %bits
+}
+)ir",
+                                            Error, Context);
+    ASSERT_TRUE(Module) << Error.getMessage().str();
+    Module->setDataLayout(Bits == 32 ? "e-p:32:32" : "e-p:64:64");
+    neverd::CEmitterOptions Options;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+    EXPECT_EQ(Source.find("(uint" + std::to_string(Bits) + "_t)0x"),
+              std::string::npos);
+    Source += "\n#define ADDRESS_BITS " + std::to_string(Bits) + "\n";
+    Source += R"c(
+int main(void) {
+  for(unsigned k=0;k<4096;k++) {
+    uint64_t base=UINT64_C(0xfffffffffffeff00)+(uint64_t)k*77;
+    uint64_t wide=UINT64_C(0xabcdef0012345678)+(uint64_t)k*123;
+    uint8_t small=(uint8_t)k;
+    uint64_t expected=base+wide*64+(uint64_t)(int64_t)(int8_t)small*4-19;
+    if(ADDRESS_BITS==32) expected=(uint32_t)expected;
+    if(address_bits((void*)(uintptr_t)base,small,wide)!=expected) return 1;
+  }
+  return 0;
+}
+)c";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      compileAndRun(Source, Level, {}, true);
+  }
 }
 
 TEST(LLVMCValues, FrameBaseOffsetsUseThePointerIndexWidth) {

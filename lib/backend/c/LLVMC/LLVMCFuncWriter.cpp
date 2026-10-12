@@ -8030,6 +8030,24 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
   }
   if (CurTo)
     writePhiCopies(CurFrom, CurTo, Indent);
+  if (EmitGoto && CurTo && CurTo->size() == 1 &&
+      CurTo->getSinglePredecessor() == CurFrom && !CurTo->hasAddressTaken() &&
+      !isReservedEHNormalTarget(CurTo)) {
+    const auto &Function = *CurTo->getParent();
+    if (auto *Return = llvm::dyn_cast<llvm::ReturnInst>(CurTo->getTerminator());
+        Return && !Function.hasPersonalityFn() &&
+        !Function.getMetadata(windows_eh_md::FunctionAttachment) &&
+        !Function.getMetadata(windows_eh_md::NativeAttachment) &&
+        !Function.getParent()->getNamedMetadata(windows_eh_md::FunctionTable)) {
+      // This edge owns an effect-free return block. PHI selection happened in
+      // the source clone; print the same return here without a status local or
+      // a jump to a one-instruction label. Cleanup/EH continuations stay whole.
+      writeInstruction(*const_cast<llvm::ReturnInst *>(Return), Indent);
+      InlinedFallthroughBlocks.insert(CurTo);
+      ReferencedBlocks.erase(CurTo);
+      return;
+    }
+  }
   if (const llvm::BasicBlock *Tail = phiFedCallTail(CurTo);
       Tail && !isReservedEHNormalTarget(Tail)) {
     const llvm::CallInst *Call = nullptr;

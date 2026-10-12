@@ -1247,6 +1247,15 @@ promotion when an incomplete native exception contract excludes optimization.
 The C emitter clones verified LLVM IR and removes dead computations before
 rendering, including in `--no-opt` mode. This source normalization preserves
 observable calls and ordered memory accesses without modifying the cached IR.
+Return-only joins select their PHI operands on the original incoming edges in
+that clone. The writer can then print an edge-owned `return` directly, avoiding
+a shared status temporary and jump label. This bounded normalization duplicates
+no call, load, store or cleanup; address-taken blocks, unsupported incoming
+terminators and native exception/control contracts retain their original CFG.
+GEP rendering retains signed index extension and unsigned address-width
+arithmetic. Width-matched unsigned constants and removal of identity casts or
+unit scales shorten the expression without substituting C array arithmetic or
+assuming that a pointer is in bounds.
 Generic LLVM arithmetic and control builtins do not request target ISA headers.
 Both C routes reject string-literal replacement when loader fixup provenance
 overlaps any candidate byte, including its terminator.
