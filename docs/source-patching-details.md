@@ -420,3 +420,5 @@ readonly state, original floating-point/stack-argument bindings and entry
 execution at two nonzero base slides. Legacy Mach-O containers use actual
 compiler instructions and relocated unwind metadata; these CPU checks do not
 certify unavailable legacy OS runtimes or additional C++ unwinders.
+
+GCC 13 C object replacements on ELF x86, ARM32 and ARM64 were loaded and executed through Linux QEMU user mode. ELF32 GNU property alignment and ARM driver instruction-state selection have dedicated corrections; x64 GCC/G++ retains the separately verified seven C++ cases.

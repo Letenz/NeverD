@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 `CPU` означает установку исходников／IR／объекта, повторную загрузку и точное исполнение функции. ARM ELF определяет EABI5, режим ARM/Thumb и ABI плавающей точки по образу и регистрирует полный отсортированный индекс `EHABI`. PE сохраняет строки x64/ARM и базовые релокации `HIGHLOW`/`DIR64`/`MOV32T`; x86 использует код регистрации компилятора. Mach-O различает watchOS DWARF и iOS `SjLj` по подтипу CPU. Входные переходы ARM/Thumb относительные и выдерживают смену базы.
 
 Нативные объекты используют собственные ограниченные символы функций, вспомогательные／секционные определения и записи раскрутки без вымышленных ID владельцев MC или перекомпиляции IR. COFF требует точных вспомогательных размеров или секций с одной функцией (`-ffunction-sections`). Адаптер watchOS сохраняет кадры листовых функций ради реальных записей. Нативные языковые обработчики COFF/Mach-O не входят в проверенный объектный профиль; для исключений C++ нужен проверенный путь IR. Статические ARM-механизмы с фиксированным реестром exidx, незарегистрированные абсолютные указатели Mach-O и неподдерживаемая память RELRO отклоняются.
+
+Объекты C от GCC также установлены и исполнены на ELF x86, ARM32 и ARM64 через Linux QEMU user mode. Адаптер выбирает ARM/Thumb по образу; записи GNU property выравниваются по ширине указателя ELF.
 
 <!-- i18n-section: references -->
 ## Исходные ссылки и память

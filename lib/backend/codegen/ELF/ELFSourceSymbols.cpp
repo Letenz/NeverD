@@ -12,6 +12,7 @@
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <set>
 
@@ -21,8 +22,11 @@ namespace neverd {
 // enable CET for a previously non-CET executable. Retain its bytes without
 // changing the original image's property note. IBT images need a different
 // entry trampoline that preserves ENDBR, and are refused below.
-llvm::Expected<uint32_t>
-readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
+llvm::Expected<uint32_t> readELFPatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes,
+                                                  uint8_t PointerWidth) {
+  if (PointerWidth != 4 && PointerWidth != 8)
+    return llvm::createStringError(llvm::errc::not_supported,
+                                   "invalid GNU property pointer width");
   if (Bytes.size() < 16 || readLE<uint32_t>(Bytes.data()) != 4 ||
       readLE<uint32_t>(Bytes.data() + 8) != llvm::ELF::NT_GNU_PROPERTY_TYPE_0 ||
       std::memcmp(Bytes.data() + 12, "GNU\0", 4) != 0 ||
@@ -47,13 +51,50 @@ readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
       return llvm::createStringError(
           llvm::errc::not_supported,
           "GNU property requires an unsupported CPU/runtime feature");
-    Offset += 16;
+    Offset = llvm::alignTo(Offset + 8 + Size, PointerWidth);
     if (Offset > Bytes.size())
       return llvm::createStringError(llvm::errc::not_supported,
                                      "invalid GNU property alignment");
   }
   return Features;
 }
+
+llvm::Expected<uint32_t>
+readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
+  return readELFPatchPropertyNote(Bytes, 8);
+}
+
+namespace {
+template <typename ELF>
+llvm::Error validateX86SourceProperties(const BinaryImage &Original) {
+  auto OriginalELF = llvm::object::ELFFile<ELF>::create(
+      llvm::StringRef(reinterpret_cast<const char *>(Original.Raw.data()),
+                      Original.Raw.size()));
+  if (!OriginalELF)
+    return OriginalELF.takeError();
+  auto OriginalSections = OriginalELF->sections();
+  if (!OriginalSections)
+    return OriginalSections.takeError();
+  for (const auto &Section : *OriginalSections) {
+    auto Name = OriginalELF->getSectionName(Section);
+    if (!Name)
+      return Name.takeError();
+    if (*Name != ".note.gnu.property")
+      continue;
+    auto Note = OriginalELF->getSectionContents(Section);
+    if (!Note)
+      return Note.takeError();
+    auto Features = readELFPatchPropertyNote(*Note, sizeof(typename ELF::Addr));
+    if (!Features)
+      return Features.takeError();
+    if (*Features & llvm::ELF::GNU_PROPERTY_X86_FEATURE_1_IBT)
+      return llvm::createStringError(
+          llvm::errc::not_supported,
+          "IBT original entries require an ENDBR-preserving trampoline");
+  }
+  return llvm::Error::success();
+}
+} // namespace
 
 llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
   if (Original.Format != BinaryFormat::ELF)
@@ -76,33 +117,10 @@ llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
               "replacement requires dynamic PT_ARM_EXIDX discovery");
     return llvm::Error::success();
   }
-  if (Original.Arch != Arch::X64)
-    return llvm::Error::success();
-  auto OriginalELF = llvm::object::ELFFile<llvm::object::ELF64LE>::create(
-      llvm::StringRef(reinterpret_cast<const char *>(Original.Raw.data()),
-                      Original.Raw.size()));
-  if (!OriginalELF)
-    return OriginalELF.takeError();
-  auto OriginalSections = OriginalELF->sections();
-  if (!OriginalSections)
-    return OriginalSections.takeError();
-  for (const auto &Section : *OriginalSections) {
-    auto Name = OriginalELF->getSectionName(Section);
-    if (!Name)
-      return Name.takeError();
-    if (*Name != ".note.gnu.property")
-      continue;
-    auto Note = OriginalELF->getSectionContents(Section);
-    if (!Note)
-      return Note.takeError();
-    auto Features = readELFX64PatchPropertyNote(*Note);
-    if (!Features)
-      return Features.takeError();
-    if (*Features & llvm::ELF::GNU_PROPERTY_X86_FEATURE_1_IBT)
-      return llvm::createStringError(
-          llvm::errc::not_supported,
-          "IBT original entries require an ENDBR-preserving trampoline");
-  }
+  if (Original.Arch == Arch::X86)
+    return validateX86SourceProperties<llvm::object::ELF32LE>(Original);
+  if (Original.Arch == Arch::X64)
+    return validateX86SourceProperties<llvm::object::ELF64LE>(Original);
   return llvm::Error::success();
 }
 

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ CPU 행렬은 열두 조합 모두에서 소스, 외부 IR, 네이티브 객체 
 `CPU`는 소스／IR／객체 설치, 재로드, 정확한 함수 실행을 뜻합니다. ARM ELF는 이미지에서 EABI5, ARM/Thumb 상태, 부동소수점 ABI를 선택하고 완전히 정렬된 `EHABI` 색인을 등록합니다. PE는 x64/ARM 런타임 행과 `HIGHLOW`/`DIR64`/`MOV32T` 기본 주소 재배치를 유지하며 x86은 컴파일러 등록 코드를 사용합니다. Mach-O는 CPU 하위 유형에 따라 watchOS DWARF와 iOS `SjLj`를 구분합니다. 소스 ARM/Thumb 진입점은 상대 분기로 주소 변경을 견딥니다.
 
 네이티브 객체는 자체의 경계가 있는 함수 심볼, 보조／섹션 정의, 언와인드 기록으로 범위를 확인합니다. MC 소유자 ID를 만들거나 IR을 재컴파일하지 않습니다. COFF에는 정확한 보조 길이 또는 단일 함수 섹션(`-ffunction-sections`)이 필요합니다. watchOS 어댑터는 실제 기록을 얻도록 리프 함수 프레임을 유지합니다. 네이티브 COFF/Mach-O 언어 처리기는 검증된 객체 구성에 포함되지 않으며 C++ 예외에는 검증된 IR 경로를 사용해야 합니다. 고정 exidx 등록부를 가진 정적 ARM 언와인더, 등록되지 않은 Mach-O 절대 포인터와 미지원 RELRO 저장소는 거부합니다.
+
+GCC C 객체도 ELF x86, ARM32, ARM64에 설치하고 Linux QEMU user mode에서 실행했습니다. 어댑터는 이미지에서 ARM/Thumb을 선택하며 GNU property는 ELF 포인터 너비로 정렬합니다.
 
 <!-- i18n-section: references -->
 ## 원래 참조 및 저장 공간
