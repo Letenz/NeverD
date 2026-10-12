@@ -16,6 +16,24 @@ namespace diagnostic {
   inline constexpr char Name[] = Text;
 #include "ExecutionDiagnostics.def"
 #undef NEVERD_EXECUTION_DIAGNOSTIC
+/// Retain the public unsupported-error classification without changing its
+/// object layout for clients compiled against the public header.
+class InstructionRejectionError
+    : public llvm::ErrorInfo<InstructionRejectionError,
+                             UnsupportedExecutionError> {
+public:
+  static char ID;
+  explicit InstructionRejectionError(llvm::StringRef Reason)
+      : Reason(Reason.str()) {}
+  void log(llvm::raw_ostream &OS) const override {
+    OS << (Reason.empty() ? llvm::StringRef(Instruction)
+                          : llvm::StringRef(Reason));
+  }
+
+private:
+  std::string Reason;
+};
+
 inline llvm::Error error(const char *Text) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(), Text);
 }

@@ -447,6 +447,11 @@ struct MedFunc {
   /// from the caller-side struct-return remodel (modelCallStructReturn).
   std::vector<MedReturnReg> MultiReturn;
 
+  /// The function returns the whole vector its FP return register holds (a
+  /// `__m128`, a NEON vector, x86-64's `{float, float}` packed in one
+  /// register), typed Float(16): its bits, not a scalar float.
+  bool ReturnsVectorRegister = false;
+
   std::vector<MedTypedParam> TypedParams;
   /// The width (4 or 8 bytes) of the scalar each floating-point argument
   /// register parameter carries in its low lane, by register offset, when
@@ -503,6 +508,21 @@ struct MedFunc {
   /// carry its named parameters, the rest only what each caller passes.  -1
   /// where unknown.
   int VariadicFirstRegister = -1;
+
+  /// The position of the first vector argument register a variadic
+  /// function's register save area spills (System V x86-64, from va_start's
+  /// fp_offset): from it on, the vector registers carry the floating
+  /// arguments each caller passes, every one promoted to double.  -1 where
+  /// the convention saves none.
+  int VariadicFirstVectorRegister = -1;
+
+  /// Whether this variadic function's register save area holds the vector
+  /// argument registers (System V x86-64): it then takes every integer and
+  /// vector argument register as a parameter, in that order, before the
+  /// overflow its callers pass on the stack.
+  bool takesVectorArgumentRegisters() const {
+    return IsVariadic && VariadicFirstVectorRegister >= 0;
+  }
 
   /// The registers this function takes its integer register arguments in,
   /// in argument order, where they are not its convention's

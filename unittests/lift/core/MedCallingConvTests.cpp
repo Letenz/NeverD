@@ -557,6 +557,56 @@ TEST(MedCallingConvFPStack, ScalarFlagComparisonRetainsBothValuesAndMxcsr) {
     }
 }
 
+TEST(MedCallingConvFPStack,
+     ScalarMaskComparisonRetainsPredicateBothValuesAndMxcsr) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control : {2U, 3U, 6U, 7U})
+      for (unsigned Immediate : {8U, 16U, 0xe8U, 255U}) {
+        const auto &TRI = getTargetRegInfo(Arch::X64);
+        const auto Layout = TRI.integerArgumentLayout(Format);
+        MedFunc F;
+        F.Blocks.resize(1);
+        auto &B = F.Blocks[0];
+        const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+        addLiveIn(B, SP);
+        const auto Address = temp(2, 0, 8, Arch::X64);
+        B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                               MedVar::makeConst(Layout.EntryStackBase, 8)));
+        const unsigned Bytes = x86FPMaskCompareElementBytes(Control);
+        MedOp Read;
+        Read.Opcode = NdOp::INTRINSIC;
+        Read.Output = temp(3, 0, Bytes + 4, Arch::X64);
+        Read.addInput(MedVar::makeConst(
+            unsigned(Intrinsic::X86FPMaskCompareMemoryState), 2));
+        Read.addInput(Address);
+        Read.addInput(MedVar::makeConst(Control, 1));
+        Read.addInput(MedVar::makeConst(Immediate, 1));
+        const auto Left = MedVar::makeConst(0, Bytes),
+                   State = MedVar::makeConst(0x1fa5, 4);
+        Read.addInput(Left);
+        Read.addInput(State);
+        const auto Descriptor = med_calling_conv_detail::stackMemoryRead(Read);
+        ASSERT_TRUE(Descriptor);
+        EXPECT_TRUE(Descriptor->ScalarFP);
+        EXPECT_EQ(Descriptor->Bytes, Bytes);
+        B.Ops.push_back(Read);
+        med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+        const auto &Value = F.Blocks[0].Ops.back();
+        EXPECT_EQ(Value.Inputs[0].ConstVal,
+                  unsigned(Intrinsic::X86FPMaskCompareState));
+        EXPECT_EQ(Value.Inputs[1].ConstVal, Control);
+        EXPECT_EQ(Value.Inputs[2].ConstVal, Immediate);
+        EXPECT_EQ(Value.Inputs[3], Left);
+        EXPECT_EQ(Value.Inputs[4].Size, Bytes);
+        EXPECT_EQ(Value.Inputs[5], State);
+        EXPECT_TRUE(
+            x86FPStateShapeIsValid(Intrinsic::X86FPMaskCompareState,
+                                   x86FPStateMedShape(Value, Arch::X64)));
+        EXPECT_TRUE(F.MutableStackParamHomes.empty());
+      }
+}
+
 TEST(MedCallingConvFPStack, MemoryOwnershipAndMalformedReadsAreConservative) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (unsigned Mode = 0; Mode < 8; ++Mode) {

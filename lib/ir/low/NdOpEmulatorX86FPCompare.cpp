@@ -27,21 +27,6 @@ bool hasUnmaskedException(uint32_t MXCSR, uint32_t Raised) {
   return (Raised & ~(MXCSR >> 7) & 0x3fU) != 0;
 }
 
-// Bits are ordered LT, EQ, GT, UNORD.  Keeping the architectural table
-// explicit prevents predicate suffixes with identical truth values from also
-// being mistaken for identical exception behavior.
-constexpr std::array<uint8_t, 32> PredicateResults = {
-    0x2, 0x1, 0x3, 0x8, 0xd, 0xe, 0xc, 0x7, 0xa, 0x9, 0xb,
-    0x0, 0x5, 0x6, 0x4, 0xf, 0x2, 0x1, 0x3, 0x8, 0xd, 0xe,
-    0xc, 0x7, 0xa, 0x9, 0xb, 0x0, 0x5, 0x6, 0x4, 0xf,
-};
-
-constexpr std::array<bool, 32> SignalingPredicates = {
-    false, true,  true, false, false, true, true,  false, false, true, true,
-    false, false, true, true,  false, true, false, false, true,  true, false,
-    false, true,  true, false, false, true, true,  false, false, true,
-};
-
 } // namespace
 
 bool NdOpEmulator::executeX86FPCompare(const LowOp &Op) {
@@ -86,15 +71,16 @@ bool NdOpEmulator::executeX86FPCompare(const LowOp &Op) {
     const size_t Offset = static_cast<size_t>(Lane) * ElementSize;
     uint64_t LeftBits = readLane(Left, Offset, ElementSize);
     uint64_t RightBits = readLane(Right, Offset, ElementSize);
-    const auto Compared =
-        evaluateX86FPComparison(LeftBits, RightBits, ElementSize,
-                                SignalingPredicates[Predicate], MXCSR);
+    const auto Compared = evaluateX86FPComparison(
+        LeftBits, RightBits, ElementSize,
+        X86FPComparisonSignalingPredicates[Predicate], MXCSR);
     if (!Compared)
       return false;
     const unsigned Relation = Compared->Relation;
     Raised |= Compared->Raised;
 
-    if ((PredicateResults[Predicate] & (UINT8_C(1) << Relation)) != 0)
+    if ((X86FPComparisonPredicateResults[Predicate] &
+         (UINT8_C(1) << Relation)) != 0)
       Result |= UINT64_C(1) << Lane;
   }
 

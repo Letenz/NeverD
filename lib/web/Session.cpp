@@ -135,6 +135,34 @@ std::string Session::capabilities() {
         {"runtime_activation", "not_checked"},
         {"v8_decoding", "opaque"}});
   }
+  if (tauriAvailable()) {
+    Operations.emplace_back("tauri_extract");
+    Operations.emplace_back("tauri_records");
+    Operations.emplace_back("tauri_export");
+    const TauriLimits L;
+    Analyses.emplace_back(llvm::json::Object{
+        {"kind", "tauri_extraction"},
+        {"profile", std::string(TauriProfile)},
+        {"max_input_bytes", std::to_string(MaxTauriInputBytes)},
+        {"max_members", L.Members},
+        {"max_stored_bytes", std::to_string(L.StoredBytes)},
+        {"max_member_stored_bytes", std::to_string(MaxBlobReadBytes)},
+        {"max_decoded_bytes", std::to_string(L.DecodedBytes)},
+        {"max_member_decoded_bytes", std::to_string(L.MemberDecodedBytes)},
+        {"max_private_bytes", std::to_string(L.PrivateBytes)},
+        {"max_reader_steps", std::to_string(L.Steps)},
+        {"max_codec_calls", std::to_string(L.CodecCalls)},
+        {"max_codec_millis", std::to_string(L.CodecMillis)},
+        {"max_codec_memory", std::to_string(L.CodecMemory)},
+        {"max_cached_extractions", MaxCachedTauriExtractions},
+        {"max_cached_decoded_bytes",
+         std::to_string(MaxCachedTauriDecodedBytes)},
+        {"max_page_records", 128},
+        {"member_path_policy", std::string(ArchivePathProfile)},
+        {"initializer_selection", "explicit_native_instruction_address"},
+        {"scope", "selected_initializer_table"},
+        {"executes_input", false}});
+  }
   if (wailsAvailable()) {
     Operations.emplace_back("wails_extract");
     Operations.emplace_back("wails_records");
@@ -361,6 +389,9 @@ std::string Session::capabilities() {
       {"profile", std::string(PackageArchiveProfile)},
       {"zip_profile", std::string(ZipArchiveProfile)},
       {"formats", llvm::json::Array{"tar", "tgz", "zip"}},
+      {"tar_profiles",
+       llvm::json::Array{std::string(PackageArchiveProfile),
+                         std::string(PackageGNUArchiveProfile)}},
       {"available", packageArchiveAvailable()},
       {"gzip_available", packageGzipAvailable()},
       {"zip_deflate_available", packageZipDeflateAvailable()},
@@ -856,6 +887,7 @@ std::string Session::commit(std::string_view Token) {
   State->NexeExtractions.clear();
   State->PkgExtractions.clear();
   State->WailsExtractions.clear();
+  State->TauriExtractions.clear();
   State->AsarExtractions.clear();
   State->ElectronManifests.clear();
   State->DesktopManifests.clear();
@@ -928,6 +960,7 @@ std::string Session::metadata() const {
       {"nexe_extraction_count", State->NexeExtractions.size()},
       {"pkg_extraction_count", State->PkgExtractions.size()},
       {"wails_extraction_count", State->WailsExtractions.size()},
+      {"tauri_extraction_count", State->TauriExtractions.size()},
       {"asar_extraction_count", State->AsarExtractions.size()},
       {"electron_manifest_count", State->ElectronManifests.size()},
       {"desktop_manifest_count", State->DesktopManifests.size()},

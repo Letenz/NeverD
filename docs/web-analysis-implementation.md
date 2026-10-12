@@ -3187,3 +3187,116 @@ second-discovery,second-focused,second-transports,second-gui,publish-format}.log
 The Tauri boundary in the acceptance audit now links pinned upstream encoding
 and Rust-layout evidence; no Tauri binary profile or extraction success is
 invented from that source review.
+
+## Native Tauri PHF/Brotli qualification and old GNU tar — 2026-10-12
+
+This increment closes the previously missing first Tauri asset-layout/native
+handoff boundary with actual input bytes. The [Tauri profile](web-tauri-profile.md)
+pins lencx/ChatGPT v1.1.0's original macOS x64 archive, expanded stream, selected
+native member, initializer instructions and PHF tables. It qualifies a storage
+grammar; exact compiled Tauri/Rust versions, type identity, initializer
+reachability, runtime mutation/mounts, bridges and signatures are not verified.
+No target/source bytes are committed or redistributed.
+
+The real release first refused as an unsupported tar dialect. Uniform
+`gnu-oldtar-basic-single-gzip-v1` now owns old GNU basic magic/timestamps and
+refuses every sparse/multivolume extension, mixed headers and local PAX. Existing
+checksum, portable paths, links-as-metadata, padding, complete gzip and budgets
+remain authoritative. Capability `tar_profiles` lists both supported dialects;
+profile selection participates in archive/member IDs. Native package/source/
+Bun consumers and exclusive CLI exports also exercise authored GNU tar/tgz
+fixtures with an unusable external-tool PATH.
+
+The native program constructs its PHF header in instructions instead of storing
+a complete header in data. `pipeline/evidence/ConstantStores` projects selected
+full-width consecutive stores through the authoritative decoder/relocation
+roles/LowIR. No web component decodes instructions or guesses pointer semantics.
+`capi/TauriInitializer` joins the hash-bound native image and loader mappings;
+`desktop/tauri` independently validates every PHF key/index, range/path and
+explicit Brotli frame. SDK inputs cannot provide a descriptor. Chained fixups
+remain unsupported under this first profile. Core readers stay independent of
+sessions and adapters; all authored implementation/fixtures use LLVM-style C++
+with project/file banners.
+
+The optional pinned static Brotli 1.2.0 decoder/common SDK is called in process.
+The C++ wrapper accounts allocations and bounds each input/output call, total
+output/calls and a shared deadline. Missing codec/path support is unavailable,
+never an external fallback. A separately compiled omission target checks the
+owning codec and capabilities. Original Brotli, Rust Project, Frank Denis and
+Steven Fackler notices/licenses/source revisions are preserved. The source
+provenance checker has one narrowly reviewed allowance for the explicit PHF
+adaptation notice, linked to those retained licenses.
+
+The actual selected constructor is eight instructions/five stores; all fifteen
+PHF rows validate. NeverD decodes **946,884 stored bytes into 2,700,272 bytes**.
+Raw export preserves the original native image, fifteen frames and fifteen
+decoded files plus a manifest, with reread hashes (32 files). All nine JS
+members pass independent same-parser-tree readable export. A retained 910,730
+byte JS member has 74,127 syntax nodes and a 993,874-byte readable copy with
+SHA-256 `70f96cd6755e0e61064af380a565c789ddf00204773ad3304650118e53be7071`.
+Deleted names/types/TypeScript and whole-program equivalence are not recovered.
+`ArtifactView` keeps decoded-frame coordinates, exact compressed ranges and
+nested archive origins; the original native member enters the shared native
+handoff. Revision-bound SDK/CLI/worker/MCP selection uses the same owners and
+metadata privacy; raw export remains local and absent from MCP.
+
+Native five-field authored/actual regressions pass all five cases. The owning
+core/GNU focused run passes six cases; GNU consumer/CLI plus Tauri SDK passes
+fourteen cases before the additional chained-fixup refusal. Direct/framed
+worker, MCP catalog/web/process pass four cases (6.35 seconds). The full owning
+Web directory passes **747 of 775 cases**, with 28 explicit skips (44.63 seconds).
+The retained eight Claude platform captures, official linux-x64 standalone/npm
+and new Tauri capture are enabled. Old temporary producer captures, npm wrapper/
+lock, advisory/attestation/diff, VSIX and Wails corpora are no longer present;
+their 27 optional cases were not requalified. The remaining skip is the expected
+ASAR-policy omission-only case. An initial full run used an unavailable native
+path and a preexisting empty npm capture, was interrupted, and is not evidence;
+the successful run selects the existing pinned standalone and platform archive.
+No missing corpus was replaced by a fabricated input.
+
+The CMake dependency repair clears only two stale temporary FetchContent
+source overrides and restores the same repository-pinned Ada/Hermes revisions
+and checksums. The rebuilt 287-step Web/CLI target succeeds. Initial C++ include/
+error conversion failures and inert fixture PHF/function-entry mistakes are
+fixed without weakening admission; inert Mach-O uses LC_FUNCTION_STARTS rather
+than a guessed prologue. Subsequent core/consumer/parity builds pass. Logs:
+`/tmp/neverd-{gnu-tar-fixed-build,tauri-{core-tests-build,consumer-fixed-build,
+parity-build,gnu-omission-build,boundaries-build,native-final-tests,
+gnu-consumer-tests,boundaries-core-tests,boundaries-sdk-tests,transports-tests,
+no-codec-tests,full-web-fixed-env-tests}}.log`.
+
+Parser omission passes its 156-step build, twelve selected SDK cases with one
+expected parser-dependent skip, and all four transports (6.09 seconds). The
+additional native/chained-fixup guard uses a five-step build and all four Tauri
+SDK cases pass with the real archive enabled (0.69 seconds). Backend omission
+passes its seven-step build and transport capability/refusal checks. Logs:
+`/tmp/neverd-tauri-{nojs-{configure,build,sdk-tests,transports-tests,
+guard-build,guard-tests},noweb-{configure,build,tests}}.log`.
+The Web/JS options are restored before integration. Source provenance passes
+across 7,481 worktree files. New Tauri C/JSON declarations are accounted for in
+the shared capability exclusions; the checker retains the sixteen existing
+unrelated source-patch declaration gaps on this pre-integration baseline.
+The [five-epic audit](web-epic-acceptance.md) records the new bounded criterion
+and remaining cross-track work; it does not declare the entire objective done.
+
+Integration merges `origin/dev` at `7aabfa363` normally; every new Web reader,
+SDK/native join and test remains byte-identical to the verified increment.
+The 302-step shared rebuild passes, followed by **748 passes / 28 skips out of
+776 distinct owning Web cases**. Five native-projection cases (including actual
+input), native buffer boundary and four transports pass (9.72 seconds). Qt
+app/worker/review builds and the selected review test pass (3.03 seconds).
+All changed C++ files pass clang-format and whitespace checks; source provenance
+passes across 7,485 files. Capability audit retains the same sixteen unrelated
+source-patch gaps. Both Web/JS options are ON; submodule revisions and the
+original checkout are unchanged.
+
+An initial integration run regenerated GoogleTest inventory concurrently from
+two CTest roots, causing duplicate discovery entries. Those 1,041 executions
+are not counted as distinct coverage. Regenerating inventory once restores
+exactly 265 source and 210 SDK cases; the clean owning run above is authoritative.
+The initial integration build also requested a nonexistent `NeverDLoaderTests`
+target; the correct existing `NeverDNativeBufferTests` target is built and run.
+Logs: `/tmp/neverd-tauri-{dev-integration,integrated-fixed-build,clean-discovery,
+integrated-clean-web-tests,integrated-native-transports-tests,
+integrated-gui-{build,tests},published-format,integrated-provenance,
+integrated-capabilities}.log`.

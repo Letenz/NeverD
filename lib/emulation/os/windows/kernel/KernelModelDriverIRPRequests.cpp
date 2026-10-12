@@ -195,6 +195,7 @@ llvm::Error KernelModel::adoptDriverIRP(uint64_t Device, uint64_t IRP) {
   Request.UserBuffer = *Output;
   Request.Neither = true;
   Request.IOStatusWritten = Storage.IOStatusWritten;
+  Request.IOStatusInitialization = Storage.IOStatusInitialization;
   DriverRequestResult Observation;
   Observation.Kind = Request.Kind;
   Observation.Origin = DriverRequestOrigin::DriverAllocatedIRP;
@@ -245,7 +246,8 @@ llvm::Error KernelModel::captureDriverIRPCompletion(uint64_t IRP) {
     return llvm::Error::success();
   for (unsigned I = 0; I < Request->IOStatusWritten.size(); ++I)
     if ((I < sizeof(uint32_t) || I >= sizeof(uint64_t)) &&
-        !Request->IOStatusWritten[I])
+        !initialized(Request->IOStatusWritten, Request->IOStatusInitialization,
+                     I))
       return driverIRPError("caller completion requires initialized IoStatus");
   auto Status = Memory.readInteger(IRP + IRPStatusOffset, 4);
   auto Information = Memory.readInteger(IRP + IRPInformationOffset, 8);

@@ -34,6 +34,7 @@
 #include "llvm/DebugInfo/MSF/MappedBlockStream.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptor.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
+#include "llvm/DebugInfo/PDB/Native/GlobalsStream.h"
 #include "llvm/DebugInfo/PDB/Native/ISectionContribVisitor.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/ModuleDebugStream.h"
@@ -186,6 +187,45 @@ pdb_loader_detail::parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream,
                                    "pdb: invalid public symbol record");
   Out.Name = llvm::StringRef(Name, NameLen);
   return llvm::Error::success();
+}
+
+llvm::Expected<bool>
+pdb_loader_detail::parseProcRefAt(llvm::ArrayRef<uint8_t> Stream,
+                                  uint32_t Offset, ParsedProcRef &Out) {
+  constexpr uint32_t PrefixSize =
+      static_cast<uint32_t>(sizeof(llvm::codeview::RecordPrefix));
+  // SumName, the record's offset and the module, before the name.
+  constexpr uint32_t HeaderSize = 4 + 4 + 2;
+  const auto boundaryError = [] {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: Globals GSI offset is not an exact "
+                                   "symbol record boundary");
+  };
+  if (Offset > Stream.size() || Stream.size() - Offset < PrefixSize)
+    return boundaryError();
+  const uint8_t *const Bytes = Stream.data() + Offset;
+  const uint16_t RecordLen = llvm::support::endian::read16le(Bytes);
+  const uint16_t Kind = llvm::support::endian::read16le(Bytes + 2);
+  const uint32_t Total = static_cast<uint32_t>(RecordLen) + 2;
+  if (RecordLen < 2 || Stream.size() - Offset < Total)
+    return boundaryError();
+  if (Kind != static_cast<uint16_t>(llvm::codeview::SymbolKind::S_PROCREF) &&
+      Kind != static_cast<uint16_t>(llvm::codeview::SymbolKind::S_LPROCREF))
+    return false;
+  if (Total < PrefixSize + HeaderSize + 1)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: invalid procedure reference record");
+  const uint8_t *const Body = Bytes + PrefixSize;
+  Out.Offset = llvm::support::endian::read32le(Body + 4);
+  Out.Module = llvm::support::endian::read16le(Body + 8);
+  const char *const Name = reinterpret_cast<const char *>(Body + HeaderSize);
+  const size_t MaxName = Total - PrefixSize - HeaderSize;
+  const size_t NameLen = ::strnlen(Name, MaxName);
+  if (NameLen == MaxName)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "pdb: invalid procedure reference record");
+  Out.Name = llvm::StringRef(Name, NameLen);
+  return true;
 }
 
 void pdb_loader_detail::FunctionNameRegistry::observe(va_t Address,
@@ -505,7 +545,56 @@ bool isProcedureIdSymbol(llvm::codeview::SymbolKind Kind) {
          Kind == SymbolKind::S_LPROC32_DPC_ID;
 }
 
+/// Where the procedure \p Ref names in \p Module's symbols begins: one
+/// record read where the reference points.
+std::optional<pdb_loader_detail::ProcedureStart>
+readReferencedProcedure(const llvm::pdb::ModuleDebugStreamRef &Module,
+                        const pdb_loader_detail::ParsedProcRef &Ref) {
+  // The offset counts from the start of the module's symbols, before the
+  // first record (the array's skew).
+  const llvm::codeview::CVSymbolArray &Records = Module.getSymbolArray();
+  if (Ref.Offset < Records.skew())
+    return std::nullopt;
+  const llvm::BinaryStreamRef Stream = Records.getUnderlyingStream();
+  llvm::ArrayRef<uint8_t> Prefix;
+  if (auto Err = Stream.readBytes(
+          Ref.Offset, sizeof(llvm::codeview::RecordPrefix), Prefix)) {
+    llvm::consumeError(std::move(Err));
+    return std::nullopt;
+  }
+  const uint16_t RecordLen = llvm::support::endian::read16le(Prefix.data());
+  llvm::ArrayRef<uint8_t> Record;
+  if (auto Err = Stream.readBytes(
+          Ref.Offset, static_cast<uint32_t>(RecordLen) + 2, Record)) {
+    llvm::consumeError(std::move(Err));
+    return std::nullopt;
+  }
+  return pdb_loader_detail::parseReferencedProcedure(Record, Ref.Name);
+}
+
 } // namespace
+
+std::optional<pdb_loader_detail::ProcedureStart>
+pdb_loader_detail::parseReferencedProcedure(llvm::ArrayRef<uint8_t> Record,
+                                            llvm::StringRef Name) {
+  if (Record.size() < sizeof(llvm::codeview::RecordPrefix))
+    return std::nullopt;
+  const uint16_t RecordLen = llvm::support::endian::read16le(Record.data());
+  const auto Kind = static_cast<llvm::codeview::SymbolKind>(
+      llvm::support::endian::read16le(Record.data() + 2));
+  if (RecordLen < 2 || Record.size() != static_cast<size_t>(RecordLen) + 2 ||
+      !isProcedureSymbol(Kind))
+    return std::nullopt;
+  auto Proc = llvm::codeview::SymbolDeserializer::deserializeAs<
+      llvm::codeview::ProcSym>(llvm::codeview::CVSymbol(Record));
+  if (!Proc) {
+    llvm::consumeError(Proc.takeError());
+    return std::nullopt;
+  }
+  if (Proc->Name != Name)
+    return std::nullopt;
+  return ProcedureStart{Proc->Segment, Proc->CodeOffset};
+}
 
 void pdb_loader_detail::publishNamedOffset(
     std::map<int64_t, VariableSym> &Slots, std::set<int64_t> &Ambiguous,
@@ -780,6 +869,108 @@ struct PDBDebugContext::Impl {
       AbsentPublics.insert(Addr);
     (void)Found;
     return llvm::Error::success();
+  }
+
+  /// The index, in the publics' address map, of the first public past the
+  /// section and offset \p Key.
+  uint32_t firstPublicAfter(const std::pair<uint16_t, uint32_t> &Key) const {
+    uint32_t Lo = 0;
+    uint32_t Hi = publicCount();
+    while (Lo < Hi) {
+      const uint32_t Mid = Lo + (Hi - Lo) / 2;
+      pdb_loader_detail::ParsedPublicSym32 Pub;
+      if (auto Err = readPublic(Mid, Pub)) {
+        llvm::consumeError(std::move(Err));
+        Hi = Mid;
+        continue;
+      }
+      if (std::tie(Pub.Segment, Pub.Offset) <= std::tie(Key.first, Key.second))
+        Lo = Mid + 1;
+      else
+        Hi = Mid;
+    }
+    return Lo;
+  }
+
+  /// The publics nearest \p Addr in its section, through the publics'
+  /// address map: the last at or before it and the first after it.
+  std::pair<std::optional<va_t>, std::optional<va_t>>
+  publicsAround(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    if (!hasLazyPublics())
+      return {};
+    const auto Key = sectOffForVA(Addr);
+    if (!Key)
+      return {};
+    const uint32_t Lo = firstPublicAfter(*Key);
+    // A public of the same section, as an address.
+    const auto AddressOf = [&](uint32_t Index) -> std::optional<va_t> {
+      pdb_loader_detail::ParsedPublicSym32 Pub;
+      if (auto Err = readPublic(Index, Pub)) {
+        llvm::consumeError(std::move(Err));
+        return std::nullopt;
+      }
+      if (Pub.Segment != Key->first)
+        return std::nullopt;
+      return Sections[Pub.Segment - 1].VA + Pub.Offset;
+    };
+    std::optional<va_t> Before, After;
+    if (Lo > 0)
+      Before = AddressOf(Lo - 1);
+    if (Lo < publicCount())
+      After = AddressOf(Lo);
+    return {Before, After};
+  }
+
+  /// The last data object of \p Addr's section at or before it, among the
+  /// symbols read in whole, when no function begins between the two.
+  std::optional<va_t> materializedDataBefore(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    auto Data = DataObjects.upper_bound(Addr);
+    if (Data == DataObjects.begin())
+      return std::nullopt;
+    --Data;
+    if (auto Function = Functions.upper_bound(Addr);
+        Function != Functions.begin() &&
+        std::prev(Function)->first >= Data->first)
+      return std::nullopt;
+    const auto Where = sectOffForVA(Addr);
+    const auto Object = sectOffForVA(Data->first);
+    if (!Where || !Object || Where->first != Object->first)
+      return std::nullopt;
+    return Data->first;
+  }
+
+  /// The last public of \p Addr's section at or before it, through the
+  /// publics' address map, and whether one of the publics there names a
+  /// function.
+  std::optional<std::pair<va_t, bool>> publicAtOrBefore(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    if (!hasLazyPublics())
+      return std::nullopt;
+    const auto Key = sectOffForVA(Addr);
+    if (!Key)
+      return std::nullopt;
+    std::optional<std::pair<uint16_t, uint32_t>> At;
+    bool IsFunction = false;
+    for (uint32_t I = firstPublicAfter(*Key); I-- > 0;) {
+      pdb_loader_detail::ParsedPublicSym32 Pub;
+      if (auto Err = readPublic(I, Pub)) {
+        llvm::consumeError(std::move(Err));
+        break;
+      }
+      if (!At) {
+        if (Pub.Segment != Key->first)
+          return std::nullopt;
+        At.emplace(Pub.Segment, Pub.Offset);
+      } else if (std::pair(Pub.Segment, Pub.Offset) != *At) {
+        break;
+      }
+      IsFunction |= Pub.IsFunction;
+    }
+    if (!At)
+      return std::nullopt;
+    return std::pair{Sections[At->first - 1].VA + At->second, IsFunction};
   }
 
   std::optional<AuthenticatedRecordParameter>
@@ -1687,6 +1878,65 @@ PDBDebugContext::load(const std::filesystem::path &PdbPath,
           if (Done == PubCount || (Done % 4096u) == 0)
             Progress.report("debug", Done, PubCount, "pdb publics");
         }
+
+        // Names of the procedures the publics leave out, static ones (an SEH
+        // filter such as `IopTimerDispatch$filt$2`), through the globals'
+        // references into the module symbol streams: one record each rather
+        // than a walk of every module.  Phase A keeps them names only, as it
+        // keeps the publics; their lengths stay unauthenticated.
+        if (PDB.hasPDBGlobalsStream()) {
+          auto GlobalsOr = PDB.getPDBGlobalsStream();
+          if (!GlobalsOr)
+            return pdbLoadError("cannot read Globals stream: " +
+                                llvm::toString(GlobalsOr.takeError()));
+          std::map<uint16_t, std::vector<pdb_loader_detail::ParsedProcRef>>
+              RefsByModule;
+          for (const uint32_t Off : GlobalsOr->getGlobalsTable()) {
+            pdb_loader_detail::ParsedProcRef Ref;
+            llvm::Expected<bool> IsRef =
+                pdb_loader_detail::parseProcRefAt(SymBytes, Off, Ref);
+            if (!IsRef)
+              return IsRef.takeError();
+            if (*IsRef && Ref.Module != 0)
+              RefsByModule[Ref.Module - 1].push_back(Ref);
+          }
+          pdb_loader_detail::FunctionNameRegistry ProcedureNames;
+          std::set<va_t> ProcedureAddresses;
+          const uint32_t ModuleCount = DBI.modules().getModuleCount();
+          for (const auto &[ModuleIndex, Refs] : RefsByModule) {
+            // A public PDB can keep the references and drop the module.
+            if (ModuleIndex >= ModuleCount ||
+                DBI.modules()
+                        .getModuleDescriptor(ModuleIndex)
+                        .getModuleStreamIndex() ==
+                    llvm::pdb::kInvalidStreamIndex)
+              continue;
+            auto ModuleOr = Native->getModuleDebugStream(ModuleIndex);
+            if (!ModuleOr) {
+              llvm::consumeError(ModuleOr.takeError());
+              continue;
+            }
+            for (const auto &Ref : Refs) {
+              const auto Start = readReferencedProcedure(*ModuleOr, Ref);
+              const va_t VA =
+                  Start ? ResolveVA(Start->Segment, Start->Offset) : 0;
+              if (VA == 0)
+                continue;
+              // Publics name the linked functions as callers spell them; a
+              // procedure's own, undecorated name only fills in the rest.
+              if (!FunctionAddresses.count(VA)) {
+                ProcedureAddresses.insert(VA);
+                ProcedureNames.observe(VA, Ref.Name);
+              }
+            }
+          }
+          for (const va_t VA : ProcedureAddresses)
+            if (const std::optional<std::string> Name =
+                    ProcedureNames.name(VA)) {
+              FunctionAddresses.insert(VA);
+              FunctionNames.observe(VA, *Name);
+            }
+        }
       }
     }
   }
@@ -2229,6 +2479,27 @@ PDBDebugContext::resolveDataObject(va_t Addr) const {
   if (It == PImpl->DataObjects.end() || It->second.Name.empty())
     return std::nullopt;
   return It->second;
+}
+
+std::pair<std::optional<va_t>, std::optional<va_t>>
+PDBDebugContext::dataSymbolsAround(va_t Addr) const {
+  if (!PImpl)
+    return {};
+  if (PImpl->hasLazyPublics())
+    return PImpl->publicsAround(Addr);
+  return DebugContext::dataSymbolsAround(Addr);
+}
+
+std::optional<va_t> PDBDebugContext::precedingDataSymbol(va_t Addr) const {
+  if (!PImpl)
+    return std::nullopt;
+  if (PImpl->hasLazyPublics()) {
+    const auto Public = PImpl->publicAtOrBefore(Addr);
+    if (!Public || Public->second)
+      return std::nullopt;
+    return Public->first;
+  }
+  return PImpl->materializedDataBefore(Addr);
 }
 
 // This narrow reader deliberately avoids resolveTpi's display fallbacks. A

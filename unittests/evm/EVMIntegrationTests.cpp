@@ -183,6 +183,19 @@ TEST_F(EVMIntegrationTest,
       runNeverD("cfg --evm-hardfork=amsterdam --func=evm_entry");
   ASSERT_EQ(CFG.ExitCode, 0) << CFG.Stderr;
   EXPECT_NE(CFG.Stdout.find("bb1 [label=\"PC 0x1\"]"), std::string::npos);
+
+  // A graph the analysis cannot build fails with its reason rather than
+  // printing an empty object.
+  const CommandResult NoGraph = runNeverD("cfg --json --func=evm_entry");
+  EXPECT_NE(NoGraph.ExitCode, 0);
+  EXPECT_EQ(NoGraph.Stdout.find("{}"), std::string::npos) << NoGraph.Stdout;
+  EXPECT_NE(NoGraph.Stderr.find("inactive opcode"), std::string::npos)
+      << NoGraph.Stderr;
+  const CommandResult JSONGraph =
+      runNeverD("cfg --json --evm-hardfork=amsterdam --func=evm_entry");
+  ASSERT_EQ(JSONGraph.ExitCode, 0) << JSONGraph.Stderr;
+  EXPECT_NE(JSONGraph.Stdout.find("\"name\":\"evm_entry\""), std::string::npos)
+      << JSONGraph.Stdout;
 }
 
 } // namespace

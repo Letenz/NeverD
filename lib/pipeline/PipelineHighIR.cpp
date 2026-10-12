@@ -113,6 +113,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   recoverStructReturnFromCallers(Img, Result);
   propagateStructReturnForwarderShapes(Img, Result);
   recoverStructReturnFromBody(Img, Result, StructReturnEvidence::Callers);
+  recoverVectorReturnFromCallers(Img, Result);
   materializeKnownStructReturnCallSites(Img, Result);
   bindFloatCallResults(Img, Result);
   settleReturnContracts(Img, Result, Dbg);
@@ -131,6 +132,11 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     // stack parameters, which MedToHigh seeds where its va_arg walk reads
     // them, as lift mode does for the LLVM emitter.
     finalizeVariadicCallees(Result.MedFuncs, Img.Arch, Img.abiFormat());
+  } else {
+    // A convention whose calls take their arguments from callee summaries
+    // recovers no call arguments here: a System V variadic callee's overflow
+    // is the stack its calls store.
+    sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch);
   }
   if (Dbg && Dbg->hasInfo()) {
     for (const MedFunc &MF : Result.MedFuncs) {
@@ -178,6 +184,10 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
   NameResolver.setBinaryImage(&Img);
   NameResolver.setFuncNames(&AllFuncNames);
   NameResolver.resolveCalleeNames(CallTargets, ResolvedCalleeNames);
+  std::map<va_t, int> VariadicVectorCallees;
+  for (const MedFunc &MF : Result.MedFuncs)
+    if (MF.takesVectorArgumentRegisters())
+      VariadicVectorCallees[MF.Entry] = MF.VariadicOverflowCount;
 
   const size_t Total = Result.MedFuncs.size();
   // A worker failure invalidates the whole stage. Keep output private until
@@ -203,6 +213,7 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
     Local.setBinaryImage(&Img);
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);
+    Local.setVariadicVectorCallees(&VariadicVectorCallees);
     for (size_t FI; (FI = Claim()) < N;) {
       const MedFunc &MF = Result.MedFuncs[FI];
       Local.setExpressionObserver({});

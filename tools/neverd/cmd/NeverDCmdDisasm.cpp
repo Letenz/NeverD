@@ -242,6 +242,19 @@ int runCfg(neverd_session_t Sess) {
   const char *InPath = InputFile.getValue().c_str();
   const char *FuncId = DisasmFunc.getValue().c_str();
 
+  // Analyze the function alone, as the workbench does, so that another
+  // function of the program cannot fail its graph.
+  const int FuncIdx = findFunction(Sess, FuncId);
+  if (FuncIdx < 0) {
+    WithColor::error() << "cfg failed: function not found\n";
+    return 1;
+  }
+  const neverd_va_t Entry = neverd_func_entry(Sess, FuncIdx);
+  if (!neverd_prepare_function(Sess, Entry)) {
+    WithColor::error() << "cfg failed: " << takeLastError(Sess) << "\n";
+    return 1;
+  }
+
   if (!CfgSvg.empty() || CfgDot) {
     int Styled = !CfgSvg.empty() ? 1 : 0;
     const char *Dot = neverd_cfg_dot(Sess, InPath, FuncId, Styled);
@@ -291,19 +304,18 @@ int runCfg(neverd_session_t Sess) {
   }
 
   if (JsonOutput) {
-    int FuncIdx = findFunction(Sess, FuncId);
-    if (FuncIdx < 0) {
-      WithColor::error() << "cfg failed: function not found\n";
+    // The graph reads "{}" when analysis fails; the error says why.
+    const char *Json = neverd_cfg_json(Sess, Entry);
+    const std::string Error = takeLastError(Sess);
+    if (!Json || !Error.empty()) {
+      if (Json)
+        neverd_free_string(Json);
+      WithColor::error() << "cfg failed" << (Error.empty() ? "" : ": " + Error)
+                         << "\n";
       return 1;
     }
-    const char *Json = neverd_cfg_json(Sess, neverd_func_entry(Sess, FuncIdx));
-    if (Json) {
-      outs() << Json << "\n";
-      neverd_free_string(Json);
-    } else {
-      WithColor::error() << "cfg failed\n";
-      return 1;
-    }
+    outs() << Json << "\n";
+    neverd_free_string(Json);
   } else {
     const char *Dot = neverd_cfg_dot(Sess, InPath, FuncId, 0);
     if (!Dot) {

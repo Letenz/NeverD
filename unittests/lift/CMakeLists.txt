@@ -3,6 +3,10 @@ add_neverd_unittest(NeverDPEProgramExportsTests
   LINK_COMPONENTS Loader
 )
 
+add_neverd_unittest(NeverDNativeConstantStoresTests
+  core/ConstantStoresTests.cpp
+  LINK_COMPONENTS Pipeline)
+
 add_neverd_unittest(NeverDMedEntryFrameTests
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
@@ -1480,6 +1484,7 @@ endif()
 
 add_neverd_unittest(NeverDLLVMCPhiTests
   core/LLVMCPhiTests.cpp
+  core/LLVMCLongInitializerTests.cpp
   core/LLVMCNonHeaderRegionTests.cpp
   LINK_COMPONENTS BackendC
 )
@@ -3811,6 +3816,11 @@ add_neverd_unittest(NeverDX86ComiStateTests
   x86_64/X86_64_ComiStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86ComiStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+add_neverd_unittest(NeverDX86MaskCompareStateTests
+  x86_64/X86_64_MaskCompareStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86MaskCompareStateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 add_neverd_unittest(NeverDX86FPRoundAccuracyTests
   x86_64/X86_64_FPRoundAccuracyTests.cpp

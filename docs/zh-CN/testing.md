@@ -1170,7 +1170,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1599,6 +1599,18 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `RegistrationCallNoReturn` 拒绝改变的指令范围、目标、操作范围、条件调用，以及错误架构或格式下的使用。对齐栈 PE32 用例同时检查已独立证明终止的调用和依赖当前证明删除的普通后继边；内存证据失效不能重新生成已不存在的普通边。
 
 `SafeSEHReference.*` 检查不可变 SafeSEH 表成员、畸形或歧义存储、重定位、其他架构与格式，以及分片间的声明顺序。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` 通过 `NEVERD_NONLOCAL_FINALLY_INPUTS`，测试原生 MSVC x86/x64、O0/O2、GS 开关及源码优化开关的 32 种 LLVM 组合。测试验证 LLVM 和已解析调用签名，并要求未支持的 x86 原生 EH 重建继续被拒绝。Windows EH 专项作业下载原生 fixture artifact 并运行该矩阵；缺少输入目录时测试会明确跳过。
+
+`RAMReservationTests.cpp` 验证公开写入记录的同值及 ABA 写入、保留切片、地址复用、兄弟映射、回滚、取消、故障前已提交写入和不透明执行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在首选、向下重定位和内核加载地址检查拥有独立生命周期的加载事实：恢复字节不会恢复已失效的来源证明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 区分活动 CFG 指针替换与未启用 CFG 的回退指针保留。
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 检查 PE 输出、独立 DIR64 读取器、模型重定位及对重写调试记录的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒绝来源、基址或顺序不匹配，并排除格式化替换，即使字节相同。这些检查验证诊断元数据，不代表原生恢复成功。
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` 检查九种 intrinsic 形式、finally 的父帧写入效果、恢复后的参数 ESP、registration 拆除以及保留的异常分派入口。仅规范 FWAIT 通过，其余八种畸形或不同 intrinsic 形式继续拒绝。
+
+`NeverDNativeFinallyInputTests` 独立承载 MSVC 输入矩阵。通用 `NeverDPipelineOutcomeTests` 在所有 CI 平台仍须执行，不依赖可选原生夹具。聚焦 Windows EH 作业用已验证镜像编译并执行原生输入目标。macOS CI 为源码替换夹具显式选择 Homebrew Clang 22，与构建 NeverD 的编译器独立；不支持的替换栈探测方法仍被拒绝。
+
+MSVC 单元测试目标使用 `/bigobj`，允许 GoogleTest 和 LLVM 模板实例产生更多 COFF 节；其他编译器配置不变。配置检查核对实际生成的测试编译命令，编译和执行仍由原生 Windows CI 验证。
+
+检查模式的双移位在目标和 flags 未定义时，报告掩码后的计数及操作数宽度。`X64DoubleShift` 验证类型化退出与旧错误接口保留原因，且没有寄存器或 RAM 改变以及内存访问观察；驱动夹具验证该原因在场景派发前仍保留。
 
 ## 源码与原生对象 patch
 

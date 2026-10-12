@@ -31,6 +31,8 @@
 namespace neverd::web {
 namespace {
 
+inline constexpr std::string_view OldGNUHeaderMagic{"ustar  \0", 8};
+
 bool zeros(std::string_view Bytes) {
   return Bytes.find_first_not_of('\0') == std::string_view::npos;
 }
@@ -178,6 +180,7 @@ public:
       throw Error("package_archive_invalid_tar_size");
     uint64_t Offset = 0, Headers = 0;
     bool End = false;
+    const bool GNU = A.Profile == PackageGNUArchiveProfile;
     while (Offset < A.ExpandedBytes) {
       if (++Headers > 2 * MaxPackageArchiveMembers + 2)
         throw Error("package_archive_member_budget_exceeded");
@@ -194,10 +197,11 @@ public:
         End = true;
         break;
       }
-      if (H.compare(257, 8,
-                    std::string("ustar\0"
-                                "00",
-                                8)))
+      const auto Magic = GNU ? OldGNUHeaderMagic
+                             : std::string_view("ustar\0"
+                                                "00",
+                                                8);
+      if (std::string_view(H).substr(257, 8) != Magic)
         throw Error("package_archive_unsupported_tar_format");
       uint64_t Sum = 8 * ' ';
       for (uint64_t I = 0; I < H.size(); ++I)
@@ -205,9 +209,19 @@ public:
           Sum += uint8_t(H[I]);
       if (Sum != octal(std::string_view(H).substr(148, 8)))
         throw Error("package_archive_invalid_tar_checksum");
+      if (GNU) {
+        // Old GNU occupies the USTAR prefix area with timestamps and sparse/
+        // multivolume state. Never turn those bytes into a pathname prefix.
+        (void)octal(std::string_view(H).substr(345, 12));
+        (void)octal(std::string_view(H).substr(357, 12));
+        if (!zeros(std::string_view(H).substr(369)))
+          throw Error("package_archive_unsupported_gnu_extension");
+      }
       auto Size = octal(std::string_view(H).substr(124, 12));
       const auto Mode = octal(std::string_view(H).substr(100, 8));
       const auto Type = H[156];
+      if (GNU && Type == 'x')
+        throw Error("package_archive_unsupported_gnu_extension");
       if (Type != 'x' && Type != '0' && Type != '\0' && Type != '5' &&
           Type != '1' && Type != '2')
         throw Error("package_archive_unsupported_tar_type");
@@ -231,9 +245,11 @@ public:
           throw Error("package_archive_member_budget_exceeded");
         PackageArchiveMember M;
         M.Path = field(std::string_view(H).substr(0, 100));
-        const auto Prefix = field(std::string_view(H).substr(345, 155));
-        if (!Prefix.empty())
-          M.Path = Prefix + "/" + M.Path;
+        if (!GNU) {
+          const auto Prefix = field(std::string_view(H).substr(345, 155));
+          if (!Prefix.empty())
+            M.Path = Prefix + "/" + M.Path;
+        }
         if (Pax.contains("path"))
           M.Path = Pax.at("path");
         M.Link = field(std::string_view(H).substr(157, 100));
@@ -308,6 +324,11 @@ PackageArchive extractPackageArchive(const Artifact &Input,
   if (A.ExpandedBytes > ExpandedBudget)
     throw Error("package_archive_expansion_budget_exceeded");
   A.ExpandedHash = A.Expanded.digest();
+  if (A.ExpandedBytes >= 512 && A.Expanded.read(257, 8) == OldGNUHeaderMagic) {
+    A.Profile = PackageGNUArchiveProfile;
+    A.ID = identity("package-archive",
+                    {Input.ID, Input.BlobHash, Format, A.Profile});
+  }
   TarReader(A).run();
   return A;
 }

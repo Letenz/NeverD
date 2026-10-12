@@ -23,6 +23,24 @@ extern "C" {
 /// Independent of neverd_session_t: source identities are not native addresses.
 typedef void *neverd_web_session_t;
 
+/// Explicit immutable native selection and instruction address. No caller
+/// supplied table descriptor, target execution, file sidecars or network use.
+NEVERD_API const char *neverd_web_tauri_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    uint64_t InitializerAddress, const char *Profile, size_t ProfileSize);
+NEVERD_API const char *
+neverd_web_tauri_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              uint64_t Offset, uint64_t Limit);
+/// Explicit local disclosure under fixed exclusive files; not exposed by MCP.
+NEVERD_API const char *
+neverd_web_tauri_export_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *OutputDirectory, size_t DirectorySize);
+
 /// Returns null on allocation failure or when web analysis is disabled.
 NEVERD_API neverd_web_session_t neverd_web_session_create(void);
 /// No concurrent call may be active during destruction. Null is accepted.

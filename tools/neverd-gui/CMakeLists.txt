@@ -61,8 +61,20 @@ target_include_directories(neverd_gui_app PUBLIC
 target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core neverd_gui_web Qt6::Widgets Qt6::Svg
   Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)
 # A window that draws its own frame tells the Wayland compositor where its
-# shadow ends through Qt's private native window interface.
+# shadow ends, and drops the Windows caption, through Qt's private native
+# window interfaces.
 target_link_libraries(neverd_gui_app PRIVATE Qt6::GuiPrivate)
+# How a window loses the system's title bar differs by platform
+# (app/WindowFramePlatform.h).
+if(WIN32)
+  target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameWindows.cpp)
+elseif(APPLE)
+  enable_language(OBJCXX)
+  target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameMac.mm)
+  target_link_libraries(neverd_gui_app PRIVATE "-framework AppKit")
+else()
+  target_sources(neverd_gui_app PRIVATE app/platform/WindowFrameUnix.cpp)
+endif()
 file(GLOB NEVERD_GUI_ICONS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.svg")
 qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd

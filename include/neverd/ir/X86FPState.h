@@ -10,6 +10,7 @@
 
 #include "neverd/ir/X86F16CState.h"
 #include "neverd/ir/X86FPComiState.h"
+#include "neverd/ir/X86FPMaskCompareState.h"
 #include "neverd/ir/X86FPPackedConvertState.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
@@ -125,7 +126,8 @@ constexpr bool isX86FPApprox12Intrinsic(Intrinsic Id) {
 }
 
 constexpr bool isX86FPStateMemoryIntrinsic(Intrinsic Id) {
-  return Id == Intrinsic::X86FPComiMemoryState ||
+  return Id == Intrinsic::X86FPMaskCompareMemoryState ||
+         Id == Intrinsic::X86FPComiMemoryState ||
          Id == Intrinsic::X86F16CReadState ||
          Id == Intrinsic::X86F16CStoreState ||
          Id == Intrinsic::X86FPRoundMemoryState ||
@@ -161,7 +163,8 @@ constexpr bool isX86ScalarFPStateIntrinsic(Intrinsic Id) {
 }
 
 constexpr bool isX86FPStateIntrinsic(Intrinsic Id) {
-  return isX86FPComiStateIntrinsic(Id) || isX86F16CStateIntrinsic(Id) ||
+  return isX86FPMaskCompareStateIntrinsic(Id) ||
+         isX86FPComiStateIntrinsic(Id) || isX86F16CStateIntrinsic(Id) ||
          isX86ScalarFPStateIntrinsic(Id) || isX86FPApprox12Intrinsic(Id) ||
          isX86FPScalarConvertStateIntrinsic(Id) ||
          isX86FPPackedConvertStateIntrinsic(Id) ||
@@ -311,6 +314,20 @@ constexpr bool x86FPStateShapeIsValid(Intrinsic Id,
            : Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default) ||
       !Shape.IdIsConst || Shape.IdSize != 2 || Shape.HasAuxiliaryOutputs)
     return false;
+  if (isX86FPMaskCompareStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPMaskCompareMemoryState;
+    const unsigned Bytes = Shape.OutputSize >= 4 ? Shape.OutputSize - 4 : 0;
+    return Shape.IdValue == unsigned(Id) && Shape.NumInputs == 6 &&
+           Shape.OutputIsWritable && Shape.OperandsAreScalar &&
+           Shape.ControlIsConst && Shape.ControlSize == 1 &&
+           x86FPMaskCompareLayoutIsValid(Shape.Control, Bytes) &&
+           Shape.ImmediateIsConst && Shape.ImmediateSize == 1 &&
+           Shape.Immediate <= 255 && Shape.StateSize == 4 &&
+           (Memory ? Shape.LeftSize == 8 && Shape.AddressIsScalar &&
+                         Shape.ThirdSize == 1 && Shape.FourthSize == Bytes
+                   : Shape.LeftSize == 1 && Shape.RightSize == 1 &&
+                         Shape.ThirdSize == Bytes && Shape.FourthSize == Bytes);
+  }
   if (isX86FPComiStateIntrinsic(Id)) {
     const bool Memory = Id == Intrinsic::X86FPComiMemoryState;
     const unsigned Element = x86FPComiElementBytes(Shape.Control);
@@ -555,6 +572,10 @@ constexpr unsigned x86FPStateHelperLayout(Intrinsic Id,
   if (isX86FPPackedConvertStateIntrinsic(Id))
     return x86FPRoundStateLayout(x86FPPackedConvertSourceBytes(Shape.Control),
                                  Shape.Control, 0, Shape.MemoryAddressSpace);
+  if (isX86FPMaskCompareStateIntrinsic(Id))
+    return x86FPMaskCompareStateLayout(Shape.OutputSize - 4, Shape.Control,
+                                       Shape.Immediate,
+                                       Shape.MemoryAddressSpace);
   return isX86FPComiStateIntrinsic(Id)
              ? x86FPRoundStateLayout(x86FPComiElementBytes(Shape.Control),
                                      Shape.Control, 0, Shape.MemoryAddressSpace)

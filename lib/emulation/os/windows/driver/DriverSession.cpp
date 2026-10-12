@@ -132,6 +132,13 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     if (auto E = CPU.write(Region.Address, Region.Bytes))
       return std::move(E);
   }
+  std::vector<DriverObservation::RelocationWitness> RelocationWrites;
+  if (Observer) {
+    auto Witnesses = DriverObservation::watchRelocations(CPU, *Image);
+    if (!Witnesses)
+      return Witnesses.takeError();
+    RelocationWrites = std::move(*Witnesses);
+  }
   for (const auto &Import : Image->Imports) {
     auto Address = Exports.bindImport(Import);
     if (!Address)
@@ -167,6 +174,7 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
   if (auto E = Kernel.initialize(*Image, Options))
     return std::move(E);
   DriverObservation Observation(Observer, CPU, *Image, Kernel, Exports, Result,
+                                std::move(RelocationWrites),
                                 Path.filename().string());
   bool PendingObservation = false, PendingMemoryWrite = false;
   std::optional<std::string> ObserverFailure;
@@ -978,7 +986,11 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       PendingEnvironmentRead.reset();
       PendingObservation = PendingMemoryWrite = false;
       if (auto E = CPU.run(NextPC, Remaining)) {
+        const bool Rejected = E.isA<UnsupportedExecutionError>();
         std::string Message = llvm::toString(std::move(E));
+        if (Stopped && Rejected &&
+            Result.Diagnostic == session_diagnostic::RejectedInstruction)
+          Result.Diagnostic = Message;
         if (!Stopped)
           Stop(CPU.hasMemoryFault()   ? DriverStopReason::MemoryFault
                : CPU.hasDeviceError() ? DriverStopReason::ModelError

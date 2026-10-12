@@ -239,3 +239,32 @@ static double h2(double a, double b) { return a * b + a - b * 2.0; }
 )C",
                        "dd", {"dd", "h2"});
 }
+
+// Clang folds the count of a static variadic function's only call into its
+// body and reads four of the arguments with one 16-byte load from the
+// stack.  The load reads four parameters, one per slot.
+TEST_F(X86_32_CallAbi, AWideLoadOfStackArgumentsReadsEverySlot) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+#include <stdarg.h>
+static int mx(int n, ...) __attribute__((noinline));
+int vmax_i(int a) {
+  unsigned u = (unsigned)a;
+  return mx(5, (int)u, (int)(u ^ 0x7fu), (int)(0 - u), (int)(u * 5u),
+            (int)(u >> 1));
+}
+static int mx(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int m = -2147483647 - 1;
+  for (int i = 0; i < n; i++) {
+    int v = va_arg(ap, int);
+    if (v > m)
+      m = v;
+  }
+  va_end(ap);
+  return m;
+}
+)C",
+                       "vmax_i", {"vmax_i", "mx"});
+}

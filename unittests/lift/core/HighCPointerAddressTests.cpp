@@ -1198,6 +1198,70 @@ int main(void) {
 )c");
 }
 
+TEST(HighCPointerAddresses, DebugSymbolsBoundAnUnsizedIndexedTable) {
+  // An eight-byte table no symbol sizes, with other data after it in its
+  // section.  Without debug information the table the code indexes runs to
+  // the section's end; with a data symbol right after it, as a PDB public
+  // names the next object without sizing it, the table ends there.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003700, {1, 10, 10, 10, 11, 11, 11, 11, 7, 7, 7, 7, 7, 7, 7, 7,
+                    7, 7,  7,  7,  7,  7,  7,  7,  7, 7, 7, 7, 7, 7, 7, 7},
+      false);
+  Section Sec;
+  Sec.Name = ".rdata";
+  Sec.VA = 0x140003700;
+  Sec.Size = 32;
+  Sec.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Sec);
+  class NextPublicDbg : public NullDebugContext {
+  public:
+    std::pair<std::optional<va_t>, std::optional<va_t>>
+    dataSymbolsAround(va_t Addr) const override {
+      if (Addr >= 0x140003700 && Addr < 0x140003708)
+        return {va_t{0x140003700}, va_t{0x140003708}};
+      return {};
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Func;
+  Func.Name = "pick";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"arg0", Word}};
+  auto Index = HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Word),
+                                   HighExpr::makeConst(7, 8));
+  auto Element = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(0x140003700, 8),
+                          std::move(Index)),
+      NdType::makeInt(1, false));
+  auto Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Element));
+  Value->Type = Func.ReturnType;
+  returnValue(Func, std::move(Value));
+
+  const auto Emit = [&](DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Img;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
+    OS.flush();
+    return Source;
+  };
+  const std::string Section = Emit(nullptr);
+  EXPECT_NE(Section.find("[32]"), std::string::npos) << Section;
+  const std::string Bounded = Emit(&Dbg);
+  EXPECT_NE(Bounded.find("[8]"), std::string::npos) << Bounded;
+  EXPECT_EQ(Bounded.find("[32]"), std::string::npos) << Bounded;
+  compileAndRunCallOrdering(Bounded + R"c(
+int main(void) {
+  return pick(0) == 1 && pick(4) == 11 && pick(9) == 10 ? 0 : 1;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   // A branchless select masks two string addresses. The literal is an array
   // in C; the mask needs its address. A call argument keeps the literal.

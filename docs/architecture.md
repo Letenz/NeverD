@@ -187,6 +187,8 @@ Win64 class-return projection is target-specific; a DWARF name on another
 platform cannot create a hidden result parameter. Runtime-language detection
 uses exported names as well as symbols and imports.
 
+`isCanonicalX87Wait` owns the same normal-path frame-preservation rule for ordinary registration transfer and checked local-finally returns. The FWAIT operation and exceptional dispatch remain intact. Other intrinsics and malformed shapes remain opaque; this rule grants no nonlocal finally exit or native recovery proof.
+
 Windows registration-chain EH has separate source and generated contracts.
 The COFF loader owns the checked SEH/FuncInfo records. LowIR's
 `analyzeRegistrationStates` owns reaching levels, callback roots and chain
@@ -668,6 +670,19 @@ exclusive writer for explicit local disclosure. None of these owners chooses
 an asset-server binding or implements a Go/JS bridge. Shared source/HTML/native
 consumers retain independent capabilities and limits. See the
 [Wails profile](web-wails-profile.md).
+`pipeline/evidence/ConstantStores` owns bounded local native instruction effects,
+using the authoritative decoder, relocation roles and LowIR. The SDK's
+`capi/TauriInitializer` joins those effects and loader mappings with the exact
+captured native hash; this descriptor is never accepted from transport JSON.
+`desktop/tauri/PHF` owns complete string lookup validation and `Reader` owns
+mapping/range/path/codec admission. `compression/Brotli` only supplies a pinned
+in-process stream decoder with accounted allocation/output/call/deadline bounds.
+`SessionTauri` atomically publishes sealed decoded storage, while `ArtifactView`
+and `memberNamespace` retain per-table namespaces, compressed frames and nested
+origins for shared consumers. Local export uses the existing exclusive writer.
+No native semantics are duplicated in Web, CLI, worker or MCP. The selected
+initializer does not establish runtime activation, type identity, mount or
+bridge relationships. See the [Tauri profile](web-tauri-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -2134,6 +2149,22 @@ invalid conversions. HighC and the LLVM lowering select that same policy;
 both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
+
+`ir/X86FPMaskCompareState.h` owns legacy/VEX CMPSS/CMPSD/CMPPS/CMPPD
+completion. Scalar or packed raw mask bits precede outgoing MXCSR in one
+aggregate; they never acquire floating-point result provenance. Full imm8 is
+retained, with only the architectural three legacy or five VEX predicate bits
+selecting semantics. `ir/X86FPComparison.h` owns the shared predicate truth and
+signaling tables plus active-lane NaN/denormal/DAZ classification, including the
+existing EVEX comparison path. Three legacy/scalar/VEX entry points share one
+authenticated lifter. Scalar upper lanes and legacy/VEX destination transport
+retain their source rules. Exact memory reads and legacy packed alignment stay
+inside completion; malformed or unknown state refuses, and unmasked exceptions
+publish MXCSR but no mask. LLVM assembly retains an authenticated full-layout
+metadata record; both C routes retain the original instruction and state scope.
+Codegen detects VEX comparison requirements before legalizing YMM results.
+Immutable scalar home recovery retains the predicate, both values and CSR.
+Swift refuses this completion surface until equivalent lowering is available.
 
 `ir/X86FPComiState.h` owns legacy/VEX COMI and UCOMI flag/MXCSR completion.
 One raw aggregate carries LAHF's defined status byte below outgoing MXCSR;
@@ -5158,3 +5189,9 @@ Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an 
 DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in DarwinSelect.cpp. Select and Pselect share one immediate bitmap, live-capacity, provider and ordered-output member; timeval and timespec retain their distinct widths and bounds. Complete nonnull masks require a future signal-state model.
 
 `isCheckedX86SafeSEHHandlerReference` authenticates a retained PE32 handler entry through the existing SafeSEH decoder, immutable table/header bytes and the relocated load-config pointer. LLVM declares that source identity before emitting any body, including omitted shards. Table membership establishes neither a language personality nor a callable ABI or native EH reconstruction permission; those consumers keep their independent checks.
+
+Kernel field initialization has a separate physical RAM owner. Permission validation remains pure. Successful host writes, committed checked transactions and exact software after-write events define only the bytes they committed, including same-value stores and completed fault prefixes. Temporary writes, rollback, attempts cancelled before commit and opaque invalidation define no bytes. An owning bitmap follows retained physical slices through aliases and can be queried without reading guest RAM. Software events prove their reported writes without establishing complete write coverage; typed model services keep their explicit initialization contracts.
+
+`MemoryWriteWitness` retains exact physical allocation slices and shares the committed-write invalidation authority with RAM reservations. Same-value, partial and aliased writes invalidate it; opaque execution conservatively removes the proof. Creation and queries require a stopped owner. Driver observation binds validated DIR64 fields immediately after image copy, before session fixups, and publishes owned facts only while the mapped allocation and write history still match. These facts do not cover generated pointers or supply a native kernel materializer.
+
+The driver loader binds relocation facts to the validated file SHA-256. PE rebuilding consumes the owned facts and excludes fields replaced by import or metadata formatting before emitting diagnostic DIR64 records. This owner cannot infer generated-pointer relocations or remove the kernel runtime refusal.
