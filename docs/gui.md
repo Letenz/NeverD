@@ -116,7 +116,8 @@ shows it any time. Behind it is the default desktop:
 - **Output** across the bottom, with a command line for expressions and
   workbench commands;
 - the status bar with the background analysis indicator (`AU: idle` or busy
-  with progress), the search direction and free disk space.
+  with progress), the search direction and free disk space. It shares the
+  windows' surface below a hairline, as in Visual Studio Code's Modern themes.
 
 Every window is a dock: drag tabs to split, stack or float them. A tab shows
 its close button while it is current or under the pointer. Docked windows
@@ -145,9 +146,10 @@ operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
 differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
-their classic forms in the listing, function list and jumps: import thunks after
-their import, the entry point `start`, and `main` as passed to the C runtime's
-start routine.
+their classic forms in the listing, function list, jumps and source views:
+import thunks after their import, the entry point `start`, and `main` as passed
+to the C runtime's start routine. The pseudocode of `sub_13E0` therefore defines
+`main`, and a rename of the function still wins over the classic name.
 
 **Graph view** (Space) lays the current function out in layers with the
 conditional (green/red) and unconditional edges routed around blocks; panning
