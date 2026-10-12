@@ -2121,16 +2121,20 @@ Signed: %4</source>
         <translation>PDB ファイル (*.pdb);;すべてのファイル (*)</translation>
     </message>
     <message>
-        <source>Unverified PDB names</source>
-        <translation>未検証の PDB 名</translation>
+        <source>Use unverified PDB for analysis</source>
+        <translation>未検証の PDB を解析に使用</translation>
     </message>
     <message>
         <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>この PE には PDB の照合識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
 
-表示用の名前だけをインポートしますか？型、関数シグネチャ、アドレス範囲は解析に使用しません。</translation>
+この PDB を解析に使用しますか？シンボル、型、関数シグネチャ、アドレス範囲を解析の入力として使用します。誤った PDB を選ぶと解析結果が不正確になる可能性があります。</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>このエンジンは未検証の PDB による解析に対応していません</translation>
     </message>
 </context>
 <context>
@@ -2408,6 +2412,10 @@ Import its names for display only? Types, function signatures and address ranges
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
         <translation>PDB の表示名をインポートしました: %1（%2 個の名前、未検証）</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
 </context>
 <context>

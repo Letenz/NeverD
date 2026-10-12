@@ -480,8 +480,10 @@ int neverd_session_is_loaded(neverd_session_t Sess) {
 // ===--------------------------------------------------------------------===//
 
 void neverd_session_set_pdb_path(neverd_session_t Sess, const char *Path) {
-  if (auto *S = toSession(Sess))
+  if (auto *S = toSession(Sess)) {
     S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
+    S->DbgRequest.AllowMissingPDBIdentity = false;
+  }
 }
 
 const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
@@ -535,14 +537,24 @@ const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
 }
 
 int neverd_session_load_pdb(neverd_session_t Sess, const char *Path) {
+  return neverd_session_load_pdb_ex(Sess, Path, 0);
+}
+
+int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
+                               int UseWithoutIdentity) {
   auto *S = toSession(Sess);
   if (!S || !S->Loaded || !Path || !*Path) {
     if (S)
       S->setError("Load a PE image and select a PDB file first");
     return 0;
   }
+  if (UseWithoutIdentity != 0 && UseWithoutIdentity != 1) {
+    S->setError("UseWithoutIdentity must be 0 or 1");
+    return 0;
+  }
   DebugInfoRequest Request;
   Request.PDBPath = std::filesystem::u8path(Path);
+  Request.AllowMissingPDBIdentity = UseWithoutIdentity == 1;
   std::error_code EC;
   const auto PdbSize = std::filesystem::file_size(Request.PDBPath, EC);
   if (EC) {

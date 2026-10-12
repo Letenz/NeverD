@@ -2121,16 +2121,20 @@ Signed: %4</source>
         <translation>PDB 文件 (*.pdb);;所有文件 (*)</translation>
     </message>
     <message>
-        <source>Unverified PDB names</source>
-        <translation>未验证的 PDB 名称</translation>
+        <source>Use unverified PDB for analysis</source>
+        <translation>使用未验证的 PDB 进行分析</translation>
     </message>
     <message>
         <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>此 PE 缺少 PDB 匹配标识（GUID/age）。所选 PDB 的架构和节区布局匹配，但无法确认它属于同一次构建。
 
-是否仅导入名称用于显示？类型、函数签名和地址范围不会用于分析。</translation>
+是否使用此 PDB 进行分析？其符号、类型、函数签名和地址范围将作为分析输入。选择错误的 PDB 可能导致错误的分析结果。</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>当前引擎不支持使用未验证的 PDB 进行分析</translation>
     </message>
 </context>
 <context>
@@ -2408,6 +2412,10 @@ Import its names for display only? Types, function signatures and address ranges
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
         <translation>已导入 PDB 显示名称：%1（%2 个名称，未验证）</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>已加载 PDB 用于分析：%1（%2 个名称，用户已确认，身份未验证）</translation>
     </message>
 </context>
 <context>

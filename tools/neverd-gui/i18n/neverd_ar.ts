@@ -2141,16 +2141,20 @@ Signed: %4</source>
         <translation>ملفات PDB (*.pdb);;جميع الملفات (*)</translation>
     </message>
     <message>
-        <source>Unverified PDB names</source>
-        <translation>أسماء PDB غير موثقة</translation>
+        <source>Use unverified PDB for analysis</source>
+        <translation>استخدام PDB غير موثق للتحليل</translation>
     </message>
     <message>
         <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>لا يحتوي ملف PE هذا على هوية مطابقة PDB ‏(GUID/age). تتطابق المعمارية وتخطيط المقاطع في ملف PDB المحدد، لكن لا يمكن التحقق من بنائه.
 
-هل تريد استيراد الأسماء للعرض فقط؟ لن تُستخدم الأنواع أو تواقيع الدوال أو نطاقات العناوين في التحليل.</translation>
+هل تريد استخدام ملف PDB هذا للتحليل؟ ستُستخدم رموزه وأنواعه وتواقيع دواله ونطاقات عناوينه كمدخلات للتحليل. قد يؤدي اختيار PDB خاطئ إلى نتائج غير صحيحة.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
     </message>
 </context>
 <context>
@@ -2428,6 +2432,10 @@ Import its names for display only? Types, function signatures and address ranges
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
         <translation>تم استيراد أسماء عرض PDB: %1 (%2 اسم، غير موثقة)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>تم تحميل PDB للتحليل: %1 (%2 اسم، أكده المستخدم، الهوية غير موثقة)</translation>
     </message>
 </context>
 <context>

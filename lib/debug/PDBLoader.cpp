@@ -735,9 +735,14 @@ struct PDBDebugContext::Impl {
   enum class TpiWalk { Named, Fields };
 
   bool ImageIdentityAuthenticated = false;
+  bool UserSelectedForAnalysis = false;
   bool FunctionSignaturesAuthenticated = false;
   bool ObjectExtentsAuthenticated = false;
   bool Loaded = false;
+
+  bool hasAnalysisAuthority() const {
+    return ImageIdentityAuthenticated || UserSelectedForAnalysis;
+  }
 
   va_t resolveVA(uint16_t Seg, uint32_t Off) const {
     if (Seg == 0 || Seg > Sections.size())
@@ -1686,24 +1691,33 @@ void PDBDebugContext::commitDebugFacts(
 llvm::Expected<std::unique_ptr<PDBDebugContext>>
 PDBDebugContext::load(const std::filesystem::path &PdbPath,
                       const BinaryImage &Image, const LoadProgress &Progress) {
-  return loadImpl(PdbPath, Image, Progress, false);
+  return loadImpl(PdbPath, Image, Progress, LoadPolicy::MatchingIdentity);
 }
 
 llvm::Expected<std::unique_ptr<PDBDebugContext>>
 PDBDebugContext::inspect(const std::filesystem::path &PdbPath,
                          const BinaryImage &Image,
                          const LoadProgress &Progress) {
-  return loadImpl(PdbPath, Image, Progress, true);
+  return loadImpl(PdbPath, Image, Progress, LoadPolicy::Inspect);
 }
 
-llvm::Expected<std::unique_ptr<PDBDebugContext>> PDBDebugContext::loadImpl(
-    const std::filesystem::path &PdbPath, const BinaryImage &Image,
-    const LoadProgress &Progress, bool AllowMissingIdentity) {
+llvm::Expected<std::unique_ptr<PDBDebugContext>>
+PDBDebugContext::loadUserSelected(const std::filesystem::path &PdbPath,
+                                  const BinaryImage &Image,
+                                  const LoadProgress &Progress) {
+  return loadImpl(PdbPath, Image, Progress, LoadPolicy::UserSelected);
+}
+
+llvm::Expected<std::unique_ptr<PDBDebugContext>>
+PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
+                          const BinaryImage &Image,
+                          const LoadProgress &Progress, LoadPolicy Policy) {
   if (Image.Format != BinaryFormat::COFF || Image.IsRelocatable)
     return pdbLoadError("strict PDB loading requires a linked PE image");
   const bool MissingIdentity =
       Image.DynInfo.CodeViewPDBIdentityState == PDBIdentityState::Absent &&
       !Image.DynInfo.CodeViewPDBIdentity;
+  const bool AllowMissingIdentity = Policy != LoadPolicy::MatchingIdentity;
   if ((!AllowMissingIdentity || !MissingIdentity) &&
       (Image.DynInfo.CodeViewPDBIdentityState != PDBIdentityState::Unique ||
        !Image.DynInfo.CodeViewPDBIdentity))
@@ -1730,7 +1744,7 @@ llvm::Expected<std::unique_ptr<PDBDebugContext>> PDBDebugContext::loadImpl(
   Session->setLoadAddress(Image.Base);
   auto &PDB = Native->getPDBFile();
   if (PDB.isPdb20())
-    return pdbLoadError("unverified display-name import requires an RSDS PDB");
+    return pdbLoadError("loading without PE identity requires an RSDS PDB");
 
   auto InfoOr = PDB.getPDBInfoStream();
   if (!InfoOr) {
@@ -1760,6 +1774,7 @@ llvm::Expected<std::unique_ptr<PDBDebugContext>> PDBDebugContext::loadImpl(
     return std::move(SectionError);
 
   Ctx->PImpl->ImageIdentityAuthenticated = !MissingIdentity;
+  Ctx->PImpl->UserSelectedForAnalysis = Policy == LoadPolicy::UserSelected;
   Ctx->PImpl->Native = Native;
   Ctx->PImpl->CPU = cpuTypeFromMachine(DBI.getMachineType());
   Ctx->PImpl->PtrSize =
@@ -2601,7 +2616,7 @@ PDBDebugContext::Impl::recordParameter(llvm::codeview::TypeIndex TI,
 void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
   using namespace llvm::codeview;
   if (!RecordParameterModules.insert(ModuleIndex).second || !Native ||
-      !ImageIdentityAuthenticated || CPU != CPUType::X64)
+      !hasAnalysisAuthority() || CPU != CPUType::X64)
     return;
   auto Module = Native->getModuleDebugStream(ModuleIndex);
   if (!Module) {
@@ -2765,7 +2780,7 @@ void PDBDebugContext::Impl::loadRecordParameters(uint32_t ModuleIndex) const {
 
 std::vector<AuthenticatedRecordParameter>
 PDBDebugContext::resolveAuthenticatedRecordParameters(va_t Addr) const {
-  if (!PImpl || !PImpl->ImageIdentityAuthenticated)
+  if (!PImpl || !PImpl->hasAnalysisAuthority())
     return {};
   const auto Module = PImpl->moduleForVA(Addr);
   if (!Module)
@@ -2782,7 +2797,7 @@ std::optional<AuthenticatedRecordParameter>
 PDBDebugContext::resolveAuthenticatedRecordReturn(va_t Addr) const {
   // This populates and validates the same complete module transaction.
   (void)resolveAuthenticatedRecordParameters(Addr);
-  if (!PImpl || !PImpl->ImageIdentityAuthenticated)
+  if (!PImpl || !PImpl->hasAnalysisAuthority())
     return std::nullopt;
   std::lock_guard<std::mutex> Guard(PImpl->RecordParameterMutex);
   const auto At = PImpl->RecordReturns.find(Addr);
@@ -2794,6 +2809,10 @@ bool PDBDebugContext::hasInfo() const { return PImpl && PImpl->Loaded; }
 
 bool PDBDebugContext::hasAuthenticatedImageIdentity() const {
   return PImpl && PImpl->ImageIdentityAuthenticated;
+}
+
+bool PDBDebugContext::hasAnalysisAuthority() const {
+  return PImpl && PImpl->hasAnalysisAuthority();
 }
 
 bool PDBDebugContext::hasAuthenticatedFunctionSignatures() const {

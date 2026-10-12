@@ -883,6 +883,9 @@ void Session::reportPdb(const QJsonObject &result) {
   emit message(
       (result.value("verified").toBool()
            ? tr("PDB loaded: %1 (%2 names, identity verified)")
+       : result.value("mode").toString() == QLatin1String("analysis")
+           ? tr("PDB loaded for analysis: %1 (%2 names, user confirmed, "
+                "identity unverified)")
            : tr("PDB display names imported: %1 (%2 names, unverified)"))
           .arg(QDir::toNativeSeparators(result.value("path").toString()))
           .arg(result.value("name_count").toInteger()),

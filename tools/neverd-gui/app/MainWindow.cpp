@@ -1514,21 +1514,28 @@ void MainWindow::loadPdb() {
             return;
           const bool verified = result.value("verified").toBool();
           if (!verified) {
+            if (!result.value("supports_unverified_analysis").toBool()) {
+              output_->append(
+                  tr("This engine cannot use an unverified PDB for analysis"),
+                  1);
+              return;
+            }
             const auto answer = QMessageBox::warning(
-                this, tr("Unverified PDB names"),
+                this, tr("Use unverified PDB for analysis"),
                 tr("This PE has no PDB matching identity (GUID/age). "
                    "The selected PDB's machine and section layout match, "
                    "but its build cannot be verified.\n\n"
-                   "Import its names for display only? Types, function "
-                   "signatures and address ranges will not be used for "
-                   "analysis."),
+                   "Use this PDB for analysis? Its symbols, types, function "
+                   "signatures and address ranges will be used as analysis "
+                   "input. Choosing the wrong PDB can produce incorrect "
+                   "results."),
                 QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
             if (answer != QMessageBox::Yes || !session_.loaded() ||
                 session_.epoch() != epoch)
               return;
           }
           QJsonObject selection{{"path", result.value("path")},
-                                {"mode", verified ? "verified" : "display"},
+                                {"mode", verified ? "verified" : "analysis"},
                                 {"stamp", result.value("stamp")}};
           session_.loadPdb(selection);
         });

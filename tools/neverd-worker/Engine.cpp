@@ -1451,9 +1451,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   if (operation == "pdb_inspect" || operation == "pdb_load") {
     using Inspect = const char *(*)(neverd_session_t, const char *);
     using Load = int (*)(neverd_session_t, const char *);
+    using LoadEx = int (*)(neverd_session_t, const char *, int);
     const auto inspect =
         engineSymbol<Inspect>("neverd_session_inspect_pdb_json");
     const auto load = engineSymbol<Load>("neverd_session_load_pdb");
+    const auto loadEx = engineSymbol<LoadEx>("neverd_session_load_pdb_ex");
     if (!inspect || !load)
       throw Error("unsupported", "This engine cannot load a selected PDB");
     const auto path = stringField(p, "path", {}, 32768);
@@ -1476,19 +1478,27 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       throw Error("input_changed", "The selected PDB changed while reading it");
     Json result{{"path", path},
                 {"verified", verified},
+                {"supports_unverified_analysis", loadEx != nullptr},
                 {"name_count", count},
                 {"stamp", stamp}};
     if (operation == "pdb_inspect")
       return result;
     const auto mode = stringField(p, "mode", "verified", 16);
-    if (mode != "verified" && mode != "display")
-      throw Error("invalid_request", "PDB mode is verified or display");
-    if (!verified && mode != "display")
+    if (mode != "verified" && mode != "analysis" && mode != "display")
+      throw Error("invalid_request",
+                  "PDB mode is verified, analysis or display");
+    if (!verified && mode == "verified")
       throw Error(
           "pdb_identity_missing",
-          "The PE has no PDB identity; only display names may be imported");
-    if (verified) {
-      if (!load(session_, path.c_str()))
+          "The PE has no PDB identity; confirm using this PDB for analysis");
+    const bool forAnalysis = verified || mode == "analysis";
+    if (forAnalysis) {
+      if (!verified && !loadEx)
+        throw Error("unsupported",
+                    "This engine cannot use an unverified PDB for analysis");
+      const bool loaded = verified ? load(session_, path.c_str()) != 0
+                                   : loadEx(session_, path.c_str(), 1) != 0;
+      if (!loaded)
         throw Error("pdb_load_failed", error());
       pdbDisplayNames_ = Json::array();
       analyzed_ = false;
@@ -1500,13 +1510,15 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         listing_->setPdbDisplayNames(pdbDisplayNames_);
     }
     pdbInput_ = {{"path", path},
-                 {"mode", verified ? "verified" : "display"},
+                 {"mode", verified ? "verified" : mode},
                  {"verified", verified},
                  {"name_count", count},
                  {"stamp", stamp}};
     invalidate();
     ++revision_;
     result["function_count"] = neverd_func_count(session_);
+    result["mode"] = pdbInput_.at("mode");
+    result["analysis"] = forAnalysis;
     result["loaded"] = true;
     return result;
   }

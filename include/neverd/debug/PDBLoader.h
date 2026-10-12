@@ -173,6 +173,14 @@ public:
   inspect(const std::filesystem::path &PdbPath, const BinaryImage &Image,
           const LoadProgress &Progress = {});
 
+  /// Load a user-confirmed PDB as analysis input even when the PE's CodeView
+  /// identity is absent. Machine, sections and any present identity still
+  /// must match. This grants the same analysis authority as a matching PDB
+  /// without claiming that its build identity was verified.
+  static llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  loadUserSelected(const std::filesystem::path &PdbPath,
+                   const BinaryImage &Image, const LoadProgress &Progress = {});
+
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
   std::optional<std::string> functionName(va_t Addr) const override;
   std::optional<VariableSym> resolveVariable(va_t FuncAddr,
@@ -199,6 +207,7 @@ public:
   resolveAuthenticatedRecordReturn(va_t Addr) const override;
 
   bool hasAuthenticatedImageIdentity() const;
+  bool hasAnalysisAuthority() const;
   /// RSDS Phase A never authorizes exact object metadata.  Names-only
   /// S_LOCAL / S_REGREL32 recovery does not change that.  A PDB 2.00 JG
   /// companion that parsed TPI and S_BPREL32_ST without stream malformation
@@ -207,9 +216,10 @@ public:
 
 private:
   PDBDebugContext();
+  enum class LoadPolicy { MatchingIdentity, Inspect, UserSelected };
   static llvm::Expected<std::unique_ptr<PDBDebugContext>>
   loadImpl(const std::filesystem::path &PdbPath, const BinaryImage &Image,
-           const LoadProgress &Progress, bool AllowMissingIdentity);
+           const LoadProgress &Progress, LoadPolicy Policy);
   void commitFunctions(std::vector<FunctionSym> Functions, bool Authenticated);
   void commitDebugFacts(std::vector<FunctionSym> Functions,
                         std::map<va_t, std::map<int64_t, VariableSym>> Locals,

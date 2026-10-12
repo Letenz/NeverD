@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manual PDB loading, unverified display aliases and replica provenance."""
+"""Manual PDB analysis, legacy display aliases and replica provenance."""
 from contextlib import ExitStack
 from pathlib import Path
 import shutil
@@ -89,6 +89,27 @@ def run(executable):
         display_replica = clients.enter_context(Client(executable))
         ok(display_replica, "analysis_restore", snapshot)
         assert ok(display_replica, "functions", {"filter": FUNCTION})["items"][0]["name"] == FUNCTION
+
+        forced = clients.enter_context(Client(executable))
+        ok(forced, "open", {"path": str(stripped), "read_only": True, "analysis": False, "debug_info": False})
+        selected = ok(forced, "pdb_inspect", {"path": str(pdb)})
+        assert not selected["verified"] and selected["supports_unverified_analysis"]
+        loaded = ok(forced, "pdb_load", dict(selected, mode="analysis"))
+        assert not loaded["verified"] and loaded["analysis"]
+        assert loaded["mode"] == "analysis"
+        row = ok(forced, "functions", {"filter": FUNCTION})["items"][0]
+        assert row["name"] == FUNCTION and row["engine_name"] == FUNCTION
+        page = ok(forced, "decompile", {"address": ADDRESS, "representation": "c", "limit": 256})
+        text = page["text"]
+        assert FUNCTION in text and "buf" in text
+        snapshot = ok(forced, "analysis_snapshot")
+        assert snapshot["pdb"]["mode"] == "analysis"
+        forced_replica = clients.enter_context(Client(executable))
+        ok(forced_replica, "analysis_restore", snapshot)
+        restored = ok(forced_replica, "functions", {"filter": FUNCTION})["items"][0]
+        assert restored["engine_name"] == FUNCTION
+        restored_page = ok(forced_replica, "decompile", {"address": ADDRESS, "representation": "c", "limit": 256})
+        assert restored_page["text"] == page["text"]
 
         pdb.write_bytes(pdb.read_bytes() + b"changed")
         stale = clients.enter_context(Client(executable))

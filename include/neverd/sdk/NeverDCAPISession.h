@@ -130,7 +130,8 @@ NEVERD_API void neverd_session_set_pdb_path(neverd_session_t Sess,
 /// {"verified":bool,"path","name_count","names":[{"address","name",
 /// "function":bool}]}. Names are returned only for an unverified import;
 /// authenticated inspection returns their count without a large name payload.
-/// A missing CodeView identity permits display names only. Present identities,
+/// A missing CodeView identity permits inspection without authorizing analysis.
+/// Present identities,
 /// machine and section layout are checked; mismatch or malformed input fails
 /// with NULL and neverd_last_error. This does not change the session, function
 /// inventory, types, ABI or analysis evidence. Caller frees.
@@ -142,6 +143,18 @@ NEVERD_API const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
 /// leaving the existing image and analysis usable. Missing CodeView identity
 /// is an error. The selected path becomes the next-load debug search policy.
 NEVERD_API int neverd_session_load_pdb(neverd_session_t Sess, const char *Path);
+
+/// Apply a manually selected PDB with an explicit trust choice. With
+/// UseWithoutIdentity == 1, a missing PE CodeView identity is permitted and
+/// the PDB supplies the same supported analysis facts as a matching companion.
+/// The caller must obtain user confirmation before setting this flag. Its
+/// identity remains unverified; machine, sections and present identities are
+/// still checked. 0 keeps the strict policy; other values fail. The selection
+/// persists in the session's next-load policy. Same transaction and result
+/// contract as neverd_session_load_pdb().
+NEVERD_API int neverd_session_load_pdb_ex(neverd_session_t Sess,
+                                          const char *Path,
+                                          int UseWithoutIdentity);
 
 /// Linker MAP counterpart of neverd_session_set_pdb_path().
 NEVERD_API void neverd_session_set_map_path(neverd_session_t Sess,

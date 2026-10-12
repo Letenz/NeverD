@@ -2125,16 +2125,20 @@ Signed: %4</translation>
         <translation>PDB files (*.pdb);;All files (*)</translation>
     </message>
     <message>
-        <source>Unverified PDB names</source>
-        <translation>Unverified PDB names</translation>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Use unverified PDB for analysis</translation>
     </message>
     <message>
         <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</translation>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>This engine cannot use an unverified PDB for analysis</translation>
     </message>
 </context>
 <context>
@@ -2412,6 +2416,10 @@ Import its names for display only? Types, function signatures and address ranges
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
         <translation>PDB display names imported: %1 (%2 names, unverified)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</translation>
     </message>
 </context>
 <context>

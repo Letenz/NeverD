@@ -2125,16 +2125,20 @@ Mit Vorzeichen: %4</translation>
         <translation>PDB-Dateien (*.pdb);;Alle Dateien (*)</translation>
     </message>
     <message>
-        <source>Unverified PDB names</source>
-        <translation>Ungeprüfte PDB-Namen</translation>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Ungeprüfte PDB zur Analyse verwenden</translation>
     </message>
     <message>
         <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>Dieser PE fehlt die PDB-Identität (GUID/age). Architektur und Abschnittslayout der ausgewählten PDB stimmen überein, aber ihr Build lässt sich nicht bestätigen.
 
-Nur Namen zur Anzeige importieren? Typen, Funktionssignaturen und Adressbereiche werden nicht zur Analyse verwendet.</translation>
+Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Adressbereiche werden als Analyseeingaben verwendet. Eine falsche PDB kann zu falschen Ergebnissen führen.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Diese Engine kann keine ungeprüfte PDB zur Analyse verwenden</translation>
     </message>
 </context>
 <context>
@@ -2412,6 +2416,10 @@ Nur Namen zur Anzeige importieren? Typen, Funktionssignaturen und Adressbereiche
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
         <translation>PDB-Anzeigenamen importiert: %1 (%2 Namen, ungeprüft)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB zur Analyse geladen: %1 (%2 Namen, vom Benutzer bestätigt, Identität ungeprüft)</translation>
     </message>
 </context>
 <context>

@@ -2129,16 +2129,20 @@ Signed: %4</source>
         <translation>Файлы PDB (*.pdb);;Все файлы (*)</translation>
     </message>
     <message>
-        <source>Unverified PDB names</source>
-        <translation>Непроверенные имена PDB</translation>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Использовать непроверенный PDB для анализа</translation>
     </message>
     <message>
         <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
 
-Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
         <translation>В этом PE отсутствует идентификатор PDB (GUID/age). Архитектура и расположение секций выбранного PDB совпадают, но его сборку нельзя проверить.
 
-Импортировать только имена для отображения? Типы, сигнатуры функций и диапазоны адресов не будут использоваться для анализа.</translation>
+Использовать этот PDB для анализа? Его символы, типы, сигнатуры функций и диапазоны адресов будут входными данными анализа. Неверный PDB может привести к ошибочным результатам.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Этот движок не может использовать непроверенный PDB для анализа</translation>
     </message>
 </context>
 <context>
@@ -2416,6 +2420,10 @@ Import its names for display only? Types, function signatures and address ranges
     <message>
         <source>PDB display names imported: %1 (%2 names, unverified)</source>
         <translation>Имена PDB для отображения импортированы: %1 (%2 имён, не проверены)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB загружен для анализа: %1 (%2 имён, подтверждён пользователем, идентификатор не проверен)</translation>
     </message>
 </context>
 <context>
