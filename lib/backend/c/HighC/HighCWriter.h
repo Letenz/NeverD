@@ -148,6 +148,19 @@ public:
                        bool MemoryAccess = false);
   /// Notes an object the code reaches only by its address so far.
   void noteImageAddress(va_t Addr);
+  /// The name the user, the debug information or a data symbol gives the
+  /// object at an address; with a symbol's, the symbol and the comment that
+  /// reads it as its language spells it.
+  struct ImageSymbolName {
+    std::string Raw;
+    std::string Symbol;
+    std::string Readable;
+  };
+  ImageSymbolName imageSymbolName(va_t Addr) const;
+  /// The listing's name for the data a relocated pointer slot at \p Slot
+  /// holds the address of, as `&name`, where the slot's initializer is a
+  /// number (no symbol sizes the target, so C declares no object for it).
+  std::string relocatedTargetNote(va_t Slot) const;
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();

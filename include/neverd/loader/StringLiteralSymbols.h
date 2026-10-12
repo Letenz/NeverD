@@ -69,6 +69,11 @@ struct SymbolStringLiteral {
 std::optional<SymbolStringLiteral>
 symbolStringLiteralAt(const BinaryImage &Img, va_t Addr, llvm::StringRef Name);
 
+/// The name of the image's own symbol at \p Addr that spells a literal, or
+/// an empty one.  Only MSVC names literals so, and only in COFF: a symbol
+/// file's names are the debug information's to give.
+llvm::StringRef stringLiteralSymbolAt(const BinaryImage &Img, va_t Addr);
+
 } // namespace neverd
 
 #endif // NEVERD_LOADER_STRINGLITERALSYMBOLS_H

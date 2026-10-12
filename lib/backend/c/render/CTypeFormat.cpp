@@ -12,8 +12,10 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 
 #include "neverd/Limits.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/StringScan.h"
 
@@ -89,6 +91,34 @@ namespace {
 bool terminatesStrings(const BinaryImage &Img) {
   return Img.ExceptionMetadata.Runtime.Runtime != SourceLanguageRuntime::Go;
 }
+
+/// Appends the character \p Ch to a C literal's text, escaped where C needs
+/// it; false for a character a literal does not show, a control or one
+/// past ASCII.
+bool appendLiteralCharacter(uint32_t Ch, std::string &Out) {
+  switch (Ch) {
+  case '\\':
+    Out += "\\\\";
+    return true;
+  case '"':
+    Out += "\\\"";
+    return true;
+  case '\n':
+    Out += "\\n";
+    return true;
+  case '\t':
+    Out += "\\t";
+    return true;
+  case '\r':
+    Out += "\\r";
+    return true;
+  default:
+    if (Ch < 0x20 || Ch > 0x7E)
+      return false;
+    Out += static_cast<char>(Ch);
+    return true;
+  }
+}
 } // namespace
 
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
@@ -105,30 +135,7 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   if (!Img->hasObjectDataProvenance(Addr))
     return std::nullopt;
   constexpr unsigned kMaxLit = 64;
-  auto Escape = [](uint32_t Ch, std::string &Out) {
-    switch (Ch) {
-    case '\\':
-      Out += "\\\\";
-      return true;
-    case '"':
-      Out += "\\\"";
-      return true;
-    case '\n':
-      Out += "\\n";
-      return true;
-    case '\t':
-      Out += "\\t";
-      return true;
-    case '\r':
-      Out += "\\r";
-      return true;
-    default:
-      if (Ch < 0x20 || Ch > 0x7E)
-        return false;
-      Out += static_cast<char>(Ch);
-      return true;
-    }
-  };
+  const auto Escape = appendLiteralCharacter;
   const uint64_t Off = Addr - Seg->VA;
   if (Off >= Seg->Data.size())
     return std::nullopt;
@@ -200,6 +207,55 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
       return std::nullopt;
   }
   return std::nullopt;
+}
+
+std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
+                                           const DebugContext *Dbg, va_t Addr,
+                                           bool AllowEmpty) {
+  if (auto Literal = imageStringLiteral(Img, Addr, AllowEmpty))
+    return Literal;
+  if (!Img || Addr == 0 || Addr == InvalidVA)
+    return std::nullopt;
+  if (const Segment *Seg = Img->getSegmentFor(Addr); !Seg || !Seg->isReadable())
+    return std::nullopt;
+  // The debug information names the literals, the image's symbols merged
+  // from it among them; without it, the image's own symbols do.
+  std::string Name;
+  if (Dbg) {
+    if (const auto Data = Dbg->resolveDataObject(Addr);
+        Data && isStringLiteralName(Data->Name))
+      Name = Data->Name;
+  } else {
+    Name = stringLiteralSymbolAt(*Img, Addr).str();
+  }
+  if (Name.empty())
+    return std::nullopt;
+  const auto Literal = symbolStringLiteralAt(*Img, Addr, Name);
+  if (!Literal)
+    return std::nullopt;
+  const uint8_t *Bytes =
+      Literal->Bytes ? Img->readVA(Addr, Literal->Bytes) : nullptr;
+  if (Literal->Bytes && !Bytes)
+    return std::nullopt;
+  std::string Text;
+  for (uint64_t At = 0; At < Literal->Bytes; At += Literal->UnitBytes) {
+    uint32_t Ch = 0;
+    for (unsigned Byte = 0; Byte < Literal->UnitBytes; ++Byte)
+      Ch |= static_cast<uint32_t>(Bytes[At + Byte]) << (8 * Byte);
+    if (!appendLiteralCharacter(Ch, Text))
+      return std::nullopt;
+  }
+  const llvm::StringRef Prefix = Literal->UnitBytes == 2   ? "L"
+                                 : Literal->UnitBytes == 4 ? "U"
+                                                           : "";
+  return (Prefix + "\"" + Text + "\"").str();
+}
+
+bool isCodeSectionData(const DebugContext *Dbg, va_t Addr) {
+  if (!Dbg)
+    return false;
+  const auto Data = Dbg->resolveDataObject(Addr);
+  return Data && !Data->Name.empty() && !Dbg->resolveFunction(Addr);
 }
 
 namespace {
