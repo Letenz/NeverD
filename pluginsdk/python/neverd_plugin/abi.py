@@ -764,6 +764,43 @@ class NeverDSafetyOptions(ctypes.Structure):
     ]
 
 
+class NeverDSourcePatchMappingV1(ctypes.Structure):
+    _fields_ = [
+        ("symbol", ctypes.c_char_p),
+        ("original_va", VirtualAddress),
+    ]
+
+
+class NeverDSourcePatchBindingV1(ctypes.Structure):
+    _fields_ = [
+        ("symbol", ctypes.c_char_p),
+        ("kind", ctypes.c_uint32),
+        ("original_va", VirtualAddress),
+        ("size", ctypes.c_uint64),
+    ]
+
+
+class NeverDSourcePatchOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("input_kind", ctypes.c_uint32),
+        ("compiler", ctypes.c_uint32),
+        ("language", ctypes.c_uint32),
+        ("artifact", ctypes.c_uint32),
+        ("mode", ctypes.c_uint32),
+        ("strategy", ctypes.c_uint32),
+        ("compiler_path", ctypes.c_char_p),
+        ("source_name", ctypes.c_char_p),
+        ("compiler_args", ctypes.POINTER(ctypes.c_char_p)),
+        ("compiler_arg_count", ctypes.c_size_t),
+        ("mappings", ctypes.POINTER(NeverDSourcePatchMappingV1)),
+        ("mapping_count", ctypes.c_size_t),
+        ("timeout_seconds", ctypes.c_uint32),
+        ("bindings", ctypes.POINTER(NeverDSourcePatchBindingV1)),
+        ("binding_count", ctypes.c_size_t),
+    ]
+
+
 class NeverDDriverOptionsV1(ctypes.Structure):
     """Exact layout of ``neverd_driver_options_v1`` (all budgets positive)."""
 
@@ -866,6 +903,9 @@ _C_TYPES: dict[str, object] = {
     "const neverd_driver_options_v1 *": ctypes.POINTER(NeverDDriverOptionsV1),
     "const neverd_sanitize_options_v1 *": ctypes.POINTER(NeverDSanitizeOptionsV1),
     "neverd_sanitize_result_v1 *": ctypes.POINTER(NeverDSanitizeResultV1),
+    "const neverd_source_patch_options_v1 *": ctypes.POINTER(
+        NeverDSourcePatchOptionsV1
+    ),
 }
 
 
@@ -1155,6 +1195,12 @@ _declare(
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
+    "neverd_function_chunks_json",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
     "neverd_exports_json",
     "const char *",
     ["neverd_session_t"],
@@ -1340,6 +1386,18 @@ _declare(
     "neverd_patch_from_c",
     "int",
     ["neverd_session_t", "const char *", "neverd_va_t", "const char *"],
+)
+_declare(
+    "neverd_patch_source",
+    "int",
+    ["neverd_session_t", "const void *", "size_t",
+     "const neverd_source_patch_options_v1 *", "const char *"],
+)
+_declare(
+    "neverd_patch_source_report",
+    "const char *",
+    ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
 )
 _declare("neverd_set_inst_substitution", "void", ["neverd_session_t", "int", "int"])
 _declare("neverd_patch_substitution_count", "int", ["neverd_session_t"])

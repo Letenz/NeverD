@@ -81,6 +81,15 @@ worker never links the test engine.
 
 ## Layout
 
+**File → Offline package review** opens a separate modeless evidence workbench.
+Preview/capture a local file or directory, select a manifest/lock file or an
+available tar/tgz/zip member, and optionally select captured registry declarations.
+The table keeps evidence, binding, confidence and analyst disposition separate.
+Review files contain fixed assertions and opaque IDs; loading previews them and
+explicit restoration verifies the whole chain against the same assessment.
+Analysis uses the shared C++ backend and never launches the input. See the
+[workflow and limits](web-package-review-journal.md).
+
 A start without a file shows the quick start over the default desktop, as IDA
 does. Drag its window edges or lower-right grip to resize it; the next opening
 remembers that size. The action pane stays the same width while the recent
@@ -96,6 +105,11 @@ A file dragged over the dialog shows that a drop opens it. **Display at
 startup** decides whether the next start shows it again; **File → Quick start**
 shows it any time. Behind it is the default desktop:
 
+- the title bar the window draws itself, as Visual Studio Code does: the
+  application icon, the menus, a command center that names the open file and
+  opens the command palette (**Ctrl+Shift+P**), and the minimize, maximize and
+  close buttons (on macOS the menus stay in the menu bar and the system's
+  traffic lights take the buttons' place);
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
   and external symbols, with the current position; click or drag to navigate;
@@ -107,9 +121,11 @@ shows it any time. Behind it is the default desktop:
 - **Output** across the bottom, with a command line for expressions and
   workbench commands;
 - the status bar with the background analysis indicator (`AU: idle` or busy
-  with progress), the search direction and free disk space.
+  with progress), the search direction and free disk space. It shares the
+  windows' surface below a hairline, as in Visual Studio Code's Modern themes.
 
-Every window is a dock: drag tabs to split, stack or float them. Docked windows
+Every window is a dock: drag tabs to split, stack or float them. A tab shows
+its close button while it is current or under the pointer. Docked windows
 are one hairline apart; drag the line to resize its neighbors, or double-click
 it to share their space evenly. A window narrows to about the width of its tab:
 a status line or a row of buttons that no longer fits is cut at the window's
@@ -135,9 +151,10 @@ operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
 differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
-their classic forms in the listing, function list and jumps: import thunks after
-their import, the entry point `start`, and `main` as passed to the C runtime's
-start routine.
+their classic forms in the listing, function list, jumps and source views:
+import thunks after their import, the entry point `start`, and `main` as passed
+to the C runtime's start routine. The pseudocode of `sub_13E0` therefore defines
+`main`, and a rename of the function still wins over the classic name.
 
 **Graph view** (Space) lays the current function out in layers with the
 conditional (green/red) and unconditional edges routed around blocks; panning
@@ -361,7 +378,10 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 
 Single-key shortcuts apply only while an analysis view has the keyboard focus,
 so typing in a field or dialog keeps normal text editing. **Options →
-Shortcuts** lists every command with its key.
+Shortcuts** lists every command with its key. Menus, buttons and labels
+underline their access keys while Alt is held, as on Windows and GNOME, and a
+menu that Alt and its letter opened keeps them until it closes; Alt and the
+letter work either way.
 
 A command IDA also has takes IDA's default key: the legacy scheme of IDA's
 `cfg/idagui.cfg`, and the decompiler's F5, Tab and Ctrl+F5.
@@ -395,10 +415,41 @@ closes.
 Without a remembered size the window opens centered at three quarters of the
 screen's width and four fifths of its height. GNOME maximizes a window that
 opens at nearly the size of the screen, and a maximized window does not resize
-from its edges; IDA opens that way. Under Wayland GNOME draws no frame and the
+from its edges; IDA opens that way.
+
+The workbench draws its own title bar. Drag the title bar's empty part to
+move the window, and double-click it to maximize or restore the window (on
+macOS, to do what the system setting for title bar double clicks asks). The
+title bar dims while the window is inactive, and full screen hides its icon
+and window buttons. Dialogs draw a title bar of their own: the dialog's title
+in the middle, Close, and Maximize for a dialog that offers it, such as the
+quick start.
+
+How the rest of the frame is drawn depends on the system:
+
+- On Linux the window has no system frame. It resizes from every edge and
+  corner, starting four pixels inside its visible edge. Under Wayland GNOME
+  draws no shadow for such a window, so the window draws a ten-pixel shadow of
+  its own, and that band resizes the window too, as GNOME's own windows allow;
+  under X11 GNOME draws the shadow.
+- On Windows the window keeps the system frame without its caption, so
+  Windows still draws its edges and shadow, snaps and animates it and resizes
+  it from its sides and bottom; the top edge resizes it through the title bar.
+- On macOS the window keeps its frame and traffic lights, and its title bar
+  turns transparent with the workbench's own drawn under it.
+
+To keep the system's whole frame instead, set `nativeTitleBar=true` in the
+`[ui]` group of the NeverD settings (`~/.config/NeverSight/NeverD.conf` on
+Linux); the workbench reads it at startup.
+
+With the window manager's frame under Wayland, GNOME draws no frame and the
 one Qt draws resizes only from a few pixels outside the visible edge, so the
 last four pixels inside the left, right and bottom edges resize the window
-too, under the matching cursor.
+too, under the matching cursor. When Qt updates the size limits of a maximized
+window, as on leaving full screen, it tells GNOME the window has no maximum
+width but a maximum height, which GNOME reads as a maximum width of zero: the
+restored window stopped resizing sideways, and a vertical resize narrowed it.
+The window therefore keeps a finite maximum size larger than any screen.
 
 ## Loading a new file
 

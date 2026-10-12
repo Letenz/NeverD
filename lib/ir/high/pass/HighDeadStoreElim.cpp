@@ -43,6 +43,8 @@ static bool isTrapFreeFloatOp(NdOp Op) {
   case NdOp::FLOAT_SUB:
   case NdOp::FLOAT_MULT:
   case NdOp::FLOAT_DIV:
+  case NdOp::FLOAT_MIN:
+  case NdOp::FLOAT_MAX:
   case NdOp::FLOAT_MINNUM:
   case NdOp::FLOAT_MAXNUM:
   case NdOp::FLOAT_EQUAL:

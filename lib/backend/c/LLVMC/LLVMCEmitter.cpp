@@ -30,6 +30,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
@@ -96,6 +97,119 @@ referencedGlobals(const llvm::Function &Function) {
   }
   return Globals;
 }
+/// An initializer longer than this prints over several lines of about
+/// InitializerLineChars each, so a mirrored image section reads, and pages,
+/// as the code around it does.
+constexpr size_t WrapInitializersOver = 4096;
+constexpr size_t InitializerLineChars = 120;
+constexpr llvm::StringLiteral InitializerIndent = "    ";
+
+/// The length of the escape sequence at \p At in \p Text: an octal escape
+/// takes three digits at most, a hex escape every digit after it.
+size_t escapeLength(llvm::StringRef Text, size_t At) {
+  size_t End = At + 1;
+  if (End == Text.size())
+    return 1;
+  const char Kind = Text[End++];
+  if (Kind >= '0' && Kind <= '7') {
+    while (End < Text.size() && End < At + 4 && Text[End] >= '0' &&
+           Text[End] <= '7')
+      ++End;
+  } else if (Kind == 'x') {
+    while (End < Text.size() && llvm::isHexDigit(Text[End]))
+      ++End;
+  } else if (Kind == 'u' || Kind == 'U') {
+    End = std::min(Text.size(), End + (Kind == 'u' ? 4 : 8));
+  }
+  return End - At;
+}
+
+/// \p Text, an initializer, broken after its commas and inside its string
+/// literals when it is too long for one line.  No break falls in a comment,
+/// a character constant or an escape sequence, and a string literal goes on
+/// as an adjacent one, which C joins back.
+std::string wrapInitializer(std::string Text) {
+  if (Text.size() <= WrapInitializersOver)
+    return Text;
+  std::string Out;
+  Out.reserve(Text.size() + Text.size() / InitializerLineChars *
+                                (InitializerIndent.size() + 3));
+  size_t LineStart = 0;
+  const auto LineFull = [&] {
+    return Out.size() - LineStart >= InitializerLineChars;
+  };
+  const auto Break = [&](llvm::StringRef Before, llvm::StringRef After) {
+    Out += Before;
+    Out += '\n';
+    LineStart = Out.size();
+    Out += InitializerIndent;
+    Out += After;
+  };
+  const auto CopyEscape = [&](size_t &I) {
+    const size_t Length = escapeLength(Text, I);
+    Out.append(Text, I, Length);
+    I += Length - 1;
+  };
+  enum class Within { Code, String, Character, Comment };
+  Within State = Within::Code;
+  for (size_t I = 0; I < Text.size(); ++I) {
+    const char C = Text[I];
+    const char Next = I + 1 < Text.size() ? Text[I + 1] : '\0';
+    switch (State) {
+    case Within::String:
+      if (C == '"') {
+        State = Within::Code;
+        Out += C;
+        break;
+      }
+      if (LineFull())
+        Break("\"", "\"");
+      if (C == '\\')
+        CopyEscape(I);
+      else
+        Out += C;
+      break;
+    case Within::Character:
+      if (C == '\\') {
+        CopyEscape(I);
+        break;
+      }
+      if (C == '\'')
+        State = Within::Code;
+      Out += C;
+      break;
+    case Within::Comment:
+      if (C == '*' && Next == '/') {
+        State = Within::Code;
+        Out += "*/";
+        ++I;
+        break;
+      }
+      Out += C;
+      break;
+    case Within::Code:
+      if (C == ',' && Next == ' ' && LineFull()) {
+        Break(",", "");
+        ++I;
+        break;
+      }
+      if (C == '"')
+        State = Within::String;
+      else if (C == '\'')
+        State = Within::Character;
+      else if (C == '/' && Next == '*') {
+        State = Within::Comment;
+        Out += "/*";
+        ++I;
+        break;
+      }
+      Out += C;
+      break;
+    }
+  }
+  return Out;
+}
+
 } // namespace
 
 bool LLVMCWriter::isNativeVectorIntrinsic(const llvm::CallBase &Call,
@@ -310,6 +424,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
   FPStateHelperNames.clear();
+  SyscallHelperNames.clear();
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -351,6 +466,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 Word != (Opts.TheArch == Arch::X64 ? 8U : 4U))
               llvm::report_fatal_error(
                   "shadow stack read target/type mismatch");
+          }
+          if (const SyscallConvention *Syscall =
+                  modeledSyscallInlineAsm(Opts.TheArch, *CI)) {
+            auto [It, Inserted] =
+                SyscallHelperNames.try_emplace(Syscall->Modeled);
+            if (Inserted)
+              It->second = GlobalIdentifierAllocator.allocate(
+                  intrinsicCName(Syscall->Modeled), "nd_syscall");
           }
           if (auto Shape = classifyX86FPStateAsm(*CI);
               Shape && isX86FPNumericalStateIntrinsic(Shape->first)) {
@@ -481,6 +604,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                               FPToIntegerPolicy::Saturate});
   }
   writeX86FPScalarValueCHelpers(OS, FPStateHelperNames);
+  for (const auto &[Id, Name] : SyscallHelperNames)
+    if (const SyscallConvention *Syscall = modeledSyscallConvention(Id))
+      OS << linuxSyscallHelperDefinition(*Syscall, Name);
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
@@ -609,7 +735,7 @@ void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
   if (Global.isConstant())
     OS << "const ";
   OS << "uint8_t " << Name << "[" << Array->getNumElements() << "] = {";
-  bool Any = false;
+  std::string Elements;
   if (!Global.getInitializer()->isNullValue())
     for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
       const auto *Element = llvm::dyn_cast_or_null<llvm::ConstantInt>(
@@ -618,15 +744,12 @@ void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
       if (!Element)
         throw std::invalid_argument(
             "non-byte initializer in image byte storage");
-      if (!Element->isZero()) {
-        OS << (Any ? ", " : "") << "[" << I
-           << "] = " << Element->getZExtValue();
-        Any = true;
-      }
+      if (!Element->isZero())
+        Elements += (Elements.empty() ? "[" : ", [") + std::to_string(I) +
+                    "] = " + std::to_string(Element->getZExtValue());
     }
-  if (!Any)
-    OS << "0";
-  OS << "};\n";
+  OS << (Elements.empty() ? "0" : wrapInitializer(std::move(Elements)))
+     << "};\n";
 }
 
 void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
@@ -775,8 +898,9 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
           Raw = Raw.drop_back();
         if (GV.hasLocalLinkage())
           OS << "static ";
-        OS << "const char " << Name << "[] = \"" << escapeCString(Raw)
-           << "\";\n";
+        OS << "const char " << Name
+           << "[] = " << wrapInitializer("\"" + escapeCString(Raw) + "\"")
+           << ";\n";
         continue;
       }
     }
@@ -790,15 +914,16 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         OS << "const ";
       OS << typeToCLLVM(Array->getElementType()) << " " << Name << "["
          << Array->getNumElements() << "] = {";
+      std::string Elements;
       if (llvm::isa<llvm::ConstantAggregateZero>(Init))
-        OS << "0";
+        Elements = "0";
       else
         for (uint64_t I = 0; I < Array->getNumElements(); ++I) {
           if (I)
-            OS << ", ";
-          OS << constStr(Init->getAggregateElement(unsigned(I)));
+            Elements += ", ";
+          Elements += constStr(Init->getAggregateElement(unsigned(I)));
         }
-      OS << "};\n";
+      OS << wrapInitializer(std::move(Elements)) << "};\n";
       continue;
     }
 
@@ -808,7 +933,7 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
       OS << "const ";
     OS << typeToCLLVM(GV.getValueType()) << " " << Name;
     if (!llvm::isa<llvm::ConstantAggregateZero>(Init))
-      OS << " = " << constStr(Init);
+      OS << " = " << wrapInitializer(constStr(Init));
     OS << ";\n";
   }
 }
@@ -1539,7 +1664,8 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     // A mapping failure leaves the successful ordinary source intact, with
     // unknown spans. Errors in the ordinary emission still propagate.
   }
-  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary,
+                               CSourceRecorder::Recording::Instructions);
   try {
     if (Sources)
       Instructions.prepareLLVMSources(*Sources);

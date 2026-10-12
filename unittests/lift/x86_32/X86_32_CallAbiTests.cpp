@@ -178,3 +178,93 @@ int pick(int x) { return apply((x & 1) ? add3 : sub2, x * 13, x >> 2); }
   }
   EXPECT_EQ(Calls, 2u) << Apply;
 }
+
+// A double passed on the stack fills two four-byte slots, and MULSD reads it
+// from its home as one memory operand: the multiply takes both slots.
+TEST_F(X86_32_CallAbi, AStackDoubleFeedsItsMultiplyWhole) {
+  expectRunsLikeSource(R"C(
+int fg(double, double, double, double, double, double)
+    __attribute__((noinline));
+int icfp(int x) {
+  double v = (double)x;
+  return fg(v, v + 1, v + 2, v + 3, v + 4, v + 5);
+}
+int fg(double a, double b, double c, double d, double e, double f) {
+  return (int)(a * b + c * d + e * f);
+}
+)C",
+                       "icfp", {"icfp", "fg"});
+}
+
+// Twelve variadic ints, all on the stack, which the callee's va_arg walk
+// reads in place above its frame.  The callee takes them as trailing
+// parameters, seeded where the walk reads them.
+TEST_F(X86_32_CallAbi, AVariadicCalleeReadsItsStackArgumentsInPlace) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+int vmany(int n, ...) __attribute__((noinline));
+int vmany_e(int x) {
+  unsigned u = (unsigned)x;
+  return vmany(12, (int)u, (int)(u + 1u), (int)(u * 2u), (int)(u ^ 3u),
+               (int)(u - 4u), (int)(u * 5u), (int)(u + 6u), (int)(u ^ 7u),
+               (int)(u - 8u), (int)(u * 9u), (int)(u + 10u), (int)(u ^ 11u));
+}
+int vmany(int n, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 131 + __builtin_va_arg(ap, int);
+  __builtin_va_end(ap);
+  return s;
+}
+)C",
+                       "vmany_e", {"vmany_e", "vmany"});
+}
+
+// Clang passes a static function's doubles in xmm0 and xmm1.  CVTSI2SD and
+// MULSD write a register's low double and keep its upper half, which this
+// function never set: the callee reads only the low double, so the call
+// passes it alone and no unknown upper half reaches the C.
+TEST_F(X86_32_CallAbi, ADoubleArgumentPassesOnlyItsLowLane) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+static double h2(double, double) __attribute__((noinline));
+int dd(int a) {
+  double x = (double)a;
+  double r = h2(x * 1.25, x * 0.5 + 3.0);
+  return (int)r;
+}
+static double h2(double a, double b) { return a * b + a - b * 2.0; }
+)C",
+                       "dd", {"dd", "h2"});
+}
+
+// Clang folds the count of a static variadic function's only call into its
+// body and reads four of the arguments with one 16-byte load from the
+// stack.  The load reads four parameters, one per slot.
+TEST_F(X86_32_CallAbi, AWideLoadOfStackArgumentsReadsEverySlot) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+#include <stdarg.h>
+static int mx(int n, ...) __attribute__((noinline));
+int vmax_i(int a) {
+  unsigned u = (unsigned)a;
+  return mx(5, (int)u, (int)(u ^ 0x7fu), (int)(0 - u), (int)(u * 5u),
+            (int)(u >> 1));
+}
+static int mx(int n, ...) {
+  va_list ap;
+  va_start(ap, n);
+  int m = -2147483647 - 1;
+  for (int i = 0; i < n; i++) {
+    int v = va_arg(ap, int);
+    if (v > m)
+      m = v;
+  }
+  va_end(ap);
+  return m;
+}
+)C",
+                       "vmax_i", {"vmax_i", "mx"});
+}

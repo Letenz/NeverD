@@ -23,6 +23,24 @@ extern "C" {
 /// Independent of neverd_session_t: source identities are not native addresses.
 typedef void *neverd_web_session_t;
 
+/// Explicit immutable native selection and instruction address. No caller
+/// supplied table descriptor, target execution, file sidecars or network use.
+NEVERD_API const char *neverd_web_tauri_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    uint64_t InitializerAddress, const char *Profile, size_t ProfileSize);
+NEVERD_API const char *
+neverd_web_tauri_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              uint64_t Offset, uint64_t Limit);
+/// Explicit local disclosure under fixed exclusive files; not exposed by MCP.
+NEVERD_API const char *
+neverd_web_tauri_export_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *OutputDirectory, size_t DirectorySize);
+
 /// Returns null on allocation failure or when web analysis is disabled.
 NEVERD_API neverd_web_session_t neverd_web_session_create(void);
 /// No concurrent call may be active during destruction. Null is accepted.
@@ -69,14 +87,26 @@ neverd_web_har_records_json(neverd_web_session_t Session,
                             const char *ExpectedRevision, size_t RevisionSize,
                             const char *CaptureID, size_t CaptureIDSize,
                             uint64_t Offset, uint64_t Limit);
-/// Direct external fetch/WebSocket syntax is inferred evidence, not proof of
-/// intrinsic identity, reachability or execution. No source text is returned.
+/// Direct fetch/WebSocket, unverified member-fetch and bounded XHR syntax are
+/// inferred evidence, not intrinsic identity, reachability or execution.
+/// Spread argument roles remain unresolved. No source text is returned.
 NEVERD_API const char *neverd_web_interfaces_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
 NEVERD_API const char *neverd_web_interface_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Explicit source-syntax relationships from one existing request analysis.
+/// No runtime response identity, wrapper argument flow or HAR join is inferred.
+NEVERD_API const char *neverd_web_interface_relations_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize);
+/// Metadata-only relation pages. Limit is 1..128; source, names and values
+/// remain private behind exact source-node and lexical-binding anchors.
+NEVERD_API const char *neverd_web_interface_relation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RelationsID, size_t RelationsIDSize,
     uint64_t Offset, uint64_t Limit);
 /// Explicit source and committed capture selections only. Matching method,
 /// origin and path produces candidate pairs, never an execution claim.
@@ -99,6 +129,104 @@ NEVERD_API const char *neverd_web_package_integrity_verify_json(
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *DeclarationID, size_t DeclarationIDSize, const char *PackageID,
     size_t PackageIDSize);
+
+/// Import one captured OSV record and one captured provenance descriptor.
+/// Descriptor schema_version:1 admits optional source/retrieved_at/as_of
+/// declarations. No fetch, freshness, publisher or exploitability inference.
+NEVERD_API const char *neverd_web_package_advisory_import_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DescriptorArtifactID, size_t DescriptorArtifactIDSize);
+/// RecordKind is affected or severities; Limit is 1..512. Supplied names,
+/// prose, scores and source labels remain private behind original anchors.
+NEVERD_API const char *neverd_web_package_advisory_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AdvisoryID, size_t AdvisoryIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+/// Options schema_version:1, optional advisory_ids array (0..16). Match exact
+/// declared npm identity and admitted version selectors, never installed code
+/// or reachability. Unknown selectors prevent negative coverage claims.
+NEVERD_API const char *neverd_web_package_advisories_match_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+NEVERD_API const char *neverd_web_package_advisories_match_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *MatchesID, size_t MatchesIDSize,
+    uint64_t Offset, uint64_t Limit);
+
+/// Import captured registry-dist, intoto-statement or dsse-intoto metadata.
+/// Descriptor uses the shared offline source/time schema. No signature,
+/// publisher, trust chain, transparency or SLSA level authentication.
+NEVERD_API const char *neverd_web_package_attestation_import_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *DescriptorArtifactID, size_t DescriptorArtifactIDSize,
+    const char *InputKind, size_t InputKindSize);
+/// RecordKind is signatures, subjects or digests. Limit is 1..512. Private
+/// names, URIs, key IDs, signature bytes, digests and payloads stay redacted.
+NEVERD_API const char *neverd_web_package_attestation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AttestationID, size_t AttestationIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+/// Match ONE explicit SHA-256/SHA-512 subject digest against a captured
+/// original using the integrity owner. No other subjects or digests are
+/// checked; equality does not bind an inventory or authenticate the signer.
+NEVERD_API const char *neverd_web_package_attestation_digest_match_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *AttestationID, size_t AttestationIDSize, const char *DigestID,
+    size_t DigestIDSize);
+NEVERD_API const char *neverd_web_package_attestation_digest_result_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *MatchID, size_t MatchIDSize);
+
+/// Compose retained results. Options are omitted or schema_version:1 with
+/// bounded integrity_ids, advisory_ids, advisory_matches_id, attestation_ids,
+/// attestation_digest_match_ids, package_behavior_id, package_install_id,
+/// package_diff_id and package_behavior_diff_id. No paths, notes or raw data.
+NEVERD_API const char *neverd_web_package_assessment_create_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// Reads pin the current review head; a changed head requires a fresh query.
+/// Pages contain 1..512 metadata rows, with no package names or source text.
+NEVERD_API const char *neverd_web_package_assessment_findings_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+/// Append one caller assertion, not proof or authorization. Disposition is
+/// unreviewed, needs_review, accepted_risk or false_positive. Only an exact
+/// replay of the last accepted request can use its old parent head again.
+NEVERD_API const char *neverd_web_package_review_append_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *FindingID,
+    size_t FindingIDSize, const char *Disposition, size_t DispositionSize);
+NEVERD_API const char *neverd_web_package_review_decisions_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+/// Restore a bounded offline-package-review-journal-v1 chain atomically.
+/// The current history must be an exact prefix; unchanged replay is free.
+/// Every identity, finding, parent, ordinal and disposition is checked by the
+/// backend. Journals are caller assertions, never authenticated analyst proof.
+NEVERD_API const char *neverd_web_package_review_restore_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *JournalJSON,
+    size_t JournalSize);
+/// Return a bounded metadata-only Markdown report page in JSON. No file is
+/// written and no source disclosure or execution permission is granted.
+NEVERD_API const char *neverd_web_package_assessment_report_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
 
 /// Explicit tar/tgz/zip profile; captured originals only, no recursive
 /// extraction.
@@ -300,6 +428,70 @@ neverd_web_sea_records_json(neverd_web_session_t Session,
                             const char *ExtractionID, size_t ExtractionIDSize,
                             uint64_t Offset, uint64_t Limit);
 
+/// Read a nexe resource envelope under an explicit listed profile. Prefix,
+/// producer, runtime and signature validation are separate, unchecked states.
+NEVERD_API const char *
+neverd_web_nexe_extract_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ArtifactID, size_t ArtifactIDSize,
+                             const char *Profile, size_t ProfileSize);
+/// RecordKind is regions/members; Limit is 1..512. Metadata only. Member and
+/// bootstrap selection IDs feed existing consumers; paths/payloads stay
+/// private.
+NEVERD_API const char *
+neverd_web_nexe_records_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *RecordKind, size_t RecordKindSize,
+                             uint64_t Offset, uint64_t Limit);
+
+/// Read a pkg VFS under an explicit listed profile without executing its
+/// loader/prelude or interpreting V8 caches. Native validation is separate.
+NEVERD_API const char *
+neverd_web_pkg_extract_json(neverd_web_session_t Session,
+                            const char *ExpectedRevision, size_t RevisionSize,
+                            const char *ArtifactID, size_t ArtifactIDSize,
+                            const char *Profile, size_t ProfileSize);
+/// RecordKind is regions/members/links; Limit is 1..512. Only non-private
+/// stored content and the prelude expose selections. Paths, links and per-store
+/// metadata hashes stay private; source/cache equivalence remains unchecked.
+NEVERD_API const char *
+neverd_web_pkg_records_json(neverd_web_session_t Session,
+                            const char *ExpectedRevision, size_t RevisionSize,
+                            const char *ExtractionID, size_t ExtractionIDSize,
+                            const char *RecordKind, size_t RecordKindSize,
+                            uint64_t Offset, uint64_t Limit);
+
+/// Read the listed Wails/Go embed.FS profile from captured native bytes.
+/// All candidate tables and stored digest prefixes must validate. Declared
+/// producer versions do not authenticate the compiler or publisher; actual
+/// asset-server bindings and native bridges remain unverified.
+NEVERD_API const char *
+neverd_web_wails_extract_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ArtifactID, size_t ArtifactIDSize,
+                              const char *Profile, size_t ProfileSize);
+/// RecordKind is tables/members; Limit is 1..128. Private paths/build metadata
+/// stay withheld. File selection IDs feed the existing HTML/source/native
+/// consumers, with one separate immutable namespace per filesystem table.
+NEVERD_API const char *
+neverd_web_wails_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              const char *RecordKind, size_t RecordKindSize,
+                              uint64_t Offset, uint64_t Limit);
+
+/// Explicit local disclosure of complete native bytes and all selected table
+/// assets into a fresh private directory. Fixed filenames, no overwrite and
+/// SHA256 reread verification. Virtual paths are manifest data only. This raw
+/// operation is not exposed through worker/MCP; it does not run or parse
+/// assets.
+NEVERD_API const char *
+neverd_web_wails_export_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *OutputDirectory, size_t DirectorySize);
+
 /// Extract the explicitly qualified Bun container layout from admitted bytes.
 /// No execution or external tools; version/producer authentication is not
 /// implied. Source maps and JSC caches retain their original byte ranges.
@@ -336,6 +528,19 @@ NEVERD_API const char *neverd_web_source_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *SourceType, size_t SourceTypeSize);
+
+/// Explicit local raw disclosure of a captured direct-byte source selection
+/// into a NEW private directory. Uses the independent recovery parser;
+/// interactive source/cache limits remain unchanged. SourceType is required.
+/// Preserves exact original.bin and publishes readable.js only after a same
+/// parser-tree check. A successful evidence-export receipt can contain an
+/// unsuccessful readable_status and no readable file. No target execution,
+/// deleted-source recovery, overwrite or remote transport export occurs.
+NEVERD_API const char *neverd_web_source_readable_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize, const char *OutputDirectory,
+    size_t OutputDirectorySize);
 
 /// Enumerates syntax kinds, parent identities and original half-open byte
 /// spans for a previously analyzed source. Limit is 1..512.
@@ -383,9 +588,9 @@ NEVERD_API const char *neverd_web_node_behavior_records_json(
     size_t RevisionSize, const char *BehaviorID, size_t BehaviorIDSize,
     uint64_t Offset, uint64_t Limit);
 /// Options is {"schema_version":1,"source_ids":[...]} with 1..16 retained
-/// source IDs. Joins exact package files and stored Bun/SEA delivery ancestry
-/// only; unknown package ownership and unavailable source results remain
-/// explicit.
+/// source IDs. Joins exact package files and stored Bun/SEA/nexe delivery
+/// ancestry only; unknown package ownership and unavailable source results
+/// remain explicit.
 NEVERD_API const char *neverd_web_package_behavior_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *PackageAnalysisID,
@@ -398,8 +603,38 @@ NEVERD_API const char *neverd_web_package_behavior_records_json(
     const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
     uint64_t Limit);
 
-/// Verify local primitive substitutions for an explicit string_recovery or
-/// constant_folding pass. Returns metadata and a raw-local-export receipt;
+/// Compare selected syntax evidence under an existing package diff. Options:
+/// schema_version=1 and optional before_package_behavior_id and
+/// after_package_behavior_id from that diff's exact package analyses.
+NEVERD_API const char *neverd_web_package_behavior_diff_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageDiffID, size_t PackageDiffIDSize,
+    const char *OptionsJSON, size_t OptionsSize);
+/// Page pairs, patterns or occurrences; missing coverage never becomes zero.
+NEVERD_API const char *neverd_web_package_behavior_diff_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *DiffID, size_t DiffIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
+/// Options is {"schema_version":1} with optional package_behavior_id from
+/// this package analysis. Absence selects no sources but retains declarations
+/// and coverage gaps. No shell, runtime resolution or reachability inference.
+NEVERD_API const char *neverd_web_package_install_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// RecordKind is scripts, sources, requests or associations. Limit is 1..512.
+/// Fixed metadata and opaque evidence anchors only; commands stay private.
+NEVERD_API const char *neverd_web_package_install_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *InstallID, size_t InstallIDSize,
+    const char *RecordKind, size_t RecordKindSize, uint64_t Offset,
+    uint64_t Limit);
+
+/// Verify local substitutions for an explicit string_recovery,
+/// constant_folding, scope_renaming or boolean_branches pass. Returns
+/// profile-specific evidence and a raw-local-export receipt;
 /// original/candidate text and individual replacement hashes remain private.
 /// These receipts do not establish whole-program or source-reflection equality.
 NEVERD_API const char *neverd_web_source_rewrite_analyze_json(

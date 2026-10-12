@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>以按位取反的形式显示操作数的数字</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>代码(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>从当前地址开始定义指令</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>离线软件包审查(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>查看本地软件包证据和分析师审查</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1444,14 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>%n 个声明以 C 显示</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>已取消</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>已保存的变量名属于另一份源代码呈现</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2072,38 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>无法确定 %1 的加载方式：%2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>此源代码行的注释：</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>新名称：</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>重命名</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>请选择要重命名的已声明变量或映像中的名称</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>请选择一行源代码；折叠的代码请先展开再添加注释</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>所选名称没有映像地址</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>此指令没有到源代码行的地址映射。</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>此源代码行没有到指令地址的映射；显示函数入口</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2242,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>你打开过的文件会显示在这里。选择“新建”，或将文件拖放到此窗口。</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>上次打开：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2368,10 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>平台：%1，从代码识别：%2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1 处已定义了指令</translation>
     </message>
 </context>
 <context>
@@ -2525,6 +2589,40 @@ Signed: %4</source>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>最小化</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>最大化</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>还原</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>关闭</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>分析进程已停止。</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>只允许读取分析结果。</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>分析进程无法恢复分析状态。</translation>
     </message>
 </context>
 </TS>

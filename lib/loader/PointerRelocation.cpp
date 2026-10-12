@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 using namespace neverd;
@@ -138,6 +139,72 @@ private:
   std::vector<Remembered> Ranges;
 };
 
+/// The addresses the image's own metadata gives to code: function symbols and
+/// their extents, runtime function records, known code ranges and the entry
+/// point.
+class CodeMetadata {
+public:
+  explicit CodeMetadata(const BinaryImage &Img) : Img(Img) {
+    for (const Symbol &Sym : Img.Symbols) {
+      if (!Sym.IsFunc)
+        continue;
+      const va_t Start = normalize(Sym.Addr);
+      Starts.push_back(Start);
+      if (Sym.Size != 0 && Sym.Size <= InvalidVA - Start)
+        Ranges.emplace_back(Start, Start + Sym.Size);
+    }
+    for (va_t Start : Img.RuntimeFunctionAddrs)
+      Starts.push_back(normalize(Start));
+    for (va_t Start : Img.VerifiedFunctionEntries)
+      Starts.push_back(normalize(Start));
+    if (Img.Entry != 0)
+      Starts.push_back(normalize(Img.Entry));
+    for (const auto &[Begin, End] : Img.KnownCodeRanges)
+      Ranges.emplace_back(Begin, End);
+    for (const ExceptionFunction &Function : Img.ExceptionMetadata.Functions)
+      Ranges.emplace_back(Function.CodeRange.Begin, Function.CodeRange.End);
+    // A load limited to some functions keeps the rest of .pdata compact.
+    for (const BinaryImage::COFFPDataRecord &Record : Img.COFFPDataRecords)
+      if (Record.EndRVA <= InvalidVA - Img.Base)
+        Ranges.emplace_back(Img.Base + Record.BeginRVA,
+                            Img.Base + Record.EndRVA);
+    sortUnique(Starts);
+    // Overlapping and nested ranges merge into the code they cover together.
+    llvm::erase_if(
+        Ranges, [](const auto &Range) { return Range.first >= Range.second; });
+    llvm::sort(Ranges);
+    size_t Count = 0;
+    for (const auto &Range : Ranges) {
+      if (Count != 0 && Range.first <= Ranges[Count - 1].second)
+        Ranges[Count - 1].second =
+            std::max(Ranges[Count - 1].second, Range.second);
+      else
+        Ranges[Count++] = Range;
+    }
+    Ranges.resize(Count);
+  }
+
+  /// Whether the metadata gives \p Addr to code.
+  bool claims(va_t Addr) const {
+    const va_t Normalized = normalize(Addr);
+    if (std::binary_search(Starts.begin(), Starts.end(), Normalized))
+      return true;
+    const auto It = std::upper_bound(
+        Ranges.begin(), Ranges.end(), Normalized,
+        [](va_t Address, const auto &Range) { return Address < Range.first; });
+    return It != Ranges.begin() && Normalized < std::prev(It)->second;
+  }
+
+private:
+  va_t normalize(va_t Addr) const {
+    return normalizeCodeAddress(Addr, Img.Arch, Img.Mode);
+  }
+
+  const BinaryImage &Img;
+  std::vector<va_t> Starts;
+  std::vector<std::pair<va_t, va_t>> Ranges;
+};
+
 } // namespace
 
 void neverd::recordAbsolutePointerRelocations(
@@ -252,4 +319,36 @@ void neverd::recordAbsolutePointerRelocations(
       break;
     }
   }
+}
+
+unsigned
+neverd::recordDataPointerTargets(BinaryImage &Img,
+                                 llvm::function_ref<bool(va_t)> InData) {
+  const uint32_t PointerSize = Img.getPointerSize();
+  if (PointerSize == 0 || Img.CodePtrRelocSlots.empty())
+    return 0;
+  const CodeMetadata Code(Img);
+  std::vector<Effect> Effects;
+  for (va_t Slot : Img.CodePtrRelocSlots) {
+    const uint8_t *Bytes = Img.readVA(Slot, PointerSize);
+    if (!Bytes)
+      continue;
+    const va_t Target = static_cast<va_t>(readPtr(Bytes, Img.is64Bit()));
+    if (Code.claims(Target) || !InData(Target))
+      continue;
+    // The relocation as it would have been recorded had the target's section
+    // kept data only.
+    Effects.push_back(decideAbsolutePointerRelocation(
+        Img, Slot, Target, InvalidVA, [&](va_t Addr) {
+          PointerRelocationAddressClass Class =
+              classifyPointerRelocationAddress(Img, Addr);
+          if (Addr == Target)
+            Class.Executable = false;
+          return Class;
+        }));
+  }
+  unsigned Changed = 0;
+  for (const Effect &E : Effects)
+    Changed += applyAbsolutePointerRelocation(Img, E);
+  return Changed;
 }

@@ -1,4 +1,4 @@
-//===- NeverDCmdWebRewrite.cpp - Primitive rewrite evidence CLI ----------===//
+//===- NeverDCmdWebRewrite.cpp - Source rewrite evidence CLI -------------===//
 //
 // NeverD Decompiler
 //
@@ -59,13 +59,15 @@ int runWebRewrite() {
            "       neverd web bun-rewrite-export <binary> <module-index> "
            "<source-type> "
            "<pass> <preview-receipt> <output-dir>\n"
-           "pass: string_recovery or constant_folding\n";
+           "pass: string_recovery, constant_folding, scope_renaming or "
+           "boolean_branches\n";
     return 2;
   }
   const auto &Type = WebArguments[Bun ? 3 : 2];
   const auto &Pass = WebArguments[Bun ? 4 : 3];
   if ((Type != "script" && Type != "module" && Type != "commonjs") ||
-      (Pass != "string_recovery" && Pass != "constant_folding")) {
+      (Pass != "string_recovery" && Pass != "constant_folding" &&
+       Pass != "scope_renaming" && Pass != "boolean_branches")) {
     llvm::errs() << "web: invalid_source_rewrite_selection\n";
     return 2;
   }

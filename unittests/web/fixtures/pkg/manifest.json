@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "profile": "pkg-5.8.1-uncompressed-vfs-v1",
+  "qualified_on": "2026-10-11",
+  "qualification_host": "macOS arm64",
+  "producer": {
+    "package": "pkg",
+    "version": "5.8.1",
+    "git_commit": "5dc987b90ffd191263eb0202833dc382cea0d47d",
+    "integrity": "sha512-CjBWtFStCfIiT4Bde9QpJy0KeH19jCfwZRJqHFDFXfhUklCx8JoFmMj3wgnEYIwGmZVNkhsStPHEOnrtrQhEXA==",
+    "pkg_fetch_version": "3.4.2",
+    "pkg_fetch_commit": "0b2a03743e72ca11eacdb2acd90c6c5abdaa2734",
+    "target_node_version": "18.5.0",
+    "host_node_version": "24.1.0",
+    "npm_version": "11.3.0",
+    "dependency_lock_sha256": "e899f6125def49507bf6e3439708b9d1b3fe1814b5aae27a64ca8e38f8c37b1f",
+    "bytecode": false,
+    "native_build": false,
+    "source_public": true,
+    "install_lifecycle_scripts": false
+  },
+  "qualification": {
+    "executes_targets": false,
+    "parser": "NeverD C++ pkg reader",
+    "native_prefix_validation": "not_checked",
+    "signature_validation": "not_checked",
+    "runtime_activation": "not_checked",
+    "source_cache_equivalence": "not_checked",
+    "binary_redistribution": false
+  },
+  "inputs": [
+    {
+      "name": "main.js",
+      "bytes": "'use strict';\nconst fs = require('fs');\nconst helper = require('./minified.js');\nmodule.exports = {answer: helper(20), asset: fs.readFileSync(__dirname + '/asset.txt', 'utf8')};\n",
+      "sha256": "e83f5d03da6abb2dca1d100990ea8ced5dab99f3da07bfbbad21cd08fc5e6fbf"
+    },
+    {
+      "name": "minified.js",
+      "bytes": "module.exports=function(a){return a*2+2};\n",
+      "sha256": "cb6cb1717cadfd48094b0057039efe776dd3b3d40785fa1c1003da6a9ac35438"
+    },
+    {
+      "name": "asset.txt",
+      "bytes": "NeverD independent pkg resource fixture.\n",
+      "sha256": "c1af5b987a6467f5f44787b5887b2287f0cf0112cd71187d61b39117c3db913d"
+    },
+    {
+      "name": "package.json",
+      "bytes": "{\"name\":\"neverd-pkg-fixture\",\"version\":\"1.0.0\",\"private\":true,\"license\":\"MIT\",\"main\":\"main.js\",\"bin\":\"main.js\",\"pkg\":{\"assets\":[\"asset.txt\",\"package.json\"]}}\n",
+      "sha256": "ee11bdd9884192e81c1b16836af767e68fbb08a4019cc98cd5ad83f83b907526"
+    }
+  ],
+  "artifacts": [
+    {
+      "target": "linux-arm64",
+      "base_url": "https://github.com/vercel/pkg-fetch/releases/download/v3.4/node-v18.5.0-linux-arm64",
+      "base_size": 44728224,
+      "base_sha256": "e562c0d81643de3b06b9900936ebde263373ca7bdaf42a8eacca8d020b2ce21e",
+      "file": "neverd-pkg-fixture-linux-arm64",
+      "container_size": 44803922,
+      "container_sha256": "d8f7b3cbe4a001a76b7f7faafab1b6dd5a478806d8ab35e9561b47011839be93",
+      "payload_size": 1189,
+      "prelude_size": 74509
+    },
+    {
+      "target": "linux-x64",
+      "base_url": "https://github.com/vercel/pkg-fetch/releases/download/v3.4/node-v18.5.0-linux-x64",
+      "base_size": 46205192,
+      "base_sha256": "25ea58e212ecac6c36df03281676aca934f4fec6a05fe9f0da8d3e01778df12c",
+      "file": "neverd-pkg-fixture-linux-x64",
+      "container_size": 46280890,
+      "container_sha256": "9dcbf9544be6a0b6914f7cc6a070c04adb473e4d208a3b1041729c69088cde37",
+      "payload_size": 1189,
+      "prelude_size": 74509
+    },
+    {
+      "target": "macos-arm64",
+      "base_url": "https://github.com/vercel/pkg-fetch/releases/download/v3.4/node-v18.5.0-macos-arm64",
+      "base_size": 46146256,
+      "base_sha256": "242917bdb26a1b53726f82483bc68ce0609cc8772df401b2eb163dc6b3d6ddfe",
+      "file": "neverd-pkg-fixture-macos-arm64",
+      "container_size": 46601376,
+      "container_sha256": "9587d836227ad298d8e3b3d0fea7700dceeb64f6aabcebab41822b578c583524",
+      "payload_size": 1189,
+      "prelude_size": 74509
+    },
+    {
+      "target": "macos-x64",
+      "base_url": "https://github.com/vercel/pkg-fetch/releases/download/v3.4/node-v18.5.0-macos-x64",
+      "base_size": 51192112,
+      "base_sha256": "63c5a7f59ea2d4c04c4d033be8844be894ce018c43b2ea61ed5ccc38b833e435",
+      "file": "neverd-pkg-fixture-macos-x64",
+      "container_size": 51686656,
+      "container_sha256": "48ba3079f42eab5606348641bc5231be1a9e92741ba4ae8da1fcf70d74550341",
+      "payload_size": 1189,
+      "prelude_size": 74509
+    },
+    {
+      "target": "win-arm64",
+      "base_url": "https://github.com/vercel/pkg-fetch/releases/download/v3.4/node-v18.5.0-win-arm64",
+      "base_size": 27098112,
+      "base_sha256": "02e317e399fecc4a21facc365ff51268555b1a347c4f2720956a12e843b99783",
+      "file": "neverd-pkg-fixture-win-arm64.exe",
+      "container_size": 27173842,
+      "container_sha256": "d083f6e8c3fe1a3fb1d61134139e4d0ee75501ab5b517dbbd00175650ab1b227",
+      "payload_size": 1189,
+      "prelude_size": 74541
+    },
+    {
+      "target": "win-x64",
+      "base_url": "https://github.com/vercel/pkg-fetch/releases/download/v3.4/node-v18.5.0-win-x64",
+      "base_size": 37574656,
+      "base_sha256": "e0e9a647d81011612f8cb19c6a41760643eedd27222af548e9ffdff7d8ebb94b",
+      "file": "neverd-pkg-fixture-win-x64.exe",
+      "container_size": 37650386,
+      "container_sha256": "8284b0997b6308f08208c97e83b21a647d7747ed1a5ff5eed24086244f3b1598",
+      "payload_size": 1189,
+      "prelude_size": 74541
+    }
+  ]
+}

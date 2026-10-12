@@ -34,23 +34,27 @@ TEST_F(X86_64_SSEMisc, PcmpeqdPreservesSemantics) {
 }
 
 TEST_F(X86_64_SSEMisc, AddpsPreservesSemantics) {
-  verifyScalarFPState(testObj(), "test_addps",
-                      neverd::Intrinsic::X86FPArithMemoryState, 0);
+  verifyFPState(testObj(), "test_addps",
+                neverd::Intrinsic::X86FPArithMemoryState,
+                unsigned(neverd::X86FPArithKind::Add));
 }
 
 TEST_F(X86_64_SSEMisc, SubpsPreservesSemantics) {
-  verifyScalarFPState(testObj(), "test_subps",
-                      neverd::Intrinsic::X86FPArithMemoryState, 1);
+  verifyFPState(testObj(), "test_subps",
+                neverd::Intrinsic::X86FPArithMemoryState,
+                unsigned(neverd::X86FPArithKind::Subtract));
 }
 
 TEST_F(X86_64_SSEMisc, MulpsPreservesSemantics) {
-  verifyScalarFPState(testObj(), "test_mulps",
-                      neverd::Intrinsic::X86FPArithMemoryState, 2);
+  verifyFPState(testObj(), "test_mulps",
+                neverd::Intrinsic::X86FPArithMemoryState,
+                unsigned(neverd::X86FPArithKind::Multiply));
 }
 
 TEST_F(X86_64_SSEMisc, DivpsPreservesSemantics) {
-  verifyScalarFPState(testObj(), "test_divps",
-                      neverd::Intrinsic::X86FPArithMemoryState, 3);
+  verifyFPState(testObj(), "test_divps",
+                neverd::Intrinsic::X86FPArithMemoryState,
+                unsigned(neverd::X86FPArithKind::Divide));
 }
 
 TEST_F(X86_64_SSEMisc, PshufdPreservesSemantics) {

@@ -13,6 +13,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FPComiState.h"
+#include "X86FPMaskCompareState.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -380,103 +382,10 @@ bool liftSIMDCompare(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     break;
   }
 
-  // SSE float compare with predicate (CMPPS/CMPPD).
-  // CMPSS/CMPSD are handled by the dual-purpose dispatcher in LiftString.
-  // VEX versions (VCMPPS/VCMPPD) are handled separately.
   case X86_INS_CMPPS:
-  case X86_INS_CMPPD: {
-    if (X86.op_count < 2)
-      break;
-    bool IsVEX = false;
-    bool IsPD = (InsnId == X86_INS_CMPPD);
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar A = IsVEX ? L.operandRead(S, X86.operands[1])
-                    : L.operandRead(S, X86.operands[0]);
-    NdVar B = L.operandRead(S, X86.operands[IsVEX ? 2 : 1]);
-    uint8_t Pred = 0;
-    bool FoundImm = false;
-    for (uint8_t N = 0; N < X86.op_count; ++N) {
-      if (X86.operands[N].type == X86_OP_IMM) {
-        Pred = static_cast<uint8_t>(X86.operands[N].imm) & 7;
-        FoundImm = true;
-      }
-    }
-    if (!FoundImm && Insn->size >= 1)
-      Pred = Insn->bytes[Insn->size - 1] & 7;
-    unsigned LaneSz = IsPD ? 8 : 4;
-    unsigned NLanes = Dst.Size / LaneSz;
-    NdVar Acc = S.makeTemp(0);
-    for (unsigned I = 0; I < NLanes; ++I) {
-      NdVar La = S.makeTemp(LaneSz);
-      NdVar Lb = S.makeTemp(LaneSz);
-      S.emit(NdOp::SUBBYTES, La, {A, NdVar::cst(I * LaneSz, 4)});
-      S.emit(NdOp::SUBBYTES, Lb, {B, NdVar::cst(I * LaneSz, 4)});
-      NdVar Cmp = S.makeTemp(1);
-      bool Neg = false;
-      switch (Pred) {
-      default:
-      case 0:
-        S.emit(NdOp::FLOAT_EQUAL, Cmp, {La, Lb});
-        break;
-      case 1:
-        S.emit(NdOp::FLOAT_LESS, Cmp, {La, Lb});
-        break;
-      case 2:
-        S.emit(NdOp::FLOAT_LESSEQUAL, Cmp, {La, Lb});
-        break;
-      case 3: { // UNORD: isNaN(a) || isNaN(b) — must inspect BOTH operands
-        NdVar NanA = S.makeTemp(1), NanB = S.makeTemp(1);
-        S.emit(NdOp::FLOAT_ISNAN, NanA, {La});
-        S.emit(NdOp::FLOAT_ISNAN, NanB, {Lb});
-        S.emit(NdOp::BOOL_OR, Cmp, {NanA, NanB});
-        break;
-      }
-      case 4:
-        S.emit(NdOp::FLOAT_NOTEQUAL, Cmp, {La, Lb});
-        break;
-      case 5:
-        S.emit(NdOp::FLOAT_LESS, Cmp, {La, Lb});
-        Neg = true;
-        break;
-      case 6:
-        S.emit(NdOp::FLOAT_LESSEQUAL, Cmp, {La, Lb});
-        Neg = true;
-        break;
-      case 7: { // ORD: !(isNaN(a) || isNaN(b)) — must inspect BOTH operands
-        NdVar NanA = S.makeTemp(1), NanB = S.makeTemp(1);
-        S.emit(NdOp::FLOAT_ISNAN, NanA, {La});
-        S.emit(NdOp::FLOAT_ISNAN, NanB, {Lb});
-        S.emit(NdOp::BOOL_OR, Cmp, {NanA, NanB});
-        Neg = true;
-        break;
-      }
-      }
-      if (Neg) {
-        NdVar NotCmp = S.makeTemp(1);
-        S.emit(NdOp::BOOL_NOT, NotCmp, {Cmp});
-        Cmp = NotCmp;
-      }
-      NdVar Mask = S.makeTemp(LaneSz);
-      S.emit(NdOp::INT_ZEXT, Mask, {Cmp});
-      NdVar AllOnes = S.makeTemp(LaneSz);
-      S.emit(NdOp::INT_NEG2, AllOnes, {Mask});
-      if (I == 0) {
-        Acc = AllOnes;
-      } else {
-        NdVar Next = S.makeTemp(Acc.Size + LaneSz);
-        S.emit(NdOp::CONCAT, Next, {AllOnes, Acc});
-        Acc = Next;
-      }
-    }
-    if (Acc.Size < Dst.Size) {
-      NdVar Wide = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ZEXT, Wide, {Acc});
-      S.emit(NdOp::COPY, Dst, {Wide});
-    } else {
-      S.emit(NdOp::COPY, Dst, {Acc});
-    }
-    break;
-  }
+  case X86_INS_CMPPD:
+    return liftFPMaskCompareState(L, S, Insn, X86, InsnId == X86_INS_CMPPD,
+                                  false, false);
 
   // PCMPISTRI/PCMPESTRI (index→ECX) and PCMPISTRM/PCMPESTRM (mask→XMM0) —
   // SSE4.2 string compare.  The index/mask result maps to the real LLVM
@@ -608,158 +517,22 @@ bool liftSIMDCompare(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_VCOMISS:
   case X86_INS_VCOMISD:
   case X86_INS_VUCOMISS:
-  case X86_INS_VUCOMISD: {
-    if (X86.op_count < 2)
-      break;
-    NdVar Lhs = L.operandRead(S, X86.operands[0]);
-    NdVar Rhs = L.operandRead(S, X86.operands[X86.op_count - 1]);
-    // VCOMISS/VUCOMISS compare the low single (4B), the *SD forms the low
-    // double (8B).  operandRead returns the whole XMM for a register operand;
-    // extract the scalar so the float emitter infers the right precision (a *SS
-    // compare left 16B wide reads 8 bytes as a double and inverts the sign
-    // test).
-    unsigned ScalarSz =
-        (InsnId == X86_INS_VCOMISS || InsnId == X86_INS_VUCOMISS) ? 4 : 8;
-    if (Lhs.Size > ScalarSz) {
-      NdVar T = S.makeTemp(ScalarSz);
-      S.emit(NdOp::SUBBYTES, T, {Lhs, NdVar::cst(0, 4)});
-      Lhs = T;
-    }
-    if (Rhs.Size > ScalarSz) {
-      NdVar T = S.makeTemp(ScalarSz);
-      S.emit(NdOp::SUBBYTES, T, {Rhs, NdVar::cst(0, 4)});
-      Rhs = T;
-    }
-    // An unordered (NaN) compare sets ZF=PF=CF=1.  Bare ordered relations leave
-    // ZF/CF 0 on NaN, which makes the SETA/SETAE ordered idioms (!CF&&!ZF /
-    // !CF) wrongly read true, so OR the unordered predicate into ZF and CF.
-    NdVar NanA = S.makeTemp(1);
-    NdVar NanB = S.makeTemp(1);
-    S.emit(NdOp::FLOAT_ISNAN, NanA, {Lhs});
-    S.emit(NdOp::FLOAT_ISNAN, NanB, {Rhs});
-    NdVar Unord = S.makeTemp(1);
-    S.emit(NdOp::BOOL_OR, Unord, {NanA, NanB});
-    NdVar Eq = S.makeTemp(1);
-    S.emit(NdOp::FLOAT_EQUAL, Eq, {Lhs, Rhs});
-    S.emit(NdOp::BOOL_OR, NdVar::reg(x86reg::ZF, 1), {Eq, Unord});
-    NdVar Lt = S.makeTemp(1);
-    S.emit(NdOp::FLOAT_LESS, Lt, {Lhs, Rhs});
-    S.emit(NdOp::BOOL_OR, NdVar::reg(x86reg::CF, 1), {Lt, Unord});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::PF, 1), {Unord});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::OF, 1), {NdVar::cst(0, 1)});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::SF, 1), {NdVar::cst(0, 1)});
-    S.emit(NdOp::COPY, NdVar::reg(x86reg::AF, 1), {NdVar::cst(0, 1)});
-    break;
-  }
-  // VEX FP compare (3-operand: dst, src1, src2 [, imm]).  The predicate lives
-  // in the trailing immediate byte; for non-NaN inputs predicate & 7 selects
-  // the relation (the 32 AVX predicates are four NaN/signaling variants of the
-  // same eight relations).  Packed forms fill the result per lane; scalar forms
-  // compare lane 0 and keep src1's upper lanes (VEX scalar semantics).
+  case X86_INS_VUCOMISD:
+    return liftFPComiState(
+        L, S, Insn, X86,
+        InsnId == X86_INS_VCOMISD || InsnId == X86_INS_VUCOMISD,
+        InsnId == X86_INS_VUCOMISS || InsnId == X86_INS_VUCOMISD, true);
+
   case X86_INS_VCMP:
   case X86_INS_VCMPSS:
   case X86_INS_VCMPSD:
   case X86_INS_VCMPPS:
-  case X86_INS_VCMPPD: {
+  case X86_INS_VCMPPD:
     if (beginsWithPotentialEvexPrefix(Insn))
       return liftEvexFPCompare(L, S, Insn, X86);
-    if (X86.op_count < 3)
-      break;
-    bool IsWide = (InsnId == X86_INS_VCMPPD || InsnId == X86_INS_VCMPSD);
-    bool IsScalar = (InsnId == X86_INS_VCMPSS || InsnId == X86_INS_VCMPSD);
-    NdVar Dst = L.operandWrite(X86.operands[0]);
-    NdVar A = L.operandRead(S, X86.operands[1]);
-    uint8_t Pred = 0;
-    bool FoundImm = false;
-    int SrcIdx = X86.op_count - 1;
-    for (uint8_t N = 0; N < X86.op_count; ++N)
-      if (X86.operands[N].type == X86_OP_IMM) {
-        Pred = static_cast<uint8_t>(X86.operands[N].imm) & 7;
-        FoundImm = true;
-      }
-    if (FoundImm)
-      SrcIdx = X86.op_count - 2;
-    else if (Insn->size >= 1)
-      Pred = Insn->bytes[Insn->size - 1] & 7;
-    NdVar B = L.operandRead(S, X86.operands[SrcIdx]);
-    unsigned LaneSz = IsWide ? 8 : 4;
-    unsigned NLanes = IsScalar ? 1 : (Dst.Size / LaneSz);
-    NdVar Acc = S.makeTemp(0);
-    for (unsigned I = 0; I < NLanes; ++I) {
-      NdVar La = S.makeTemp(LaneSz);
-      NdVar Lb = S.makeTemp(LaneSz);
-      S.emit(NdOp::SUBBYTES, La, {A, NdVar::cst(I * LaneSz, 4)});
-      S.emit(NdOp::SUBBYTES, Lb, {B, NdVar::cst(I * LaneSz, 4)});
-      NdVar Cmp = S.makeTemp(1);
-      bool Neg = false;
-      switch (Pred) {
-      default:
-      case 0:
-        S.emit(NdOp::FLOAT_EQUAL, Cmp, {La, Lb});
-        break;
-      case 1:
-        S.emit(NdOp::FLOAT_LESS, Cmp, {La, Lb});
-        break;
-      case 2:
-        S.emit(NdOp::FLOAT_LESSEQUAL, Cmp, {La, Lb});
-        break;
-      case 3: { // UNORD: isNaN(a) || isNaN(b) — must inspect BOTH operands
-        NdVar NanA = S.makeTemp(1), NanB = S.makeTemp(1);
-        S.emit(NdOp::FLOAT_ISNAN, NanA, {La});
-        S.emit(NdOp::FLOAT_ISNAN, NanB, {Lb});
-        S.emit(NdOp::BOOL_OR, Cmp, {NanA, NanB});
-        break;
-      }
-      case 4:
-        S.emit(NdOp::FLOAT_NOTEQUAL, Cmp, {La, Lb});
-        break;
-      case 5:
-        S.emit(NdOp::FLOAT_LESS, Cmp, {La, Lb});
-        Neg = true;
-        break;
-      case 6:
-        S.emit(NdOp::FLOAT_LESSEQUAL, Cmp, {La, Lb});
-        Neg = true;
-        break;
-      case 7: { // ORD: !(isNaN(a) || isNaN(b)) — must inspect BOTH operands
-        NdVar NanA = S.makeTemp(1), NanB = S.makeTemp(1);
-        S.emit(NdOp::FLOAT_ISNAN, NanA, {La});
-        S.emit(NdOp::FLOAT_ISNAN, NanB, {Lb});
-        S.emit(NdOp::BOOL_OR, Cmp, {NanA, NanB});
-        Neg = true;
-        break;
-      }
-      }
-      if (Neg) {
-        NdVar NotCmp = S.makeTemp(1);
-        S.emit(NdOp::BOOL_NOT, NotCmp, {Cmp});
-        Cmp = NotCmp;
-      }
-      NdVar Mask = S.makeTemp(LaneSz);
-      S.emit(NdOp::INT_ZEXT, Mask, {Cmp});
-      NdVar AllOnes = S.makeTemp(LaneSz);
-      S.emit(NdOp::INT_NEG2, AllOnes, {Mask});
-      if (I == 0) {
-        Acc = AllOnes;
-      } else {
-        NdVar Next = S.makeTemp(Acc.Size + LaneSz);
-        S.emit(NdOp::CONCAT, Next, {AllOnes, Acc});
-        Acc = Next;
-      }
-    }
-    if (IsScalar && Dst.Size > LaneSz) {
-      NdVar Hi = S.makeTemp(Dst.Size - LaneSz);
-      S.emit(NdOp::SUBBYTES, Hi, {A, NdVar::cst(LaneSz, 4)});
-      S.emit(NdOp::CONCAT, Dst, {Hi, Acc});
-    } else if (Acc.Size < Dst.Size) {
-      NdVar Wide = S.makeTemp(Dst.Size);
-      S.emit(NdOp::INT_ZEXT, Wide, {Acc});
-      S.emit(NdOp::COPY, Dst, {Wide});
-    } else {
-      S.emit(NdOp::COPY, Dst, {Acc});
-    }
-    break;
-  }
+    return liftFPMaskCompareState(
+        L, S, Insn, X86, InsnId == X86_INS_VCMPPD || InsnId == X86_INS_VCMPSD,
+        InsnId == X86_INS_VCMPSS || InsnId == X86_INS_VCMPSD, true);
 
   // AVX-512 packed integer compare into an opmask. Validate the complete EVEX
   // shape before emitting IR: the writemask controls both destination bits and

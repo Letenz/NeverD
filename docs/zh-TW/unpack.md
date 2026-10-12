@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | 執行期觀察 |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | 執行期觀察 |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLibraryA`、`FreeLibrary`，沿用一般相依、TLS 與 `DllMain` 生命週期。DLL 預設入口是其程序附加呼叫；不替任意匯出猜測參數。重建保留匯出名稱、序號、別名、資料及轉送器；指向自身匯出的指標保持為內部指標，不產生自身匯入。輔助常式傳回的位址也遵循此規則：內部結果會撤銷該位置先前的匯入修復證據。
 
@@ -26,8 +26,22 @@ PE32+ DLL 輸入由 `IMAGE_FILE_DLL` 識別。建模的來賓 EXE 呼叫 `LoadLi
 
 恢復會檢查入口參數、返回／影子堆疊框架、非揮發性暫存器、方向旗標、浮點控制與核心物件所有權。殘留記憶體池、借用核心指標、已修改的載入器物件或未計入的核心效果會回傳 `unsupported_state`；明確的 `snapshot_only` 保留診斷。核心狀態尚無 `restore_runtime` 實作。匯入重建使用核心匯出身分，驗證原始匯出表並重算 PE 檢查碼。固定基底產物不代表已通過 Windows 核心載入、簽章驗證或未執行路徑的驗收。
 
+使用 `backend: "unicorn"` 和 `execution_contract: "driver-strict"` 時，x64 驅動程式恢復支援停止狀態的指令解碼，以及跨實體別名的已提交 RAM 寫入監視。此契約使用 Unicorn 的指令語義；`checked-x64-v1` 提供執行前的指令准入檢查。
+
+載入器擁有的映像頁上，暫時 MDL 的全部別名解除、全部鎖釋放且全部描述元釋放後，不再額外阻止還原。此契約允許未指定位址的核心模式快取別名。存活 MDL、其他所有權或對映類型，以及客體對實體 PFN 身分的讀取仍保留還原相依性；模型化的複製、移動和比較服務讀取也計入。
+
+透過 `KeQueryPerformanceCounter`、`RDTSC` 或 `RDTSCP` 讀取時鐘會保留明確的驅動程式恢復相依性。擷取的計數器與頻率值尚無面向新核心環境的重新繫結契約。預設恢復傳回 `unsupported_state`；`snapshot_only` 保留此診斷。
+
+`runtime_state.additional_dependency_reasons` 列出驅動模型觀察到的原因，包括存活的池或 MDL、被修改的載入器物件、核心副作用及入口呼叫上下文變化。預設拒絕與明確快照保留相同原因。空清單不會覆寫 `has_additional_dependencies`，也不證明存在恢復契約。
+
+`ProcessView::runtimeState(include_backing)` 為暫停的驅動程式提供 `WindowsDriverState`。核心擁有者保存每個存活集區的配置 API、精確請求大小、標籤，以及有效的舊式類型或完整的新式 flags。要求內容時獨立複製恰好這些位元組；僅擷取中繼資料時不包含內容。已釋放的集區、借用的載入器物件以及裝置物件不會成為集區記錄。此擷取不提供指標來源或原生初始化器，既有相依性和重定位拒絕條件繼續有效。
+
+`WindowsDriverState::Entry` 保留最初 DriverEntry 的暫存器基線與返回／shadow frame、停止時的整數／XMM／浮點控制暫存器，以及目前 OS 擁有的堆疊範圍。請求 backing 時複製完整活動堆疊。後續分派和卸載呼叫仍保留原基線，並明確標記為 DriverEntry 之外的呼叫。這些具體觀測不構成指標來源或新呼叫者繫結證明。 指令獲准執行後，即使暫存器與框架的數值相同或隨後復原，仍須重建新呼叫者的繫結；數值相等不能證明繼續點的輸入繫結或仍需使用的輸出。
+
+即使沒有殘留集區或借用物件，核心映像重定位仍是獨立的載入器相依性。預設驅動程式復原傳回 `unsupported_state`，不會建立或截斷輸出。明確指定 `snapshot_only` 會保留此診斷，並可保留物理寫入證據仍完整的原始 DIR64 欄位。欄位事實透過 SHA-256 和兩個映像基址繫結至已驗證的輸入；同值寫入、ABA 還原、映射遺失及寫入追蹤不透明的執行都會撤銷證據。匯入修復或中繼資料格式化替換的欄位會被排除。這份部分清單不涵蓋生成指標，也不能繫結新的 DriverEntry 呼叫者。
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## 用法
@@ -76,7 +90,7 @@ neverd unpack packed.exe -o unpacked.exe \
 
 ## 重建的映像
 
-各節保留 RVA、觀察到的記憶體（包含已執行初始化的效果）及頁面權限。新增 `.neverd` 節保存導入目錄和修復導出呼叫與位址載入所需的新 IAT 單元，保留原有零填充資料。`imports` 的 `origin` 區分輸入目錄綁定的 `static` 單元，以及來賓寫入或修復新增的 `runtime` 單元。生成內容的重定位未經觀察，因此固定於觀察基址，移除重定位目錄並設定 `IMAGE_FILE_RELOCS_STRIPPED`。
+各節保留 RVA、觀察到的記憶體及頁面權限。末尾 `.neverd` 節保存新的匯入中繼資料，以及修復匯出呼叫和位址載入所需的單元，保留原有零填充儲存。`imports.origin` 區分輸入目錄的 `static` 單元與來賓寫入或修復的 `runtime` 單元。生成內容的重定位仍未知。使用者模式映像固定於觀察基址；核心快照僅可輸出上文有證據的載入欄位。僅當該目錄非空時清除 `IMAGE_FILE_RELOCS_STRIPPED`，核心執行階段相依性仍未解決。
 
 使用者態節範圍將 `VirtualSize`（為零時取 `SizeOfRawData`）向上對齊至來賓頁；`SectionAlignment` 只定位 RVA。最後一個有效頁內的節原始資料尾部保留，超出此範圍的位元組不映射。重建保留 `FileAlignment`，檔案對齊填補補零，不從節間隙借讀。此規則的原生證據僅涵蓋 x64 Windows DLL。執行時准入、中繼資料讀取和固定映像驗證共用未按頁對齊的邏輯範圍。零 `VirtualSize` 使用 `SizeOfRawData`，非零值仍限制中繼資料。載入器使用私有讀取檢視相容 LLVM，並為執行、偵錯身分和位元組驗證保留原始資料。驅動程式映射不在使用者態分頁規則範圍內。
 

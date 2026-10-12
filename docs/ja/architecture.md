@@ -8,6 +8,10 @@
 本番コードの境界を説明します。対象は意図的に NeverD 所有のコードだけに限定し、
 LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキテクチャを持ちます。
 
+## ソースとオブジェクト置換の境界
+
+`SourcePatchCompiler` はコンパイラの識別と成果物の選択を担当します。`validateSourcePatchTarget` はソースと外部 IR に共通の対象判定であり、対象トリプルだけでは対応を証明できません。`bindSourcePatch` は IR 入口を確認し、`PatchObject` はネイティブセクション、再配置、FDE 範囲の根拠を管理します。`publishSourcePatch` は候補の作成、検証、排他的公開を担当します。`COFFSourceImage` は PE x64 の新領域とアンワインド表を担当し、リフト後の書き換えは元の EH の独立した根拠を必要とします。[ソースパッチ](source-patching.md)を参照してください。
+
 ## システム境界
 
 ```mermaid
@@ -196,6 +200,8 @@ SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界�
 可変ストレージの部分集合は 8/16/32/64/128 ビットのスカラーに対応し、ビットカウントの入力は最大 64 ビットです。非標準幅やそれ以上の幅には別のソース契約が必要です。
 
 アーキテクチャの lifter は、未定義出力の付随メタデータをトランザクションとして管理します。各試行前に古い証拠を消し、成功した正確なリフトに対してのみ効果を公開します。`Missing` は証拠の欠如であり、空の `Complete` 記述ではありません。通常の LowIR は選択済みの決定的な値を維持します。`LowIRUndefinedIndependence` は、渡された完全な非巡回 LowIR グラフの有界な関係証明を担当し、通常の入力を共有しつつ、新たな未定義値の相関を保持します。完全な命令境界と操作ダイジェストに証拠を対応付け、不完全な証明を拒否します。以下の有限なネイティブ実行経路の範囲を超えるネイティブグラフの認証、ループ不変条件、ネイティブコードから C への等価性証明は、別の課題です。
+
+`FreshChoiceProjection` は独立性チェッカーの内部コンポーネントです。同じ不変のシンボリックコンテキスト内で通常値のゼロ射影を再利用し、前回の射影完了後に作成された新しい葉だけを追加できます。結果表の容量を超える場合は従来の置換に戻ります。両実行の独立した選択、ノード上限、クエリコスト、証明義務は維持されます。
 
 `Decoder` は形式監査と再配置照合の前に、x64 のオペランド接頭辞による disp32 幅の誤報を補正します。ModRM/SIB 境界、完全なフィールド、符号付き変位、メモリオペランド、後続即値の配置が一致する必要があります。完全デコード、リフト用デコード、詳細情報付き軽量デコードで同じ正規化を使います。変更するのは符号化幅のメタデータだけで、実際の i386 disp16、disp8、moffs、詳細情報なしのデコードは従来どおりです。
 
@@ -762,6 +768,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
+
+同じ検査付き x64 命令一覧は、16/32/64 ビットの `BSF` と `BSR` を許可します。ゼロ入力も含め、選択したプロセッサが元の命令を実行します。ISA 層は未定義の出力先に移植可能な値を捏造しません。通常 RAM では全範囲のアクセス検査と実行前の監視を維持し、デバイスオペランドと不正な LOCK 形式は副作用の前に拒否します。
 
 `X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列を要求し、変更型 MMIO は明示的な準備付きアトミックプロバイダーを要求します。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
@@ -1504,6 +1512,16 @@ PE 実行ドメインから `observeImage` がプロセスまたはドライバ�
 通常 RAM の `XCHG` は、明示的 LOCK 接頭辞の有無にかかわらず非整列の 8/16/32/64 ビットオペランドを受け入れます。共有 RAM トランザクションは入口の実効アドレスを保持し、結果の公開を直列化し、キャンセルや障害時の書き込みを破棄します。プロセッサは元の交換命令を実行します。`X64Address` はアドレスとレジスタの重複、部分レジスタ書き込み、キャッシュラインとページ境界、観測、未マップページ障害を検証します。MMIO 交換のプロバイダ契約と自然整列要件、および他の LOCK 命令群の既存の受け入れ規則は維持されます。
 
 DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマスクを取り込み、未モデル化のシグナル状態操作を拒否します。Select と Pselect は immediateSelect を共有し、ビットマップ、容量下限、提供者、順序付きコピーを処理します。timeval と timespec は各フィールド幅と境界を保持します。完全な非 NULL マスクには将来のシグナル状態モデルが必要です。
+
+`isCheckedX86SafeSEHHandlerReference` は既存の SafeSEH デコーダー、不変のテーブルとヘッダー、および再配置付き load-config ポインターから、保持する PE32 ハンドラーの入口を認証します。LLVM は分割により省略された本体も含め、関数本体の出力前にこのソース識別子を宣言します。テーブルへの所属は言語 personality、呼び出し ABI、ネイティブ EH 再構築の許可を証明しません。各利用側の独立した検査は維持されます。
+
+カーネルフィールドの初期化は独立した物理 RAM 記録が管理し、権限検証は純粋な検査を維持します。成功したホスト書き込み、コミット済みの検査付きトランザクション、正確なソフトウェア書き込み後イベントは、同値ストアや障害前に完了した書き込みを含め、実際にコミットしたバイトだけを定義します。一時書き込み、ロールバック、コミット前に取り消された試行、不透明な無効化は初期化の証拠を与えません。所有ビットマップは保持された物理スライスと別名を追跡し、ゲスト RAM を読まずに照会できます。ソフトウェアイベントは報告した書き込みのみを証明し、完全な書き込み追跡を保証しません。型付きモデルサービスは明示的な初期化契約を維持します。
+
+`MemoryWriteWitness` は正確な物理割り当て範囲を保持し、RAM reservation とコミット済み書き込みの無効化処理を共有します。同値、部分、別名経由の書き込みで無効になり、完全に追跡できない実行では証明を保守的に破棄します。作成と照会には所有者の停止が必要です。ドライバー観測は映像コピー後、セッション修正前に検証済み DIR64 フィールドを結び付け、割り当てと書き込み履歴が一致する場合だけ所有された事実を公開します。生成されたポインターやネイティブカーネルの状態復元は対象外です。
+
+ドライバーローダーは検証済みファイルの SHA-256 に再配置の事実を結び付けます。PE 再構築は所有された事実を使用し、診断用 DIR64 レコードを出力する前にインポート修復やメタデータ整形で置換したフィールドを除外します。この層は生成ポインターの再配置を推測せず、カーネル実行時の拒否を解除しません。
+
+`isCanonicalX87Wait` は通常の registration 転送と検証済み local-finally の戻りで、正常経路のフレーム保持規則を共有します。FWAIT 操作と例外ディスパッチは保持されます。他の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

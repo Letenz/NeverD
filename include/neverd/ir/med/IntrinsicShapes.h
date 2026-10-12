@@ -14,10 +14,47 @@
 
 #include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X86ShadowStack.h"
+#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
 
 namespace neverd {
+
+inline X87ConstantControlShape x87ConstantControlMedShape(const MedOp &Op,
+                                                          Arch A) {
+  LowOp Low;
+  Low.NumInputs = Op.NumInputs;
+  Low.MemoryOrdering = Op.MemoryOrdering;
+  Low.MemoryAddressSpace = Op.MemoryAddressSpace;
+  Low.Output = NdVar::tmp(0, Op.Output.Size);
+  if (Op.Output.Size && Op.Output.Kind != MedVar::Reg &&
+      Op.Output.Kind != MedVar::Temp)
+    Low.Output.Space = VnodeSpace::CONST;
+  bool Matches = true;
+  const auto Observe = [&](const MedVar &V) {
+    if (V.TheArch == Arch::Unknown)
+      return;
+    if (A == Arch::Unknown)
+      A = V.TheArch;
+    else if (A != V.TheArch)
+      Matches = false;
+  };
+  Observe(Op.Output);
+  if (Op.NumInputs > 6 || Op.NumInputs > Op.Inputs.size())
+    return {};
+  for (unsigned I = 0; I < Op.NumInputs; ++I) {
+    const auto &V = Op.Inputs[I];
+    Observe(V);
+    Low.Inputs[I] =
+        V.isConst() ? NdVar::cst(V.ConstVal, V.Size) : NdVar::tmp(0, V.Size);
+    if (!V.isConst() && V.Kind != MedVar::Reg && V.Kind != MedVar::Temp &&
+        V.Kind != MedVar::Param)
+      Low.Inputs[I].Space = VnodeSpace::RAM;
+  }
+  auto S = x87ConstantControlLowShape(Low, A);
+  S.HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty() || !Matches;
+  return S;
+}
 
 inline bool isMedIntrinsicScalarInput(const MedVar &Value) {
   switch (Value.Kind) {
@@ -89,7 +126,23 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
   const bool Arithmetic =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPArithStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
-  const unsigned ControlIndex = Memory ? 2 : 1;
+  const bool ScalarConvert =
+      Op.NumInputs && Op.Inputs[0].isConst() &&
+      (isX86FPScalarConvertStateIntrinsic(
+           static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) ||
+       isX86FPPackedConvertStateIntrinsic(
+           static_cast<Intrinsic>(Op.Inputs[0].ConstVal)));
+  const auto Id = Op.NumInputs && Op.Inputs[0].isConst()
+                      ? static_cast<Intrinsic>(Op.Inputs[0].ConstVal)
+                      : Intrinsic::X86ReadMXCSR;
+  const bool Half = isX86F16CStateIntrinsic(Id),
+             Store = Id == Intrinsic::X86F16CStoreState;
+  const unsigned ControlIndex =
+      Store ? 3 : (Memory || ScalarConvert || Half ? 2 : 1);
+  const unsigned ImmediateIndex = isX86FPMaskCompareStateIntrinsic(Id)
+                                      ? (Memory ? 3 : 2)
+                                  : Store ? 4
+                                          : 3;
   const bool Fma =
       Op.NumInputs && Op.Inputs[0].isConst() &&
       isX86FPFmaStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].ConstVal));
@@ -130,11 +183,17 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
       .ArithmeticLeftIsZero = Op.NumInputs > (Memory ? 3U : 2U) &&
                               Op.Inputs[Memory ? 3 : 2].isConst() &&
                               Op.Inputs[Memory ? 3 : 2].ConstVal == 0,
-      .StateSize = Round || Arithmetic ? (Op.NumInputs > (Fma ? 5U : 4U)
-                                              ? Op.Inputs[Fma ? 5 : 4].Size
-                                              : 0U)
-                   : Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
-                                : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
+      .StateSize =
+          isX86FPMaskCompareStateIntrinsic(Id)
+              ? (Op.NumInputs > 5 ? Op.Inputs[5].Size : 0U)
+          : Half ? (Op.NumInputs > (Store ? 5U : 4U)
+                        ? Op.Inputs[Store ? 5 : 4].Size
+                        : 0U)
+          : Round || Arithmetic || isX86FPComiStateIntrinsic(Id)
+              ? (Op.NumInputs > (Fma ? 5U : 4U) ? Op.Inputs[Fma ? 5 : 4].Size
+                                                : 0U)
+          : Conversion ? (Op.NumInputs > 2 ? Op.Inputs[2].Size : 0U)
+                       : (Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U),
       .HasAuxiliaryOutputs = !Op.IntrinsicOutputs.empty(),
       .DestinationIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
       .DestinationSelectorSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
@@ -146,9 +205,13 @@ inline X86FPStateShape x86FPStateMedShape(const MedOp &Op,
           Op.NumInputs > ControlIndex ? Op.Inputs[ControlIndex].Size : 0U,
       .Control =
           Op.NumInputs > ControlIndex ? Op.Inputs[ControlIndex].ConstVal : 0U,
-      .ImmediateIsConst = Op.NumInputs > 3 && Op.Inputs[3].isConst(),
-      .ImmediateSize = Op.NumInputs > 3 ? Op.Inputs[3].Size : 0U,
-      .Immediate = Op.NumInputs > 3 ? Op.Inputs[3].ConstVal : 0U,
+      .ImmediateIsConst =
+          Op.NumInputs > ImmediateIndex && Op.Inputs[ImmediateIndex].isConst(),
+      .ImmediateSize =
+          Op.NumInputs > ImmediateIndex ? Op.Inputs[ImmediateIndex].Size : 0U,
+      .Immediate = Op.NumInputs > ImmediateIndex
+                       ? Op.Inputs[ImmediateIndex].ConstVal
+                       : 0U,
       .AddressIsScalar = Op.NumInputs > 1 && Scalar};
 }
 

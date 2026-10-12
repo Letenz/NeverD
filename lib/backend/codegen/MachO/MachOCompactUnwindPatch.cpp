@@ -199,6 +199,66 @@ findMachOCompactUnwindRegion(llvm::ArrayRef<uint8_t> Binary) {
   return Found;
 }
 
+llvm::Error reserveMachOCompactUnwindStorage(std::vector<uint8_t> &Binary,
+                                             uint64_t RequiredSize) {
+  auto Located = findMachOCompactUnwindRegion(Binary);
+  if (!Located)
+    return Located.takeError();
+  if (!*Located)
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "no compact-unwind section to enlarge");
+  const MachOCompactUnwindRegion Region = **Located;
+  if (RequiredSize <= Region.SectionSize)
+    return llvm::Error::success();
+  std::vector<macho_patch_detail::MachOFileRange> Segments, Sections;
+  if (!macho_patch_detail::collectMachOFileRanges(Binary, Segments, Sections))
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "invalid compact-unwind storage layout");
+  uint64_t Limit = Region.LimitFileOff;
+  for (const auto &Segment : Segments)
+    if (Segment.Begin <= Region.SectionFileOff &&
+        Segment.End >= Region.LimitFileOff) {
+      Limit = Segment.End;
+      break;
+    }
+  for (const auto &Section : Sections)
+    if (Section.HeaderOff != Region.SectionHeaderOff &&
+        Section.Begin >= Region.LimitFileOff)
+      Limit = std::min(Limit, Section.Begin);
+  uint64_t NewEnd = 0;
+  if (!macho_patch_detail::checkedAdd(Region.SectionFileOff, RequiredSize,
+                                      NewEnd) ||
+      NewEnd > Limit || NewEnd > Binary.size() ||
+      (!Region.Is64 && RequiredSize > UINT32_MAX))
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "compact-unwind growth exceeds adjacent segment padding");
+  if (!std::all_of(Binary.begin() + Region.LimitFileOff,
+                   Binary.begin() + NewEnd,
+                   [](uint8_t Byte) { return Byte == 0; }))
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "compact-unwind padding contains nonzero bytes");
+
+  std::vector<uint8_t> Candidate = Binary;
+  uint8_t *Header = Candidate.data() + Region.SectionHeaderOff;
+  if (Region.Is64)
+    reinterpret_cast<llvm::MachO::section_64 *>(Header)->size = RequiredSize;
+  else
+    reinterpret_cast<llvm::MachO::section *>(Header)->size = RequiredSize;
+  auto Expanded = findMachOCompactUnwindRegion(Candidate);
+  if (!Expanded)
+    return Expanded.takeError();
+  if (!*Expanded || (**Expanded).SectionSize != RequiredSize ||
+      (**Expanded).SectionVA != Region.SectionVA ||
+      (**Expanded).SectionFileOff != Region.SectionFileOff)
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "compact-unwind growth changed its address mapping");
+  Binary.swap(Candidate);
+  return llvm::Error::success();
+}
+
 MachOCompactUnwindParseError::MachOCompactUnwindParseError(
     MachOCompactUnwindParseFailure Reason, uint64_t RecordIndex,
     std::string Detail)
@@ -1642,7 +1702,7 @@ buildMachOCompactUnwindRangeMappings(
     llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
     const MachOCompactUnwindRecords &Generated,
     llvm::ArrayRef<PatchedFunctionEntry> InstalledTrampolines,
-    llvm::endianness ByteOrder) {
+    llvm::endianness ByteOrder, const CompiledImage *SourceCompilation) {
   using MapFailure = MachOCompactUnwindRangeMapFailure;
 
   if (Generated.Records.empty())
@@ -1703,6 +1763,29 @@ buildMachOCompactUnwindRangeMappings(
       if (!Trampoline)
         Trampoline = &Installed;
       ++TrampolineCount;
+    }
+    if (TrampolineCount == 0 && SourceCompilation &&
+        SourceCompilation->InputKind == RewriteInputKind::ReplacementIR) {
+      const size_t HelperOwners = std::count_if(
+          SourceCompilation->SourceFunctionOwners.begin(),
+          SourceCompilation->SourceFunctionOwners.end(),
+          [&](const auto &Owner) {
+            return Owner.OwnerSymbol == GeneratedRecord.OwnerSymbol &&
+                   Owner.OwnerVA == GeneratedRecord.OwnerVA &&
+                   !SourceCompilation->SourceFunctionOriginalVAs.contains(
+                       Owner.SourceFunction);
+          });
+      if (HelperOwners == 1) {
+        MachOCompactUnwindRangeMapping Mapping;
+        Mapping.DestinationVA = GeneratedRecord.FunctionVA;
+        Mapping.DestinationEndVA = GeneratedRecord.FunctionEndVA;
+        Mapping.Mode = MachOCompactUnwindRangeMode::AddedFunction;
+        Mapping.FunctionRangeId = GeneratedRecord.FunctionRangeId;
+        Mapping.OwnerSymbol = GeneratedRecord.OwnerSymbol;
+        Mapping.OwnerVA = GeneratedRecord.OwnerVA;
+        Result.push_back(std::move(Mapping));
+        continue;
+      }
     }
     if (TrampolineCount == 0) {
       const bool HasOwnerVA = llvm::any_of(
@@ -1823,13 +1906,18 @@ llvm::Expected<MachOCompactUnwindMergeResult> mergeMachOCompactUnwind(
       return mergeError(MergeFailure::FunctionRangeIdentityMismatch,
                         MergeInputKind::RangeMapping, I,
                         "owner symbol is empty");
-    if (Mapping.SourceVA >= Mapping.SourceEndVA ||
+    const bool Added =
+        Mapping.Mode == MachOCompactUnwindRangeMode::AddedFunction;
+    if ((!Added && Mapping.SourceVA >= Mapping.SourceEndVA) ||
+        (Added && (Mapping.SourceVA != 0 || Mapping.SourceEndVA != 0)) ||
         Mapping.DestinationVA >= Mapping.DestinationEndVA)
       return mergeError(MergeFailure::InvalidRangeMapping,
                         MergeInputKind::RangeMapping, I,
                         "range is empty or reversed");
 
     switch (Mapping.Mode) {
+    case MachOCompactUnwindRangeMode::AddedFunction:
+      break;
     case MachOCompactUnwindRangeMode::NewSegment:
       if (Mapping.SourceVA == Mapping.DestinationVA)
         return mergeError(MergeFailure::InvalidRangeMapping,
@@ -1847,16 +1935,6 @@ llvm::Expected<MachOCompactUnwindMergeResult> mergeMachOCompactUnwind(
                         MergeInputKind::RangeMapping, I, "unknown mode");
     }
 
-    auto SourceRVA =
-        toImageRVA(Mapping.SourceVA, MachHeaderVA, MergeInputKind::RangeMapping,
-                   I, "source start");
-    if (!SourceRVA)
-      return SourceRVA.takeError();
-    auto SourceEndRVA =
-        toImageRVA(Mapping.SourceEndVA, MachHeaderVA,
-                   MergeInputKind::RangeMapping, I, "source end");
-    if (!SourceEndRVA)
-      return SourceEndRVA.takeError();
     auto DestinationRVA =
         toImageRVA(Mapping.DestinationVA, MachHeaderVA,
                    MergeInputKind::RangeMapping, I, "destination start");
@@ -1869,31 +1947,43 @@ llvm::Expected<MachOCompactUnwindMergeResult> mergeMachOCompactUnwind(
       return DestinationEndRVA.takeError();
 
     std::optional<size_t> SourceIndex;
-    for (size_t S = 0; S < OriginalTable->Records.size(); ++S) {
-      const MergedRecord &Record = OriginalTable->Records[S];
-      const bool ExactRecipe = Record.FunctionRVA == *SourceRVA &&
-                               Record.FunctionEndRVA == *SourceEndRVA;
-      const bool CoalescedNewSegment =
-          Mapping.Mode == MachOCompactUnwindRangeMode::NewSegment &&
-          Record.FunctionRVA <= *SourceRVA &&
-          *SourceRVA < Record.FunctionEndRVA &&
-          Record.FunctionEndRVA == *SourceEndRVA;
-      if (ExactRecipe || CoalescedNewSegment) {
-        SourceIndex = S;
-        break;
+    if (!Added) {
+      auto SourceRVA =
+          toImageRVA(Mapping.SourceVA, MachHeaderVA,
+                     MergeInputKind::RangeMapping, I, "source start");
+      if (!SourceRVA)
+        return SourceRVA.takeError();
+      auto SourceEndRVA =
+          toImageRVA(Mapping.SourceEndVA, MachHeaderVA,
+                     MergeInputKind::RangeMapping, I, "source end");
+      if (!SourceEndRVA)
+        return SourceEndRVA.takeError();
+      for (size_t S = 0; S < OriginalTable->Records.size(); ++S) {
+        const MergedRecord &Record = OriginalTable->Records[S];
+        const bool ExactRecipe = Record.FunctionRVA == *SourceRVA &&
+                                 Record.FunctionEndRVA == *SourceEndRVA;
+        const bool CoalescedNewSegment =
+            Mapping.Mode == MachOCompactUnwindRangeMode::NewSegment &&
+            Record.FunctionRVA <= *SourceRVA &&
+            *SourceRVA < Record.FunctionEndRVA &&
+            Record.FunctionEndRVA == *SourceEndRVA;
+        if (ExactRecipe || CoalescedNewSegment) {
+          SourceIndex = S;
+          break;
+        }
       }
+      if (!SourceIndex)
+        return mergeError(MergeFailure::SourceRangeNotExact,
+                          MergeInputKind::RangeMapping, I);
+      SourceOwner &BoundOwner = SourceOwners[*SourceRVA];
+      if (BoundOwner.Used && (BoundOwner.Symbol != Mapping.OwnerSymbol ||
+                              BoundOwner.VA != Mapping.OwnerVA))
+        return mergeError(MergeFailure::CrossOwnerSourceReuse,
+                          MergeInputKind::RangeMapping, I);
+      BoundOwner.Used = true;
+      BoundOwner.Symbol = Mapping.OwnerSymbol;
+      BoundOwner.VA = Mapping.OwnerVA;
     }
-    if (!SourceIndex)
-      return mergeError(MergeFailure::SourceRangeNotExact,
-                        MergeInputKind::RangeMapping, I);
-    SourceOwner &BoundOwner = SourceOwners[*SourceRVA];
-    if (BoundOwner.Used && (BoundOwner.Symbol != Mapping.OwnerSymbol ||
-                            BoundOwner.VA != Mapping.OwnerVA))
-      return mergeError(MergeFailure::CrossOwnerSourceReuse,
-                        MergeInputKind::RangeMapping, I);
-    BoundOwner.Used = true;
-    BoundOwner.Symbol = Mapping.OwnerSymbol;
-    BoundOwner.VA = Mapping.OwnerVA;
 
     std::optional<size_t> GeneratedIndex;
     for (size_t G = 0; G < GeneratedRecords->size(); ++G) {
