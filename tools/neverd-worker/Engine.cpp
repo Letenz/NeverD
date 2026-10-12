@@ -1453,7 +1453,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
       // matching PDB proves itself again by its GUID and age; only a PDB the
       // user confirmed without that identity stays bound to its file stamp.
       auto selection = p.at("pdb");
-      if (selection.value("mode", Json()) == "verified")
+      if (selection.value("mode", Json("verified")) == "verified")
         selection.erase("stamp");
       try {
         execute("pdb_load", selection);
