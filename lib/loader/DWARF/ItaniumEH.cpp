@@ -404,6 +404,7 @@ void parseItaniumExceptions(BinaryImage &Img) {
     }
 
     F.Dwarf = std::move(FDE);
+    inheritFrameSectionDecodeStatus(Frames, F);
     F.rebuildParseSummary();
 
     if (F.CodeRange.isValid()) {

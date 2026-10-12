@@ -28,6 +28,17 @@
 
 namespace neverd::dwarf_eh {
 
+void inheritFrameSectionDecodeStatus(const ParseResult &Frames,
+                                     ExceptionFunction &Function) {
+  if (Frames.ParseStatus == ExceptionParseStatus::Complete)
+    return;
+  auto &Structural = Function.establishDecodeProvenance().Structural;
+  Structural.mergeStatus(Frames.ParseStatus);
+  Structural.Diagnostics.emplace_back(
+      "DWARF frame section was not completely decoded");
+  Function.rebuildParseSummary();
+}
+
 using namespace dweh;
 
 namespace {
