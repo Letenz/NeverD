@@ -2447,16 +2447,23 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     (void)Binding;
     PointerSlots.insert(Slot);
   }
-  auto Extent = [](const ImageObject &Obj) -> uint64_t {
-    return std::max<uint64_t>(Obj.IndexedBytes,
-                              Obj.String ? Obj.ArrayBytes
-                                         : (Obj.Type ? Obj.Type->Size : 0));
+  // An object the code keeps the address of reaches each of its slots
+  // through that address, whichever the code indexes (`T = c ? FA : FB;
+  // T[i]` indexes neither table directly): its symbol sizes it.
+  auto Extent = [&](va_t Addr, const ImageObject &Obj) -> uint64_t {
+    uint64_t Bytes = std::max<uint64_t>(
+        Obj.IndexedBytes,
+        Obj.String ? Obj.ArrayBytes : (Obj.Type ? Obj.Type->Size : 0));
+    if (Obj.AddressTaken)
+      if (const auto Sized = sizedObjectAt(Addr); Sized && Sized->first == Addr)
+        Bytes = std::max<uint64_t>(Bytes, Sized->second);
+    return Bytes;
   };
   std::set<va_t> NotedSlots;
   for (bool Changed = !PointerSlots.empty(); Changed;) {
     Changed = false;
     for (auto &[Addr, Obj] : ImageObjects) {
-      const uint64_t Size = Extent(Obj);
+      const uint64_t Size = Extent(Addr, Obj);
       for (auto Slot = PointerSlots.lower_bound(Addr);
            Slot != PointerSlots.end() && *Slot - Addr < Size &&
            *Slot - Addr + PointerBytes <= Size;
@@ -3111,7 +3118,9 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
       continue;
     auto Event = SourceRecorder ? SourceRecorder->function(Funcs[I].Entry)
                                 : std::nullopt;
-    if (SourceRecorder)
+    if (SourceRecorder && SourceRecorder->recordsPositions())
+      SourceRecorder->positionDefinition(Funcs[I].Entry, OS.tell());
+    else if (SourceRecorder)
       OS << SourceRecorder->definition(Funcs[I].Entry);
     if (Event)
       OS << SourceRecorder->begin(*Event);
@@ -3162,7 +3171,48 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   }
   std::string Ordinary;
   llvm::raw_string_ostream OrdinaryOS(Ordinary);
-  Render(OrdinaryOS, nullptr);
+  std::optional<CSourceRecorder> Positions;
+  if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
+    try {
+      Positions.emplace(*Opts.SourceMap, llvm::StringRef(),
+                        CSourceRecorder::Recording::Positions);
+      Positions->prepareHighSources();
+    } catch (const std::exception &) {
+      Positions.reset();
+    }
+  }
+  // Position recording adds no bytes and cannot influence expression spelling.
+  // Render failures are ordinary source failures, not optional mapping
+  // failures.
+  Render(OrdinaryOS, Positions ? &*Positions : nullptr);
+  if (Positions && Positions->finishPositions(Ordinary)) {
+    Out << Ordinary;
+    return true;
+  }
+  if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
+    // Without library evidence there is no independent coverage proof to
+    // protect. Verify definition and instruction locations together instead
+    // of repeating every source analysis for a library render with no events.
+    CSourceRecorder Combined(
+        *Opts.SourceMap, Ordinary,
+        CSourceRecorder::Recording::DefinitionsAndInstructions);
+    bool Mapped = false;
+    try {
+      Combined.prepareHighSources();
+      std::string Annotated;
+      llvm::raw_string_ostream AnnotatedOS(Annotated);
+      Render(AnnotatedOS, &Combined);
+      Mapped = Combined.finish(Annotated, Ordinary);
+    } catch (const std::exception &) {
+      // Independent recordings below can still recover either mapping.
+    }
+    if (Mapped) {
+      Out << Ordinary;
+      return true;
+    }
+    // A failed combined proof must not lose a definition or instruction map
+    // that the original, independent recordings could have established.
+  }
   CSourceRecorder Recorder(*Opts.SourceMap, Ordinary);
   try {
     Recorder.prepareHighSources();
@@ -3176,7 +3226,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   }
   // Statement markers must not affect expression spelling or the independent
   // library-region coverage proof. Each private render must reproduce Ordinary.
-  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary,
+                               CSourceRecorder::Recording::Instructions);
   try {
     Instructions.prepareHighSources();
     std::string Annotated;

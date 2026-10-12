@@ -7387,6 +7387,28 @@ TEST(CallRegisterEffects, StackProbeIsNoCall) {
   }
 }
 
+// A summary tracks the general registers whole and each of xmm0..xmm7 by its
+// low sixteen bytes: a call to a callee that never writes a family keeps
+// exactly those bytes.
+TEST(CallRegisterEffects, APreservedFamilyKeepsTheBytesItTracks) {
+  const uint64_t XMM1 = x86reg::VectorBase + x86reg::VectorRegStride;
+  const uint32_t KeepsRAXAndXMM1 =
+      (uint32_t(1) << *gprFamilyOf(Arch::X64, x86reg::RAX)) |
+      (uint32_t(1) << registerFamilyOf(Arch::X64, XMM1)->first);
+  EXPECT_TRUE(
+      callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, x86reg::RAX, 8));
+  EXPECT_TRUE(callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, XMM1, 16));
+  EXPECT_TRUE(
+      callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, XMM1 + 8, 8));
+  // The upper half of ymm1 is no part of the family (vzeroupper writes it).
+  EXPECT_FALSE(
+      callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, XMM1, 32));
+  EXPECT_FALSE(callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1,
+                                          x86reg::VectorBase, 16));
+  EXPECT_FALSE(callPreservesRegisterBytes(Arch::X64, 0, XMM1, 16));
+  EXPECT_FALSE(callPreservesRegisterBytes(Arch::AArch64, ~uint32_t(0), 0, 8));
+}
+
 TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
   // `setbe r8b` lifts as `t = r8 & ~0xFF; u = t | flag; r8 = u` in one
   // instruction.  The old R8 reaches only bytes no later `test r8b, r8b`

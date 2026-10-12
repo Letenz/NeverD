@@ -92,6 +92,38 @@ int ptrcmp(int a) {
                        "ptrcmp", {"ptrcmp", "A"});
 }
 
+// A table of functions the code reaches only through a selected base
+// (`T = c ? FA : FB; T[i]`) holds the functions' addresses, not their
+// offsets in the object's text.
+TEST_F(X86_64_ImageTable, ASelectedTableOfFunctionsHoldsTheirAddresses) {
+  expectRunsLikeSource(
+      R"C(
+static int a0(int x) { return x + 11; }
+static int a1(int x) { return x * 5; }
+static int a2(int x) { return x ^ 0x3c; }
+static int a3(int x) { return (x << 2) + 3; }
+static int b0(int x) { return x - 7; }
+static int b1(int x) { return x * 9 + 2; }
+static int b2(int x) { return (x >> 2) ^ x; }
+static int b3(int x) { return x * x - 1; }
+static int (*const FA[4])(int) = {a0, a1, a2, a3};
+static int (*const FB[4])(int) = {b0, b1, b2, b3};
+int fnsel(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    int (*const *T)(int) = ((s >> 4) & 1u) ? FA : FB;
+    int (*f)(int) = T[(s >> 7) & 3u];
+    h = h * 131u + (unsigned)f((int)(s >> 3));
+    h ^= h >> 10;
+  }
+  return (int)h;
+}
+)C",
+      "fnsel",
+      {"fnsel", "FA", "FB", "a0", "a1", "a2", "a3", "b0", "b1", "b2", "b3"});
+}
+
 // At -O0 a local label table is copied from its read-only initializer, an
 // object no symbol names: the copy reads the object the output declares,
 // not the address the image gives it.

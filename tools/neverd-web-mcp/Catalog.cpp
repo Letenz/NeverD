@@ -219,6 +219,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
       "Native identity and source/cache equivalence remain unverified.",
       {decimal("revision"), text("artifact_id"), text("profile")});
   Page("web_pkg_records", "extraction_id", true);
+  Add("web_wails_extract",
+      "Validate a listed Wails/Go embed.FS profile and every stored asset "
+      "digest. Asset-server bindings and native bridges remain unverified.",
+      {decimal("revision"), text("artifact_id"), text("profile")});
+  Page("web_wails_records", "extraction_id", true, 128);
   Add("web_asar_extract",
       "Extract admitted ASAR members with an optional captured unpacked "
       "directory.",

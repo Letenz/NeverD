@@ -302,7 +302,9 @@ void CodeEdits::validateChange(const Json &view, const Json &request) {
 
 void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
                          const std::string &representation, const Json &renames,
-                         const Json &annotations, const Resolver &resolve) {
+                         const Json &annotations,
+                         const FunctionAliases &displayNames,
+                         const Resolver &resolve) {
   if (!source(representation))
     return;
   const auto original = view.at("text").get<std::string>();
@@ -457,6 +459,20 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
   for (const auto &note : annotations)
     imageComments[parseAddress(note.at("addr").get<std::string>())] =
         note.at("text").get<std::string>();
+  // An image name shows the analyst's rename of its address, otherwise the
+  // listing's display name for how the engine spelled it, as main for the
+  // sub_ name of the function the C runtime's start routine calls.
+  const auto shownName =
+      [&](std::uint64_t address,
+          const std::string &spelling) -> std::optional<std::string> {
+    if (const auto rename = imageNames.find(address);
+        rename != imageNames.end())
+      return rename->second;
+    if (const auto display = displayNames.find(spelling);
+        display != displayNames.end())
+      return display->second;
+    return std::nullopt;
+  };
   struct Replacement {
     std::size_t begin, end;
     std::string text;
@@ -487,8 +503,8 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
                      {"address", hexAddress(*at)},
                      {"original", original.substr(begin, end - begin)}});
     spelled.emplace_back(begin, end);
-    if (imageNames.contains(*at))
-      replacements.push_back({begin, end, imageNames.at(*at)});
+    if (const auto shown = shownName(*at, original.substr(begin, end - begin)))
+      replacements.push_back({begin, end, *shown});
   }
   for (std::size_t i = 0; i < ts.size(); ++i) {
     const auto &token = ts[i];
@@ -505,8 +521,8 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     if (definition == i) {
       name["address"] = hexAddress(function);
       name["kind"] = "address";
-      if (imageNames.contains(function))
-        display = imageNames.at(function);
+      if (const auto shown = shownName(function, token.text))
+        display = *shown;
     } else if (i >= body && i < bodyEnd && declarations[token.text] == 1) {
       name["kind"] = "local";
       name["identity"] = identity;
@@ -515,8 +531,8 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
     } else if (globals.contains(token.text)) {
       name["kind"] = "address";
       name["address"] = hexAddress(globals.at(token.text));
-      if (imageNames.contains(globals.at(token.text)))
-        display = imageNames.at(globals.at(token.text));
+      if (const auto shown = shownName(globals.at(token.text), token.text))
+        display = *shown;
     } else if (i + 1 < ts.size() &&
                (ts[i + 1].text == "(" || links.contains(token.text))) {
       const auto at = imageAddress(token.text);
@@ -524,8 +540,8 @@ void CodeEdits::decorate(Json &view, const Json &row, std::uint64_t function,
         continue;
       name["kind"] = "address";
       name["address"] = hexAddress(*at);
-      if (imageNames.contains(*at))
-        display = imageNames.at(*at);
+      if (const auto shown = shownName(*at, token.text))
+        display = *shown;
     } else
       continue;
     if (display != token.text) {

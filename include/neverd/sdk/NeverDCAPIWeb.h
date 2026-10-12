@@ -444,6 +444,36 @@ neverd_web_pkg_records_json(neverd_web_session_t Session,
                             const char *RecordKind, size_t RecordKindSize,
                             uint64_t Offset, uint64_t Limit);
 
+/// Read the listed Wails/Go embed.FS profile from captured native bytes.
+/// All candidate tables and stored digest prefixes must validate. Declared
+/// producer versions do not authenticate the compiler or publisher; actual
+/// asset-server bindings and native bridges remain unverified.
+NEVERD_API const char *
+neverd_web_wails_extract_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ArtifactID, size_t ArtifactIDSize,
+                              const char *Profile, size_t ProfileSize);
+/// RecordKind is tables/members; Limit is 1..128. Private paths/build metadata
+/// stay withheld. File selection IDs feed the existing HTML/source/native
+/// consumers, with one separate immutable namespace per filesystem table.
+NEVERD_API const char *
+neverd_web_wails_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              const char *RecordKind, size_t RecordKindSize,
+                              uint64_t Offset, uint64_t Limit);
+
+/// Explicit local disclosure of complete native bytes and all selected table
+/// assets into a fresh private directory. Fixed filenames, no overwrite and
+/// SHA256 reread verification. Virtual paths are manifest data only. This raw
+/// operation is not exposed through worker/MCP; it does not run or parse
+/// assets.
+NEVERD_API const char *
+neverd_web_wails_export_json(neverd_web_session_t Session,
+                             const char *ExpectedRevision, size_t RevisionSize,
+                             const char *ExtractionID, size_t ExtractionIDSize,
+                             const char *OutputDirectory, size_t DirectorySize);
+
 /// Extract the explicitly qualified Bun container layout from admitted bytes.
 /// No execution or external tools; version/producer authentication is not
 /// implied. Source maps and JSC caches retain their original byte ranges.
@@ -480,6 +510,19 @@ NEVERD_API const char *neverd_web_source_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *SourceType, size_t SourceTypeSize);
+
+/// Explicit local raw disclosure of a captured direct-byte source selection
+/// into a NEW private directory. Uses the independent recovery parser;
+/// interactive source/cache limits remain unchanged. SourceType is required.
+/// Preserves exact original.bin and publishes readable.js only after a same
+/// parser-tree check. A successful evidence-export receipt can contain an
+/// unsuccessful readable_status and no readable file. No target execution,
+/// deleted-source recovery, overwrite or remote transport export occurs.
+NEVERD_API const char *neverd_web_source_readable_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize, const char *OutputDirectory,
+    size_t OutputDirectorySize);
 
 /// Enumerates syntax kinds, parent identities and original half-open byte
 /// spans for a previously analyzed source. Limit is 1..512.

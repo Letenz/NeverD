@@ -87,11 +87,17 @@ Pseudocode navigation uses instruction anchors recorded during source emission.
 HighIR statement observations retain function, address, sequence and statement
 kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
 observations retain weak handles through optimization and the private C clone.
-The source recorder publishes statement spans only when its private rendering
-reproduces ordinary source byte for byte. Instruction and library recordings use
-independent renders so navigation cannot weaken library folding evidence. The
-C API checks every occurrence against the same canonical LowIR boundaries and
-sequences used by Low/Med pages. C++, Rust and Go record individual statement
+With no library evidence, HighC records definition and statement byte positions
+on its ordinary output without inserting delimiters or repeating source analysis.
+Buffered bodies relocate their anchors when their unchanged text is appended,
+after any deferred declarations; nested buffers preserve the same event order.
+Only complete, in-bounds positions are published. Invalid positions fall back
+to private delimiter recordings that must reproduce ordinary source byte for
+byte. When library evidence is present, instruction and library recordings keep
+independent renders so navigation cannot weaken library folding evidence.
+The C API checks every occurrence
+against the same canonical LowIR boundaries and sequences used by Low/Med pages.
+C++, Rust and Go record individual statement
 spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
 surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
@@ -650,6 +656,16 @@ only admitted occurrences. Content, opaque V8 caches and private metadata have
 distinct roles; source/cache equivalence and symlink resolution remain unknown.
 `ArtifactView` retains occurrence namespaces and nested coordinates for shared
 consumers. See the [pkg profile](web-pkg-profile.md).
+`desktop/wails/ELF` owns one measured producer mapping layout; `BuildInfo`
+owns declared-version framing, `Tables` owns recognizable slice/record and
+portable namespace admission, and `Contents` owns stored compiler hashes and
+overlap proof. `Reader` owns bounded atomic extraction. `SessionWails` publishes
+metadata; `ArtifactView` composes nested storage coordinates and keeps each
+filesystem table's namespace separate. `SessionWailsExport` reuses the shared
+exclusive writer for explicit local disclosure. None of these owners chooses
+an asset-server binding or implements a Go/JS bridge. Shared source/HTML/native
+consumers retain independent capabilities and limits. See the
+[Wails profile](web-wails-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and
@@ -795,6 +811,13 @@ formatting cannot remove or lower them. See the
 `ArtifactView` owns direct-byte selection and origins for original files, Bun
 assets and available ASAR or package archive members. Nested origins retain
 container-relative offsets separately from original/expanded storage offsets.
+`SessionReadableExport` consumes that selection with an explicit source goal
+and the independent sequential recovery parser. It verifies original bytes,
+retains exact origins/ranges and uses the shared exclusive export writer.
+`SourceRecovery` alone owns whitespace insertion and same-parser-tree proof;
+its larger models never enter interactive source/semantic caches. C API and CLI
+select this result; worker/MCP exclude raw export. See the
+[readable-export profile](web-readable-export-profile.md).
 Encoded Bun/map source keeps its dedicated
 decoder. `Asar` owns Pickle/JSON/member/integrity validation, while `PathPolicy`
 owns its pinned native Unicode collision policy. `SessionAsar` publishes bounded
@@ -1494,6 +1517,15 @@ ContinuationCodeStarts`), and an entry guessed only from inter-function padding
 either stays inside the jumping function. A guessed entry that another function
 absorbed this way is audited as `AbsorbedFunctionChunk` rather than decompiled
 twice.
+
+An x86 function whose whole body is one direct unconditional jump, after an
+optional `endbr` marker, passes its caller's return address, stack and
+arguments on untouched, so function detection makes the jump target an entry
+on the forwarder's evidence. GCC's `frame_dummy` (`endbr64; jmp
+register_tm_clones`) is the usual case: in a stripped image nothing else names
+the target, whose body the forwarder would otherwise absorb. A target between
+the forwarder and the next entry is the forwarder's own code, such as a loop
+entered at its test, and stays inside it.
 
 At a validated source-call boundary, an exact integer constant zero may supply
 a pointer parameter even when the machine expression uses a narrower integer
@@ -4068,6 +4100,11 @@ address analysis accepts only bit-preserving views at the target width.
 HighC's later text-based store forwarding records the names used by each cached
 value. Liveness includes those dependencies at surviving loads, and subsequent
 value inlining cannot hide a definition still named in cached text.
+Its address analysis indexes definitions by the existing kind, ID, SSA version,
+register offset, rename tag and architecture identity. Repeated definitions
+remain ambiguous even when their expressions are shared. A separate index of
+preceding top-level aliases retains the private-frame dominance requirement;
+global uniqueness alone cannot authorize a memory rewrite.
 Candidate selection uses one cached rendering score: expanded operator and
 leaf count first, then fewer operations on a size tie. Associative infix
 chains count every printed binary operator. Signed literals are leaves;
