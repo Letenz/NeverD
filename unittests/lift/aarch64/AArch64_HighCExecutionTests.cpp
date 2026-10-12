@@ -316,3 +316,25 @@ int ldadd(int a) {
 )C",
       "ldadd", {"ldadd"}, {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
 }
+
+// A table of pointers to arrays becomes a relative table whose entries point
+// back to the arrays before it.  The code keeps the table's address in a
+// register it indexes and adds each entry back to, so the table's object
+// spans from the first array through the table.
+TEST_F(AArch64_HighCExecution, ARelativeTableHeldInARegisterReachesItsArrays) {
+  expectRunsLikeSource(R"C(
+int ptab(int a) {
+  static const int A[8] = {11, 22, 33, 44, 55, 66, 77, 88};
+  static const int B[8] = {2, 3, 5, 7, 11, 13, 17, 19};
+  static const int C[8] = {101, 202, 303, 404, 505, 606, 707, 808};
+  static const int *const tabs[3] = {A, B, C};
+  unsigned acc = (unsigned)a;
+  for (int i = 0; i < 96; i++) {
+    const int *tp = tabs[acc % 3u];
+    acc = acc * 131u + (unsigned)tp[(acc >> 2) & 7u] + (unsigned)i;
+  }
+  return (int)acc;
+}
+)C",
+                       "ptab", {"ptab"});
+}

@@ -2350,8 +2350,60 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // A variable holding an entry of an indexed image table: code that adds
   // it back to the table (`e = table[i]; *(table + e)`) reads a relative
   // table as surely as one that adds the load itself.
+  // A variable a function assigns once, a constant address, stands for
+  // that address: the code keeps a table's address in a register it indexes
+  // and adds back to (`v0 = &table; e = *(v0 + i * 4); p = v0 + e`).
+  auto ConstAddressVars = [&](const HighFunc &Func) {
+    VarKeyMap<unsigned> Assigned;
+    VarKeyMap<va_t> Addresses;
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
+        return;
+      const VarKey Key = varKey(S.Dst->Var);
+      if (++Assigned[Key] == 1)
+        if (const auto Address = constAddress(*S.Val))
+          Addresses[Key] = *Address;
+    });
+    for (auto It = Addresses.begin(); It != Addresses.end();)
+      It = Assigned[It->first] == 1 ? std::next(It) : Addresses.erase(It);
+    return Addresses;
+  };
+  auto AddressOf = [&](const HighExpr &E,
+                       const VarKeyMap<va_t> &Bases) -> std::optional<va_t> {
+    if (const auto Address = constAddress(E))
+      return Address;
+    const HighExpr *Inner = peelIntegerViewOps(&E);
+    if (Inner && (Inner->Kind == ExprKind::Var || Inner->Kind == ExprKind::Phi))
+      if (const auto It = Bases.find(varKey(Inner->Var)); It != Bases.end())
+        return It->second;
+    return std::nullopt;
+  };
+  // The table an indexed address reads, its base a constant or such a
+  // variable.
+  auto IndexedTable = [&](const HighExpr &Address,
+                          const VarKeyMap<va_t> &Bases) -> std::optional<va_t> {
+    if (const HighExpr *Entries = indexedImageBase(Address))
+      return Entries->ConstVal;
+    const HighExpr *Sum = peelIntegerViewOps(&Address);
+    if (!Sum || Sum->Kind != ExprKind::BinOp || Sum->Op != NdOp::INT_ADD ||
+        Sum->Operands.size() != 2 || !Sum->Operands[0] || !Sum->Operands[1])
+      return std::nullopt;
+    for (unsigned I = 0; I < 2; ++I)
+      if (const HighExpr *Base = peelIntegerViewOps(Sum->Operands[I].get());
+          Base && (Base->Kind == ExprKind::Var || Base->Kind == ExprKind::Phi))
+        if (const auto It = Bases.find(varKey(Base->Var));
+            It != Bases.end() && isImageDataAddress(It->second) &&
+            !constAddress(*Sum->Operands[1 - I]))
+          return It->second;
+    return std::nullopt;
+  };
   VarKeyMap<std::pair<va_t, uint16_t>> TableEntryVars;
-  for (const HighFunc &Func : Funcs)
+  // An entry added back to its table in an assignment proves the table
+  // relative however the sum is used (`p = table + e; *p`).
+  std::set<std::pair<va_t, uint16_t>> AddedBackTables;
+  for (const HighFunc &Func : Funcs) {
+    const VarKeyMap<va_t> Bases = ConstAddressVars(Func);
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
           (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
@@ -2360,14 +2412,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       if (!Load || Load->Kind != ExprKind::Load || !Load->Type ||
           Load->Operands.empty() || !Load->Operands[0])
         return;
-      if (const HighExpr *Entries = indexedImageBase(*Load->Operands[0]))
-        TableEntryVars[varKey(S.Dst->Var)] = {Entries->ConstVal,
-                                              Load->Type->Size};
+      if (const auto Table = IndexedTable(*Load->Operands[0], Bases))
+        TableEntryVars[varKey(S.Dst->Var)] = {*Table, Load->Type->Size};
     });
-  // An entry added back to its table in an assignment proves the table
-  // relative however the sum is used (`p = table + e; *p`).
-  std::set<std::pair<va_t, uint16_t>> AddedBackTables;
-  for (const HighFunc &Func : Funcs)
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Kind != StmtKind::Assign || !S.Val)
         return;
@@ -2376,7 +2423,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Sum->Operands.size() != 2 || !Sum->Operands[0] || !Sum->Operands[1])
         return;
       for (unsigned I = 0; I < 2; ++I) {
-        const auto Table = constAddress(*Sum->Operands[I]);
+        const auto Table = AddressOf(*Sum->Operands[I], Bases);
         const HighExpr *Entry = peelIntegerViewOps(Sum->Operands[1 - I].get());
         if (!Table || !Entry ||
             (Entry->Kind != ExprKind::Var && Entry->Kind != ExprKind::Phi))
@@ -2386,6 +2433,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           AddedBackTables.insert(It->second);
       }
     });
+  }
   // The constant addresses the code reads or writes at, as opposed to those
   // it uses as values.
   std::set<const HighExpr *> AccessAddresses;
