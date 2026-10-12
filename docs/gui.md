@@ -116,7 +116,8 @@ shows it any time. Behind it is the default desktop:
 - **Output** across the bottom, with a command line for expressions and
   workbench commands;
 - the status bar with the background analysis indicator (`AU: idle` or busy
-  with progress), the search direction and free disk space.
+  with progress), the search direction and free disk space. It shares the
+  windows' surface below a hairline, as in Visual Studio Code's Modern themes.
 
 Every window is a dock: drag tabs to split, stack or float them. A tab shows
 its close button while it is current or under the pointer. Docked windows

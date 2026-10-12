@@ -53,8 +53,11 @@ NEVERD_CHROME_COLOR(MenuSelection, "#0060C0", "#04395E")
 NEVERD_CHROME_COLOR(MenuSeparator, "#D4D4D4", "#454545")
 NEVERD_CHROME_COLOR(ToolBar, "#F3F3F3", "#2D2D2D")
 NEVERD_CHROME_COLOR(ToolBarHover, "#E1E1E1", "#3C3C3C")
-NEVERD_CHROME_COLOR(StatusBar, "#007ACC", "#007ACC")
-NEVERD_CHROME_COLOR(StatusBarText, "#FFFFFF", "#FFFFFF")
+// The status bar shares the windows' surface with a hairline above it, as in
+// Visual Studio Code's Modern themes; the accent marks states, not chrome.
+NEVERD_CHROME_COLOR(StatusBar, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(StatusBarText, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(StatusBarBorder, "#E5E5E5", "#3C3C3C")
 NEVERD_CHROME_COLOR(TabBar, "#F3F3F3", "#252526")
 NEVERD_CHROME_COLOR(TabActive, "#FFFFFF", "#1E1E1E")
 NEVERD_CHROME_COLOR(TabInactive, "#ECECEC", "#2D2D2D")
