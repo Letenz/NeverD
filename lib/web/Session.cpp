@@ -14,6 +14,7 @@
 #include "SessionInternal.h"
 
 #include "neverd/web/Source.h"
+#include "neverd/web/SourceRecovery.h"
 
 namespace neverd::web {
 
@@ -496,6 +497,25 @@ std::string Session::capabilities() {
 #ifdef NEVERD_ENABLE_WEB_JAVASCRIPT
   Operations.emplace_back("source_analyze");
   Operations.emplace_back("source_nodes");
+  Operations.emplace_back("source_readable_export");
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "source_local_readable_export"},
+      {"profile", std::string(SourceReadableExportProfile)},
+      {"recovery_profile", std::string(JavaScriptRecoveryProfile)},
+      {"max_source_bytes", std::to_string(MaxRecoverySourceBytes)},
+      {"max_output_bytes", std::to_string(MaxRecoverySourceBytes)},
+      {"max_syntax_nodes", MaxRecoveryNodes},
+      {"max_lexemes", MaxRecoveryLexemes},
+      {"max_string_units", std::to_string(MaxRecoveryStringUnits)},
+      {"storage_read_chunk_bytes", BlobTransferBytes},
+      {"destination", "new_private_directory"},
+      {"filename_policy", "fixed_names"},
+      {"raw_local_disclosure", true},
+      {"interactive_cache_modified", false},
+      {"transformation", "whitespace_insertion_only"},
+      {"verification", "same_parser_tree_and_exported_file_sha256"},
+      {"semantic_coverage", "not_established"},
+      {"executes_input", false}});
   Operations.emplace_back("source_map_lookup");
   Operations.emplace_back("source_bindings_analyze");
   Operations.emplace_back("source_binding_records");

@@ -112,6 +112,7 @@ void discovery(Harness &H, const Json &Caps) {
     const auto Name = Operation.get<std::string>();
     const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
                          Name == "native_analyze" ||
+                         Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");

@@ -511,6 +511,19 @@ NEVERD_API const char *neverd_web_source_analyze_json(
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *SourceType, size_t SourceTypeSize);
 
+/// Explicit local raw disclosure of a captured direct-byte source selection
+/// into a NEW private directory. Uses the independent recovery parser;
+/// interactive source/cache limits remain unchanged. SourceType is required.
+/// Preserves exact original.bin and publishes readable.js only after a same
+/// parser-tree check. A successful evidence-export receipt can contain an
+/// unsuccessful readable_status and no readable file. No target execution,
+/// deleted-source recovery, overwrite or remote transport export occurs.
+NEVERD_API const char *neverd_web_source_readable_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize, const char *OutputDirectory,
+    size_t OutputDirectorySize);
+
 /// Enumerates syntax kinds, parent identities and original half-open byte
 /// spans for a previously analyzed source. Limit is 1..512.
 NEVERD_API const char *

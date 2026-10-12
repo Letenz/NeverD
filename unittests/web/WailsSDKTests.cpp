@@ -318,19 +318,25 @@ TEST_F(WebWailsSDK, CLIExtractsAndAnalyzesWithoutExternalTools) {
   const auto Out = (Root / "out").string(), Err = (Root / "err").string();
   const llvm::StringRef Env[]{"PATH=/neverd-no-external-tools", "LC_ALL=C"};
   const std::optional<llvm::StringRef> Redirects[]{std::nullopt, Out, Err};
-  for (const auto *Command : {"wails", "wails-html", "wails-source"}) {
+  const auto Destination = (Root / "readable").string();
+  for (const auto *Command :
+       {"wails", "wails-html", "wails-source", "wails-readable-export"}) {
+    const bool Readable = std::string_view(Command) == "wails-readable-export";
     std::vector<llvm::StringRef> Args{NEVERD_WEB_TEST_CLI, "web", Command, Path,
                                       Profile};
     if (std::string_view(Command) != "wails") {
       Args.emplace_back("0");
       Args.emplace_back(std::string_view(Command) == "wails-html" ? "2" : "1");
     }
-    if (std::string_view(Command) == "wails-source")
+    if (std::string_view(Command) == "wails-source" || Readable)
       Args.emplace_back("module");
-    const auto Expected = !NEVERD_TEST_WEB_JAVASCRIPT &&
-                                  std::string_view(Command) == "wails-source"
-                              ? 1
-                              : 0;
+    if (Readable)
+      Args.emplace_back(Destination);
+    const auto Expected =
+        !NEVERD_TEST_WEB_JAVASCRIPT &&
+                (std::string_view(Command) == "wails-source" || Readable)
+            ? 1
+            : 0;
     ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Env,
                                         Redirects, 30),
               Expected);
@@ -340,6 +346,10 @@ TEST_F(WebWailsSDK, CLIExtractsAndAnalyzesWithoutExternalTools) {
     EXPECT_EQ(Text.find("CANARY"), std::string::npos);
     EXPECT_EQ(Errors.find("CANARY"), std::string::npos);
     EXPECT_NE(Text.find("extraction_id"), std::string::npos);
+    if (Readable)
+      EXPECT_EQ(std::filesystem::exists(std::filesystem::path(Destination) /
+                                        "readable.js"),
+                bool(NEVERD_TEST_WEB_JAVASCRIPT));
   }
 }
 #endif

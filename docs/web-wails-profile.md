@@ -151,7 +151,10 @@ and 32,475 function records. Counts are loader evidence, not native recovery
 or complete function semantics. The 1,552,742-byte JS asset is extracted intact
 but whole-asset source analysis currently returns `source_byte_budget_exceeded`
 under the independent 1 MiB source profile. Raw export does not erase that limit
-or claim parse success. Authored fixtures independently exercise positive
+or claim interactive parse success. The separate
+[shared readable-source export](web-readable-export-profile.md) parses 449,790
+nodes and publishes the complete 1,897,987-byte same-tree readable bundle
+without entering the interactive caches. Authored fixtures independently exercise positive
 source analysis, compressed origins and cross-table reference refusal.
 
 Primary format references are the pinned
