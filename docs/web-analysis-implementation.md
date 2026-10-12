@@ -3438,3 +3438,12 @@ remain ON. Integration head is `779893528b51c3ccb7d57e60f04bf8763c01829a`
 before this receipt-only commit. Logs:
 `/tmp/neverd-configuration-order-{dev-integration,integrated-{build,
 focused-tests,gui-{build,tests},provenance,capabilities}}.log`.
+
+The first normal push is rejected because `dev` advanced. A second normal
+merge includes `5e08ef0eb` (two native HighIR-lowering owners and their tests),
+with the Web/SDK/fixture surfaces still unchanged. The twelve-step rebuild
+passes, followed by all nineteen affected core/SDK/native/transport cases
+(5.65 seconds). Integration head is
+`2537571a18225047ec1a484e9b7048575ad77ec9` before this receipt-only commit.
+Logs: `/tmp/neverd-configuration-order-{second-integration,
+second-integrated-build,second-focused-tests}.log`.
