@@ -125,6 +125,55 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual((unknown.reconstructed_calls, unknown.unresolved_contract_calls), (0, 1))
         self.assertIn("runtime_service(state)", unknown.source)
 
+    def test_narrow_types_and_default_arguments_share_the_native_pipeline(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}
+        def operand(space, size, value):
+            return {"space": space, "size": size, "value": {"addend": value}}
+        slot = lambda offset: {"offset": offset, "bytes": 8}
+        contract = {"schemaVersion": 1, "state_bytes": 48, "isolated_bank": True,
+                    "zero_status_gateways": True, "gateways": [{
+                        "name": "runtime_service", "selector": slot(8),
+                        "argument_count": slot(0), "arguments": [slot(40), slot(40)],
+                        "result_offset": slot(16), "result_bytes": slot(24),
+                        "writes": [], "imports": [{"selector": 7, "name": "example_narrow",
+                            "parameters": ["i8"], "result": "i8", "defaults": [0xfe]}]}]}
+        options = dict(bindings=[{"address": 8192, "name": "runtime_service"}],
+                       output="llvmc", optimize=True, source_contracts=contract, api=api)
+        functions = [{"entry": 0, "end": 2, "name": "source_query"}]
+        for spelling in ("i8", "u8", "i16", "u16"):
+            imported = contract["gateways"][0]["imports"][0]
+            imported.update(parameters=[spelling], result=spelling)
+            for count in (0, 1, 2):
+                copies = [{"op": "COPY", "output": operand("reg", 8, offset),
+                           "inputs": [operand("const", 8, value)]}
+                          for offset, value in ((0, count), (8, 7), (16, 32),
+                                                (24, 8), (40, 0xfeedbeef))]
+                recipes = {0x41: {"size": 1, "operations": copies + [{
+                    "op": "CALL", "inputs": [operand("const", 8, 8192)]}]},
+                    0xfe: {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]}}
+                profile = dict(layout, encodings=[dict(recipe, match=[{"offset": 0, "value": op}])
+                                                 for op, recipe in recipes.items()])
+                static = recover_bytecode(b"A\xfe", profile, functions, **options)
+                dynamic = recover_bytecode_with_decoder(b"A\xfe", layout, functions,
+                                                        lambda data, pc: recipes[data[0]], **options)
+                self.assertEqual(static, dynamic)
+                self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls),
+                                 (int(count <= 1), int(count > 1)))
+                if count <= 1:
+                    ctype = ("uint" if spelling[0] == "u" else "int") + spelling[1:] + "_t"
+                    self.assertIn(f"{ctype} example_narrow({ctype})", static.source)
+        for update in ({"defaults": True}, {"defaults": [True]}, {"defaults": [-1]},
+                       {"defaults": [1.5]}, {"defaults": [0, 0]}, {"defaults": [65536]},
+                       {"parameters": ["pointer"], "defaults": [1]},
+                       {"variadic_fixed": 1},
+                       {"parameters": ["u32", "u8"], "variadic_fixed": 1, "defaults": []}):
+            bad = copy.deepcopy(contract)
+            bad["gateways"][0]["imports"][0].update(update)
+            with self.assertRaises(NeverDError):
+                recover_bytecode(b"A\xfe", profile, functions,
+                                 **dict(options, source_contracts=bad))
+
     def test_scalar_candidates_keep_a_runtime_selector_guard(self):
         api = self.load_api()
         layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}

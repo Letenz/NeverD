@@ -45,7 +45,9 @@ llvm::Expected<StateSourceType> type(const llvm::json::Value &V) {
   static const std::map<llvm::StringRef, StateSourceType> Types = {
       {"void", StateSourceType::Void}, {"u32", StateSourceType::U32},
       {"u64", StateSourceType::U64},   {"i32", StateSourceType::I32},
-      {"i64", StateSourceType::I64},   {"pointer", StateSourceType::Pointer}};
+      {"i64", StateSourceType::I64},   {"pointer", StateSourceType::Pointer},
+      {"u8", StateSourceType::U8},     {"i8", StateSourceType::I8},
+      {"u16", StateSourceType::U16},   {"i16", StateSourceType::I16}};
   auto Name = V.getAsString();
   if (!Name || !Types.count(*Name))
     return invalid("unsupported source type");
@@ -213,8 +215,9 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
     for (const auto &I : *O->getArray("imports")) {
       auto *Import = I.getAsObject();
       if (!Import ||
-          !keys(*Import, {"selector", "pointer_source", "name", "parameters",
-                          "result", "variadic_fixed", "void_result"}) ||
+          !keys(*Import,
+                {"selector", "pointer_source", "name", "parameters", "result",
+                 "variadic_fixed", "void_result", "defaults"}) ||
           (G.FunctionPointer ? bool(Import->get("selector"))
                              : !number(*Import, "selector")) ||
           !Import->getString("name") || !Import->getArray("parameters") ||
@@ -244,6 +247,17 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
       if (!T)
         return T.takeError();
       Native.Result = *T;
+      if (auto *Value = Import->get("defaults")) {
+        auto *Defaults = Value->getAsArray();
+        if (!Defaults || Defaults->size() > 16)
+          return invalid("invalid default arguments");
+        for (const auto &Default : *Defaults) {
+          auto Bits = Default.getAsUINT64();
+          if (!Bits)
+            return invalid("default argument requires an unsigned bit pattern");
+          Native.Defaults.push_back(*Bits);
+        }
+      }
       if (auto *Value = Import->get("void_result")) {
         auto Policy = Value->getAsString();
         if (Native.Result != StateSourceType::Void || !Policy ||

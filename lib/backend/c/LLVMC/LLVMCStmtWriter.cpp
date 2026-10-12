@@ -91,6 +91,23 @@ bool freezeHasDefinedCProjection(const llvm::Value *Root) {
       Anchors.push_back(Value);
       continue;
     }
+    if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(Value)) {
+      const auto *Callee = Call->getCalledFunction();
+      if (!Callee || Callee->isIntrinsic() || Call->hasOperandBundles() ||
+          Call->getCallingConv() != llvm::CallingConv::C)
+        return false;
+      // An ordinary integer C call materializes one returned bit pattern.
+      // Reuse that value, without a new invocation or an LLVM noundef fact.
+      // Its arguments must independently have a total projection: passing
+      // poison is not necessarily immediate LLVM UB, so an unsafe argument
+      // cannot be hidden behind the call's otherwise ordinary C result.
+      Anchors.push_back(Value);
+      for (const auto &Argument : Call->args()) {
+        Users[Argument].push_back(Value);
+        Work.push_back(Argument);
+      }
+      continue;
+    }
     const auto *Inst = llvm::dyn_cast<llvm::Instruction>(Value);
     if (!Inst)
       return false;
@@ -4719,7 +4736,11 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
         Hint.isValid()) {
       auto Spelling = Hint.getValueAsString();
       auto *T = Call.getArgOperand(ArgIdx)->getType();
-      bool Valid = ((Spelling == "int32_t" || Spelling == "uint32_t") &&
+      bool Valid = ((Spelling == "int8_t" || Spelling == "uint8_t") &&
+                    T->isIntegerTy(8)) ||
+                   ((Spelling == "int16_t" || Spelling == "uint16_t") &&
+                    T->isIntegerTy(16)) ||
+                   ((Spelling == "int32_t" || Spelling == "uint32_t") &&
                     T->isIntegerTy(32)) ||
                    ((Spelling == "int64_t" || Spelling == "uint64_t") &&
                     T->isIntegerTy(64)) ||

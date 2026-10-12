@@ -1550,11 +1550,28 @@ arity fallback. Native Python tests verify static/callback parity, the legacy
 zero policy, proof failure and strict void-policy schema admission.
 Scalar-selector cases cover both byte orders, partial slices, multiple bank
 transports, unlisted candidates and unknown writers. The compiled oracle checks
-2048 full-bank cases at O0/O2 with undefined-behavior traps, changing the selector
+4096 full-bank cases at O0/O2 with undefined-behavior traps, changing the selector
 across an opaque call, varying upper bits and argument counts, and comparing
 guest effects, signed results and full-width failure statuses. Native Python
 tests verify static/callback parity and preservation of the runtime guard and
-original fallback.
+original fallback. PHI/select candidates include conflicting arms and loop
+backedges. The compiled oracle executes both straight-line and variable-trip
+loops, preserving complete banks and per-iteration effects across native and
+fallback paths.
+
+Narrow-signature cases check signed and unsigned 8- and 16-bit results on both
+byte orders. The compiled default-argument oracle compares 8192 cases per
+optimization level, varying all four result types, 1/2/4/8-byte destinations,
+supplied counts, signed operands, null pointer defaults and bank alignment.
+Full banks, guest effects, native traces and failure statuses must agree at
+O0/O2 with undefined-behavior traps; both accepted and fallback paths execute.
+Native Python tests check static/callback parity, zero supplied operands,
+out-of-range counts and rejection of malformed or overflowing defaults,
+non-null pointer defaults and unpromoted narrow variadic operands.
+`LLVMCVoidAnalysis.FreezeOfIntegerCall*` covers joins between an integer call
+result and a memory load. Its 1024-case C oracle checks both branches, the
+stored/returned bits and exact call counts at O0/O2 with undefined-behavior
+traps. Unproved shift, undef and poison arguments still refuse emission.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed

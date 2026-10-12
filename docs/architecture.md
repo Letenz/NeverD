@@ -931,6 +931,9 @@ expressions and endian-aware slices can identify a candidate import after an
 opaque call, but cannot establish its current identity. A comparison of the
 captured selector authorizes the direct arm; a mismatch retains the original
 gateway. No candidate replaces an SSA operand or establishes a memory fact.
+PHI and select arms can also nominate a candidate under the same work bounds;
+literal seeds are preferred over loop backedges. This is not a join-equality
+proof, and each execution still compares the current captured selector.
 Explicit variadic import contracts retain a fixed declaration prefix and a
 complete supplied-operand list. The same owner materializes the LLVM variadic
 signature and promoted scalar hints; the C emitter validates those hints and
@@ -939,6 +942,14 @@ their width, signedness or pointer identity.
 Fixed scalar arguments retain their declared integer types as well, so platform
 header overloads cannot redirect calls. Function-address expressions and forward
 declarations share the same signature spelling, including signedness.
+This includes signed and unsigned 8- and 16-bit fixed arguments and results;
+the owner narrows arguments and extends results before the exact bank write.
+Explicit trailing defaults are width-checked bit patterns. The same owner
+guards the permitted count interval and chooses supplied or default operands
+from the captured count before fixed writes. Non-null pointer defaults,
+optional by-value strings and defaults on variadic imports are rejected.
+Variadic integer tails must declare their promoted types. Neither JSON parsing
+nor C emission supplies omitted operands or infers their meaning from names.
 The same owner handles explicitly unspecified void-result captures with a
 bounded forward byte-liveness proof. It omits a capture only when all normal
 return paths overwrite every destination byte before any observer. Unknown
@@ -2130,7 +2141,12 @@ LLVMC preserves relocatable constant address arithmetic, and constant
 `ptrtoint` of a global denotes its address, not initializer bytes. Freeze
 projection requires either LLVM definedness or a bounded integer expression
 whose C evaluation refines it without introducing undefined behavior.
-Division additionally requires defined operands. Helper discovery covers all
+Ordinary direct C calls returning integers can supply their already materialized
+result, provided every argument independently has the supported integer
+projection. This does not add LLVM definedness attributes or repeat the call.
+Intrinsics, operand bundles, other calling conventions and unsupported argument
+projections remain rejected. Division additionally requires defined operands.
+Helper discovery covers all
 emitted bodies, including Windows analysis bodies; supported indirect vector
 calls use the same C vector ABI as direct calls.
 

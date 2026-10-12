@@ -40,6 +40,12 @@ llvm::Type *type(llvm::LLVMContext &C, StateSourceType T) {
   switch (T) {
   case StateSourceType::Void:
     return llvm::Type::getVoidTy(C);
+  case StateSourceType::U8:
+  case StateSourceType::I8:
+    return llvm::Type::getInt8Ty(C);
+  case StateSourceType::U16:
+  case StateSourceType::I16:
+    return llvm::Type::getInt16Ty(C);
   case StateSourceType::U32:
   case StateSourceType::I32:
     return llvm::Type::getInt32Ty(C);
@@ -52,7 +58,8 @@ llvm::Type *type(llvm::LLVMContext &C, StateSourceType T) {
   llvm_unreachable("invalid source type");
 }
 bool signedType(StateSourceType T) {
-  return T == StateSourceType::I32 || T == StateSourceType::I64;
+  return T == StateSourceType::I8 || T == StateSourceType::I16 ||
+         T == StateSourceType::I32 || T == StateSourceType::I64;
 }
 bool identifier(llvm::StringRef Name) {
   return !Name.empty() && Name.size() <= 128 &&
@@ -93,6 +100,14 @@ llvm::FunctionType *signature(llvm::LLVMContext &C,
 }
 llvm::StringRef sourceScalarSpelling(StateSourceType T) {
   switch (T) {
+  case StateSourceType::I8:
+    return "int8_t";
+  case StateSourceType::U8:
+    return "uint8_t";
+  case StateSourceType::I16:
+    return "int16_t";
+  case StateSourceType::U16:
+    return "uint16_t";
   case StateSourceType::I32:
     return "int32_t";
   case StateSourceType::U32:
@@ -429,6 +444,28 @@ llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
   auto Next = [&](llvm::Value *Op) {
     return selectorCandidate(Op, Bank, DT, DL, Budget, Depth + 1);
   };
+  if (auto *Phi = llvm::dyn_cast<llvm::PHINode>(V)) {
+    // A join needs only one advisory candidate, not agreement of its arms.
+    // Prefer literal seeds before traversing backedges; the current value
+    // still needs the same runtime equality check on every iteration.
+    for (auto &Incoming : Phi->incoming_values()) {
+      if (!Budget)
+        return nullptr;
+      --Budget;
+      if (auto *K = llvm::dyn_cast<llvm::ConstantInt>(Incoming))
+        return K;
+    }
+    for (auto &Incoming : Phi->incoming_values())
+      if (auto *K = Next(Incoming))
+        return K;
+    return nullptr;
+  }
+  if (auto *Select = llvm::dyn_cast<llvm::SelectInst>(V)) {
+    for (auto *Arm : {Select->getTrueValue(), Select->getFalseValue()})
+      if (auto *K = Next(Arm))
+        return K;
+    return nullptr;
+  }
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(V)) {
     if (!Load->isSimple() || Load->getType()->getIntegerBitWidth() % 8)
       return nullptr;
@@ -446,8 +483,7 @@ llvm::ConstantInt *selectorCandidate(llvm::Value *V, llvm::Value *Bank,
                                   K->getValue().lshr(Shift).trunc(Width));
   }
   auto *I = llvm::dyn_cast<llvm::Instruction>(V);
-  if (!I || !llvm::isa<llvm::BinaryOperator, llvm::ICmpInst, llvm::CastInst,
-                       llvm::SelectInst>(I))
+  if (!I || !llvm::isa<llvm::BinaryOperator, llvm::ICmpInst, llvm::CastInst>(I))
     return nullptr;
   llvm::SmallVector<llvm::Constant *, 4> Operands;
   for (auto &Op : I->operands()) {
@@ -681,7 +717,7 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
       if (!ValidSlot(W.Slot))
         return invalid("write outside bank");
     auto ValidType = [](StateSourceType T) {
-      return unsigned(T) <= unsigned(StateSourceType::Pointer);
+      return unsigned(T) <= unsigned(StateSourceType::I16);
     };
     std::set<uint64_t> Selectors;
     std::set<std::pair<unsigned, unsigned>> PointerSources;
@@ -693,7 +729,9 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           (G.FunctionPointer && I.Selector) ||
           (I.VariadicFixedParameters &&
            (!*I.VariadicFixedParameters ||
-            *I.VariadicFixedParameters > I.Parameters.size())) ||
+            *I.VariadicFixedParameters > I.Parameters.size() ||
+            !I.Defaults.empty())) ||
+          I.Defaults.size() > I.Parameters.size() ||
           (I.VoidResult != StateSourceVoidResult::Zero &&
            (I.VoidResult != StateSourceVoidResult::Unspecified ||
             I.Result != StateSourceType::Void)) ||
@@ -701,6 +739,20 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           !llvm::all_of(I.Parameters, ValidType) ||
           llvm::is_contained(I.Parameters, StateSourceType::Void))
         return invalid("invalid import identity or parameters");
+      unsigned Required = I.Parameters.size() - I.Defaults.size();
+      for (unsigned P = 0; P < I.Parameters.size(); ++P) {
+        auto *T = type(M.getContext(), I.Parameters[P]);
+        if (I.VariadicFixedParameters && P >= *I.VariadicFixedParameters &&
+            T->isIntegerTy() && T->getIntegerBitWidth() < 32)
+          return invalid("variadic operands must use promoted integer types");
+        if (P < Required)
+          continue;
+        uint64_t Value = I.Defaults[P - Required];
+        if ((T->isPointerTy() && Value) ||
+            (T->isIntegerTy() && T->getIntegerBitWidth() < 64 &&
+             Value >> T->getIntegerBitWidth()))
+          return invalid("default argument does not fit its source type");
+      }
       if (I.PointerSource) {
         const auto &P = *I.PointerSource;
         if (P.Image >= C.Images.size() ||
@@ -710,7 +762,7 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           return invalid("invalid or duplicate imported pointer source");
       }
       for (const auto &S : G.Strings)
-        if (S.Argument >= I.Parameters.size() ||
+        if (S.Argument >= I.Parameters.size() || S.Argument >= Required ||
             I.Parameters[S.Argument] != StateSourceType::Pointer)
           return invalid("string requires an imported pointer parameter");
       auto *T = signature(M.getContext(), I);
@@ -983,7 +1035,8 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           *Offset <= R.Contract.StateBytes &&
           *Bytes <= R.Contract.StateBytes - *Offset)
         for (const auto &I : G.Imports) {
-          if (Arity && I.Parameters.size() != *Arity)
+          if (Arity && (*Arity > I.Parameters.size() ||
+                        *Arity < I.Parameters.size() - I.Defaults.size()))
             continue;
           if (G.FunctionPointer) {
             if (!PointerOrigin)
@@ -1004,10 +1057,19 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         Import = nullptr;
       llvm::IRBuilder<> B(Call);
       llvm::Value *ScalarMatches = B.getTrue();
-      if (Import && !Arity)
-        ScalarMatches = B.CreateICmpEQ(Call->getArgOperand(N + 1),
-                                       B.getInt64(Import->Parameters.size()),
-                                       "argument_count_matches");
+      if (Import && !Arity) {
+        auto *Count = Call->getArgOperand(N + 1);
+        unsigned Total = Import->Parameters.size();
+        if (Import->Defaults.empty())
+          ScalarMatches = B.CreateICmpEQ(Count, B.getInt64(Total),
+                                         "argument_count_matches");
+        else
+          ScalarMatches = B.CreateAnd(
+              B.CreateICmpUGE(Count,
+                              B.getInt64(Total - Import->Defaults.size())),
+              B.CreateICmpULE(Count, B.getInt64(Total)),
+              "argument_count_matches");
+      }
       if (Import && !G.FunctionPointer && !Selector)
         ScalarMatches =
             B.CreateAnd(ScalarMatches,
@@ -1096,6 +1158,11 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         std::vector<llvm::Value *> Args;
         for (size_t I = 0; I < Import->Parameters.size(); ++I) {
           auto *V = Call->getArgOperand(N + 4 + I);
+          size_t Required = Import->Parameters.size() - Import->Defaults.size();
+          if (I >= Required)
+            V = B.CreateSelect(
+                B.CreateICmpUGT(Call->getArgOperand(N + 1), B.getInt64(I)), V,
+                B.getInt64(Import->Defaults[I - Required]), "default_argument");
           auto *T = type(M.getContext(), Import->Parameters[I]);
           Args.push_back(T->isPointerTy() ? B.CreateIntToPtr(V, T)
                                           : B.CreateZExtOrTrunc(V, T));

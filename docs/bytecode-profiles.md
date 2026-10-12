@@ -259,8 +259,10 @@ arm retains the original gateway and status. The selector must be proven at the
 site or checked against an advisory candidate as described below. Unlisted selectors,
 incompatible constant counts and invalid destinations keep the original state
 gateway. A signed result is extended before the exact-width
-bank write; a void result writes zero by default. Supported source types are `u32`, `u64`,
-`i32`, `i64`, `pointer`, and result-only `void`. Exceptional call edges,
+bank write; a void result writes zero by default. Supported source types are
+`u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `pointer`, and result-only
+`void`. Fixed arguments are narrowed to their declared widths; signedness is
+preserved in C declarations, calls and result extension. Exceptional call edges,
 observable state addresses and unbounded bank addressing are unsupported.
 This route currently requires integral 64-bit pointers and indices.
 
@@ -271,7 +273,9 @@ or preservation fact. The actual captured selector is compared with the
 candidate's service number before using the imported call. Other values retain
 the original gateway, status and bank effects. Candidate discovery adds no
 memory reads and uses the target byte order for partial-width transport. Without
-a declared candidate, the gateway remains unchanged.
+a declared candidate, the gateway remains unchanged. PHI and select arms can
+supply an advisory candidate, including a loop's initial service number; this
+does not establish agreement of the arms or stability across iterations.
 
 A void import may declare `"void_result": "unspecified"` when its gateway
 captures physical return-register bits that the native void operation does not
@@ -284,6 +288,18 @@ retains the original gateway; its failure paths and bank writes are unchanged.
 This policy does not permit replacing observed bits with zero. The explicit
 `"zero"` policy retains the default behavior. `void_result` is invalid on a
 non-void import.
+
+An import may provide `defaults`, an array of unsigned integer bit patterns for
+a suffix of `parameters`. For example, `parameters: ["u32"]` and
+`defaults: [0]` accept either zero operands (passing zero) or one supplied
+operand. A known count must be between the required prefix length and the full
+parameter count; a dynamic count gets the same runtime bounds check and
+original-gateway fallback. Defaults are selected from the captured count before
+fixed bank writes. Each bit pattern must fit its declared type, including signed
+types: an `i8` default of `254` means `-2`. Pointer defaults must be zero.
+Defaults cannot be combined with variadic imports or optional by-value strings.
+These values are explicit caller assertions; NeverD does not infer a missing
+argument's value from the callee name.
 
 Gateway `indirect_arguments` lists argument indices whose slots contain byte
 offsets into the bank. Each points to an eight-byte value captured before fixed
@@ -355,7 +371,9 @@ variadic signature, and call-site scalar hints make C preserve each trailing
 operand's width, signedness and pointer type, including small 64-bit constants.
 Fixed integer arguments and imported function addresses preserve their declared
 types too, so overloads in platform C headers cannot redirect the call or make
-its address ambiguous.
+its address ambiguous. Narrow fixed parameters are supported; trailing integer
+varargs must already use their promoted 32- or 64-bit types. Unpromoted 8- or
+16-bit trailing declarations are rejected.
 Floating-point and aggregate varargs remain unsupported by this source contract.
 These models do not recover arbitrary encryption or establish a resolver's ABI.
 

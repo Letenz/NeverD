@@ -30,7 +30,18 @@ struct StateSourceWrite {
   StateSourceSlot Slot;
   uint64_t Value = 0;
 };
-enum class StateSourceType { Void, U32, U64, I32, I64, Pointer };
+enum class StateSourceType {
+  Void,
+  U32,
+  U64,
+  I32,
+  I64,
+  Pointer,
+  U8,
+  I8,
+  U16,
+  I16
+};
 enum class StateSourceVoidResult { Zero, Unspecified };
 struct StateSourcePointerSource {
   unsigned Image = 0;
@@ -53,6 +64,10 @@ struct StateSourceImport {
   /// models capture of physical return-register bits: recovery must prove
   /// every destination byte overwritten before observation on normal return.
   StateSourceVoidResult VoidResult = StateSourceVoidResult::Zero;
+  /// Explicit bit-pattern defaults for a suffix of Parameters. Missing
+  /// operands use these values; supplied operands retain their captured values.
+  /// A pointer default must be null. Variadic imports cannot have defaults.
+  std::vector<uint64_t> Defaults;
 };
 struct StateSourceImage {
   StateSourceSlot Base;
