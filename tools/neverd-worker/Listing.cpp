@@ -581,6 +581,8 @@ struct Listing::Impl {
   /// thunk where it has one, else its slot.  Kept apart from listingNames,
   /// whose names display names must not take.
   std::map<std::string, std::uint64_t, std::less<>> importTargets;
+  /// The other names the image exports a function under.
+  std::map<std::string, std::uint64_t, std::less<>> exportAliases;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
   std::unordered_map<std::uint64_t, std::string> pdbDisplayNames;
@@ -1150,6 +1152,7 @@ struct Listing::Impl {
     slots.clear();
     stubImports.clear();
     importTargets.clear();
+    exportAliases.clear();
     strings.clear();
     listingNames.clear();
     namedData.clear();
@@ -1219,10 +1222,16 @@ struct Listing::Impl {
         const auto address = jsonAddress(row.value("addr", Json()));
         if (!address)
           continue;
-        if (auto *function = functionAtEntry(address))
+        auto name = row.value("name", std::string());
+        if (auto *function = functionAtEntry(address)) {
           function->exported = true;
-        else if (auto name = row.value("name", std::string()); !name.empty())
+          // Each name the image exports a function under finds it, as a
+          // linker that folds identical functions exports several for one.
+          if (!name.empty() && name != function->name)
+            exportAliases.emplace(std::move(name), address);
+        } else if (!name.empty()) {
           dataNames.emplace(address, std::move(name));
+        }
       }
     const auto addString = [&](const Json &row) {
       StringItem item;
@@ -4000,6 +4009,8 @@ std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   if (auto it = d.listingNames.find(name); it != d.listingNames.end())
     return it->second;
   if (auto it = d.importTargets.find(name); it != d.importTargets.end())
+    return it->second;
+  if (auto it = d.exportAliases.find(name); it != d.exportAliases.end())
     return it->second;
   if (auto address = parseDummyName(name);
       address && d.regionIndex(*address) >= 0)
