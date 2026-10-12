@@ -25,6 +25,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/X86FPState.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterBody.h"
@@ -834,6 +835,10 @@ class X87CallEffectIndex {
     if (Op.NumInputs == 0 || !Op.Inputs[0].isConst())
       return false;
     if (isArchitecturalNoReturn(Op))
+      return true;
+    // SSE arithmetic under MXCSR touches no x87 register: i386 code computes
+    // a double in an XMM register and returns it on the x87 stack.
+    if (isX86FPStateIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)))
       return true;
     // The decoder already accounts for the numeric x87 operations' pops and
     // pushes. Environment restores, tag changes and unknown intrinsics have

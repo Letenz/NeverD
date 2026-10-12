@@ -1744,3 +1744,5 @@ ctest --test-dir build-source -L \
   '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
   --output-on-failure --parallel 4
 ```
+
+تتحقق `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` من مسح وضبط IF في CPL0 مقابل تحكم CPL3، وتطابق الملفات وفصل الملخصات، ورفض TF/AC/IOPL، واعتماد IF النهائي الإلزامي حتى عند تعطيل الملاحظات العادية، والاستعادة والميزانيات الدقيقة أو الأقل بعملية واحدة. تتحقق `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` أيضاً من عدم اختيار ABI المستخدم ضمنياً. لم تتغير admission التعليمات غير المعرفة أو guards استعادة برامج التشغيل.

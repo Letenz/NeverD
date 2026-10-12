@@ -136,6 +136,13 @@ public:
   /// even where the next section's first object starts.
   std::optional<std::string>
   ownedImageBackingAddress(const HighExpr &Const) const;
+  /// The section \p Const is anchored to when its relocation names an object
+  /// there and subtracts from it, leaving an address before the section
+  /// (i386 `table@GOTOFF - 1`; BinaryImage::RodataAnchorSeg).
+  std::optional<va_t> anchoredOwner(const HighExpr &Const) const;
+  /// \p Const as the address of its anchored section's first object less
+  /// the distance to it, as an integer.
+  std::optional<std::string> anchoredOwnerAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);

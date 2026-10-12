@@ -110,8 +110,9 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-mcp/server.py"
 
 if(BUILD_TESTING)
   option(NEVERD_GUI_CI_DIAGNOSTICS
-    "Write file diagnostics for the Windows GUI controller test runner" OFF)
+    "Write file diagnostics for the Windows GUI unit and controller test runners" OFF)
   set(_neverd_controller_test_log_args)
+  set(_neverd_units_test_log_args)
   if(NEVERD_GUI_CI_DIAGNOSTICS)
     if(NOT WIN32 OR NOT "$ENV{CI}" STREQUAL "true" OR
        NOT "$ENV{GITHUB_ACTIONS}" STREQUAL "true")
@@ -122,6 +123,10 @@ if(BUILD_TESTING)
     set(_neverd_controller_test_log_args
       -o "${_neverd_gui_ci_log_dir}/controller.txt,txt"
       -o "${_neverd_gui_ci_log_dir}/controller.xml,xml"
+      -o "-,txt")
+    # A crash loses what a pipe buffered; the file keeps each line.
+    set(_neverd_units_test_log_args
+      -o "${_neverd_gui_ci_log_dir}/units.txt,txt"
       -o "-,txt")
   endif()
   find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
@@ -157,7 +162,10 @@ if(BUILD_TESTING)
 
   qt_add_executable(neverd-gui-unit-tests tests/WorkbenchUnitTests.cpp)
   target_link_libraries(neverd-gui-unit-tests PRIVATE neverd_gui_app Qt6::Test)
-  add_test(NAME NeverDGuiUnits COMMAND neverd-gui-unit-tests)
+  # A console program on Windows too, so CTest records what failed.
+  set_target_properties(neverd-gui-unit-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  add_test(NAME NeverDGuiUnits COMMAND neverd-gui-unit-tests
+    ${_neverd_units_test_log_args})
   set_tests_properties(NeverDGuiUnits PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
@@ -169,8 +177,9 @@ if(BUILD_TESTING)
     add_dependencies(neverd-gui-tests neverd-worker-test-server)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
+    # Over a minute on a Linux runner, about twice that on macOS and Windows.
     set_tests_properties(NeverDGuiController PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
       --worker $<TARGET_FILE:neverd-worker-test-server>)
     set_tests_properties(NeverDGuiWidgets PROPERTIES

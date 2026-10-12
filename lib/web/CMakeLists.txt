@@ -76,6 +76,7 @@ add_neverd_component_library(NeverDWeb
   SessionWailsExport.cpp
   desktop/tauri/PHF.cpp
   desktop/tauri/Reader.cpp
+  desktop/bridge/Publication.cpp
   SessionTauri.cpp
   SessionTauriExport.cpp
   compression/Brotli.cpp
@@ -178,6 +179,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   include("${CMAKE_SOURCE_DIR}/cmake/NeverDJavaScriptParser.cmake")
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
+    desktop/bridge/Source.cpp
     packages/behavior/Rules.cpp
     packages/behavior/Source.cpp
     packages/behavior/Package.cpp

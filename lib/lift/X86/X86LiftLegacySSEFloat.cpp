@@ -41,6 +41,17 @@ bool liftLegacySSEFloat(X86Lifter &L, X86Lifter::LiftState &S,
   case X86_INS_PCMPGTD: {
     if (X86.op_count < 2)
       break;
+    // A register compared with itself reads none of its lanes: each equals
+    // itself and exceeds none, so `pcmpeqd x, x` sets every bit (a vector of
+    // ones, as compilers make it) and `pcmpgtd x, x` clears them.
+    if (isSameRegisterOperand(X86.operands[0], X86.operands[1])) {
+      NdVar Dst = L.operandWrite(X86.operands[0]);
+      const bool Greater = InsnId == X86_INS_PCMPGTB ||
+                           InsnId == X86_INS_PCMPGTW ||
+                           InsnId == X86_INS_PCMPGTD;
+      S.emit(NdOp::COPY, Dst, {emitByteSplat(S, Dst.Size, Greater ? 0 : 0xFF)});
+      break;
+    }
     NdVar Lhs = L.operandRead(S, X86.operands[0]);
     NdVar Rhs = L.operandRead(S, X86.operands[1]);
     NdVar Dst = L.operandWrite(X86.operands[0]);

@@ -6,9 +6,11 @@
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "ExtensionsView.h"
+#include "GnomeWindowEdges.h"
 #include "GraphView.h"
 #include "HexView.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "JumpDialog.h"
 #include "Language.h"
 #include "ListingView.h"
@@ -240,11 +242,15 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
         startupQuickStartPending_ = false;
         // Leave the native drop callback before opening or asking about
         // unsaved changes. The window owns the queued callback's lifetime.
-        const QPointer<QDialog> start = quickStart ? quickStart_ : nullptr;
+        // A file dropped on the quick start starts as New does.
+        const QPointer<QuickStartDialog> start =
+            quickStart ? qobject_cast<QuickStartDialog *>(quickStart_.data())
+                       : nullptr;
         QTimer::singleShot(0, this, [this, path, start] {
           if (start)
-            start->reject();
-          chooseLoader(path);
+            start->startNew(path);
+          else
+            chooseLoader(path);
         });
       }
       return true;
@@ -638,6 +644,8 @@ void MainWindow::retitleCodeDocks() {
 }
 
 void MainWindow::initializeLayout() {
+  if (std::exchange(layoutInitialized_, true))
+    return;
   if (!QFile::exists(layoutPath()) ||
       !KDDockWidgets::LayoutSaver().restoreFromFile(layoutPath()))
     applyDefaultLayout();
@@ -1414,14 +1422,17 @@ void MainWindow::openFile(const QString &path) {
 
 void MainWindow::openDialog() {
   startupQuickStartPending_ = false;
+  if (const QString path = askForFile(this); !path.isEmpty())
+    chooseLoader(path);
+}
+
+QString MainWindow::askForFile(QWidget *parent) const {
   // The folder of the file the user opened, not of a working copy of it.
   const QString start = QFileInfo(session_.projectPath()).absolutePath();
-  const auto path = QFileDialog::getOpenFileName(
-      this, tr("Open binary or database"),
+  return QFileDialog::getOpenFileName(
+      parent, tr("Open binary or database"),
       start.isEmpty() ? QDir::homePath() : start,
       tr("All files (*);;NeverD databases (*.nddb)"));
-  if (!path.isEmpty())
-    chooseLoader(path);
 }
 
 void MainWindow::chooseLoader(const QString &path) {
@@ -2160,6 +2171,7 @@ void MainWindow::showCommandPalette() {
   auto *filter = new QLineEdit(&dialog);
   filter->setPlaceholderText(tr("Type a command"));
   auto *list = new QListWidget(&dialog);
+  activateOnReturn(*list);
   // Shortcuts line up at the right of their commands.
   list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
   layout->addWidget(filter);
@@ -2413,14 +2425,38 @@ void MainWindow::scheduleQuickStart() {
 
 void MainWindow::showQuickStart() {
   startupQuickStartPending_ = false;
-  QuickStartDialog dialog(this);
+  // Before the workbench shows, the quick start greets alone, as IDA's
+  // does: a window of its own until the user chooses how to start, when the
+  // workbench takes its place.  Closing it then quits.
+  const bool greeting = !isVisible();
+  QuickStartDialog dialog(
+      [this](QWidget *parent) { return askForFile(parent); },
+      greeting ? nullptr : this);
+  // Qt would quit when the greeting closes as the last window, even once
+  // the user chose how to start; closing it quits below instead.
+  dialog.setAttribute(Qt::WA_QuitOnClose, false);
   quickStart_ = &dialog;
-  if (dialog.exec() != QDialog::Accepted)
+  dialog.exec();
+  const auto start = dialog.start();
+  if (start == QuickStartDialog::Start::None) {
+    if (greeting)
+      QCoreApplication::quit();
     return;
-  if (dialog.start() == QuickStartDialog::Start::New)
-    openDialog();
-  else if (dialog.start() == QuickStartDialog::Start::Previous)
+  }
+  showWorkbench();
+  if (start == QuickStartDialog::Start::New)
+    chooseLoader(dialog.file());
+  else if (start == QuickStartDialog::Start::Previous)
     openFile(dialog.file());
+}
+
+void MainWindow::showWorkbench() {
+  if (isVisible())
+    return;
+  initializeLayout();
+  gnome::boundMaximumSize(*this);
+  show();
+  gnome::widenResizeEdges(*this);
 }
 
 QHash<QString, QByteArray> MainWindow::projectState() const {

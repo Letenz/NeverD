@@ -1909,6 +1909,9 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
   if (ProjectImageBacking && ProjectFrameAliasesIntoStorage)
     if (const auto Disp = certifiedFrameStorageDisplacement(E))
       return frameStorageAddress(*Disp);
+  if (E.Kind == ExprKind::Const)
+    if (auto Anchored = anchoredOwnerAddress(E))
+      return *Anchored;
   if (auto VA = constAddress(E)) {
     if (!ProjectImageBacking)
       return constStr(*VA, E.Type);
@@ -1938,6 +1941,19 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       Off = Lhs;
     }
     if (Base && Off && Off->Kind == ExprKind::Const) {
+      // A displacement anchored before its owner's section is that object's
+      // address less the distance, which the integer base adds to, whatever
+      // object lies at the displacement itself.
+      if (!Minus)
+        if (auto Anchored = anchoredOwnerAddress(*Off)) {
+          constexpr int AddPrec = 9;
+          std::string B = addrStr(*Base, AddPrec, ProjectImageBacking);
+          if (B != "frame_base" &&
+              !llvm::StringRef(B).starts_with("(uintptr_t)"))
+            B = "(uintptr_t)(" + B + ")";
+          std::string S = B + " + " + *Anchored;
+          return ParentPrec >= AddPrec ? "(" + S + ")" : S;
+        }
       if (ProjectImageBacking) {
         if (auto Member = typedMemberAddress(*Inner))
           return "&" + *Member;
@@ -4297,6 +4313,19 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (E.ConstProvenance == ConstantAddressProvenance::Scalar ||
         E.ConstProvenance == ConstantAddressProvenance::AddressFragment)
       return constStr(E.ConstVal, E.Type);
+    // A relocation that names an object and subtracts from it (i386
+    // `SA@GOTOFF - 1` for `SA[i - 1]`) leaves an address before the object's
+    // section: the object's address less the distance, whatever lies at the
+    // address itself.
+    if (auto Anchored = anchoredOwnerAddress(E)) {
+      if (E.Type &&
+          (E.Type->Kind == NdTypeKind::Ptr ||
+           (E.Type->Kind == NdTypeKind::Int &&
+            (E.Type->IsSigned ||
+             E.Type->Size != getTargetRegInfo(Opts.TheArch).PointerSize))))
+        return "(" + typeToC(E.Type) + ")" + *Anchored;
+      return PointerInteger(*Anchored);
+    }
     bool AllowEmpty = false;
     if (Dbg) {
       if (auto Data = Dbg->resolveDataObject(E.ConstVal);
@@ -5045,16 +5074,26 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
         const HighExpr *Inner = peelIntegerViewOps(&E);
         if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
           return false;
-        if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::INT_ADD &&
-            Inner->Operands.size() == 2 && Inner->Operands[0] &&
-            Inner->Operands[1])
-          return Collect(*Inner->Operands[0], Depth + 1) &&
-                 Collect(*Inner->Operands[1], Depth + 1);
+        if (Inner->Kind == ExprKind::BinOp && Inner->Operands.size() == 2 &&
+            Inner->Operands[0] && Inner->Operands[1]) {
+          if (Inner->Op == NdOp::INT_ADD)
+            return Collect(*Inner->Operands[0], Depth + 1) &&
+                   Collect(*Inner->Operands[1], Depth + 1);
+          // A number taken off a sum leaves its terms: `SA[i - 1]` reads
+          // `SA + i - 1`.
+          if (Inner->Op == NdOp::INT_SUB)
+            if (const HighExpr *Taken =
+                    peelIntegerViewOps(Inner->Operands[1].get());
+                Taken && Taken->Kind == ExprKind::Const &&
+                !isExactAddressProvenance(Taken->ConstProvenance))
+              return Collect(*Inner->Operands[0], Depth + 1);
+        }
         Terms.push_back(Inner);
         return true;
       };
   const HighExpr *Inner = peelIntegerViewOps(&Address);
-  if (!Inner || Inner->Kind != ExprKind::BinOp || Inner->Op != NdOp::INT_ADD ||
+  if (!Inner || Inner->Kind != ExprKind::BinOp ||
+      (Inner->Op != NdOp::INT_ADD && Inner->Op != NdOp::INT_SUB) ||
       !Collect(Address, 0))
     return nullptr;
   // One term is the object's address and another varies.  A number equal to
@@ -5170,6 +5209,39 @@ HighCWriter::ownedImageBackingAddress(const HighExpr &Const) const {
       break;
     }
   return imageBackingAddress(Const.ConstVal);
+}
+
+std::optional<va_t> HighCWriter::anchoredOwner(const HighExpr &Const) const {
+  if (!Opts.Image || Const.Kind != ExprKind::Const ||
+      !isExactAddressProvenance(Const.ConstProvenance) ||
+      Const.AddressOwnerVA == InvalidVA)
+    return std::nullopt;
+  const auto Anchor = Opts.Image->RodataAnchorSeg.find(Const.ConstVal);
+  if (Anchor == Opts.Image->RodataAnchorSeg.end() ||
+      Anchor->second != Const.AddressOwnerVA ||
+      Const.ConstVal >= Anchor->second)
+    return std::nullopt;
+  return Anchor->second;
+}
+
+std::optional<std::string>
+HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
+  const std::optional<va_t> Owner = anchoredOwner(Const);
+  if (!Owner)
+    return std::nullopt;
+  std::optional<std::string> Object = imageStringLiteral(Opts.Image, *Owner);
+  if (!Object)
+    Object = imageBackingAddress(*Owner);
+  if (!Object)
+    if (const auto Name = imageObjectName(*Owner)) {
+      const auto It = ImageObjects.find(*Owner);
+      Object =
+          It != ImageObjects.end() && It->second.String ? *Name : "&" + *Name;
+    }
+  if (!Object)
+    return std::nullopt;
+  return "((uintptr_t)" + *Object + " - " +
+         std::to_string(*Owner - Const.ConstVal) + ")";
 }
 
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,

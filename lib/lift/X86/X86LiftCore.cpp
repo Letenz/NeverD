@@ -27,6 +27,24 @@
 
 namespace neverd {
 
+bool isSameRegisterOperand(const cs_x86_op &A, const cs_x86_op &B) {
+  return A.type == X86_OP_REG && B.type == X86_OP_REG && A.reg == B.reg;
+}
+
+NdVar emitByteSplat(X86Lifter::LiftState &S, uint16_t Bytes, uint8_t Byte) {
+  const uint64_t Word = Byte * 0x0101010101010101ULL;
+  if (Bytes <= 8)
+    return NdVar::cst(
+        Bytes == 8 ? Word : Word & ((uint64_t{1} << (8 * Bytes)) - 1), Bytes);
+  NdVar Acc = NdVar::cst(Word, 8);
+  for (uint16_t Done = 8; Done < Bytes; Done += 8) {
+    NdVar Next = S.makeTemp(Done + 8);
+    S.emit(NdOp::CONCAT, Next, {NdVar::cst(Word, 8), Acc});
+    Acc = Next;
+  }
+  return Acc;
+}
+
 NdVar snapshotCarryAtWidth(X86Lifter::LiftState &S, uint16_t Size) {
   NdVar Carry = NdVar::reg(x86reg::CF, 1);
   NdVar Snapshot = S.makeTemp(Size);

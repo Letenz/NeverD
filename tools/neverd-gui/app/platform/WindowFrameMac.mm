@@ -13,6 +13,9 @@ namespace {
 constexpr char CocoaPlatform[] = "cocoa";
 /// A standard title bar, in whose height the traffic lights are centered.
 constexpr int TitleBarHeight = 28;
+/// Visual Studio Code's custom title bar with its command center, which a
+/// window off Cocoa (offscreen) draws whole.
+constexpr int DrawnTitleBarHeight = 35;
 /// The traffic lights' share of the title bar, which Visual Studio Code
 /// keeps clear for them.
 constexpr int TrafficLightsWidth = 70;
@@ -22,15 +25,20 @@ NSString *const DoubleClickActionKey = @"AppleActionOnDoubleClick";
 NSString *const MinimizeAction = @"Minimize";
 NSString *const NoAction = @"None";
 
+/// Whether windows are Cocoa's, whose native handles are NSViews.
+bool onCocoa() {
+  return QGuiApplication::platformName() == QLatin1String(CocoaPlatform);
+}
+
 NSWindow *nativeWindow(QWindow &window) {
+  if (!onCocoa())
+    return nil;
   return reinterpret_cast<NSView *>(window.winId()).window;
 }
 } // namespace
 
 FrameKind frameKind() {
-  return QGuiApplication::platformName() == QLatin1String(CocoaPlatform)
-             ? FrameKind::Captionless
-             : FrameKind::System;
+  return onCocoa() ? FrameKind::Captionless : FrameKind::System;
 }
 
 bool drawsShadow() { return false; }
@@ -48,15 +56,23 @@ void removeCaption(QWindow &window) {
 
 QMargins maximizedInsets(QWindow &) { return {}; }
 
-Qt::Edges ownResizeEdges() { return {}; }
+// Off Cocoa no system frame or traffic lights serve the window, so its title
+// bar draws and does everything itself.
+Qt::Edges ownResizeEdges() {
+  return onCocoa()
+             ? Qt::Edges()
+             : Qt::LeftEdge | Qt::TopEdge | Qt::RightEdge | Qt::BottomEdge;
+}
 
-int titleBarHeight() { return TitleBarHeight; }
+int titleBarHeight() {
+  return onCocoa() ? TitleBarHeight : DrawnTitleBarHeight;
+}
 
-int systemControlsWidth() { return TrafficLightsWidth; }
+int systemControlsWidth() { return onCocoa() ? TrafficLightsWidth : 0; }
 
-bool drawsWindowControls() { return false; }
+bool drawsWindowControls() { return !onCocoa(); }
 
-bool showsWindowIcon() { return false; }
+bool showsWindowIcon() { return !onCocoa(); }
 
 bool doubleClickTitleBar(QWindow &window) {
   NSWindow *native = nativeWindow(window);

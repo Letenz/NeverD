@@ -243,6 +243,16 @@ Function containment and declaration/initializer links are source relationships;
 them as resolved runtime calls. Failed navigation publishes no records. Partial
 navigation may retain complete syntax with unavailable lexical evidence.
 
+Desktop bridge analysis has its own identity binding source, bindings,
+navigation and `tauri-1-wails-2-direct-bridge-syntax-v1`. Its record identities
+add the call's syntax node and selected form. Navigation summary includes
+`desktop_bridges`; the existing records operation admits this additional kind.
+Candidates retain source/call/reference IDs and private argument/target-name
+node anchors. Fixed confidence, root resolution, unresolved shapes and
+`native_target: not_resolved` prevent promotion to authenticated APIs or native
+registrations. A failed bridge analysis clears only bridge records, preserving
+independent navigation. See the [profile](web-desktop-bridge-profile.md).
+
 `source-storage-anchor-v1` identities bind the source and requested UTF-8 span.
 `start/end` use zero-based line/UTF-16 coordinates; `source_parse_status` does not
 affect the separate claim of coordinate validity. `storage` identifies original
