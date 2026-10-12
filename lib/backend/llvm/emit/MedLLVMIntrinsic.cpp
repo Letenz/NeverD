@@ -14,12 +14,16 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/backend/llvm/LLVMSyscallAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X87Constant.h"
 
 #define DEBUG_TYPE "neverd-med-llvm-intrinsic"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X64Syscall.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -29,6 +33,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 
 namespace neverd {
 
@@ -95,7 +100,8 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
   using I = Intrinsic;
   auto IC = static_cast<I>(IntrCode);
 
-  if (IC == I::CetRdSsp || isX86FPStateIntrinsic(IC)) {
+  if (IC == I::CetRdSsp || isX86FPStateIntrinsic(IC) ||
+      isX87ConstantControlIntrinsic(IC)) {
     if (TargetArch != Arch::X86 && TargetArch != Arch::X64)
       llvm::report_fatal_error("x86 FP state requires an x86 target");
     return emitX86IntrinsicValue(Op, IC, Builder);
@@ -195,6 +201,9 @@ llvm::Value *MedLLVMEmitter::emitIntrinsic(const MedOp &Op,
     return nullptr;
 
   auto *OutTy = sizeToType(Op.Output.Size);
+
+  if (const SyscallConvention *Syscall = modeledSyscallConvention(IC))
+    return emitLinuxSyscall(Op, *Syscall, Builder);
 
   llvm::Value *R = nullptr;
 
@@ -309,6 +318,45 @@ bool MedLLVMEmitter::emitSideeffectIntrinsic(const MedOp &Op, Intrinsic IC,
     setVar(Op.Output, llvm::ConstantInt::get(OutTy, 0), Builder);
   }
   return Matched;
+}
+
+llvm::Value *
+MedLLVMEmitter::emitLinuxSyscall(const MedOp &Op,
+                                 const SyscallConvention &Convention,
+                                 llvm::IRBuilder<> &Builder) {
+  if (TargetArch != Convention.TheArch || TargetFormat != BinaryFormat::ELF ||
+      !llvm::Triple(Mod->getTargetTriple()).isOSLinux())
+    llvm::report_fatal_error(
+        "a Linux supervisor call requires the Linux execution ABI");
+  if (Op.NumInputs != 2u + Convention.ArgumentCount ||
+      Op.Output.Size != Convention.RegisterSize ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+      Op.MemoryOrdering != NdMemoryOrdering::None)
+    llvm::report_fatal_error("invalid Linux supervisor call register operands");
+  auto *RegisterTy = sizeToType(Convention.RegisterSize);
+  // getVar can materialize a known scalar through register backing loads.
+  // Use the relocation-aware MedIR control proof to identify the syscall.
+  const auto KnownNumber = controlConstantMayRelocate(Op.Inputs[1])
+                               ? std::nullopt
+                               : traceControlConst(Op.Inputs[1]);
+  const std::optional<unsigned> Read =
+      KnownNumber ? linuxSyscallArgumentCount(Convention.TheArch, *KnownNumber)
+                  : std::nullopt;
+  std::vector<llvm::Value *> Arguments = {
+      Builder.CreateZExtOrTrunc(getVar(Op.Inputs[1], Builder), RegisterTy)};
+  for (unsigned I = 0; I < Convention.ArgumentCount; ++I)
+    // A verified syscall reads only its own arguments: invent no dependency
+    // on an undefined register it ignores.
+    Arguments.push_back(
+        Read && I >= *Read
+            ? llvm::ConstantInt::get(RegisterTy, 0)
+            : Builder.CreateZExtOrTrunc(getVar(Op.Inputs[2 + I], Builder),
+                                        RegisterTy));
+  std::vector<llvm::Type *> Types(Arguments.size(), RegisterTy);
+  auto *Asm = llvm::InlineAsm::get(
+      llvm::FunctionType::get(RegisterTy, Types, false),
+      syscallAsmString(Convention), syscallAsmConstraints(Convention), true);
+  return Builder.CreateCall(Asm, Arguments, "syscall_result");
 }
 
 } // namespace neverd

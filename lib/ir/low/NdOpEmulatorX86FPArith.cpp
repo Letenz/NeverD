@@ -1,6 +1,7 @@
 //===- NdOpEmulatorX86FPArith.cpp - Exact x86 SIMD FP arithmetic --------===//
 
 #include "neverd/Limits.h"
+#include "neverd/ir/X86FPComparison.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/NdOpEmulator.h"
 
@@ -302,9 +303,10 @@ std::optional<uint32_t> approximate12Lane(uint32_t Bits, bool Rsqrt,
 
 } // namespace
 
-std::optional<std::vector<uint8_t>>
-NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
-                                   unsigned Alignment) {
+std::optional<uint64_t> NdOpEmulator::checkX86FPStateMemory(const LowOp &Op,
+                                                            uint16_t Bytes,
+                                                            unsigned Alignment,
+                                                            bool Write) {
   if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
       (Img.Arch != Arch::X86 && Img.Arch != Arch::X64) ||
       (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
@@ -321,10 +323,18 @@ NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
   for (unsigned Index = 0; Index < Bytes; ++Index) {
     const uint64_t ByteAddress = *Address + Index;
     const Segment *Mapped = Img.getSegmentFor(ByteAddress);
-    if (!Mapped || !Mapped->isReadable() || ByteAddress < Mapped->VA ||
-        ByteAddress - Mapped->VA >= Mapped->Size)
+    if (!Mapped || (Write ? !Mapped->isWritable() : !Mapped->isReadable()) ||
+        ByteAddress < Mapped->VA || ByteAddress - Mapped->VA >= Mapped->Size)
       return std::nullopt;
   }
+  return Address;
+}
+std::optional<std::vector<uint8_t>>
+NdOpEmulator::loadX86FPStateMemory(const LowOp &Op, uint16_t Bytes,
+                                   unsigned Alignment) {
+  const auto Address = checkX86FPStateMemory(Op, Bytes, Alignment, false);
+  if (!Address)
+    return std::nullopt;
   const auto Loaded = loadMemoryBytes(*Address, Bytes);
   if (Loaded && CollectLoads &&
       static_cast<int>(LoadLog.size()) < limits::kMaxLoadRecords)
@@ -625,6 +635,33 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
   for (unsigned Index = 1; Index < Op.NumInputs; ++Index)
     if (!Op.Inputs[Index].isConst() && !getRegister(Op.Inputs[Index].Offset))
       return false;
+  if (isX86FPComiStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPComiMemoryState;
+    const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;
+    const unsigned Bytes = x86FPComiElementBytes(Control);
+    const uint32_t Incoming = readOperand(Op.Inputs[4]);
+    if (!MXCSRKnown || Incoming != MXCSR)
+      return false;
+    std::vector<uint8_t> Right = Memory ? loadX86FPStateMemory(Op, Bytes, 1)
+                                              .value_or(std::vector<uint8_t>{})
+                                        : readOperandBytes(Op.Inputs[3]);
+    if (Right.size() != Bytes)
+      return false;
+    uint64_t RightBits = 0;
+    for (unsigned I = 0; I < Bytes; ++I)
+      RightBits |= uint64_t(Right[I]) << (I * 8);
+    const auto Compared =
+        evaluateX86FPComparison(readOperand(Op.Inputs[Memory ? 3 : 2]),
+                                RightBits, Bytes, !(Control & 1), Incoming);
+    if (!Compared)
+      return false;
+    MXCSR = Incoming | Compared->Raised;
+    if (Compared->Raised & ~(Incoming >> 7) & 0x3f)
+      return false;
+    writeOutput(Op.Output, uint64_t(x86FPComiFlags(Compared->Relation)) |
+                               (uint64_t(MXCSR) << 32));
+    return true;
+  }
   if (Id == Intrinsic::X86ReadMXCSR) {
     if (!MXCSRKnown)
       return false;
@@ -665,6 +702,177 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
     writeOutputBytes(Op.Output, Result);
     if (Approximated)
       ++Skips.ApproximatedOps;
+    return true;
+  }
+  if (isX86F16CStateIntrinsic(Id)) {
+    const bool Store = Id == Intrinsic::X86F16CStoreState;
+    const bool Read = Id == Intrinsic::X86F16CReadState;
+    const unsigned Control = Op.Inputs[Store ? 3 : 2].Offset;
+    const unsigned Bytes = x86F16CDestinationBytes(Control);
+    const auto State = readOperand(Op.Inputs[Store ? 5 : 4]);
+    if (State & ~UINT64_C(0xffff))
+      return false;
+    if (Read) {
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      setMXCSR(State);
+    }
+    auto Source = Read
+                      ? loadX86FPStateMemory(Op, x86F16CSourceBytes(Control), 1)
+                      : std::optional<std::vector<uint8_t>>(
+                            readOperandBytes(Op.Inputs[Store ? 2 : 1]));
+    if (!Source || Source->size() != x86F16CSourceBytes(Control))
+      return false;
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(State);
+    Evaluation.writeOutputBytes(NdVar::tmp(1, Source->size()), *Source);
+    LowOp Convert;
+    Convert.Opcode = NdOp::INTRINSIC;
+    Convert.Output = NdVar::tmp(0, Bytes);
+    Convert.addInput(NdVar::cst(unsigned(Intrinsic::F16CConvert), 2));
+    Convert.addInput(NdVar::cst(unsigned(x86F16CIsNarrow(Control)
+                                             ? F16CConvertKind::SingleToHalf
+                                             : F16CConvertKind::HalfToSingle),
+                                1));
+    Convert.addInput(NdVar::tmp(1, Source->size()));
+    Convert.addInput(Op.Inputs[Store ? 4 : 3]);
+    const bool Complete = Evaluation.step(Convert);
+    setMXCSR(Evaluation.getMXCSR());
+    if (Store) {
+      // Identical native instructions expose competing floating/access faults
+      // and different new status at an invalid target. Validate the writable
+      // target before promising an exact outgoing CSR, even if evaluation
+      // already found an unmasked floating exception. No store occurs until
+      // both numerical completion and the whole write are authenticated.
+      const auto Address =
+          checkX86FPStateMemory(Op, x86F16CStoreBytes(Control), 1, true);
+      if (!Address) {
+        if ((MXCSR & ~State & 0x3f) != 0)
+          MXCSRKnown = false;
+        return false;
+      }
+      if (!Complete)
+        return false;
+      const auto Result = Evaluation.readOperandBytes(Convert.Output);
+      if (!storeMemoryBytes(*Address,
+                            llvm::ArrayRef<uint8_t>(Result).take_front(
+                                x86F16CStoreBytes(Control)))) {
+        if ((MXCSR & ~State & 0x3f) != 0)
+          MXCSRKnown = false;
+        return false;
+      }
+      writeOutput(Op.Output, MXCSR);
+    } else {
+      if (!Complete)
+        return false;
+      auto Result = Evaluation.readOperandBytes(Convert.Output);
+      Result.resize(Bytes + 4);
+      for (unsigned Index = 0; Index < 4; ++Index)
+        Result[Bytes + Index] = uint8_t(MXCSR >> (Index * 8));
+      writeOutputBytes(Op.Output, Result);
+    }
+    return true;
+  }
+  if (isX86FPPackedConvertStateIntrinsic(Id)) {
+    const unsigned Control = Op.Inputs[2].Offset;
+    const unsigned Bytes = x86FPPackedConvertDestinationBytes(Control);
+    const unsigned SourceBytes = x86FPPackedConvertSourceBytes(Control);
+    const auto State = readOperand(Op.Inputs[3]);
+    if (State & ~UINT64_C(0xffff))
+      return false;
+    const bool Memory = Id == Intrinsic::X86FPPackedConvertMemoryState;
+    if (Memory) {
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      setMXCSR(static_cast<uint32_t>(State));
+    }
+    auto Source =
+        Memory
+            ? loadX86FPStateMemory(Op, SourceBytes,
+                                   x86FPPackedConvertMemoryAlignment(Control))
+            : std::optional<std::vector<uint8_t>>(
+                  readOperandBytes(Op.Inputs[1]));
+    if (!Source || Source->size() != SourceBytes)
+      return false;
+    Source->resize(std::max(16u, SourceBytes), 0);
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(static_cast<uint32_t>(State));
+    Evaluation.writeOutputBytes(NdVar::tmp(1, Source->size()), *Source);
+    LowOp Convert;
+    Convert.Opcode = NdOp::INTRINSIC;
+    Convert.Output = NdVar::tmp(0, Bytes);
+    Convert.addInput(NdVar::cst(unsigned(Intrinsic::X86FPConvert), 2));
+    Convert.addInput(
+        NdVar::cst(x86FPPackedConvertEvaluationControl(Control), 2));
+    Convert.addInput(NdVar::tmp(1, Source->size()));
+    Convert.addInput(NdVar::cst(0xff, 1));
+    const bool Complete = Evaluation.executeX86FPConvert(Convert);
+    setMXCSR(Evaluation.getMXCSR());
+    if (!Complete)
+      return false;
+    auto Result = Evaluation.readOperandBytes(Convert.Output);
+    Result.resize(Bytes + 4);
+    for (unsigned Index = 0; Index < 4; ++Index)
+      Result[Bytes + Index] = uint8_t(MXCSR >> (Index * 8));
+    writeOutputBytes(Op.Output, Result);
+    return true;
+  }
+  if (isX86FPScalarConvertStateIntrinsic(Id)) {
+    const unsigned Control = Op.Inputs[2].Offset;
+    const unsigned SourceBytes = x86FPScalarConvertSourceBytes(Control);
+    const unsigned DestinationBytes =
+        x86FPScalarConvertDestinationBytes(Control);
+    const auto State = readOperand(Op.Inputs[3]);
+    if ((State & ~UINT64_C(0xffff)) != 0)
+      return false;
+    if (Id == Intrinsic::X86FPScalarConvertMemoryState) {
+      // Missing architectural context is a refusal, not a predicted fault.
+      if ((Img.Arch == Arch::X64 && !X86LinearAddressBits) ||
+          (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
+           !MemoryAddressSpaceBases.contains(Op.MemoryAddressSpace)))
+        return false;
+      // The native completion scope installs the incoming CSR before reading.
+      setMXCSR(static_cast<uint32_t>(State));
+    }
+    auto Source = Id == Intrinsic::X86FPScalarConvertMemoryState
+                      ? loadX86FPStateMemory(Op, SourceBytes, 1)
+                      : std::optional<std::vector<uint8_t>>(
+                            readOperandBytes(Op.Inputs[1]));
+    if (!Source || Source->size() != SourceBytes)
+      return false;
+    Source->resize(16, 0);
+    NdOpEmulator Evaluation(Img);
+    Evaluation.setStrictMode(true);
+    Evaluation.setMXCSR(static_cast<uint32_t>(State));
+    Evaluation.writeOutputBytes(NdVar::tmp(1, 16), *Source);
+    LowOp Scalar;
+    Scalar.Opcode = NdOp::INTRINSIC;
+    Scalar.Output = NdVar::tmp(0, 16);
+    Scalar.addInput(NdVar::cst(unsigned(Intrinsic::X86FPConvert), 2));
+    Scalar.addInput(NdVar::cst(
+        makeX86FPConvertControl(x86FPScalarConvertIsInteger(Control)
+                                    ? X86FPConvertKind::SignedIntegerToFloat
+                                    : X86FPConvertKind::FloatToFloat,
+                                SourceBytes == 8, DestinationBytes == 8, false,
+                                false, X86FPRounding::MXCSR, 1),
+        2));
+    Scalar.addInput(NdVar::tmp(1, 16));
+    Scalar.addInput(NdVar::cst(1, 1));
+    const bool Complete = Evaluation.executeX86FPConvert(Scalar);
+    setMXCSR(Evaluation.getMXCSR());
+    if (!Complete)
+      return false;
+    auto Result = Evaluation.readOperandBytes(Scalar.Output);
+    Result.resize(DestinationBytes + 4);
+    for (unsigned Index = 0; Index < 4; ++Index)
+      Result[DestinationBytes + Index] = uint8_t(MXCSR >> (Index * 8));
+    writeOutputBytes(Op.Output, Result);
     return true;
   }
   if (isX86FPConversionStateIntrinsic(Id)) {

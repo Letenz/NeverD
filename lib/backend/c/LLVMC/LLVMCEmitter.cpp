@@ -30,6 +30,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
+#include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
@@ -310,6 +311,7 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
   std::map<std::string, ScalarIntegerMinMax> IntegerMinMax;
   std::map<std::string, ScalarUnary> ScalarUnaries;
   FPStateHelperNames.clear();
+  SyscallHelperNames.clear();
 
   for (auto &Fn : Mod) {
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -351,6 +353,14 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                 Word != (Opts.TheArch == Arch::X64 ? 8U : 4U))
               llvm::report_fatal_error(
                   "shadow stack read target/type mismatch");
+          }
+          if (const SyscallConvention *Syscall =
+                  modeledSyscallInlineAsm(Opts.TheArch, *CI)) {
+            auto [It, Inserted] =
+                SyscallHelperNames.try_emplace(Syscall->Modeled);
+            if (Inserted)
+              It->second = GlobalIdentifierAllocator.allocate(
+                  intrinsicCName(Syscall->Modeled), "nd_syscall");
           }
           if (auto Shape = classifyX86FPStateAsm(*CI);
               Shape && isX86FPNumericalStateIntrinsic(Shape->first)) {
@@ -481,6 +491,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                               FPToIntegerPolicy::Saturate});
   }
   writeX86FPScalarValueCHelpers(OS, FPStateHelperNames);
+  for (const auto &[Id, Name] : SyscallHelperNames)
+    if (const SyscallConvention *Syscall = modeledSyscallConvention(Id))
+      OS << linuxSyscallHelperDefinition(*Syscall, Name);
   for (const auto &[Name, Shape] : IntegerMinMax) {
     const unsigned CarrierBits = Shape.Bits == 1 ? 8 : Shape.Bits;
     const std::string Type = CarrierBits == 128
@@ -1539,7 +1552,8 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     // A mapping failure leaves the successful ordinary source intact, with
     // unknown spans. Errors in the ordinary emission still propagate.
   }
-  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary,
+                               CSourceRecorder::Recording::Instructions);
   try {
     if (Sources)
       Instructions.prepareLLVMSources(*Sources);

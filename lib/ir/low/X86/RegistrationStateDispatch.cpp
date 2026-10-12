@@ -10,6 +10,7 @@
 #include "neverd/lift/X86Regs.h"
 
 #include <algorithm>
+#include <bit>
 #include <utility>
 
 namespace neverd::registration_state {
@@ -25,21 +26,23 @@ int32_t cxxMinimumTryLevel(const Domain &State, const CxxExceptionInfo &Cxx) {
 }
 
 void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
-  if (Exhausted ||
-      !charge(Source.Levels.size() + Source.Frame.cellCount() +
-              Source.Frame.OtherRegisterBytes.size() +
-              Incoming[Target].Frame.cellCount() +
-              Incoming[Target].Frame.OtherRegisterBytes.size() +
-              Source.CxxCatchStacks.size() +
-              Incoming[Target].CxxCatchStacks.size() +
-              Source.RuntimeObject.cellCount() +
-              Source.RuntimeObject.OtherRegisterBytes.size() +
-              Incoming[Target].RuntimeObject.cellCount() +
-              Incoming[Target].RuntimeObject.OtherRegisterBytes.size() +
-              Source.InitializedFrameBytes.size() +
-              Incoming[Target].InitializedFrameBytes.size() + 10))
+  if (Exhausted || !charge(1 + 2 * std::bit_width(States[Target].size() + 1)))
     return;
-  Domain &Dest = Incoming[Target];
+  auto [It, New] = States[Target].try_emplace(Source.Activation);
+  auto &Node = It->second;
+  if (New)
+    Node.Facts.Invalid = InvalidBlocks[Target];
+  Domain &Dest = Node.Incoming;
+  if (!charge(Source.Levels.size() + Source.Frame.cellCount() +
+              Source.Frame.OtherRegisterBytes.size() + Dest.Frame.cellCount() +
+              Dest.Frame.OtherRegisterBytes.size() + Source.catchCellCount() +
+              Dest.catchCellCount() + Source.RuntimeObject.cellCount() +
+              Source.RuntimeObject.OtherRegisterBytes.size() +
+              Dest.RuntimeObject.cellCount() +
+              Dest.RuntimeObject.OtherRegisterBytes.size() +
+              Source.InitializedFrameBytes.size() +
+              Dest.InitializedFrameBytes.size() + 10))
+    return;
   bool Changed = !Dest.Reached;
   if (!Dest.Reached) {
     Dest = Source;
@@ -50,11 +53,6 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     Changed |= Before != Dest.Levels.size();
     Changed |= Dest.Frame.merge(Source.Frame);
     Changed |= Dest.RuntimeObject.merge(Source.RuntimeObject);
-    if (Dest.RuntimeIdentity != Source.RuntimeIdentity &&
-        Dest.RuntimeIdentity) {
-      Dest.RuntimeIdentity.reset();
-      Changed = true;
-    }
     for (auto It = Dest.InitializedFrameBytes.begin();
          It != Dest.InitializedFrameBytes.end();)
       if (!Source.InitializedFrameBytes.count(*It)) {
@@ -79,10 +77,8 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     MergeFlag(Dest.Installed, Source.Installed);
     MergeFlag(Dest.CanDispatch, Source.CanDispatch);
   }
-  if (Changed && !Queued[Target]) {
-    Work.push_back(Target);
-    Queued[Target] = true;
-  }
+  if (Changed && charge(1 + 2 * std::bit_width(Work.size() + 1)))
+    Work.emplace(Order[Target], Target, Source.Activation);
 }
 
 void RegistrationStateSolver::dispatch(
@@ -96,6 +92,8 @@ void RegistrationStateSolver::dispatch(
     return;
   }
   Domain Root;
+  if (!KnownCxx && Callback)
+    Root.Activation = {Address, SearchFilter};
   Root.Levels = {Level};
   for (auto &Register : Root.Frame.Registers)
     Register.MayBeFrame = true;
@@ -128,6 +126,23 @@ void RegistrationStateSolver::dispatch(
       return;
     if (!enterCxxCatch(Root, Source, CxxCatch->first, CxxCatch->second))
       return;
+    // Unwinding and catch-object construction may change local objects.
+    // Keep only frame taint until their write footprints establish that a
+    // particular alias survives. Runtime administration has separate owners.
+    for (auto It = Root.Frame.Cells.begin(); It != Root.Frame.Cells.end();) {
+      const auto Offset = It->first;
+      if (Offset != *Chain.RegistrationOffset &&
+          int64_t(Offset) != int64_t(*Chain.RegistrationOffset) - 4 &&
+          Offset != *Chain.TryLevelOffset &&
+          (!Chain.RealignedFrame ||
+           Offset != Chain.RealignedFrame->SavedParentFrameOffset))
+        It->second = registration_state::join(It->second, {});
+      if (It->second == FrameValue{})
+        It = Root.Frame.Cells.erase(It);
+      else
+        ++It;
+    }
+    preserveCxxFrameCells(Root, Source);
     if (CheckRuntimeObjects) {
       const auto Object = CatchObjects.find(*CxxCatch);
       const auto &Catch =
@@ -138,7 +153,9 @@ void RegistrationStateSolver::dispatch(
         const auto &C = Object->second;
         const uint16_t SlotBytes = C.Reference ? 4 : uint16_t(C.ObjectSize);
         const auto SP =
-            Root.Frame.load(*Chain.RegistrationOffset - 4, 4).Offset;
+            Root.CxxCatchStacks.size() == 1
+                ? Root.CxxCatchStacks.begin()->front().SavedStackOffset
+                : std::nullopt;
         const auto Offset = Chain.cxxSourceFrameOffset(C.FrameOffset);
         const int64_t End = int64_t(Offset.value_or(0)) + SlotBytes;
         if (!SP || !Offset || Source.Unknown || Unknown || *Offset < *SP ||
@@ -154,28 +171,11 @@ void RegistrationStateSolver::dispatch(
           for (int64_t Byte = *Offset; Byte < End; ++Byte)
             Root.InitializedFrameBytes.insert(int32_t(Byte));
           Root.RuntimeObject.store(*Offset, SlotBytes,
-                                   C.Reference ? FrameValue::frame(0)
+                                   C.Reference ? FrameValue::exceptionObject(
+                                                     C.TryIndex, C.CatchIndex)
                                                : FrameValue{});
-          if (C.Reference)
-            Root.RuntimeIdentity = C;
         }
       }
-    }
-    // Unwinding and catch-object construction may change local objects.
-    // Keep only frame taint for their old values. Runtime administration is
-    // separate: the link word and SavedESP remain owned by the EH frame.
-    for (auto It = Root.Frame.Cells.begin(); It != Root.Frame.Cells.end();) {
-      const auto Offset = It->first;
-      if (Offset != *Chain.RegistrationOffset &&
-          int64_t(Offset) != int64_t(*Chain.RegistrationOffset) - 4 &&
-          Offset != *Chain.TryLevelOffset &&
-          (!Chain.RealignedFrame ||
-           Offset != Chain.RealignedFrame->SavedParentFrameOffset))
-        It->second = registration_state::join(It->second, {});
-      if (It->second == FrameValue{})
-        It = Root.Frame.Cells.erase(It);
-      else
-        ++It;
     }
   }
   Root.Installed = true;

@@ -197,6 +197,8 @@ SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界�
 
 アーキテクチャの lifter は、未定義出力の付随メタデータをトランザクションとして管理します。各試行前に古い証拠を消し、成功した正確なリフトに対してのみ効果を公開します。`Missing` は証拠の欠如であり、空の `Complete` 記述ではありません。通常の LowIR は選択済みの決定的な値を維持します。`LowIRUndefinedIndependence` は、渡された完全な非巡回 LowIR グラフの有界な関係証明を担当し、通常の入力を共有しつつ、新たな未定義値の相関を保持します。完全な命令境界と操作ダイジェストに証拠を対応付け、不完全な証明を拒否します。以下の有限なネイティブ実行経路の範囲を超えるネイティブグラフの認証、ループ不変条件、ネイティブコードから C への等価性証明は、別の課題です。
 
+`FreshChoiceProjection` は独立性チェッカーの内部コンポーネントです。同じ不変のシンボリックコンテキスト内で通常値のゼロ射影を再利用し、前回の射影完了後に作成された新しい葉だけを追加できます。結果表の容量を超える場合は従来の置換に戻ります。両実行の独立した選択、ノード上限、クエリコスト、証明義務は維持されます。
+
 `Decoder` は形式監査と再配置照合の前に、x64 のオペランド接頭辞による disp32 幅の誤報を補正します。ModRM/SIB 境界、完全なフィールド、符号付き変位、メモリオペランド、後続即値の配置が一致する必要があります。完全デコード、リフト用デコード、詳細情報付き軽量デコードで同じ正規化を使います。変更するのは符号化幅のメタデータだけで、実際の i386 disp16、disp8、moffs、詳細情報なしのデコードは従来どおりです。
 
 従来のスカラー SHL/SAL、SHR、SAR は、8/16/32/64 ビットのオペランドについて回数に依存する未定義ビットの証拠を生成します。マスク後の回数がゼロなら全フラグを保持し、非ゼロなら AF、1 より大きければ OF、SHL/SHR でオペランド幅以上なら CF が任意になります。SAR の CF は定義済みです。命令内のブールガードは、重なる宛先への書き込み前に保存した回数を使い、メタデータの有無によらず同じ操作を生成します。未監査の形式から部分的な効果は公開しません。
@@ -762,6 +764,8 @@ x64 KVM/WHP/HVF のネイティブ初期化は、非公開の supervisor ペー�
 共通の `encodeX64XsaveState` / `decodeX64XsaveState` が標準・圧縮 FP/SSE パケット、物理 TOP の回転、欠落成分の初期状態、アトミックな検証を所有します。WHP は完全な XSAVE API を使い、`WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState` を優先し、旧 XSAVE API を互換経路とします。旧式の個別 x87 レジスター転送は完全なパケットを代替できません。非初期状態の拡張成分、不正なヘッダー、制御値、切り詰められた取得結果は明示的に失敗します。WHP マッピングエラーは診断用に HRESULT、GPA、サイズを保持します。
 
 `CheckedX64Instructions.def` は既存の CPU バックエンドで 8/16/32/64 ビットの符号なし `MUL` と `CBW/CWDE/CDQE/CWD/CDQ/CQO` を許可します。`NeverDX64IntegerTests` は独立した `X64IntegerCases.def` の命令列と期待値を使い、両特権レベルで部分レジスターの保持、32 ビットのゼロ拡張、積の上位・下位、定義された CF/OF、符号拡張によるフラグの不変性を検証します。通常 RAM の乗算はアクセス範囲全体の権限検査と読み取り観測を維持し、障害や観測コールバックによる停止では暗黙の出力レジスターと PC を保持します。デバイスオペランドは未対応です。checked Unicorn でも実行し、利用できないネイティブバックエンドは明示的にスキップします。
+
+同じ検査付き x64 命令一覧は、16/32/64 ビットの `BSF` と `BSR` を許可します。ゼロ入力も含め、選択したプロセッサが元の命令を実行します。ISA 層は未定義の出力先に移植可能な値を捏造しません。通常 RAM では全範囲のアクセス検査と実行前の監視を維持し、デバイスオペランドと不正な LOCK 形式は副作用の前に拒否します。
 
 `X64BitInstructions.def` は 16/32/64 ビットのレジスタと通常 RAM の `BT/BTS/BTR/BTC` を許可します。レジスタのビット索引はオペランド幅の符号付き値としてワード全体を選択し、即値は基底ワード内に限定されます。アドレス幅による切り詰めは FS/GS 基底の加算より前に行います。CF と書き込み値はプロセッサが生成し、`RAMTransaction` は観測コールバックの承認まで結果を非公開に保ちます。全範囲の権限検査は独立したページ割り当てとエイリアスを対象とし、停止、コールバック失敗、アクセス拒否では元の CPU と RAM を保持します。LOCK は自然整列を要求し、変更型 MMIO は明示的な準備付きアトミックプロバイダーを要求します。`X64BitStringTests.cpp` は独立した符号化を x64 ホストの実行と比較し、負の索引、幅の切り詰め、ページ境界、キャンセル、不正な LOCK 形式を検証します。[Intel 命令リファレンス](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)を参照してください。
 
@@ -1504,6 +1508,8 @@ PE 実行ドメインから `observeImage` がプロセスまたはドライバ�
 通常 RAM の `XCHG` は、明示的 LOCK 接頭辞の有無にかかわらず非整列の 8/16/32/64 ビットオペランドを受け入れます。共有 RAM トランザクションは入口の実効アドレスを保持し、結果の公開を直列化し、キャンセルや障害時の書き込みを破棄します。プロセッサは元の交換命令を実行します。`X64Address` はアドレスとレジスタの重複、部分レジスタ書き込み、キャッシュラインとページ境界、観測、未マップページ障害を検証します。MMIO 交換のプロバイダ契約と自然整列要件、および他の LOCK 命令群の既存の受け入れ規則は維持されます。
 
 DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマスクを取り込み、未モデル化のシグナル状態操作を拒否します。Select と Pselect は immediateSelect を共有し、ビットマップ、容量下限、提供者、順序付きコピーを処理します。timeval と timespec は各フィールド幅と境界を保持します。完全な非 NULL マスクには将来のシグナル状態モデルが必要です。
+
+`isCheckedX86SafeSEHHandlerReference` は既存の SafeSEH デコーダー、不変のテーブルとヘッダー、および再配置付き load-config ポインターから、保持する PE32 ハンドラーの入口を認証します。LLVM は分割により省略された本体も含め、関数本体の出力前にこのソース識別子を宣言します。テーブルへの所属は言語 personality、呼び出し ABI、ネイティブ EH 再構築の許可を証明しません。各利用側の独立した検査は維持されます。
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

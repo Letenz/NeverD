@@ -14,7 +14,7 @@ El contenedor determina cómo se valida y reconstruye un archivo, el conjunto de
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | observación en ejecución |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | observación en ejecución |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 Las DLL PE32+ se identifican por `IMAGE_FILE_DLL`. Un EXE invitado modelado llama a `LoadLibraryA` y después a `FreeLibrary` mediante el ciclo ordinario de dependencias, TLS y `DllMain`. La entrada DLL aceptada es su llamada de asociación al proceso; no se inventan argumentos para exportaciones arbitrarias. Se conservan nombres, ordinales, alias, datos y reenvíos. Los punteros a exportaciones propias permanecen internos, sin autoimportaciones. La misma regla cubre las direcciones devueltas por helpers: un resultado interno retira las pruebas anteriores de reparación de importaciones para ese sitio.
 
@@ -26,8 +26,22 @@ UNPACK de controladores desactiva el registro de cada escritura y conserva la va
 
 La recuperación comprueba argumentos de entrada, marco de retorno y espacio reservado, registros no volátiles, indicador de dirección, controles de coma flotante y propiedad de objetos del núcleo. Pools retenidos, punteros prestados, objetos del cargador modificados o efectos no contabilizados producen `unsupported_state`; `snapshot_only` conserva el diagnóstico. No existe un materializador `restore_runtime` para el núcleo. Los imports usan identidades de exports del núcleo; se validan exports originales y se recalcula la suma PE. El resultado con base fija no demuestra carga en el núcleo Windows, validez de firma ni ejecución de rutas no alcanzadas.
 
+Con `backend: "unicorn"` y `execution_contract: "driver-strict"`, la recuperación de controladores x64 usa decodificación de instrucciones en estado detenido y vigilancia de escrituras RAM completadas entre alias físicos. Este contrato usa la semántica de instrucciones de Unicorn; `checked-x64-v1` comprueba su admisión antes de ejecutarlas.
+
+Los MDL temporales de páginas de imagen del cargador dejan de añadir una dependencia de recuperación cuando se desmapean todos los alias, se liberan todos los bloqueos y se liberan todos los descriptores. Este contrato admite alias en modo kernel con caché sin dirección solicitada. Los MDL activos, otros tipos de propiedad o mapeo y las lecturas del invitado de identidades físicas PFN siguen siendo dependencias; también cuentan las lecturas de servicios modelados de copia, movimiento y comparación.
+
+Las lecturas del reloj mediante `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` conservan una dependencia explícita de recuperación del controlador. No existe un contrato para revincular los valores capturados del contador y su frecuencia a un nuevo entorno del núcleo. La recuperación predeterminada devuelve `unsupported_state`; `snapshot_only` conserva el diagnóstico.
+
+`runtime_state.additional_dependency_reasons` enumera los motivos observados por el modelo del controlador: pools o MDL activos, objetos del cargador modificados, efectos del kernel y cambios en el contexto de la llamada de entrada. El rechazo predeterminado y las instantáneas explícitas conservan los mismos motivos. Una lista vacía no anula `has_additional_dependencies` ni demuestra un contrato de restauración.
+
+`ProcessView::runtimeState(include_backing)` proporciona `WindowsDriverState` para controladores detenidos. El propietario del núcleo conserva la API de asignación, el tamaño exacto solicitado, la etiqueta y el tipo heredado efectivo o todas las banderas modernas de cada pool vivo. El contenido solicitado es una copia independiente de esos bytes exactos; la captura de solo metadatos no incluye contenido. Los pools liberados, los objetos prestados del cargador y los objetos de dispositivos no se convierten en registros de pool. Esta captura no proporciona procedencia de punteros ni un inicializador nativo; siguen vigentes los rechazos existentes por dependencias y reubicaciones.
+
+`WindowsDriverState::Entry` conserva los registros iniciales de DriverEntry y su marco de retorno/shadow space, los registros enteros, XMM y de control flotante al detenerse, y el rango de la pila activa que pertenece al SO. Al solicitar backing se copia toda la pila activa. Las llamadas posteriores de despacho y descarga conservan la referencia original y se marcan explícitamente como externas a DriverEntry. Estas observaciones concretas no prueban la procedencia de los punteros ni su vinculación con un nuevo llamador.
+
+Las reubicaciones de la imagen del núcleo siguen siendo una dependencia del cargador aunque no queden pools ni objetos prestados. El generador elimina actualmente las reubicaciones del contenido generado, por lo que la recuperación predeterminada devuelve `unsupported_state` sin crear ni truncar la salida. Solo `snapshot_only` explícito emite la imagen de dirección fija y conserva el diagnóstico. La tabla original no demuestra que cubra los punteros generados.
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## Uso

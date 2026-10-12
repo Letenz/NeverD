@@ -1,4 +1,4 @@
-//===- ARMLiftCoreExtMisc.cpp - ARM32 remaining integer instruction lifter ---===//
+//===- ARMLiftCoreExtMisc.cpp - ARM32 remaining integer instructions ------===//
 //
 // NeverD Decompiler
 //
@@ -171,9 +171,9 @@ bool liftCoreExtMisc(ARMLifter &L, ARMLifter::LiftState &S, const cs_insn *Insn,
     // operand through operandRead() used to emit a 4-byte LOAD followed by a
     // direct INDIR_BR of those table bytes, which both mis-modeled execution
     // and erased the exact index operand needed by jump-table guard analysis.
-    // Most Thumb instructions read PC as Align(address + 4, 4), and the
-    // instruction prologue deliberately installs that value in the synthetic
-    // PC register.  TBB/TBH are the exception: their Rn==PC table base and
+    // The instruction prologue installs Align(address + 4, 4) in the synthetic
+    // PC register for a PC-based memory operand, the base a literal access
+    // reads.  TBB/TBH are no literal access: their Rn==PC table base and
     // branch target base both use the raw Thumb PC (address + 4), including
     // when the 32-bit instruction starts at the second halfword of a word.
     // Override PC only for this terminating instruction; the next instruction

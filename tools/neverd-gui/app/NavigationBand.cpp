@@ -19,6 +19,11 @@ constexpr int BandHeight = 16;
 constexpr int LegendHeight = 18;
 constexpr int Margin = 4;
 constexpr int RefreshDebounceMs = 120;
+// The legend keys the band with small rounded swatches.
+constexpr int SwatchSize = 8;
+constexpr qreal SwatchRadius = 2;
+constexpr int SwatchGap = 6;
+constexpr int LegendEntryGap = 16;
 
 struct LegendEntry {
   AddressClass addressClass;
@@ -146,22 +151,27 @@ void NavigationBand::paintEvent(QPaintEvent *) {
     painter.fillRect(QRectF(x - 1, band.top(), 2, band.height()),
                      theme.color(ColorRole::NavCursor));
   }
-  // Legend.
-  painter.setRenderHint(QPainter::Antialiasing, false);
+  // Legend, in secondary text so the key stays quieter than the band.
+  painter.setRenderHint(QPainter::Antialiasing);
   const QFontMetrics metrics(font());
+  const QColor legendText = theme.chrome(QStringLiteral("SecondaryText"));
   int x = Margin;
   const int y = band.bottom() + Margin + 2;
   for (const auto &entry : Legend) {
     const QString text =
         QCoreApplication::translate("NavigationBand", entry.text);
-    const QRect swatch(x, y + (LegendHeight - 12) / 2, 12, 12);
-    painter.fillRect(
-        swatch, theme.navigationColor(static_cast<int>(entry.addressClass)));
-    painter.setPen(palette().color(QPalette::WindowText));
-    painter.drawText(QRect(swatch.right() + 5, y,
-                           metrics.horizontalAdvance(text) + 2, LegendHeight),
-                     Qt::AlignVCenter | Qt::AlignLeft, text);
-    x = swatch.right() + 5 + metrics.horizontalAdvance(text) + 14;
+    const QRectF swatch(x, y + (LegendHeight - SwatchSize) / 2, SwatchSize,
+                        SwatchSize);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(
+        theme.navigationColor(static_cast<int>(entry.addressClass)));
+    painter.drawRoundedRect(swatch, SwatchRadius, SwatchRadius);
+    const int textLeft = x + SwatchSize + SwatchGap;
+    painter.setPen(legendText);
+    painter.drawText(
+        QRect(textLeft, y, metrics.horizontalAdvance(text) + 2, LegendHeight),
+        Qt::AlignVCenter | Qt::AlignLeft, text);
+    x = textLeft + metrics.horizontalAdvance(text) + LegendEntryGap;
     if (x > width())
       break;
   }

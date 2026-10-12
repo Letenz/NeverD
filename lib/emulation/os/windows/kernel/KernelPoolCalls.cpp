@@ -93,7 +93,13 @@ llvm::Expected<uint64_t> KernelModel::allocatePool(llvm::ArrayRef<uint64_t> A,
     if (auto E =
             runtime::writeBytes(Memory, *Pointer, A[1], UninitializedPoolByte))
       return E;
-  Allocations.emplace(*Pointer, PoolAllocation{A[1], Tag, NonPaged});
+  using PoolAPI = WindowsDriverState::PoolAPI;
+  const auto API = Modern   ? PoolAPI::ExAllocatePool2
+                   : Tagged ? PoolAPI::ExAllocatePoolWithTag
+                            : PoolAPI::ExAllocatePool;
+  Allocations.emplace(*Pointer,
+                      PoolAllocation{A[1], Tag, NonPaged, API,
+                                     Modern ? Flags : uint32_t(A[0])});
   return *Pointer;
 }
 

@@ -5,7 +5,7 @@ protected:
   void expectPairedClangSyntax(const fs::path &CFile,
                                const std::string &Source) {
     auto syntax = checkHighCClangSyntax(
-        CFile, {"-target", "aarch64-none-elf", "-ffreestanding",
+        CFile, {"-target", "aarch64-linux-gnu", "-ffreestanding",
                 "-march=armv9.4-a+lse128+the+d128+rcpc3", "-std=gnu11"});
     EXPECT_EQ(syntax.exitCode, 0) << syntax.err << "\n" << Source;
   }

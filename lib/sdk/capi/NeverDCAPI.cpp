@@ -266,6 +266,8 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.DbgKind = Found.Kind;
   S.DbgPath = std::move(Found.Path);
   S.Loaded = true;
+  S.LastPatch = {};
+  S.LastSourcePatchReport.clear();
   S.Annotations.clear();
   S.Renames.clear();
   S.FunctionEdits.clear();
