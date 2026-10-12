@@ -96,7 +96,7 @@ TEST(StateSource, RejectsMissingAssertionsAndConflictingImportsBeforeMutation) {
   auto M = cell_test::parse(C, program());
   ASSERT_TRUE(M);
   auto Before = cell_test::print(*M);
-  for (unsigned Case = 0; Case != 7; ++Case) {
+  for (unsigned Case = 0; Case != 9; ++Case) {
     auto Contract = contract();
     if (Case == 0)
       Contract.IsolatedBank = false;
@@ -116,6 +116,11 @@ TEST(StateSource, RejectsMissingAssertionsAndConflictingImportsBeforeMutation) {
       I.Result = StateSourceType::U32;
       Contract.Gateways[0].Imports.push_back(I);
     }
+    if (Case == 7)
+      Contract.Gateways[0].Imports[0].VoidResult = StateSourceVoidResult(99);
+    if (Case == 8)
+      Contract.Gateways[0].Imports[0].VoidResult =
+          StateSourceVoidResult::Unspecified;
     auto R = prepareStateSourceRecovery(*M, Contract);
     EXPECT_FALSE(bool(R));
     if (!R)
@@ -897,6 +902,171 @@ int main(void) {
   for (const char *Level : {"-O0", "-O2"}) {
     auto Executable = tmpFile(std::string("variadic-oracle") + Level +
                               test::executableSuffix());
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Level, "-fsanitize=undefined",
+                       "-fsanitize-trap=all", Original.string(), After.string(),
+                       Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
+}
+std::string voidResultProgram(llvm::StringRef Body) {
+  auto Text = program();
+  Text.resize(Text.find("next:\n") + 6);
+  return Text + Body.str() + "\n}\n";
+}
+StateSourceContract voidResultContract() {
+  auto C = contract();
+  // The fixture writes full words; read the same words on both byte orders.
+  C.Gateways[0].Selector = {32, 8};
+  C.Gateways[0].ArgumentCount = {56, 8};
+  auto &I = C.Gateways[0].Imports[0];
+  I.Name = "example_release";
+  I.Result = StateSourceType::Void;
+  I.VoidResult = StateSourceVoidResult::Unspecified;
+  return C;
+}
+
+TEST(StateSource, UnspecifiedVoidResultsRequireCompleteOverwriteOnEveryPath) {
+  const std::pair<const char *, bool> Cases[] = {
+      {"store i64 123, ptr %r, align 1\nret i64 0", true},
+      {R"(store i16 123, ptr %r, align 1
+          %upper = getelementptr i8, ptr %r, i64 2
+          store i16 456, ptr %upper, align 1
+          ret i64 0)",
+       true},
+      {R"(%other = load i64, ptr %a, align 1
+          store i64 %other, ptr %r, align 1
+          ret i64 0)",
+       true},
+      {R"(%choose = icmp eq i64 %x, 0
+          br i1 %choose, label %one, label %two
+        one: store i32 111, ptr %r, align 1
+          ret i64 0
+        two: store i32 222, ptr %r, align 1
+          ret i64 0)",
+       true},
+      {R"(%choose = icmp eq i64 %x, 0
+          br i1 %choose, label %one, label %two
+        one: store i32 111, ptr %r, align 1
+          ret i64 0
+        two: ret i64 0)",
+       false},
+      {"store i16 123, ptr %r, align 1\nret i64 0", false},
+      {R"(%seen = load i32, ptr %r, align 1
+          store i32 %seen, ptr %context, align 1
+          store i32 0, ptr %r, align 1
+          ret i64 0)",
+       false},
+      {R"(%seen = call i64 @opaque(ptr %state, ptr %context)
+          store i32 0, ptr %r, align 1
+          ret i64 %seen)",
+       false},
+      {R"(%choose = icmp eq i64 %x, 0
+          %address = select i1 %choose, ptr %r, ptr %context
+          store i32 0, ptr %address, align 1
+          ret i64 0)",
+       false},
+      {R"(br label %again
+        again:
+          %choose = icmp eq i64 %x, 0
+          br i1 %choose, label %again, label %done
+        done: store i32 0, ptr %r, align 1
+          ret i64 0)",
+       false},
+      {"ret i64 0", false}};
+  for (auto Target : {std::pair{"x86_64-pc-windows-msvc", "e-p:64:64"},
+                      std::pair{"aarch64_be-unknown-linux-gnu", "E-p:64:64"}})
+    for (auto [Body, Expected] : Cases) {
+      SCOPED_TRACE(Body);
+      llvm::LLVMContext C;
+      auto M = cell_test::parse(C, voidResultProgram(Body));
+      ASSERT_TRUE(M);
+      M->setTargetTriple(llvm::Triple(Target.first));
+      M->setDataLayout(Target.second);
+      auto R = prepareStateSourceRecovery(*M, voidResultContract());
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      optimize(*M);
+      auto E = finishStateSourceRecovery(*M, *R);
+      ASSERT_FALSE(E) << llvm::toString(std::move(E));
+      EXPECT_EQ(R->RewrittenCalls, unsigned(Expected)) << cell_test::print(*M);
+      EXPECT_EQ(R->UnresolvedCalls, unsigned(!Expected));
+    }
+}
+
+TEST_F(StateSourceCompiled, DeadVoidCaptureKeepsFullBankAndFailureResults) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  auto Text = voidResultProgram(R"(
+  %low = trunc i64 %x to i16
+  store i16 %low, ptr %r, align 1
+  %upper = getelementptr i8, ptr %r, i64 2
+  store i16 7123, ptr %upper, align 1
+  %value = load i64, ptr %r, align 1
+  ret i64 %value)");
+  cell_test::replace(Text, "store i64 1, ptr %count, align 1", "");
+  llvm::LLVMContext C;
+  auto M = cell_test::parse(C, Text);
+  ASSERT_TRUE(M);
+  M->getFunction("work")->setName("before");
+  auto Original = tmpFile("void-before.ll");
+  std::ofstream(Original) << test::printHostCompilerFixture(*M);
+  M->getFunction("before")->setName("after");
+  auto R = prepareStateSourceRecovery(*M, voidResultContract());
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  optimize(*M);
+  auto E = finishStateSourceRecovery(*M, *R);
+  ASSERT_FALSE(E) << llvm::toString(std::move(E));
+  ASSERT_EQ(R->RewrittenCalls, 1u);
+  ASSERT_EQ(R->GuardedCalls, 1u);
+  optimize(*M);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+  auto After = tmpFile("void-after.c");
+  std::ofstream(After) << Source;
+  auto Harness = tmpFile("void-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t before(void *,void *), after(void *,void *);
+static uint64_t get(const void *s,unsigned o) { uint64_t v;memcpy(&v,(const char*)s+o,8);return v; }
+static void put(void *s,unsigned o,uint64_t v,unsigned n) { memcpy((char*)s+o,&v,n); }
+static unsigned calls,gateways;
+static uint64_t capture,trace;
+static uint32_t *guest;
+void example_release(uint64_t x) { ++calls;trace=x;*guest+=(uint32_t)x; }
+uint64_t gateway(void *s,void *ctx) {
+ (void)ctx;++gateways;
+ uint64_t x=get(s,8),off=get(s,40),width=get(s,48);
+ if((uint32_t)get(s,56)!=1) { put(s,(unsigned)off,capture,(unsigned)width);return 19; }
+ put(s,56,0,8);example_release(x);
+ /* An unspecified physical return value, not a fabricated void zero. */
+ put(s,(unsigned)off,capture,(unsigned)width);return 0;
+}
+int main(void) {
+ unsigned fast=0,slow=0;
+ for(unsigned k=0;k<2048;k++) {
+  unsigned char a[80],b[80];for(unsigned j=0;j<80;j++) a[j]=(unsigned char)(k*7+j*13);
+  unsigned off=k&15;put(a+off,0,UINT64_MAX-(uint64_t)k*0x192ad76f,8);
+  put(a+off,56,(k/16)%3,8);memcpy(b,a,sizeof(a));
+  capture=UINT64_C(0xeda1704b99ab1653) ^ ((uint64_t)k*7937);
+  uint32_t ga=k,gb=k;guest=&ga;calls=gateways=0;trace=0;
+  uint64_t ra=before(a+off,&ga),ta=trace;unsigned ca=calls;
+  guest=&gb;calls=gateways=0;trace=0;uint64_t rb=after(b+off,&gb);
+  if(ra!=rb || ta!=trace || ca!=calls || ga!=gb || memcmp(a,b,sizeof(a))) return 1;
+  if(gateways) ++slow;else ++fast;
+ }
+ return !(fast && slow);
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable =
+        tmpFile(std::string("void-oracle") + Level + test::executableSuffix());
     auto Built = exec(NEVERD_TEST_CLANG,
                       {"-std=c11", Level, "-fsanitize=undefined",
                        "-fsanitize-trap=all", Original.string(), After.string(),

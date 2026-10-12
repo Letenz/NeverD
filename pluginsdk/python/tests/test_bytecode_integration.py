@@ -125,6 +125,57 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual((unknown.reconstructed_calls, unknown.unresolved_contract_calls), (0, 1))
         self.assertIn("runtime_service(state)", unknown.source)
 
+    def test_unspecified_void_capture_requires_a_native_overwrite_proof(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 48, "byte_order": "little"}
+        def operand(space, size, value):
+            return {"space": space, "size": size, "value": {"addend": value}}
+        copies = [{"op": "COPY", "output": operand("reg", 8, offset),
+                   "inputs": [operand("const", 8, value)]}
+                  for offset, value in ((8, 7), (16, 32), (24, 4), (40, 99))]
+        slot = lambda offset: {"offset": offset, "bytes": 8}
+        contract = {"schemaVersion": 1, "state_bytes": 48, "isolated_bank": True,
+                    "zero_status_gateways": True, "gateways": [{
+                        "name": "runtime_service", "selector": slot(8),
+                        "arguments": [slot(40)], "result_offset": slot(16),
+                        "result_bytes": slot(24), "writes": [], "imports": [{
+                            "selector": 7, "name": "example_release",
+                            "parameters": ["u64"], "result": "void",
+                            "void_result": "unspecified"}]}]}
+        functions = [{"entry": 0, "end": 2, "name": "release_item"}]
+        options = dict(bindings=[{"address": 8192, "name": "runtime_service"}],
+                       output="llvmc", optimize=True, source_contracts=contract, api=api)
+        for overwrite in (False, True):
+            tail = [{"op": "RETURN", "inputs": []}]
+            if overwrite:
+                tail.insert(0, {"op": "COPY", "output": operand("reg", 8, 32),
+                                "inputs": [operand("const", 8, 0)]})
+            recipes = {0x41: {"size": 1, "operations": copies + [{"op": "CALL", "inputs": [
+                operand("const", 8, 8192)]}]}, 0xfe: {"size": 1, "operations": tail}}
+            profile = dict(layout, encodings=[dict(recipe, match=[{"offset": 0, "value": op}])
+                                             for op, recipe in recipes.items()])
+            static = recover_bytecode(b"A\xfe", profile, functions, **options)
+            dynamic = recover_bytecode_with_decoder(b"A\xfe", layout, functions,
+                                                    lambda data, pc: recipes[data[0]], **options)
+            self.assertEqual(static, dynamic)
+            self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls),
+                             (int(overwrite), int(not overwrite)))
+            if overwrite:
+                self.assertIn("example_release((uint64_t)(99))", static.source)
+            else:
+                legacy = copy.deepcopy(contract)
+                legacy["gateways"][0]["imports"][0].pop("void_result")
+                zero = recover_bytecode(b"A\xfe", profile, functions,
+                                        **dict(options, source_contracts=legacy))
+                self.assertEqual(zero.reconstructed_calls, 1)
+        for result, policy in (("void", "unknown"), ("void", True),
+                               ("i32", "zero"), ("u64", "unspecified")):
+            bad = copy.deepcopy(contract)
+            bad["gateways"][0]["imports"][0].update(result=result, void_result=policy)
+            with self.assertRaisesRegex(NeverDError, "void result"):
+                recover_bytecode(b"A\xfe", profile, functions,
+                                 **dict(options, source_contracts=bad))
+
     def test_pointer_source_candidates_keep_address_and_count_guards(self):
         api = self.load_api()
         layout = {"version": 1, "register_bytes": 80, "byte_order": "little"}

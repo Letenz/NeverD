@@ -31,6 +31,7 @@ struct StateSourceWrite {
   uint64_t Value = 0;
 };
 enum class StateSourceType { Void, U32, U64, I32, I64, Pointer };
+enum class StateSourceVoidResult { Zero, Unspecified };
 struct StateSourcePointerSource {
   unsigned Image = 0;
   unsigned Offset = 0;
@@ -48,6 +49,10 @@ struct StateSourceImport {
   /// positive prefix length describes the variadic declaration's fixed part.
   /// Trailing scalar types include the C default argument promotions.
   std::optional<unsigned> VariadicFixedParameters;
+  /// Zero models gateways that explicitly clear a void result. Unspecified
+  /// models capture of physical return-register bits: recovery must prove
+  /// every destination byte overwritten before observation on normal return.
+  StateSourceVoidResult VoidResult = StateSourceVoidResult::Zero;
 };
 struct StateSourceImage {
   StateSourceSlot Base;

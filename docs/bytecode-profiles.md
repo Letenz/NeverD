@@ -258,10 +258,22 @@ gets a runtime comparison: the matching arm uses the imported call and the other
 arm retains the original gateway and status. Dynamic or unlisted selectors,
 incompatible constant counts and invalid destinations keep the original state
 gateway. A signed result is extended before the exact-width
-bank write; a void result writes zero. Supported source types are `u32`, `u64`,
+bank write; a void result writes zero by default. Supported source types are `u32`, `u64`,
 `i32`, `i64`, `pointer`, and result-only `void`. Exceptional call edges,
 observable state addresses and unbounded bank addressing are unsupported.
 This route currently requires integral 64-bit pointers and indices.
+
+A void import may declare `"void_result": "unspecified"` when its gateway
+captures physical return-register bits that the native void operation does not
+define. NeverD omits that capture only after proving that every destination byte
+is overwritten before any possible observer on every normal-return path. The
+proof follows branches and switches with zero gateway status, accepts partial
+stores only when they cover the whole destination, and stops at unknown memory
+accesses, calls, exits, cycles or its analysis budget. Failure to prove this
+retains the original gateway; its failure paths and bank writes are unchanged.
+This policy does not permit replacing observed bits with zero. The explicit
+`"zero"` policy retains the default behavior. `void_result` is invalid on a
+non-void import.
 
 Gateway `indirect_arguments` lists argument indices whose slots contain byte
 offsets into the bank. Each points to an eight-byte value captured before fixed

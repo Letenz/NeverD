@@ -934,6 +934,13 @@ their width, signedness or pointer identity.
 Fixed scalar arguments retain their declared integer types as well, so platform
 header overloads cannot redirect calls. Function-address expressions and forward
 declarations share the same signature spelling, including signedness.
+The same owner handles explicitly unspecified void-result captures with a
+bounded forward byte-liveness proof. It omits a capture only when all normal
+return paths overwrite every destination byte before any observer. Unknown
+accesses, calls, exits, cycles and exhausted budgets retain the gateway. The
+proof specializes only the successful status to zero; fallback failure edges
+and their full bank effects remain intact. The emitter does not invent a void
+return value or perform this proof itself.
 
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive

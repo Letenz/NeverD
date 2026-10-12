@@ -11,8 +11,10 @@
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Analysis/ConstantFolding.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
@@ -199,6 +201,133 @@ std::optional<int64_t> displacement(llvm::Value *V, llvm::Value *Base,
   if (Values && !Values->Guest && Values->Bank.size() == 1)
     return Values->Bank.front();
   return {};
+}
+
+// Only the successful imported arm has zero gateway status. Fold its pure
+// integer conditions without changing the original call or failure edges.
+llvm::Constant *normalReturnConstant(llvm::Value *V, llvm::CallInst &Call,
+                                     const llvm::DataLayout &DL,
+                                     unsigned &Budget, unsigned Depth = 0) {
+  if (!Budget || Depth >= 64)
+    return nullptr;
+  --Budget;
+  if (V == &Call)
+    return llvm::ConstantInt::get(Call.getType(), 0);
+  if (auto *K = llvm::dyn_cast<llvm::Constant>(V))
+    return K;
+  auto *I = llvm::dyn_cast<llvm::Instruction>(V);
+  if (!I || !I->getType()->isIntegerTy() ||
+      !(llvm::isa<llvm::BinaryOperator, llvm::ICmpInst, llvm::CastInst,
+                  llvm::SelectInst>(I)))
+    return nullptr;
+  llvm::SmallVector<llvm::Constant *, 4> Operands;
+  for (auto &Op : I->operands()) {
+    auto *K = normalReturnConstant(Op.get(), Call, DL, Budget, Depth + 1);
+    if (!K)
+      return nullptr;
+    Operands.push_back(K);
+  }
+  return llvm::ConstantFoldInstOperands(I, Operands, DL, nullptr,
+                                        /*AllowNonDeterministic=*/false);
+}
+
+// A void native call cannot reproduce unspecified physical result bits.
+// Omit their bank write only if all bytes are killed on every normal-return
+// path before a possible observer. Unknown accesses, calls, exits, cycles and
+// exhausted budgets fail closed. The untouched gateway remains the fallback.
+bool resultWriteIsDead(llvm::CallInst &Call, StateSourceSlot Result,
+                       unsigned StateBytes, const llvm::DataLayout &DL) {
+  using Key = std::pair<llvm::Instruction *, unsigned>;
+  std::set<Key> Active, Proven;
+  unsigned Budget = 4096;
+  auto *Bank = Call.getArgOperand(0);
+  auto Check = [&](auto &&Self, llvm::Instruction *Start, unsigned Live,
+                   unsigned Depth) -> bool {
+    if (!Start || !Budget || Depth >= 128)
+      return false;
+    Key K{Start, Live};
+    if (Proven.count(K))
+      return true;
+    if (!Active.insert(K).second)
+      return false;
+    auto Scan = [&]() -> bool {
+      for (auto *I = Start; I; I = I->getNextNode()) {
+        if (!Budget)
+          return false;
+        --Budget;
+        llvm::Value *Address = nullptr;
+        llvm::Type *AccessType = nullptr;
+        bool Store = false;
+        if (auto *L = llvm::dyn_cast<llvm::LoadInst>(I)) {
+          if (!L->isSimple())
+            return false;
+          Address = L->getPointerOperand();
+          AccessType = L->getType();
+        } else if (auto *S = llvm::dyn_cast<llvm::StoreInst>(I)) {
+          if (!S->isSimple())
+            return false;
+          Address = S->getPointerOperand();
+          AccessType = S->getValueOperand()->getType();
+          Store = true;
+        }
+        if (Address) {
+          auto Offset = displacement(Address, Bank, DL);
+          auto Size = DL.getTypeStoreSize(AccessType);
+          if (!Offset || *Offset < 0 || uint64_t(*Offset) > StateBytes ||
+              Size.isScalable() || Size.getFixedValue() > StateBytes - *Offset)
+            return false;
+          unsigned Touched = 0;
+          for (unsigned B = 0; B < Result.Bytes; ++B) {
+            uint64_t At = Result.Offset + B;
+            if (At >= uint64_t(*Offset) && At - *Offset < Size.getFixedValue())
+              Touched |= 1u << B;
+          }
+          if (!Store && (Live & Touched))
+            return false;
+          if (Store)
+            Live &= ~Touched;
+          if (!Live)
+            return true;
+          continue;
+        }
+        if (auto *Branch = llvm::dyn_cast<llvm::BranchInst>(I)) {
+          if (Branch->isConditional())
+            if (auto *C = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+                    normalReturnConstant(Branch->getCondition(), Call, DL,
+                                         Budget)))
+              return Self(Self,
+                          &Branch->getSuccessor(C->isZero() ? 1 : 0)->front(),
+                          Live, Depth + 1);
+          for (auto *Next : Branch->successors())
+            if (!Self(Self, &Next->front(), Live, Depth + 1))
+              return false;
+          return true;
+        }
+        if (auto *Switch = llvm::dyn_cast<llvm::SwitchInst>(I)) {
+          if (auto *C = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+                  normalReturnConstant(Switch->getCondition(), Call, DL,
+                                       Budget)))
+            return Self(Self,
+                        &Switch->findCaseValue(C)->getCaseSuccessor()->front(),
+                        Live, Depth + 1);
+          for (unsigned N = 0; N < Switch->getNumSuccessors(); ++N)
+            if (!Self(Self, &Switch->getSuccessor(N)->front(), Live, Depth + 1))
+              return false;
+          return true;
+        }
+        if (I->isTerminator() || llvm::isa<llvm::CallBase>(I) ||
+            I->mayReadOrWriteMemory() || I->mayHaveSideEffects())
+          return false;
+      }
+      return false;
+    };
+    bool Success = Scan();
+    Active.erase(K);
+    if (Success)
+      Proven.insert(K);
+    return Success;
+  };
+  return Check(Check, Call.getNextNode(), (1u << Result.Bytes) - 1, 0);
 }
 // Only a complete, ordinary pointer-width load supplies slot provenance.
 // This identifies a specialization candidate, not the loaded value. A later
@@ -501,6 +630,9 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           (I.VariadicFixedParameters &&
            (!*I.VariadicFixedParameters ||
             *I.VariadicFixedParameters > I.Parameters.size())) ||
+          (I.VoidResult != StateSourceVoidResult::Zero &&
+           (I.VoidResult != StateSourceVoidResult::Unspecified ||
+            I.Result != StateSourceType::Void)) ||
           I.Parameters.size() > G.Arguments.size() || !ValidType(I.Result) ||
           !llvm::all_of(I.Parameters, ValidType) ||
           llvm::is_contained(I.Parameters, StateSourceType::Void))
@@ -794,6 +926,10 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           Import = &I;
           break;
         }
+      if (Import && Import->VoidResult == StateSourceVoidResult::Unspecified &&
+          !resultWriteIsDead(*Call, {unsigned(*Offset), unsigned(*Bytes)},
+                             R.Contract.StateBytes, M.getDataLayout()))
+        Import = nullptr;
       llvm::IRBuilder<> B(Call);
       llvm::Value *ScalarMatches = B.getTrue();
       if (Import && !Arity)
@@ -931,8 +1067,9 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         else if (!Native->getType()->isVoidTy())
           Result = B.CreateIntCast(Native, B.getInt64Ty(),
                                    signedType(Import->Result));
-        write(B, Call->getArgOperand(0), {unsigned(*Offset), unsigned(*Bytes)},
-              Result, Scope);
+        if (Import->VoidResult != StateSourceVoidResult::Unspecified)
+          write(B, Call->getArgOperand(0),
+                {unsigned(*Offset), unsigned(*Bytes)}, Result, Scope);
       };
       if (!Import) {
         Call->replaceAllUsesWith(OriginalCall(B));

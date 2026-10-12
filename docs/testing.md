@@ -1541,6 +1541,13 @@ actual `va_arg` consumers, signed/unsigned 32- and 64-bit operands, a small
 64-bit constant and a pointer. It checks guest effects and return values;
 native Python parsing rejects zero, fractional and oversized fixed prefixes and preserves
 explicit promoted types at guarded pointer call sites.
+Void-capture cases exercise full and partial overwrites on both byte orders,
+branch coverage, intervening observers, mixed bank/guest addresses, cycles and
+early exits. The independent compiled oracle compares 2048 unaligned complete
+banks, guest effects and statuses at O0/O2 while varying the gateway's otherwise
+unspecified captured bits. It exercises both the native void arm and failed
+arity fallback. Native Python tests verify static/callback parity, the legacy
+zero policy, proof failure and strict void-policy schema admission.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed
