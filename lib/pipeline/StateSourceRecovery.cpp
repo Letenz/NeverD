@@ -13,6 +13,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
@@ -51,24 +52,31 @@ bool signedType(StateSourceType T) {
   return T == StateSourceType::I32 || T == StateSourceType::I64;
 }
 bool identifier(llvm::StringRef Name) {
-  return !Name.empty() && Name.size() <= 128 && llvm::isAlpha(Name.front()) &&
+  return !Name.empty() && Name.size() <= 128 &&
+         (llvm::isAlpha(Name.front()) || Name.front() == '_') &&
          llvm::all_of(Name,
                       [](char C) { return llvm::isAlnum(C) || C == '_'; }) &&
          !llvm::StringSwitch<bool>(Name)
-              .Cases(
-                  {"auto",         "break",         "case",         "char",
-                   "const",        "continue",      "default",      "do",
-                   "double",       "else",          "enum",         "extern",
-                   "float",        "for",           "goto",         "if",
-                   "inline",       "int",           "long",         "register",
-                   "restrict",     "return",        "short",        "signed",
-                   "sizeof",       "static",        "struct",       "switch",
-                   "typedef",      "union",         "unsigned",     "void",
-                   "volatile",     "while",         "alignas",      "alignof",
-                   "bool",         "constexpr",     "nullptr",      "false",
-                   "true",         "static_assert", "thread_local", "typeof",
-                   "typeof_unqual"},
-                  true)
+              .Cases({"auto",         "break",     "case",
+                      "char",         "const",     "continue",
+                      "default",      "do",        "double",
+                      "else",         "enum",      "extern",
+                      "float",        "for",       "goto",
+                      "if",           "inline",    "int",
+                      "long",         "register",  "restrict",
+                      "return",       "short",     "signed",
+                      "sizeof",       "static",    "struct",
+                      "switch",       "typedef",   "union",
+                      "unsigned",     "void",      "volatile",
+                      "while",        "alignas",   "alignof",
+                      "bool",         "constexpr", "nullptr",
+                      "false",        "true",      "static_assert",
+                      "thread_local", "typeof",    "typeof_unqual",
+                      "_Alignas",     "_Alignof",  "_Atomic",
+                      "_Bool",        "_Complex",  "_Generic",
+                      "_Imaginary",   "_Noreturn", "_Static_assert",
+                      "_Thread_local"},
+                     true)
               .Default(false);
 }
 llvm::FunctionType *signature(llvm::LLVMContext &C,
@@ -171,6 +179,92 @@ std::optional<int64_t> displacement(llvm::Value *V, llvm::Value *Base,
   if (Values && !Values->Guest && Values->Bank.size() == 1)
     return Values->Bank.front();
   return {};
+}
+// Only a complete, ordinary pointer-width load supplies slot provenance.
+// This identifies a specialization candidate, not the loaded value. A later
+// runtime address comparison remains mandatory, including after intervening
+// guest writes or calls. Do not walk through narrow carriers or merged values.
+llvm::LoadInst *pointerLoad(llvm::Value *V) {
+  while (auto *Cast = llvm::dyn_cast<llvm::CastInst>(V)) {
+    if (Cast->getOpcode() != llvm::Instruction::BitCast &&
+        Cast->getOpcode() != llvm::Instruction::PtrToInt &&
+        Cast->getOpcode() != llvm::Instruction::IntToPtr)
+      return nullptr;
+    auto Valid = [](llvm::Type *T) {
+      return T->isIntegerTy(64) ||
+             (T->isPointerTy() && T->getPointerAddressSpace() == 0);
+    };
+    if (!Valid(Cast->getType()) || !Valid(Cast->getOperand(0)->getType()))
+      return nullptr;
+    V = Cast->getOperand(0);
+  }
+  auto *Load = llvm::dyn_cast<llvm::LoadInst>(V);
+  if (!Load || Load->isAtomic() || Load->isVolatile() ||
+      (!Load->getType()->isIntegerTy(64) &&
+       !(Load->getType()->isPointerTy() &&
+         Load->getType()->getPointerAddressSpace() == 0)))
+    return nullptr;
+  return Load;
+}
+// Bank transport across an opaque call does not prove the current value.
+// Follow bounded dominating stores only to choose a candidate; the actual
+// captured target and arity are still checked before invoking that candidate.
+llvm::LoadInst *pointerCandidateLoad(llvm::Value *V, llvm::Value *Bank,
+                                     llvm::DominatorTree &DT,
+                                     const llvm::DataLayout &DL) {
+  unsigned Budget = 4096;
+  while (Budget) {
+    --Budget;
+    auto *Load = pointerLoad(V);
+    if (!Load)
+      return nullptr;
+    auto Offset = displacement(Load->getPointerOperand(), Bank, DL);
+    if (!Offset)
+      return Load;
+    auto *Block = Load->getParent();
+    auto Position = Load->getIterator();
+    llvm::Value *Stored = nullptr;
+    while (Block && Budget && !Stored) {
+      while (Position != Block->begin() && Budget) {
+        --Position;
+        --Budget;
+        auto *Store = llvm::dyn_cast<llvm::StoreInst>(&*Position);
+        if (!Store || Store->isAtomic() || Store->isVolatile() ||
+            displacement(Store->getPointerOperand(), Bank, DL) != Offset ||
+            DL.getTypeStoreSize(Store->getValueOperand()->getType()) != 8)
+          continue;
+        Stored = Store->getValueOperand();
+        break;
+      }
+      auto *Node = DT.getNode(Block);
+      Block = Node && Node->getIDom() ? Node->getIDom()->getBlock() : nullptr;
+      if (Block)
+        Position = Block->end();
+    }
+    if (!Stored)
+      return nullptr;
+    V = Stored;
+  }
+  return nullptr;
+}
+bool pointerCandidateMatches(llvm::LoadInst &Origin, llvm::Value *Bank,
+                             const StateSourceImage &Image, unsigned Offset,
+                             const llvm::DataLayout &DL) {
+  unsigned Budget = 4096;
+  for (auto &I : llvm::instructions(Origin.getFunction())) {
+    if (!Budget--)
+      return false;
+    auto *Base = llvm::dyn_cast<llvm::LoadInst>(&I);
+    if (!Base || pointerLoad(Base) != Base ||
+        displacement(Base->getPointerOperand(), Bank, DL) != Image.Base.Offset)
+      continue;
+    // A past bank base is advisory too: an opaque call may have replaced it.
+    // No extra guest load is generated, and only target equality permits the
+    // native call. Candidate bytes and sampled addresses are never consulted.
+    if (displacement(Origin.getPointerOperand(), Base, DL) == Offset)
+      return true;
+  }
+  return false;
 }
 llvm::Value *slot(llvm::IRBuilder<> &B, llvm::Value *Bank, unsigned Offset) {
   return B.CreateConstGEP1_64(B.getInt8Ty(), Bank, Offset, "state_slot");
@@ -346,6 +440,8 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
         G.Arguments.size() > 16 || G.Imports.size() > 4096 ||
         !ValidSlot(G.ResultOffset) || !ValidSlot(G.ResultBytes) ||
         (G.Selector && !ValidSlot(*G.Selector)) ||
+        (G.FunctionPointer && (G.Selector || !ValidSlot(*G.FunctionPointer) ||
+                               G.FunctionPointer->Bytes != 8)) ||
         (G.ArgumentCount && !ValidSlot(*G.ArgumentCount)))
       return invalid("invalid gateway layout");
     for (auto A : G.Arguments)
@@ -375,13 +471,25 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
       return unsigned(T) <= unsigned(StateSourceType::Pointer);
     };
     std::set<uint64_t> Selectors;
+    std::set<std::pair<unsigned, unsigned>> PointerSources;
     for (const auto &I : G.Imports) {
       if (!identifier(I.Name) || Gateways.count(I.Name) ||
-          !Selectors.insert(I.Selector).second || (!G.Selector && I.Selector) ||
+          (!G.FunctionPointer && (!Selectors.insert(I.Selector).second ||
+                                  (!G.Selector && I.Selector))) ||
+          bool(G.FunctionPointer) != bool(I.PointerSource) ||
+          (G.FunctionPointer && I.Selector) ||
           I.Parameters.size() > G.Arguments.size() || !ValidType(I.Result) ||
           !llvm::all_of(I.Parameters, ValidType) ||
           llvm::is_contained(I.Parameters, StateSourceType::Void))
         return invalid("invalid import identity or parameters");
+      if (I.PointerSource) {
+        const auto &P = *I.PointerSource;
+        if (P.Image >= C.Images.size() ||
+            P.Offset > C.Images[P.Image].Bytes.size() ||
+            8 > C.Images[P.Image].Bytes.size() - P.Offset ||
+            !PointerSources.emplace(P.Image, P.Offset).second)
+          return invalid("invalid or duplicate imported pointer source");
+      }
       for (const auto &S : G.Strings)
         if (S.Argument >= I.Parameters.size() ||
             I.Parameters[S.Argument] != StateSourceType::Pointer)
@@ -483,9 +591,9 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
       Args[0] = Original;
       if (At != Gateways.end()) {
         const auto &G = C.Gateways[At->second];
-        for (auto S :
-             {G.Selector, G.ArgumentCount, std::optional(G.ResultOffset),
-              std::optional(G.ResultBytes)})
+        for (auto S : {G.FunctionPointer ? G.FunctionPointer : G.Selector,
+                       G.ArgumentCount, std::optional(G.ResultOffset),
+                       std::optional(G.ResultBytes)})
           Args.push_back(S ? read(B, Bank, *S, Scope) : B.getInt64(0));
         if (!G.ArgumentCount)
           Args[Call->arg_size() + 1] = B.getInt64(G.Arguments.size());
@@ -631,22 +739,53 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       };
       auto Selector = Constant(0), Arity = Constant(1), Offset = Constant(2),
            Bytes = Constant(3);
+      llvm::LoadInst *PointerOrigin = nullptr;
+      if (G.FunctionPointer) {
+        llvm::DominatorTree DT(*Call->getFunction());
+        PointerOrigin =
+            pointerCandidateLoad(Call->getArgOperand(N), Call->getArgOperand(0),
+                                 DT, M.getDataLayout());
+      }
       const StateSourceImport *Import = nullptr;
-      if (Call->getMetadata("neverd.state.sources_ready") && Selector &&
-          Offset && Bytes &&
+      if (Call->getMetadata("neverd.state.sources_ready") &&
+          (G.FunctionPointer || Selector) && Offset && Bytes &&
           (*Bytes == 1 || *Bytes == 2 || *Bytes == 4 || *Bytes == 8) &&
           *Offset <= R.Contract.StateBytes &&
           *Bytes <= R.Contract.StateBytes - *Offset)
-        for (const auto &I : G.Imports)
-          if (I.Selector == *Selector &&
-              (!Arity || I.Parameters.size() == *Arity))
-            Import = &I;
+        for (const auto &I : G.Imports) {
+          if (Arity && I.Parameters.size() != *Arity)
+            continue;
+          if (G.FunctionPointer) {
+            if (!PointerOrigin)
+              continue;
+            const auto &P = *I.PointerSource;
+            if (!pointerCandidateMatches(*PointerOrigin, Call->getArgOperand(0),
+                                         R.Contract.Images[P.Image], P.Offset,
+                                         M.getDataLayout()))
+              continue;
+          } else if (I.Selector != *Selector)
+            continue;
+          Import = &I;
+          break;
+        }
       llvm::IRBuilder<> B(Call);
       llvm::Value *ScalarMatches = B.getTrue();
       if (Import && !Arity)
         ScalarMatches = B.CreateICmpEQ(Call->getArgOperand(N + 1),
                                        B.getInt64(Import->Parameters.size()),
                                        "argument_count_matches");
+      if (Import && G.FunctionPointer) {
+        auto Target = M.getOrInsertFunction(Import->Name,
+                                            signature(M.getContext(), *Import));
+        auto *Pointer = Call->getArgOperand(N);
+        ScalarMatches = B.CreateAnd(
+            ScalarMatches,
+            B.CreateAnd(
+                B.CreateICmpNE(Pointer, B.getInt64(0)),
+                B.CreateICmpEQ(Pointer, B.CreatePtrToInt(Target.getCallee(),
+                                                         B.getInt64Ty()))),
+            "function_pointer_matches");
+      }
       for (auto E : G.ExcludedArguments)
         ScalarMatches =
             B.CreateAnd(ScalarMatches,

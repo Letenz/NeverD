@@ -31,11 +31,19 @@ struct StateSourceWrite {
   uint64_t Value = 0;
 };
 enum class StateSourceType { Void, U32, U64, I32, I64, Pointer };
+struct StateSourcePointerSource {
+  unsigned Image = 0;
+  unsigned Offset = 0;
+};
 struct StateSourceImport {
   uint64_t Selector = 0;
   std::string Name;
   std::vector<StateSourceType> Parameters;
   StateSourceType Result = StateSourceType::U64;
+  /// Candidate identity for a pointer loaded from this image slot. This is
+  /// never a constant-memory assertion: the captured target must also equal
+  /// the imported function's address before a direct call is emitted.
+  std::optional<StateSourcePointerSource> PointerSource;
 };
 struct StateSourceImage {
   StateSourceSlot Base;
@@ -65,6 +73,9 @@ struct StateSourceArgumentExclusion {
 struct StateSourceGateway {
   std::string Name;
   std::optional<StateSourceSlot> Selector;
+  /// Mutually exclusive with Selector. Imports supply PointerSource instead
+  /// of numeric selectors; unknown provenance or addresses keep the gateway.
+  std::optional<StateSourceSlot> FunctionPointer;
   std::optional<StateSourceSlot> ArgumentCount;
   std::vector<StateSourceSlot> Arguments;
   StateSourceSlot ResultOffset;

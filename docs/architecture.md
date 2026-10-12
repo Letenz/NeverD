@@ -899,8 +899,9 @@ authorize rewriting. See [external bytecode profiles](bytecode-profiles.md).
 independently of instruction language, OS and API names. It validates bounded
 bank addressing, attaches scoped alias facts without relocating the bank, and
 passes explicit gateway operands through temporary probes to the shared LLVM
-optimizer. Only proven site constants and caller-declared signatures authorize
-a direct call and exact-width result write. Unknown arity gets a runtime guard
+optimizer. Proven site operands or explicit runtime target checks, together
+with caller-declared signatures, authorize a direct call and exact-width result
+write. Unknown arity gets a runtime guard
 and original-call fallback. Unknown targets retain the original
 gateway and status. The bytecode JSON adapter owns schema parsing; observers
 remain conditional evidence and cannot supply these assertions implicitly.
@@ -918,6 +919,13 @@ A call-site string-content attribute permits the C emitter to spell an
 immutable private NUL array as a literal at that call. Unmarked calls and
 writable or externally initialized globals retain ordinary address/storage
 spelling; the attribute does not classify every call to the same function.
+Pointer gateways use declared image-slot candidates and bounded bank transport
+to select a possible imported target. Dominating stores across opaque calls are
+advisory lineage, not value or alias facts. The owner checks the captured target
+against the actual imported function address and checks arity before making a
+direct call; null or changed targets keep the original gateway. Candidate bytes
+and sampled resolver addresses never establish function identity, and the
+candidate search introduces no guest-memory reads.
 
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive

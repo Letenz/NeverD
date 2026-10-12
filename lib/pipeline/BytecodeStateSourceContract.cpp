@@ -101,9 +101,10 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
   for (const auto &Item : *Gateways) {
     auto *O = Item.getAsObject();
     if (!O ||
-        !keys(*O, {"name", "selector", "argument_count", "arguments",
-                   "result_offset", "result_bytes", "writes", "imports",
-                   "indirect_arguments", "strings", "excluded_arguments"}) ||
+        !keys(*O, {"name", "selector", "function_pointer", "argument_count",
+                   "arguments", "result_offset", "result_bytes", "writes",
+                   "imports", "indirect_arguments", "strings",
+                   "excluded_arguments"}) ||
         !O->getString("name") || !O->getArray("arguments") ||
         !O->getArray("writes") || !O->getArray("imports") ||
         !O->get("result_offset") || !O->get("result_bytes"))
@@ -112,6 +113,7 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
     G.Name = O->getString("name")->str();
     for (auto [Name, Destination] :
          {std::pair{"selector", &G.Selector},
+          std::pair{"function_pointer", &G.FunctionPointer},
           std::pair{"argument_count", &G.ArgumentCount}})
       if (auto *Value = O->get(Name)) {
         auto S = slot(*Value);
@@ -211,12 +213,26 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
     for (const auto &I : *O->getArray("imports")) {
       auto *Import = I.getAsObject();
       if (!Import ||
-          !keys(*Import, {"selector", "name", "parameters", "result"}) ||
-          !number(*Import, "selector") || !Import->getString("name") ||
-          !Import->getArray("parameters") || !Import->get("result"))
+          !keys(*Import, {"selector", "pointer_source", "name", "parameters",
+                          "result"}) ||
+          (G.FunctionPointer ? bool(Import->get("selector"))
+                             : !number(*Import, "selector")) ||
+          !Import->getString("name") || !Import->getArray("parameters") ||
+          !Import->get("result"))
         return invalid("incomplete imported signature");
       StateSourceImport Native;
-      Native.Selector = *number(*Import, "selector");
+      Native.Selector = number(*Import, "selector").value_or(0);
+      if (auto *Value = Import->get("pointer_source")) {
+        auto *Source = Value->getAsObject();
+        if (!Source || !keys(*Source, {"image", "offset"}) ||
+            !number(*Source, "image") || !number(*Source, "offset") ||
+            *number(*Source, "image") >= Result.Images.size() ||
+            *number(*Source, "offset") > 65536)
+          return invalid("invalid imported pointer source");
+        Native.PointerSource =
+            StateSourcePointerSource{unsigned(*number(*Source, "image")),
+                                     unsigned(*number(*Source, "offset"))};
+      }
       Native.Name = Import->getString("name")->str();
       auto T = type(*Import->get("result"));
       if (!T)

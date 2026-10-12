@@ -1526,6 +1526,14 @@ statuses. Native Python tests exercise static/callback parity and reject
 malformed images, string declarations and exclusions through the shared C ABI.
 String spelling also rejects missing call-site contracts, writable globals and
 externally initialized globals, preserving ordinary address identity.
+Pointer cases reject mixed selector modes, incomplete/duplicate source slots,
+narrow loads and unknown offsets. Windows x64 and ARM64 IR retain address and
+arity checks even after opaque bank calls. The compiled pointer oracle compares
+2048 cases at O0/O2, including target replacement, null pointers, changed cache
+contents after capture, signed results, unaligned full banks, guest effects and
+nonzero gateway statuses. Python tests check static/callback parity, underscore
+symbols and strict pointer-contract parsing. These are synthetic ABI cases, not
+native Windows import-table or whole-program execution coverage.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed

@@ -305,6 +305,23 @@ terminator** and the applicable mode before using it. Changed bytes, mode or
 excluded arguments take the original gateway; the candidate never replaces
 unverified memory. Memory comparisons occur only after scalar guards succeed.
 No platform API name, sample string or image address is built into this pass.
+
+A gateway that calls a function pointer may replace `selector` with an
+eight-byte `function_pointer` bank slot. Each import then replaces its numeric
+`selector` with `pointer_source: {"image": 0, "offset": 16}`, identifying a
+candidate pointer slot in a declared image. The names and complete callable
+signatures are explicit producer input; the candidate image's pointer bytes
+are not used as addresses. Source slots must fit eight bytes in the image and
+be unique within a gateway.
+
+The core follows complete pointer loads and bounded dominating bank stores to
+select a candidate, including advisory transport across opaque calls. This
+does not prove that the cached pointer or bank value is unchanged. It compares
+the captured current target to the declared imported function's actual address,
+checks the argument count, and retains the original gateway for null, different
+or unresolved targets. No speculative image read is introduced. A changed cache
+after capture cannot make the pass call a different function. As with direct
+imports, the generated C requires the declared native symbols when linked.
 These models do not recover arbitrary encryption or establish a resolver's ABI.
 
 A bounded refinement exposes narrow bank reads at the original wide-load point
