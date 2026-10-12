@@ -782,6 +782,52 @@ struct PDBDebugContext::Impl {
     return llvm::Error::success();
   }
 
+  /// The publics nearest \p Addr in its section, through the publics'
+  /// address map: the last at or before it and the first after it.
+  std::pair<std::optional<va_t>, std::optional<va_t>>
+  publicsAround(va_t Addr) const {
+    std::lock_guard<std::mutex> Guard(PublicMutex);
+    if (!hasLazyPublics())
+      return {};
+    const auto Key = sectOffForVA(Addr);
+    if (!Key)
+      return {};
+    // The first public past Addr.
+    uint32_t Lo = 0;
+    uint32_t Hi = publicCount();
+    while (Lo < Hi) {
+      const uint32_t Mid = Lo + (Hi - Lo) / 2;
+      pdb_loader_detail::ParsedPublicSym32 Pub;
+      if (auto Err = readPublic(Mid, Pub)) {
+        llvm::consumeError(std::move(Err));
+        Hi = Mid;
+        continue;
+      }
+      if (std::tie(Pub.Segment, Pub.Offset) <=
+          std::tie(Key->first, Key->second))
+        Lo = Mid + 1;
+      else
+        Hi = Mid;
+    }
+    // A public of the same section, as an address.
+    const auto AddressOf = [&](uint32_t Index) -> std::optional<va_t> {
+      pdb_loader_detail::ParsedPublicSym32 Pub;
+      if (auto Err = readPublic(Index, Pub)) {
+        llvm::consumeError(std::move(Err));
+        return std::nullopt;
+      }
+      if (Pub.Segment != Key->first)
+        return std::nullopt;
+      return Sections[Pub.Segment - 1].VA + Pub.Offset;
+    };
+    std::optional<va_t> Before, After;
+    if (Lo > 0)
+      Before = AddressOf(Lo - 1);
+    if (Lo < publicCount())
+      After = AddressOf(Lo);
+    return {Before, After};
+  }
+
   std::optional<AuthenticatedRecordParameter>
   recordParameter(llvm::codeview::TypeIndex TI, uint64_t Register) const;
   void loadRecordParameters(uint32_t ModuleIndex) const;
@@ -2229,6 +2275,15 @@ PDBDebugContext::resolveDataObject(va_t Addr) const {
   if (It == PImpl->DataObjects.end() || It->second.Name.empty())
     return std::nullopt;
   return It->second;
+}
+
+std::pair<std::optional<va_t>, std::optional<va_t>>
+PDBDebugContext::dataSymbolsAround(va_t Addr) const {
+  if (!PImpl)
+    return {};
+  if (PImpl->hasLazyPublics())
+    return PImpl->publicsAround(Addr);
+  return DebugContext::dataSymbolsAround(Addr);
 }
 
 // This narrow reader deliberately avoids resolveTpi's display fallbacks. A

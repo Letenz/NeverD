@@ -288,6 +288,9 @@ constexpr std::int64_t MaxStringMinLength = 1024;
 constexpr std::size_t EnginePageLines = 2048;
 /// Text a renamed whole-function view may hold: the engine's source budget.
 constexpr std::size_t MaxNamedViewBytes = 32 * 1024 * 1024;
+/// The text of one code page, as the engine bounds its own pages: a page
+/// ends before the line that would pass it.
+constexpr std::size_t MaxCodePageBytes = 2 * 1024 * 1024;
 constexpr std::size_t MaxNamedViewCacheBytes = 32 * 1024 * 1024;
 constexpr std::size_t MaxNamedViews = 8;
 
@@ -2346,7 +2349,7 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         if (result.contains("text")) {
           if (!result["text"].is_string() ||
               result["text"].get_ref<const std::string &>().size() >
-                  2 * 1024 * 1024 ||
+                  MaxCodePageBytes ||
               !result.contains("rows") || !result["rows"].is_array() ||
               result["rows"].size() > limit)
             throw Error("invalid_engine_result",
@@ -2390,15 +2393,22 @@ Json Engine::execute(const std::string &operation, const Json &p) {
           textLines_.push_back(i + 1);
       textKey_ = key;
     }
+    const auto byteAt = [this](std::size_t line) {
+      return line < textLines_.size() ? textLines_[line] : textCache_.size();
+    };
     const auto start = std::min(offset, textLines_.size());
-    const auto end = start + std::min(limit, textLines_.size() - start);
-    const auto startByte =
-        start < textLines_.size() ? textLines_[start] : textCache_.size();
-    const auto endByte =
-        end < textLines_.size() ? textLines_[end] : textCache_.size();
-    if (endByte - startByte > 2 * 1024 * 1024)
+    auto end = start + std::min(limit, textLines_.size() - start);
+    const auto startByte = byteAt(start);
+    // The page ends before the line that would pass its budget; the next
+    // page starts there.
+    std::size_t fits = start;
+    while (fits < end && byteAt(fits + 1) - startByte <= MaxCodePageBytes)
+      ++fits;
+    if (fits == start && end > start)
       throw Error("budget_exceeded",
-                  "Code page exceeds 2 MiB; request fewer lines");
+                  "A code line exceeds the 2 MiB page budget");
+    end = fits;
+    const auto endByte = byteAt(end);
     return {
         {"address", hexAddress(address)},
         {"representation", representation},

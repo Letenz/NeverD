@@ -294,6 +294,21 @@ public:
     }
     return std::nullopt;
   }
+  /// Where the data symbols nearest \p Addr begin: the last at or before it
+  /// and the first after it.  A symbol begins an object even when unsized,
+  /// so the two bound one the image does not size.  The default walks
+  /// allDataObjects(); providers with an address-ordered index override it.
+  virtual std::pair<std::optional<va_t>, std::optional<va_t>>
+  dataSymbolsAround(va_t Addr) const {
+    std::optional<va_t> Before, After;
+    for (const DataObjectSym &Object : allDataObjects()) {
+      if (Object.Addr <= Addr && (!Before || Object.Addr > *Before))
+        Before = Object.Addr;
+      else if (Object.Addr > Addr && (!After || Object.Addr < *After))
+        After = Object.Addr;
+    }
+    return {Before, After};
+  }
 
   virtual bool hasInfo() const = 0;
 };
