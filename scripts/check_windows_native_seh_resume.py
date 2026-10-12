@@ -85,8 +85,11 @@ def main(argv: list[str] | None = None) -> int:
             report["cases"].append(record)
             llvm_object, wrapper = case / "resume.obj", case / "probe.obj"
             image = case / "resume.exe"
+            # MSVC adds its installed toolset version to the requested triple.
+            # Keep all other warnings fatal and validate the resulting PE64 image.
             compile_step([args.llvm_compiler, "-target", "x86_64-pc-windows-msvc",
-                          f"-O{optimization}", "-Werror", "-x", "ir", "-c",
+                          f"-O{optimization}", "-Werror", "-Wno-override-module",
+                          "-x", "ir", "-c",
                           str(FIXTURES / SOURCES[0]), "-o", str(llvm_object)],
                          case, record)
             compile_step([args.assembler, "/nologo", "/c", f"/Fo{wrapper}",
