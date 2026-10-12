@@ -177,6 +177,7 @@ private:
   void copySelection();
   void showCommandPalette();
   void exportCurrent(bool pseudocode);
+  void loadPdb();
   void runCommand(const QString &command, const QString &argument);
   void saveDesktop();
   void restoreDesktop();

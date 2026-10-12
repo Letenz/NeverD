@@ -2252,12 +2252,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // A relative table holds the offsets of its targets from its own start
   // (clang's `.rel` lookup tables), so the code reaches each target through
   // the table's address: the table's object spans the targets.  Code that
-  // adds an entry back to the table proves it relative, so a target may also
-  // be a string, in another section, the entry a relocation the loader
-  // applies as the same offset (an object's strings).  A table the code only
-  // keeps the address of is one where each entry is an offset the assembler
-  // fixed to a sized object after the table in its section; a relocated slot
-  // of it is a pointer.
+  // adds an entry back to the table proves it relative, and so does a loader
+  // that relocated every entry as such a displacement
+  // (BinaryImage::RelDataPtrRelocSlots); a target of a proven table may be
+  // any string, in another section (an object's strings).  Otherwise each
+  // entry is an offset the assembler fixed to a sized object or a string of
+  // text after the table in its section; a relocated slot of such a table is
+  // a pointer.
   auto StringExtent = [&](va_t Target) -> std::optional<uint64_t> {
     for (uint64_t Byte = 0; Byte < limits::kMaxStringScanLen; ++Byte) {
       const uint8_t *Unit = Opts.Image->readVA(Target + Byte, 1);
@@ -2268,27 +2269,39 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
     return std::nullopt;
   };
+  auto TextExtent = [&](va_t Target) -> std::optional<uint64_t> {
+    if (const auto Text = imageCString(Opts.Image, Target))
+      return Text->Bytes;
+    return std::nullopt;
+  };
   auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes,
                                  bool AddedBack) {
     const auto Object = sizedObjectAt(Table);
     const Section *Sec = Opts.Image->getSectionFor(Table);
     if (!Object || Object->first != Table ||
-        (EntryBytes != 4 && EntryBytes != 8) ||
-        (!AddedBack &&
-         (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)))
+        (EntryBytes != 4 && EntryBytes != 8))
+      return;
+    bool Relocated = Object->second >= EntryBytes;
+    for (va_t Slot = Table;
+         Relocated && Slot + EntryBytes <= Table + Object->second;
+         Slot += EntryBytes)
+      Relocated = Opts.Image->RelDataPtrRelocSlots.count(Slot) != 0;
+    const bool Proven = AddedBack || Relocated;
+    if (!Proven &&
+        (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA))
       return;
     va_t End = Table + Object->second;
     for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
          Slot += EntryBytes) {
       const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
-      if (!Bytes || (!AddedBack && Opts.Image->hasRelocationProvenanceAt(Slot)))
+      if (!Bytes || (!Proven && Opts.Image->hasRelocationProvenanceAt(Slot)))
         return;
       const int64_t Offset =
           EntryBytes == 4 ? static_cast<int64_t>(
                                 static_cast<int32_t>(readLE<uint32_t>(Bytes)))
                           : static_cast<int64_t>(readLE<uint64_t>(Bytes));
       if (Offset < static_cast<int64_t>(Object->second) ||
-          (AddedBack &&
+          (Proven &&
            Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes)))
         return;
       const va_t Target = Table + static_cast<va_t>(Offset);
@@ -2297,12 +2310,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           TargetObject && TargetObject->first == Target)
         TargetEnd = Target + TargetObject->second;
       else if (const auto String =
-                   AddedBack ? StringExtent(Target) : std::nullopt)
+                   Proven ? StringExtent(Target) : TextExtent(Target))
         TargetEnd = Target + *String;
       else
         return;
-      if (AddedBack ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
-                    : TargetEnd > Sec->VA + Sec->Size)
+      if (Proven ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
+                 : TargetEnd > Sec->VA + Sec->Size)
         return;
       End = std::max<va_t>(End, TargetEnd);
     }

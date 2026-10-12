@@ -558,6 +558,26 @@ linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
+**File → Load file → PDB file...** selects a PDB anywhere on disk for the
+currently loaded PE. A matching CodeView identity applies its debug symbols and
+refreshes function names, the listing and open code views while preserving
+user renames, comments and other edits. Output reports the selected path and
+whether the identity was verified. A missing, malformed or mismatched PDB
+leaves the current session usable.
+
+If the PE has no CodeView identity, the dialog asks whether to use the selected
+PDB for analysis after machine and section-layout checks. Confirming loads it
+through the same supported analysis path as a matching PDB, including symbols,
+types, function signatures and available debug ranges. Output distinguishes
+user confirmation from verified build identity. An existing but mismatched or
+ambiguous identity cannot be overridden. This route currently supports modern
+RSDS PDBs; a matching legacy NB10 PDB uses the ordinary authenticated loader.
+The chosen file and analysis mode accompany read-only analysis replicas and
+are remembered on reload and in saved databases. Older display-only selections
+keep that mode until the PDB is selected again and confirmed for analysis.
+The PDB remains an external file and must be available when reopening that
+database.
+
 ## Databases
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the
