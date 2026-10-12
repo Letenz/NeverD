@@ -913,6 +913,10 @@ GoogleTest 发现使用 `DISCOVERY_MODE PRE_TEST`，因此 CTest 枚举前必须
 
 `ResolverValueQueryCache.EntryMemoryCannotBorrowAStoreFromALaterIteration` 在同一架构/格式矩阵下检查第一轮帧内存值与认证写入。回边 STORE 不能初始化入口 LOAD；先于读取的完整 STORE 为正例，未知 LOAD 的掩码仍提供独立数值上界。两种查询顺序、冷/热缓存及恰好/少一预算均覆盖。
 
+`ResolverValueQueryCache.FiniteJointReuseRequiresCurrentSourceAndRoles` 直接提供数值缓存结果，检查生产复用入口：等大小来源修改、改变索引／LOAD／目标使用点及地址角色均须拒绝，恰好／少一预算保持确定。此 fixture 检查结果绑定，不验证数值定理的构造；现有 i386 GOTOFF 联合循环和四／六消费者相邻表用例分别覆盖构造、受限索引／地址／目标重放及整组发布。
+
+`ResolverLoadRoles.RestrictedReplayDoesNotBorrowTheGroupHypothesis` 在 H 中额外加入可破坏地址及目标生产者的路径。两种角色查询均拒绝 H、接受独立指定的受限边；普通组模式仍使用 H。冷／热图复用必须保持这一差异。
+
 `ModuleAdjacentTable.*` 使用真实 ELF32/ELF64 相邻绝对表及两种函数顺序，覆盖最终 x87 返回、独立根、未拆块且绕过 mask 的块内跳转、物理续接间隙、TOP 克隆、畸形地址操作数、改变的 LOAD 地址/宽度和 FS/GS 地址域。地址逃逸、来源别名、重复来源及无 LOAD 的独立上下文均保留前表；后者仅删除 occurrence、保持 LowOps 不变作为对照。三表大预算正例和累计耗尽反例验证早先授权被撤销。扩大物理包络的测试验证最终保留（含后续 LOAD/别名否决），并未单独隔离包络比较。真实 CLI HighC 及优化/不优化 LLVMC 结果在宿主 O0/O2 执行全部 mask 输入类别。这些 fixture 尚未证明新查询对异常图或其他架构的支持。
 
 CI 在 Linux、macOS 和 Windows 上以 Release 开启测试构建，先审核发现的测试清单，

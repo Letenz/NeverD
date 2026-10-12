@@ -1354,6 +1354,19 @@ entry LOAD. A preceding definite STORE is a positive control, and masking the
 unknown LOAD still proves its independent numeric bound. Both query orders and
 cold/warm caches must agree.
 
+`ResolverValueQueryCache.FiniteJointReuseRequiresCurrentSourceAndRoles` supplies
+a cached numerical result directly to the production reuse gate. Equal-size
+source changes, altered index/LOAD/target use points and changed address roles
+must refuse; exact/one-short work boundaries remain deterministic. This fixture
+tests result binding, not construction of a numerical theorem. The existing
+i386 GOTOFF joint-loop and four/six-consumer adjacent-table fixtures separately
+exercise construction, restricted selector/address/target replay and atomic
+group publication.
+`ResolverLoadRoles.RestrictedReplayDoesNotBorrowTheGroupHypothesis` includes an
+extra H edge that can corrupt both an address and a target producer. Both role
+queries refuse H and accept its independently supplied restricted map; ordinary
+group mode still uses H. Cold/warm graph reuse must preserve this distinction.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

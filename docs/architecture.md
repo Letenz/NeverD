@@ -850,6 +850,15 @@ newly reached backedge cannot reuse an entry-only domain. A complete
 single-consumer finite proof is not
 widened or vetoed by a weaker mask search. Module-wide storage mutation checks
 still run before source publication.
+The specialized i386/ELF joint finite proof returns one owned result after every
+consumer replays its selector, LOAD address and target role on the restricted
+owner graph. It retains separate physical, preceding-phase and restricted edge
+sets, exact selector/LOAD/target use points and an owned source snapshot. Round
+reuse compares the current operations, occurrence inventories, boundaries and
+borrowed protection sets by value; a changed member revokes the whole result.
+Numerical coordinate membership supplies neither input known bits nor negative
+dependency/origin authority. Other architecture/format admission remains with
+its existing proof owners.
 Guard identity can name a contained architectural register lane at its exact
 full-register writer. The shared reaching-value resolver names that complete
 definition and retains the lane's offset and width, so a comparison of AL or

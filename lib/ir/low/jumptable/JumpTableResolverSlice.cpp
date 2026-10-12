@@ -9305,7 +9305,10 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
     const InsnRecord &Rec, const JumpTableInfo &Info,
     size_t *AggregateEvidenceBudget, bool *AnalysisComplete,
     bool UseDefinedAlternativesAsRoots,
-    const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides) const {
+    const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
+    bool UseGroupContext) const {
+  if (UseGroupContext && GuardedGroupProofContext)
+    CertifiedEdgeOverrides = &GuardedGroupProofContext->Edges;
   if (AnalysisComplete)
     *AnalysisComplete = false;
   RequestedCompleteJumpTableProof = true;
@@ -9749,7 +9752,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
         RestrictToLexicalTargetRegion
             ? limits::kMaxJumpTableLargeExpressionRoleResolverDepth
             : limits::kMaxJumpTableExpandedResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!TransformQueriesComplete || QueryResults.size() != Queries.size()) {
       Complete = false;
       return false;
@@ -9845,7 +9848,7 @@ bool CFGBuilder::branchTargetDependsOnTableLoad(
       FinalQueries, &FinalQueryComplete, nullptr, InvalidVA, nullptr,
       AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
       nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
-      CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+      CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
   if (!FinalQueryComplete || Final.size() != FinalQueries.size()) {
     Complete = false;
     return false;
@@ -9857,7 +9860,9 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
     JumpTableInfo &Info, size_t *AggregateEvidenceBudget,
     bool *AnalysisComplete, bool UseDefinedAlternativesAsRoots,
     const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides,
-    bool *DomainInputsChanged) const {
+    bool *DomainInputsChanged, bool UseGroupContext) const {
+  if (UseGroupContext && GuardedGroupProofContext)
+    CertifiedEdgeOverrides = &GuardedGroupProofContext->Edges;
   if (AnalysisComplete)
     *AnalysisComplete = false;
   if (DomainInputsChanged)
@@ -10038,9 +10043,11 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             },
             [&](size_t Amount) { return consumeWork(Amount); }))
       return false;
-    const std::set<va_t> &ProofRoots = ActiveJumpTableProofRoots
-                                           ? *ActiveJumpTableProofRoots
-                                           : PersistentCFGRoots;
+    const std::set<va_t> &ProofRoots =
+        UseGroupContext && GuardedGroupProofContext
+            ? GuardedGroupProofContext->Roots
+            : (ActiveJumpTableProofRoots ? *ActiveJumpTableProofRoots
+                                         : PersistentCFGRoots);
     bool GraphComplete = false;
     const ResolverFlowGraph Graph = buildResolverFlowGraph(
         Snapshot, BlockStarts, ProofRoots, DiscoveredCodeRefSources,
@@ -10336,7 +10343,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
           Queries, &QueriesComplete, nullptr, InvalidVA, nullptr,
           AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
           nullptr, nullptr, limits::kMaxJumpTableExpandedResolverDepth,
-          CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+          CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
       if (!QueriesComplete || Results.size() != Queries.size()) {
         Complete = false;
         return false;
@@ -10734,7 +10741,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         ScaleQueries, &ScaleQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!ScaleQueriesComplete || Results.size() != ScaleQueries.size()) {
       Complete = false;
       return false;
@@ -12035,7 +12042,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
             AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
             nullptr, nullptr,
             limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-            CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+            CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
         if (LocalComplete && LocalResults.size() == LocalQueries.size()) {
           for (AddressProof &Proof : LocalProofs) {
             if (!consumeWork() || !consumeWork(Proof.QueryIndices.size()))
@@ -12088,7 +12095,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         AddressQueries, &AddressQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!AddressQueriesComplete ||
         AddressResults.size() != AddressQueries.size()) {
       Complete = false;
@@ -12229,7 +12236,7 @@ bool CFGBuilder::tableLoadAddressesMatchRole(
         LoadQueries, &LoadQueriesComplete, nullptr, InvalidVA, nullptr,
         AggregateEvidenceBudget, limits::kMaxJumpTableRoleMatchEvidenceWork,
         nullptr, nullptr, limits::kMaxJumpTableLargeExpressionRoleResolverDepth,
-        CertifiedEdgeOverrides, /*UseGroupContext=*/true, &QueryScope);
+        CertifiedEdgeOverrides, UseGroupContext, &QueryScope);
     if (!LoadQueriesComplete || LoadResults.size() != LoadQueries.size()) {
       Complete = false;
       return false;

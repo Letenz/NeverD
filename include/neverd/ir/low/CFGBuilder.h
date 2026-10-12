@@ -1837,6 +1837,20 @@ private:
   /// Scratch-only assumptions for bounded joint finite table proofs.
   /// They are never published as prior role/storage certificates. EmptyEdges
   /// removes every group edge for a hypothesis-free seed query.
+  struct FiniteJumpTableSourceSnapshot;
+  struct FiniteJumpTableJointProof {
+    // Coordinate membership is a numerical theorem, not input known bits or
+    // a negative dependency/origin certificate.
+    std::map<va_t, std::vector<uint32_t>> Domains;
+    std::map<va_t, std::vector<va_t>> PhysicalTargets;
+    std::map<va_t, std::vector<va_t>> HypothesisEdges;
+    std::map<va_t, std::vector<va_t>> RestrictedEdges;
+    std::set<va_t> Roots;
+    std::map<va_t, JumpTableValueOccurrence> Indices;
+    std::map<va_t, JumpTableLoadRole> LoadRoles;
+    std::map<va_t, JumpTableValueOccurrence> TargetUses;
+    std::shared_ptr<const FiniteJumpTableSourceSnapshot> Source;
+  };
   struct FiniteJumpTableRoundCertificate {
     // A complete all-consumer certificate belongs to exactly one immutable
     // group round. The next round uses a different edge/role hypothesis and
@@ -1847,6 +1861,10 @@ private:
     std::set<va_t> Roots;
     /// Exact use points for hypothesis-free absolute selector seeds.
     std::map<va_t, JumpTableValueOccurrence> Indices;
+    /// Complete i386 joint numerical result; committed only after all members
+    /// replay on the restricted owner graph. Never reused across source input
+    /// changes, even when roots and physical target vectors are identical.
+    std::shared_ptr<const FiniteJumpTableJointProof> JointProof;
   };
   struct GuardedJumpTableGroupProofContext {
     std::set<va_t> Roots;
@@ -1893,6 +1911,12 @@ private:
   bool prepayJumpTableInfoCopy(const JumpTableInfo &Info, size_t Copies);
   bool copyGuardedGroupProofSnapshot(
       CFGBuilder &Scratch, const GuardedJumpTableGroupProofContext &Context);
+  std::shared_ptr<const FiniteJumpTableSourceSnapshot>
+  freezeFiniteJumpTableSource(size_t &Remaining, bool &Incomplete) const;
+  bool finiteJumpTableJointProofMatches(
+      const FiniteJumpTableJointProof &Proof, const InsnRecord &Rec,
+      const JumpTableInfo &Info, const std::vector<va_t> &PhysicalTargets,
+      size_t &Remaining, bool &Incomplete) const;
   /// Decode authenticated physical case targets into a private, budgeted CFG
   /// snapshot for a finite-domain induction query.  The snapshot may describe
   /// hypothetical control flow only through the caller's query overrides;
@@ -1907,8 +1931,8 @@ private:
   bool proveCandidateFiniteAbsoluteSiblings(
       CFGBuilder &Scratch, const InsnRecord &Current, const JumpTableInfo &Info,
       const std::vector<va_t> &PhysicalTargets,
-      std::map<va_t, std::vector<uint32_t>> &FiniteDomains,
-      size_t *EvidenceBudget, bool *AnalysisIncomplete) const;
+      FiniteJumpTableJointProof &Proof, size_t *EvidenceBudget,
+      bool *AnalysisIncomplete) const;
   uint32_t proveGroupDenseMaskBound(const InsnRecord &Rec,
                                     const JumpTableInfo &Info,
                                     size_t *AggregateEvidenceBudget,
@@ -2312,8 +2336,8 @@ private:
       const InsnRecord &Rec, const JumpTableInfo &Info,
       size_t *AggregateEvidenceBudget, bool *AnalysisComplete,
       bool UseDefinedAlternativesAsRoots = false,
-      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides =
-          nullptr) const;
+      const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
+      bool UseGroupContext = true) const;
   /// Prove that every authenticated target LOAD reads the declared table role
   /// at that exact occurrence: base + certified-index * physical stride.
   /// Output-to-branch dependence alone is insufficient when a sibling or
@@ -2322,7 +2346,7 @@ private:
       JumpTableInfo &Info, size_t *AggregateEvidenceBudget,
       bool *AnalysisComplete, bool UseDefinedAlternativesAsRoots = false,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool *DomainInputsChanged = nullptr) const;
+      bool *DomainInputsChanged = nullptr, bool UseGroupContext = true) const;
   /// Build the root set used while proving one candidate table.  A
   /// relocation-discovered interior label is not an independent entry when
   /// every relocation that names it is a physical slot owned by this exact

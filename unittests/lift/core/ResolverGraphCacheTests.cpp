@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <vector>
@@ -529,6 +530,232 @@ struct ResolverGraphCacheTestAccess {
   }
 
   static va_t nodeAddress(size_t Node) { return 0x100 + 2 * Node; }
+
+  struct RoleReplayFixture {
+    RoleInfo Info;
+    std::map<va_t, std::vector<va_t>> Hypothesis{{0x101, {0x103, 0x200}}};
+    std::map<va_t, std::vector<va_t>> Restricted{{0x101, {0x103}}};
+  };
+  static RoleReplayFixture seedRoleReplay(CFGBuilder &B,
+                                          const BinaryImage &Image) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.ActiveJumpTableProofRoots = B.PersistentCFGRoots;
+    B.BlockStarts = {0x100, 0x101, 0x103, 0x200, 0x201};
+    const auto Index = NdVar::reg(0, 8);
+    const auto Address = NdVar::reg(0x40, 8);
+    const auto Target = NdVar::reg(0x48, 8);
+    auto Emit = [&](va_t Addr, NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      auto &Rec = B.Insns[Addr];
+      Rec.Addr = Addr;
+      Rec.Size = 1;
+      LowOp Op;
+      Op.Addr = Addr;
+      Op.Seq = static_cast<int>(Rec.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Rec.Ops.push_back(Op);
+      return Rec.Ops.back();
+    };
+    Emit(0x100, NdOp::COPY, Index, {NdVar::scalar(7, 8)});
+    Emit(0x100, NdOp::INT_ADD, Address, {NdVar::address(0x4000, 8), Index});
+    Emit(0x101, NdOp::LOAD, Target, {Address});
+    Emit(0x101, NdOp::INDIR_BR, {}, {NdVar::reg(0x50, 8)});
+    B.Insns.at(0x101).IsBranch = B.Insns.at(0x101).IsIndirect = true;
+    Emit(0x103, NdOp::INDIR_BR, {}, {Target});
+    B.Insns.at(0x103).IsBranch = B.Insns.at(0x103).IsIndirect = true;
+    // The extra H edge may clobber the LOAD address before another iteration
+    // and may reach the final branch without the authenticated target value.
+    Emit(0x200, NdOp::COPY, Address, {NdVar::scalar(0x5000, 8)});
+    Emit(0x200, NdOp::COPY, Target, {NdVar::scalar(0, 8)});
+    Emit(0x200, NdOp::COND_BR, {},
+         {NdVar::address(0x101, 8),
+          NdVar::reg(getTargetRegInfo(Image.Arch).FlagZF, 1)});
+    Emit(0x201, NdOp::BRANCH, {}, {NdVar::address(0x103, 8)});
+    B.Insns.at(0x201).IsBranch = true;
+    B.Insns.at(0x201).BranchTarget = 0x103;
+    B.Insns.at(0x200).IsBranch = B.Insns.at(0x200).IsCond = true;
+    B.Insns.at(0x200).BranchTarget = 0x101;
+    RoleReplayFixture Fixture;
+    auto &Info = Fixture.Info;
+    Info.setBaseAddr(0x4000);
+    Info.EntrySize = 8;
+    Info.RelocAbsolute = true;
+    Info.IndexValueAtUse = Index;
+    Info.IndexUseAddr = 0x100;
+    Info.IndexUseSeq = 1;
+    Info.TableLoadAddr = 0x101;
+    Info.TableLoadSeq = 0;
+    CFGBuilder::JumpTableLoadRole Role;
+    Role.Load = {Target, 0x101, 0, true};
+    Role.LoadWidth = 8;
+    Role.AllowedBases = {0x4000};
+    Role.Indices = {{Index, 0x100, 1, false}};
+    Role.AddressScale = 1;
+    Info.LoadRoles = {Role};
+    Info.TargetLoads = {Role.Load};
+    CFGBuilder::GuardedJumpTableGroupProofContext Context;
+    Context.Roots = B.PersistentCFGRoots;
+    Context.Edges = Fixture.Hypothesis;
+    B.GuardedGroupProofContext = Context;
+    return Fixture;
+  }
+  static Answer replayRoles(CFGBuilder &B, RoleInfo Info,
+                            const std::map<va_t, std::vector<va_t>> &Edges,
+                            bool UseGroupContext) {
+    Answer Result;
+    Result.Remaining = 1000000;
+    bool AddressComplete = false;
+    bool TargetComplete = false;
+    const bool Address =
+        B.tableLoadAddressesMatchRole(Info, &Result.Remaining, &AddressComplete,
+                                      true, &Edges, nullptr, UseGroupContext);
+    const bool Target = B.branchTargetDependsOnTableLoad(
+        B.Insns.at(0x103), Info, &Result.Remaining, &TargetComplete, true,
+        &Edges, UseGroupContext);
+    Result.Values = {Address, Target};
+    Result.QueryComplete = {AddressComplete, TargetComplete};
+    Result.Complete = AddressComplete && TargetComplete;
+    return Result;
+  }
+
+  using JointProof = CFGBuilder::FiniteJumpTableJointProof;
+
+  static JointProof seedFiniteJointReuse(CFGBuilder &B,
+                                         const BinaryImage &Image,
+                                         RoleInfo &Info) {
+    Info = seedLocalLoadRole(B, Image, 0);
+    Info.EntrySize = 4;
+    Info.RelocAbsolute = true;
+    Info.PhysicalCapacity = 5;
+    auto &Role = Info.LoadRoles.front();
+    Role.LoadWidth = 4;
+    Role.AddressScale = 4;
+    Role.AddressIndex = {};
+    for (auto &[Addr, Rec] : B.Insns) {
+      (void)Addr;
+      for (auto &Op : Rec.Ops) {
+        if (Op.Output.Size)
+          Op.Output.Size = 4;
+        for (unsigned I = 0; I < Op.NumInputs; ++I)
+          if (Op.Inputs[I].Size)
+            Op.Inputs[I].Size = 4;
+      }
+    }
+    Role.Load.Value.Size = 4;
+    Role.Indices.front().Value.Size = 4;
+    Info.IndexValueAtUse = Role.Indices.front().Value;
+    Info.IndexUseAddr = Role.Indices.front().Addr;
+    Info.IndexUseSeq = Role.Indices.front().Seq;
+    Info.TargetLoads = {Role.Load};
+    const auto Target = Role.Load.Value;
+    auto &First = B.Insns.at(Role.Load.Addr);
+    First.IsRet = false;
+    First.IsBranch = First.IsIndirect = true;
+    First.Ops.back().Opcode = NdOp::INDIR_BR;
+    CFGBuilder::GuardedJumpTableGroupKey Key;
+    Key.OwnerBegin = 0x4000;
+    Key.OwnerEnd = 0x4028;
+    Key.MemberCount = 4;
+    Key.Kind = CFGBuilder::GuardedJumpTableGroupKind::FiniteAdjacentGOTOFF;
+    CFGBuilder::GuardedJumpTableGroupProofContext Context;
+    Context.Roots = B.PersistentCFGRoots;
+    JointProof Proof;
+    Proof.Roots = Context.Roots;
+    for (unsigned I = 0; I < 4; ++I) {
+      const va_t Branch = I ? 0x200 + I : Role.Load.Addr;
+      if (I) {
+        auto &Rec = B.Insns[Branch];
+        Rec.Addr = Branch;
+        Rec.Size = 1;
+        Rec.IsBranch = Rec.IsIndirect = true;
+        LowOp Op;
+        Op.Addr = Branch;
+        Op.Opcode = NdOp::INDIR_BR;
+        Op.addInput(Target);
+        Rec.Ops.push_back(Op);
+      }
+      Key.Members[I] = Branch;
+      const auto &Op = B.Insns.at(Branch).Ops.back();
+      Proof.Indices.emplace(Branch, Role.Indices.front());
+      Proof.LoadRoles.emplace(Branch, Role);
+      Proof.TargetUses.emplace(Branch,
+                               Occurrence{Target, Op.Addr, Op.Seq, false});
+      Proof.Domains.emplace(Branch, std::vector<uint32_t>{1, 4});
+      Proof.PhysicalTargets.emplace(
+          Branch, std::vector<va_t>{0x300, 0x301, 0x302, 0x303, 0x304});
+      Proof.RestrictedEdges.emplace(Branch, std::vector<va_t>{0x301, 0x304});
+      Context.Edges.emplace(Branch, Proof.PhysicalTargets.at(Branch));
+      Context.EmptyEdges.emplace(Branch, std::vector<va_t>{});
+    }
+    Proof.HypothesisEdges = Context.Edges;
+    B.GuardedGroupIdentity = Key;
+    B.GuardedGroupProofContext = Context;
+    size_t Remaining = 1000000;
+    bool Incomplete = false;
+    Proof.Source = B.freezeFiniteJumpTableSource(Remaining, Incomplete);
+    EXPECT_FALSE(Incomplete);
+    EXPECT_TRUE(Proof.Source);
+    return Proof;
+  }
+
+  static bool reuseFiniteJoint(const CFGBuilder &B, const JointProof &Proof,
+                               const RoleInfo &Info, size_t &Remaining,
+                               bool &Incomplete) {
+    const va_t Branch = B.GuardedGroupIdentity->Members.front();
+    return B.finiteJumpTableJointProofMatches(Proof, B.Insns.at(Branch), Info,
+                                              Proof.PhysicalTargets.at(Branch),
+                                              Remaining, Incomplete);
+  }
+  static void mutateFiniteJointSource(CFGBuilder &B, unsigned Variant) {
+    const va_t Branch = B.GuardedGroupIdentity->Members.front();
+    switch (Variant) {
+    case 0:
+      ++B.Insns.begin()->second.Ops.front().Inputs[0].Offset;
+      break;
+    case 1:
+      B.Insns.at(Branch).Ops.front().MemoryAddressSpace =
+          NdMemoryAddressSpace::X86FS;
+      break;
+    case 2:
+      ++B.Insns.at(Branch).Ops.back().Inputs[0].Offset;
+      break;
+    case 3:
+      ++B.Insns.at(Branch).Ops.front().Seq;
+      break;
+    case 4:
+      B.BlockStarts.erase(0x100);
+      B.BlockStarts.insert(0x101);
+      break;
+    case 5:
+      B.CurrentFuncEntry = 0x101;
+      break;
+    case 6:
+      B.RelocatedInstructionScalarModelOccurrences.push_back({});
+      break;
+    case 7:
+      B.RelocationCFGRootSources[0x300] = {0x4000};
+      break;
+    case 8:
+      ++B.GuardedGroupIdentity->OwnerBegin;
+      break;
+    case 9:
+      ++B.GuardedGroupIdentity->OwnerEnd;
+      break;
+    case 10:
+      ++B.GuardedGroupIdentity->Members[1];
+      break;
+    case 11:
+      std::swap(B.GuardedGroupIdentity->Members[1],
+                B.GuardedGroupIdentity->Members[2]);
+      break;
+    }
+  }
 
   static void seedControlGraph(CFGBuilder &B, const BinaryImage &Image,
                                const std::vector<std::array<int, 2>> &Edges,
@@ -1855,6 +2082,98 @@ TEST(ResolverValueQueryCache,
             EXPECT_EQ(Access::batch(B, Queries, Work - 1), Short);
           }
     }
+}
+
+TEST(ResolverValueQueryCache, FiniteJointReuseRequiresCurrentSourceAndRoles) {
+  // The fixture supplies a previously completed numerical result directly;
+  // this exercises its production reuse gate, not construction of the theorem.
+  // Real four/six-consumer GOTOFF fixtures exercise that construction
+  // separately.
+  auto Image = image();
+  Image.Arch = Arch::X86;
+  Image.Bits = Bitness::Bits32;
+  for (unsigned Variant = 0; Variant < 23; ++Variant) {
+    SCOPED_TRACE(Variant);
+    CFGBuilder B;
+    Access::RoleInfo Info;
+    std::set<va_t> Protected{0x4000};
+    std::set<va_t> Known{0x800};
+    B.setProtectedJumpTableRelocationSlots(&Protected);
+    B.setKnownFuncEntries(&Known);
+    const auto Proof = Access::seedFiniteJointReuse(B, Image, Info);
+    size_t Remaining = 1000000;
+    bool Incomplete = false;
+    ASSERT_TRUE(
+        Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+    ASSERT_FALSE(Incomplete);
+    const size_t Work = 1000000 - Remaining;
+    Remaining = Work;
+    EXPECT_TRUE(
+        Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+    EXPECT_EQ(Remaining, 0u);
+    Remaining = Work - 1;
+    EXPECT_FALSE(
+        Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+    EXPECT_TRUE(Incomplete);
+    Incomplete = false;
+    if (Variant < 8 || Variant >= 19)
+      Access::mutateFiniteJointSource(B, Variant < 8 ? Variant : Variant - 11);
+    else if (Variant == 8)
+      ++Info.IndexUseSeq;
+    else if (Variant == 9)
+      Info.IndexValueDefinedAtUse = true;
+    else if (Variant == 10)
+      ++Info.TargetLoads.front().Seq;
+    else if (Variant == 11)
+      ++Info.LoadRoles.front().AddressIndex.Seq;
+    else if (Variant == 12)
+      ++Info.LoadRoles.front().AddressScale;
+    else if (Variant == 13)
+      ++Info.TableLoadSeq;
+    else if (Variant == 14)
+      ++Info.BaseAddr;
+    else if (Variant == 15)
+      Info.IndexValueAlternatives = {{Info.IndexValueAtUse, Info.IndexUseAddr,
+                                      Info.IndexUseSeq + 1, false}};
+    else if (Variant == 16)
+      Protected = {0x4004};
+    else if (Variant == 17)
+      Known = {0x900};
+    else
+      ++Info.PhysicalCapacity;
+    for (unsigned Repeat = 0; Repeat < 2; ++Repeat) {
+      Remaining = 1000000;
+      EXPECT_FALSE(
+          Access::reuseFiniteJoint(B, Proof, Info, Remaining, Incomplete));
+      EXPECT_FALSE(Incomplete);
+    }
+  }
+}
+
+TEST(ResolverLoadRoles, RestrictedReplayDoesNotBorrowTheGroupHypothesis) {
+  auto Image = image();
+  Image.Bits = Bitness::Bits64;
+  CFGBuilder B;
+  const auto Fixture = Access::seedRoleReplay(B, Image);
+  const auto Hypothesis =
+      Access::replayRoles(B, Fixture.Info, Fixture.Hypothesis, false);
+  ASSERT_TRUE(Hypothesis.Complete);
+  EXPECT_EQ(Hypothesis.Values, (std::vector<bool>{false, false}));
+  const auto Restricted =
+      Access::replayRoles(B, Fixture.Info, Fixture.Restricted, false);
+  ASSERT_TRUE(Restricted.Complete);
+  EXPECT_EQ(Restricted.Values, (std::vector<bool>{true, true}));
+  EXPECT_EQ(Access::replayRoles(B, Fixture.Info, Fixture.Restricted, false),
+            Restricted);
+  // Ordinary group queries retain their preceding-phase H. A supplied map
+  // does not silently opt them out of the enclosing group's proof context.
+  const auto Group =
+      Access::replayRoles(B, Fixture.Info, Fixture.Restricted, true);
+  EXPECT_TRUE(Group.Complete);
+  EXPECT_EQ(Group.Values, Hypothesis.Values);
+  Access::clear(B);
+  EXPECT_EQ(Access::replayRoles(B, Fixture.Info, Fixture.Restricted, false),
+            Restricted);
 }
 
 } // namespace

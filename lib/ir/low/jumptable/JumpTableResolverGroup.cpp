@@ -352,6 +352,245 @@ bool CFGBuilder::prepayJumpTableInfoCopy(const JumpTableInfo &Info,
   return Budget.products({{Copies, Work}, {Copies, Work}});
 }
 
+// Bind the numerical result to owned source inputs, not a builder address or
+// vector cardinalities. Image bytes/loader inventories are immutable within
+// the enclosing build; occurrence inventories and borrowed protection sets
+// can change between rounds and therefore require value comparisons.
+struct CFGBuilder::FiniteJumpTableSourceSnapshot {
+  const BinaryImage *Image;
+  Arch Architecture;
+  InstructionMode Mode;
+  BinaryFormat Format;
+  BinaryFormat ABI;
+  uint32_t PointerSize;
+  va_t Entry;
+  std::optional<std::pair<va_t, va_t>> Range;
+  std::optional<std::pair<va_t, va_t>> AuthoritativeRange;
+  std::map<va_t, InsnRecord> Instructions;
+  std::set<va_t> Starts, Reachable, Persistent, Ordinary, Durable;
+  std::vector<va_t> PublishedStarts;
+  std::map<va_t, std::set<va_t>> RelocationSources, CodeRefSources;
+  std::vector<RelocatedInstructionAddressOccurrence> Addresses;
+  std::vector<RelocatedInstructionScalarOperandOccurrence> ScalarOperands;
+  std::vector<RelocatedInstructionScalarModelOccurrence> ScalarModels;
+  std::vector<I386GetPcOccurrence> GetPCs;
+  std::optional<std::set<va_t>> KnownEntries, Continuations, Protected, Unsafe;
+  std::optional<GuardedJumpTableGroupKey> GroupIdentity;
+  bool GOTIncomplete, ContextComplete;
+
+  static std::optional<std::set<va_t>> own(const std::set<va_t> *Values) {
+    return Values ? std::optional<std::set<va_t>>(*Values) : std::nullopt;
+  }
+  static bool same(const std::optional<std::set<va_t>> &A,
+                   const std::set<va_t> *B) {
+    return A.has_value() == bool(B) && (!B || *A == *B);
+  }
+  explicit FiniteJumpTableSourceSnapshot(const CFGBuilder &B)
+      : Image(B.CurrentImg), Architecture(Image->Arch), Mode(Image->Mode),
+        Format(Image->Format), ABI(Image->abiFormat()),
+        PointerSize(Image->getPointerSize()), Entry(B.CurrentFuncEntry),
+        Range(B.CurrentFuncRange),
+        AuthoritativeRange(B.AuthoritativeCurrentFuncRange),
+        Instructions(B.Insns), Starts(B.BlockStarts),
+        Reachable(B.PublishedReachableInsns), Persistent(B.PersistentCFGRoots),
+        Ordinary(B.OrdinaryCFGRoots), Durable(B.DurableCFGRoots),
+        PublishedStarts(B.PublishedBlockStarts),
+        RelocationSources(B.RelocationCFGRootSources),
+        CodeRefSources(B.DiscoveredCodeRefSources),
+        Addresses(B.RelocatedInstructionAddressOccurrences),
+        ScalarOperands(B.RelocatedInstructionScalarOperandOccurrences),
+        ScalarModels(B.RelocatedInstructionScalarModelOccurrences),
+        GetPCs(B.I386GetPcOccurrences), KnownEntries(own(B.KnownFuncEntries)),
+        Continuations(own(B.CrossFunctionContinuationRoots)),
+        Protected(own(B.ProtectedJumpTableRelocationSlots)),
+        Unsafe(own(B.UnsafeJumpTableBranches)),
+        GroupIdentity(B.GuardedGroupIdentity),
+        GOTIncomplete(B.I386GOTModelEvidenceIncomplete),
+        ContextComplete(B.JumpTableProofContextComplete) {}
+
+  static std::optional<size_t> work(const CFGBuilder &B,
+                                    GroupEvidence &Budget) {
+    // Pay for the shape inventory before inspecting any nested payload size.
+    if (!Budget.products(
+            {{B.Insns.size(), 16},
+             {B.RelocationCFGRootSources.size(), 8},
+             {B.DiscoveredCodeRefSources.size(), 8},
+             {B.RelocatedInstructionAddressOccurrences.size(), 16}}))
+      return std::nullopt;
+    size_t Work = 384;
+    auto Add = [&](size_t Count, size_t Cost = 16) {
+      return detail::addLinearComparisonWork(Work, Count, Cost);
+    };
+    if (!Add(B.Insns.size(), 192) || !Add(B.BlockStarts.size()) ||
+        !Add(B.PublishedBlockStarts.size()) ||
+        !Add(B.PublishedReachableInsns.size()) ||
+        !Add(B.PersistentCFGRoots.size()) || !Add(B.OrdinaryCFGRoots.size()) ||
+        !Add(B.DurableCFGRoots.size()) ||
+        !Add(B.RelocationCFGRootSources.size(), 32) ||
+        !Add(B.DiscoveredCodeRefSources.size(), 32) ||
+        !Add(B.RelocatedInstructionAddressOccurrences.size(), 192) ||
+        !Add(B.RelocatedInstructionScalarOperandOccurrences.size(), 96) ||
+        !Add(B.RelocatedInstructionScalarModelOccurrences.size(), 192) ||
+        !Add(B.I386GetPcOccurrences.size(), 96))
+      return std::nullopt;
+    for (const auto *Values :
+         {B.KnownFuncEntries, B.CrossFunctionContinuationRoots,
+          B.ProtectedJumpTableRelocationSlots, B.UnsafeJumpTableBranches})
+      if (Values && !Add(Values->size()))
+        return std::nullopt;
+    for (const auto &[Addr, Rec] : B.Insns) {
+      (void)Addr;
+      if (!Add(Rec.Ops.size(), 192) || !Add(Rec.JumpTableTargets.size()))
+        return std::nullopt;
+    }
+    for (const auto *Sources :
+         {&B.RelocationCFGRootSources, &B.DiscoveredCodeRefSources})
+      for (const auto &[Addr, Values] : *Sources) {
+        (void)Addr;
+        if (!Add(Values.size()))
+          return std::nullopt;
+      }
+    for (const auto &Occurrence : B.RelocatedInstructionAddressOccurrences)
+      if (!Add(Occurrence.ArithmeticProof.size(), 96))
+        return std::nullopt;
+    return Work;
+  }
+
+  static bool sameOp(const LowOp &A, const LowOp &B) {
+    return A.Opcode == B.Opcode && A.MemoryOrdering == B.MemoryOrdering &&
+           A.MemoryAddressSpace == B.MemoryAddressSpace &&
+           A.Output == B.Output && A.NumInputs == B.NumInputs &&
+           A.Addr == B.Addr && A.Seq == B.Seq &&
+           std::equal(std::begin(A.Inputs), std::end(A.Inputs),
+                      std::begin(B.Inputs));
+  }
+  static bool sameInsn(const std::pair<const va_t, InsnRecord> &A,
+                       const std::pair<const va_t, InsnRecord> &B) {
+    const auto &L = A.second;
+    const auto &R = B.second;
+    return A.first == B.first && L.Addr == R.Addr && L.Size == R.Size &&
+           L.Mode == R.Mode && L.IsBranch == R.IsBranch &&
+           L.IsCond == R.IsCond && L.IsCall == R.IsCall && L.IsRet == R.IsRet &&
+           L.IsIndirect == R.IsIndirect &&
+           L.IsOpaqueTerminator == R.IsOpaqueTerminator &&
+           L.IsResumableTerminator == R.IsResumableTerminator &&
+           L.IsInstructionGuard == R.IsInstructionGuard &&
+           L.IsNoReturnCall == R.IsNoReturnCall &&
+           L.BranchTarget == R.BranchTarget && L.Immediate == R.Immediate &&
+           L.TargetMode == R.TargetMode && L.FpuTopIn == R.FpuTopIn &&
+           L.FpuTopOut == R.FpuTopOut && L.FpuReset == R.FpuReset &&
+           L.JumpTableTargets == R.JumpTableTargets &&
+           L.Ops.size() == R.Ops.size() &&
+           std::equal(L.Ops.begin(), L.Ops.end(), R.Ops.begin(), sameOp);
+  }
+  bool matches(const CFGBuilder &B) const {
+    return Image == B.CurrentImg && Image && Architecture == Image->Arch &&
+           Mode == Image->Mode && Format == Image->Format &&
+           ABI == Image->abiFormat() &&
+           PointerSize == Image->getPointerSize() &&
+           Entry == B.CurrentFuncEntry && Range == B.CurrentFuncRange &&
+           AuthoritativeRange == B.AuthoritativeCurrentFuncRange &&
+           Instructions.size() == B.Insns.size() &&
+           std::equal(Instructions.begin(), Instructions.end(), B.Insns.begin(),
+                      sameInsn) &&
+           Starts == B.BlockStarts && Reachable == B.PublishedReachableInsns &&
+           PublishedStarts == B.PublishedBlockStarts &&
+           Persistent == B.PersistentCFGRoots &&
+           Ordinary == B.OrdinaryCFGRoots && Durable == B.DurableCFGRoots &&
+           RelocationSources == B.RelocationCFGRootSources &&
+           CodeRefSources == B.DiscoveredCodeRefSources &&
+           Addresses == B.RelocatedInstructionAddressOccurrences &&
+           ScalarOperands == B.RelocatedInstructionScalarOperandOccurrences &&
+           ScalarModels == B.RelocatedInstructionScalarModelOccurrences &&
+           GetPCs == B.I386GetPcOccurrences &&
+           same(KnownEntries, B.KnownFuncEntries) &&
+           same(Continuations, B.CrossFunctionContinuationRoots) &&
+           same(Protected, B.ProtectedJumpTableRelocationSlots) &&
+           same(Unsafe, B.UnsafeJumpTableBranches) &&
+           GroupIdentity == B.GuardedGroupIdentity &&
+           GOTIncomplete == B.I386GOTModelEvidenceIncomplete &&
+           ContextComplete == B.JumpTableProofContextComplete;
+  }
+  size_t Work = 0;
+};
+
+std::shared_ptr<const CFGBuilder::FiniteJumpTableSourceSnapshot>
+CFGBuilder::freezeFiniteJumpTableSource(size_t &Remaining,
+                                        bool &Incomplete) const {
+  if (!CurrentImg)
+    return {};
+  GroupEvidence Budget(Remaining, Incomplete);
+  const auto Work = FiniteJumpTableSourceSnapshot::work(*this, Budget);
+  if (!Work || !Budget.products({{*Work, 2}})) {
+    Budget.fail();
+    return {};
+  }
+  auto Source = std::make_shared<FiniteJumpTableSourceSnapshot>(*this);
+  Source->Work = *Work;
+  return Source;
+}
+
+bool CFGBuilder::finiteJumpTableJointProofMatches(
+    const FiniteJumpTableJointProof &Proof, const InsnRecord &Rec,
+    const JumpTableInfo &Info, const std::vector<va_t> &PhysicalTargets,
+    size_t &Remaining, bool &Incomplete) const {
+  GroupEvidence Budget(Remaining, Incomplete);
+  if (!CurrentImg || !GuardedGroupProofContext || !finiteGOTOFFGroupClaimed() ||
+      !Proof.Source)
+    return false;
+  const size_t Members = GuardedGroupIdentity->MemberCount;
+  const auto SourceWork = FiniteJumpTableSourceSnapshot::work(*this, Budget);
+  if (!SourceWork ||
+      !Budget.products({{*SourceWork, 1},
+                        {Proof.Source->Work, 1},
+                        {Members, 64 * 32},
+                        {GuardedGroupProofContext->Roots.size(), 8}}))
+    return Budget.fail();
+  if (!Proof.Source->matches(*this) || Proof.Domains.size() != Members ||
+      Proof.PhysicalTargets.size() != Members ||
+      Proof.RestrictedEdges.size() != Members ||
+      Proof.Indices.size() != Members || Proof.LoadRoles.size() != Members ||
+      Proof.TargetUses.size() != Members ||
+      Proof.HypothesisEdges != GuardedGroupProofContext->Edges ||
+      Proof.Roots != GuardedGroupProofContext->Roots ||
+      !Proof.Domains.count(Rec.Addr) || !Proof.Indices.count(Rec.Addr) ||
+      !Proof.LoadRoles.count(Rec.Addr) || !Proof.TargetUses.count(Rec.Addr) ||
+      !Proof.PhysicalTargets.count(Rec.Addr) ||
+      Proof.PhysicalTargets.at(Rec.Addr) != PhysicalTargets)
+    return false;
+  const JumpTableValueOccurrence Index{Info.IndexValueAtUse, Info.IndexUseAddr,
+                                       Info.IndexUseSeq,
+                                       Info.IndexValueDefinedAtUse};
+  const auto &Role = Proof.LoadRoles.at(Rec.Addr);
+  if (Index != Proof.Indices.at(Rec.Addr) || Index.DefinedAtPoint ||
+      Info.IndexValueAlternatives.size() > 1 ||
+      (!Info.IndexValueAlternatives.empty() &&
+       Info.IndexValueAlternatives.front() != Index) ||
+      !Info.HasBaseAddr || !Info.RelocAbsolute || Info.IsRelative ||
+      Info.EntrySize != 4 || (Info.EntryStride != 0 && Info.EntryStride != 4) ||
+      Info.PhysicalCapacity != PhysicalTargets.size() || Info.PreScaledIndex ||
+      Info.TwoTableSelect || Info.TwoLevelIndex || Role.LoadWidth != 4 ||
+      Role.AddressScale != 4 ||
+      Role.AllowedBases != std::vector<va_t>{Info.BaseAddr} ||
+      Role.Indices != std::vector<JumpTableValueOccurrence>{Index} ||
+      Info.TargetLoads != std::vector<JumpTableValueOccurrence>{Role.Load} ||
+      Info.TableLoadAddr != Role.Load.Addr ||
+      Info.TableLoadSeq != Role.Load.Seq ||
+      (!Info.LoadRoles.empty() &&
+       Info.LoadRoles != std::vector<JumpTableLoadRole>{Role}))
+    return false;
+  unsigned TargetCount = 0;
+  for (const auto &Op : Rec.Ops)
+    if (Op.Opcode == NdOp::INDIR_BR) {
+      if (Op.NumInputs != 1 ||
+          JumpTableValueOccurrence{Op.Inputs[0], Op.Addr, Op.Seq, false} !=
+              Proof.TargetUses.at(Rec.Addr))
+        return false;
+      ++TargetCount;
+    }
+  return TargetCount == 1;
+}
+
 bool CFGBuilder::copyGuardedGroupProofSnapshot(
     CFGBuilder &Scratch, const GuardedJumpTableGroupProofContext &Context) {
   GroupEvidence Budget(CandidateProposalStageEvidenceRemaining,
@@ -1264,10 +1503,9 @@ bool CFGBuilder::recoverGuardedJumpTableGroup(const BinaryImage &Img,
     // A maximum of 64 slots and eight members bounds context storage. All
     // ordered inserts, lookups, copies and retirement are prepaid here.
     if (!Budget.products(
-            {{SlotCount,
-              64 + 8 * lookupWork(Insns.size()) +
-                  2 * lookupWork(Img.CodePtrRelocSlots.size()) +
-                  2 * lookupWork(knownFunctionEntryCount())},
+            {{SlotCount, 64 + 8 * lookupWork(Insns.size()) +
+                             2 * lookupWork(Img.CodePtrRelocSlots.size()) +
+                             2 * lookupWork(knownFunctionEntryCount())},
              {Img.Symbols.size(), 2 * SlotCount},
              {Img.Segments.size(), 8 * SlotCount},
              {Img.DataAddressRelocOperands.size(), 24}}))
@@ -1286,8 +1524,7 @@ bool CFGBuilder::recoverGuardedJumpTableGroup(const BinaryImage &Img,
       if (Target <= AuthoritativeCurrentFuncRange->first ||
           Target >= AuthoritativeCurrentFuncRange->second ||
           Img.hasFunctionSymbolAt(Target, ExecutableCodeOwners) ||
-          isKnownFunctionEntry(Target) ||
-          !Insns.count(Target)) {
+          isKnownFunctionEntry(Target) || !Insns.count(Target)) {
         Valid = false;
         break;
       }
