@@ -5071,6 +5071,22 @@ The committed-write observer regressions verify visibility before the next instr
 
 The source registration solver uses one administration-boundary check for object borrows, catch-object construction and local-finally writes. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` and `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` cover EH3/EH4 reads, writes and partial overlaps with SavedESP, exception pointers and cookie cells. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` protects the saved entry frame independently of later reloads. Adjacent ordinary objects remain valid.
 
+`NeverDSEHRuntimeMemoryTests` checks nested authenticated UCRT calls, actual
+home-area writes, immutable formats and receipt freshness. Wrong providers,
+delay imports, incomplete or conflicting PE32/PE64 storage, `%n` variants,
+writable formats, saved-slot overwrites, IAT rebinding, forged import veneers,
+parent-return-PC home-area overlaps and encoded frame escape
+must refuse. These focused contracts do not establish xcpt4 support; retain the
+real `DecompileMatrixFailsClosedWithAuditableExceptionMetadata` acceptance test.
+
+`RegistrationState.OrdinaryFinallyReturnsItsCheckedFrameEffects` checks actual
+ordinary finally returns, private push/pop storage, incoming register values,
+nonvolatile register changes and joins across both return arms. Missing branch
+arms, return-PC corruption, administration writes, unknown aliases, opaque
+calls, malformed boundaries, missing near-return evidence and stack-pop returns
+reject. The check supplies no native callable contract and does not model the
+nonlocal xcpt4 finally exits.
+
 ## Source and native object replacement tests
 
 `NeverDSourcePatchTests` checks C API/CLI address selection, compiler isolation,

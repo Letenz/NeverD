@@ -11,6 +11,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineLLVM.cpp
   PipelineLibraryRecognition.cpp
   PipelineLowIR.cpp
+  PipelineSEHRuntimeMemory.cpp
   PipelineMedIR.cpp
   PipelineOptimize.cpp
   PipelinePatchLift.cpp

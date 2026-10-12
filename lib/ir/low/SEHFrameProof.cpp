@@ -10,9 +10,11 @@
 #include "neverd/ir/low/SEHFrameProof.h"
 
 #include "SEHFrameProofDetail.h"
+#include "SEHFrameRuntimeMemory.h"
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowNoReturn.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/LowUndefinedEffects.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -32,47 +34,10 @@ namespace {
 // The shared work budget bounds total analysis; this also bounds C++ recursion.
 constexpr size_t MaxCalleeDepth = 16;
 
-using Key = std::tuple<VnodeSpace, uint64_t, uint16_t>;
-Key key(const NdVar &V) { return {V.Space, V.Offset, V.Size}; }
-
-struct State {
-  std::map<Key, int64_t> Values;
-  std::map<int64_t, int64_t> Spills;
-  bool operator==(const State &) const = default;
-
-  std::optional<int64_t> get(const NdVar &V) const {
-    if (V.Size != 8 || (!V.isReg() && !V.isTemp()))
-      return std::nullopt;
-    const auto It = Values.find(key(V));
-    return It == Values.end() ? std::nullopt
-                              : std::optional<int64_t>{It->second};
-  }
-
-  void dropTemporaries() {
-    std::erase_if(Values, [](const auto &V) {
-      return std::get<0>(V.first) == VnodeSpace::TEMP;
-    });
-  }
-
-  void intersect(const State &Other) {
-    const auto Missing = [](const auto &Map, const auto &Item) {
-      const auto It = Map.find(Item.first);
-      return It == Map.end() || It->second != Item.second;
-    };
-    std::erase_if(Values,
-                  [&](const auto &V) { return Missing(Other.Values, V); });
-    std::erase_if(Spills,
-                  [&](const auto &V) { return Missing(Other.Spills, V); });
-  }
-
-  void invalidateMemory(int64_t Start, int64_t End) {
-    std::erase_if(Spills, [&](const auto &S) {
-      int64_t Limit = 0;
-      return llvm::AddOverflow(S.first, int64_t{8}, Limit) ||
-             (Start < Limit && S.first < End);
-    });
-  }
-};
+using seh_frame::Key;
+using seh_frame::key;
+using seh_frame::State;
+using seh_frame::Value;
 
 bool consume(size_t &Remaining, size_t Amount = 1) {
   if (Amount > Remaining) {
@@ -187,6 +152,8 @@ struct CallContext {
   std::set<va_t> Dependencies;
   std::set<va_t> ActiveFunctions;
   std::set<int64_t> ReturnSlots;
+  const LowSEHRuntimeMemory *RuntimeMemory = nullptr;
+  bool UsesRuntimeMemory = false;
 
   bool overlapsReturnPC(int64_t Begin, int64_t End) const {
     return llvm::any_of(ReturnSlots, [&](int64_t Slot) {
@@ -219,7 +186,8 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
   }
   va_t Instruction = InvalidVA;
   for (size_t I = 0; I < Block.Ops.size(); ++I) {
-    if (!consume(Remaining, S.Values.size() + S.Spills.size() + 1))
+    if (!consume(Remaining, S.Values.size() + S.Spills.size() +
+                                S.InvalidatedImportSlots.size() + 1))
       return false;
     const LowOp &Op = Block.Ops[I];
     if (Op.Opcode >= NdOp::_COUNT || Op.NumInputs > std::size(Op.Inputs) ||
@@ -266,13 +234,31 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
             Calls->Dependencies.insert(It->first);
         }
       }
+      if (!Returned && Calls && Calls->RuntimeMemory) {
+        if (!consume(Remaining, Calls->ReturnSlots.size() + 1))
+          return false;
+        Returned = seh_frame::transferRuntimeMemory(
+            Op, S, TRI, *Calls->RuntimeMemory, Calls->ReturnSlots);
+        Calls->UsesRuntimeMemory |= Returned.has_value();
+      }
       if (ReturnSlot && !Returned)
         return false;
-      // Only the inspected body's actual stores may preserve a saved slot.
-      // A neighbouring pointer passed to an opaque callee has no extent.
+      // Inspected stores or an authenticated runtime invocation own saved
+      // cells. A neighbouring pointer passed to an opaque callee has no extent.
       State Preserved;
+      Preserved.InvalidatedImportSlots = S.InvalidatedImportSlots;
+      Preserved.EscapedFrame = S.EscapedFrame || !Returned;
+      if (Returned)
+        Preserved.EscapedFrame |= Returned->EscapedFrame;
       if (Returned) {
+        Preserved.InvalidatedImportSlots.insert(
+            Returned->InvalidatedImportSlots.begin(),
+            Returned->InvalidatedImportSlots.end());
         Preserved.Spills = std::move(Returned->Spills);
+        const auto ReturnKey = key(NdVar::reg(TRI.IntReturnReg, 8));
+        if (auto It = Returned->Values.find(ReturnKey);
+            It != Returned->Values.end())
+          Preserved.Values.emplace(*It);
         for (const auto &[K, Value] : S.Values) {
           const auto &[Space, Offset, Size] = K;
           const auto AtReturn = Returned->Values.find(K);
@@ -289,7 +275,7 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
                              Op.Output.Offset < SP.Offset + SP.Size &&
                              SP.Offset < Op.Output.Offset + Op.Output.Size;
       if (CurrentSP && Op.Opcode != NdOp::INTRINSIC && !DefinesSP)
-        S.Values[key(SP)] = *CurrentSP;
+        S.Values[key(SP)] = Value::frame(*CurrentSP);
       continue;
     }
     if (Op.Opcode == NdOp::STORE) {
@@ -298,13 +284,32 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
         return true;
       }
       const auto Address = S.get(Op.Inputs[0]);
-      const auto Value = S.get(Op.Inputs[1]);
+      const auto StoredValue = S.value(Op.Inputs[1]);
       int64_t End = 0;
       if (!Address || !Op.Inputs[1].Size ||
           llvm::AddOverflow(*Address, int64_t{Op.Inputs[1].Size}, End)) {
+        const auto ImageAddress = S.constant(Op.Inputs[0]);
+        if (Calls && Calls->RuntimeMemory && ImageAddress &&
+            seh_frame::imageStoreIsDisjoint(*Calls->RuntimeMemory,
+                                            *ImageAddress, Op.Inputs[1].Size)) {
+          Calls->UsesRuntimeMemory = true;
+          if (!consume(Remaining, Calls->RuntimeMemory->calls().size() + 1))
+            return false;
+          for (const auto &[Identity, Binding] : Calls->RuntimeMemory->calls())
+            if (*ImageAddress < Binding.IATAddress + 8 &&
+                Binding.IATAddress < *ImageAddress + Op.Inputs[1].Size)
+              S.InvalidatedImportSlots.insert(Binding.IATAddress);
+          // Unsupported arithmetic or a partial pointer carrier loses the
+          // exact value, not its possible alias. Exporting unknown bits must
+          // not restore privacy merely because no Frame fact remains.
+          S.EscapedFrame |=
+              !StoredValue || StoredValue->Identity == Value::Kind::Frame;
+          continue;
+        }
         if (ReturnSlot)
           return false; // It may overwrite this invocation's return PC.
         S.Spills.clear();
+        S.EscapedFrame = true;
         continue;
       }
       if (ReturnSlot &&
@@ -312,8 +317,8 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
            Calls->overlapsReturnPC(*Address, End)))
         return false;
       S.invalidateMemory(*Address, End);
-      if (Value && Op.Inputs[1].Size == 8)
-        S.Spills[*Address] = *Value;
+      if (StoredValue && Op.Inputs[1].Size == 8)
+        S.Spills[*Address] = *StoredValue;
       continue;
     }
     if (Op.Opcode == NdOp::ATOMIC_XCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
@@ -321,37 +326,59 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
       if (ReturnSlot)
         return false;
       S.Spills.clear();
+      S.EscapedFrame = true;
     }
-    std::optional<int64_t> Value;
-    if (Op.Output.Size == 8 && Op.NumInputs == 1 && Op.Opcode == NdOp::COPY)
-      Value = S.get(Op.Inputs[0]);
-    else if (Op.Output.Size == 8 && Op.NumInputs == 2 &&
-             (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
-             Op.Inputs[1].isConst() && Op.Inputs[1].Size == 8) {
-      if (auto Base = S.get(Op.Inputs[0])) {
-        const int64_t Delta = static_cast<int64_t>(Op.Inputs[1].Offset);
-        int64_t Sum = 0;
-        const bool Overflow = Op.Opcode == NdOp::INT_ADD
-                                  ? llvm::AddOverflow(*Base, Delta, Sum)
-                                  : llvm::SubOverflow(*Base, Delta, Sum);
-        if (!Overflow)
-          Value = Sum;
+    std::optional<Value> Fact;
+    if (auto Bits = lowScalarConstantResult(
+            Op, [&](const NdVar &V) { return S.constant(V); }))
+      Fact = Value::constant(*Bits);
+    else if (Op.NumInputs == 1 && Op.Opcode == NdOp::COPY &&
+             Op.Output.Size == Op.Inputs[0].Size)
+      Fact = S.value(Op.Inputs[0]);
+    else if (Op.NumInputs == 2 &&
+             (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB)) {
+      const auto DeltaBits = S.constant(Op.Inputs[1]);
+      if (Op.Output.Size == 8 && Op.Inputs[1].Size == 8 && DeltaBits) {
+        if (auto Base = S.get(Op.Inputs[0])) {
+          const int64_t Delta = static_cast<int64_t>(*DeltaBits);
+          int64_t Sum = 0;
+          const bool Overflow = Op.Opcode == NdOp::INT_ADD
+                                    ? llvm::AddOverflow(*Base, Delta, Sum)
+                                    : llvm::SubOverflow(*Base, Delta, Sum);
+          if (!Overflow)
+            Fact = Value::frame(Sum);
+        }
       }
     } else if (Op.Output.Size == 8 && Op.NumInputs == 1 &&
                Op.Opcode == NdOp::LOAD) {
-      if (auto Address = S.get(Op.Inputs[0]))
+      if (auto Address = S.get(Op.Inputs[0])) {
         if (auto It = S.Spills.find(*Address); It != S.Spills.end())
-          Value = It->second;
+          Fact = It->second;
+      } else if (Calls && Calls->RuntimeMemory) {
+        const auto Address = S.constant(Op.Inputs[0]);
+        if (Address && !S.InvalidatedImportSlots.count(*Address) &&
+            Calls->RuntimeMemory->calls().count({*Address, true})) {
+          Fact = Value{Value::Kind::ImportTarget, *Address};
+          Calls->UsesRuntimeMemory = true;
+        }
+      }
     }
+    if (Fact && (!Op.Output.Size || Op.Output.Size > 8))
+      Fact.reset();
+    if (Fact && Fact->Identity == Value::Kind::Constant)
+      Fact->Bits &= UINT64_MAX >> ((8 - Op.Output.Size) * 8);
     if (!Op.Output.Size)
       continue;
     if (Op.Output.Space == SP.Space && Op.Output.Offset < SP.Offset + SP.Size &&
         SP.Offset < Op.Output.Offset + Op.Output.Size) {
       const auto Before = S.get(SP);
-      if (!Value || !Before || Op.Output != SP)
+      const auto Offset = Fact && Fact->Identity == Value::Kind::Frame
+                              ? std::optional<int64_t>{int64_t(Fact->Bits)}
+                              : std::nullopt;
+      if (!Offset || !Before || Op.Output != SP)
         S.Spills.clear();
-      else if (*Before < *Value)
-        S.invalidateMemory(*Before, *Value);
+      else if (*Before < *Offset)
+        S.invalidateMemory(*Before, *Offset);
     }
     std::erase_if(S.Values, [&](const auto &V) {
       const auto &[Space, Offset, Size] = V.first;
@@ -359,8 +386,13 @@ bool transfer(const LowBlock &Block, State &S, const TargetRegInfo &TRI,
              Offset < Op.Output.Offset + Op.Output.Size &&
              Op.Output.Offset < Offset + Size;
     });
-    if (Value)
-      S.Values[key(Op.Output)] = *Value;
+    if (Fact) {
+      S.Values[key(Op.Output)] = *Fact;
+      if (Fact->Identity == Value::Kind::Constant && Op.Output.isReg() &&
+          Op.Output.Size == 4 &&
+          TRI.writeZeroExtends(Op.Output.Offset, Op.Output.Size))
+        S.Values[key(NdVar::reg(Op.Output.Offset, 8))] = *Fact;
+    }
   }
   S.dropTemporaries();
   return true;
@@ -391,7 +423,7 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
     return std::nullopt;
   Calls.ActiveFunctions.insert(F.Entry);
   Calls.ReturnSlots.insert(Slot);
-  auto RestoreInvocation = llvm::make_scope_exit([&] {
+  llvm::scope_exit RestoreInvocation([&] {
     Calls.ActiveFunctions.erase(F.Entry);
     Calls.ReturnSlots.erase(Slot);
   });
@@ -417,7 +449,7 @@ std::optional<State> transferCallee(const LowFunc &F, const State &Caller,
         return std::nullopt;
   State Initial = Caller;
   Initial.dropTemporaries();
-  Initial.Values[key(SP)] = Slot;
+  Initial.Values[key(SP)] = Value::frame(Slot);
   // The callee owns new storage below the caller SP, including the pushed PC.
   // Reusing stale values from a previous invocation would prove false loads.
   std::erase_if(Initial.Spills,
@@ -652,7 +684,8 @@ std::string lowSEHFrameDependencyDigest(const LowFunc &F) {
 
 LowSEHFrameProof
 proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
-                  const std::map<va_t, const LowFunc *> *Callees) {
+                  const std::map<va_t, const LowFunc *> *Callees,
+                  const LowSEHRuntimeMemory *RuntimeMemory) {
   if (TRI.TheArch != Arch::X64 || TRI.PointerSize != 8 ||
       TRI.Win64ParamRegs.empty() || F.Blocks.empty() ||
       !F.hasCompleteLiftCoverage() || !F.FunctionTemporaries.empty())
@@ -660,6 +693,14 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
   const size_t N = F.Blocks.size();
   CallContext Calls;
   Calls.Callees = Callees;
+  Calls.RuntimeMemory = RuntimeMemory;
+  // The entry frame is anchored at its caller's pushed return address. Runtime
+  // home areas must not overwrite that live slot, just as nested invocations
+  // must preserve each return address introduced by transferCallee.
+  if (TRI.CallPushesReturnAddress)
+    Calls.ReturnSlots.insert(0);
+  if (RuntimeMemory && lowSEHRuntimeMemoryDigest(*RuntimeMemory).empty())
+    return {};
   std::map<int, size_t> Positions;
   std::set<va_t> Starts;
   for (size_t I = 0; I < N; ++I)
@@ -701,7 +742,11 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
     if (!F.SEHLocalUnwindContinuations.empty()) {
       if (!chargeFrameMetadata(F, Remaining))
         return {};
-      FrameDigest = lowSEHFrameDependencyDigest(F, FrameDependencies, Callees);
+      FrameDigest = lowSEHFrameDependencyDigest(
+          F, FrameDependencies, Callees,
+          F.SEHLocalUnwindContinuations.front().UsesRuntimeMemory
+              ? RuntimeMemory
+              : nullptr);
     }
     std::vector<va_t> CheckedHandlers;
     for (const auto &Block : F.Blocks) {
@@ -778,9 +823,13 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
     if (Roots[I]) {
       Input.emplace();
       if (Block.StartAddr == F.Entry && Block.ExceptionalPreds.empty())
-        Input->Values[key(NdVar::reg(TRI.StackPointer, 8))] = 0;
-      else if (auto It = HandlerSP.find(Block.StartAddr); It != HandlerSP.end())
-        Input->Values[key(NdVar::reg(TRI.StackPointer, 8))] = It->second;
+        Input->Values[key(NdVar::reg(TRI.StackPointer, 8))] = Value::frame(0);
+      else {
+        Input->EscapedFrame = true;
+        if (auto It = HandlerSP.find(Block.StartAddr); It != HandlerSP.end())
+          Input->Values[key(NdVar::reg(TRI.StackPointer, 8))] =
+              Value::frame(It->second);
+      }
     }
     for (int Id : Block.Preds) {
       const size_t P = Positions.at(Id);
@@ -831,8 +880,10 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
     }
     Result.CalleeDependencies.assign(Calls.Dependencies.begin(),
                                      Calls.Dependencies.end());
-    Result.DependencyDigest =
-        lowSEHFrameDependencyDigest(F, Result.CalleeDependencies, Callees);
+    Result.UsesRuntimeMemory = Calls.UsesRuntimeMemory;
+    Result.DependencyDigest = lowSEHFrameDependencyDigest(
+        F, Result.CalleeDependencies, Callees,
+        Result.UsesRuntimeMemory ? RuntimeMemory : nullptr);
     if (Result.DependencyDigest.empty())
       return {};
   }
@@ -841,15 +892,23 @@ proveLowSEHFrames(const LowFunc &F, const TargetRegInfo &TRI, size_t &Remaining,
 
 std::string
 lowSEHFrameDependencyDigest(const LowFunc &F, llvm::ArrayRef<va_t> Dependencies,
-                            const std::map<va_t, const LowFunc *> *Callees) {
+                            const std::map<va_t, const LowFunc *> *Callees,
+                            const LowSEHRuntimeMemory *RuntimeMemory) {
   const auto CallerDigest = lowSEHFrameDependencyDigest(F);
-  if (Dependencies.empty())
+  if (Dependencies.empty() && !RuntimeMemory)
     return CallerDigest;
-  if (!Callees)
+  if (!Dependencies.empty() && !Callees)
     return {};
   llvm::SHA256 Hash;
   Hash.update("neverd-low-seh-frame-callees-v1");
   Hash.update(CallerDigest);
+  if (RuntimeMemory) {
+    const auto Digest = lowSEHRuntimeMemoryDigest(*RuntimeMemory);
+    if (Digest.empty())
+      return {};
+    Hash.update("runtime-memory");
+    Hash.update(Digest);
+  }
   std::set<va_t> Seen;
   for (va_t Entry : Dependencies) {
     const auto It = Callees->find(Entry);

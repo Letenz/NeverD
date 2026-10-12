@@ -136,7 +136,11 @@ private:
   std::optional<FrameValue> transferLocalUnwind(size_t I, Domain &After,
                                                 const LowOp &Op,
                                                 BlockFacts &Facts);
-  bool runLocalFinally(va_t Target, FrameState &Parent);
+  bool transferOrdinaryFinally(size_t I, Domain &After, const LowOp &Op,
+                               BlockFacts &Facts,
+                               std::optional<FrameValue> &ReturnedSP);
+  bool runLocalFinally(va_t Target, FrameState &Parent,
+                       bool OrdinaryInvocation = false);
   void
   recordCatchReturn(size_t I, const Domain &After, const LowOp &Op,
                     const FrameTransfer &Transfer, const BlockFacts &Facts,
@@ -201,6 +205,7 @@ private:
   std::vector<bool> InvalidBlocks;
   std::map<va_t, RegistrationTryLevelStore> Stores;
   std::set<int32_t> AllLevels;
+  std::set<va_t> FinallyTargets;
   std::vector<std::map<SEHActivation, ActivationState>> States;
   std::vector<size_t> Order;
   std::set<std::tuple<size_t, size_t, SEHActivation>> Work;

@@ -144,6 +144,9 @@ bool RegistrationStateSolver::initialize() {
     // The frame sentinel remains a valid state even if installation starts
     // directly in a checked active scope.
     AllLevels.insert(registrationOutsideTryLevel(EH4));
+    for (const auto &Scope : Chain.Scopes)
+      if (Scope.IsFinally)
+        FinallyTargets.insert(Scope.HandlerVA);
   }
   AllLevels.insert(*Chain.SeededTryLevel);
   for (size_t I = 0; I < StateCount; ++I)

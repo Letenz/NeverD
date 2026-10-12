@@ -1,3 +1,9 @@
+add_neverd_unittest(NeverDSEHRuntimeMemoryTests
+  eh/SEHRuntimeMemoryTests.cpp
+  LINK_COMPONENTS Pipeline)
+target_include_directories(NeverDSEHRuntimeMemoryTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/pipeline)
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader
@@ -275,6 +281,7 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjectExternTests.cpp
   core/HighCReturnJoinTests.cpp
   eh/RegistrationTryLevelTests.cpp
+  eh/SEHRuntimeMemoryTests.cpp
   format/COFFARMFormatTests.cpp
   format/COFFARMFormatFragmentTests.cpp
   format/COFFARMFormatMalformedTests.cpp
@@ -1308,6 +1315,7 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationOrdinaryFinallyTests.cpp
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationCxxSearchTests.cpp

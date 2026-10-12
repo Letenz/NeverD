@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineLowIRDetail.h"
+#include "PipelineSEHRuntimeMemory.h"
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Limits.h"
@@ -584,6 +585,7 @@ bool collectLowAddressUses(
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const std::vector<TargetRegisterRange> PreservedRanges =
       TRI.callPreservedRanges(Img.abiFormat());
+  const auto SEHRuntimeMemory = collectLowSEHRuntimeMemory(Img, Funcs);
   std::map<va_t, const LowFunc *> SEHCallees;
   if (LocalUnwind)
     for (const auto &Func : Funcs)
@@ -1564,7 +1566,8 @@ bool collectLowAddressUses(
                         // or replace a checked runtime-activation coordinate.
                         if (!SEHFrameProof)
                           SEHFrameProof = proveLowSEHFrames(
-                              Func, TRI, SEHFrameWorkRemaining, &SEHCallees);
+                              Func, TRI, SEHFrameWorkRemaining, &SEHCallees,
+                              &SEHRuntimeMemory);
                         const auto Proof =
                             SEHFrameProof->Calls.find({Op.Addr, Op.Seq});
                         if (Proof != SEHFrameProof->Calls.end())
@@ -1572,7 +1575,8 @@ bool collectLowAddressUses(
                               .push_back({Target, Op.Addr, Op.Seq, CalleeVA,
                                           Proof->second,
                                           SEHFrameProof->DependencyDigest,
-                                          SEHFrameProof->CalleeDependencies});
+                                          SEHFrameProof->CalleeDependencies,
+                                          SEHFrameProof->UsesRuntimeMemory});
                       }
                     }
                   }

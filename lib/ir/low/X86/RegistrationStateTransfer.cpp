@@ -396,13 +396,14 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     }
     std::optional<FrameValue> CallSP;
     bool CheckedCall = false;
-    if (auto Call = transferCall(I, After, Op, Facts)) {
-      CheckedCall = true;
-      CallSP = Call->StackPointer;
-      NoReturnAtExit = Call->DoesNotReturn;
-      if (NoReturnAtExit)
-        NoReturnEnd = Call->EndAddress;
-    }
+    if (!transferOrdinaryFinally(I, After, Op, Facts, CallSP))
+      if (auto Call = transferCall(I, After, Op, Facts)) {
+        CheckedCall = true;
+        CallSP = Call->StackPointer;
+        NoReturnAtExit = Call->DoesNotReturn;
+        if (NoReturnAtExit)
+          NoReturnEnd = Call->EndAddress;
+      }
     if (auto SP = transferLocalUnwind(I, After, Op, Facts))
       CallSP = *SP;
     // The CFG's exact instruction already owns the no-return decision.

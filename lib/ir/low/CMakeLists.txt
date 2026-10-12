@@ -1,9 +1,12 @@
 add_neverd_component_library(NeverDIRLowValidation
   LowIR.cpp
+  LowScalarConstant.cpp
   LowNoReturn.cpp
   LowPreservedState.cpp
   LowUndefinedEffects.cpp
   SEHFrameProof.cpp
+  SEHFrameRuntimeMemory.cpp
+  SEHRuntimeMemory.cpp
   SEHEstablisherFrame.cpp
   X87PartialRemainder.cpp
 
@@ -21,6 +24,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateContracts.cpp
   X86/RegistrationStateCookies.cpp
   X86/RegistrationStateDispatch.cpp
+  X86/RegistrationStateFinallyCall.cpp
   X86/RegistrationStateLocalUnwind.cpp
   X86/RegistrationStateOccurrences.cpp
   X86/RegistrationStateOrder.cpp
@@ -31,10 +35,14 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateThrow.cpp
   X86/RegistrationStateTransfer.cpp
   X86/RegistrationStateUnwind.cpp
+  X86/RegistrationFinallyFrame.cpp
   X86/RegistrationFrame.cpp
   X86/RegistrationFrameMemory.cpp
   X86/RegistrationFrameCallback.cpp
   X86/RegistrationFrameRealignment.cpp
+
+  LINK_COMPONENTS
+  IRLowValidation
 )
 
 add_neverd_component_library(NeverDIRLow

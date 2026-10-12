@@ -649,9 +649,15 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
               : lowSEHFrameDependencyDigest(
                     Low,
                     Low.SEHLocalUnwindContinuations.front().CalleeDependencies,
-                    SEHFrameCallees);
+                    SEHFrameCallees,
+                    Low.SEHLocalUnwindContinuations.front().UsesRuntimeMemory
+                        ? SEHRuntimeMemory
+                        : nullptr);
       for (const auto &Evidence : Low.SEHLocalUnwindContinuations)
         if (LocalUnwindDigest.empty() ||
+            (Evidence.UsesRuntimeMemory && !SEHRuntimeMemory) ||
+            Evidence.UsesRuntimeMemory !=
+                Low.SEHLocalUnwindContinuations.front().UsesRuntimeMemory ||
             Evidence.CalleeDependencies !=
                 Low.SEHLocalUnwindContinuations.front().CalleeDependencies)
           throw LowToMedConversionError(

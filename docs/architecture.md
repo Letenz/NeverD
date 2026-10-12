@@ -5068,4 +5068,27 @@ The LLVM emitter reuses completed default-budget frame-slot queries only within 
 
 The `_local_unwind2` bound is a numeric operand, not a scope-table index. Any constant 32-bit unsigned bound can prove a zero-step exit; only actual current levels index the table. Dynamic bounds and invalid current levels remain unproved.
 
+`PipelineSEHRuntimeMemory` authenticates exact PE import-directory bindings and
+immutable scalar printf formats. `ReadOnlyBytes` owns complete, unique storage
+and fixup checks; ABI declarations supply no memory authority. The shared LowIR
+frame interpreter checks actual arguments, active return-PC slots (including
+the parent entry PC) and the
+Win64 home area before applying CRT effects. Explicit IAT writes withdraw
+future bindings, and unknown exported bits retain possible frame escape.
+Import veneers require their immutable indirect-jump bytes and exact IAT
+displacement; an address cache supplies no callable authority.
+Receipts bind the consulted runtime catalog and inspected callee bodies; SSA
+rechecks the same dependencies. Writable formats and opaque calls retain their
+refusal, so this contract does not yet close the x64 xcpt4 case.
+
+`RegistrationStateFinallyCall` checks ordinary calls into owned PE32 finally
+bodies. `RegistrationFinallyFrame` shares the returning invocation interpreter
+with local-unwind analysis. An independent source-byte check authenticates
+near-return encodings. The interpreter follows actual arguments, every ordinary return,
+private stack allocation and parent-frame writes, including changes to nominally
+preserved registers. This establishes state flow without granting a callable
+native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
+resumption still require a separate invocation-exit contract; the PE32 xcpt4
+case remains incomplete.
+
 `RegistrationScopeGraph` shares the EH3/EH4 index and frame-sentinel rules between COFF parsing and LowIR. State analysis revalidates initial levels, backward enclosing links, handler presence and filter/finally roles before publishing facts. An initially active scope retains its frame sentinel; an empty table admits only that sentinel. Instruction bytes, executable ownership and frame installation retain their separate proofs. Scope handler and filter addresses must also fit the PE32 pointer width.
