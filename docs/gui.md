@@ -105,6 +105,10 @@ A file dragged over the dialog shows that a drop opens it. **Display at
 startup** decides whether the next start shows it again; **File → Quick start**
 shows it any time. Behind it is the default desktop:
 
+- on Linux, the title bar the window draws itself, as Visual Studio Code
+  does: the application icon, the menus, a command center that names the open
+  file and opens the command palette (**Ctrl+Shift+P**), and the minimize,
+  maximize and close buttons;
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
   and external symbols, with the current position; click or drag to navigate;
@@ -410,7 +414,20 @@ closes.
 Without a remembered size the window opens centered at three quarters of the
 screen's width and four fifths of its height. GNOME maximizes a window that
 opens at nearly the size of the screen, and a maximized window does not resize
-from its edges; IDA opens that way. Under Wayland GNOME draws no frame and the
+from its edges; IDA opens that way.
+
+On Linux the workbench draws its own frame. Drag the title bar's empty part
+to move the window, and double-click it to maximize or restore the window.
+The title bar dims while the window is inactive, and full screen hides its
+icon and window buttons. The window resizes from every edge and corner,
+starting four pixels inside its visible edge. Under Wayland GNOME draws no
+shadow for such a window, so the window draws a ten-pixel shadow of its own,
+and that band resizes the window too, as GNOME's own windows allow; under X11
+GNOME draws the shadow. To keep the window manager's frame instead, set
+`nativeTitleBar=true` in the `[ui]` group of
+`~/.config/NeverSight/NeverD.conf`; the workbench reads it at startup.
+
+With the window manager's frame under Wayland, GNOME draws no frame and the
 one Qt draws resizes only from a few pixels outside the visible edge, so the
 last four pixels inside the left, right and bottom edges resize the window
 too, under the matching cursor. When Qt updates the size limits of a maximized
