@@ -1059,6 +1059,20 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   // Names this walk assigns a value that is no frame address: one derived
   // from an alias a later assignment proved ambiguous no longer is one.
   std::set<std::string> NotFrameAddresses;
+  std::function<bool(const HighExpr &, unsigned)> ReadsNotFrame =
+      [&](const HighExpr &E, unsigned Depth) {
+        if (NotFrameAddresses.empty() ||
+            Depth > limits::kMaxIntegerViewUnwrapDepth * 4)
+          return Depth > limits::kMaxIntegerViewUnwrapDepth * 4;
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            NotFrameAddresses.count(varName(E.Var)))
+          return true;
+        bool Reads = false;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          Reads = Reads || (Child && ReadsNotFrame(*Child, Depth + 1));
+        });
+        return Reads;
+      };
   std::function<void(const std::vector<HighStmt> &, bool, bool)> WalkAliases;
   WalkAliases = [&](const std::vector<HighStmt> &Stmts, bool InHandler,
                     bool InCleanup) {
@@ -1070,8 +1084,17 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
           (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
           S.Dst->Var.Kind != MedVar::Param) {
         const std::string Name = varName(S.Dst->Var);
+        // A value read from a name assigned a non-frame value anywhere is no
+        // frame address either, though the alias that name had when first
+        // seen still gives it a displacement (`v10 = v9 - 4` with v9 a loop
+        // cursor whose first value is `frame_base - 20`).
+        const bool FromNotFrame =
+            NotFrameAddresses.count(Name) || ReadsNotFrame(*S.Val, 0);
         if (!Name.empty() && !InCleanup) {
-          if (const auto Disp = frameDisplacement(*S.Val)) {
+          if (FromNotFrame) {
+            FrameAliases.erase(Name);
+            NotFrameAddresses.insert(Name);
+          } else if (const auto Disp = frameDisplacement(*S.Val)) {
             if (AmbiguousFrameAliases.count(Name)) {
               FrameAliases.erase(Name);
             } else if (auto It = FrameAliases.find(Name);
@@ -1107,15 +1130,16 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   auto CollectAliases = [&]() {
     FrameAliases.clear();
     AmbiguousFrameAliases.clear();
+    NotFrameAddresses.clear();
     bool Grew = true;
     unsigned Guard = 0;
     while (Grew && Guard++ < limits::kMaxFrameAliasFixedPoint) {
       const auto Before = FrameAliases;
-      NotFrameAddresses.clear();
+      const size_t NotBefore = NotFrameAddresses.size();
       WalkAliases(Func.Body, false, false);
       for (const std::string &Name : NotFrameAddresses)
         FrameAliases.erase(Name);
-      Grew = FrameAliases != Before;
+      Grew = FrameAliases != Before || NotFrameAddresses.size() != NotBefore;
     }
   };
   CollectAliases();

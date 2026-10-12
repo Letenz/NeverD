@@ -105,3 +105,32 @@ int satb2(int a, int b) {
                             "satb", {"satb", "satb2"},
                             {0, 1, -1, 7, 0x12345678});
 }
+
+// The cursors start at frame addresses and move by a select each iteration.
+// `v10 = v9 - 4` once took v9's first value as a frame alias, so the loop
+// test compared `frame_base - 24`, the first iteration's address, with the
+// other cursor every time.
+TEST_F(ARM32_ObjectImmediate, ACursorFromAFrameAddressKeepsMoving) {
+  expectHighCRunsLikeSource({"-target", "armv7-linux-gnueabi",
+                             "-mcpu=cortex-a15", "-mfloat-abi=softfp"},
+                            R"C(
+int ptrdiff(int a) {
+  unsigned buf[40];
+  for (int i = 0; i < 40; i++)
+    buf[i] = (unsigned)a + (unsigned)i * 7u;
+  unsigned *lo = buf, *hi = buf + 39;
+  unsigned h = 0;
+  while (lo < hi) {
+    long d = hi - lo;
+    h += (unsigned)d * 131u + *lo + *hi;
+    if (*lo < *hi)
+      lo++;
+    else
+      hi--;
+    h ^= (unsigned)(hi - lo);
+  }
+  return (int)h;
+}
+)C",
+                            "ptrdiff", {"ptrdiff"}, {0, 1, -1, 9, 0x12345678});
+}
