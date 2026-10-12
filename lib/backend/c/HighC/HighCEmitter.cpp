@@ -2230,6 +2230,40 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     ImageObject &Obj = ImageObjects[Object->first];
     Obj.IndexedBytes = std::max(Obj.IndexedBytes, Object->second);
   };
+  // A relative table holds the offsets of its targets from its own start
+  // (clang's `.rel` lookup tables), so the code reaches each target through
+  // the table's address: the table's object spans the targets.  Only offsets
+  // the assembler fixed, to sized objects after the table in its section,
+  // say where the targets are.
+  auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes) {
+    const auto Object = sizedObjectAt(Table);
+    const Section *Sec = Opts.Image->getSectionFor(Table);
+    if (!Object || Object->first != Table || !Sec ||
+        (EntryBytes != 4 && EntryBytes != 8) ||
+        Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+      return;
+    va_t End = Table + Object->second;
+    for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
+         Slot += EntryBytes) {
+      const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
+      if (!Bytes || Opts.Image->hasRelocationProvenanceAt(Slot))
+        return;
+      const int64_t Offset =
+          EntryBytes == 4 ? static_cast<int64_t>(
+                                static_cast<int32_t>(readLE<uint32_t>(Bytes)))
+                          : static_cast<int64_t>(readLE<uint64_t>(Bytes));
+      if (Offset < static_cast<int64_t>(Object->second))
+        return;
+      const va_t Target = Table + static_cast<va_t>(Offset);
+      const auto TargetObject = sizedObjectAt(Target);
+      if (!TargetObject || TargetObject->first != Target ||
+          Target + TargetObject->second > Sec->VA + Sec->Size)
+        return;
+      End = std::max<va_t>(End, Target + TargetObject->second);
+    }
+    ImageObject &Obj = ImageObjects[Table];
+    Obj.IndexedBytes = std::max<uint64_t>(Obj.IndexedBytes, End - Table);
+  };
   // The constant addresses the code reads or writes at, as opposed to those
   // it uses as values.
   std::set<const HighExpr *> AccessAddresses;
@@ -2335,7 +2369,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if ((E.Kind == ExprKind::Load || E.Kind == ExprKind::Store) &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         !E.Operands.empty() && E.Operands[0])
-      if (const HighExpr *Base = indexedImageBase(*E.Operands[0]))
+      if (const HighExpr *Base = indexedImageBase(*E.Operands[0])) {
         NoteWhole(Base->ConstVal,
                   E.Kind == ExprKind::Load
                       ? E.Type
@@ -2343,6 +2377,30 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                              ? E.Operands[1]->Type
                              : nullptr),
                   E.Kind == ExprKind::Store);
+        // `*(T *)(table + table[i])`: the offset the code adds to the table
+        // is an entry of the same table.
+        std::function<void(const HighExpr &, unsigned)> Terms =
+            [&](const HighExpr &Term, unsigned Depth) {
+              const HighExpr *Inner = peelIntegerViewOps(&Term);
+              if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
+                return;
+              if (Inner->Kind == ExprKind::BinOp &&
+                  Inner->Op == NdOp::INT_ADD && Inner->Operands.size() == 2) {
+                for (const ExprPtr &Operand : Inner->Operands)
+                  if (Operand)
+                    Terms(*Operand, Depth + 1);
+                return;
+              }
+              if (Inner->Kind != ExprKind::Load || !Inner->Type ||
+                  Inner->Operands.empty() || !Inner->Operands[0])
+                return;
+              if (const HighExpr *Entries =
+                      indexedImageBase(*Inner->Operands[0]);
+                  Entries && Entries->ConstVal == Base->ConstVal)
+                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size);
+            };
+        Terms(*E.Operands[0], 0);
+      }
     if (E.Kind == ExprKind::Store &&
         E.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
         E.Operands.size() >= 2 && E.Operands[0]) {
@@ -2368,6 +2426,11 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         NoteAccessAddress(E.Operands[0].get());
         if (auto VA = constAddress(*E.Operands[0]))
           noteImageObject(*VA, NdType::makeInt(Bytes, false), false, true);
+        // Through a base the code adds (i386 PIC code adds the GOT register
+        // to the constant's offset), the read is of the object there, as a
+        // load at a variable offset is.
+        else if (const HighExpr *Base = indexedImageBase(*E.Operands[0]))
+          NoteWhole(Base->ConstVal, NdType::makeInt(Bytes, false), false);
       }
     // A read-modify-write reads and writes the object it addresses.
     if (E.Kind == ExprKind::BinOp &&
@@ -2433,6 +2496,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Visit(*E);
       });
     });
+
+  // A table the code keeps only the address of, through a variable it
+  // indexes, may be relative all the same: every entry an offset to a sized
+  // object after it.
+  for (auto &[Addr, Obj] : ImageObjects)
+    if (Obj.AddressTaken)
+      NoteRelativeTargets(Addr, 4);
 
   // A pointer slot the image relocates holds an address, not a number: a
   // table of functions or of data the code reaches through it.  Each target
@@ -2929,6 +2999,32 @@ HighCWriter::imageObjectInitializer(va_t Addr, const ImageObject &Obj) {
       return "(" + typeToC(Type) + ")(" + Value + ")";
     return "__builtin_bit_cast(" + typeToC(Type) + ", (unsigned __int128)(" +
            Value + "))";
+  }
+  // A wider integer, a 256- or 512-bit constant vector, is the sum of its
+  // 64-bit pieces shifted into place, a constant expression of the unsigned
+  // type whose bits its conversion keeps.
+  if (Type && Type->Kind == NdTypeKind::Int && !Type->IsEnum &&
+      Type->Size > 16 && Type->Size % 8 == 0) {
+    const uint8_t *Bytes = Opts.Image->readVA(Addr, Type->Size);
+    if (!Bytes)
+      return std::nullopt;
+    const std::string Unsigned =
+        typeToC(NdType::makeInt(Type->Size, /*Signed=*/false));
+    std::string Value;
+    for (unsigned Piece = Type->Size / 8; Piece-- > 0;) {
+      uint64_t Bits = 0;
+      for (unsigned I = 0; I < 8; ++I)
+        Bits |= static_cast<uint64_t>(Bytes[Piece * 8 + I]) << (8 * I);
+      if (!Bits)
+        continue;
+      std::string Term = "(" + Unsigned + ")0x" + llvm::utohexstr(Bits) + "ull";
+      if (Piece)
+        Term = "(" + Term + " << " + std::to_string(Piece * 64) + ")";
+      Value += (Value.empty() ? "" : " | ") + Term;
+    }
+    if (Value.empty())
+      return std::nullopt;
+    return Type->IsSigned ? "(" + typeToC(Type) + ")(" + Value + ")" : Value;
   }
   if (!Type || (Type->Size != 1 && Type->Size != 2 && Type->Size != 4 &&
                 Type->Size != 8))

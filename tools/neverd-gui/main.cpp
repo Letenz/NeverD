@@ -214,6 +214,7 @@ int main(int argc, char **argv) {
         window, session, parser.value(QStringLiteral("interaction-benchmark")),
         timeout, &app);
   }
+  gnome::boundMaximumSize(window);
   window.show();
   gnome::widenResizeEdges(window);
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {

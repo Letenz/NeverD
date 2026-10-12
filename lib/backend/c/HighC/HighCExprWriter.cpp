@@ -37,6 +37,28 @@
 namespace neverd {
 
 namespace {
+/// Whether printed C \p Text joins operands with a binary or conditional
+/// operator outside every parenthesis and bracket.  The printer spaces each
+/// such operator, and no unary one.
+bool hasTopLevelBinaryOperator(llvm::StringRef Text) {
+  static constexpr llvm::StringLiteral Operators[] = {
+      "&& ", "|| ", "== ", "!= ", "<= ", ">= ", "<< ", ">> ", "< ", "> ",
+      "+ ",  "- ",  "* ",  "/ ",  "% ",  "& ",  "| ",  "^ ",  "? ", ": "};
+  int Depth = 0;
+  for (size_t I = 0; I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (C == '(' || C == '[' || C == '{')
+      ++Depth;
+    else if (C == ')' || C == ']' || C == '}')
+      --Depth;
+    else if (C == ' ' && Depth == 0)
+      for (llvm::StringLiteral Operator : Operators)
+        if (Text.substr(I + 1).starts_with(Operator))
+          return true;
+  }
+  return false;
+}
+
 TypeRef debugParameterCarrier(TypeRef Type, Arch Architecture,
                               BinaryFormat Format) {
   // An indirect source parameter needs only a record declaration. Decide
@@ -653,8 +675,14 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         Inner->Op == NdOp::INT_SLESSEQUAL && Inner->Operands.size() == 2 &&
         IsZero(Inner->Operands[1]) && Inner->Operands[0])
       return PrintGtZero(Inner->Operands[0]);
-    if (Inner)
-      return invertCondStr(*Inner);
+    if (Inner) {
+      // The inverse is a condition of its own, `!a && !b` of `!(a || b)` or
+      // `a >= b` of `!(a < b)`: as an operand it keeps its grouping.
+      std::string Inverted = invertCondStr(*Inner);
+      if (ParentPrec > 0 && hasTopLevelBinaryOperator(Inverted))
+        Inverted = "(" + Inverted + ")";
+      return Inverted;
+    }
     return "!" + exprStr(*E.Operands[0], 99);
   }
   case NdOp::INT_ZEXT: {
