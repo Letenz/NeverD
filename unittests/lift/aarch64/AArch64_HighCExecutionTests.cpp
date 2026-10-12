@@ -275,3 +275,28 @@ long runs(long a) {
 )C",
                        "rle", {"rle", "runs"});
 }
+
+// `mov w13, #0xc0000001` is the ORR alias, whose bitmask immediate Capstone
+// gives sign-extended to 64 bits.  The W register receives its low 32, which
+// the unsigned compare with x reads; as 0xFFFFFFFFC0000001 the compare was
+// always true.
+TEST_F(AArch64_HighCExecution, AMovedBitmaskImmediateIsItsLow32Bits) {
+  expectRunsLikeSource(R"C(
+int boolsc(int a) {
+  unsigned w = (unsigned)a + 9u;
+  long long acc = 0;
+  for (int i = 0; i < 80; i++) {
+    w = w * 1664525u + 1013904223u;
+    int x = (int)w;
+    if ((x > 0 && (x & 3) == 0) || ((unsigned)x > 0xC0000000u && (x >> 5) != 0))
+      acc += (long long)x * 5;
+    else if (x < 0 && ((x ^ i) & 1))
+      acc -= x;
+    else
+      acc ^= (long long)x << 3;
+  }
+  return (int)(acc ^ (acc >> 32));
+}
+)C",
+                       "boolsc", {"boolsc"});
+}
