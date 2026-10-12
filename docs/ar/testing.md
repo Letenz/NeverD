@@ -1722,3 +1722,5 @@ guest/Python5,000,000us / quantum1024 / public10s
 يتحقق `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` من إخراج PE وقارئ DIR64 مستقل وإعادة تموضع النموذج واستبعاد سجلات التصحيح المعاد كتابتها. يرفض `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` اختلاف المصدر أو القاعدة أو الترتيب ويستبعد استبدال التنسيق حتى مع تطابق البايتات. تثبت هذه الفحوص بيانات التشخيص، لا الاستعادة الأصلية.
 
 تحتوي `NeverDNativeFinallyInputTests` بصورة مستقلة على مصفوفة مدخلات MSVC. تبقى `NeverDPipelineOutcomeTests` إلزامية على كل منصة CI ولا تعتمد على ملفات أصلية اختيارية. تبني مهمة Windows EH الهدف وتنفذه باستخدام الصور المتحقق منها. تختار CI على macOS مترجم Homebrew Clang 22 صراحة لاختبارات استبدال المصدر، بصورة مستقلة عن مترجم بناء NeverD. وتستمر في رفض طرق فحص المكدس غير المدعومة.
+
+تستخدم أهداف اختبارات MSVC الخيار `/bigobj` للسماح بعدد أكبر من أقسام COFF الناتجة عن قوالب GoogleTest وLLVM. لا تتغير ملفات تعريف المترجمات الأخرى. تتحقق اختبارات الإعداد من أمر الترجمة المولد، وتتحقق CI الأصلية على Windows من الترجمة والتنفيذ.

@@ -1605,3 +1605,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 检查 PE 输出、独立 DIR64 读取器、模型重定位及对重写调试记录的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒绝来源、基址或顺序不匹配，并排除格式化替换，即使字节相同。这些检查验证诊断元数据，不代表原生恢复成功。
 
 `NeverDNativeFinallyInputTests` 独立承载 MSVC 输入矩阵。通用 `NeverDPipelineOutcomeTests` 在所有 CI 平台仍须执行，不依赖可选原生夹具。聚焦 Windows EH 作业用已验证镜像编译并执行原生输入目标。macOS CI 为源码替换夹具显式选择 Homebrew Clang 22，与构建 NeverD 的编译器独立；不支持的替换栈探测方法仍被拒绝。
+
+MSVC 单元测试目标使用 `/bigobj`，允许 GoogleTest 和 LLVM 模板实例产生更多 COFF 节；其他编译器配置不变。配置检查核对实际生成的测试编译命令，编译和执行仍由原生 Windows CI 验证。
