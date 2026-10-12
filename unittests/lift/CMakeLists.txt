@@ -1540,6 +1540,7 @@ endif()
 # without relinking the aggregate lift suite during local RED/GREEN iterations.
 add_neverd_unittest(NeverDHighCStoreForwardingTests
   core/HighCStoreForwardingTests.cpp
+  core/HighCDefinitionIndexTests.cpp
 
   LINK_COMPONENTS
   BackendC
