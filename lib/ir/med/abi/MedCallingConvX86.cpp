@@ -738,8 +738,35 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       Func.MutableStackParamHomes.push_back({Idx, Off});
   }
 
-  for (auto &Blk : Func.Blocks)
-    for (auto &Op : Blk.Ops) {
+  // A load of more than two slots composes in temporaries numbered above
+  // every value: MedIR numbers registers, temporaries and stack values from
+  // one counter, which HighIR keys values by.
+  int NextTemp = 0;
+  const auto Observe = [&](const MedVar &V) {
+    if (!V.isConst())
+      NextTemp = std::max(NextTemp, V.Id + 1);
+  };
+  for (const auto &Parameter : Func.Params)
+    Observe(Parameter);
+  for (const auto &Blk : Func.Blocks) {
+    for (const auto &Phi : Blk.Phis) {
+      Observe(Phi.Output);
+      for (const auto &[Pred, Input] : Phi.Args)
+        Observe(Input);
+    }
+    for (const auto &Op : Blk.Ops) {
+      Observe(Op.Output);
+      for (const auto &V : Op.Inputs)
+        Observe(V);
+      for (const auto &V : Op.IntrinsicOutputs)
+        Observe(V);
+    }
+  }
+  // The compositions to insert before an op, by its block and index.
+  std::map<std::pair<size_t, size_t>, std::vector<MedOp>> Compositions;
+  for (size_t BI = 0; BI < Func.Blocks.size(); ++BI)
+    for (size_t OI = 0; OI < Func.Blocks[BI].Ops.size(); ++OI) {
+      MedOp &Op = Func.Blocks[BI].Ops[OI];
       if (Op.Opcode != NdOp::LOAD || Op.NumInputs < 1)
         continue;
       if (Op.MemoryOrdering != NdMemoryOrdering::None)
@@ -748,25 +775,54 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
         continue;
       auto Off = stackArgOffset(Op.Inputs[0]);
       if (Off) {
-        if (MutableArgOffsets.count(*Off))
+        const uint16_t Bytes = Op.Output.Size > 0 ? Op.Output.Size : 4;
+        // A load wider than a slot reads every slot it covers.
+        const unsigned Slots = Bytes > 4 && Bytes % 4 == 0 ? Bytes / 4 : 1;
+        bool Mutable = false;
+        for (unsigned K = 0; K < Slots; ++K)
+          Mutable |= MutableArgOffsets.count(*Off + 4 * K) != 0;
+        if (Mutable)
           continue; // mutable parameter home: keep as a memory load
         MedVar Param;
         Param.Kind = MedVar::Param;
         Param.Id = BaseIdx + static_cast<int>((*Off - 4) / 4);
-        Param.Size = Op.Output.Size > 0 ? Op.Output.Size : 4;
+        Param.Size = Bytes;
         Param.RegOff = kNoParamReg;
         Param.TheArch = TargetArch;
-        if (Param.Size == 8) {
-          // An eight-byte load spans two four-byte ABI parameters. Encode
-          // that composition in MedIR so both source routes retain the high
-          // word and agree about which incoming slots are actually used.
+        if (Slots > 1) {
+          // A load of several slots, an eight-byte double or a vectorized
+          // copy of four arguments, spans as many four-byte ABI parameters.
+          // Encode that composition in MedIR, each slot above the ones below
+          // it, so both source routes keep every slot and agree about which
+          // incoming slots are actually used.
           Param.Size = 4;
-          MedVar High = Param;
-          ++High.Id;
+          auto SlotParam = [&](unsigned K) {
+            MedVar Slot = Param;
+            Slot.Id += static_cast<int>(K);
+            return Slot;
+          };
+          MedVar Low = SlotParam(0);
+          std::vector<MedOp> Prefix;
+          for (unsigned K = 1; K + 1 < Slots; ++K) {
+            MedOp Compose;
+            Compose.Opcode = NdOp::CONCAT;
+            Compose.Addr = Op.Addr;
+            Compose.OriginSeq = Op.OriginSeq;
+            Compose.Output = Low;
+            Compose.Output.Kind = MedVar::Temp;
+            Compose.Output.Id = NextTemp++;
+            Compose.Output.Size = static_cast<uint16_t>(4 * (K + 1));
+            Compose.addInput(SlotParam(K));
+            Compose.addInput(Low);
+            Low = Compose.Output;
+            Prefix.push_back(Compose);
+          }
           Op.Opcode = NdOp::CONCAT;
-          Op.Inputs[0] = High;
-          Op.Inputs[1] = Param;
+          Op.Inputs[0] = SlotParam(Slots - 1);
+          Op.Inputs[1] = Low;
           Op.NumInputs = 2;
+          if (!Prefix.empty())
+            Compositions[{BI, OI}] = std::move(Prefix);
           continue;
         }
         Op.Opcode = NdOp::COPY;
@@ -804,6 +860,13 @@ void detectCdeclStackParams(MedFunc &Func, Arch TargetArch) {
       Op.Inputs[1] = MedVar::makeConst(static_cast<uint64_t>(ByteOff), 4);
       Op.NumInputs = 2;
     }
+  // Insert each composition before its load, latest first so earlier
+  // indices stay valid.
+  for (auto It = Compositions.rbegin(); It != Compositions.rend(); ++It) {
+    auto &Ops = Func.Blocks[It->first.first].Ops;
+    Ops.insert(Ops.begin() + static_cast<std::ptrdiff_t>(It->first.second),
+               It->second.begin(), It->second.end());
+  }
   med_calling_conv_detail::recoverFPStackReads(
       Func, TargetArch, 4, 4, BaseIdx, rawStackArgOffset, MutableArgOffsets);
 }
