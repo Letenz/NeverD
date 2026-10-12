@@ -21,6 +21,14 @@ def ok(client, operation, payload=None):
     return result["payload"]
 
 
+def user_renames(client):
+    # The engine rebuilds each rename's original spelling from the names the
+    # image has now, as ProjectHistory::verifyLoadedState expects; the user
+    # owns only the address and the new name.
+    return [{key: value for key, value in row.items() if key != "original"}
+            for row in ok(client, "analysis_snapshot")["state"]["renames"]]
+
+
 def without_debug_directory(binary):
     image = bytearray(binary.read_bytes())
     pe = struct.unpack_from("<I", image, 0x3C)[0]
@@ -51,7 +59,7 @@ def run(executable):
         ok(owner, "rename", {"address": ADDRESS, "name": "user_name"})
         ok(owner, "annotation_set", {"address": ADDRESS, "text": "keep this comment"})
         before = ok(owner, "functions", {"filter": "user_name"})
-        rename_state = ok(owner, "analysis_snapshot")["state"]["renames"]
+        rename_state = user_renames(owner)
         selected = ok(owner, "pdb_inspect", {"path": str(pdb)})
         assert selected["verified"]
         assert ok(owner, "functions", {"filter": "user_name"}) == before
@@ -59,9 +67,11 @@ def run(executable):
         assert loaded["verified"] and loaded["name_count"] > 0
         assert ok(owner, "functions", {"filter": "user_name"})["total"] == 1
         assert ok(owner, "annotations")["items"][0]["text"] == "keep this comment"
-        assert ok(owner, "analysis_snapshot")["state"]["renames"] == rename_state
+        assert user_renames(owner) == rename_state
+        # Without the user's name the function is now called what the PDB says.
+        assert ok(owner, "analysis_snapshot")["state"]["renames"][0]["original"] == FUNCTION
         ok(owner, "decompile", {"address": ADDRESS, "representation": "c", "limit": 32})
-        assert ok(owner, "analysis_snapshot")["state"]["renames"] == rename_state
+        assert user_renames(owner) == rename_state
         bad = owner.call("pdb_load", {"path": str(root / "absent.pdb")})
         assert bad["status"] != "ok"
         assert ok(owner, "functions", {"filter": "user_name"})["total"] == 1
@@ -98,16 +108,19 @@ def run(executable):
         assert not loaded["verified"] and loaded["analysis"]
         assert loaded["mode"] == "analysis"
         row = ok(forced, "functions", {"filter": FUNCTION})["items"][0]
-        assert row["name"] == FUNCTION and row["engine_name"] == FUNCTION
+        # The engine itself names it; a row lists engine_name only for an alias.
+        assert row["name"] == FUNCTION and "engine_name" not in row
         page = ok(forced, "decompile", {"address": ADDRESS, "representation": "c", "limit": 256})
         text = page["text"]
-        assert FUNCTION in text and "buf" in text
+        # The PDB's procedure type reaches the decompiler as a matching PDB's
+        # does; the image alone spells int64_t sub_140001000(void).
+        assert f"void {FUNCTION}(void)" in text and "neverd.debug: return=void" in text
         snapshot = ok(forced, "analysis_snapshot")
         assert snapshot["pdb"]["mode"] == "analysis"
         forced_replica = clients.enter_context(Client(executable))
         ok(forced_replica, "analysis_restore", snapshot)
         restored = ok(forced_replica, "functions", {"filter": FUNCTION})["items"][0]
-        assert restored["engine_name"] == FUNCTION
+        assert restored["name"] == FUNCTION and "engine_name" not in restored
         restored_page = ok(forced_replica, "decompile", {"address": ADDRESS, "representation": "c", "limit": 256})
         assert restored_page["text"] == page["text"]
 

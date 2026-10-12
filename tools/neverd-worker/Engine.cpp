@@ -1155,8 +1155,17 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
                 "The analysis input differs from the open project");
-  const auto actual = userState();
-  const auto &expected = snapshot.at("state");
+  auto actual = userState();
+  auto expected = snapshot.at("state");
+  // A rename's original spelling is derived from the names the image has, and
+  // the owner's PDB and signatures are applied below, after this check. As in
+  // ProjectHistory::verifyLoadedState, only the user's values identify edits.
+  for (auto *state : {&actual, &expected})
+    if (auto renames = state->find("renames");
+        renames != state->end() && renames->is_array())
+      for (auto &row : *renames)
+        if (row.is_object())
+          row.erase("original");
   // Committed edits have one writer. Loading them is safe only when they
   // still match the version exported by that writer. A racing edit causes
   // rejection; the GUI retires this replica on the new owner revision.

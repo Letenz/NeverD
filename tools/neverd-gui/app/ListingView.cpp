@@ -131,7 +131,8 @@ void ListingView::clear() {
   lastEmitted_.reset();
   lastFunction_.reset();
   contentReported_ = false;
-  arrowsWidth_ = prefixChars_ = 0;
+  // The arrow gutter is a font metric; only the prefix width follows the rows.
+  prefixChars_ = 0;
   updatingScrollBar_ = true;
   horizontalScrollBar()->setRange(0, 0);
   verticalScrollBar()->setRange(0, 0);
