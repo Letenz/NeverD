@@ -5,14 +5,14 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/analysis/arch/x86_64/InterpreterLLVMRefinement.h"
 
-#include "X64UserFlags.h"
+#include "X64MachineFlags.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 
 namespace neverd::analysis {
 namespace {
-using Profile = detail::X64UserFlags;
+using Profile = detail::X64MachineFlags;
 
 std::string digest(const InterpreterLLVMRefinementCertificate &C) {
   llvm::SHA256 Hash;
