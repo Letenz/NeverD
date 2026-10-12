@@ -2399,10 +2399,10 @@ TEST_F(SessionCAPITest, StringsTakeTheLiteralsSymbolsSpell) {
                                 "\"value\":\"%d\\n\"}";
   EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)),
             "[" + WideRow + "," + NarrowRow + "]");
-  // Not where the options search no wide strings.
+  // The symbol says they are text, whichever encodings a search reads.
   EXPECT_EQ(
       takeString(neverd_strings_ex_json(Session, R"({"encodings":["ascii"]})")),
-      "[" + NarrowRow + "]");
+      "[" + WideRow + "," + NarrowRow + "]");
   // The symbols spell the literals, until the user names one.
   const std::string Spelled = "{\"addr\":\"" + Hex(Entry + Wide) +
                               "\",\"literal\":true,\"name\":\"" + WideName +

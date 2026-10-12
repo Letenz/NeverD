@@ -25,11 +25,11 @@ va_t terminatedEnd(const ImageString &String) {
          strings::encodingUnitBytes(String.Kind);
 }
 
-/// The string \p Literal holds at \p Addr, read whole in an encoding that
-/// \p Options search: ASCII or UTF-8, else the code page a scan reads it in,
-/// for bytes; UTF-16 or UTF-32 for wider characters.  None where no such
-/// encoding reads every character.  Unlike a scan's, its characters may be
-/// controls: the symbol, not their look, says the bytes are text.
+/// The string \p Literal holds at \p Addr, read whole: ASCII or UTF-8, else
+/// the code page a scan reads it in, for bytes; UTF-16 or UTF-32 for wider
+/// characters.  None where no encoding reads every character.  The symbol,
+/// not a search, says the bytes are text, so the encodings \p Options search
+/// do not choose it, and its characters may be controls.
 std::optional<ImageString> literalString(const BinaryImage &Img, va_t Addr,
                                          const SymbolStringLiteral &Literal,
                                          const strings::ScanOptions &Options) {
@@ -44,8 +44,6 @@ std::optional<ImageString> literalString(const BinaryImage &Img, va_t Addr,
   String.Bytes = Literal.Bytes;
   String.Literal = true;
   const auto ReadsWhole = [&](strings::Encoding Kind) {
-    if (!(Options.Encodings & strings::encodingBit(Kind)))
-      return false;
     std::string UTF8;
     unsigned Chars = 0;
     bool Whole = true;
@@ -73,8 +71,10 @@ std::optional<ImageString> literalString(const BinaryImage &Img, va_t Addr,
                                                   : std::nullopt;
     if (ReadsWhole(strings::Encoding::UTF8))
       return String;
-    // A code page reads it only as a scan of its bytes would.
+    // A code page reads it only as a scan of its bytes would: the preferred
+    // one first, then the common ones.
     strings::ScanOptions Whole = Options;
+    Whole.Encodings |= strings::defaultEncodings();
     Whole.MinLength = 1;
     std::optional<ImageString> Paged;
     strings::scan(Terminated, Whole, [&](strings::FoundString &&Found) {

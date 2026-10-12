@@ -1207,7 +1207,10 @@ const char *neverd_strings_ex_json(neverd_session_t s, const char *options) {
     return false;
   };
   Json items = Json::array();
-  if (literalFixture(s) && wanted("ascii"))
+  // Symbols spell the literals of literal-names.bin, which are listed
+  // whichever encodings are searched.
+  const bool literals = literalFixture(s);
+  if (literals)
     items.push_back({{"addr", hexAddress(CodeLiteral)},
                      {"length", 6},
                      {"chars", 6},
@@ -1220,12 +1223,16 @@ const char *neverd_strings_ex_json(neverd_session_t s, const char *options) {
                      {"chars", 2},
                      {"encoding", "utf-8"},
                      {"value", "\xe4\xb8\xad\xe6\x96\x87"}});
-  if (wanted("utf-16le"))
-    items.push_back({{"addr", hexAddress(RodataBase + 8)},
-                     {"length", 8},
-                     {"chars", 4},
-                     {"encoding", "utf-16le"},
-                     {"value", "Wide"}});
+  if (literals || wanted("utf-16le")) {
+    Json wide = {{"addr", hexAddress(RodataBase + 8)},
+                 {"length", 8},
+                 {"chars", 4},
+                 {"encoding", "utf-16le"},
+                 {"value", "Wide"}};
+    if (literals)
+      wide["literal"] = true;
+    items.push_back(std::move(wide));
+  }
   return copy(items.dump());
 }
 // The rows neverd_strings_ex_json lists, a page at a time.

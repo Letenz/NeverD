@@ -69,10 +69,10 @@ NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// Text strings in the image's initialized data that is not code: C strings
 /// in ASCII or UTF-8, UTF-16 or UTF-32 strings in either byte order, and C
 /// strings in legacy code pages, each ending in a zero code unit.  Also the
-/// literals symbols spell (neverd_symbols_json's "literal"), wherever they
-/// lie -- a kernel keeps them among its code -- however short they are and
-/// whatever characters they hold, where the image holds the bytes the name
-/// spells and one of the encodings searched reads them.
+/// literals symbols spell (neverd_symbols_json's "literal") where the image
+/// holds the bytes the name spells: wherever they lie -- a kernel keeps them
+/// among its code -- however short they are, whatever characters they hold
+/// and whichever encodings are searched, since the symbol says they are text.
 /// \p OptionsJson is NULL for the defaults or an object with optional
 /// "encodings" (names from neverd_string_encodings_json(); default those it
 /// marks "default"), "preferred" (a legacy code page that reads a C string

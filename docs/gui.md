@@ -329,8 +329,9 @@ short it is. MSVC names each literal it pools by its type, its size and its
 first bytes (`??_C@_15OHIPBLFN@?$AAS?$AAA@` is L"SA"), and a kernel such as
 ntoskrnl keeps them among its code in PAGE and INIT. The string takes its
 automatic name, `aSa` as IDA names it, instead of the symbol's, unless you
-name it yourself; `neverd strings` lists it too. The image's bytes must start
-as the name spells them, so a stale symbol file adds no strings.
+name it yourself, and shows whichever encodings are searched; `neverd strings`
+lists it too. The image's bytes must start as the name spells them, so a
+stale symbol file adds no strings.
 
 **Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
 command line) lists every instruction that refers to a string: directly, into
