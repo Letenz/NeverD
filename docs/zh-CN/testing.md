@@ -1614,9 +1614,11 @@ MSVC 单元测试目标使用 `/bigobj`，允许 GoogleTest 和 LLVM 模板实�
 
 ## 源码与原生对象 patch
 
-`CPU` 表示源码安装与隔离函数执行；`REFUSED` 表示明确缺少安装契约。ARM32 ELF 需要 EHABI 注册；32 位 Mach-O 需要经验证的加载器、前端及展开契约；PE 源码安装目前要求 x64。
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+当前矩阵要求 143 项检查成功，覆盖源码／IR／原生对象、四架构三格式、ARMv7k watchOS 与 ARMv7 iOS、可写／只读状态、浮点／栈参数和两次非零基址变化。旧 32 位 Mach-O 使用真实编译器代码和元数据的容器执行测试，不代表操作系统运行验证；原生对象不伪造 MC 范围身份。
 
 [源码与原生对象 patch](source-patching.md)
 

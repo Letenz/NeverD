@@ -13,6 +13,10 @@
 #include <string>
 #include <vector>
 
+namespace neverd {
+struct BinaryImage;
+}
+
 namespace neverd::sdk {
 
 struct SourcePatchCompilation {
@@ -26,7 +30,7 @@ struct SourcePatchCompilation {
 llvm::Expected<SourcePatchCompilation>
 compileSourcePatch(llvm::StringRef Source,
                    const neverd_source_patch_options_v1 &Options,
-                   Arch Architecture, BinaryFormat Format);
+                   const BinaryImage &Image);
 
 } // namespace neverd::sdk
 

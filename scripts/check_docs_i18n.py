@@ -2766,7 +2766,7 @@ GUIDE_SECTION_CONTRACTS = {
     ),
     ("source-patching", "profiles"): (
         "dyncode", "x86", "x64", "ARM32", "ARM64", "ELF", "PE", "Mach-O",
-        "CPU", "REFUSED",
+        "CPU", "EHABI", "HIGHLOW", "DIR64", "MOV32T", "SjLj", "-ffunction-sections",
     ),
     ("source-patching", "references"): (
         "function", "data", "const", "-Wl,-headerpad,0x400", ".data.rel.ro",

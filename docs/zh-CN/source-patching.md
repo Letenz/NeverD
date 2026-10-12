@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
+<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
 
 [← Documentation Index](README.md)
 
@@ -50,19 +50,19 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生对象 | ELF x64 C |
 
-这些是经过验证的配置，不代表所有编译器版本和选项都兼容。尚未接入 `dyncode` 或 NeverC C++。GCC 不能生成 LLVM IR。原生 COFF/Mach-O 对象尚不支持；对象安装要求 ELF x64。未知重定位、TLS、构造函数、LTO、common/IFUNC 符号以及无法解析的导入均明确失败。JSON 凭据记录编译器身份、参数、绑定和安装地址；原生对象另记录 SHA-256。
+上表是已验证的操作系统运行配置，不承诺所有编译器版本和选项。ELF、PE、Mach-O 的原生安装器均接入四种架构。尚未接入 `dyncode` 或 NeverC C++；GCC 需要匹配的 ELF 驱动，不能生成 LLVM IR。未知重定位、TLS、构造函数、LTO、common/IFUNC 符号及未解析导入均明确失败。JSON 凭据记录编译器身份、参数、绑定与安装地址，原生对象另记录 SHA-256。
 
-独立 CPU 矩阵覆盖四种架构（`x86`、`x64`、`ARM32`、`ARM64`）和三种格式（`ELF`、`PE`、`Mach-O`），检查源码安装或明确拒绝。隔离的 CPU 执行不能证明操作系统加载器、C++ 展开器或任意 ABI 正确；这些结论应依据上表的运行配置。
+CPU 矩阵要求十二种组合的源码、外部 IR 和原生对象均成功安装。另分别覆盖 ARMv7k watchOS、ARMv7 iOS、可写／只读状态、原程序浮点与栈参数绑定，以及改变加载地址后的入口执行。CPU 执行不能证明操作系统加载器、C++ 展开器或任意 ABI 正确；这些结论应依据上表的运行配置。
 
 | Format | `x86` | `x64` | `ARM32` | `ARM64` |
 |---|---|---|---|---|
-| `ELF` | `CPU` | `CPU` | `REFUSED` | `CPU` |
-| `PE` | `REFUSED` | `CPU` | `REFUSED` | `REFUSED` |
-| `Mach-O` | `REFUSED` | `CPU` | `REFUSED` | `CPU` |
+| `ELF` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `PE` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `Mach-O` | `CPU` | `CPU` | `CPU` | `CPU` |
 
-`CPU` 表示源码安装与隔离函数执行；`REFUSED` 表示明确缺少安装契约。ARM32 ELF 需要 EHABI 注册；32 位 Mach-O 需要经验证的加载器、前端及展开契约；PE 源码安装目前要求 x64。
+`CPU` 表示源码／IR／对象安装、重新加载及精确函数执行。ARM ELF 从镜像确定 EABI5、ARM/Thumb 状态和浮点 ABI，并注册完整排序的 `EHABI` 索引。PE 保留 x64/ARM 运行时记录与 `HIGHLOW`/`DIR64`/`MOV32T` 基址重定位；x86 使用编译器注册代码。Mach-O 根据 CPU 子类型区分 watchOS DWARF 与 iOS `SjLj`。源码的 ARM/Thumb 入口使用相对分支，可随镜像改变加载地址。
 
-CPU 矩阵使用独立的算术、分支与辅助函数调用。其结果不能证明 ELF x86/ARM64 数据引用或 ARM64 C++ 导入正确；额外运行探测因尚未支持的重定位契约而明确拒绝了安装。
+原生对象依据自身有界函数符号、辅助／区段定义及展开记录验证范围，不伪造 MC 所有者 ID，也不重新编译 IR。COFF 需要精确辅助长度或单函数区段（`-ffunction-sections`）；watchOS 编译适配器保留叶函数栈帧以取得真实展开记录。原生 COFF/Mach-O 语言处理程序尚不属于已验证对象配置；C++ 异常应使用已验证 IR 路径。固化 exidx 注册表的静态 ARM 展开器、未注册的 Mach-O 绝对指针及不支持的 RELRO 存储均明确拒绝。
 
 <!-- i18n-section: references -->
 ## 原程序引用与存储

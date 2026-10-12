@@ -90,8 +90,7 @@ int patchSource(Session &S, const void *Input, size_t InputSize,
 
   std::string Artifact;
   if (Options->input_kind == NEVERD_SOURCE_PATCH_SOURCE) {
-    auto Compiled =
-        compileSourcePatch(Text, *Options, S.Img.Arch, S.Img.Format);
+    auto Compiled = compileSourcePatch(Text, *Options, S.Img);
     if (!Compiled)
       return Error(Compiled.takeError());
     Artifact = std::move(Compiled->Bytes);
