@@ -2739,6 +2739,62 @@ TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
       std::string::npos);
 }
 
+TEST_F(SessionCAPITest, DataTakesItsListingNameWhereOnlyItsAddressIsTaken) {
+  // The entry calls a reader for each access width, then returns the address
+  // of the data they read, which no symbol names.  Decompiled alone, as the
+  // workbench shows it, the entry names the data as the listing does: by the
+  // width every function's accesses share there.
+  const auto Bytes32 = [](uint64_t Value) {
+    std::string Bytes;
+    for (unsigned I = 0; I < 4; ++I)
+      Bytes += static_cast<char>(static_cast<uint32_t>(Value) >> (8 * I));
+    return Bytes;
+  };
+  const auto Program = [&](const std::vector<unsigned> &Widths) {
+    std::string Entry, Readers;
+    uint64_t Reader = DataELFEntry + 5 * Widths.size() + 8;
+    for (const unsigned Width : Widths) {
+      // call reader
+      Entry += "\xe8" + Bytes32(Reader - (DataELFEntry + Entry.size() + 5));
+      // mov rax, [rip + data] or mov eax, [rip + data]; ret
+      const std::string Load = Width == 8 ? std::string("\x48\x8b\x05", 3)
+                                          : std::string("\x8b\x05", 2);
+      const uint64_t Next = Reader + Load.size() + 4;
+      Readers += Load + Bytes32(DataELFData - Next) + "\xc3";
+      Reader = Next + 1;
+    }
+    // lea rax, [rip + data]; ret
+    Entry += std::string("\x48\x8d\x05", 3) +
+             Bytes32(DataELFData - (DataELFEntry + Entry.size() + 7)) + "\xc3";
+    return Entry + Readers;
+  };
+  const std::string Data = llvm::utohexstr(DataELFData);
+  const std::pair<std::vector<unsigned>, std::string> Cases[] = {
+      {{8}, "qword_"}, {{8, 4}, "unk_"}, {{}, "unk_"}};
+  for (const auto &[Widths, Prefix] : Cases) {
+    SCOPED_TRACE(Prefix + std::to_string(Widths.size()));
+    const auto Input =
+        write("listing-names-" + std::to_string(Widths.size()) + ".elf",
+              makeDataELF(std::string(8, '\x11'), Program(Widths)));
+    neverd_session_t Names = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Names, Input.c_str()), 1)
+        << takeString(neverd_last_error(Names));
+    ASSERT_GE(neverd_session_discover_functions(Names),
+              static_cast<int>(Widths.size()) + 1);
+    const std::string HighC = takeString(neverd_decompile(Names, DataELFEntry));
+    EXPECT_NE(HighC.find("&" + Prefix + Data), std::string::npos) << HighC;
+    // Declared as wide as the accesses the name says.
+    if (Prefix == "qword_")
+      EXPECT_NE(HighC.find("int64_t qword_" + Data + " = "), std::string::npos)
+          << HighC;
+    const std::string LLVMC =
+        takeString(neverd_decompile_llvm(Names, DataELFEntry));
+    EXPECT_NE(LLVMC.find(Prefix + Data), std::string::npos)
+        << LLVMC << takeString(neverd_last_error(Names));
+    neverd_session_destroy(Names);
+  }
+}
+
 // A universal Mach-O file of \p Slices, each at a page boundary.
 std::string makeFatMachO(const std::vector<std::string> &Slices) {
   using namespace llvm::MachO;
