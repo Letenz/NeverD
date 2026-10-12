@@ -2742,7 +2742,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
   };
   if (Msvc && Msvc->Kind == MsvcCalleeKind::Format && Have >= 2) {
     if (auto VA = imageDataVA(Call.getArgOperand(1))) {
-      if (auto Lit = imageStringLiteral(Img, *VA, /*AllowEmpty=*/false)) {
+      if (auto Lit = stringLiteralAt(Img, Dbg, *VA, /*AllowEmpty=*/false)) {
         llvm::StringRef Body = *Lit;
         if (Body.consume_front("L"))
           Body.consume_front("\"");

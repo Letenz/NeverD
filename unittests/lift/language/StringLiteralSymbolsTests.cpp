@@ -149,4 +149,26 @@ TEST(StringLiteralSymbols, ALiteralLiesInTheFileBytesOfItsSection) {
   EXPECT_FALSE(symbolStringLiteralAt(Img, CodeVA + 3, "??_C@_02DKCKIIND@cd@"));
 }
 
+TEST(StringLiteralSymbols, OnlyACOFFImageNamesItsOwnLiterals) {
+  // A data symbol that spells "ab" after a label at the same address, and a
+  // function: only the literal's name answers, and only MSVC names one.
+  BinaryImage Img = imageHolding(std::string("ab\0", 3));
+  Img.Format = BinaryFormat::COFF;
+  Symbol Label;
+  Label.Name = "label";
+  Label.Addr = CodeVA;
+  Symbol Literal;
+  Literal.Name = "??_C@_02DKCKIIND@ab@";
+  Literal.Addr = CodeVA;
+  Symbol Function;
+  Function.Name = "??_C@_02DKCKIIND@ab@";
+  Function.Addr = CodeVA + 1;
+  Function.IsFunc = true;
+  Img.Symbols = {Label, Literal, Function};
+  EXPECT_EQ(stringLiteralSymbolAt(Img, CodeVA), "??_C@_02DKCKIIND@ab@");
+  EXPECT_EQ(stringLiteralSymbolAt(Img, CodeVA + 1), "");
+  Img.Format = BinaryFormat::ELF;
+  EXPECT_EQ(stringLiteralSymbolAt(Img, CodeVA), "");
+}
+
 } // namespace
