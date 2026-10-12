@@ -995,6 +995,33 @@ PC-relative occurrence retains the loader field's container rather than
 authorizing its approximate numeric target. Any exhaustion protects every
 requested relocation slot and rejects writable dispatch owners.
 
+An x86/x64 absolute dispatch may name the preceding table's one-past address
+without using that preceding object. `CFGBuilder::proveInstructionLocalTableSource`
+replays the complete table proof against the frozen final LowIR, including
+x87 normalization. It binds the exact loader field to a full-width address
+operation and its unique instruction-local LOAD. The imported graph must keep
+every root and ordinary edge, with direct targets at block starts; exposed
+temporaries, repeated instruction contexts and exceptional graphs refuse the
+query. Module arbitration may exclude only that exact source when its complete
+physical envelope is disjoint from every old owner envelope. Equal fields in
+independent contexts remain separate sources. All imports and fresh resolver
+queries share one cumulative proof balance; exhaustion withdraws earlier grants.
+Complete plain structural unwind records do not introduce language dispatch.
+The shared source-unwind classifier is authoritative; all overlapping image
+records, fragments, explicit entries and malformed but identifiable FDE starts
+are checked even when the final annotation is absent. A contiguous per-slot
+storage inventory must partition the freshly proved runtime envelope exactly.
+Other architectures and complex tables retain their existing conservative rules.
+
+DWARF frame-section decoding failures remain structural failures on every
+FDE-backed function from that section in Itanium and Darwin. A later language
+refresh cannot clear them; complete sections add no new refresh authority.
+Darwin preserves consumed CIE personalities and LSDAs, refuses unresolved or
+conflicting providers, and retains foreign or oversized FDEs as separate
+records. Provider slots share one binding rule with routine naming, including unnamed
+relative relocations; equal file values cannot equate distinct bound slots. These rules grant no
+native exception reconstruction or frame-memory authority.
+
 CFG construction also owns indirect tail-call classification. For an AArch64
 candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
 incoming SP and link-word restoration under the existing native call ABI.

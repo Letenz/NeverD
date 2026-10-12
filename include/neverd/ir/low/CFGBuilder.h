@@ -1049,6 +1049,16 @@ public:
     PreservePotentialJumpTableBranches = Preserve;
   }
 
+  /// Fresh proof against the supplied final LowIR graph, including x87
+  /// normalization. Only a unique instruction-local absolute dispatch is
+  /// supported. The encoded source must reach its sole LOAD without exposing
+  /// the address elsewhere. Imports, replay and retirement share WorkRemaining;
+  /// no published LOAD tuple or stale resolver cache grants this permission.
+  static std::optional<JumpTableStorageRange> proveInstructionLocalTableSource(
+      const BinaryImage &Img, const LowFunc &Function,
+      const RelocatedInstructionAddressOccurrence &Source,
+      size_t &WorkRemaining);
+
 private:
   friend struct detail::ResolverGraphCacheTestAccess;
   friend struct detail::X87CallGraphCacheTestAccess;
@@ -1253,7 +1263,8 @@ private:
   void prepareRelativeRelocationRootSourceCache();
   void extractJumpTables(LowFunc &Func);
   std::vector<va_t> resolveJumpTable(const BinaryImage &Img,
-                                     const InsnRecord &Rec);
+                                     const InsnRecord &Rec,
+                                     size_t *AggregateProofBudget = nullptr);
 
   /// Establish the half-open interval that this CFG builder may claim for
   /// address-taken interior blocks.  A merely containing unwind range is not

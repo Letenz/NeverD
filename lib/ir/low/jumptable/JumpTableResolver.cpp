@@ -857,7 +857,8 @@ bool CFGBuilder::proveCandidateFiniteAbsoluteSiblings(
 }
 
 std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
-                                               const InsnRecord &Rec) {
+                                               const InsnRecord &Rec,
+                                               size_t *AggregateProofBudget) {
   // The stage-start candidate vector cannot contain indirect branches decoded
   // recursively while another candidate explores its provisional targets.
   // Register each such invocation before the resolver erases or publishes any
@@ -997,12 +998,30 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
       std::min<size_t>(limits::kMaxJumpTableCandidateEvidenceWork,
                        MaskFixedPointEvidenceBudgetForTesting.value_or(
                            limits::kMaxJumpTableCandidateEvidenceWork));
-  const size_t InitialCandidateEvidenceBudget =
+  const size_t StageCandidateEvidenceBudget =
       CandidateProposalStageActive
           ? std::min(CandidateEvidenceLimit,
                      CandidateProposalStageEvidenceRemaining)
           : CandidateEvidenceLimit;
+  const size_t InitialCandidateEvidenceBudget =
+      AggregateProofBudget
+          ? std::min(StageCandidateEvidenceBudget, *AggregateProofBudget)
+          : StageCandidateEvidenceBudget;
   size_t CandidateEvidenceBudget = InitialCandidateEvidenceBudget;
+  struct AggregateDebit {
+    size_t *Account;
+    const size_t Initial;
+    const size_t &Remaining;
+    ~AggregateDebit() {
+      if (!Account)
+        return;
+      if (Remaining > Initial || Initial - Remaining > *Account)
+        *Account = 0;
+      else
+        *Account -= Initial - Remaining;
+    }
+  } DebitAggregate{AggregateProofBudget, InitialCandidateEvidenceBudget,
+                   CandidateEvidenceBudget};
   JumpTableInfo Info;
   auto observeGroupProof = [&](const char *Stage) {
     if (!GuardedGroupProofContext)
@@ -1026,6 +1045,20 @@ std::vector<va_t> CFGBuilder::resolveJumpTable(const BinaryImage &Img,
   bool CandidateEvidenceAnalysisIncomplete = false;
   bool CandidateEvidenceChargeFailed = false;
   bool CandidateEvidenceExhaustedBeforeDedicatedRefund = false;
+  struct AggregateFailure {
+    size_t *Account;
+    const bool &ChargeFailed;
+    const bool &BeforeRefund;
+    const bool &I386Incomplete;
+    ~AggregateFailure() {
+      // A reserved nested allowance can refund unused work after the generic
+      // query exhausted. The caller must still revoke every earlier grant.
+      if (Account && (ChargeFailed || BeforeRefund || I386Incomplete))
+        *Account = 0;
+    }
+  } PublishAggregateFailure{AggregateProofBudget, CandidateEvidenceChargeFailed,
+                            CandidateEvidenceExhaustedBeforeDedicatedRefund,
+                            I386GOTOFFProposalEvidenceIncomplete};
   bool IncompleteBranchInsertPrepaid = false;
   bool IncompleteBranchAlreadyInserted = false;
   bool CandidateTargetMaterializationStarted = false;

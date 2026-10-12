@@ -1391,6 +1391,37 @@ sources, repeated long blocks, final recording and cross-function exhaustion.
 Every exhaustion must protect the nonempty request set. Existing cross-target
 jump-table and returned-code tests exercise the shared collector's semantics.
 
+`ModuleAdjacentTable.*` uses real ELF32/ELF64 adjacent absolute tables in both
+function orders. It checks final x87 returns, independent roots, an unsplit
+interior branch that bypasses the mask, physical fallthrough gaps, cloned TOP
+contexts, malformed address operands, changed LOAD widths/addresses and FS/GS
+spaces. Escaped temporaries and provenance aliases, duplicate sources and a
+source-only context retain the preceding object. The source-only control removes
+only its occurrence, leaving its LowOps unchanged. A three-table positive and
+cumulative exhaustion control verify withdrawal of earlier grants. The expanded
+physical-envelope test checks end-to-end preservation, including the later
+LOAD/alias veto; it does not isolate the envelope comparison. Actual CLI HighC
+and optimized/unoptimized LLVMC output execute all masked indices at host O0/O2.
+These fixtures do not establish support for exceptional graphs or other
+architectures in the new instruction-local query. The real PE32 CFI cases require
+`i686-w64-mingw32-ld`; they assert an actual FDE, nonempty recovered tables and
+exact field occurrences before testing ordinary-unwind admission and incomplete
+augmentation/indirect-LSDA refusals. Metadata negatives cover outer records,
+fragments, explicit entries, malformed identifiable starts, reversed order and
+cleared final annotations. Per-slot inventories must completely partition the
+fresh runtime extent; gaps, duplicates, extra slots and changed strides refuse.
+
+`ItaniumEHDriver` and `DarwinUnwindSymbols` check section-wide structural failure
+propagation across x86/x64/AArch64, mixed good/bad record orders, unknown CIE
+augmentation, unresolved indirect LSDA, malformed tails and language refresh.
+Darwin covers standalone and both compact/FDE attachment paths, unrelated
+compact-only records, missing personality arrays, unknown providers, direct and
+bound-slot conflicts (including equal nonzero file values, equal names and
+unnamed relative relocation targets),
+LSDA conflicts, invalid ranges and retained foreign/oversized FDEs. Complete
+frame sections add no language-refresh provenance. These are decoding/source
+proof checks; they do not certify native exception execution.
+
 The same target's `NarrowGuard*` tests use long arithmetic prefixes before x86
 and x64 byte/word guards and AArch64 W-register guards. Low/high byte identity,
 disjoint writes and explicit index widening must retain exactly three slots

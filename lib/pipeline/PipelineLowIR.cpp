@@ -2490,6 +2490,11 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
   ModuleEvidenceBudget Budget(TestBudget);
   size_t PairScanRemaining = size_t{limits::kMaxJumpTableEvidenceWork} *
                              size_t{limits::kMaxMultiStageRetries};
+  // Final-graph replay is proof work, distinct from retaining a source-index
+  // node or screening a pair. Every replay shares this one finite balance.
+  size_t SourceProofRemaining =
+      std::min(TestBudget.value_or(limits::kMaxJumpTableCandidateEvidenceWork),
+               size_t{limits::kMaxJumpTableCandidateEvidenceWork});
   auto scanPair = [&](size_t Amount = 1) {
     if (Amount > PairScanRemaining)
       return false;
@@ -2789,6 +2794,13 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
       It->second.push_back({FuncIndex, &Occurrence});
     }
 
+  // An occurrence's address is a unique identity within this immutable input
+  // inventory. Equal fields in the same function still receive independent
+  // bindings; an imprecise duplicate cannot borrow a successful source proof.
+  std::map<const RelocatedInstructionAddressOccurrence *,
+           std::optional<JumpTableStorageRange>>
+      FinalSourceAccesses;
+
   auto protectRelocationUse = [&](va_t FieldVA,
                                   const RelocatedAddressField &Field) {
     if (!scanPair(detail::orderedContainerLookupWork(SourcesByField.size())))
@@ -2868,6 +2880,36 @@ collectModuleJumpTableArbitration(const BinaryImage &Img,
           continue; // candidate-local audit already handled it
         if (isUniquelyAuthenticatedTableLoad(Funcs[FuncIndex], InsnAddr, Owner))
           continue;
+        if (!scanPair(
+                detail::orderedContainerLookupWork(FinalSourceAccesses.size())))
+          return false;
+        auto Access = FinalSourceAccesses.find(Source.Occurrence);
+        if (Access == FinalSourceAccesses.end()) {
+          if (!Budget.consume())
+            return false;
+          const auto Range = CFGBuilder::proveInstructionLocalTableSource(
+              Img, Funcs[FuncIndex], *Source.Occurrence, SourceProofRemaining);
+          if (SourceProofRemaining == 0)
+            return false;
+          Access = FinalSourceAccesses.emplace(Source.Occurrence, Range).first;
+        }
+        if (Access->second) {
+          const auto End = Access->second->storageEnd();
+          bool Disjoint =
+              End.has_value() && !Owner.PhysicalIdentityRanges.empty();
+          for (const JumpTableStorageRange &Old :
+               Owner.PhysicalIdentityRanges) {
+            if (!scanPair())
+              return false;
+            const auto OldEnd = Old.storageEnd();
+            // Whole envelopes also preserve sparse filler/gap identities.
+            Disjoint &=
+                End && OldEnd &&
+                (*End <= Old.BaseAddr || *OldEnd <= Access->second->BaseAddr);
+          }
+          if (Disjoint)
+            continue;
+        }
         // A loader record has no LowOp sequence identity.  Unless this
         // machine instruction contains exactly one LOAD and that exact
         // occurrence is an authenticated table role, its address shape is

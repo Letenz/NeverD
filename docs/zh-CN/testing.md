@@ -909,6 +909,8 @@ GoogleTest 发现使用 `DISCOVERY_MODE PRE_TEST`，因此 CTest 枚举前必须
 
 `ModuleJumpTableBudget.*` 使用真实 ELF 表清单，分别检查 400000 操作的输入边界、扫描、来源保留、队列及累计传递额度。测试覆盖两种函数顺序、无关代码 occurrence、没有内存消费者的同字段独立上下文、缺失的 PC-relative 来源、重复长块、最终记录及跨函数耗尽。耗尽时必须保留非空请求集的全部重定位槽；已有跨目标跳转表与返回代码测试继续检查共享收集器的语义。
 
+`ModuleAdjacentTable.*` 使用真实 ELF32/ELF64 相邻绝对表及两种函数顺序，覆盖最终 x87 返回、独立根、未拆块且绕过 mask 的块内跳转、物理续接间隙、TOP 克隆、畸形地址操作数、改变的 LOAD 地址/宽度和 FS/GS 地址域。地址逃逸、来源别名、重复来源及无 LOAD 的独立上下文均保留前表；后者仅删除 occurrence、保持 LowOps 不变作为对照。三表大预算正例和累计耗尽反例验证早先授权被撤销。扩大物理包络的测试验证最终保留（含后续 LOAD/别名否决），并未单独隔离包络比较。真实 CLI HighC 及优化/不优化 LLVMC 结果在宿主 O0/O2 执行全部 mask 输入类别。这些 fixture 尚未证明新查询对异常图或其他架构的支持。
+
 CI 在 Linux、macOS 和 Windows 上以 Release 开启测试构建，先审核发现的测试清单，
 再应用平台特定的标签排除。配置定义于 `.github/workflows/ci.yml` 和
 `scripts/audit_ci_test_inventory.py`。每个矩阵主机都必须包含 `NeverDSafetyTests`
@@ -1625,3 +1627,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 `LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` 检查完整模块及单函数输出中的基本块地址返回、整数转换、地址运算和嵌套表初始化。矩阵覆盖 32/64 位、两种字节序及 ELF/COFF/Mach-O 配置。不支持的符号常量也明确拒绝，不能变成空指针。这验证输出拒绝规则，并未实现可移植的原生续接。
 
 `X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模块和单函数的 CLI 检查覆盖两种优化设置，拒绝内部代码地址并保留已有输出；其他原子指令函数仍必须成功输出 C。地址低位观察尚未支持，LLVM 验证通过不能证明其语义。
+
+真实 PE32 CFI 用例需要 `i686-w64-mingw32-ld`，先断言 FDE、非空跳转表和精确字段来源，再检查普通展开放行及未知 augmentation/未解析间接 LSDA 的拒绝。来源查询覆盖外层记录、fragment、显式入口、可识别的畸形 FDE、顺序交换和清除最终注解；单槽清单的缺口、重复、额外范围和错误步长均拒绝。`ItaniumEHDriver`/`DarwinUnwindSymbols` 覆盖 x86/x64/AArch64 的混合正常/不完整记录、语言刷新、两种 compact/FDE 绑定、缺失 personality 数组、未知 provider、相同初值/名字但不同动态槽、LSDA 冲突和外来/超范围 FDE。完整 section 不新增 language-refresh provenance。以上检查不代表原生异常执行验证。
