@@ -27,6 +27,12 @@ CSourceRecorder::CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
       Map.Recognitions && !Map.Recognitions->empty())
     throw std::invalid_argument(
         "library coverage needs an independent source recording");
+  if (recordsPositions() && Map.HighSources &&
+      llvm::any_of(*Map.HighSources, [](const auto &Source) {
+        return Source.Kind == HighSourceKind::CallExpression;
+      }))
+    throw std::invalid_argument(
+        "call expression coverage needs an independent source recording");
   Map.Anchors.clear();
   if (Mode != Recording::Instructions) {
     Map.Regions.clear();

@@ -87,14 +87,19 @@ Pseudocode navigation uses instruction anchors recorded during source emission.
 HighIR statement observations retain function, address, sequence and statement
 kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
 observations retain weak handles through optimization and the private C clone.
-With no library evidence, HighC records definition and statement byte positions
-on its ordinary output without inserting delimiters or repeating source analysis.
+With no library or call-expression evidence, HighC records definition and
+statement byte positions on its ordinary output without inserting delimiters or
+repeating source analysis.
 Buffered bodies relocate their anchors when their unchanged text is appended,
 after any deferred declarations; nested buffers preserve the same event order.
 Only complete, in-bounds positions are published. Invalid positions fall back
 to private delimiter recordings that must reproduce ordinary source byte for
-byte. When library evidence is present, instruction and library recordings keep
-independent renders so navigation cannot weaken library folding evidence.
+byte. Call-expression evidence uses this independent rendering path: statement
+positions cannot identify an embedded call, and marker text must never enter
+ordinary output. The recorder rejects position mode for these source maps before
+clearing existing mappings. When library evidence is present, instruction and
+library recordings keep independent renders so navigation cannot weaken
+library folding evidence.
 The C API checks every occurrence
 against the same canonical LowIR boundaries and sequences used by Low/Med pages.
 C++, Rust and Go record individual statement

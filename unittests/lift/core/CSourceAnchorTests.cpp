@@ -106,10 +106,15 @@ TEST(CSourceEvidence, HighCallExpressionRequiresSurvivingIdentityAndKind) {
   CSourceMap Map;
   Map.HighSources = &Sources;
   CEmitterOptions Options;
+  std::string Ordinary;
+  llvm::raw_string_ostream OrdinaryOS(Ordinary);
+  ASSERT_TRUE(HighCEmitter().emit({Function}, OrdinaryOS, Options));
   Options.SourceMap = &Map;
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit({Function}, OS, Options));
+  EXPECT_EQ(Source, Ordinary);
+  EXPECT_EQ(Source.find('\x1f'), std::string::npos);
   CSourceEvidence Evidence{
       Function.Entry, {0x1010, 3}, "resolver(\"example\")", ""};
   auto Result = annotateCSourceEvidence(Source, Map, {Evidence});

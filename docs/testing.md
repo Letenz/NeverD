@@ -110,13 +110,18 @@ complement `source_revisit_bench.py`, which measures complete real source pages.
 
 `NeverDSourceAnchorTests` checks byte-identical HighC/LLVMC emission and refuses
 changed-kind, synthetic, ambiguous and mismatched-function observations.
-It also checks that empty library evidence needs only the ordinary HighC render,
+It also checks that statement navigation without library or call-expression
+evidence needs only the ordinary HighC render,
 preserves definitions and instruction locations, and matches independent marker
 proofs across nested statements and multiple functions. Buffered byte positions
 cover UTF-8, marker-looking text, nested relocation, suppressed statements and
 refusal of invalid or overflowing ranges without partial publication. Private
 recordings still reject changed text. Ordinary rendering and output failures
 propagate without retrying them as optional mapping failures.
+Call-expression maps reject position mode before mutation and use independent
+recording; the mapped output must equal ordinary C without leaked delimiters,
+and changed expression kinds still lose their anchors. The bytecode observation
+test also recompiles and runs the resulting call and pointer-store evidence.
 `SourceDialect.Navigation*` checks distinct statement ranges in C++, Rust and
 Go, partial slices, conflicting spans and functions shown as C after a dialect
 refusal. `SessionCAPITest.DialectNavigationMapsOnlyTheReturnRowAcrossPages`
