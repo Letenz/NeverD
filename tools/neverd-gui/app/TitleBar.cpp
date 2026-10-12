@@ -1,6 +1,7 @@
 #include "TitleBar.h"
 
 #include "Theme.h"
+#include "WindowFramePlatform.h"
 
 #include <QAbstractButton>
 #include <QAction>
@@ -16,8 +17,8 @@
 
 namespace neverd::gui {
 namespace {
-// Visual Studio Code's custom title bar, in logical pixels.
-constexpr int BarHeight = 35;
+// Visual Studio Code's custom title bar, in logical pixels; its height
+// is the platform's (WindowFramePlatform.h).
 constexpr int IconSlot = 35;
 constexpr int IconSize = 16;
 constexpr int ButtonWidth = 46;
@@ -64,6 +65,15 @@ Controls controlsFor(Qt::WindowFlags flags) {
           bool(flags & Qt::WindowCloseButtonHint)};
 }
 
+/// The width at the bar's left that the application icon and the system's
+/// own window controls take, which full screen hides.
+int leftReserve(const QWidget &window, bool withIcon) {
+  if (window.isFullScreen())
+    return 0;
+  return (withIcon && platform::showsWindowIcon() ? IconSlot : 0) +
+         platform::systemControlsWidth();
+}
+
 QColor chrome(const char *name) {
   return Theme::instance().chrome(QLatin1String(name));
 }
@@ -100,7 +110,9 @@ public:
   enum class Kind { Minimize, Maximize, Close };
   WindowButton(Kind kind, QWidget &window, QWidget *parent)
       : HoverButton(window, parent), kind_(kind) {}
-  QSize sizeHint() const override { return {ButtonWidth, BarHeight}; }
+  QSize sizeHint() const override {
+    return {ButtonWidth, platform::titleBarHeight()};
+  }
 
 protected:
   void paintEvent(QPaintEvent *) override {
@@ -232,19 +244,22 @@ void TitleBar::setCommandCenterText(const QString &text,
 void TitleBar::setCommandCenterAction(QAction *action) { command_ = action; }
 
 QSize TitleBar::sizeHint() const {
-  const int buttons = 3 * ButtonWidth;
+  const int height = platform::titleBarHeight();
+  const int buttons = platform::drawsWindowControls() ? 3 * ButtonWidth : 0;
   if (!menuBar_)
-    return {2 * TitlePadding +
+    return {leftReserve(window_, false) + 2 * TitlePadding +
                 fontMetrics().horizontalAdvance(window_.windowTitle()) +
                 buttons,
-            BarHeight};
-  return {IconSlot + menuBar_->sizeHint().width() + 2 * Gap + CenterMaxWidth +
-              buttons,
-          BarHeight};
+            height};
+  return {leftReserve(window_, true) + menuBar_->sizeHint().width() + 2 * Gap +
+              CenterMaxWidth + buttons,
+          height};
 }
 
 QSize TitleBar::minimumSizeHint() const {
-  return {(menuBar_ ? IconSlot : TitlePadding) + 3 * ButtonWidth, BarHeight};
+  const int buttons = platform::drawsWindowControls() ? 3 * ButtonWidth : 0;
+  return {leftReserve(window_, menuBar_ != nullptr) + TitlePadding + buttons,
+          platform::titleBarHeight()};
 }
 
 bool TitleBar::event(QEvent *event) {
@@ -298,13 +313,17 @@ void TitleBar::mouseReleaseEvent(QMouseEvent *event) {
 }
 
 void TitleBar::mouseDoubleClickEvent(QMouseEvent *event) {
-  if (event->button() != Qt::LeftButton || !maximizable() ||
-      window_.isFullScreen()) {
+  if (event->button() != Qt::LeftButton || window_.isFullScreen()) {
     QWidget::mouseDoubleClickEvent(event);
     return;
   }
   pressAt_.reset();
-  toggleMaximized();
+  // macOS has a setting for what a double click on a title bar does.
+  if (QWindow *handle = window_.windowHandle();
+      handle && platform::doubleClickTitleBar(*handle))
+    return;
+  if (maximizable())
+    toggleMaximized();
 }
 
 void TitleBar::paintEvent(QPaintEvent *) {
@@ -313,25 +332,27 @@ void TitleBar::paintEvent(QPaintEvent *) {
   if (!menuBar_) {
     // A dialog's title, centered in the bar while it fits beside the
     // buttons.
-    const int room = buttonsLeft_ - 2 * TitlePadding;
+    const int start = leftReserve(window_, false) + TitlePadding;
+    const int room = buttonsLeft_ - TitlePadding - start;
     const QString title =
         fontMetrics().elidedText(window_.windowTitle(), Qt::ElideRight, room);
     const int titleWidth = fontMetrics().horizontalAdvance(title);
-    const int x = std::clamp(
-        (width() - titleWidth) / 2, TitlePadding,
-        std::max(TitlePadding, buttonsLeft_ - TitlePadding - titleWidth));
+    const int x =
+        std::clamp((width() - titleWidth) / 2, start,
+                   std::max(start, buttonsLeft_ - TitlePadding - titleWidth));
     painter.setPen(titleText(window_));
     painter.drawText(QRect(x, 0, titleWidth, height()),
                      Qt::AlignLeft | Qt::AlignVCenter, title);
     return;
   }
-  if (window_.isFullScreen())
+  if (window_.isFullScreen() || !platform::showsWindowIcon())
     return;
   if (!window_.isActiveWindow())
     painter.setOpacity(InactiveOpacity);
-  window_.windowIcon().paint(&painter, QRect((IconSlot - IconSize) / 2,
-                                             (height() - IconSize) / 2,
-                                             IconSize, IconSize));
+  const int iconLeft = platform::systemControlsWidth();
+  window_.windowIcon().paint(
+      &painter, QRect(iconLeft + (IconSlot - IconSize) / 2,
+                      (height() - IconSize) / 2, IconSize, IconSize));
 }
 
 void TitleBar::resizeEvent(QResizeEvent *event) {
@@ -350,7 +371,7 @@ void TitleBar::arrange() {
   buttonsLeft_ = right;
   if (!menuBar_)
     return;
-  const int left = window_.isFullScreen() ? 0 : IconSlot;
+  const int left = leftReserve(window_, true);
   const QSize menus = menuBar_->sizeHint();
   const int menuWidth =
       std::clamp(menus.width(), 0, std::max(0, right - left - Gap));
@@ -384,11 +405,12 @@ void TitleBar::toggleMaximized() {
 }
 
 void TitleBar::updateWindowState() {
-  const bool fullScreen = window_.isFullScreen();
+  // Full screen hides the buttons, and on macOS the system draws them.
+  const bool shown = !window_.isFullScreen() && platform::drawsWindowControls();
   const Controls controls = controlsFor(window_.windowFlags());
-  minimize_->setVisible(controls.minimize && !fullScreen);
-  maximize_->setVisible(maximizable() && !fullScreen);
-  close_->setVisible(controls.close && !fullScreen);
+  minimize_->setVisible(controls.minimize && shown);
+  maximize_->setVisible(maximizable() && shown);
+  close_->setVisible(controls.close && shown);
   retranslateUi();
   arrange();
   repaintAll();

@@ -1211,6 +1211,24 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.Entry = Med.Entry;
   Func.FrameSize = Med.FrameSize;
   Func.FrameHeadroom = Med.FrameHeadroom;
+  // The incoming stack argument homes seeded below, written in place or read
+  // in place by a variadic function's va_arg walk.
+  std::vector<std::pair<int, int64_t>> IncomingStackHomes =
+      Med.MutableStackParamHomes;
+  if (Med.IsVariadic && Med.VariadicOverflowCount > 0 && !Med.SourceTypeHint) {
+    const auto &TRI = getTargetRegInfo(TheArch);
+    const int Count = Med.VariadicOverflowCount;
+    const int First = static_cast<int>(Med.Params.size()) - Count;
+    for (int I = 0; I < Count && First >= 0; ++I)
+      IncomingStackHomes.emplace_back(
+          First + I,
+          Med.VariadicOverflowBase + static_cast<int64_t>(I) * TRI.PointerSize);
+    // As the LLVM emitter reserves it, with the same slop past the last.
+    Func.FrameHeadroom = std::max(
+        Func.FrameHeadroom, Med.VariadicOverflowBase +
+                                static_cast<int64_t>(Count) * TRI.PointerSize +
+                                limits::kVariadicOverflowSlop);
+  }
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
   Func.ReturnsNoValue = Med.ReturnsNoValue;
@@ -1281,9 +1299,11 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // MedIR keeps the loads and stores of an incoming stack argument the
   // function writes in place as memory accesses to its home slot. Seed each
   // home with its parameter at entry, as the LLVM emitter does, so the first
-  // read sees the argument rather than an uninitialized local.
+  // read sees the argument rather than an uninitialized local.  A variadic
+  // function's va_arg walk reads its overflow arguments in place the same
+  // way: finalizeVariadicCallees gives each a trailing parameter.
   auto SeedMutableStackParamHomes = [&] {
-    if (Med.MutableStackParamHomes.empty() || Med.SourceTypeHint)
+    if (IncomingStackHomes.empty() || Med.SourceTypeHint)
       return;
     std::optional<MedVar> EntrySP;
     for (const MedBlock &Block : Med.Blocks) {
@@ -1299,7 +1319,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
     if (!EntrySP)
       return;
     std::vector<HighStmt> Seeds;
-    for (const auto &[ParamIdx, Offset] : Med.MutableStackParamHomes) {
+    for (const auto &[ParamIdx, Offset] : IncomingStackHomes) {
       if (ParamIdx < 0 || static_cast<size_t>(ParamIdx) >= Med.Params.size())
         continue;
       HighStmt Seed;
@@ -1308,9 +1328,10 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       Seed.StoreAddr = HighExpr::makeBinop(
           NdOp::INT_ADD, HighExpr::makeVar(*EntrySP),
           HighExpr::makeConst(static_cast<uint64_t>(Offset), EntrySP->Size));
+      // The parameter keeps its own id: its index can be another's id, as
+      // ARM32's r1 carries id 8, the ninth parameter's index.
       MedVar Param = Med.Params[ParamIdx];
       Param.Kind = MedVar::Param;
-      Param.Id = ParamIdx;
       Seed.StoreVal = medvarToExpr(Param);
       Seeds.push_back(std::move(Seed));
     }

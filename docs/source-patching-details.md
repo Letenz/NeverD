@@ -346,3 +346,45 @@ points are available in English and all ten supported locales. The documentation
 checker validates reviewed source hashes, executable examples, target
 dispositions and contract tokens. The complete 310-file matrix and eleven
 focused documentation/build regressions passed.
+
+## Native Windows x64 qualification (2026-10-12)
+
+The dedicated [Windows run 38200205814](https://github.com/NeverSight/NeverD/actions/runs/38200205814)
+completed successfully at `96cf7cd5936f6c7d2f83f8e1bcc9fee6e1253485`.
+Its downloaded XML reports contain all 15 focused PE/object/trampoline checks
+and all 48 source-target matrix checks, with zero failures, disabled cases or
+skips. The optional NeverC object producer is covered separately and is not
+selected by this Clang qualification. The workflow checks both inventories
+before accepting a run.
+
+The native PE cases executed normal C calls and mutable pointers with base
+relocations. The FH3 case executed all seven C++ scenarios: normal return,
+internal typed catch, propagation to an original caller, an original callee
+throwing through the replacement, rethrow, noexcept termination and an
+untouched original function. Cleanup counters verify exactly-once RAII for
+the propagation and rethrow cases. Clang 22.1.6, MSVC and the Windows SDK were
+configured on the Windows x64 runner; this is actual Windows execution evidence.
+The 48-case matrix still certifies only its isolated CPU checks and explicit
+target refusals.
+
+The earlier native runs stopped at DLL linking. `MedSyscallConvention.h`
+forward-declared `BinaryImage` as a class while the owning model defines a
+struct, producing incompatible MSVC names across include orders. The declaration
+now agrees with the model, and the Med component treats C4099 as an error. The
+real translation-unit mismatch check failed before the correction and passed
+after it; the successful Windows build and runtime run verify the correction.
+
+After integration through `0be80a553`, the freshly rebuilt local source, matrix,
+native exception and COFF suites ran 363 checks: 361 passed and two Linux-only
+checks were skipped on the Mac. An earlier replay encountered the stopped
+owned Wine container; restarting that disposable container and repeating the
+unchanged FH3 case passed. The final complete run passed all available cases.
+The shared library's Python SDK run passed 110 of 165 checks, with 55 explicit
+platform/fixture skips. English and ten localized source guides include the
+native Windows result.
+
+A separate local Windows 11 ARM64 VM experiment did not produce a native patch
+runtime result: guest command sessions timed out and were later refused by
+Parallels Tools. That attempt is not counted as passing coverage. No VM
+configuration was changed; the VM was observed stopped later and was not
+restarted. Native Windows evidence above comes from the qualified x64 runner.
