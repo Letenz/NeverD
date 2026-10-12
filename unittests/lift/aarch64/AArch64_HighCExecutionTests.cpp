@@ -424,3 +424,37 @@ int dotp(int a) {
                             "dotp", {"dotp"},
                             {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
 }
+
+// `ldr x18, [x11, xzr, lsl #3]` reads the first label of a computed goto's
+// table: the zero register is the index, and it reads as zero.
+TEST_F(AArch64_HighCExecution, AZeroRegisterIndexReadsTheFirstEntry) {
+  expectRunsLikeSource(R"C(
+int lex(int a) {
+  static const void *cls[4] = {&&DIG, &&ALP, &&SPC, &&OTH};
+  unsigned acc = (unsigned)a, tok = 0;
+  for (int i = 0; i < 96; i++) {
+    unsigned c = ((acc >> (i & 15)) ^ (unsigned)(i * 131)) & 0xFF;
+    int k = c < 64 ? 0 : c < 128 ? 1 : c < 192 ? 2 : 3;
+    goto *cls[k];
+  DIG:
+    tok = tok * 10u + (c & 7u);
+    acc += c;
+    continue;
+  ALP:
+    tok = (tok << 4) ^ (c | 0x20u);
+    acc ^= c << 1;
+    continue;
+  SPC:
+    tok += 0x9E37u;
+    acc = (acc << 1) | (acc >> 31);
+    continue;
+  OTH:
+    tok ^= c * 2654435761u;
+    acc -= c;
+    continue;
+  }
+  return (int)(tok ^ acc);
+}
+)C",
+                       "lex", {"lex"});
+}

@@ -388,6 +388,10 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   // The proven GOT base of an unlinked i386 object is address zero.
   if (I386GotBase.count(varKey(V)))
     return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
+  // The zero register reads as zero, as the index of `[x11, xzr, lsl #3]`.
+  if (const auto Zero = getTargetRegInfo(TargetArch).ZeroRegister;
+      Zero && V.Kind == MedVar::Reg && V.RegOff == *Zero)
+    return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {
     const auto &Bindings = SourceParameters;
