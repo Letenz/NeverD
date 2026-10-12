@@ -26,7 +26,6 @@
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/X86FPState.h"
-#include "neverd/ir/X87Constant.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterBody.h"
 #include "neverd/ir/low/ImportCallee.h"
