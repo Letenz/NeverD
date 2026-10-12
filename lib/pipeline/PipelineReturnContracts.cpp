@@ -39,6 +39,7 @@
 #include "neverd/debug/DebugContext.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/libc/LibCNames.h"
@@ -447,6 +448,7 @@ private:
       Paths.push_back(Id != Intrinsic::None && Id != Intrinsic::DebugService &&
                               Id != Intrinsic::CetRdSsp &&
                               !x86FPStateReturnsValue(Id) &&
+                              !x87ContextReturnsValue(Id) &&
                               (isSideeffectIntrinsic(Id) || !intrinsicCName(Id))
                           ? ReturnedValue::Undefined
                           : ReturnedValue::Other);

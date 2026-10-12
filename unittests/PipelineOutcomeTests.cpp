@@ -217,9 +217,28 @@ TEST(PipelineOutcome, AnalysisCachePreservesFloatingAndIntegerCallChains) {
           for (const auto &Op : Block.Ops)
             if (Op.Opcode == NdOp::CALL) {
               FoundCall = true;
-              EXPECT_EQ(Op.Output.Size, Floating ? 10u : 8u);
+              EXPECT_EQ(Op.Output.Size, 8u);
+              if (Floating)
+                EXPECT_EQ(Op.Output, NdVar::reg(x86reg::RAX, 8));
             }
         EXPECT_TRUE(FoundCall);
+        if (Floating) {
+          unsigned Captures = 0, Exports = 0, Imports = 0;
+          for (const auto &B : Kept.LowFuncs[0].Blocks)
+            for (const auto &Op : B.Ops)
+              if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                  Op.Inputs[0].isConst()) {
+                Captures +=
+                    Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+                Exports += Op.Inputs[0].Offset ==
+                           unsigned(Intrinsic::X87ContextExport);
+                Imports += Op.Inputs[0].Offset ==
+                           unsigned(Intrinsic::X87ContextRefresh);
+              }
+          EXPECT_EQ(Captures, 1u);
+          EXPECT_EQ(Exports, 2u);
+          EXPECT_EQ(Imports, 1u);
+        }
       }
     }
   }
@@ -411,9 +430,22 @@ TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
         EXPECT_EQ(Function.Entry, Entries[I]);
         ASSERT_TRUE(Function.hasCompleteInstructionLift());
         size_t Calls = 0, Returns = 0;
-        const auto ResultSlot = NdVar::reg(x86reg::ST7, x86reg::FPURegSize);
+        const auto ResultSlot =
+            Architecture == Arch::X64
+                ? NdVar::reg(x86reg::RAX, 8)
+                : NdVar::reg(x86reg::ST7, x86reg::FPURegSize);
+        unsigned Captures = 0, Exports = 0, Imports = 0;
         for (const auto &Block : Function.Blocks)
           for (const auto &Op : Block.Ops) {
+            if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                Op.Inputs[0].isConst()) {
+              Captures +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+              Exports +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextExport);
+              Imports +=
+                  Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextRefresh);
+            }
             if (Op.Opcode == NdOp::CALL) {
               ++Calls;
               ASSERT_GT(Op.NumInputs, 0u);
@@ -428,6 +460,9 @@ TEST(PipelineOutcome, SelectedX87WrappersPreserveReturnsAcrossParallelBuilds) {
           }
         EXPECT_EQ(Calls, 1u);
         EXPECT_EQ(Returns, 1u);
+        EXPECT_EQ(Captures, Architecture == Arch::X64 ? 1u : 0u);
+        EXPECT_EQ(Exports, Architecture == Arch::X64 ? 2u : 0u);
+        EXPECT_EQ(Imports, Architecture == Arch::X64 ? 1u : 0u);
       }
     }
     EXPECT_EQ(Parallel.CallMayWriteGPRs, Serial.CallMayWriteGPRs);

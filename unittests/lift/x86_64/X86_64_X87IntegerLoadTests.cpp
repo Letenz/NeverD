@@ -9,6 +9,7 @@
 
 #include "X86FPStateAccuracyFixture.h"
 
+#include "neverd/ir/X87Context.h"
 #include "neverd/lift/X86Lifter.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -182,8 +183,10 @@ TEST(X87IntegerLoadContract, WaitPrecedesMemoryAndStopsPendingExceptions) {
     std::vector<LowOp> Ops;
     ASSERT_NO_THROW(D.liftToLow(I, Ops));
     ASSERT_FALSE(Ops.empty());
-    ASSERT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
-    ASSERT_EQ(Ops.front().Inputs[0].Offset, unsigned(Intrinsic::X87Wait));
+    ASSERT_EQ(Ops.back().Opcode, NdOp::INTRINSIC);
+    ASSERT_EQ(Ops.back().Inputs[0].Offset, unsigned(Intrinsic::X87ContextStep));
+    ASSERT_TRUE(x87ContextInstruction(Ops.back().Inputs[2].Offset));
+    EXPECT_TRUE(x87ContextInstruction(Ops.back().Inputs[2].Offset)->Waiting);
     for (bool Unknown : {false, true}) {
       NdOpEmulator E(Image);
       E.setStrictMode(true);
@@ -199,7 +202,7 @@ TEST(X87IntegerLoadContract, WaitPrecedesMemoryAndStopsPendingExceptions) {
         E.setRegister(x86reg::FPU_SW, 0x281);
       }
       E.setRegisterBytes(x86reg::ST7, std::vector<uint8_t>(16, 0xa5));
-      EXPECT_EQ(E.run(Ops), 0U);
+      EXPECT_LT(E.run(Ops), Ops.size());
       EXPECT_TRUE(E.getLoadRecords().empty());
       EXPECT_EQ(E.getRegisterBytes(x86reg::ST7),
                 std::vector<uint8_t>(16, 0xa5));
@@ -208,14 +211,12 @@ TEST(X87IntegerLoadContract, WaitPrecedesMemoryAndStopsPendingExceptions) {
 }
 
 class X87IntegerLoadAdmission : public X86FPStateFixture {};
-TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
+TEST_F(X87IntegerLoadAdmission, DynamicDestinationsKeepTheirRuntimeState) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
       for (unsigned Scenario = 0; Scenario < 9; ++Scenario) {
         std::vector<uint8_t> Bytes;
-        const bool Accepted =
-            Scenario == 0 || Scenario == 4 || Scenario == 6 || Scenario == 7;
         if (Scenario != 1)
           Bytes = {0xdb, 0xe3}; // fninit authenticates empty tags
         if (Scenario == 2 || Scenario == 3)
@@ -253,17 +254,22 @@ TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
         auto Result = Pipeline().run(Image, Context, Options);
         ASSERT_EQ(Result.FunctionAudits.size(), 1U);
         const auto &Audit = Result.FunctionAudits[0];
-        EXPECT_EQ(Audit.HasLLVMDefinition, Accepted)
-            << Scenario << ':' << NoOpt;
-        EXPECT_EQ(Audit.Disposition,
-                  Accepted ? PipelineFunctionDisposition::Accepted
-                           : PipelineFunctionDisposition::RejectedIncomplete)
+        EXPECT_TRUE(Audit.HasLLVMDefinition) << Scenario << ':' << NoOpt;
+        EXPECT_EQ(Audit.Disposition, PipelineFunctionDisposition::Accepted)
             << Scenario << ':' << NoOpt << ':' << Result.Error;
-        if (!Accepted)
-          EXPECT_NE(std::find(Audit.UnsupportedInstructions.begin(),
-                              Audit.UnsupportedInstructions.end(), Address),
-                    Audit.UnsupportedInstructions.end())
-              << Scenario;
+        EXPECT_TRUE(Audit.UnsupportedInstructions.empty());
+        ASSERT_EQ(Result.LowFuncs.size(), 1U);
+        unsigned Steps = 0;
+        for (const auto &Block : Result.LowFuncs[0].Blocks)
+          for (const auto &Op : Block.Ops)
+            if (Op.Addr == Address && Op.Opcode == NdOp::INTRINSIC &&
+                Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextStep)) {
+              ++Steps;
+              EXPECT_EQ(Op.Inputs[2].Offset & 0x1ffffu,
+                        0xdfu | (0x28u << 8) | X87ContextMemory);
+              EXPECT_TRUE(Op.Inputs[1].isTemp());
+            }
+        EXPECT_EQ(Steps, 1u);
       }
 }
 
@@ -314,8 +320,10 @@ TEST(X87IntegerLoadContract, MemoryLoadsRequireOnlyTheExactSourceExtent) {
         ASSERT_EQ(D.decodeOneForLift(Bytes, sizeof(Bytes), Entry, I), 2);
         std::vector<LowOp> Ops;
         ASSERT_NO_THROW(D.liftToLow(I, Ops));
-        ASSERT_EQ(Ops.back().Opcode, NdOp::FLOAT_INT2FLOAT);
-        const NdVar Destination = Ops.back().Output;
+        ASSERT_EQ(Ops.back().Opcode, NdOp::INTRINSIC);
+        ASSERT_EQ(Ops.back().Inputs[0].Offset,
+                  unsigned(Intrinsic::X87ContextStep));
+        const NdVar Destination = NdVar::reg(x86reg::ST7, 10);
         BinaryImage Image;
         Image.Arch = Arch::X64;
         const uint64_t Value = UINT64_C(0xfedcba9876543210);
@@ -328,12 +336,19 @@ TEST(X87IntegerLoadContract, MemoryLoadsRequireOnlyTheExactSourceExtent) {
         Image.Segments.push_back(Data);
         NdOpEmulator E(Image);
         E.setStrictMode(true);
+        ASSERT_TRUE(E.setX86LinearAddressBits(48));
         E.setRegister(x86reg::RCX, Data.VA);
-        E.setRegisterBytes(Destination.Offset, std::vector<uint8_t>(16, 0xa5));
+        std::array<uint8_t, 512> State{};
+        State[0] = 0x7f;
+        State[1] = 3;
+        std::fill_n(State.begin() + 144, 16, 0xa5);
+        ASSERT_TRUE(E.setX87Context(State));
+        const auto Before = E.getX87Context();
         if (!Complete) {
           EXPECT_LT(E.run(Ops), Ops.size());
           EXPECT_EQ(E.getRegisterBytes(Destination.Offset),
-                    std::vector<uint8_t>(16, 0xa5));
+                    std::vector<uint8_t>(10, 0xa5));
+          EXPECT_EQ(E.getX87Context(), Before);
         } else {
           EXPECT_EQ(E.run(Ops), Ops.size());
           llvm::APFloat Reference(llvm::APFloat::x87DoubleExtended());
@@ -341,11 +356,14 @@ TEST(X87IntegerLoadContract, MemoryLoadsRequireOnlyTheExactSourceExtent) {
               Reference.convertFromAPInt(llvm::APInt(Width * 8, Value), true,
                                          llvm::APFloat::rmNearestTiesToEven),
               llvm::APFloat::opOK);
-          std::vector<uint8_t> Expected(16, 0xa5);
+          std::vector<uint8_t> Expected(10);
           const auto Bits = Reference.bitcastToAPInt();
           for (unsigned N = 0; N < 10; ++N)
             Expected[N] = Bits.extractBitsAsZExtValue(8, N * 8);
           EXPECT_EQ(E.getRegisterBytes(Destination.Offset), Expected);
+          ASSERT_TRUE(E.getX87Context());
+          EXPECT_EQ((*E.getX87Context())[4], 0x80);
+          EXPECT_EQ((*E.getRegister(x86reg::FPU_SW) >> 11) & 7, 7u);
         }
       }
 }

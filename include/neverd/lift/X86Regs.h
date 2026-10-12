@@ -201,6 +201,10 @@ constexpr uint64_t TMM7 = tileReg(7);
 constexpr uint64_t TileConfig = tileReg(TileRegCount);
 constexpr uint16_t TileConfigSize = 64;
 
+/// Private lift placeholder, replaced by a declared function temporary before
+/// SSA. It is a context handle, never a decoder-visible architectural register.
+constexpr uint64_t X87ContextHandle = TileConfig + TileConfigSize;
+
 constexpr uint16_t FPURegSize = 10;   // 80-bit x87 extended-precision value
 constexpr uint16_t FPURegStride = 16; // per-register slot spacing
 constexpr int FPUStackDepth = 8;

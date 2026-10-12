@@ -19,6 +19,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/c/render/X87ContextRender.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
@@ -36,6 +37,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
+#include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/Operator.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -3678,6 +3680,36 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::x86_fxsave ||
+      IID == llvm::Intrinsic::x86_fxsave64 ||
+      IID == llvm::Intrinsic::x86_fxrstor ||
+      IID == llvm::Intrinsic::x86_fxrstor64) {
+    if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
+        Call.arg_size() != 1 || !Call.getType()->isVoidTy() ||
+        !Call.getArgOperand(0)->getType()->isPointerTy() ||
+        Call.getArgOperand(0)->getType()->getPointerAddressSpace() != 0 ||
+        ((IID == llvm::Intrinsic::x86_fxsave64 ||
+          IID == llvm::Intrinsic::x86_fxrstor64) &&
+         Opts.TheArch != Arch::X64))
+      throw std::runtime_error("invalid x86 FP snapshot C contract");
+    const bool Restore = IID == llvm::Intrinsic::x86_fxrstor ||
+                         IID == llvm::Intrinsic::x86_fxrstor64;
+    const char *Mnemonic = IID == llvm::Intrinsic::x86_fxsave     ? "fxsave"
+                           : IID == llvm::Intrinsic::x86_fxsave64 ? "fxsave64"
+                           : IID == llvm::Intrinsic::x86_fxrstor  ? "fxrstor"
+                                                                  : "fxrstor64";
+    emitIndent(Indent);
+    OS << "__asm__ volatile(\"" << Mnemonic << " (%0)\" :: \"r\"("
+       << valueStr(Call.getArgOperand(0)) << ") : \"memory\"";
+    if (Restore) {
+      OS << ", \"st\", \"st(1)\", \"st(2)\", \"st(3)\", \"st(4)\", \"st(5)\", "
+            "\"st(6)\", \"st(7)\"";
+      for (unsigned I = 0; I < (Opts.TheArch == Arch::X64 ? 16U : 8U); ++I)
+        OS << ", \"xmm" << I << "\"";
+    }
+    OS << ");\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::abs && Call.getType()->isIntegerTy() &&
       Call.getType()->getIntegerBitWidth() <= 64) {
     const unsigned Bits = Call.getType()->getIntegerBitWidth();
@@ -3940,6 +3972,17 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     return true;
   }
 
+  if (auto Context = classifyX87ContextAsm(Call)) {
+    if (Opts.TheArch != Arch::X64)
+      llvm::report_fatal_error(
+          "complete x87 context C projection requires x64");
+    std::vector<std::string> Args;
+    for (const auto &Arg : Call.args())
+      Args.push_back(valueStr(Arg.get()));
+    emitIndent(Indent);
+    OS << renderX87ContextAsm(*Context, Args) << "\n";
+    return true;
+  }
   if (auto Selector = classifyX87ConstantAsm(Call)) {
     if (Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64)
       llvm::report_fatal_error(

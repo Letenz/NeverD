@@ -28,6 +28,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -89,6 +90,16 @@ public:
   /// scalar API remains the low-64-bit view used by jump-table emulation.
   void setRegisterBytes(uint64_t RegOff, llvm::ArrayRef<uint8_t> Value);
   std::optional<std::vector<uint8_t>> getRegisterBytes(uint64_t RegOff) const;
+  /// Authenticate the complete x87 portion of a 64-bit FXSAVE image. SIMD and
+  /// MXCSR are separate state owners; this snapshot never imports those fields.
+  bool setX87Context(llvm::ArrayRef<uint8_t> Image);
+  std::optional<std::array<uint8_t, 512>> getX87Context() const;
+  /// Opt into the host CPU's implementation-dependent x87 transcendental and
+  /// partial-remainder results. Strict mode refuses this representative; a
+  /// completed operation records ApproximatedOps. This survives reset().
+  void setX87NativeReferenceMode(bool Enable) {
+    X87NativeReferenceMode = Enable;
+  }
   void setMXCSR(uint32_t Value) {
     MXCSR = Value;
     MXCSRKnown = true;
@@ -231,10 +242,14 @@ private:
   bool StepOverCalls = false;
   bool StrictMode = false;
   bool X86Approx12ReferenceMode = false;
+  bool X87NativeReferenceMode = false;
   std::optional<NdVar> ReachedIndirectBranchTarget;
   std::optional<InstructionMode> ReachedSourceMode;
   std::optional<LowInstructionTargetMode> ReachedTargetMode;
   EmulatorSkips Skips;
+  std::array<uint8_t, 512> X87ContextState{};
+  bool X87ContextKnown = false;
+  uint8_t X87PayloadKnown = 0;
   std::vector<uint64_t> CallPreservedRegs;
 
   uint64_t readOperand(const NdVar &Operand) const;
@@ -278,6 +293,8 @@ private:
   bool executeX86FPScale(const LowOp &Op);
   bool executeX86FPCompare(const LowOp &Op);
   bool executeX87(const LowOp &Op);
+  bool executeX87Context(const LowOp &Op);
+  void publishX87ContextRegisters();
   void resetX87State();
 
   size_t runImpl(llvm::ArrayRef<LowOp> Ops,

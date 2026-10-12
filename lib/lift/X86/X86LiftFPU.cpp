@@ -12,6 +12,7 @@
 
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/X87Constant.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
 
@@ -101,6 +102,90 @@ static void emitFpuArithReg(X86Lifter::LiftState &S, const cs_x86 &X86,
 }
 
 bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
+  if (TargetArch == Arch::X64 &&
+      ((X86.opcode[0] >= 0xd8 && X86.opcode[0] <= 0xdf) ||
+       Insn->id == X86_INS_WAIT)) {
+    const bool Memory = (X86.modrm & 0xc0) != 0xc0 && Insn->id != X86_INS_WAIT;
+    uint32_t Selector =
+        Insn->id == X86_INS_WAIT
+            ? 0x9b
+            : X86.opcode[0] |
+                  (uint32_t(Memory ? X86.modrm & 0x38 : X86.modrm) << 8);
+    if (Memory) {
+      Selector |= X87ContextMemory;
+      Selector |= uint32_t(X86.modrm) << X87ContextOriginalModRMShift;
+    }
+    if (X86.prefix[2] == 0x66)
+      Selector |= X87ContextOperand16;
+    if (Insn->size > 1 && Insn->bytes[0] == 0x9b)
+      Selector |= X87ContextWaitPrefix;
+    const auto Spec = x87ContextInstruction(Selector);
+    const auto Reject = [&]() -> bool {
+      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
+    };
+    if (!Spec || Insn->size == 0 || Insn->size > 15)
+      return Reject();
+    if (Memory) {
+      if (X86.op_count != 1 || X86.operands[0].type != X86_OP_MEM ||
+          X86.operands[0].size != Spec->MemoryBytes)
+        return Reject();
+    } else if (Spec->WritesAX) {
+      if (X86.op_count != 1 || X86.operands[0].type != X86_OP_REG ||
+          X86.operands[0].reg != X86_REG_AX || X86.operands[0].size != 2)
+        return Reject();
+    } else {
+      if (X86.op_count > 2)
+        return Reject();
+      for (unsigned I = 0; I < X86.op_count; ++I)
+        if (X86.operands[I].type != X86_OP_REG ||
+            X86.operands[I].reg < X86_REG_ST0 ||
+            X86.operands[I].reg > X86_REG_ST7)
+          return Reject();
+    }
+    NdVar Flags = NdVar::cst(0, 8);
+    if (Spec->ReadsFlags) {
+      for (const auto [Offset, Bit] : {std::pair{x86reg::CF, 0U},
+                                       {x86reg::PF, 2U},
+                                       {x86reg::AF, 4U},
+                                       {x86reg::ZF, 6U},
+                                       {x86reg::SF, 7U},
+                                       {x86reg::OF, 11U}}) {
+        NdVar Wide = S.makeTemp(8), Shift = S.makeTemp(8),
+              Combined = S.makeTemp(8);
+        S.emit(NdOp::INT_ZEXT, Wide, {NdVar::reg(Offset, 1)});
+        S.emit(NdOp::INT_LEFT, Shift, {Wide, NdVar::cst(Bit, 8)});
+        S.emit(NdOp::INT_OR, Combined, {Flags, Shift});
+        Flags = Combined;
+      }
+    }
+    NdVar Output;
+    if (Spec->WritesAX || Spec->WritesFlags)
+      Output = S.makeTemp(Spec->WritesAX ? 2 : 8);
+    const auto Space = Memory ? LiftState::memoryAddressSpace(X86.operands[0])
+                              : NdMemoryAddressSpace::Default;
+    const NdVar Address =
+        Memory ? S.computeEA(X86.operands[0]) : NdVar::cst(0, 8);
+    S.emitIntrinsic(Intrinsic::X87ContextStep, Output,
+                    {NdVar::reg(x86reg::X87ContextHandle, 8),
+                     NdVar::cst(Selector, 4), Address, Flags,
+                     NdVar::cst(S.Addr, 8)},
+                    NdMemoryOrdering::None, Space);
+    if (Spec->WritesAX)
+      S.emit(NdOp::COPY, NdVar::reg(x86reg::RAX, 2), {Output});
+    else if (Spec->WritesFlags)
+      for (const auto [Offset, Bit] : {std::pair{x86reg::CF, 0U},
+                                       {x86reg::PF, 2U},
+                                       {x86reg::AF, 4U},
+                                       {x86reg::ZF, 6U},
+                                       {x86reg::SF, 7U},
+                                       {x86reg::OF, 11U}}) {
+        NdVar Shift = S.makeTemp(8), Mask = S.makeTemp(8);
+        S.emit(NdOp::INT_RIGHT, Shift, {Output, NdVar::cst(Bit, 8)});
+        S.emit(NdOp::INT_AND, Mask, {Shift, NdVar::cst(1, 8)});
+        S.emit(NdOp::SUBBYTES, NdVar::reg(Offset, 1), {Mask, NdVar::cst(0, 4)});
+      }
+    return true;
+  }
   unsigned InsnId = Insn->id;
   switch (InsnId) {
 

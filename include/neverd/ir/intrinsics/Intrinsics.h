@@ -354,6 +354,16 @@ enum class Intrinsic : uint16_t {
   X86FPMaskCompareState,
   X86FPMaskCompareMemoryState,
 
+  // Explicit, function-owned x87 context. Keep TOP, tags, pending exceptions
+  // and all eight raw values together rather than projecting host long double.
+  X87ContextBegin,
+  X87ContextRefresh,
+  X87ContextExport,
+  X87ContextStep,
+  X87ContextMMXRead,
+  X87ContextMMXWrite,
+  X87ContextMMXEnter,
+
   _Count = 16000
 };
 
@@ -678,6 +688,7 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::Ldmxcsr:
   case Intrinsic::Stmxcsr:
   case Intrinsic::Fxsave:
+  case Intrinsic::X87ContextStep:
   case Intrinsic::Fxrstor:
   case Intrinsic::Fxsave64Mem:
   case Intrinsic::Fxrstor64Mem:
@@ -843,6 +854,12 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     Intrinsic Id, uint8_t NumInputs, uint16_t OutputSize, uint16_t AddressSize,
     uint16_t MaskSize, uint16_t DataSize) {
   switch (Id) {
+  case Intrinsic::X87ContextStep:
+    // [id,context,selector,address,flags,source-PC]; the full selector and
+    // architecture contract belongs to X87Context.h.
+    return NumInputs == 6 && AddressSize == 8 && MaskSize == 4 &&
+           DataSize == 8 &&
+           (OutputSize == 0 || OutputSize == 2 || OutputSize == 8);
   case Intrinsic::X86FPFmaMemoryState:
     return NumInputs == 6 && AddressSize == 8 && MaskSize == 2 &&
            DataSize + 4 == OutputSize &&

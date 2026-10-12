@@ -3827,6 +3827,12 @@ add_neverd_unittest(NeverDX86X87IntegerLoadTests
 target_include_directories(NeverDX86X87IntegerLoadTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
+add_neverd_unittest(NeverDX86X87ConvertStateTests
+  x86_64/X86_64_X87ConvertStateTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87ConvertStateTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86ComiStateTests
   x86_64/X86_64_ComiStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)

@@ -164,6 +164,8 @@ public:
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
+  void writeX87ContextHelpers(const std::vector<HighFunc> &Funcs);
+  std::string renderX87ContextCall(const HighExpr &E);
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
   void writeLinuxSyscallHelpers();
@@ -777,6 +779,8 @@ public:
   /// The x87 helpers the output calls, and whether it computes with the
   /// x87 extended `long double`.
   std::set<X87CHelper> X87Helpers;
+  std::map<std::tuple<Intrinsic, uint32_t, NdMemoryAddressSpace>, std::string>
+      X87ContextHelperNames;
   std::map<std::pair<Intrinsic, unsigned>, std::string> X86FPStateHelpers;
   bool UsesX87Extended = false;
   /// The bytes a plain access of the C memory type \p Type copies inline: 0
