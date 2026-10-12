@@ -51,6 +51,11 @@ public:
                              llvm::ArrayRef<uint8_t> Code,
                              llvm::StringRef SegName, Arch TargetArch) override;
 
+  /// Install a separately authenticated native producer image. MC owner and
+  /// range identities remain absent; storage and segment receipts are shared.
+  llvm::Error appendReplacementImage(std::vector<uint8_t> &Binary,
+                                     const CompiledImage &Image);
+
 private:
   struct PatchLayout : PatchLayoutBase {
     uint32_t NCmds = 0;

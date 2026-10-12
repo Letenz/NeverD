@@ -24,6 +24,7 @@
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
 #include "neverd/backend/codegen/ELF/ELFExceptionPatch.h"
+#include "neverd/loader/ELF/ARMEHABI.h"
 #include "neverd/object/ELFLayout.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
@@ -137,37 +138,7 @@ void appendOpcodeBytes(std::vector<uint8_t> &Opcodes, uint32_t Word,
 }
 
 bool hasTerminatedOpcodeProgram(llvm::ArrayRef<uint8_t> Opcodes) {
-  size_t Cursor = 0;
-  while (Cursor < Opcodes.size()) {
-    const uint8_t First = Opcodes[Cursor++];
-    if (First == kFinishOpcode)
-      return true;
-    const bool HasSecond = (First & 0xF0) == 0x80 || First == 0xB1 ||
-                           First == 0xB3 || First == 0xC6 || First == 0xC7 ||
-                           First == 0xC8 || First == 0xC9;
-    if (HasSecond) {
-      if (Cursor >= Opcodes.size())
-        return false;
-      ++Cursor;
-      continue;
-    }
-    if (First != 0xB2)
-      continue;
-
-    bool Complete = false;
-    for (unsigned I = 0; I < 10 && Cursor < Opcodes.size(); ++I) {
-      const uint8_t Byte = Opcodes[Cursor++];
-      if (I == 9 && ((Byte & 0x80) != 0 || (Byte & 0x7F) > 1))
-        return false;
-      if ((Byte & 0x80) == 0) {
-        Complete = true;
-        break;
-      }
-    }
-    if (!Complete)
-      return false;
-  }
-  return false;
+  return arm_ehabi::isSupportedUnwindProgram(Opcodes);
 }
 
 bool validateInlineOpcodeWord(uint32_t Word) {
@@ -239,9 +210,14 @@ validateDescriptorBytes(llvm::ArrayRef<uint8_t> Bytes, uint64_t Delta,
 }
 
 /// Read the index at \p Region into entries whose targets are addresses.
+llvm::Expected<ELFARMEHABIModel>
+validateGeneratedDescriptor(const CompiledImage &Compiled,
+                            uint64_t DescriptorVA);
+
 llvm::Error readIndex(llvm::ArrayRef<uint8_t> Binary,
                       const ELFARMEHABIRegion &Region,
-                      std::vector<IndexEntry> &Out) {
+                      std::vector<IndexEntry> &Out,
+                      const CompiledImage *Generated = nullptr) {
   if (!rangeInBounds(Region.IndexFileOff, Region.IndexSize, Binary.size()) ||
       (Region.IndexSize % kIndexEntrySize) != 0)
     return patchError("the .ARM.exidx at 0x" + llvm::utohexstr(Region.IndexVA) +
@@ -289,14 +265,23 @@ llvm::Error readIndex(llvm::ArrayRef<uint8_t> Binary,
         return patchError("the .ARM.exidx descriptor field address overflows");
       Entry.DescriptorVA = decodePrel31(Word1, EntryVA + kWordSize);
       uint64_t TableEndVA = 0;
-      if (!Region.HasTable ||
-          !checkedAdd(Region.TableVA, Region.TableSize, TableEndVA) ||
-          *Entry.DescriptorVA < Region.TableVA ||
-          *Entry.DescriptorVA >= TableEndVA ||
-          !rangeInBounds(Region.TableFileOff, Region.TableSize, Binary.size()))
-        return patchError("the .ARM.exidx entry at 0x" +
-                          llvm::utohexstr(EntryVA) +
-                          " points outside its unique .ARM.extab");
+      const bool OriginalDescriptor =
+          Region.HasTable &&
+          checkedAdd(Region.TableVA, Region.TableSize, TableEndVA) &&
+          *Entry.DescriptorVA >= Region.TableVA &&
+          *Entry.DescriptorVA < TableEndVA &&
+          rangeInBounds(Region.TableFileOff, Region.TableSize, Binary.size());
+      if (!OriginalDescriptor) {
+        if (!Generated)
+          return patchError(
+              "EHABI descriptor has no authenticated storage owner");
+        auto Model =
+            validateGeneratedDescriptor(*Generated, *Entry.DescriptorVA);
+        if (!Model)
+          return Model.takeError();
+        Out.push_back(Entry);
+        continue;
+      }
       const llvm::ArrayRef<uint8_t> Table(
           Binary.data() + Region.TableFileOff,
           static_cast<size_t>(Region.TableSize));
@@ -966,6 +951,113 @@ bool hasGeneratedELFARMEHABI(const CompiledImage &Compiled) {
                      isGeneratedIndexSection);
 }
 
+llvm::Expected<std::vector<uint8_t>>
+buildRelocatedELFARMEHABIIndex(llvm::ArrayRef<uint8_t> Binary,
+                               const ELFARMEHABIRegion &Region,
+                               const CompiledImage &Compiled, uint64_t IndexVA,
+                               llvm::ArrayRef<uint64_t> RequiredFunctions) {
+  std::vector<ELFARMEHABIRecord> Records;
+  std::vector<uint64_t> Terminators;
+  if (auto Error = collectGeneratedRecords(Compiled, Records, Terminators))
+    return std::move(Error);
+  if (Records.empty())
+    return patchError("no compiler EHABI entries for the relocated index");
+  for (uint64_t Function : RequiredFunctions)
+    if (llvm::none_of(Records, [&](const ELFARMEHABIRecord &Record) {
+          return Record.FunctionVA == clearThumbBit(Function);
+        }))
+      return patchError("native object function has no EHABI index entry");
+  if (auto Error = validateGeneratedKeysAgainstInput(Binary, Region,
+                                                     Terminators, Records))
+    return std::move(Error);
+  std::vector<IndexEntry> Entries, Added;
+  std::vector<uint8_t> Descriptors;
+  if (auto Error = readIndex(Binary, Region, Entries))
+    return std::move(Error);
+  if (auto Error = planRecords(Region, Records, 0, Added, Descriptors))
+    return std::move(Error);
+  if (!Descriptors.empty())
+    return patchError("relocated index requires already placed descriptors");
+  if (auto Error = mergeEntries(Entries, std::move(Added)))
+    return std::move(Error);
+  std::vector<uint8_t> Bytes;
+  if (auto Error = encodeIndex(Entries, IndexVA, Bytes))
+    return std::move(Error);
+  return Bytes;
+}
+
+llvm::Error retargetELFARMEHABIIndex(std::vector<uint8_t> &Binary,
+                                     uint64_t IndexVA, uint64_t IndexSize,
+                                     const CompiledImage *Generated) {
+  auto Region = findELFARMEHABIRegion(Binary);
+  if (!Region || !IndexSize || (IndexSize % kIndexEntrySize) ||
+      IndexVA >= kTargetAddressLimit ||
+      IndexSize > kTargetAddressLimit - IndexVA)
+    return patchError("invalid relocated EHABI index");
+  std::optional<uint64_t> Offset;
+  unsigned Count = 0;
+  forEachELFPhdr(
+      Binary.data(), Binary.size(),
+      [&](const ELFPhdrFields &PH, const uint8_t *, bool) {
+        if (PH.Type == llvm::ELF::PT_LOAD && IndexVA >= PH.VAddr &&
+            rangeInBounds(IndexVA - PH.VAddr, IndexSize, PH.FileSz) &&
+            rangeInBounds(PH.Offset, PH.FileSz, Binary.size())) {
+          Offset = PH.Offset + IndexVA - PH.VAddr;
+          ++Count;
+        }
+      });
+  if (Count != 1)
+    return patchError("relocated EHABI index has no unique load mapping");
+  auto SH = readELFShdr(Binary.data() + Region->IndexSectionHeaderOff, false);
+  SH.Offset = *Offset;
+  SH.Addr = IndexVA;
+  SH.Size = IndexSize;
+  auto PH = readELFPhdr(Binary.data() + Region->ExidxPhdrOff, false);
+  PH.Offset = *Offset;
+  PH.VAddr = PH.PAddr = IndexVA;
+  PH.FileSz = PH.MemSz = IndexSize;
+  if (Generated) {
+    // Authenticate installed descriptor bytes against the producer before
+    // allowing a pointer outside the original extab. Ordinary input reads
+    // continue to require the unique original section.
+    for (const auto &Section : Generated->Sections) {
+      if (!isGeneratedDescriptorSection(Section) || !Section.Size)
+        continue;
+      auto Bytes = sectionBytes(*Generated, Section);
+      if (Bytes.size() != Section.Size)
+        return patchError("generated extab lacks complete producer bytes");
+      std::optional<uint64_t> FileOff;
+      unsigned Owners = 0;
+      forEachELFPhdr(
+          Binary.data(), Binary.size(),
+          [&](const ELFPhdrFields &P, const uint8_t *, bool) {
+            if (P.Type == llvm::ELF::PT_LOAD && (P.Flags & llvm::ELF::PF_R) &&
+                !(P.Flags & llvm::ELF::PF_W) && Section.VA >= P.VAddr &&
+                rangeInBounds(Section.VA - P.VAddr, Section.Size, P.FileSz) &&
+                rangeInBounds(P.Offset, P.FileSz, Binary.size())) {
+              FileOff = P.Offset + Section.VA - P.VAddr;
+              ++Owners;
+            }
+          });
+      if (Owners != 1 ||
+          !std::equal(Bytes.begin(), Bytes.end(), Binary.begin() + *FileOff))
+        return patchError(
+            "installed extab differs from authenticated producer bytes");
+    }
+  }
+  // Validate the complete table before changing either public registry.
+  ELFARMEHABIRegion Check = *Region;
+  Check.IndexVA = IndexVA;
+  Check.IndexFileOff = *Offset;
+  Check.IndexSize = IndexSize;
+  std::vector<IndexEntry> Entries;
+  if (auto Error = readIndex(Binary, Check, Entries, Generated))
+    return Error;
+  writeELFShdr(Binary.data() + Region->IndexSectionHeaderOff, false, SH);
+  writeELFPhdr(Binary.data() + Region->ExidxPhdrOff, false, PH);
+  return llvm::Error::success();
+}
+
 llvm::Error installELFARMEHABI(std::vector<uint8_t> &Binary,
                                const std::optional<ELFARMEHABIRegion> &Region,
                                const CompiledImage &Compiled,
@@ -973,7 +1065,8 @@ llvm::Error installELFARMEHABI(std::vector<uint8_t> &Binary,
   auto Requirements = exception_rewrite::validateExceptionRewriteContracts(Mod);
   if (!Requirements)
     return Requirements.takeError();
-  const bool Required = Requirements->RequiresRegisteredUnwind;
+  const bool Required = Requirements->RequiresRegisteredUnwind ||
+                        Compiled.InputKind == RewriteInputKind::ReplacementIR;
   if (Required && !Compiled.Unresolved.empty())
     return patchError("required unwind output has unresolved symbols: " +
                       llvm::join(Compiled.Unresolved, ", "));

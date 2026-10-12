@@ -17,6 +17,8 @@ namespace neverd {
 /// Preserve original CPU/security requirements; current entry replacement
 /// refuses CET IBT images until it can retain their ENDBR landing instruction.
 llvm::Error validateELFSourceFeatures(const BinaryImage &Original);
+llvm::Expected<uint32_t> readELFPatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes,
+                                                  uint8_t PointerWidth);
 llvm::Expected<uint32_t>
 readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes);
 

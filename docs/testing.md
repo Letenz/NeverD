@@ -1334,6 +1334,10 @@ Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
 
+`SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
+exhausts cheaper functions at small widths, and covers wide words, resource
+refusals and related or opaque inputs that still require full simplification.
+
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
 
@@ -5313,11 +5317,15 @@ The committed-write observer regressions verify visibility before the next instr
 `NeverDSourcePatchMatrixTests` compiles and links real fixtures, installs source
 or supplied IR, reloads the result and invokes the patched original entry in
 Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
-PE, Mach-O) require exact results or the documented explicit admission refusal.
-The positive native-object case also executes its installed bytes. Every
+PE, Mach-O) require successful source, supplied-IR and native-object installation,
+reload and exact execution. The 143-case inventory includes both ARMv7k watchOS
+and ARMv7 iOS, mutable/readonly state, original floating-point and stack-argument
+bindings, and source/object entries at two nonzero image-base slides. Every
 invocation must reach the return address within a finite instruction/time budget.
 This CPU matrix does not certify operating-system loaders or C++ unwinders.
-The synthetic legacy Mach-O 32-bit images are refusal inputs, not OS profiles.
+Legacy Mach-O 32-bit containers retain compiler-produced instructions,
+relocated CFI and genuine symbols; their CPU execution is not an OS runtime
+qualification. Native object ranges never receive synthetic MC identities.
 On Apple Silicon, `NEVERD_TEST_DARWIN_ARCH=x86_64` runs the C API/CLI and
 seven exception scenarios through Rosetta 2 using x64 originals. Intel fixtures
 reserve file/virtual padding with `-Wl,-segalign,0x4000` independently of header

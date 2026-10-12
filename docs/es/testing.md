@@ -1807,9 +1807,11 @@ El rechazo verificado de desplazamientos dobles informa del contador enmascarado
 
 ## Parches de código fuente y objetos nativos
 
-`CPU` indica instalación y ejecución aislada de funciones; `REFUSED` indica un contrato de instalación ausente. ARM32 ELF exige registro EHABI; Mach-O de 32 bits exige contratos verificados del cargador, frontend y desenrollado; PE requiere actualmente x64 para instalar fuentes.
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+`sourcePatchTargetTriple` selecciona modo ARM, ABI flotante ELF y subtipo CPU Mach-O desde la imagen. `COFFPatchObject` y `MachOPatchObject` verifican símbolos, definiciones auxiliares／de sección y registros nativos sin inventar identificadores MC. Los instaladores de formato registran las tablas reales. Los 143 casos CPU exigen fuente／IR／objetos, cuatro arquitecturas, tres formatos, estado, argumentos flotantes／de pila y dos cambios de base no nulos. Los contenedores Mach-O antiguos de 32 bits conservan código real del compilador y no certifican un OS.
 
 [Parches de código fuente y objetos nativos](source-patching.md)
 

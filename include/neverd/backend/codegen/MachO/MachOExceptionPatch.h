@@ -28,6 +28,7 @@ class Module;
 namespace neverd {
 
 struct CompiledImage;
+struct CompiledSection;
 struct MachOCompactUnwindRecords;
 
 /// The file-backed tail of `__TEXT,__eh_frame` that regenerated DWARF unwind
@@ -155,6 +156,12 @@ llvm::Error installMachOEHFrame(std::vector<uint8_t> &Binary,
                                 const std::optional<MachOEHFrameRegion> &Region,
                                 const CompiledImage &Compiled,
                                 const llvm::Module &Mod);
+
+/// Register native producer bytes using decoded FDE ranges. This deliberately
+/// produces no rewrite-backend MC receipt or synthetic function identities.
+llvm::Error installNativeMachOEHFrame(std::vector<uint8_t> &Binary,
+                                      const MachOEHFrameRegion &Region,
+                                      const CompiledSection &Generated);
 
 } // namespace neverd
 

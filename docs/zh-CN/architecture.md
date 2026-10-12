@@ -9,7 +9,9 @@ NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部
 
 ## 源码与对象替换边界
 
-`SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
+`SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x86/x64/ARM32/ARM64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
+
+`sourcePatchTargetTriple` 从镜像确定 ARM 指令模式、ELF 浮点 ABI 和 Mach-O CPU 子类型。`COFFPatchObject` 与 `MachOPatchObject` 使用对象自身的符号、辅助／区段定义和展开记录验证范围，原生对象不伪造 MC 标识；格式安装器负责注册实际展开表。
 
 ## 系统边界
 

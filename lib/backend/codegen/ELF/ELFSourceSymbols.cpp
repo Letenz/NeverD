@@ -7,10 +7,12 @@
 #include "neverd/backend/codegen/ELF/ELFSourceSymbols.h"
 
 #include "neverd/backend/codegen/ELF/ELFSourceRelocations.h"
+#include "neverd/object/ELFLayout.h"
 
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Object/ELF.h"
 #include "llvm/Support/Errc.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <set>
 
@@ -20,8 +22,11 @@ namespace neverd {
 // enable CET for a previously non-CET executable. Retain its bytes without
 // changing the original image's property note. IBT images need a different
 // entry trampoline that preserves ENDBR, and are refused below.
-llvm::Expected<uint32_t>
-readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
+llvm::Expected<uint32_t> readELFPatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes,
+                                                  uint8_t PointerWidth) {
+  if (PointerWidth != 4 && PointerWidth != 8)
+    return llvm::createStringError(llvm::errc::not_supported,
+                                   "invalid GNU property pointer width");
   if (Bytes.size() < 16 || readLE<uint32_t>(Bytes.data()) != 4 ||
       readLE<uint32_t>(Bytes.data() + 8) != llvm::ELF::NT_GNU_PROPERTY_TYPE_0 ||
       std::memcmp(Bytes.data() + 12, "GNU\0", 4) != 0 ||
@@ -46,7 +51,7 @@ readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
       return llvm::createStringError(
           llvm::errc::not_supported,
           "GNU property requires an unsupported CPU/runtime feature");
-    Offset += 16;
+    Offset = llvm::alignTo(Offset + 8 + Size, PointerWidth);
     if (Offset > Bytes.size())
       return llvm::createStringError(llvm::errc::not_supported,
                                      "invalid GNU property alignment");
@@ -54,10 +59,15 @@ readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
   return Features;
 }
 
-llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
-  if (Original.Format != BinaryFormat::ELF || Original.Arch != Arch::X64)
-    return llvm::Error::success();
-  auto OriginalELF = llvm::object::ELFFile<llvm::object::ELF64LE>::create(
+llvm::Expected<uint32_t>
+readELFX64PatchPropertyNote(llvm::ArrayRef<uint8_t> Bytes) {
+  return readELFPatchPropertyNote(Bytes, 8);
+}
+
+namespace {
+template <typename ELF>
+llvm::Error validateX86SourceProperties(const BinaryImage &Original) {
+  auto OriginalELF = llvm::object::ELFFile<ELF>::create(
       llvm::StringRef(reinterpret_cast<const char *>(Original.Raw.data()),
                       Original.Raw.size()));
   if (!OriginalELF)
@@ -74,7 +84,7 @@ llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
     auto Note = OriginalELF->getSectionContents(Section);
     if (!Note)
       return Note.takeError();
-    auto Features = readELFX64PatchPropertyNote(*Note);
+    auto Features = readELFPatchPropertyNote(*Note, sizeof(typename ELF::Addr));
     if (!Features)
       return Features.takeError();
     if (*Features & llvm::ELF::GNU_PROPERTY_X86_FEATURE_1_IBT)
@@ -82,6 +92,35 @@ llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
           llvm::errc::not_supported,
           "IBT original entries require an ENDBR-preserving trampoline");
   }
+  return llvm::Error::success();
+}
+} // namespace
+
+llvm::Error validateELFSourceFeatures(const BinaryImage &Original) {
+  if (Original.Format != BinaryFormat::ELF)
+    return llvm::Error::success();
+  if (Original.Arch == Arch::ARM) {
+    bool Dynamic = false;
+    forEachELFPhdr(Original.Raw.data(), Original.Raw.size(),
+                   [&](const ELFPhdrFields &P, const uint8_t *, bool) {
+                     Dynamic |= P.Type == llvm::ELF::PT_DYNAMIC;
+                   });
+    if (!Dynamic)
+      for (const auto &S : Original.Symbols)
+        if (Original.isCodeAddress(S.Addr) &&
+            (S.Name == "__gnu_Unwind_Find_exidx" ||
+             S.Name == "_Unwind_RaiseException" ||
+             llvm::StringRef(S.Name).starts_with("__aeabi_unwind_cpp_pr")))
+          return llvm::createStringError(
+              llvm::errc::not_supported,
+              "static ARM unwinder may retain a baked exidx registry; "
+              "replacement requires dynamic PT_ARM_EXIDX discovery");
+    return llvm::Error::success();
+  }
+  if (Original.Arch == Arch::X86)
+    return validateX86SourceProperties<llvm::object::ELF32LE>(Original);
+  if (Original.Arch == Arch::X64)
+    return validateX86SourceProperties<llvm::object::ELF64LE>(Original);
   return llvm::Error::success();
 }
 
@@ -96,11 +135,15 @@ llvm::Expected<std::optional<uint64_t>> resolveELFSourceSymbol(
   if (!Image.isELF() || Request.Symbol.empty() || Request.IsSubtrahend)
     return Fail("unsupported image or subtractive external reference");
   const llvm::StringRef Specifier = Request.SpecifierName;
+  const bool AArch64Call = Image.Arch == Arch::AArch64 &&
+                           Request.Specifier == 1 &&
+                           (Request.FixupKindName.contains("call26") ||
+                            Request.FixupKindName.contains("branch26"));
   const bool Slot = Specifier == "GOTPCREL" ||
                     Specifier == "GOTPCREL_NORELAX" || Specifier == "GOT" ||
                     Specifier == "GOT_PAGE" || Specifier == "GOT_LO12";
   if (!Slot && Specifier != "PLT" &&
-      !(Request.Specifier == 0 && Specifier.empty()))
+      !(Request.Specifier == 0 && Specifier.empty()) && !AArch64Call)
     return Fail("unsupported relocation specifier: " + Specifier);
 
   if (auto VA = parseNdDataSymbol(Request.Symbol)) {

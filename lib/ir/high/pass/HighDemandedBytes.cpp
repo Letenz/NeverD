@@ -23,6 +23,7 @@
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/bit.h"
 
 #include <algorithm>
@@ -387,24 +388,63 @@ private:
       demand(R.get(), carryFill(D) & allBytes(exprBytes(*R)));
       return;
     case NdOp::INT_LEFT:
-      if (Constant(R)) {
-        demand(L.get(), leftShiftSource(D, R->ConstVal, Bytes));
-        return;
-      }
-      break;
     case NdOp::INT_RIGHT:
-    case NdOp::INT_ASHR:
-      if (Constant(R)) {
-        demand(L.get(),
-               rightShiftSource(D, R->ConstVal, Bytes, E.Op == NdOp::INT_ASHR));
-        return;
-      }
-      break;
+    case NdOp::INT_ASHR: {
+      // A shift by amounts its count can take reads the bytes it moves into
+      // a demanded one under any of them.
+      llvm::SmallVector<uint64_t, 2> Amounts;
+      if (!shiftAmounts(*R, Amounts, 0))
+        break;
+      ByteMask Source = 0;
+      for (const uint64_t Amount : Amounts)
+        Source |=
+            E.Op == NdOp::INT_LEFT
+                ? leftShiftSource(D, Amount, Bytes)
+                : rightShiftSource(D, Amount, Bytes, E.Op == NdOp::INT_ASHR);
+      demand(L.get(), Source);
+      if (!Constant(R))
+        demandAll(R);
+      return;
+    }
     default:
       break;
     }
     demandAll(L);
     demandAll(R);
+  }
+
+  /// The amounts a shift count can take: a constant, or a register or
+  /// temporary every assignment of which gives one.
+  bool shiftAmounts(const HighExpr &Count, llvm::SmallVectorImpl<uint64_t> &Out,
+                    unsigned Depth) const {
+    if (Count.Kind == ExprKind::Const) {
+      Out.push_back(Count.ConstVal);
+      return true;
+    }
+    if (Depth > 4)
+      return false;
+    // A conversion of one keeps its value within the converted width.
+    if ((Count.Kind == ExprKind::Cast ||
+         (Count.Kind == ExprKind::UnaryOp &&
+          (Count.Op == NdOp::INT_ZEXT || Count.Op == NdOp::INT_SEXT))) &&
+        Count.Operands.size() == 1 && Count.Operands[0]) {
+      const size_t First = Out.size();
+      if (!shiftAmounts(*Count.Operands[0], Out, Depth + 1))
+        return false;
+      if (const uint16_t Bytes = exprBytes(Count); Bytes && Bytes < 8)
+        for (size_t I = First; I < Out.size(); ++I)
+          Out[I] &= (uint64_t{1} << (8 * Bytes)) - 1;
+      return true;
+    }
+    if (Count.Kind != ExprKind::Var || !readOnlyByUses(Count.Var))
+      return false;
+    const auto It = Definitions.find(varKey(Count.Var));
+    if (It == Definitions.end() || It->second.empty())
+      return false;
+    for (const HighExpr *Value : It->second)
+      if (!Value || !shiftAmounts(*Value, Out, Depth + 1))
+        return false;
+    return true;
   }
 
   /// An entry value of a register or flag the function neither receives as

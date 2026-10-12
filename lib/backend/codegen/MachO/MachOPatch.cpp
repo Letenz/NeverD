@@ -500,7 +500,8 @@ namespace {
 llvm::Expected<MachORewriteTarget>
 resolveMachORewriteTarget(llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
                           InstructionMode RequestedMode,
-                          const llvm::Module &Module) {
+                          const llvm::Module &Module,
+                          RewriteInputKind InputKind) {
   MachORewriteTarget Result;
   Result.Mode = RequestedMode;
   if (TargetArch != Arch::ARM)
@@ -509,7 +510,10 @@ resolveMachORewriteTarget(llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
   auto ModeInfo = macho_arm32::parseModeInfo(Binary);
   if (!ModeInfo)
     return ModeInfo.takeError();
-  if (ModeInfo->CPUSubtype != CPU_SUBTYPE_ARM_V7K)
+  const bool Watch = ModeInfo->CPUSubtype == CPU_SUBTYPE_ARM_V7K;
+  const bool IOS = ModeInfo->CPUSubtype == CPU_SUBTYPE_ARM_V7 ||
+                   ModeInfo->CPUSubtype == CPU_SUBTYPE_ARM_V7S;
+  if (!Watch && !(IOS && InputKind == RewriteInputKind::ReplacementIR))
     return llvm::createStringError(
         llvm::errc::not_supported,
         "32-bit ARM Mach-O rewrite currently requires the ARMv7k ABI");
@@ -538,7 +542,7 @@ resolveMachORewriteTarget(llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
         "cached ARM code mode disagrees with authenticated nlist metadata");
 
   Result.Mode = *Mode;
-  Result.Triple = "thumbv7k-apple-watchos";
+  Result.Triple = Watch ? "thumbv7k-apple-watchos" : "thumbv7-apple-ios5.0";
   Result.ARM32Modes = std::move(*ModeInfo);
   return Result;
 }
@@ -1258,6 +1262,26 @@ bool MachOPatcher::validateExecSegmentInstall(
          LinkeditFileEnd == Binary.size();
 }
 
+llvm::Error MachOPatcher::appendReplacementImage(std::vector<uint8_t> &Binary,
+                                                 const CompiledImage &Image) {
+  if (Image.InputKind != RewriteInputKind::ReplacementObject ||
+      !Image.Success || Image.Format != BinaryFormat::MachO ||
+      Image.BaseVA != plannedExecSegmentVA(Binary, Image.TargetArch))
+    return llvm::createStringError(llvm::errc::not_supported,
+                                   "native Mach-O placement identity changed");
+  auto Storage =
+      validatePatchStorageLayout(Image, machoPageSize(Image.TargetArch));
+  if (!Storage)
+    return Storage.takeError();
+  ExecSegmentInstallReceipt Receipt;
+  if (appendExecSegmentImpl(Binary, Image.Bytes, kDefaultNdTextSegment,
+                            Image.TargetArch, &Receipt,
+                            Storage->WritableOffset) != Image.BaseVA)
+    return llvm::createStringError(llvm::errc::not_supported,
+                                   "native Mach-O segment installation failed");
+  return llvm::Error::success();
+}
+
 uint64_t MachOPatcher::appendExecSegment(std::vector<uint8_t> &Binary,
                                          llvm::ArrayRef<uint8_t> Code,
                                          llvm::StringRef SegName,
@@ -1585,7 +1609,7 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
         }
 
         auto RewriteTarget = resolveMachORewriteTarget(
-            Binary, TargetArch, AuthenticatedImage.Mode, Mod);
+            Binary, TargetArch, AuthenticatedImage.Mode, Mod, InputKind);
         if (!RewriteTarget) {
           llvm::WithColor::error()
               << "macho_patch: " << llvm::toString(RewriteTarget.takeError())
@@ -1597,7 +1621,7 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
         SourceFunctionPreparation SourcePreparation;
         if (!prepareSourceFunctionsForPatch(*CompileMod, &AuthenticatedImage,
                                             SourcePreparation,
-                                            AuthenticatedDetail)) {
+                                            AuthenticatedDetail, InputKind)) {
           llvm::WithColor::error()
               << "macho_patch: source identity preparation failed: "
               << AuthenticatedDetail << "\n";
@@ -1898,7 +1922,11 @@ PatchResult MachOPatcher::patch(const std::filesystem::path &InputPath,
                 &AuthenticatedImage.Exports,
                 /*PatchedOriginalEntries=*/nullptr,
                 /*PatchedEntryMappings=*/nullptr, &InstalledFunctions,
-                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs);
+                TrampolinePlan.Owners, TrampolinePlan.OriginalVAs,
+                &AuthenticatedImage,
+                InputKind == RewriteInputKind::ReplacementIR
+                    ? &Img.ReplacementFunctionModes
+                    : nullptr);
         }
         if (llvm::Error Error = validateSourceFunctionTrampolineClosure(
                 TrampolinePlan, InstalledFunctions, TrampolineCount)) {

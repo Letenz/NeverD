@@ -78,7 +78,8 @@ transformations need their own relocation and runtime verification.
 NeverC is optional. Ordinary NeverC compilation does not enable dyncode. Explicit
 `--compile-mode=dyncode` currently fails because its code-block/runtime contract
 has not been adapted. NeverC C++ is not an admitted source profile. GCC cannot
-produce the LLVM IR artifact. COFF/Mach-O native objects are not admitted.
+produce the LLVM IR artifact. Native ELF, COFF and Mach-O objects are accepted
+on all four native architectures under the bounded producer contracts below.
 Additional architectures are outside the runtime-verified source profiles;
 matching a target triple alone does not establish runtime support. Additional
 Windows EH encodings need their own contracts and runtime profiles. The existing
@@ -119,23 +120,40 @@ for the new segments. Test inputs reserve it with `-Wl,-headerpad,0x400` or more
 Insufficient space fails before publication. Existing code is not moved to
 manufacture that space.
 
-PE x64 source patches put new code in RX storage, mutable state in RW storage,
+PE x86/x64/ARM32/ARM64 source patches put new code in RX storage, mutable state in RW storage,
 and merged runtime/base-relocation tables in read-only storage. Original runtime
 rows and base relocations remain intact. The image must have unused section-header
 space. Active CFG, EH continuation protection, XFG and other guard modes require
 additional compiler/installer contracts and are rejected without changing flags.
 Informational CRT instrumentation flags alone do not enable these modes.
 
-The native ELF object reader retains an entire single object, including validated
-COMDAT groups and link-order members. It supports bounded x64 PC32/PLT32, GOTPCREL
-(including GOTPCRELX forms), and writable 64-bit pointer relocations. It validates
-CFI ranges against exact object function symbols. Unknown relocations, malformed
-symbols, overlapping writes, TLS, IFUNC, common symbols, LTO, archives, unresolved
-weak references and dynamic initializer/finalizer sections fail clearly.
-Post-relocation read-only allocations such as `.data.rel.ro` need additional
-RELRO registration and are currently rejected. CET/IBT original images require
-an ENDBR-preserving entry scheme and are currently rejected without changing
-protection flags.
+The native ELF reader retains complete COMDAT/link-order members on x86, x64,
+ARM32 and ARM64, handles the admitted REL/RELA calls, GOT/data and pointer
+encodings, and authenticates FDE or EHABI coverage against bounded function
+symbols. ARM descriptors placed outside the original extab are authenticated
+against exact installed producer bytes before the public index is retargeted.
+Known static ARM unwinders with a baked exidx registry are refused because
+changing PT_ARM_EXIDX alone cannot change their private lookup boundaries.
+
+Native COFF installation uses exact function auxiliary lengths or a singleton
+function section (`-ffunction-sections`) and cross-checks generated runtime rows
+against those extents. It keeps HIGHLOW/DIR64/MOV32T base relocations separate
+from the IR backend's private MC fixup evidence. Mach-O uses linker atom,
+compact-record and decoded FDE evidence, preserves section-difference pairs,
+and can register native compact records in unused mapped TEXT/header capacity.
+The watchOS compiler adapter retains leaf frames to obtain genuine unwind
+records; externally supplied objects need equivalent producer coverage.
+Neither native reader fabricates MC function owners or recompiles IR.
+Native COFF/Mach-O language-handler graphs are not yet a verified object
+profile; use the documented IR profiles for C++ exception replacements.
+
+Unknown relocations, malformed symbols, overlapping writers, TLS, IFUNC,
+common symbols, LTO, archives, unresolved weak references and runtime
+initializers/finalizers fail clearly. ELF `.data.rel.ro` needs RELRO registration;
+Mach-O absolute pointers need a dyld registration contract and remain refused.
+CET/IBT inputs require an ENDBR-preserving entry scheme and are refused while
+retaining their protection flags. ARM/Thumb replacement entries use relative
+branches so the original text has no new absolute address to rebase.
 
 ## Exception behavior
 
@@ -391,3 +409,16 @@ runtime result: guest command sessions timed out and were later refused by
 Parallels Tools. That attempt is not counted as passing coverage. No VM
 configuration was changed; the VM was observed stopped later and was not
 restarted. Native Windows evidence above comes from the qualified x64 runner.
+
+## All native architecture qualification
+
+The current CPU inventory is 143 passing checks over thirteen profiles:
+x86/x64/ARM32/ARM64 × ELF/PE/Mach-O, with separate ARMv7k watchOS and ARMv7
+iOS profiles. Every source, supplied-IR and native-object target requires
+installation, reload and exact execution. Additional cases cover mutable and
+readonly state, original floating-point/stack-argument bindings and entry
+execution at two nonzero base slides. Legacy Mach-O containers use actual
+compiler instructions and relocated unwind metadata; these CPU checks do not
+certify unavailable legacy OS runtimes or additional C++ unwinders.
+
+GCC 13 C object replacements on ELF x86, ARM32 and ARM64 were loaded and executed through Linux QEMU user mode. ELF32 GNU property alignment and ARM driver instruction-state selection have dedicated corrections; x64 GCC/G++ retains the separately verified seven C++ cases.

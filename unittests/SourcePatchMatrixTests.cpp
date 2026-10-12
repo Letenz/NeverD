@@ -12,6 +12,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/codegen/SourcePatch.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/Loader.h"
 #include "neverd/sdk/NeverDCAPI.h"
@@ -36,6 +37,7 @@ struct Profile {
   Arch Architecture;
   BinaryFormat Format;
   const char *Name;
+  const char *FrontendTriple = nullptr;
 };
 const Profile Profiles[] = {
     {Arch::X86, BinaryFormat::ELF, "ELF_X86"},
@@ -50,6 +52,7 @@ const Profile Profiles[] = {
     {Arch::X64, BinaryFormat::MachO, "MachO_X64"},
     {Arch::ARM, BinaryFormat::MachO, "MachO_ARM32"},
     {Arch::AArch64, BinaryFormat::MachO, "MachO_ARM64"},
+    {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "armv7-apple-ios5.0"},
 };
 std::string take(const char *Text) {
   std::string Result = Text ? Text : "";
@@ -60,57 +63,11 @@ std::string read(const std::filesystem::path &Path) {
   std::ifstream Input(Path, std::ios::binary);
   return {std::istreambuf_iterator<char>(Input), {}};
 }
-void put(std::string &Bytes, size_t At, uint64_t Value, unsigned Width) {
-  for (unsigned I = 0; I < Width; ++I)
-    Bytes.at(At + I) = char(Value >> (8 * I));
-}
-// Modern ld64 cannot link these legacy 32-bit Mach-O targets. An unsigned
-// image with an ordinary ABI entry lets the refusal tests authenticate the
-// input and execute its original bytes without inventing an OS runtime profile.
-std::string legacyMachOImage(const Profile &P) {
-  std::string B(0x2000, '\0');
-  constexpr uint32_t Base = 0x400000, Code = 0x1000;
-  constexpr size_t H = 28, S = 56, Sec = 68;
-  put(B, 0, 0xfeedface, 4);
-  put(B, 4, P.Architecture == Arch::ARM ? 12 : 7, 4);
-  put(B, 8, P.Architecture == Arch::ARM ? 9 : 3, 4);
-  put(B, 12, 2, 4);
-  put(B, 16, 2, 4);
-  put(B, 20, S + Sec + 24, 4);
-  put(B, H, 1, 4);
-  put(B, H + 4, S + Sec, 4);
-  B.replace(H + 8, 6, "__TEXT");
-  put(B, H + 24, Base, 4);
-  put(B, H + 28, B.size(), 4);
-  put(B, H + 36, B.size(), 4);
-  put(B, H + 40, 5, 4);
-  put(B, H + 44, 5, 4);
-  put(B, H + 48, 1, 4);
-  const size_t T = H + S;
-  B.replace(T, 6, "__text");
-  B.replace(T + 16, 6, "__TEXT");
-  put(B, T + 32, Base + Code, 4);
-  put(B, T + 36, 4096, 4);
-  put(B, T + 40, Code, 4);
-  put(B, T + 44, 4, 4);
-  put(B, T + 56, 0x80000400, 4);
-  const size_t E = H + S + Sec;
-  put(B, E, 0x80000028, 4);
-  put(B, E + 4, 24, 4);
-  put(B, E + 8, Code, 8);
-  const std::string Instructions =
-      P.Architecture == Arch::ARM
-          ? std::string("\x01\x00\x80\xe2\x1e\xff\x2f\xe1", 8)
-          : std::string("\x8b\x44\x24\x04\x40\xc3", 6);
-  B.replace(Code, Instructions.size(), Instructions);
-  return B;
-}
-
 // Map image bytes and invoke an ordinary ABI function. The original entry is
 // used after installation, so this verifies the entry branch as well as
 // codegen.
 void execute(const BinaryImage &Image, const Profile &P, int Argument,
-             int Expected) {
+             int Expected, uint64_t Slide = 0) {
   uc_engine *UC = nullptr;
   const auto CPU = P.Architecture == Arch::ARM       ? UC_ARCH_ARM
                    : P.Architecture == Arch::AArch64 ? UC_ARCH_ARM64
@@ -118,7 +75,8 @@ void execute(const BinaryImage &Image, const Profile &P, int Argument,
   const auto Mode =
       P.Architecture == Arch::X86   ? UC_MODE_32
       : P.Architecture == Arch::X64 ? UC_MODE_64
-      : P.Architecture == Arch::ARM && P.Format == BinaryFormat::COFF
+      : P.Architecture == Arch::ARM &&
+              Image.instructionModeAt(Image.Entry) == InstructionMode::Thumb
           ? UC_MODE_THUMB
           : UC_MODE_ARM;
   ASSERT_EQ(uc_open(CPU, Mode, &UC), UC_ERR_OK);
@@ -128,13 +86,13 @@ void execute(const BinaryImage &Image, const Profile &P, int Argument,
     if (Segment.Data.empty())
       continue;
     ASSERT_LT(Segment.Data.size(), 16u * 1024 * 1024);
-    for (uint64_t Page = Segment.VA & ~uint64_t(4095);
-         Page < Segment.VA + Segment.Data.size(); Page += 4096)
+    for (uint64_t Page = (Segment.VA + Slide) & ~uint64_t(4095);
+         Page < Segment.VA + Slide + Segment.Data.size(); Page += 4096)
       if (Pages.insert(Page).second)
         ASSERT_EQ(uc_mem_map(UC, Page, 4096, UC_PROT_ALL), UC_ERR_OK);
-    ASSERT_EQ(
-        uc_mem_write(UC, Segment.VA, Segment.Data.data(), Segment.Data.size()),
-        UC_ERR_OK);
+    ASSERT_EQ(uc_mem_write(UC, Segment.VA + Slide, Segment.Data.data(),
+                           Segment.Data.size()),
+              UC_ERR_OK);
   }
   constexpr uint64_t Stack = 0x70000000, Return = 0x7fff0000;
   ASSERT_EQ(uc_mem_map(UC, Stack, 0x10000, UC_PROT_ALL), UC_ERR_OK);
@@ -160,7 +118,14 @@ void execute(const BinaryImage &Image, const Profile &P, int Argument,
     ASSERT_EQ(uc_reg_write(UC, UC_X86_REG_ESP, &SP), UC_ERR_OK);
     ResultReg = UC_X86_REG_EAX;
     break;
-  case Arch::ARM:
+  case Arch::ARM: {
+    uint32_t CPACR = 0;
+    ASSERT_EQ(uc_reg_read(UC, UC_ARM_REG_C1_C0_2, &CPACR), UC_ERR_OK);
+    CPACR |= 0x00f00000;
+    uint32_t FPEXC = 0x40000000;
+    ASSERT_EQ(uc_reg_write(UC, UC_ARM_REG_C1_C0_2, &CPACR), UC_ERR_OK);
+    ASSERT_EQ(uc_reg_write(UC, UC_ARM_REG_FPEXC, &FPEXC), UC_ERR_OK);
+  }
     ASSERT_EQ(uc_reg_write(UC, UC_ARM_REG_SP, &SP), UC_ERR_OK);
     ASSERT_EQ(uc_reg_write(UC, UC_ARM_REG_LR, &LR), UC_ERR_OK);
     ASSERT_EQ(uc_reg_write(UC, UC_ARM_REG_R0, &Arg), UC_ERR_OK);
@@ -176,9 +141,24 @@ void execute(const BinaryImage &Image, const Profile &P, int Argument,
     llvm_unreachable("matrix architecture");
   }
   const uint64_t Start =
-      Image.Entry |
-      (P.Architecture == Arch::ARM && P.Format == BinaryFormat::COFF ? 1 : 0);
-  ASSERT_EQ(uc_emu_start(UC, Start, Return, 1000000, 10000), UC_ERR_OK);
+      (Image.Entry + Slide) |
+      (P.Architecture == Arch::ARM &&
+               Image.instructionModeAt(Image.Entry) == InstructionMode::Thumb
+           ? 1
+           : 0);
+  uint64_t FaultVA = 0;
+  uc_hook FaultHook;
+  ASSERT_EQ(uc_hook_add(UC, &FaultHook, UC_HOOK_MEM_UNMAPPED,
+                        reinterpret_cast<void *>(+[](uc_engine *, uc_mem_type,
+                                                     uint64_t VA, int, int64_t,
+                                                     void *Context) -> bool {
+                          *static_cast<uint64_t *>(Context) = VA;
+                          return false;
+                        }),
+                        &FaultVA, 1, 0),
+            UC_ERR_OK);
+  ASSERT_EQ(uc_emu_start(UC, Start, Return, 1000000, 10000), UC_ERR_OK)
+      << "fault address 0x" << std::hex << FaultVA;
   uint64_t Value = 0, PC = 0;
   ASSERT_EQ(uc_reg_read(UC, ResultReg, &Value), UC_ERR_OK);
   const int PCReg = P.Architecture == Arch::X64   ? UC_X86_REG_RIP
@@ -204,18 +184,6 @@ std::string linker(const char *Name) {
   return std::filesystem::exists(Candidate) ? Candidate.string() : "";
 }
 
-const char *refusalReason(const Profile &P) {
-  if (P.Format == BinaryFormat::COFF && P.Architecture != Arch::X64)
-    return "requires PE x64";
-  if (P.Format == BinaryFormat::ELF && P.Architecture == Arch::ARM)
-    return "EHABI registration contract";
-  if (P.Format == BinaryFormat::MachO && P.Architecture == Arch::ARM)
-    return "verified watchOS frontend ABI";
-  if (P.Format == BinaryFormat::MachO && P.Architecture == Arch::X86)
-    return "verified loader/unwind contract";
-  return nullptr;
-}
-
 class SourcePatchMatrix : public testing::TestWithParam<Profile> {
 protected:
   std::filesystem::path Directory, Original, Output;
@@ -224,6 +192,20 @@ protected:
   neverd_session_t Session = nullptr;
   neverd_source_patch_options_v1 Options{};
   neverd_source_patch_mapping_v1 Mapping{};
+  std::string originalSource() {
+    const std::string Export =
+        GetParam().Format == BinaryFormat::COFF ? "__declspec(dllexport) " : "";
+    return (GetParam().Format == BinaryFormat::COFF ? "int _fltused=0; " : "") +
+           Export +
+           "__attribute__((noinline)) int target(int x) { volatile int y=x; "
+           "return y+1; } " +
+           Export +
+           "__attribute__((noinline)) int boundary(int x) {return x+2;} " +
+           Export +
+           "__attribute__((noinline)) double original_fp(float a, double b, "
+           "int x, int c, int d, int e, int f, int g, int h, int i) {return "
+           "a*2+b+x+c+d+e+f+g+h+i;}";
+  }
   void SetUp() override {
     ASSERT_FALSE(std::string(NEVERD_TEST_CLANG).empty());
     llvm::SmallString<256> Temp;
@@ -235,18 +217,25 @@ protected:
     const auto P = GetParam();
     if (P.Format == BinaryFormat::MachO &&
         (P.Architecture == Arch::X86 || P.Architecture == Arch::ARM)) {
-      // Modern ld64 no longer links these legacy Mach-O ABIs. Synthetic
-      // images let us verify an explicit refusal without claiming OS support.
-      const auto Bytes = legacyMachOImage(P);
-      std::ofstream(Original, std::ios::binary)
-          .write(Bytes.data(), Bytes.size());
+      const auto Source = Directory / "original.c",
+                 IR = Directory / "original.ll";
+      std::ofstream(Source) << originalSource();
+      ASSERT_EQ(run({NEVERD_TEST_CLANG,
+                     std::string("--target=") +
+                         (P.Architecture == Arch::ARM
+                              ? (P.FrontendTriple ? P.FrontendTriple
+                                                  : "armv7k-apple-watchos")
+                              : "i386-apple-macos10.6"),
+                     P.Architecture == Arch::ARM ? "-mthumb" : "-m32", "-O0",
+                     "-funwind-tables", "-emit-llvm", "-S", Source.string(),
+                     "-o", IR.string()}),
+                0);
+      ASSERT_EQ(
+          run({NEVERD_TEST_LEGACY_FIXTURE, IR.string(), Original.string()}), 0);
     } else {
       const auto Source = Directory / "original.c",
                  Object = Directory / "original.o";
-      std::ofstream(Source)
-          << (P.Format == BinaryFormat::COFF ? "__declspec(dllexport) " : "")
-          << "__attribute__((noinline)) int target(int x) { volatile int y=x; "
-             "return y+1; }";
+      std::ofstream(Source) << originalSource();
       ASSERT_EQ(run({NEVERD_TEST_CLANG,
                      std::string("--target=") +
                          llvmCodegenTriple(P.Architecture, P.Format),
@@ -264,7 +253,8 @@ protected:
                   0);
       } else if (P.Format == BinaryFormat::COFF) {
         ASSERT_EQ(run({Linker, Object.string(), "/out:" + Original.string(),
-                       "/entry:target", "/subsystem:console", "/nodefaultlib"}),
+                       "/entry:target", "/subsystem:console", "/nodefaultlib",
+                       "/debug:dwarf"}),
                   0);
       } else {
         ASSERT_EQ(run({Linker, "-arch",
@@ -297,6 +287,10 @@ protected:
   }
   void TearDown() override {
     neverd_session_destroy(Session);
+    if (HasFailure()) {
+      std::cerr << "Source matrix diagnostic fixture: " << Directory << '\n';
+      return;
+    }
     std::error_code Ignored;
     if (!Directory.empty())
       std::filesystem::remove_all(Directory, Ignored);
@@ -312,21 +306,9 @@ protected:
   }
 };
 
-TEST_P(SourcePatchMatrix, CompilesInstallsAndExecutesOrExplicitlyRefuses) {
+TEST_P(SourcePatchMatrix, CompilesInstallsAndExecutes) {
   const auto P = GetParam();
   const int Result = patch();
-  if (const char *Reason = refusalReason(P)) {
-    EXPECT_EQ(Result, 0);
-    EXPECT_NE(error().find(Reason), std::string::npos);
-    auto Report = llvm::json::parse(take(neverd_patch_source_report(Session)));
-    ASSERT_TRUE(bool(Report));
-    EXPECT_EQ(Report->getAsObject()->getBoolean("success"), false);
-    EXPECT_NE(Report->getAsObject()->getString("error")->find(Reason),
-              llvm::StringRef::npos);
-    EXPECT_FALSE(std::filesystem::exists(Output));
-    EXPECT_EQ(neverd_patch_trampoline_count(Session), 0);
-    return;
-  }
   ASSERT_EQ(Result, 1) << error();
   auto Report = llvm::json::parse(take(neverd_patch_source_report(Session)));
   ASSERT_TRUE(bool(Report));
@@ -347,21 +329,19 @@ TEST_P(SourcePatchMatrix, CompilesInstallsAndExecutesOrExplicitlyRefuses) {
 TEST_P(SourcePatchMatrix, SuppliedIRUsesTheSameInstallationContract) {
   const auto P = GetParam();
   Options.input_kind = NEVERD_SOURCE_PATCH_LLVM_IR;
-  const std::string IR = std::string("target triple = \"") +
-                         llvmCodegenTriple(P.Architecture, P.Format) + "\"\n" +
-                         "target datalayout = \"e-p:" +
-                         std::to_string(Image.getPointerSize() * 8) + ":" +
-                         std::to_string(Image.getPointerSize() * 8) + "\"\n" +
-                         "define i32 @replacement(i32 %x) uwtable {\n"
-                         "  %value = add i32 %x, 40\n  ret i32 %value\n}\n";
+  const std::string IR =
+      std::string("target triple = \"") +
+      (P.Format == BinaryFormat::MachO && P.Architecture == Arch::ARM
+           ? (P.FrontendTriple ? "thumbv7-apple-ios5.0"
+                               : "thumbv7k-apple-watchos")
+           : llvmCodegenTriple(P.Architecture, P.Format)) +
+      "\"\n" + "target datalayout = \"e-p:" +
+      std::to_string(Image.getPointerSize() * 8) + ":" +
+      std::to_string(Image.getPointerSize() * 8) + "\"\n" +
+      "define i32 @replacement(i32 %x) uwtable {\n"
+      "  %value = add i32 %x, 40\n  ret i32 %value\n}\n";
   const int Result = neverd_patch_source(Session, IR.data(), IR.size(),
                                          &Options, Output.string().c_str());
-  if (const char *Reason = refusalReason(P)) {
-    EXPECT_EQ(Result, 0);
-    EXPECT_NE(error().find(Reason), std::string::npos);
-    EXPECT_FALSE(std::filesystem::exists(Output));
-    return;
-  }
   ASSERT_EQ(Result, 1) << error();
   auto Reader = Loader::create(Output);
   ASSERT_NE(Reader, nullptr);
@@ -372,22 +352,185 @@ TEST_P(SourcePatchMatrix, SuppliedIRUsesTheSameInstallationContract) {
   EXPECT_EQ(read(Original), OriginalBytes);
 }
 
-TEST_P(SourcePatchMatrix, NativeObjectProfileCannotFallBackToIR) {
-  if (GetParam().Format == BinaryFormat::ELF &&
-      GetParam().Architecture == Arch::X64) {
-    Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
-    ASSERT_EQ(patch(), 1) << error();
-    auto Reader = Loader::create(Output);
-    ASSERT_NE(Reader, nullptr);
-    auto Reloaded = Reader->load(Output);
-    ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
-    execute(*Reloaded, GetParam(), 7, 61);
-    return;
-  }
+TEST_P(SourcePatchMatrix, MutableStateAndReadOnlyData) {
+  constexpr const char *Source =
+      "static volatile int counter=5; static const int table[3]={9,3,7}; "
+      "__attribute__((noinline)) static int next(void) {return counter++;} "
+      "int replacement(int x) {return next()+next()+table[(unsigned)x%3];}";
+  ASSERT_EQ(neverd_patch_source(Session, Source, std::strlen(Source), &Options,
+                                Output.string().c_str()),
+            1)
+      << error();
+  auto Reader = Loader::create(Output);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  for (int X : {0, 1, 2, 7})
+    execute(*Reloaded, GetParam(), X,
+            11 + (X % 3 == 0   ? 9
+                  : X % 3 == 1 ? 3
+                               : 7));
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+
+TEST_P(SourcePatchMatrix, OriginalFloatingPointAndStackArgumentABI) {
+  uint64_t Address = 0;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.IsFunc &&
+        (Symbol.Name == "original_fp" || Symbol.Name == "_original_fp"))
+      Address = Symbol.Addr;
+  for (const auto &Export : Image.Exports)
+    if (Export.Name == "original_fp" || Export.Name == "_original_fp")
+      Address = Export.Addr;
+  ASSERT_NE(Address, 0u);
+  ASSERT_TRUE(Image.hasAuthenticatedFunctionEntryAt(Address));
+  neverd_source_patch_binding_v1 Binding{
+      "original_fp", NEVERD_SOURCE_BIND_FUNCTION, Address, 0};
+  Options.bindings = &Binding;
+  Options.binding_count = 1;
+  constexpr const char *Source =
+      "extern double "
+      "original_fp(float,double,int,int,int,int,int,int,int,int); "
+      "int replacement(int x) {return "
+      "(int)original_fp(2.5f,3.5,x,2,3,4,5,6,7,8);}";
+  ASSERT_EQ(neverd_patch_source(Session, Source, std::strlen(Source), &Options,
+                                Output.string().c_str()),
+            1)
+      << error();
+  auto Reader = Loader::create(Output);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  for (int X : {-1, 0, 7, 25})
+    execute(*Reloaded, GetParam(), X, X + 43);
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+
+TEST_P(SourcePatchMatrix, NativeObjectMutableStateAndReadOnlyData) {
   Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
-  EXPECT_EQ(patch(), 0);
-  EXPECT_NE(error().find("requires ELF x64"), std::string::npos);
+  constexpr const char *Source =
+      "static volatile int counter=5; static const int table[3]={9,3,7}; "
+      "__attribute__((noinline)) static int next(void) {return counter++;} "
+      "int replacement(int x) {return next()+next()+table[(unsigned)x%3];}";
+  ASSERT_EQ(neverd_patch_source(Session, Source, std::strlen(Source), &Options,
+                                Output.string().c_str()),
+            1)
+      << error();
+  auto Reader = Loader::create(Output);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  for (int X : {0, 1, 2, 7})
+    execute(*Reloaded, GetParam(), X,
+            11 + (X % 3 == 0   ? 9
+                  : X % 3 == 1 ? 3
+                               : 7));
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+TEST_P(SourcePatchMatrix, NativeObjectFloatingPointAndStackArgumentABI) {
+  Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
+  uint64_t Address = 0;
+  for (const auto &Symbol : Image.Symbols)
+    if (Symbol.IsFunc &&
+        (Symbol.Name == "original_fp" || Symbol.Name == "_original_fp"))
+      Address = Symbol.Addr;
+  for (const auto &Export : Image.Exports)
+    if (Export.Name == "original_fp" || Export.Name == "_original_fp")
+      Address = Export.Addr;
+  ASSERT_NE(Address, 0u);
+  ASSERT_TRUE(Image.hasAuthenticatedFunctionEntryAt(Address));
+  neverd_source_patch_binding_v1 Binding{
+      "original_fp", NEVERD_SOURCE_BIND_FUNCTION, Address, 0};
+  Options.bindings = &Binding;
+  Options.binding_count = 1;
+  constexpr const char *Source =
+      "extern double "
+      "original_fp(float,double,int,int,int,int,int,int,int,int); "
+      "int replacement(int x) {return "
+      "(int)original_fp(2.5f,3.5,x,2,3,4,5,6,7,8);}";
+  ASSERT_EQ(neverd_patch_source(Session, Source, std::strlen(Source), &Options,
+                                Output.string().c_str()),
+            1)
+      << error();
+  auto Reader = Loader::create(Output);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  for (int X : {-1, 0, 7, 25})
+    execute(*Reloaded, GetParam(), X, X + 43);
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+TEST_P(SourcePatchMatrix, NativeObjectProfileCannotFallBackToIR) {
+  Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
+  ASSERT_EQ(patch(), 1) << error();
+  auto Reader = Loader::create(Output);
+  ASSERT_NE(Reader, nullptr);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  execute(*Reloaded, GetParam(), 7, 61);
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
+  const auto C = Directory / "bad-object.c", O = Directory / "bad-object.o";
+  std::ofstream(C)
+      << "__attribute__((noinline)) static int helper(int x) {volatile int "
+         "y=x;return y*3;} int replacement(int x){return helper(x)+40;}";
+  auto Target = sourcePatchTargetTriple(Image);
+  ASSERT_TRUE(bool(Target)) << llvm::toString(Target.takeError());
+  std::vector<std::string> Args = {NEVERD_TEST_CLANG,
+                                   "--target=" + *Target,
+                                   "-O2",
+                                   "-funwind-tables",
+                                   "-fno-lto",
+                                   "-c",
+                                   C.string(),
+                                   "-o",
+                                   O.string()};
+  if (Image.Format == BinaryFormat::MachO && Image.Arch == Arch::ARM) {
+    Args[1] = "--target=arm" + Target->substr(5);
+    Args.push_back("-mthumb");
+    Args.push_back("-fno-omit-frame-pointer");
+    Args.push_back("-mno-omit-leaf-frame-pointer");
+  }
+  if (Image.Format == BinaryFormat::COFF)
+    Args.push_back("-ffunction-sections");
+  else
+    Args.push_back("-fPIC");
+  ASSERT_EQ(run(Args), 0);
+  const auto Bytes = read(O);
+  ASSERT_GT(Bytes.size(), 24u);
+  Options.input_kind = NEVERD_SOURCE_PATCH_OBJECT;
+  Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
+  auto Wrong = Bytes;
+  const size_t Machine = Image.Format == BinaryFormat::ELF    ? 18
+                         : Image.Format == BinaryFormat::COFF ? 0
+                                                              : 4;
+  Wrong[Machine] = char(0xfe);
+  Wrong[Machine + 1] = char(0x7f);
+  EXPECT_EQ(neverd_patch_source(Session, Wrong.data(), Wrong.size(), &Options,
+                                Output.string().c_str()),
+            0);
+  EXPECT_FALSE(error().empty());
   EXPECT_FALSE(std::filesystem::exists(Output));
+  EXPECT_EQ(neverd_patch_source(Session, Bytes.data(), 15, &Options,
+                                Output.string().c_str()),
+            0);
+  EXPECT_FALSE(error().empty());
+  EXPECT_FALSE(std::filesystem::exists(Output));
+  EXPECT_EQ(read(Original), OriginalBytes);
+}
+TEST_P(SourcePatchMatrix, SourceEntrySurvivesImageRebasing) {
+  ASSERT_EQ(patch(), 1) << error();
+  auto Reader = Loader::create(Output);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  for (uint64_t Slide : {0x02000000u, 0x08000000u})
+    execute(*Reloaded, GetParam(), 7, 61, Slide);
+}
+TEST_P(SourcePatchMatrix, ObjectEntrySurvivesImageRebasing) {
+  Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
+  ASSERT_EQ(patch(), 1) << error();
+  auto Reader = Loader::create(Output);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  for (uint64_t Slide : {0x02000000u, 0x08000000u})
+    execute(*Reloaded, GetParam(), 7, 61, Slide);
 }
 TEST_P(SourcePatchMatrix, DyncodeCannotPublishAnOrdinaryCompilation) {
   Options.mode = NEVERD_SOURCE_PATCH_DYNCODE;

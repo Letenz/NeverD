@@ -63,6 +63,7 @@ void detectXMMParams(
     const MedCallClobber *Clobber = nullptr;
   };
   llvm::DenseMap<ValueKey, llvm::SmallVector<ValueUse, 2>> Uses;
+  llvm::DenseMap<ValueKey, const MedOp *> Defs;
   for (const MedBlock &Block : Func.Blocks) {
     for (const PhiNode &Phi : Block.Phis)
       for (const auto &[Pred, Arg] : Phi.Args) {
@@ -70,11 +71,48 @@ void detectXMMParams(
         if (!Arg.isConst())
           Uses[valueKey(Arg)].push_back({nullptr, &Phi});
       }
-    for (const MedOp &Op : Block.Ops)
+    for (const MedOp &Op : Block.Ops) {
       for (uint8_t I = 0; I < Op.NumInputs; ++I)
         if (!Op.Inputs[I].isConst())
           Uses[valueKey(Op.Inputs[I])].push_back({&Op, nullptr});
+      if (Op.Output.Kind == MedVar::Temp)
+        Defs[valueKey(Op.Output)] = &Op;
+    }
   }
+  // The amounts a shift count can take: a constant, a byte view of one, or
+  // a selection of them (the lifter's count-at-least-the-width rule for
+  // vector shifts).
+  std::function<bool(const MedVar &, llvm::SmallVectorImpl<uint64_t> &,
+                     unsigned)>
+      shiftAmounts = [&](const MedVar &Count,
+                         llvm::SmallVectorImpl<uint64_t> &Out, unsigned Depth) {
+        const uint64_t Keep = Count.Size == 0 || Count.Size >= 8
+                                  ? ~uint64_t{0}
+                                  : (uint64_t{1} << (8 * Count.Size)) - 1;
+        if (Count.isConst()) {
+          Out.push_back(Count.ConstVal & Keep);
+          return true;
+        }
+        const auto It = Defs.find(valueKey(Count));
+        if (It == Defs.end() || Depth > 4)
+          return false;
+        const MedOp &Def = *It->second;
+        if ((Def.Opcode == NdOp::COPY || Def.Opcode == NdOp::INT_ZEXT) &&
+            Def.NumInputs == 1)
+          return shiftAmounts(Def.Inputs[0], Out, Depth + 1);
+        if (Def.Opcode == NdOp::SUBBYTES && Def.NumInputs == 2 &&
+            Def.Inputs[1].isConst() && Def.Inputs[1].ConstVal < 8) {
+          llvm::SmallVector<uint64_t, 2> Whole;
+          if (!shiftAmounts(Def.Inputs[0], Whole, Depth + 1))
+            return false;
+          for (const uint64_t Value : Whole)
+            Out.push_back((Value >> (8 * Def.Inputs[1].ConstVal)) & Keep);
+          return true;
+        }
+        return Def.Opcode == NdOp::SELECT && Def.NumInputs == 3 &&
+               shiftAmounts(Def.Inputs[1], Out, Depth + 1) &&
+               shiftAmounts(Def.Inputs[2], Out, Depth + 1);
+      };
   // SSA records the low prefix that the call ABI preserves as an implicit
   // value definition. Connect that exact prefix to its pre-call value, just
   // like an explicit byte copy; the volatile upper lanes supply no input use.
@@ -232,6 +270,44 @@ void detectXMMParams(
       case NdOp::INT_SUB:
         // `x ^ x` / `x - x`: the value is discarded, not consumed.
         return Op.NumInputs != 2 || !(Op.Inputs[0] == Op.Inputs[1]);
+      case NdOp::INT_LEFT:
+      case NdOp::INT_RIGHT:
+      case NdOp::INT_ASHR: {
+        // A shift by known amounts only moves bytes, and drops those it
+        // moves out: `psrad $16` after `punpckhwd` keeps none of the words
+        // taken from the destination's incoming value.
+        const uint16_t Size = Op.NumInputs == 2 ? Op.Inputs[0].Size : 0;
+        llvm::SmallVector<uint64_t, 2> Amounts;
+        if (Size == 0 || Size > 8 || In[1] != 0 ||
+            !shiftAmounts(Op.Inputs[1], Amounts, 0))
+          return true;
+        const int64_t Bits = 8 * Size;
+        uint64_t Mask = 0;
+        for (const uint64_t Amount : Amounts)
+          for (int64_t Byte = 0; Byte < Size; ++Byte) {
+            // The input bits output byte Byte takes, and whether it also
+            // takes the sign bit an arithmetic shift fills in.
+            const int64_t Shift = static_cast<int64_t>(
+                std::min<uint64_t>(Amount, static_cast<uint64_t>(Bits)));
+            int64_t Low = 8 * Byte - Shift, High = 8 * Byte + 7 - Shift;
+            bool Sign = false;
+            if (Op.Opcode != NdOp::INT_LEFT) {
+              Low = 8 * Byte + Shift;
+              High = 8 * Byte + 7 + Shift;
+              Sign = Op.Opcode == NdOp::INT_ASHR && High >= Bits;
+            }
+            Low = std::max<int64_t>(Low, 0);
+            High = std::min<int64_t>(High, Bits - 1);
+            uint64_t From = Sign ? uint64_t{1} << (Size - 1) : 0;
+            for (int64_t Bit = Low; Bit <= High; Bit += 8)
+              From |= uint64_t{1} << (Bit / 8);
+            if (Low <= High)
+              From |= uint64_t{1} << (High / 8);
+            if (In[0] & From)
+              Mask |= uint64_t{1} << Byte;
+          }
+        return !carry(Op.Output, Mask);
+      }
       case NdOp::CALL:
       case NdOp::INDIR_CALL:
         // A floating argument passes only the bytes the callee reads.
