@@ -44,6 +44,11 @@ struct DebugInfoRequest {
   /// Set false to read the image alone.  The escape hatch for a stale or
   /// mismatched companion file that names functions worse than the image does.
   bool Enabled = true;
+
+  /// Explicit user choice permits the named PDB to supply analysis input
+  /// when the PE's CodeView identity is absent. Automatic discovery never
+  /// uses this exception; machine, sections and present identities must match.
+  bool AllowMissingPDBIdentity = false;
 };
 
 /// Outcome of a discovery attempt.
