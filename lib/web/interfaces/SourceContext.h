@@ -41,7 +41,18 @@ struct SourceContext {
   void publish(SourceInterface R);
 };
 
+struct RequestWrapper {
+  uint32_t Function = None, Request = None;
+  uint32_t URLParameter = None, OptionsParameter = None;
+  uint32_t URLArgument = None, OptionsArgument = None;
+};
+
+void inspectFetchOptions(SourceContext &C, SourceInterface &R);
 void inspectRequestSyntax(SourceContext &C, uint32_t I);
+std::vector<RequestWrapper> requestWrappers(SourceContext &C);
+void inspectRequestWrapper(SourceContext &C,
+                           const std::vector<RequestWrapper> &Wrappers,
+                           uint32_t I);
 std::vector<uint32_t> xhrConstructors(SourceContext &C);
 void inspectXHR(SourceContext &C, const std::vector<uint32_t> &Constructors,
                 uint32_t I);
