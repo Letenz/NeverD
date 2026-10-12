@@ -2734,6 +2734,80 @@ private slots:
     }
   }
 
+  void closingFileClearsDisassemblyAndReopensAtTheSameAddress() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    auto *listing = disassembly->listing();
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(listing->currentItem(), std::optional<Address>(Base + 0x140));
+    QVERIFY(!listing->currentLineText().isEmpty());
+    listing->setFocus();
+    QTest::keyClick(listing, Qt::Key_Home);
+    QTest::keyClick(listing, Qt::Key_Right, Qt::ShiftModifier);
+    QVERIFY(!listing->selectedText().isEmpty());
+    listing->horizontalScrollBar()->setValue(
+        listing->horizontalScrollBar()->maximum());
+
+    bench.action(ActionId::FileClose)->trigger();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    // A closed image has no cached address, copyable text or scroll position.
+    QVERIFY(!listing->currentAddress());
+    QVERIFY(!listing->currentItem());
+    QVERIFY(!listing->topItem());
+    QVERIFY(!listing->currentFunction());
+    QVERIFY(!listing->cursorLine());
+    QVERIFY(listing->currentLineText().isEmpty());
+    QVERIFY(listing->currentToken().isEmpty());
+    QVERIFY(listing->selectedText().isEmpty());
+    QVERIFY(!listing->jumpPending());
+    QCOMPARE(listing->horizontalScrollBar()->maximum(), 0);
+    QCOMPARE(listing->horizontalScrollBar()->value(), 0);
+    QCOMPARE(listing->verticalScrollBar()->maximum(), 0);
+    QCOMPARE(listing->verticalScrollBar()->value(), 0);
+    QVERIFY(!disassembly->currentAddress());
+    QVERIFY(!disassembly->canGoBack());
+    QVERIFY(!disassembly->canGoForward());
+
+    QSignalSpy locations(listing, &ListingView::locationChanged);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(listing->currentItem(), std::optional<Address>(Base + 0x140));
+    // Reusing an address in the new image still publishes its location.
+    QVERIFY(!locations.isEmpty());
+  }
+
+  void closingDuringAJumpCancelsTheDeferredGraphSwitch() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(Base + 0x140);
+    QVERIFY(disassembly->listing()->jumpPending());
+    disassembly->setGraphMode(true);
+    QVERIFY(!disassembly->graphMode());
+    bench.action(ActionId::FileClose)->trigger();
+    QVERIFY(!bench.session.loaded());
+    QVERIFY(!disassembly->listing()->jumpPending());
+
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    disassembly->navigate(Base + 0x140);
+    QTRY_COMPARE(disassembly->currentItem(),
+                 std::optional<Address>(Base + 0x140));
+    QVERIFY(!disassembly->graphMode());
+  }
+
   void graphStopsWaitingWhenTheFileCloses() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
@@ -2754,6 +2828,10 @@ private slots:
     bench.session.closeFile();
     QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
     QVERIFY(!disassembly->graph()->waiting());
+    QVERIFY(!disassembly->graph()->loaded());
+    QVERIFY(!disassembly->graph()->function());
+    QVERIFY(!disassembly->graph()->currentAddress());
+    QVERIFY(!disassembly->listing()->currentItem());
   }
 
   void hexViewShownBeforeOpeningLoadsItsBytes() {

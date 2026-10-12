@@ -752,6 +752,7 @@ void MainWindow::connectSession() {
   });
   session_.setStateProvider([this] { return projectState(); });
   connect(&session_, &Session::unloaded, this, [this] {
+    pseudocodeAfterJump_.reset();
     updateTitle();
     updateActions();
   });
