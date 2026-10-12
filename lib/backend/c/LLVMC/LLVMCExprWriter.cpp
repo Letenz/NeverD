@@ -15,6 +15,7 @@
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMName.h"
@@ -361,8 +362,13 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
                  Img->DataPtrRelocSlots.count(Addr))) ||
         (Use != ImageDataUses.end() && Use->second.CallSlot);
     std::optional<uint64_t> AccessBytes;
-    if (Use != ImageDataUses.end() && Use->second.AccessBytes.size() == 1)
+    if (Opts.AccessWidths) {
+      if (const auto Width = Opts.AccessWidths->at(Addr); Width && *Width)
+        AccessBytes = *Width;
+    } else if (Use != ImageDataUses.end() &&
+               Use->second.AccessBytes.size() == 1) {
       AccessBytes = *Use->second.AccessBytes.begin();
+    }
     Raw = makeDataName(Addr, PointerSlot, AccessBytes);
     SynthesizedImageObjects.insert(Addr);
   }

@@ -2407,6 +2407,20 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         // section of other objects, and a Mach-O object's metadata sections
         // point at symbols the output does not define.
         NoteWhole(E.ConstVal, nullptr, false);
+      } else if (Opts.AccessWidths && !AccessAddresses.count(&E) &&
+                 (E.ConstProvenance == ConstantAddressProvenance::Address ||
+                  E.ConstProvenance ==
+                      ConstantAddressProvenance::DataAddress)) {
+        // Unnamed data whose address the code proves and keeps as a value
+        // takes the name the listing gives it (`&qword_140C4EE80`), not a
+        // number, when the emitter knows how the listing names data.  An
+        // address inside a sized object reaches that object, declared whole
+        // above.
+        const auto Object = sizedObjectAt(E.ConstVal);
+        if (!Object || Object->first == E.ConstVal) {
+          noteImageAddress(E.ConstVal);
+          ImageObjects[E.ConstVal].AddressTaken = true;
+        }
       }
     }
     // A data import read names the import's slot; the read-only pointer it
@@ -2886,14 +2900,11 @@ void HighCWriter::writeImageObjects() {
     const bool PointerSlot = Obj.CallSlot ||
                              Opts.Image->CodePtrRelocSlots.count(Addr) ||
                              Opts.Image->DataPtrRelocSlots.count(Addr);
-    std::optional<uint64_t> AccessBytes;
-    if (Obj.MemoryWidths.size() == 1)
-      AccessBytes = *Obj.MemoryWidths.begin();
     const auto Binding = DataSymbolBindings.find(Addr);
     Obj.Name = GlobalIdentifierAllocator.allocate(
         Binding != DataSymbolBindings.end()
             ? "got_" + Binding->second.Name
-            : makeDataName(Addr, PointerSlot, AccessBytes),
+            : makeDataName(Addr, PointerSlot, dataNameWidth(Addr, Obj)),
         "g");
   }
   // A pointer slot that names another object comes after the declarations
