@@ -3545,3 +3545,12 @@ ownership remained valid for 23 capabilities. Web, JS and ASAR remain ON.
 Receipts: `/tmp/neverd-epic-completion-final-{integrated-build,focused,
 gui-build,gui-tests,provenance,capabilities}.log`. This integration does not
 broaden the supported runtime profiles or change the acceptance boundaries.
+
+A concurrent advance to `170e3ad4c` required normal merge `c913e314b` before
+publication. Its native ABI, HighC and ELF patch changes completed a 228-step
+engine/SDK build. The affected native/resource/report/CLI/worker/MCP selection
+passed 61 of 63 checks (4.57 s); the same two optional inputs remain absent.
+Qt Claude-package review passed (6.24 s), source provenance passed for 7,548
+files, and all 23 capability declarations remained valid. Receipts use
+`/tmp/neverd-epic-completion-publish-{integration,build,tests,gui-tests,
+provenance,capabilities}.log`.
