@@ -234,13 +234,16 @@ std::string Session::capabilities() {
       {"intrinsic_verified", false},
       {"fetch_member_identity", "property_spelling_unverified"},
       {"fetch_member_correlation", false},
+      {"wrapper_profile", std::string(SourceRequestWrapperProfile)},
+      {"wrapper_argument_flow", "single_layer_parameter_forwarding"},
+      {"wrapper_correlation", false},
       {"spread_argument_resolution", "not_analyzed"},
       {"websocket_correlation", false},
       {"xhr_correlation", false},
       {"candidate_kinds",
-       llvm::json::Array{"fetch", "fetch_member_call", "websocket", "xhr_open",
-                         "xhr_set_request_header", "xhr_send",
-                         "xhr_event_handler"}}});
+       llvm::json::Array{"fetch", "fetch_member_call", "fetch_wrapper_call",
+                         "websocket", "xhr_open", "xhr_set_request_header",
+                         "xhr_send", "xhr_event_handler"}}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "source_interface_relations"},
       {"profile", std::string(InterfaceSourceRelationProfile)},
