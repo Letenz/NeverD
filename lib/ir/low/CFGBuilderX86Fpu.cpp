@@ -61,15 +61,23 @@ bool isStReg(const NdVar &V) {
          ((V.Offset - x86reg::ST0) % x86reg::FPURegStride == 0);
 }
 
-// A value instruction defines only its explicit outputs; its pops are the
-// lifter's TOP changes. Neither replaces the tags of other slots.
-bool isX87ValueIntrinsic(Intrinsic Kind) {
+// The intrinsics that load or reinitialize the whole x87 state, or stand for
+// an x87 operation NeverD does not model, may leave any tags. Value
+// instructions define only their outputs (their pops are the lifter's TOP
+// changes), and other intrinsics, such as an IDIV's divide-error
+// precondition, do not touch the register stack.
+bool replacesX87Tags(Intrinsic Kind) {
   switch (Kind) {
-#define NEVERD_X87_VALUE_HELPER(ID, Name, Asm, Operands, PopsST1)              \
-  case Intrinsic::ID:
-#include "neverd/ir/intrinsics/X87ValueInstructions.def"
-  case Intrinsic::X87Fprem:
-  case Intrinsic::X87Fprem1:
+  case Intrinsic::X87Op:
+  case Intrinsic::X87Fldenv:
+  case Intrinsic::X87Frstor:
+  case Intrinsic::X87Fnsave:
+  case Intrinsic::Fxrstor:
+  case Intrinsic::Fxrstor64Mem:
+  case Intrinsic::Xrstor:
+  case Intrinsic::Xrstor64:
+  case Intrinsic::Xrstors:
+  case Intrinsic::Xrstors64:
     return true;
   default:
     return false;
@@ -1781,14 +1789,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
               } else if (Kind == Intrinsic::X87Ffree && Op.NumInputs == 3 &&
                          isStReg(Op.Inputs[1])) {
                 makeEmpty(x86reg::stRegIndex(Op.Inputs[1].Offset));
-              } else if (Kind != Intrinsic::X87Fincstp &&
-                         Kind != Intrinsic::X87Fnclex &&
-                         Kind != Intrinsic::X87Wait &&
-                         Kind != Intrinsic::X87ReadStatus &&
-                         !isX87ConstantControlIntrinsic(Kind) &&
-                         !isX87ValueIntrinsic(Kind)) {
-                // Restores, resumable traps and unknown extensions may replace
-                // tags. A subsequent explicit definition can recover a slot.
+              } else if (replacesX87Tags(Kind)) {
+                // A subsequent explicit definition can recover a slot.
                 State = {};
               }
             }

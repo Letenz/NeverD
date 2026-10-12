@@ -2241,8 +2241,10 @@ destination empty. A function entry starts from the calling convention's empty
 register stack, and every call returns under the same contract, which the TOP
 pass already assumes for callees it cannot prove: slots a call found empty stay
 empty, full ones become unknown. Payloads stay undefined, so these seeds prove
-push destinations but no FXAM or sign source. x87 value instructions
-(`X87ValueInstructions.def`, FPREM) define only their outputs. The successful
+push destinations but no FXAM or sign source. Only state restores (FRSTOR,
+FLDENV, FNSAVE, FXRSTOR, XRSTOR) and unmodeled x87 operations replace tags;
+value instructions define only their outputs, and other intrinsics, such as
+an IDIV's divide-error precondition, leave the register stack alone. The successful
 16/32/64-bit signed load becomes an exact raw binary80 image and clears C1 in
 shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
 the signed minimum without overflow. Waiting precedes the source memory load.

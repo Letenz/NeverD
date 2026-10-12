@@ -214,13 +214,13 @@ TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
-      for (unsigned Scenario = 0; Scenario < 13; ++Scenario) {
+      for (unsigned Scenario = 0; Scenario < 15; ++Scenario) {
         std::vector<uint8_t> Bytes;
         // Scenarios 1, 9 and 10 start at the function boundary, whose calling
         // convention empties the register stack, as compiled FILD relies on.
         const bool Accepted = Scenario == 0 || Scenario == 1 || Scenario == 4 ||
                               Scenario == 5 || Scenario == 6 || Scenario == 7 ||
-                              Scenario == 10;
+                              Scenario == 10 || Scenario == 13;
         if (Scenario != 1 && Scenario != 9 && Scenario != 10)
           Bytes = {0xdb, 0xe3}; // fninit authenticates empty tags
         if (Scenario == 2 || Scenario == 3 || Scenario == 9 || Scenario == 11 ||
@@ -238,6 +238,11 @@ TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
         if (Scenario == 6)
           Bytes.insert(Bytes.end(),
                        {0x85, 0xc9, 0x74, 0x02, 0xd9, 0xe8}); // two TOPs
+        // Only a state restore replaces tags, not another intrinsic.
+        if (Scenario == 13)
+          Bytes.insert(Bytes.end(), {0x0f, 0xa2}); // cpuid
+        if (Scenario == 14)
+          Bytes.insert(Bytes.end(), {0xdd, 0x22}); // frstor [rdx]
         // So does a direct call to a callee whose x87 effect is proven (10,
         // 11).
         std::optional<size_t> CallAt;
