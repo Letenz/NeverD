@@ -984,6 +984,17 @@ missing owner, changed member, observable table use or exhausted proof retains
 the unresolved transfers. Module-wide mutation and consumer arbitration still
 owns the final publication decision.
 
+Module arbitration keeps input capacity, retained evidence and repeated work
+separate. The LowIR inventory admits at most 400000 operations; its queue still
+has 65536 debits, and block transfers share 1048576 operation debits across
+functions, fixed-point visits and final use recording. Address-occurrence
+screening uses the scan account. Retained anchors, field-index nodes and every
+source reference use the evidence account. One frozen field index preserves
+all matching contexts, including imprecise and conflicting sources; a missing
+PC-relative occurrence retains the loader field's container rather than
+authorizing its approximate numeric target. Any exhaustion protects every
+requested relocation slot and rejects writable dispatch owners.
+
 CFG construction also owns indirect tail-call classification. For an AArch64
 candidate without a proved dispatch, `IndirectTailFrame` checks the necessary
 incoming SP and link-word restoration under the existing native call ABI.

@@ -907,6 +907,8 @@ GoogleTest 发现使用 `DISCOVERY_MODE PRE_TEST`，因此 CTest 枚举前必须
 
 ## 与 CI 的关系
 
+`ModuleJumpTableBudget.*` 使用真实 ELF 表清单，分别检查 400000 操作的输入边界、扫描、来源保留、队列及累计传递额度。测试覆盖两种函数顺序、无关代码 occurrence、没有内存消费者的同字段独立上下文、缺失的 PC-relative 来源、重复长块、最终记录及跨函数耗尽。耗尽时必须保留非空请求集的全部重定位槽；已有跨目标跳转表与返回代码测试继续检查共享收集器的语义。
+
 CI 在 Linux、macOS 和 Windows 上以 Release 开启测试构建，先审核发现的测试清单，
 再应用平台特定的标签排除。配置定义于 `.github/workflows/ci.yml` 和
 `scripts/audit_ci_test_inventory.py`。每个矩阵主机都必须包含 `NeverDSafetyTests`

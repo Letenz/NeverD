@@ -1383,6 +1383,14 @@ agree. Borrowed RBP fields, negative displacements and both signed and unsigned
 index extensions are covered; changed bases/offsets, partial reloads, stores,
 calls and memory barriers must not recover a table from the earlier guard.
 
+`ModuleJumpTableBudget.*` uses a real ELF table inventory to separate the
+400000-operation input boundary from scan, retained-source, queue and cumulative
+transfer limits. It checks both function orders, unrelated code occurrences,
+same-field independent contexts with no memory consumer, missing PC-relative
+sources, repeated long blocks, final recording and cross-function exhaustion.
+Every exhaustion must protect the nonempty request set. Existing cross-target
+jump-table and returned-code tests exercise the shared collector's semantics.
+
 The same target's `NarrowGuard*` tests use long arithmetic prefixes before x86
 and x64 byte/word guards and AArch64 W-register guards. Low/high byte identity,
 disjoint writes and explicit index widening must retain exactly three slots
