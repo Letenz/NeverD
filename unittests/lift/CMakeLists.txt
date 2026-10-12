@@ -297,6 +297,7 @@ add_neverd_unittest(NeverDLiftTests
   core/CircleRangeTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
@@ -1066,6 +1067,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp

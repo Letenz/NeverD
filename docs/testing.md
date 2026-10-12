@@ -1576,6 +1576,16 @@ all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
 The existing deep-arithmetic narrow guards must retain their exact-definition
 proof before the batched extension-range fallback is considered.
 
+`ResolverGuardPredicates.*` checks compound entry/backedge predicates on x86,
+x64, ARM32 and AArch64, including changed lanes, independent roots, unrelated
+flags, wide indices and exhausted evidence. Query-mode changes must retain
+separate caches, and a logical union cannot claim CFG predecessor ownership.
+`JumpTableJoinedGuard.*` checks separate inclusive/exclusive loop guards in
+ELF, COFF and Mach-O. Its ELF source
+roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
+selection oracle. Small joined domains reuse the finite-coordinate proof;
+unchecked paths and sparse or incomplete domains cannot grant a dense table.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

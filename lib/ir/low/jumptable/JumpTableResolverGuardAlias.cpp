@@ -28,6 +28,7 @@
 #include "llvm/Support/Debug.h"
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <functional>
 #include <iterator>
@@ -618,6 +619,9 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
     return false;
   }
 
+  // Literals propose a small finite query envelope; they do not prove any
+  // index bound. The all-path value query must authenticate every coordinate.
+  uint64_t ProposedJoinedBound = 0;
   bool SawControllingGuard = false;
   bool GuardBuildExhausted = false;
   bool GuardExpressionAllowanceExtended = false;
@@ -1219,6 +1223,8 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
       if (V.Size == 0 || V.Size > sizeof(uint64_t))
         return {};
       if (V.isConst()) {
+        if (V.Offset < 64)
+          ProposedJoinedBound = std::max(ProposedJoinedBound, V.Offset + 1);
         if (!consumeGuardBuildWork())
           return {};
         auto Node = std::make_shared<GuardSyntaxNode>();
@@ -1662,6 +1668,48 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
   }
 
   if (IndexGuards.empty()) {
+    // A loop may check its initial and recurrent index separately. No one
+    // dominating comparison then names the complete merged value. Reuse the
+    // shared finite-domain proof over that exact use, including every current
+    // predecessor and root. The normal candidate replay still authenticates
+    // later graph growth before publishing targets. Never infer this envelope
+    // from table capacity or omit an unguarded incoming path.
+    // Provisional group graphs keep their separate universal guard proof;
+    // their hypothesized edges cannot seed an existential finite domain.
+    if (!GuardedGroupProofContext && SawControllingGuard &&
+        !Info.IndexValueDefinedAtUse &&
+        ProposedJoinedBound >= limits::kMinJumpTableEntries) {
+      if (!consumeGuardBuildWork(12))
+        return failIncomplete();
+      JumpTableValueQuery Joined;
+      Joined.Candidate = Info.IndexValueAtUse;
+      Joined.UseAddr = Info.IndexUseAddr;
+      Joined.UseSeq = Info.IndexUseSeq;
+      Joined.Relation = JumpTableValueRelation::JoinedUnsignedFeasibleSet;
+      Joined.UnsignedUpperBound = ProposedJoinedBound;
+      std::vector<bool> Complete;
+      std::vector<uint64_t> Masks;
+      const auto Results = tableValuesMatchAtUses(
+          {Joined}, nullptr, &Complete, InvalidVA, nullptr,
+          CandidateEvidenceBudget, 0, nullptr, &Masks,
+          limits::kMaxJumpTableExpandedResolverDepth, CertifiedEdgeOverrides);
+      // The ordinary table representation requires a dense zero-based
+      // prefix. Sparse domains keep their existing specialized owner.
+      if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&
+          Masks.size() == 1 && Results[0] && Masks[0] &&
+          (Masks[0] & (Masks[0] + 1)) == 0) {
+        const uint32_t Bound = std::bit_width(Masks[0]);
+        if (Bound >= limits::kMinJumpTableEntries) {
+          if (Info.MaxEntries == 0 || Bound < Info.MaxEntries)
+            Info.MaxEntries = Bound;
+          Info.IncompleteGuardDomain = false;
+          Info.SemanticGuardDomainAmbiguous = false;
+          return true;
+        }
+      }
+      if (Complete.size() != 1 || !Complete[0])
+        SawIncompleteProofQuery = true;
+    }
     // Dropping an unrelated guard only enlarges the candidate domain and is
     // conservative when another complete guard was materialized.  With no
     // complete index guard, however, an incomplete leaf/def query must remain
