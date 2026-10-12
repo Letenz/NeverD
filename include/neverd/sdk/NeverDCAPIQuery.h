@@ -59,6 +59,12 @@ NEVERD_API const char *neverd_import_slots_json(neverd_session_t Sess);
 /// true when the record carries decoded language-specific data.
 NEVERD_API const char *neverd_unwind_frame_json(neverd_session_t Sess,
                                                 neverd_va_t Address);
+/// The parts of functions that lie apart from their bodies, as
+/// [{"begin","end","function"}] in address order: code that unwind records
+/// chained to a function's own cover past a gap in its body, where compilers
+/// move cold paths out of line.  "function" is the entry of the function
+/// each part belongs to.
+NEVERD_API const char *neverd_function_chunks_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// Text strings in the image's initialized data that is not code: C strings
 /// in ASCII or UTF-8, UTF-16 or UTF-32 strings in either byte order, and C
