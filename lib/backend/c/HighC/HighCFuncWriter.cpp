@@ -6363,6 +6363,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // Render the body first: a name the declaration pass expected to be
   // forwarded or dead may still be printed, and it must be declared.
   std::string Body;
+  const size_t FirstBodyAnchor =
+      SourceRecorder ? SourceRecorder->positionBuffer() : 0;
   {
     llvm::raw_string_ostream BodyOS(Body);
     llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
@@ -6401,6 +6403,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     emitIndent(1);
     OS << Type << " " << Name << ";\n";
   }
+  if (SourceRecorder && SourceRecorder->recordsPositions())
+    SourceRecorder->appendPositionBuffer(FirstBodyAnchor, Body.size(),
+                                         OS.tell());
   OS << Body;
   if (EmitFunctionWrapper && !IndirectReturnName.empty() &&
       !PrintedIndirectReturn) {
