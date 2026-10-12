@@ -1512,13 +1512,17 @@ TEST(OriginalBinaryUndefinedIndependence,
 }
 
 TEST(OriginalBinaryUndefinedIndependence, KernelPackedFlagsBindAndChargeWork) {
-  auto P = interruptFlagWrite(0x200);
+  // Isolate transition execution from the separate preservation-metadata
+  // budget. The complete IF oracle above still requires opaque preservation.
+  Program P({0x9c, 0x58, 0x50, 0x9d, 0xc3});
   P.flagsProfile(InterpreterMachineStateProfile::KernelX64NoFaultV1);
   const auto Good = P.check();
   ASSERT_TRUE(Good.proved()) << Good.Proof.Diagnostic;
+  ASSERT_EQ(Good.Certificate->LowIR.NativeFlagTransitions.size(), 2U);
   LowIRIndependenceLimits Limits;
   Limits.MaxOperations = Good.Proof.Operations;
-  ASSERT_TRUE(P.check(Limits).proved());
+  const auto Exact = P.check(Limits);
+  ASSERT_TRUE(Exact.proved()) << Exact.Proof.Diagnostic;
   --Limits.MaxOperations;
   expectRefusal(P, Status::BudgetExceeded, Limits);
   P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile =
