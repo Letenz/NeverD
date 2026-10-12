@@ -3,8 +3,6 @@
    for the active theme; Mode names the theme itself, which picks the glyphs
    drawn for it, and CodeFont is the code font in which text fields type. */
 QMainWindow, QDialog { background: ${Window}; }
-/* A window that draws its own shadow paints its surface inside the shadow. */
-QMainWindow[drawsShadow="true"] { background: transparent; }
 QDialog#commandPalette { border: 1px solid ${MenuSeparator}; }
 QMenuBar { background: ${MenuBar}; color: ${MenuBarText}; border: none; padding: 0 2px; }
 QMenuBar::item { background: transparent; padding: 4px 8px; border-radius: 3px; }
