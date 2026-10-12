@@ -150,10 +150,10 @@ struct Session {
   std::list<FunctionSource> FunctionSources;
   static constexpr size_t MaxFunctionSources = 8;
   /// The widths of the reads and writes the code of every function states
-  /// at each address (dataAccessWidths), and a fingerprint of the functions
-  /// they were read from.
+  /// at each address (dataAccessWidths), and the exact function extents they
+  /// were read from. Navigation can keep these image facts, but no output IR.
   std::optional<DataAccessWidths> AccessWidths;
-  uint64_t AccessWidthsFunctions = 0;
+  std::vector<std::pair<va_t, uint64_t>> AccessWidthsFunctions;
   /// Whether every native function's call ABI was recovered for this
   /// pipeline's LLVM emission.
   bool NativeCallAbiRecovered = false;
@@ -410,6 +410,7 @@ struct Session {
     Functions.clear();
     OriginalNames.clear();
     AccessWidths.reset();
+    AccessWidthsFunctions.clear();
     if (!Loaded)
       return;
     const auto Symbols = Img.getFunctionSymbols();
@@ -562,13 +563,23 @@ struct Session {
   void clearPipeline() {
     clearPipelineResult();
     AnalysisCache.reset();
+    AccessWidths.reset();
+    AccessWidthsFunctions.clear();
   }
 
   /// Only navigation may keep immutable image facts. Edits, reloads and
   /// policy changes continue through clearPipeline()/invalidatePipeline().
   void selectFunction(va_t Entry) {
+    // Selecting another function does not edit the image. Rebuilding the
+    // presentation inventory must not discard its decoded access widths.
+    // dataAccessWidths still compares every extent after synchronization;
+    // newly discovered or differently sized functions force a fresh scan.
+    auto KeptWidths = std::move(AccessWidths);
+    auto KeptExtents = std::move(AccessWidthsFunctions);
     clearPipelineResult();
     resetFunctionsFromImage();
+    AccessWidths = std::move(KeptWidths);
+    AccessWidthsFunctions = std::move(KeptExtents);
     OnlyFunctionEntries = {Entry};
   }
 

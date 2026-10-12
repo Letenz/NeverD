@@ -86,6 +86,12 @@ Other architectures and whole-image analyses retain run-local ownership.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
 
+Function selection also retains decoded image data-access widths. Their exact
+ordered function address/size inventory is checked after synchronization;
+changed extents rebuild the widths and discard source using the former names.
+Image reloads, function edits, analysis-policy and signature changes retire
+these facts. Navigation still discards the preceding output IR and source.
+
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
 revision and listing generation identify a document. A hit can answer before
