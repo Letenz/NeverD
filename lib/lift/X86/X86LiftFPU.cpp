@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/X87Constant.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
@@ -127,13 +128,16 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     break;
   }
   case X86_INS_FILD: {
+    if (X86.op_count != 1 || X86.operands[0].type != X86_OP_MEM ||
+        (X86.operands[0].size != 2 && X86.operands[0].size != 4 &&
+         X86.operands[0].size != 8))
+      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
+    S.emitVoidIntrinsic(Intrinsic::X87Wait);
     FPUTop = (FPUTop - 1) & 7;
-    if (X86.op_count >= 1) {
-      NdVar IVal = operandRead(S, X86.operands[0]);
-      NdVar FVal = S.makeTemp(x86reg::FPURegSize);
-      S.emit(NdOp::FLOAT_INT2FLOAT, FVal, {IVal});
-      S.emit(NdOp::COPY, ST(0), {FVal});
-    }
+    NdVar IVal = operandRead(S, X86.operands[0]);
+    // CFG stack admission proves the destination empty before projecting
+    // the exact integer conversion and its successful-load C1 effect.
+    S.emit(NdOp::FLOAT_INT2FLOAT, ST(0), {IVal});
     break;
   }
   case X86_INS_FLD1:

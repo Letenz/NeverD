@@ -75,7 +75,9 @@ double test_fchs32(double a) {
 
 int test_fild_fistp32(int a) {
     int result;
+    /* Authenticate an empty destination; an ABI entry does not prove tags. */
     __asm__ volatile (
+        "fninit\n\t"
         "fildl %1\n\t"
         "fistpl %0"
         : "=m"(result)

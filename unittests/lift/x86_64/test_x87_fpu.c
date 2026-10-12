@@ -87,7 +87,9 @@ double test_fsqrt(double a) {
 
 int test_fild_fistp(int a) {
     int result;
+    /* Authenticate an empty destination; an ABI entry does not prove tags. */
     __asm__ volatile (
+        "fninit\n\t"
         "fildl %1\n\t"
         "fistpl %0"
         : "=m"(result)

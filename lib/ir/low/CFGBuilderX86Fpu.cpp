@@ -68,6 +68,60 @@ bool isX87SignOperation(const LowOp &Op) {
          Op.Output.Offset == Op.Inputs[0].Offset;
 }
 
+bool isX87IntegerLoad(const LowOp &Op) {
+  return Op.Opcode == NdOp::FLOAT_INT2FLOAT && Op.NumInputs == 1 &&
+         isStReg(Op.Output) && Op.Output.Size == 10 &&
+         (Op.Inputs[0].Size == 2 || Op.Inputs[0].Size == 4 ||
+          Op.Inputs[0].Size == 8);
+}
+
+// All signed FILD source widths fit exactly in binary80's 64-bit
+// significand, independently of PC/RC. Construct bits with integer LowIR so
+// neither C emitter depends on the host long double ABI. The tag prover must
+// establish an empty push destination before this successful-load projection.
+std::vector<LowOp> lowerX87IntegerLoad(const LowOp &Load, uint64_t &NextTemp) {
+  std::vector<LowOp> Ops;
+  auto emit = [&](NdOp Code, unsigned Width,
+                  std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Code;
+    Op.Addr = Load.Addr;
+    Op.Seq = Ops.size();
+    Op.Output = NdVar::tmp(NextTemp++, Width);
+    for (const auto &V : Inputs)
+      Op.addInput(V);
+    Ops.push_back(Op);
+    return Op.Output;
+  };
+  const NdVar Value = Load.Inputs[0].Size == 8
+                          ? Load.Inputs[0]
+                          : emit(NdOp::INT_SEXT, 8, {Load.Inputs[0]});
+  const NdVar Negative = emit(NdOp::INT_SLESS, 1, {Value, NdVar::cst(0, 8)});
+  const NdVar Negated = emit(NdOp::INT_SUB, 8, {NdVar::cst(0, 8), Value});
+  const NdVar Magnitude = emit(NdOp::SELECT, 8, {Negative, Negated, Value});
+  const NdVar Leading = emit(NdOp::LZCOUNT, 8, {Magnitude});
+  // LZCOUNT(0) is 64. Mask the shift even on the zero path: SELECT cannot
+  // repair an already-poisonous shift in LLVM or undefined C evaluation.
+  const NdVar Shift = emit(NdOp::INT_AND, 8, {Leading, NdVar::cst(63, 8)});
+  const NdVar Significand = emit(NdOp::INT_LEFT, 8, {Magnitude, Shift});
+  const NdVar Exponent =
+      emit(NdOp::INT_SUB, 8, {NdVar::cst(16383 + 63, 8), Leading});
+  const NdVar Zero = emit(NdOp::INT_EQUAL, 1, {Magnitude, NdVar::cst(0, 8)});
+  const NdVar Biased =
+      emit(NdOp::SELECT, 8, {Zero, NdVar::cst(0, 8), Exponent});
+  const NdVar Sign = emit(NdOp::INT_ZEXT, 8, {Negative});
+  const NdVar SignBit = emit(NdOp::INT_LEFT, 8, {Sign, NdVar::cst(15, 8)});
+  const NdVar Word = emit(NdOp::INT_OR, 8, {Biased, SignBit});
+  const NdVar SignExponent = emit(NdOp::SUBBYTES, 2, {Word, NdVar::cst(0, 4)});
+  emit(NdOp::CONCAT, 10, {SignExponent, Significand});
+  Ops.back().Output = Load.Output;
+  const NdVar Status = NdVar::reg(x86reg::FPU_SW, 2);
+  emit(NdOp::INT_AND, 2,
+       {Status, NdVar::cst(uint16_t(~(1u << x86reg::FPU_SW_C1_BIT)), 2)});
+  Ops.back().Output = Status;
+  return Ops;
+}
+
 // The tag prover admits this operation before any numeric projection can
 // replace it. Sign changes preserve all other raw binary80 bits, including
 // NaN payloads and encodings a host long double cannot represent.
@@ -1498,7 +1552,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       for (size_t O = Boundary.FirstOp;
            O < Boundary.FirstOp + Boundary.OpCount && O < Blk.Ops.size(); ++O) {
         LowOp &Op = Blk.Ops[O];
-        if (isX87SignOperation(Op)) {
+        if (isX87SignOperation(Op) || isX87IntegerLoad(Op)) {
           HasTagOperations = true;
           UnsupportedInstructionAddresses.insert(Op.Addr);
         }
@@ -1622,8 +1676,8 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       break;
     }
 
-  auto lowerExaminations = [&](const std::vector<std::pair<int, int>>
-                                   &Origins) {
+  auto lowerTagOperations = [&](const std::vector<std::pair<int, int>>
+                                    &Origins) {
     if (!HasTagOperations)
       return;
     struct Tags {
@@ -1671,6 +1725,11 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
              O < Boundary.FirstOp + Boundary.OpCount; ++O) {
           const LowOp &Op = Block.Ops[O];
           const bool SignOperation = isX87SignOperation(Op);
+          if (isX87IntegerLoad(Op) && Publish) {
+            const unsigned Bit = 1u << x86reg::stRegIndex(Op.Output.Offset);
+            if (State.Empty & Bit)
+              ProvenTags[{Id, O}] = false;
+          }
           if (SignOperation && Publish) {
             const unsigned Bit = 1u << x86reg::stRegIndex(Op.Inputs[0].Offset);
             if ((State.Full & State.Payload) & Bit)
@@ -1794,12 +1853,15 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         NewOffsets[O] = Rewritten.size();
         const LowOp &Op = B.Ops[O];
         const bool SignOperation = isX87SignOperation(Op);
-        if (SignOperation || (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
-                              Op.Inputs[0].isConst() &&
-                              Op.Inputs[0].Offset ==
-                                  static_cast<uint64_t>(Intrinsic::X87Fxam))) {
+        const bool IntegerLoad = isX87IntegerLoad(Op);
+        if (SignOperation || IntegerLoad ||
+            (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+             Op.Inputs[0].isConst() &&
+             Op.Inputs[0].Offset ==
+                 static_cast<uint64_t>(Intrinsic::X87Fxam))) {
           if (auto It = ProvenTags.find({B.Id, O}); It != ProvenTags.end()) {
-            auto Lowered = SignOperation
+            auto Lowered = IntegerLoad ? lowerX87IntegerLoad(Op, NextTemp)
+                           : SignOperation
                                ? lowerX87Sign(Op, NextTemp)
                                : lowerX87Examine(Op, It->second, NextTemp);
             Rewritten.insert(Rewritten.end(), Lowered.begin(), Lowered.end());
@@ -1845,7 +1907,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         }
       bindReturn(Func.Blocks[I], exitTop(static_cast<int>(I), Top));
     }
-    lowerExaminations(Origins);
+    lowerTagOperations(Origins);
     return;
   }
 
@@ -1911,7 +1973,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
   std::vector<std::pair<int, int>> Origins;
   for (const auto &[B, T] : States)
     Origins.emplace_back(B, HasReset[B] ? 0 : (T - LiftedIn[B]) & 7);
-  lowerExaminations(Origins);
+  lowerTagOperations(Origins);
 }
 
 } // namespace neverd

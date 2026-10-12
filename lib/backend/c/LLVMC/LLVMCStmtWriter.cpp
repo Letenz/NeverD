@@ -3678,6 +3678,30 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::abs && Call.getType()->isIntegerTy() &&
+      Call.getType()->getIntegerBitWidth() <= 64) {
+    const unsigned Bits = Call.getType()->getIntegerBitWidth();
+    const std::string Source = freshVar("abs_bits");
+    emitIndent(Indent);
+    OS << "{ uint64_t " << Source << " = (uint64_t)("
+       << valueStr(Call.getArgOperand(0)) << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent + 1);
+    // Unsigned subtraction also handles the signed minimum when
+    // is_int_min_poison is false. With true that input is poison, so this is a
+    // valid refinement.
+    OS << getName(&Call) << " = ((" << Source << " & UINT64_C("
+       << (uint64_t(1) << (Bits - 1)) << ")) ? UINT64_C(0) - " << Source
+       << " : " << Source << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
   if ((IID == llvm::Intrinsic::ctpop || IID == llvm::Intrinsic::ctlz ||
        IID == llvm::Intrinsic::cttz) &&
       Call.getType()->isIntegerTy() &&
