@@ -1688,6 +1688,8 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `scripts/check_windows_native_seh_resume.py` は実験的な Windows x64 LLVM/CRT プロトコルを O0/O2 で別途検証します。`_local_unwind` の物理 SP と親の復帰先はソースフレームと分離します。MASM は8個の保存 GPR、XMM6–XMM15、SP、ガード、通常経路の呼び出し後処理、非局所経路での処理スキップと2回目の例外を確認します。ツール情報とハッシュを保存します。成功は NeverD 再構築の許可ではなく、PE32、エスケープしたメモリ、任意の入れ子、両 C 経路は未解決です。ネイティブ x64 MSVC で `--output` を指定します。 ワークフロー入力 `windows_eh_protocol_only` は NeverD を再ビルドせずにこれらのネイティブ実験を実行します。エンジンの回帰検証とは別です。
 
+`scripts/check_windows_native_seh_bridge.py` 独立した固定 x64 フレームのアセンブリが再開ラベルと unwind を所有し、通常 ABI で最適化 LLVM を呼びます。O0/O2 ごとに八経路、256 呼び出し、生の異常値、実コード、回数、消去不能エラーを検査し、六つの破損負例を実行します。ソースハッシュ、最終 unwind/load-config、実 CRT を保存します。メモリ権限、任意の入れ子、並行実行、EHCONT/CET、製品再構築は未証明です。
+
 `RegistrationTryLevel.EH4Publication*` と `EH4CookieStoresMustOwnDistinctPrivateBytes` は、ADD/SUB による確保、レジスタ保存、cookie の PUSH、disp8/disp32 の cookie 格納を含む PE32 EH4 の直接フレームを検証します。変更された参照元やオフセット、cookie の重複、保存レジスタやランタイム管理領域への上書きは拒否し、共有 LowIR が値と寿命を独立して検証します。
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` は、x86、x64、AArch64 の PE32、ELF、Mach-O で最適化あり・なしのソース投影を検証します。単一関数と分割 LLVM 出力は同じ不完全なネイティブ EH 契約を明示的に保持し、バイナリ書き換えは引き続き拒否します。
@@ -1711,3 +1713,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 ソースの登録状態ソルバーは、オブジェクトの借用、catch オブジェクトの構築、local-finally の書き込みに共通の管理領域境界チェックを使います。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` と `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` は、EH3/EH4 の SavedESP、例外ポインター、cookie スロットに対する読み取り、書き込み、部分的な重なりを検証します。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` は、後続の再読み取りに依存せず、保存された入口フレームを保護します。隣接する通常のオブジェクトは引き続き借用できます。
 
 `LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` は、モジュール全体と選択関数の出力で、ブロックアドレスの返却、整数変換、アドレス演算、入れ子の表初期値を拒否します。32/64 ビット、両エンディアン、ELF/COFF/Mach-O を検証します。未対応のシンボル定数も null に置き換えず明示的に拒否します。これは出力拒否の契約であり、移植可能なネイティブ再開の実装ではありません。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 両最適化で全体・選択関数の CLI 拒否と既存出力の保持を検証します。他のアトミック関数は C 出力を要求します。アドレス下位ビットの観測は未対応であり、LLVM 検証はその意味を証明しません。

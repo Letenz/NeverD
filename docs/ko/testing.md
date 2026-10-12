@@ -1678,6 +1678,8 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `scripts/check_windows_native_seh_resume.py`는 실험적인 Windows x64 LLVM/CRT 프로토콜을 O0/O2에서 별도로 검사합니다. `_local_unwind`의 물리 SP와 부모 재개 주소는 소스 프레임과 구분합니다. MASM은 보존 GPR 여덟 개, XMM6–XMM15, SP, 가드, 정상 호출 뒤의 연산과 비지역 경로의 연산 건너뛰기, 두 번째 예외를 검사합니다. 도구와 해시를 보존합니다. 성공은 NeverD 재구성 허가가 아니며 PE32, 이탈한 메모리 별칭, 임의 중첩, 두 C 경로는 미해결입니다. 네이티브 x64 MSVC에서 `--output`을 지정합니다. 워크플로 입력 `windows_eh_protocol_only`는 NeverD를 다시 빌드하지 않고 이 네이티브 실험을 실행하며 엔진 회귀 검증과는 별개입니다.
 
+`scripts/check_windows_native_seh_bridge.py` 독립 고정 x64 프레임의 어셈블리가 재개 레이블과 unwind 정보를 소유하고 일반 ABI로 최적화 LLVM을 호출합니다. O0/O2마다 여덟 경로를 256회 실행하며 원시 예외 값, 실제 코드, 횟수 및 영구 오류를 검사하고 여섯 손상 반례를 실행합니다. 소스 해시, 최종 unwind/load-config 및 실제 CRT를 보존합니다. 메모리 권한, 임의 중첩, 동시 실행, EHCONT/CET 및 제품 재구성은 아직 증명하지 않았습니다.
+
 `RegistrationTryLevel.EH4Publication*`와 `EH4CookieStoresMustOwnDistinctPrivateBytes`는 ADD/SUB 할당, 레지스터 저장, cookie PUSH 및 disp8/disp32 cookie 저장을 사용하는 PE32 EH4 직접 프레임을 검사합니다. 변경된 원본과 오프셋, 겹치는 cookie, 저장된 레지스터나 런타임 관리 영역을 덮어쓰는 접근은 거부하며, 공유 LowIR이 값과 수명을 독립적으로 검증합니다.
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission`은 x86, x64, AArch64의 PE32, ELF, Mach-O에서 최적화 여부에 따른 소스 투영을 검사합니다. 단일 함수와 분할 LLVM 출력은 동일한 불완전한 네이티브 EH 계약을 명시적으로 유지하며 바이너리 재작성은 계속 이를 거부합니다.
@@ -1701,3 +1703,5 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 소스 등록 상태 솔버는 객체 대여, catch 객체 생성, local-finally 쓰기에 동일한 관리 영역 경계 검사를 적용합니다. `RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers`와 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells`는 EH3/EH4의 SavedESP, 예외 포인터, cookie 슬롯에 대한 읽기, 쓰기 및 부분 겹침을 검사합니다. `RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors`는 이후의 재로드에 의존하지 않고 저장된 진입 프레임을 보호합니다. 인접한 일반 객체는 계속 대여할 수 있습니다.
 
 `LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants`는 전체 모듈과 선택 함수 출력에서 블록 주소 반환, 정수 변환, 주소 연산 및 중첩 테이블 초기화를 거부합니다. 32/64비트, 두 바이트 순서 및 ELF/COFF/Mach-O 설정을 검사합니다. 지원하지 않는 심볼 상수도 널 포인터로 바꾸지 않고 명시적으로 거부합니다. 이는 출력 거부 계약이며 이식 가능한 네이티브 재개의 구현은 아닙니다.
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 두 최적화에서 전체 및 선택 함수의 CLI 거부와 기존 출력 보존을 검사합니다. 다른 원자 함수는 C 출력을 요구합니다. 주소 하위 비트 관찰은 미지원이며 LLVM 검증은 그 의미를 증명하지 않습니다.

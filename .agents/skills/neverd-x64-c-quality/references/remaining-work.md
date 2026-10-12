@@ -12,6 +12,7 @@ analysis and comparison output belong outside the repository.
 | Source types and member calls remain partially recovered | Use authenticated PDB/TPI type and method metadata; do not infer a virtual method name from a vtable offset alone. |
 | Release performance varies by function and debug input | Time paired fresh `--func` calls and separate load from decompile cost. Profile before changing shared analysis. Preserve byte-identical C and EH semantics. |
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
+| Interior code-address bits have no portable C or general LLVM blockaddress contract | Preserve precise CLI refusal and existing-file protection at full/selected optimized/unoptimized emission. Other atomic functions must still emit. LLVM verification does not prove bit observation; close opaque transport versus inspected bits at the shared LLVM owner. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
 | The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Complete decoded callee chains and certified runtime-only continuations retain their frame evidence. This case still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
 | The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Ordinary finally calls and nonlocal exits need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. A nested SEH helper also needs checked incoming-object and exception-field accesses before its independent returning-stack proof can close. Neither a guessed zero-pop summary nor an unconditional no-return annotation is valid. |
@@ -31,9 +32,14 @@ require a predecessor-only PHI at hidden entry. Local Wine O0/O2 observations
 are supporting evidence only; native Windows and compiler-visible resumption
 still require their own validation. A second ordinary finally call in the same
 parent activation checks token reinitialization. Arbitrary live SSA values,
-nested activations and EHCONT/CET compatibility are not authenticated. A native
-bridge that enters a resume body through its normal ABI remains the stronger
-candidate. LLVMC refuses block addresses and other
+nested activations and EHCONT/CET compatibility are not authenticated. The independent
+`check_windows_native_seh_bridge.py` tests a fixed assembly-owned frame and two
+native continuation labels, entering optimized LLVM bodies through ordinary ABI
+calls. Local Wine O0/O2 covers eight paths and 512 positive calls, plus six
+corrupt compiled controls. Raw abnormal bytes, event counts, actual codes and a
+persistent unexpected-event flag remain independently observable. Native Windows
+is pending; no source-memory, arbitrary nesting, concurrency, EHCONT/CET or
+production reconstruction authority follows. LLVMC refuses block addresses and other
 unrepresented constants instead of silently substituting zero.
 Compiler or native-runtime success alone grants no reconstruction receipt;
 conditional memory, invocation lifetime and both C routes remain open.

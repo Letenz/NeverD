@@ -1596,6 +1596,8 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 
 `scripts/check_windows_native_seh_resume.py` 单独测试 Windows x64 LLVM/CRT 的实验性续接协议，覆盖 O0/O2。`_local_unwind` 接收捕获的物理 SP 和取址的父函数续接点，与逃逸的源帧单元分开。MASM 调用方检查八个保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路径执行调用后的操作，非局部路径跳过这些操作，所有路径随后再次抛异常。报告保留工具链和哈希。原生成功不授予 NeverD 重建凭据，也未解决 PE32 出口、逃逸内存的访问权限、任意嵌套或两条 C 路线。请在原生 x64 MSVC 环境中指定 `--output`。 工作流参数 `windows_eh_protocol_only` 直接运行这些原生实验，不重新构建 NeverD；它与引擎回归覆盖分开。
 
+`scripts/check_windows_native_seh_bridge.py` 独立 x64 固定帧桥由汇编拥有续接标签和展开元数据，正常 ABI 入口调用优化 LLVM。O0/O2 各测八路径、256 次调用；逐次记录原始异常标志、异常码、事件数和永久错误标记，并运行六个损坏反例。保存实际源码哈希、最终 unwind/load-config 与 CRT 提供者。源内存权限、任意嵌套、并发、EHCONT/CET 和生产重建仍未证明。
+
 `RegistrationTryLevel.EH4Publication*` 和 `EH4CookieStoresMustOwnDistinctPrivateBytes` 检查 PE32 EH4 直接栈帧，覆盖 ADD/SUB 分配、保存寄存器、压入 cookie 及 disp8/disp32 cookie 存储。改变来源或偏移、cookie 重叠，以及覆盖保存寄存器或运行时管理字段的写入必须被拒绝；共享 LowIR 独立验证值和生命周期。
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 检查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的优化与未优化源码投影。单函数和分片 LLVM 发射保留相同的不完整原生 EH 显式契约；二进制重写仍拒绝该契约。
@@ -1619,3 +1621,5 @@ bulk-attributes 检查完整组、名称/类型集合、未使用字节保护区
 源码登记状态求解器对对象借用、catch 对象构造和 local-finally 写入共用管理区边界检查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 与 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 覆盖 EH3/EH4 对 SavedESP、异常指针和 cookie 槽的读取、写入及部分重叠。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 独立检查入口帧保存槽，无需依赖后续重新加载才发现覆盖。相邻普通对象仍可合法借用。
 
 `LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` 检查完整模块及单函数输出中的基本块地址返回、整数转换、地址运算和嵌套表初始化。矩阵覆盖 32/64 位、两种字节序及 ELF/COFF/Mach-O 配置。不支持的符号常量也明确拒绝，不能变成空指针。这验证输出拒绝规则，并未实现可移植的原生续接。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模块和单函数的 CLI 检查覆盖两种优化设置，拒绝内部代码地址并保留已有输出；其他原子指令函数仍必须成功输出 C。地址低位观察尚未支持，LLVM 验证通过不能证明其语义。

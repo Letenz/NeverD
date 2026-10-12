@@ -2199,15 +2199,20 @@ jobs:
         with:
           arch: x64
       - name: Check native resume protocol observation admission
-        run: python -m unittest scripts.tests.test_check_windows_native_seh_resume -v
+        run: python -m unittest scripts.tests.test_check_windows_native_seh_resume scripts.tests.test_check_windows_native_seh_bridge -v
       - name: Test experimental x64 CRT continuation protocol
         run: python scripts/check_windows_native_seh_resume.py --output build-windows-eh/native-seh-resume
+      - name: Test experimental x64 physical bridge and negative controls
+        if: ${{ !cancelled() }}
+        run: python scripts/check_windows_native_seh_bridge.py --output build-windows-eh/native-seh-bridge
       - name: Preserve native resume protocol evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-eh-native-seh-resume-protocol
-          path: build-windows-eh/native-seh-resume/
+          path: |
+            build-windows-eh/native-seh-resume/
+            build-windows-eh/native-seh-bridge/
           if-no-files-found: warn
           retention-days: 14
 

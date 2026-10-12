@@ -1634,6 +1634,8 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `scripts/check_windows_native_seh_resume.py` 單獨測試 Windows x64 LLVM/CRT 的實驗性續接協定，涵蓋 O0/O2。`_local_unwind` 接收捕獲的實體 SP 與取址的父函式續接點，與逸出的來源框架單元分開。MASM 呼叫端檢查八個保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路徑執行呼叫後的操作，非局部路徑跳過這些操作，所有路徑隨後再次拋出例外。報告保留工具鏈與雜湊。原生成功不授予 NeverD 重建憑據，也未解決 PE32 出口、逸出記憶體的存取權限、任意巢狀或兩條 C 路線。請在原生 x64 MSVC 環境中指定 `--output`。 工作流程參數 `windows_eh_protocol_only` 直接執行這些原生實驗，不重新建置 NeverD；它與引擎迴歸涵蓋範圍分開。
 
+`scripts/check_windows_native_seh_bridge.py` 獨立 x64 固定框架橋由組合語言擁有续接標籤和展開中繼資料，以一般 ABI 入口呼叫最佳化 LLVM。O0/O2 各測八路徑、256 次呼叫；逐次保留原始異常旗標、代碼、事件數及永久錯誤，並執行六個損壞反例。保存實際來源雜湊、unwind/load-config 與 CRT 提供者。來源記憶體權限、任意巢狀、並行、EHCONT/CET 和正式重建仍未證明。
+
 `RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
 
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` 檢查 x86、x64、AArch64 上 PE32、ELF 和 Mach-O 的最佳化與未最佳化原始碼投影。單函式和分片 LLVM 發射保留相同的不完整原生 EH 明確契約；二進位重寫仍拒絕該契約。
@@ -1657,3 +1659,5 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 原始碼登記狀態求解器對物件借用、catch 物件建構與 local-finally 寫入共用管理區邊界檢查。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` 與 `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` 涵蓋 EH3/EH4 對 SavedESP、例外指標與 cookie 槽的讀取、寫入及部分重疊。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` 獨立檢查入口框架保存槽，無須依賴後續重新載入才發現覆寫。相鄰一般物件仍可合法借用。
 
 `LLVMCValues.NativeBlockAddressesCannotBecomeZeroConstants` 檢查完整模組及單函式輸出中的基本區塊位址回傳、整數轉換、位址運算與巢狀表初始化。矩陣涵蓋 32/64 位元、兩種位元組序及 ELF/COFF/Mach-O 設定。不支援的符號常數也明確拒絕，不能變成空指標。這驗證輸出拒絕規則，尚未實作可攜的原生續接。
+
+`X86_64_PipelineE2E.DecompileC_InteriorCodeAddressRefusesWithoutReplacingOutput` 完整模組和單函式 CLI 檢查涵蓋兩種最佳化，拒絕內部程式碼位址並保留既有輸出；其他原子指令函式仍须輸出 C。位址低位觀察未支援，LLVM 驗證不能證明其語義。
