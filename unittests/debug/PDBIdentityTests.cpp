@@ -17,12 +17,14 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
+#include "llvm/DebugInfo/CodeView/SymbolRecord.h"
+#include "llvm/DebugInfo/CodeView/SymbolSerializer.h"
 #include "llvm/DebugInfo/MSF/MSFCommon.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/Object/CVDebugRecord.h"
-#include "llvm/Support/Endian.h"
 #include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/BinaryStreamRef.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -68,12 +70,11 @@ TEST(PDBTypeSpelling, MsvcUdtDisplayNameStripsTemplates) {
   EXPECT_EQ(msvcUdtDisplayName("Ns::Outer::Inner"), "Ns::Outer::Inner");
   EXPECT_EQ(msvcUdtDisplayName("ATL::CStringT<wchar_t, Trait>"),
             "ATL::CStringT");
-  EXPECT_EQ(msvcUdtDisplayName(
-                "ATL::CAtlMap<enum RankCode, unsigned long>::CNode"),
-            "ATL::CAtlMap::CNode");
-  EXPECT_EQ(msvcUdtDisplayName(
-                "ATL::CAtlMap<enum RankCode, unsigned long, "
-                "ATL::CElementTraits<enum RankCode>>::CNode"),
+  EXPECT_EQ(
+      msvcUdtDisplayName("ATL::CAtlMap<enum RankCode, unsigned long>::CNode"),
+      "ATL::CAtlMap::CNode");
+  EXPECT_EQ(msvcUdtDisplayName("ATL::CAtlMap<enum RankCode, unsigned long, "
+                               "ATL::CElementTraits<enum RankCode>>::CNode"),
             "ATL::CAtlMap::CNode");
   EXPECT_EQ(msvcUdtDisplayName("?$CStringT@_WV?$StrTraitMFC_DLL@D"),
             "CStringT");
@@ -390,8 +391,7 @@ TEST(PDBPublicSym32Parse, FunctionRecord) {
           static_cast<uint32_t>(llvm::codeview::PublicSymFlags::Function),
       0x1050, 1, "probe_plain_seh");
   pdb_loader_detail::ParsedPublicSym32 Pub;
-  llvm::Error Err =
-      pdb_loader_detail::parsePublicSym32At(Bytes, 0, Pub);
+  llvm::Error Err = pdb_loader_detail::parsePublicSym32At(Bytes, 0, Pub);
   ASSERT_FALSE(static_cast<bool>(Err)) << llvm::toString(std::move(Err));
   EXPECT_TRUE(Pub.IsFunction);
   EXPECT_EQ(Pub.Segment, 1u);
@@ -400,32 +400,101 @@ TEST(PDBPublicSym32Parse, FunctionRecord) {
 }
 
 TEST(PDBPublicSym32Parse, DataRecordIsNotFunction) {
-  const std::vector<uint8_t> Bytes =
-      makePub32(0, 0x2000, 2, "g_image_object");
+  const std::vector<uint8_t> Bytes = makePub32(0, 0x2000, 2, "g_image_object");
   pdb_loader_detail::ParsedPublicSym32 Pub;
-  llvm::Error Err =
-      pdb_loader_detail::parsePublicSym32At(Bytes, 0, Pub);
+  llvm::Error Err = pdb_loader_detail::parsePublicSym32At(Bytes, 0, Pub);
   ASSERT_FALSE(static_cast<bool>(Err)) << llvm::toString(std::move(Err));
   EXPECT_FALSE(Pub.IsFunction);
   EXPECT_EQ(Pub.Name, "g_image_object");
 }
 
+/// An S_PROCREF or S_LPROCREF record naming \p Name at \p Offset in module
+/// \p Module's symbols.
+static std::vector<uint8_t> makeProcRef(llvm::codeview::SymbolKind Kind,
+                                        uint16_t Module, uint32_t Offset,
+                                        llvm::StringRef Name) {
+  const uint32_t AfterLen = 2u + 10u + static_cast<uint32_t>(Name.size()) + 1u;
+  const uint32_t Padded = (AfterLen + 3u) & ~3u;
+  std::vector<uint8_t> Bytes(2u + Padded, 0);
+  llvm::support::endian::write16le(Bytes.data(), static_cast<uint16_t>(Padded));
+  llvm::support::endian::write16le(Bytes.data() + 2,
+                                   static_cast<uint16_t>(Kind));
+  llvm::support::endian::write32le(Bytes.data() + 8, Offset);
+  llvm::support::endian::write16le(Bytes.data() + 12, Module);
+  std::memcpy(Bytes.data() + 14, Name.data(), Name.size());
+  return Bytes;
+}
+
+TEST(PDBProcRefParse, ReadsGlobalAndStaticReferences) {
+  using llvm::codeview::SymbolKind;
+  for (const SymbolKind Kind :
+       {SymbolKind::S_PROCREF, SymbolKind::S_LPROCREF}) {
+    const std::vector<uint8_t> Bytes =
+        makeProcRef(Kind, 652, 6212, "IopTimerDispatch$fin$0");
+    pdb_loader_detail::ParsedProcRef Ref;
+    llvm::Expected<bool> IsRef =
+        pdb_loader_detail::parseProcRefAt(Bytes, 0, Ref);
+    ASSERT_TRUE(static_cast<bool>(IsRef)) << llvm::toString(IsRef.takeError());
+    EXPECT_TRUE(*IsRef);
+    EXPECT_EQ(Ref.Module, 652u);
+    EXPECT_EQ(Ref.Offset, 6212u);
+    EXPECT_EQ(Ref.Name, "IopTimerDispatch$fin$0");
+  }
+  // Other globals are no references; a cut record is an error.
+  const std::vector<uint8_t> Public = makePub32(0, 0x2000, 2, "g_object");
+  pdb_loader_detail::ParsedProcRef Ref;
+  llvm::Expected<bool> Other =
+      pdb_loader_detail::parseProcRefAt(Public, 0, Ref);
+  ASSERT_TRUE(static_cast<bool>(Other)) << llvm::toString(Other.takeError());
+  EXPECT_FALSE(*Other);
+  const std::vector<uint8_t> Truncated{0x20, 0x00, 0x27, 0x11};
+  llvm::Expected<bool> Short =
+      pdb_loader_detail::parseProcRefAt(Truncated, 0, Ref);
+  EXPECT_FALSE(static_cast<bool>(Short));
+  llvm::consumeError(Short.takeError());
+}
+
+TEST(PDBProcRefParse, PointsAtAProcedureOfItsName) {
+  llvm::BumpPtrAllocator Allocator;
+  // An S_LPROC32, as a static procedure's record is.
+  llvm::codeview::ProcSym Proc(llvm::codeview::SymbolRecordKind::ProcSym);
+  Proc.Segment = 8;
+  Proc.CodeOffset = 0x300FF2;
+  Proc.CodeSize = 96;
+  Proc.Name = "IopTimerDispatch$fin$0";
+  const llvm::codeview::CVSymbol Record =
+      llvm::codeview::SymbolSerializer::writeOneSymbol(
+          Proc, Allocator, llvm::codeview::CodeViewContainer::Pdb);
+  const auto Start = pdb_loader_detail::parseReferencedProcedure(
+      Record.data(), "IopTimerDispatch$fin$0");
+  ASSERT_TRUE(Start.has_value());
+  EXPECT_EQ(Start->Segment, 8u);
+  EXPECT_EQ(Start->Offset, 0x300FF2u);
+  // A reference of another name, or to a record of another kind, points at
+  // no procedure.
+  EXPECT_FALSE(pdb_loader_detail::parseReferencedProcedure(Record.data(),
+                                                           "IopTimerDispatch")
+                   .has_value());
+  const std::vector<uint8_t> Public =
+      makePub32(0, 0x300FF2, 8, "IopTimerDispatch$fin$0");
+  EXPECT_FALSE(pdb_loader_detail::parseReferencedProcedure(
+                   Public, "IopTimerDispatch$fin$0")
+                   .has_value());
+}
+
 TEST(PDBPublicSym32Parse, RejectsWrongKindAndTruncation) {
   const std::vector<uint8_t> End = makeMinimalCVSymbols(1);
   pdb_loader_detail::ParsedPublicSym32 Pub;
-  llvm::Error WrongKind =
-      pdb_loader_detail::parsePublicSym32At(End, 0, Pub);
+  llvm::Error WrongKind = pdb_loader_detail::parsePublicSym32At(End, 0, Pub);
   EXPECT_TRUE(static_cast<bool>(WrongKind));
   llvm::consumeError(std::move(WrongKind));
 
   const std::vector<uint8_t> Truncated{0x20, 0x00, 0x0e, 0x11};
-  llvm::Error Short =
-      pdb_loader_detail::parsePublicSym32At(Truncated, 0, Pub);
+  llvm::Error Short = pdb_loader_detail::parsePublicSym32At(Truncated, 0, Pub);
   EXPECT_TRUE(static_cast<bool>(Short));
   llvm::consumeError(std::move(Short));
 
-  llvm::Error BadOffset =
-      pdb_loader_detail::parsePublicSym32At(End, 1, Pub);
+  llvm::Error BadOffset = pdb_loader_detail::parsePublicSym32At(End, 1, Pub);
   EXPECT_TRUE(static_cast<bool>(BadOffset));
   llvm::consumeError(std::move(BadOffset));
 }
@@ -581,6 +650,56 @@ TEST(PDBIdentityIntegration, LoadReportsModuleProgress) {
               State.LastDetail == "pdb symbol stream");
 }
 
+// A data public begins an object even without a size, so the publics around
+// an address bound the object there: the string literal after one ends it.
+TEST(PDBIdentityIntegration, DataSymbolsAroundAnAddressAreTheNearestPublics) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  auto ContextOr =
+      PDBDebugContext::load(safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_TRUE(static_cast<bool>(ContextOr))
+      << llvm::toString(ContextOr.takeError());
+  const DebugContext &Context = **ContextOr;
+  // "EARLY" begins at 0x140002008 and "CLEAN" at 0x14000200E.
+  auto [Before, After] = Context.dataSymbolsAround(0x14000200A);
+  ASSERT_TRUE(Before && After);
+  EXPECT_EQ(*Before, 0x140002008u);
+  EXPECT_EQ(*After, 0x14000200Eu);
+  // A public's own address is the one at or before it.
+  std::tie(Before, After) = Context.dataSymbolsAround(0x140002008);
+  ASSERT_TRUE(Before && After);
+  EXPECT_EQ(*Before, 0x140002008u);
+  EXPECT_EQ(*After, 0x14000200Eu);
+}
+
+TEST(PDBIdentityIntegration, AnAddressFollowsTheDataPublicBeforeIt) {
+  // A whole load reads every public; one limited to some functions reads
+  // them through the address map as asked.
+  for (const bool Limited : {false, true}) {
+    SCOPED_TRACE(Limited);
+    auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+    ASSERT_TRUE(static_cast<bool>(ImageOr))
+        << llvm::toString(ImageOr.takeError());
+    if (Limited)
+      ImageOr->LoadOnlyFunctionEntries.insert(0x140001250);
+    auto ContextOr = PDBDebugContext::load(
+        safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+    ASSERT_TRUE(static_cast<bool>(ContextOr))
+        << llvm::toString(ContextOr.takeError());
+    const DebugContext &Context = **ContextOr;
+    // "EARLY" begins at 0x140002008, and the bytes after it up to "CLEAN" at
+    // 0x14000200E follow it.
+    EXPECT_EQ(Context.precedingDataSymbol(0x14000200A),
+              std::optional<va_t>(0x140002008));
+    EXPECT_EQ(Context.precedingDataSymbol(0x140002008),
+              std::optional<va_t>(0x140002008));
+    // The function public "main" begins at 0x140001250: its bytes follow
+    // code.
+    EXPECT_EQ(Context.precedingDataSymbol(0x140001254), std::nullopt);
+  }
+}
+
 TEST(PDBIdentityIntegration, MatchingFixtureAuthenticatesNamesButNotExtents) {
   auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
   ASSERT_TRUE(static_cast<bool>(ImageOr))
@@ -609,7 +728,8 @@ TEST(PDBIdentityIntegration, MatchingFixtureAuthenticatesNamesButNotExtents) {
   }
 }
 
-TEST(PDBIdentityIntegration, MatchingFixtureNamesLocalsWithoutAuthorizingExtents) {
+TEST(PDBIdentityIntegration,
+     MatchingFixtureNamesLocalsWithoutAuthorizingExtents) {
   auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
   ASSERT_TRUE(static_cast<bool>(ImageOr))
       << llvm::toString(ImageOr.takeError());
@@ -732,10 +852,9 @@ TEST(PDBIdentityIntegration, FuncLoadIngestsOnlyRequestedPublics) {
   };
 
   Seen FullState;
-  auto FullOr = PDBDebugContext::load(
-      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr, attach(FullState));
-  ASSERT_TRUE(static_cast<bool>(FullOr))
-      << llvm::toString(FullOr.takeError());
+  auto FullOr = PDBDebugContext::load(safetyFixture("safety_cases_pe_x64.pdb"),
+                                      *ImageOr, attach(FullState));
+  ASSERT_TRUE(static_cast<bool>(FullOr)) << llvm::toString(FullOr.takeError());
   const size_t FullCount = (*FullOr)->allFunctions().size();
   ASSERT_GE(FullCount, 2u);
   ASSERT_GT(FullState.PublicsTotal, 1u);
@@ -743,9 +862,9 @@ TEST(PDBIdentityIntegration, FuncLoadIngestsOnlyRequestedPublics) {
   BinaryImage Restricted = *ImageOr;
   Restricted.LoadOnlyFunctionEntries.insert(Overflow);
   Seen RestrictedState;
-  auto ContextOr = PDBDebugContext::load(
-      safetyFixture("safety_cases_pe_x64.pdb"), Restricted,
-      attach(RestrictedState));
+  auto ContextOr =
+      PDBDebugContext::load(safetyFixture("safety_cases_pe_x64.pdb"),
+                            Restricted, attach(RestrictedState));
   ASSERT_TRUE(static_cast<bool>(ContextOr))
       << llvm::toString(ContextOr.takeError());
   ASSERT_NE(*ContextOr, nullptr);
@@ -978,6 +1097,141 @@ TEST(PDBIdentityIntegration, ImageWithoutUniqueRSDSCannotUsePDBNames) {
       << Error;
 }
 
+TEST(PDBDisplayInspection, MissingIdentityNamesWithoutAuthenticatingFacts) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  const auto OriginalSymbols = ImageOr->Symbols.size();
+  auto Context = PDBDebugContext::inspect(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_TRUE(static_cast<bool>(Context))
+      << llvm::toString(Context.takeError());
+  EXPECT_FALSE((*Context)->hasAuthenticatedImageIdentity());
+  EXPECT_FALSE((*Context)->hasAnalysisAuthority());
+  EXPECT_FALSE((*Context)->hasAuthenticatedFunctionSignatures());
+  EXPECT_FALSE((*Context)->hasAuthenticatedObjectExtents());
+  const auto Functions = (*Context)->allFunctions();
+  EXPECT_TRUE(std::any_of(Functions.begin(), Functions.end(),
+                          [](const FunctionSym &Function) {
+                            return Function.Name == "tainted_stack_overflow";
+                          }));
+  EXPECT_EQ(ImageOr->Symbols.size(), OriginalSymbols);
+  EXPECT_FALSE(ImageOr->DynInfo.CodeViewPDBIdentity.has_value());
+}
+
+TEST(PDBDisplayInspection, PresentWrongIdentityCannotBeBypassed) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentity->Guid[0] ^= 1;
+  auto Context = PDBDebugContext::inspect(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_FALSE(static_cast<bool>(Context));
+  EXPECT_NE(llvm::toString(Context.takeError()).find("GUID/age does not match"),
+            std::string::npos);
+}
+
+TEST(PDBDisplayInspection, MissingIdentityStillRequiresSectionAgreement) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  ++ImageOr->Sections.front().Size;
+  auto Context = PDBDebugContext::inspect(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_FALSE(static_cast<bool>(Context));
+  EXPECT_NE(
+      llvm::toString(Context.takeError()).find("section table does not match"),
+      std::string::npos);
+}
+
+TEST(PDBUserSelection, MissingIdentityLoadsFunctionAndLocalTypesForAnalysis) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  auto Context = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_TRUE(static_cast<bool>(Context))
+      << llvm::toString(Context.takeError());
+  EXPECT_FALSE((*Context)->hasAuthenticatedImageIdentity());
+  EXPECT_TRUE((*Context)->hasAnalysisAuthority());
+  // The same facts LaterFuncLoadStillNamesEarlierLocals reads through a
+  // matching identity: Overflow's procedure names no parameters, Outer's does.
+  constexpr va_t Overflow = 0x140001000;
+  constexpr va_t Outer = 0x1400012a0;
+  auto Function = (*Context)->resolveFunction(Overflow);
+  ASSERT_TRUE(Function);
+  EXPECT_EQ(Function->Name, "tainted_stack_overflow");
+  ASSERT_TRUE(Function->ReturnType);
+  auto OuterFunction = (*Context)->resolveFunction(Outer);
+  ASSERT_TRUE(OuterFunction);
+  ASSERT_EQ(OuterFunction->Params.size(), 1u);
+  EXPECT_EQ(OuterFunction->Params[0].first, "s");
+  EXPECT_TRUE(isCharPointer(OuterFunction->Params[0].second));
+  auto Buffer = (*Context)->resolveVariable(Overflow, -0x18);
+  ASSERT_TRUE(Buffer);
+  EXPECT_EQ(Buffer->Name, "buf");
+  ASSERT_TRUE(Buffer->Type);
+  EXPECT_TRUE(isCharArray16(Buffer->Type));
+  EXPECT_FALSE(ImageOr->DynInfo.CodeViewPDBIdentity);
+}
+
+TEST(PDBUserSelection, DiscoveryRequiresAnExplicitNamedPDBChoice) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  DebugInfoRequest Request;
+  Request.PDBPath = safetyFixture("safety_cases_pe_x64.pdb");
+  auto Strict = loadDebugInfo(safetyFixture("safety_cases_pe_x64.exe"),
+                              *ImageOr, Request);
+  EXPECT_FALSE(static_cast<bool>(Strict));
+  Request.AllowMissingPDBIdentity = true;
+  auto Selected = loadDebugInfo(safetyFixture("safety_cases_pe_x64.exe"),
+                                *ImageOr, Request);
+  ASSERT_TRUE(static_cast<bool>(Selected)) << Selected.Error;
+  EXPECT_EQ(Selected.Kind, DebugInfoKind::PDB);
+  auto Function = Selected.Context->resolveFunction(0x1400012a0);
+  ASSERT_TRUE(Function);
+  ASSERT_TRUE(Function->ReturnType);
+  EXPECT_EQ(Function->Params.size(), 1u);
+}
+
+TEST(PDBUserSelection, WrongIdentityMachineAndSectionsStillFail) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  BinaryImage WrongIdentity = *ImageOr;
+  WrongIdentity.DynInfo.CodeViewPDBIdentity->Guid[0] ^= 1;
+  auto Wrong = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), WrongIdentity);
+  ASSERT_FALSE(static_cast<bool>(Wrong));
+  EXPECT_NE(llvm::toString(Wrong.takeError()).find("GUID/age does not match"),
+            std::string::npos);
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  BinaryImage WrongMachine = *ImageOr;
+  WrongMachine.Arch = Arch::AArch64;
+  auto Machine = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), WrongMachine);
+  ASSERT_FALSE(static_cast<bool>(Machine));
+  EXPECT_NE(llvm::toString(Machine.takeError()).find("machine does not match"),
+            std::string::npos);
+  ++ImageOr->Sections.front().Size;
+  auto Sections = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_FALSE(static_cast<bool>(Sections));
+  EXPECT_NE(
+      llvm::toString(Sections.takeError()).find("section table does not match"),
+      std::string::npos);
+}
+
 TEST(PDBIdentityIntegration, MatchingIdentityStillRequiresMachineAgreement) {
   auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
   ASSERT_TRUE(static_cast<bool>(ImageOr))
@@ -1064,7 +1318,8 @@ std::vector<uint8_t> writeJgPdb(llvm::ArrayRef<std::vector<uint8_t>> Streams,
   PageCounts.reserve(Streams.size());
   uint32_t RootSize = 4 + static_cast<uint32_t>(Streams.size()) * 8;
   for (const std::vector<uint8_t> &Stream : Streams) {
-    const uint32_t Count = pagesFor(static_cast<uint32_t>(Stream.size()), BlockSize);
+    const uint32_t Count =
+        pagesFor(static_cast<uint32_t>(Stream.size()), BlockSize);
     PageCounts.push_back(Count);
     RootSize += Count * 2;
   }
@@ -1109,13 +1364,15 @@ std::vector<uint8_t> writeJgPdb(llvm::ArrayRef<std::vector<uint8_t>> Streams,
     const std::vector<uint8_t> &Stream = Streams[S];
     for (size_t I = 0; I < StreamPages[S].size(); ++I) {
       const size_t Off = static_cast<size_t>(StreamPages[S][I]) * BlockSize;
-      const size_t Chunk = std::min<size_t>(BlockSize, Stream.size() - I * BlockSize);
+      const size_t Chunk =
+          std::min<size_t>(BlockSize, Stream.size() - I * BlockSize);
       std::memcpy(File.data() + Off, Stream.data() + I * BlockSize, Chunk);
     }
   }
   for (size_t I = 0; I < RootPageList.size(); ++I) {
     const size_t Off = static_cast<size_t>(RootPageList[I]) * BlockSize;
-    const size_t Chunk = std::min<size_t>(BlockSize, Root.size() - I * BlockSize);
+    const size_t Chunk =
+        std::min<size_t>(BlockSize, Root.size() - I * BlockSize);
     std::memcpy(File.data() + Off, Root.data() + I * BlockSize, Chunk);
   }
   return File;
@@ -1141,7 +1398,8 @@ std::vector<uint8_t> makeLegacyProcStream(llvm::StringRef Name, uint32_t Offset,
   std::vector<uint8_t> Stream;
   appendU32(Stream, 2);
   appendU16(Stream, static_cast<uint16_t>(Payload.size() + 2));
-  appendU16(Stream, static_cast<uint16_t>(llvm::codeview::SymbolKind::S_GPROC32_ST));
+  appendU16(Stream,
+            static_cast<uint16_t>(llvm::codeview::SymbolKind::S_GPROC32_ST));
   Stream.insert(Stream.end(), Payload.begin(), Payload.end());
   return Stream;
 }
@@ -1195,7 +1453,8 @@ std::vector<uint8_t> makeLegacyInfo(uint32_t Signature, uint32_t Age) {
   return Info;
 }
 
-std::vector<uint8_t> makeCvRecord(uint16_t Kind, llvm::ArrayRef<uint8_t> Payload) {
+std::vector<uint8_t> makeCvRecord(uint16_t Kind,
+                                  llvm::ArrayRef<uint8_t> Payload) {
   std::vector<uint8_t> Rec;
   appendU16(Rec, static_cast<uint16_t>(Payload.size() + 2));
   appendU16(Rec, Kind);
@@ -1203,16 +1462,16 @@ std::vector<uint8_t> makeCvRecord(uint16_t Kind, llvm::ArrayRef<uint8_t> Payload
   return Rec;
 }
 
-std::vector<uint8_t> makeTpi800(const std::vector<std::vector<uint8_t>> &Records,
-                               uint32_t TypeMin = 0x1000) {
+std::vector<uint8_t>
+makeTpi800(const std::vector<std::vector<uint8_t>> &Records,
+           uint32_t TypeMin = 0x1000) {
   std::vector<uint8_t> Data;
   for (const auto &Record : Records)
     Data.insert(Data.end(), Record.begin(), Record.end());
   std::vector<uint8_t> Tpi(56, 0);
   const uint32_t Version = 19961031;
   const uint32_t HeaderLen = 56;
-  const uint32_t TypeMax =
-      TypeMin + static_cast<uint32_t>(Records.size());
+  const uint32_t TypeMax = TypeMin + static_cast<uint32_t>(Records.size());
   const uint32_t DataLen = static_cast<uint32_t>(Data.size());
   std::memcpy(Tpi.data(), &Version, 4);
   std::memcpy(Tpi.data() + 4, &HeaderLen, 4);
@@ -1340,8 +1599,8 @@ TEST(CodeViewNB10Parser, RecoversSignatureAgeAndBoundedPath) {
 }
 
 TEST(CodeViewNB10Parser, RejectsRSDSAndZeroAge) {
-  auto AsRSDS = coff_loader::detail::parseCodeViewNB10(
-      makeRSDS(makeIdentity(0x11)));
+  auto AsRSDS =
+      coff_loader::detail::parseCodeViewNB10(makeRSDS(makeIdentity(0x11)));
   EXPECT_FALSE(static_cast<bool>(AsRSDS));
   llvm::consumeError(AsRSDS.takeError());
 
@@ -1471,8 +1730,8 @@ TEST(PDB20IdentityIntegration, StdcallParamsLocalsAndExtentReachDebugContext) {
   constexpr uint32_t Chars = 0x60000020;
   constexpr uint32_t Int32 = 0x74;
   const std::vector<uint8_t> ArgList = makeArgList({Int32, Int32});
-  const std::vector<uint8_t> ProcType = makeProcedure(
-      Int32, /*stdcall=*/0x07, 2, /*ArgList=*/0x1000);
+  const std::vector<uint8_t> ProcType =
+      makeProcedure(Int32, /*stdcall=*/0x07, 2, /*ArgList=*/0x1000);
   const std::vector<uint8_t> Tpi = makeTpi800({ArgList, ProcType});
 
   auto Module = makeLegacyProcStream("legacy_target", 0x100, 1, 0x20, 0x1001);
@@ -1535,8 +1794,8 @@ TEST(PDB20IdentityIntegration, TpiParamsWithoutLocalsStillPublishArity) {
   constexpr uint32_t Chars = 0x60000020;
   constexpr uint32_t Int32 = 0x74;
   const std::vector<uint8_t> ArgList = makeArgList({Int32, Int32});
-  const std::vector<uint8_t> ProcType = makeProcedure(
-      Int32, /*stdcall=*/0x07, 2, /*ArgList=*/0x1000);
+  const std::vector<uint8_t> ProcType =
+      makeProcedure(Int32, /*stdcall=*/0x07, 2, /*ArgList=*/0x1000);
   const std::vector<uint8_t> Tpi = makeTpi800({ArgList, ProcType});
 
   auto Module = makeLegacyProcStream("legacy_target", 0x100, 1, 0x20, 0x1001);
@@ -1680,11 +1939,8 @@ TEST(PDBIdentity, BindDebugParamsSkipsMismatchedLocalBeforeTpiSlot) {
   const TypeRef Int32 = NdType::makeInt(4);
   const TypeRef Ptr = NdType::makePtr();
   const std::vector<std::pair<std::string, TypeRef>> Locals = {
-      {"this", Ptr},
-      {"result", Ptr},
-      {"nType", Int32},
-      {"nKey", Int32},
-      {"lock", Ptr},
+      {"this", Ptr},   {"result", Ptr}, {"nType", Int32},
+      {"nKey", Int32}, {"lock", Ptr},
   };
   const auto Bound = bindDebugParamsToTpi(Locals, {Int32, Int32});
   ASSERT_EQ(Bound.size(), 3u);

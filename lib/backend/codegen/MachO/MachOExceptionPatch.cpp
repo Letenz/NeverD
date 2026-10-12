@@ -24,6 +24,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Triple.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -485,7 +486,26 @@ llvm::Expected<MachOEHFrameInstallReceipt> installMachOEHFrameWithReceipt(
   if (!Compiled.FunctionRangesValid ||
       !llvm::mc_rewrite::validateRewriteFunctionRanges(
           Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))
-    return patchError("compiled function-range provenance is invalid");
+    return patchError("compiler function ranges are not authenticated");
+  const llvm::Triple Target(Compiled.TargetTriple);
+  if (Compiled.InputKind == RewriteInputKind::ReplacementIR &&
+      (Target.isARM() || Target.isThumb()) && Target.isOSDarwin() &&
+      !Target.isWatchABI()) {
+    // The ordinary iOS ARM ABI uses compiler-generated SjLj registration
+    // code. It does not publish a DWARF/compact table for each C frame.
+    // ARMv7k instead uses the DWARF path below.
+    for (const llvm::Function &Function : Mod)
+      if (!Function.isDeclaration() && Function.hasPersonalityFn()) {
+        const auto *Personality = llvm::dyn_cast<llvm::Function>(
+            Function.getPersonalityFn()->stripPointerCasts());
+        if (!Personality || Personality->getName() != "__gxx_personality_sj0")
+          return patchError(
+              "iOS ARM replacement requires the SjLj personality ABI");
+      }
+    if (!Compiled.Unresolved.empty())
+      return patchError("SjLj replacement has unresolved runtime symbols");
+    return Receipt;
+  }
   auto Compact = authenticateCompactCoverage(CompactCoverage, Compiled);
   if (!Compact)
     return Compact.takeError();
@@ -710,6 +730,57 @@ llvm::Error installMachOEHFrame(std::vector<uint8_t> &Binary,
       installMachOEHFrameWithReceipt(Binary, Region, Compiled, Mod, nullptr);
   if (!Receipt)
     return Receipt.takeError();
+  return llvm::Error::success();
+}
+
+llvm::Error installNativeMachOEHFrame(std::vector<uint8_t> &Binary,
+                                      const MachOEHFrameRegion &Region,
+                                      const CompiledSection &Generated) {
+  const auto Current = findMachOEHFrameRegion(Binary);
+  if (!Current || !sameRegion(*Current, Region) || Generated.IsInImage ||
+      Generated.Size != Generated.ExternalBytes.size() ||
+      Generated.VA != Region.AppendVA)
+    return patchError("native FDE registration needs the exact current region "
+                      "and producer extent");
+  auto Records = decodeDwarfEHFrameRecords(Generated.ExternalBytes,
+                                           Generated.VA, Region.Is64);
+  if (!Records)
+    return Records.takeError();
+  if (Records->empty() || llvm::any_of(*Records, [](const auto &R) {
+        return R.HasLanguageAugmentation;
+      }))
+    return patchError(
+        "native FDEs require a verified language-augmentation contract");
+  auto Existing = decodeDwarfEHFrameRecords(
+      llvm::ArrayRef<uint8_t>(Binary).slice(
+          Region.SectionFileOff, Region.AppendFileOff - Region.SectionFileOff),
+      Region.SectionVA, Region.Is64);
+  if (!Existing)
+    return Existing.takeError();
+  if (auto E = validateCombinedFDERanges(*Existing, *Records))
+    return E;
+  auto Candidate = Binary;
+  if (!appendGeneratedEHFrame(Candidate, Region, Generated))
+    return patchError("native FDEs exceed registered in-image storage");
+  auto Updated = findMachOEHFrameRegion(Candidate);
+  if (!Updated || !sameRegionIdentity(*Updated, Region))
+    return patchError("native FDE section cannot be rediscovered");
+  auto Size = getDeclaredEHFrameSize(Candidate, *Updated);
+  if (!Size)
+    return patchError("native FDE section lost its declared extent");
+  auto Combined = decodeDwarfEHFrameRecords(
+      llvm::ArrayRef<uint8_t>(Candidate).slice(Updated->SectionFileOff, *Size),
+      Updated->SectionVA, Updated->Is64);
+  if (!Combined)
+    return Combined.takeError();
+  auto Expected = *Existing;
+  Expected.insert(Expected.end(), Records->begin(), Records->end());
+  if (!sameFDEs(*Combined, Expected) ||
+      !std::equal(Generated.ExternalBytes.begin(),
+                  Generated.ExternalBytes.end(),
+                  Candidate.begin() + Region.AppendFileOff))
+    return patchError("native FDE registration failed exact semantic replay");
+  Binary.swap(Candidate);
   return llvm::Error::success();
 }
 

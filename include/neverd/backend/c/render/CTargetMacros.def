@@ -1,0 +1,21 @@
+//===- CTargetMacros.def - Compiler macros naming a target -----*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The macro a GNU-compatible C compiler predefines for each architecture,
+/// which emitted C that only runs there guards on.
+///
+//===----------------------------------------------------------------------===//
+
+// NEVERD_C_TARGET_MACRO(Arch, Macro)
+#ifndef NEVERD_C_TARGET_MACRO
+#define NEVERD_C_TARGET_MACRO(Arch, Macro)
+#endif
+NEVERD_C_TARGET_MACRO(X64, "__x86_64__")
+NEVERD_C_TARGET_MACRO(X86, "__i386__")
+NEVERD_C_TARGET_MACRO(AArch64, "__aarch64__")
+NEVERD_C_TARGET_MACRO(ARM, "__arm__")
+#undef NEVERD_C_TARGET_MACRO

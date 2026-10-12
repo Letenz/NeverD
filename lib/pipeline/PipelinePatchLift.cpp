@@ -148,7 +148,10 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   propagateStructReturnForwarderShapes(Img, Result);
 
-  recoverStructReturnFromBody(Img, Result);
+  recoverStructReturnFromBody(Img, Result,
+                              StructReturnEvidence::CallersAndBody);
+
+  recoverVectorReturnFromCallers(Img, Result);
 
   materializeKnownStructReturnCallSites(Img, Result);
 
@@ -249,9 +252,17 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
       OptimizationOptions Options;
       Options.SourceMap = Result.LLVMSources.get();
       Options.Conservative = Opts.PatchMode;
+      const bool SourceOnly = Opts.SourceProjection && !Opts.PatchMode;
       OptimizationResult Optimization =
-          optimizeModule(*Result.LlvmModule, Options);
-      if (isFatalOptimizationStop(Optimization.Stop)) {
+          SourceOnly ? optimizeOrPromoteModule(*Result.LlvmModule,
+                                               Result.LLVMSources.get())
+                     : optimizeModule(*Result.LlvmModule, Options);
+      // Match the source SDK and sharded C route: a verified analysis module
+      // keeps its explicit incomplete native EH contract and only promotes
+      // temporary allocas. Binary rewriting still requires native lowering.
+      if (isFatalOptimizationStop(Optimization.Stop) &&
+          !(SourceOnly &&
+            Optimization.Stop == OptimizationStopReason::InputInvalid)) {
         Result.LLVMVerifierFailed = true;
         Result.Error = std::string("LLVM optimization failed: ") +
                        optimizationStopReasonName(Optimization.Stop);

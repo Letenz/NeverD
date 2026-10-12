@@ -68,6 +68,35 @@ struct ParsedPublicSym32 {
 llvm::Error parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream, uint32_t Offset,
                                ParsedPublicSym32 &Out);
 
+/// One S_PROCREF or S_LPROCREF decoded from a contiguous symbol stream: where
+/// a module's symbols hold a procedure's record.  Name borrows from that
+/// stream; callers that keep the name must copy it.
+struct ParsedProcRef {
+  /// The module, counted from one as the record counts it.
+  uint16_t Module = 0;
+  /// The procedure record's offset in the module's symbol stream.
+  uint32_t Offset = 0;
+  llvm::StringRef Name;
+};
+
+/// Decode the procedure reference whose record starts at \p Offset, or say
+/// that the global there is of another kind.  A globals GSI offset that is
+/// not an exact record boundary is an error.
+llvm::Expected<bool> parseProcRefAt(llvm::ArrayRef<uint8_t> Stream,
+                                    uint32_t Offset, ParsedProcRef &Out);
+
+/// Where a procedure's code begins, as a section and an offset in it.
+struct ProcedureStart {
+  uint16_t Segment = 0;
+  uint32_t Offset = 0;
+};
+
+/// Where the procedure \p Record holds begins, when it is a procedure record
+/// (S_GPROC32, S_LPROC32 and their ID forms) named \p Name: what a
+/// procedure reference of that name points at.
+std::optional<ProcedureStart>
+parseReferencedProcedure(llvm::ArrayRef<uint8_t> Record, llvm::StringRef Name);
+
 /// Sticky, order-independent policy for names supplied by independent PDB
 /// symbol streams.  A conflicting name at the same address is not a semantic
 /// identity source, regardless of which stream LLVM happens to visit first.
@@ -135,6 +164,23 @@ public:
   load(const std::filesystem::path &PdbPath, const BinaryImage &Image,
        const LoadProgress &Progress = {});
 
+  /// Explicit display-name import may inspect a PE without a CodeView
+  /// identity. Machine and section layout must still agree. A present
+  /// identity must match; malformed, ambiguous and mismatched identities
+  /// are never bypassed. The caller must not publish an unauthenticated
+  /// context as analysis evidence.
+  static llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  inspect(const std::filesystem::path &PdbPath, const BinaryImage &Image,
+          const LoadProgress &Progress = {});
+
+  /// Load a user-confirmed PDB as analysis input even when the PE's CodeView
+  /// identity is absent. Machine, sections and any present identity still
+  /// must match. This grants the same analysis authority as a matching PDB
+  /// without claiming that its build identity was verified.
+  static llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  loadUserSelected(const std::filesystem::path &PdbPath,
+                   const BinaryImage &Image, const LoadProgress &Progress = {});
+
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
   std::optional<std::string> functionName(va_t Addr) const override;
   std::optional<VariableSym> resolveVariable(va_t FuncAddr,
@@ -147,6 +193,9 @@ public:
   std::vector<FunctionSym> allFunctions() const override;
   std::vector<DataObjectSym> allDataObjects() const override;
   std::optional<DataObjectSym> resolveDataObject(va_t Addr) const override;
+  std::pair<std::optional<va_t>, std::optional<va_t>>
+  dataSymbolsAround(va_t Addr) const override;
+  std::optional<va_t> precedingDataSymbol(va_t Addr) const override;
   bool hasInfo() const override;
   bool hasAuthenticatedFunctionSignatures() const override;
   bool hasAuthenticatedObjectExtents() const override;
@@ -158,6 +207,7 @@ public:
   resolveAuthenticatedRecordReturn(va_t Addr) const override;
 
   bool hasAuthenticatedImageIdentity() const;
+  bool hasAnalysisAuthority() const;
   /// RSDS Phase A never authorizes exact object metadata.  Names-only
   /// S_LOCAL / S_REGREL32 recovery does not change that.  A PDB 2.00 JG
   /// companion that parsed TPI and S_BPREL32_ST without stream malformation
@@ -166,6 +216,10 @@ public:
 
 private:
   PDBDebugContext();
+  enum class LoadPolicy { MatchingIdentity, Inspect, UserSelected };
+  static llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  loadImpl(const std::filesystem::path &PdbPath, const BinaryImage &Image,
+           const LoadProgress &Progress, LoadPolicy Policy);
   void commitFunctions(std::vector<FunctionSym> Functions, bool Authenticated);
   void commitDebugFacts(std::vector<FunctionSym> Functions,
                         std::map<va_t, std::map<int64_t, VariableSym>> Locals,

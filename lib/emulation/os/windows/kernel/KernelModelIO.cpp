@@ -393,6 +393,11 @@ llvm::Error KernelModel::initializeRequestPacket(ActiveRequest &Record,
                                      ShareReadWrite, 2))
       return E;
   }
+  auto Watch = watchInitialization(Record.IRP + IRPStatusOffset,
+                                   Record.IOStatusWritten.size());
+  if (!Watch)
+    return Watch.takeError();
+  Record.IOStatusInitialization = std::move(*Watch);
   return llvm::Error::success();
 }
 
@@ -757,10 +762,8 @@ KernelModel::beginRequest(const DriverRequest &Input,
     }
   }
   if (!Callback) {
-    const auto First =
-        DispatchBytesWritten.begin() + Major * profile::PointerSize;
-    if (std::any_of(First, First + profile::PointerSize,
-                    [](bool Written) { return Written; }))
+    if (anyInitialized(DispatchBytesWritten, DispatchInitialization,
+                       Major * profile::PointerSize, profile::PointerSize))
       return ioError("driver explicitly registered a null dispatch callback");
     if (auto E = Memory.writeInteger(Request->IRP + IRPStatusOffset,
                                      InvalidDeviceRequest, 4))
@@ -880,7 +883,8 @@ llvm::Error KernelModel::retireCompletedRequest(uint64_t IRP,
   if (PriorityBoost)
     return ioError("modeled completion supports IO_NO_INCREMENT only");
   for (unsigned I = 0; I < Request->IOStatusWritten.size(); ++I)
-    if ((I < 4 || I >= 8) && !Request->IOStatusWritten[I])
+    if ((I < 4 || I >= 8) && !initialized(Request->IOStatusWritten,
+                                          Request->IOStatusInitialization, I))
       return ioError(
           "completion requires initialized IoStatus.Status and Information");
   auto Status = Memory.readInteger(IRP + IRPStatusOffset, 4);
@@ -1250,7 +1254,9 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
                    (Offset >= IRPDriverContextOffset &&
                     Offset < IRPThreadOffset);
           if (Offset >= IRPStatusOffset && Offset < IRPRequestorModeOffset)
-            return Request->IOStatusWritten[Offset - IRPStatusOffset];
+            return initialized(Request->IOStatusWritten,
+                               Request->IOStatusInitialization,
+                               Offset - IRPStatusOffset);
           return (DriverIRPs.contains(IRP) && Offset < sizeof(uint32_t)) ||
                  (Offset >= profile::PointerSize &&
                   Offset < IRPSystemBufferOffset + profile::PointerSize) ||
@@ -1290,14 +1296,6 @@ llvm::Error KernelModel::validateIOAccess(uint64_t Address, uint32_t Size,
                          [](uint64_t) { return false; }))
         return E;
   }
-  if (IsWrite)
-    for (const auto &[IRP, Record] : Requests) {
-      if (Record.Completed)
-        continue;
-      for (uint64_t Byte = std::max(Address, IRP + IRPStatusOffset);
-           Byte < std::min(End, IRP + IRPRequestorModeOffset); ++Byte)
-        Record.IOStatusWritten[Byte - IRP - IRPStatusOffset] = true;
-    }
   return llvm::Error::success();
 }
 

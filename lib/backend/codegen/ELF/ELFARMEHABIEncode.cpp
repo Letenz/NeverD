@@ -14,6 +14,8 @@
 
 #include "ELFARMEHABIPatchDetail.h"
 
+#include "neverd/loader/ELF/ARMEHABI.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/Errc.h"
@@ -209,8 +211,8 @@ llvm::Error validatePopOperation(const UnwindOperation &Op) {
 }
 
 llvm::Error validateOpcodeProgram(llvm::ArrayRef<uint8_t> Opcodes) {
-  if (Opcodes.empty() || Opcodes.back() != kFinishOpcode)
-    return opcodeError("an opcode program has no explicit final finish");
+  if (!arm_ehabi::isSupportedUnwindProgram(Opcodes))
+    return opcodeError("an opcode program is truncated or unsupported");
   return llvm::Error::success();
 }
 

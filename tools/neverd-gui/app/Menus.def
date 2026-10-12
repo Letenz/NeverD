@@ -31,9 +31,11 @@
 
 NEVERD_MENU(File, None, QT_TRANSLATE_NOOP("Menus", "&File"))
 NEVERD_MENU_ITEM(File, FileOpen)
+NEVERD_MENU_ITEM(File, FilePackageReview)
 NEVERD_MENU(LoadFile, File, QT_TRANSLATE_NOOP("Menus", "&Load file"))
 NEVERD_MENU_ITEM(LoadFile, FileReload)
 NEVERD_MENU_SEPARATOR(LoadFile)
+NEVERD_MENU_ITEM(LoadFile, FileLoadPdb)
 NEVERD_MENU_ITEM(LoadFile, FileLoadSignatures)
 NEVERD_MENU_ITEM(LoadFile, FileLoadSignatureTree)
 NEVERD_MENU(ProduceFile, File, QT_TRANSLATE_NOOP("Menus", "&Produce file"))

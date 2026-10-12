@@ -71,17 +71,6 @@ struct InplaceMapping {
   int64_t Shift = 0;
 };
 
-/// One trampoline that was actually written, retaining the exact object symbol
-/// whose generated address it targets.  Format metadata writers use this
-/// installed identity instead of inferring a range relationship from numeric
-/// addresses alone.
-struct PatchedFunctionEntry {
-  std::string OwnerSymbol;
-  va_t OriginalVA = 0;
-  va_t OwnerVA = 0;
-  std::string SourceFunction;
-};
-
 /// Exact subset of compiled source functions whose original entries can host
 /// a target trampoline without crossing another authenticated entry or a code
 /// owner boundary. Unsafe definitions are externalized before compilation;
@@ -162,6 +151,7 @@ struct CompiledFixupReference {
   std::string SubtractSymbol;
   int64_t Addend = 0;
   uint32_t Specifier = 0;
+  std::string SpecifierName;
   bool IsPCRel = false;
   bool IsResolved = false;
   unsigned BitWidth = 0;
@@ -204,6 +194,7 @@ using CompiledWinEHSemanticRecord =
 /// emitted section, including non-allocated linker metadata, retains its exact
 /// logical identity and contents in Sections.
 struct CompiledImage {
+  RewriteInputKind InputKind = RewriteInputKind::LiftedIR;
   std::vector<uint8_t> Bytes;                  ///< Combined image (text first).
   uint64_t BaseVA = 0;                         ///< VA of Bytes[0].
   Arch TargetArch = Arch::Unknown;             ///< Exact code-generation ISA.
@@ -224,10 +215,13 @@ struct CompiledImage {
   /// Exact compiler-emitted Windows language rows carrying source-issued
   /// semantic identities.
   std::vector<CompiledWinEHSemanticRecord> WinEHSemanticRecords;
-  /// Exact lifted source-function identity -> original image entry.  These
-  /// values come only from the validated IR attachment emitted by the lifter;
-  /// patchers join them to SourceFunctionOwners by exact source identity.
+  /// Source-function identity -> authenticated original image entry. Lifted
+  /// input receives this from the lifter; explicit replacement input receives
+  /// it from bindSourcePatch. Patchers join by exact SourceFunctionOwners.
   std::map<std::string, uint64_t> SourceFunctionOriginalVAs;
+  /// Compiler-selected instruction state of replacement owners. New helpers
+  /// do not inherit a state from an original image address.
+  std::map<uint64_t, InstructionMode> ReplacementFunctionModes;
   bool FunctionRangesValid = true;
   bool WinEHSemanticsValid = true;
   std::vector<std::string> Unresolved; ///< Symbols left unresolved.
@@ -272,17 +266,17 @@ CompiledImage compileImageForPatch(llvm::Module &Mod, Arch TargetArch,
 /// Exact-platform variant.  \p TargetTriple is propagated through the probe
 /// compile and every layout-convergence compile; callers must authenticate it
 /// against the input container before invoking this overload.
-CompiledImage compileImageForPatch(llvm::Module &Mod, Arch TargetArch,
-                                   BinaryFormat Fmt, uint64_t BaseVA,
-                                   PatchSymbolResolver ResolveFn,
-                                   uint64_t ImageBaseVA,
-                                   llvm::StringRef TargetTriple);
+CompiledImage
+compileImageForPatch(llvm::Module &Mod, Arch TargetArch, BinaryFormat Fmt,
+                     uint64_t BaseVA, PatchSymbolResolver ResolveFn,
+                     uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+                     RewriteInputKind InputKind = RewriteInputKind::LiftedIR);
 
-CompiledImage compileImageForPatch(llvm::Module &Mod, Arch TargetArch,
-                                   BinaryFormat Fmt, uint64_t BaseVA,
-                                   ContextualPatchSymbolResolver ResolveFn,
-                                   uint64_t ImageBaseVA,
-                                   llvm::StringRef TargetTriple);
+CompiledImage
+compileImageForPatch(llvm::Module &Mod, Arch TargetArch, BinaryFormat Fmt,
+                     uint64_t BaseVA, ContextualPatchSymbolResolver ResolveFn,
+                     uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+                     RewriteInputKind InputKind = RewriteInputKind::LiftedIR);
 
 /// Compile like compileImageForPatch, but allow selected allocated sections to
 /// be assigned format-owned VAs outside the contiguous patch image.  Such
@@ -307,18 +301,24 @@ CompiledImage compileImageForPatchWithFixedSectionVAs(
     PatchSymbolResolver ResolveFn,
     llvm::function_ref<std::optional<uint64_t>(llvm::StringRef)>
         FixedSectionVAFn,
-    uint64_t ImageBaseVA, llvm::StringRef TargetTriple);
+    uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+    RewriteInputKind InputKind = RewriteInputKind::LiftedIR);
 
 CompiledImage compileImageForPatchWithFixedSectionVAs(
     llvm::Module &Mod, Arch TargetArch, BinaryFormat Fmt, uint64_t BaseVA,
     ContextualPatchSymbolResolver ResolveFn,
     llvm::function_ref<std::optional<uint64_t>(llvm::StringRef)>
         FixedSectionVAFn,
-    uint64_t ImageBaseVA, llvm::StringRef TargetTriple);
+    uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+    RewriteInputKind InputKind = RewriteInputKind::LiftedIR);
 
 // ===--------------------------------------------------------------------===//
 // BinaryPatcher — base class for new-section patching
 // ===--------------------------------------------------------------------===//
+
+/// Check the original entry's authenticated code span and nearby entries.
+/// Shared by IR and object installers; does not infer replacement ownership.
+bool sourceEntryCanHostTrampoline(const BinaryImage &Image, va_t OriginalVA);
 
 /// Fill a buffer with NOP instructions appropriate for the target ISA.
 void padWithNops(uint8_t *Dst, uint64_t Len, Arch TargetArch,
@@ -414,6 +414,8 @@ public:
     CachedImports = Imports;
   }
 
+  void setInputKind(RewriteInputKind Kind) { InputKind = Kind; }
+
   void setImageContext(const BinaryImage *Image) {
     CachedImage = Image;
     CachedExports = Image ? &Image->Exports : nullptr;
@@ -467,7 +469,8 @@ public:
       llvm::ArrayRef<llvm::mc_rewrite::RewriteSourceFunctionOwner>
           SourceFunctionOwners,
       const std::map<std::string, uint64_t> &SourceFunctionOriginalVAs = {},
-      const BinaryImage *SourceImage = nullptr);
+      const BinaryImage *SourceImage = nullptr,
+      const std::map<uint64_t, InstructionMode> *ReplacementModes = nullptr);
 
   /// Common file I/O skeleton shared by all patchers: reads the input
   /// binary, calls \p PatchFn to modify the in-memory buffer and fill
@@ -485,10 +488,10 @@ protected:
   static bool validateSourceFunctionPatchPlan(const CompiledImage &Compiled,
                                               const BinaryImage *Image,
                                               std::string &Detail);
-  static bool
-  prepareSourceFunctionsForPatch(llvm::Module &Module, const BinaryImage *Image,
-                                 SourceFunctionPreparation &Preparation,
-                                 std::string &Detail);
+  static bool prepareSourceFunctionsForPatch(
+      llvm::Module &Module, const BinaryImage *Image,
+      SourceFunctionPreparation &Preparation, std::string &Detail,
+      RewriteInputKind InputKind = RewriteInputKind::LiftedIR);
   static SourceTrampolinePlan
   makeSourceTrampolinePlan(const CompiledImage &Compiled,
                            const BinaryImage *Image);
@@ -497,6 +500,7 @@ protected:
       llvm::ArrayRef<PatchedFunctionEntry> PatchedFunctions,
       size_t TrampolineCount, std::string &Detail);
 
+  RewriteInputKind InputKind = RewriteInputKind::LiftedIR;
   const BinaryImage *CachedImage = nullptr;
   const std::vector<Export> *CachedExports = nullptr;
   const std::vector<Import> *CachedImports = nullptr;

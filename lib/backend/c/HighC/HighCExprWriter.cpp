@@ -15,16 +15,21 @@
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
+#include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -35,6 +40,28 @@
 namespace neverd {
 
 namespace {
+/// Whether printed C \p Text joins operands with a binary or conditional
+/// operator outside every parenthesis and bracket.  The printer spaces each
+/// such operator, and no unary one.
+bool hasTopLevelBinaryOperator(llvm::StringRef Text) {
+  static constexpr llvm::StringLiteral Operators[] = {
+      "&& ", "|| ", "== ", "!= ", "<= ", ">= ", "<< ", ">> ", "< ", "> ",
+      "+ ",  "- ",  "* ",  "/ ",  "% ",  "& ",  "| ",  "^ ",  "? ", ": "};
+  int Depth = 0;
+  for (size_t I = 0; I < Text.size(); ++I) {
+    const char C = Text[I];
+    if (C == '(' || C == '[' || C == '{')
+      ++Depth;
+    else if (C == ')' || C == ']' || C == '}')
+      --Depth;
+    else if (C == ' ' && Depth == 0)
+      for (llvm::StringLiteral Operator : Operators)
+        if (Text.substr(I + 1).starts_with(Operator))
+          return true;
+  }
+  return false;
+}
+
 TypeRef debugParameterCarrier(TypeRef Type, Arch Architecture,
                               BinaryFormat Format) {
   // An indirect source parameter needs only a record declaration. Decide
@@ -256,11 +283,26 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
   return "0x" + llvm::utohexstr(Val);
 }
 
+llvm::StringRef HighCWriter::plainText(llvm::StringRef Text,
+                                       std::string &Storage) const {
+  return SourceRecorder ? SourceRecorder->plain(Text, Storage) : Text;
+}
+
+std::string HighCWriter::castOperandText(std::string Text) const {
+  std::string Storage;
+  const llvm::StringRef Plain = plainText(Text, Storage);
+  // Parentheses the ordinary text needs enclose its delimiters too.
+  if (c_memory::castOperand(Plain) == Plain)
+    return Text;
+  return "(" + Text + ")";
+}
+
 bool HighCWriter::declaredLocalInteger(const HighExpr &E, uint16_t Width,
                                        bool Signed) {
   if (E.Kind != ExprKind::Var && E.Kind != ExprKind::Phi)
     return false;
-  const auto It = DeclaredCTypes.find(exprStr(E));
+  std::string Storage;
+  const auto It = DeclaredCTypes.find(plainText(exprStr(E), Storage).str());
   return It != DeclaredCTypes.end() && It->second &&
          It->second->Kind == NdTypeKind::Int && !It->second->IsEnum &&
          It->second->IsSigned == Signed && It->second->Size == Width;
@@ -391,6 +433,8 @@ const HighExpr &HighCWriter::lowBytesSource(const HighExpr &E,
 bool HighCWriter::integerText(const HighExpr &E, llvm::StringRef Text) const {
   if (printedIntegerType(E))
     return true;
+  std::string Storage;
+  Text = plainText(Text, Storage);
   if (E.Kind == ExprKind::Const) {
     llvm::StringRef Digits = Text;
     Digits.consume_front("-");
@@ -423,9 +467,9 @@ std::string HighCWriter::integerView(const HighExpr &E, const TypeRef &To,
     if (auto Carrier = unsignedCarrierText(*Source, ParentPrec)) {
       if (!Signed && Width == Source->Type->Size)
         return *Carrier;
-      return "(" + typeToC(To) + ")" + c_memory::castOperand(*Carrier);
+      return "(" + typeToC(To) + ")" + castOperandText(std::move(*Carrier));
     }
-  return "(" + typeToC(To) + ")" + c_memory::castOperand(Text);
+  return "(" + typeToC(To) + ")" + castOperandText(std::move(Text));
 }
 
 std::optional<std::string>
@@ -436,7 +480,9 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
   const HighExpr &Source = lowBytesSource(E, Width);
   // A literal is spelled as the value it converts to.
   if (Source.Kind == ExprKind::Const && isPlainInteger(Source.Type)) {
-    if (exprStr(Source) != constStr(Source.ConstVal, Source.Type))
+    std::string Storage;
+    if (plainText(exprStr(Source), Storage) !=
+        constStr(Source.ConstVal, Source.Type))
       return std::nullopt;
     const unsigned Bits = Source.Type->Size * 8;
     uint64_t Value = Source.ConstVal;
@@ -474,6 +520,14 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
 std::string HighCWriter::storedValueText(const HighExpr &Value,
                                          const TypeRef &To,
                                          NdMemoryOrdering Ordering) {
+  // An integer slot takes a string's address as the integer it is.
+  const bool Literal = Value.Kind == ExprKind::Const && To &&
+                       To->Kind == NdTypeKind::Int &&
+                       LiteralAddressOperands.insert(&Value).second;
+  const auto Unmark = llvm::make_scope_exit([&] {
+    if (Literal)
+      LiteralAddressOperands.erase(&Value);
+  });
   // A plain store converts the value to the memory's type like an
   // assignment does.
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
@@ -486,6 +540,16 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
 std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   if (E.Operands.empty())
     return "/* bad unary */";
+  // An integer operator, `~` or a negation, takes a string's address as the
+  // integer it is.
+  const HighExpr *Only = E.Operands[0].get();
+  const bool Literal = Only && Only->Kind == ExprKind::Const && E.Type &&
+                       E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+                       LiteralAddressOperands.insert(Only).second;
+  const auto Unmark = llvm::make_scope_exit([&] {
+    if (Literal)
+      LiteralAddressOperands.erase(Only);
+  });
 
   switch (E.Op) {
   case NdOp::INT_NOT:
@@ -632,8 +696,14 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         Inner->Op == NdOp::INT_SLESSEQUAL && Inner->Operands.size() == 2 &&
         IsZero(Inner->Operands[1]) && Inner->Operands[0])
       return PrintGtZero(Inner->Operands[0]);
-    if (Inner)
-      return invertCondStr(*Inner);
+    if (Inner) {
+      // The inverse is a condition of its own, `!a && !b` of `!(a || b)` or
+      // `a >= b` of `!(a < b)`: as an operand it keeps its grouping.
+      std::string Inverted = invertCondStr(*Inner);
+      if (ParentPrec > 0 && hasTopLevelBinaryOperator(Inverted))
+        Inverted = "(" + Inverted + ")";
+      return Inverted;
+    }
     return "!" + exprStr(*E.Operands[0], 99);
   }
   case NdOp::INT_ZEXT: {
@@ -852,6 +922,15 @@ const HighFunc *HighCWriter::calledDefinition(const HighExpr &E) const {
                                                               : nullptr;
 }
 
+std::vector<size_t> HighCWriter::printedCallOperands(const HighExpr &E) const {
+  const HighFunc *Defined = calledDefinition(E);
+  if (!Defined || Defined->SourceTypeHint ||
+      E.Operands.size() != Defined->Params.size() ||
+      ParamIndicesInProgress.count(Defined))
+    return {};
+  return emittedParamIndices(*Defined);
+}
+
 std::string HighCWriter::importSlotIdentifier(const HighExpr &E) const {
   if (!Opts.Image || !E.CallAddr)
     return {};
@@ -996,6 +1075,28 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 }
 
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
+  if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
+    if (!x87ConstantControlShapeIsValid(
+            E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
+      llvm::report_fatal_error("invalid HighC x87 constant/control contract");
+    const std::string Word = MemoryIdentifiers.allocate("x87_control");
+    if (E.IntrinsicId == Intrinsic::X87ReadControl)
+      return "({ uint16_t " + Word +
+             "; __asm__ volatile(\"fnstcw %0\" : \"=m\"(" + Word +
+             ") :: \"memory\"); " + Word + "; })";
+    const unsigned Index = E.IntrinsicId == Intrinsic::X87LoadConstant ? 1 : 0;
+    const std::string Init = "({ uint16_t " + Word + " = (uint16_t)(" +
+                             exprStr(*E.Operands[Index]) + "); ";
+    if (E.IntrinsicId == Intrinsic::X87WriteControl)
+      return Init + "__asm__ volatile(\"fldcw %0\" :: \"m\"(" + Word +
+             ") : \"memory\"); })";
+    const std::string Value = MemoryIdentifiers.allocate("x87_constant");
+    return Init + "unsigned _BitInt(80) " + Value +
+           " = 0; __asm__ volatile(\"fldcw (%1)\\n\\t" +
+           X87ConstantMnemonics[E.Operands[0]->ConstVal] +
+           "\\n\\tfstpt (%0)\" :: \"r\"(&" + Value + "), \"r\"(&" + Word +
+           ") : \"st\", \"memory\"); " + Value + "; })";
+  }
   if (E.IntrinsicId == Intrinsic::CetRdSsp) {
     const auto Shape = x86ShadowStackReadHighShape(E, Opts.TheArch);
     if (!x86ShadowStackReadShapeIsValid(Shape))
@@ -1052,6 +1153,17 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (Number && Number->Kind == ExprKind::Const)
         LinuxSyscallArgs = linuxX64SyscallArgumentCount(Number->ConstVal);
     }
+    // A modeled supervisor call passes the number, then one operand per
+    // argument register; a verified syscall reads only its own arguments.
+    size_t FirstUnreadOperand = E.Operands.size();
+    if (const SyscallConvention *Syscall =
+            modeledSyscallConvention(E.IntrinsicId);
+        Syscall && !E.Operands.empty() && E.Operands[0])
+      if (const HighExpr *Number = unwrapIntegerView(E.Operands[0].get());
+          Number && Number->Kind == ExprKind::Const)
+        if (const auto Count =
+                linuxSyscallArgumentCount(Syscall->TheArch, Number->ConstVal))
+          FirstUnreadOperand = 1 + *Count;
     // An unconsumed register read is not part of the syscall's behavior. The
     // helper has a fixed six-register signature, so fill those positions with
     // zero only when the omitted expression cannot fault or have side effects.
@@ -1082,7 +1194,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       if (!Op)
         continue;
       OpBytes.push_back(Op->Type ? Op->Type->Size : 0);
-      if (LinuxSyscallArgs == 1 && I >= 2 && CanOmit(CanOmit, Op.get(), 0)) {
+      if (((LinuxSyscallArgs == 1 && I >= 2) || I >= FirstUnreadOperand) &&
+          CanOmit(CanOmit, Op.get(), 0)) {
         OpStrs.push_back("0");
         continue;
       }
@@ -1153,7 +1266,10 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
           : std::nullopt;
   const size_t ArityIntegers = Arity ? std::max(0, Arity->IntArgs) : 0;
   const size_t ArityFloats = Arity ? std::max(0, Arity->FpArgs) : 0;
+  const std::vector<size_t> DefinedIndices = printedCallOperands(E);
   auto OperandIndex = [&](size_t I) {
+    if (I < DefinedIndices.size())
+      return DefinedIndices[I];
     if (!Arity || !Arity->FpFirst || I >= ArityIntegers + ArityFloats)
       return I;
     return I < ArityFloats ? ArityIntegers + I : I - ArityFloats;
@@ -1183,6 +1299,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       Missing = HighExpr::makeUndef(8);
       Op = Missing.get();
     }
+    // A variadic callee saves an argument register the call never set, and
+    // va_arg reads no more arguments than a caller passes: no defined run
+    // observes it, and it passes as zero.
+    if (Defined && Defined->IsVariadic && isUnknownCallOperand(Op)) {
+      Missing = HighExpr::makeConst(
+          0, Op->Type && Op->Type->Size ? Op->Type->Size : 8);
+      Op = Missing.get();
+    }
     Note = stringArgumentNote(*Op);
     if (const HighExpr *Imm = unwrapIntegerView(Op)) {
       if ((Imm->Kind == ExprKind::Var || Imm->Kind == ExprKind::Phi)) {
@@ -1204,7 +1328,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     if (Callee) {
       // A callee this file defines takes what its prototype declares.
       if (const TypeRef Expected = Defined
-                                       ? emittedParamType(*Defined, I)
+                                       ? emittedParamTypeAt(*Defined, I)
                                        : expectedDebugCallArgType(*Callee, I)) {
         S += exprStrAsTypedArg(*Op, Expected);
         continue;
@@ -1273,9 +1397,7 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       PointerArgument = Function;
     }
     // A floating parameter of the callee's prototype takes the bits.
-    TypeRef FloatParam = Defined && I < Defined->Params.size()
-                             ? emittedParamType(*Defined, I)
-                             : nullptr;
+    TypeRef FloatParam = Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
     if (!FloatParam && Prototype && I < Prototype->ParamCount) {
       if (Prototype->Params[I] == "double")
         FloatParam = NdType::makeFloat(sizeof(double));
@@ -1299,9 +1421,8 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       PointerArgumentOperands.erase(PointerArgument);
     // A signed result of at least an int's width passes the same register
     // bits as its unsigned carrier, unless a prototype widens it.
-    const TypeRef DefinedParam = Defined && I < Defined->Params.size()
-                                     ? emittedParamType(*Defined, I)
-                                     : nullptr;
+    const TypeRef DefinedParam =
+        Defined ? emittedParamTypeAt(*Defined, I) : nullptr;
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
                            DefinedParam->Size <= Op->Type->Size)))
@@ -1425,9 +1546,17 @@ const HighExpr *HighCWriter::functionAddressArgument(const HighExpr &Arg) {
   }
   return Cur && Cur->Kind == ExprKind::Const &&
                  isAddressProvenance(Cur->ConstProvenance) &&
-                 FunctionAddressNames.count(Cur->ConstVal)
+                 FunctionAddressNames.count(functionAddressKey(*Cur))
              ? Cur
              : nullptr;
+}
+
+va_t HighCWriter::functionAddressKey(const HighExpr &Const) const {
+  return Const.ConstProvenance == ConstantAddressProvenance::CodeAddress &&
+                 Opts.Image
+             ? normalizeCodeAddress(Const.ConstVal, Opts.Image->Arch,
+                                    Opts.Image->Mode)
+             : Const.ConstVal;
 }
 
 const libc::LibCPrototype *
@@ -1548,7 +1677,7 @@ std::string HighCWriter::stringArgumentNote(const HighExpr &Arg) {
     // A number is no address, and a literal shows its text itself.
     if (Inner->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Inner->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        imageStringLiteral(Opts.Image, Inner->ConstVal))
+        stringLiteralAt(Opts.Image, Dbg, Inner->ConstVal))
       return {};
     Target = Inner->ConstVal;
   } else if (Inner->Kind == ExprKind::Load && Inner->Operands.size() == 1 &&
@@ -1782,6 +1911,9 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
   if (ProjectImageBacking && ProjectFrameAliasesIntoStorage)
     if (const auto Disp = certifiedFrameStorageDisplacement(E))
       return frameStorageAddress(*Disp);
+  if (E.Kind == ExprKind::Const)
+    if (auto Anchored = anchoredOwnerAddress(E))
+      return *Anchored;
   if (auto VA = constAddress(E)) {
     if (!ProjectImageBacking)
       return constStr(*VA, E.Type);
@@ -1811,19 +1943,36 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
       Off = Lhs;
     }
     if (Base && Off && Off->Kind == ExprKind::Const) {
+      // A displacement anchored before its owner's section is that object's
+      // address less the distance, which the integer base adds to, whatever
+      // object lies at the displacement itself.
+      if (!Minus)
+        if (auto Anchored = anchoredOwnerAddress(*Off)) {
+          constexpr int AddPrec = 9;
+          std::string B = addrStr(*Base, AddPrec, ProjectImageBacking);
+          if (B != "frame_base" &&
+              !llvm::StringRef(B).starts_with("(uintptr_t)"))
+            B = "(uintptr_t)(" + B + ")";
+          std::string S = B + " + " + *Anchored;
+          return ParentPrec >= AddPrec ? "(" + S + ")" : S;
+        }
       if (ProjectImageBacking) {
         if (auto Member = typedMemberAddress(*Inner))
           return "&" + *Member;
         if (auto Slot = namedFrameSlot(*Inner))
           return "&" + *Slot;
-        // The constant is the table and the rest the offset into it.
+        // The constant is the table and the rest the offset into it.  The
+        // offset prints as the operand is, not as what peeling found under
+        // it: `(u64)(u8)i` indexes by the low byte of `i`, not by `i`.
         if (Base->Kind != ExprKind::Const && indexedImageBase(*Inner) == Off)
           if (auto Table = imageBackingAddress(Off->ConstVal)) {
             constexpr int AddPrec = 9;
+            const HighExpr &Index =
+                Off == Rhs ? *Inner->Operands[0] : *Inner->Operands[1];
             std::string S =
                 "(uintptr_t)" + *Table + " + " +
                 integerView(
-                    *Base,
+                    Index,
                     NdType::makeInt(getTargetRegInfo(Opts.TheArch).PointerSize,
                                     false),
                     AddPrec);
@@ -3609,7 +3758,10 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
         Ptr = Rhs;
         Off = Lhs;
       }
-      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0) {
+      // An image address added to an index is the table the call reads, not
+      // a slot offset; it prints as the object the output defines there.
+      if (Ptr && Off && Off->Kind == ExprKind::Const && Off->ConstVal != 0 &&
+          !isExactAddressProvenance(Off->ConstProvenance)) {
         const HighExpr *Vptr = peelIntegerViewOps(Ptr);
         std::string SlotBase;
         if (Vptr && Vptr->Kind == ExprKind::Load && !Vptr->Operands.empty() &&
@@ -3760,6 +3912,23 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
         (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) {
       E = E->Operands[0].get();
       continue;
+    }
+    // The low bytes of an extension, as wide as what it extends, are that
+    // value: i386 `SUBBYTES((i64)(esp - 12), 0)` is `esp - 12`.
+    if (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+        E->Operands.size() == 2 && E->Operands[1] &&
+        E->Operands[1]->Kind == ExprKind::Const &&
+        E->Operands[1]->ConstVal == 0 && E->Type) {
+      const HighExpr *Extension = E->Operands[0].get();
+      if (Extension->Kind == ExprKind::UnaryOp &&
+          (Extension->Op == NdOp::INT_ZEXT ||
+           Extension->Op == NdOp::INT_SEXT) &&
+          !Extension->Operands.empty() && Extension->Operands[0] &&
+          Extension->Operands[0]->Type &&
+          Extension->Operands[0]->Type->Size == E->Type->Size) {
+        E = Extension->Operands[0].get();
+        continue;
+      }
     }
     break;
   }
@@ -3936,6 +4105,52 @@ HighCWriter::certifiedFrameStorageDisplacement(const HighExpr &E) const {
   return std::nullopt;
 }
 
+bool HighCWriter::reachesFrameThroughIndex(const HighExpr &E) const {
+  if (E.Kind != ExprKind::BinOp)
+    return false;
+  // A choice between whole addresses (`csel x8, x9, x10, ne`, or a run-time
+  // mask `(p & m) | (&slot & ~m)`) reaches whichever it picks.  C takes a
+  // named slot's address for it; only a choice of other frame bytes is an
+  // index.
+  const auto ChoosesFrameBytes = [&](const ExprPtr &Operand) {
+    return Operand && certifiedFrameStorageDisplacement(*Operand) &&
+           !namedFrameSlot(*Operand);
+  };
+  if (E.Op == NdOp::SELECT)
+    return E.Operands.size() == 3 && (ChoosesFrameBytes(E.Operands[1]) ||
+                                      ChoosesFrameBytes(E.Operands[2]));
+  // A frame address plus a run-time index (`&buf[i]`), or one with the index
+  // inserted into its bits (AArch64 `bfi x10, x9, #2, #2` over `mov x10, sp`
+  // is `(sp & ~12) | i << 2`).
+  if ((E.Op != NdOp::INT_ADD && E.Op != NdOp::INT_SUB &&
+       E.Op != NdOp::INT_AND && E.Op != NdOp::INT_OR &&
+       E.Op != NdOp::INT_XOR) ||
+      E.Operands.size() != 2 || !E.Operands[0] || !E.Operands[1] ||
+      certifiedFrameStorageDisplacement(E))
+    return false;
+  if (E.Op == NdOp::INT_AND) {
+    bool ConstantMask = false;
+    for (const ExprPtr &Operand : E.Operands)
+      if (const HighExpr *Mask = unwrapIntegerView(Operand.get());
+          Mask && Mask->Kind == ExprKind::Const && E.Type && E.Type->Size) {
+        ConstantMask = true;
+        // A mask clearing only low bits aligns the address (`and rsp,
+        // -32`); it selects no frame bytes by a run-time value.
+        const uint64_t Width = E.Type->Size >= 8
+                                   ? UINT64_MAX
+                                   : (UINT64_C(1) << (8 * E.Type->Size)) - 1;
+        const uint64_t Cleared = ~Mask->ConstVal & Width;
+        if ((Cleared & (Cleared + 1)) == 0)
+          return false;
+      }
+    if (!ConstantMask)
+      return ChoosesFrameBytes(E.Operands[0]) ||
+             ChoosesFrameBytes(E.Operands[1]);
+  }
+  return certifiedFrameStorageDisplacement(*E.Operands[0]) ||
+         certifiedFrameStorageDisplacement(*E.Operands[1]);
+}
+
 std::optional<std::string>
 HighCWriter::namedFrameSlot(const HighExpr &E, const TypeRef &Access) const {
   const auto Disp = frameDisplacement(E);
@@ -3976,8 +4191,10 @@ std::string HighCWriter::exprStr(const HighExpr &E, int ParentPrec,
   UnsignedCarrierTexts.erase(&E);
   std::string Text = exprStrImpl(E, ParentPrec, Destination);
   // A local's name has its declared type.
-  if (!Text.empty() && (llvm::isAlpha(Text.front()) || Text.front() == '_'))
-    if (const auto Declared = DeclaredCTypes.find(Text);
+  std::string Storage;
+  if (const llvm::StringRef Name = plainText(Text, Storage);
+      !Name.empty() && (llvm::isAlpha(Name.front()) || Name.front() == '_'))
+    if (const auto Declared = DeclaredCTypes.find(Name.str());
         Declared != DeclaredCTypes.end() && isPlainInteger(Declared->second))
       PrintedIntegerTypes[&E] = {Declared->second->Size,
                                  Declared->second->IsSigned};
@@ -4098,13 +4315,20 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (E.ConstProvenance == ConstantAddressProvenance::Scalar ||
         E.ConstProvenance == ConstantAddressProvenance::AddressFragment)
       return constStr(E.ConstVal, E.Type);
-    bool AllowEmpty = false;
-    if (Dbg) {
-      if (auto Data = Dbg->resolveDataObject(E.ConstVal);
-          Data && llvm::StringRef(Data->Name).starts_with("??_C@"))
-        AllowEmpty = true;
+    // A relocation that names an object and subtracts from it (i386
+    // `SA@GOTOFF - 1` for `SA[i - 1]`) leaves an address before the object's
+    // section: the object's address less the distance, whatever lies at the
+    // address itself.
+    if (auto Anchored = anchoredOwnerAddress(E)) {
+      if (E.Type &&
+          (E.Type->Kind == NdTypeKind::Ptr ||
+           (E.Type->Kind == NdTypeKind::Int &&
+            (E.Type->IsSigned ||
+             E.Type->Size != getTargetRegInfo(Opts.TheArch).PointerSize))))
+        return "(" + typeToC(E.Type) + ")" + *Anchored;
+      return PointerInteger(*Anchored);
     }
-    if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
+    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
@@ -4116,7 +4340,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     if (ImageObjects.count(E.ConstVal) ||
         E.ConstProvenance == ConstantAddressProvenance::Address ||
         E.ConstProvenance == ConstantAddressProvenance::DataAddress)
-      if (auto Backing = imageBackingAddress(E.ConstVal)) {
+      if (auto Backing = ownedImageBackingAddress(E)) {
         // An integer the machine computes with stays an integer: `~` or a
         // multiplication takes no pointer.
         if (E.Type && E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum)
@@ -4157,7 +4381,8 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
     // A function's address prints as the function, whose designator C
     // converts to its address; it keeps the integer type the machine moves.
     if (isAddressProvenance(E.ConstProvenance))
-      if (const auto Function = FunctionAddressNames.find(E.ConstVal);
+      if (const auto Function =
+              FunctionAddressNames.find(functionAddressKey(E));
           Function != FunctionAddressNames.end()) {
         if (PointerArgumentOperands.count(&E))
           return Function->second;
@@ -4320,6 +4545,57 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
                           E.Type->IsSigned)
                    ? "(" + typeToC(E.Type) + ")(uintptr_t)" + Text
                    : PointerInteger("(uintptr_t)" + Text);
+    // A struct returned across several registers arrives whole in the
+    // integer the HighIR unpacks its fields from, one register's scalar
+    // after another.  An integer of another width than those fields would
+    // invent or drop field bytes.
+    if (&E != StatementCall && (!E.Type || E.Type->Kind == NdTypeKind::Int))
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind == NdTypeKind::Struct && !Return->IsEnum) {
+        const TypeRef Carrier =
+            E.Type ? E.Type : NdType::makeInt(Return->Size, false);
+        const auto Members = sourceAggregateMembers(Return);
+        uint16_t Packed = 0;
+        for (const auto &Member : Members)
+          Packed += Member.Type->Size;
+        if (Members.empty() || Packed != Carrier->Size)
+          return "((void)" + Text + ", (__builtin_trap(), (" +
+                 typeToC(Carrier) + ")0 /* unknown struct return fields */))";
+        if (Return->Size == Carrier->Size &&
+            (Carrier->Size == 4 || Carrier->Size == 8 || Carrier->Size == 16))
+          return typedText(
+              E, "__builtin_bit_cast(" + typeToC(Carrier) + ", " + Text + ")",
+              Carrier->Size, Carrier->IsSigned);
+        // No integer bit casts from the record (three floats are twelve
+        // bytes, and an int beside a double leaves padding): place each
+        // member's bits where the packed fields put them.
+        const std::string Wide = typeToC(Carrier);
+        std::string Fields;
+        uint16_t Offset = 0;
+        for (size_t I = 0; I < Members.size(); ++I) {
+          std::string Term =
+              "(" + Wide + ")__builtin_bit_cast(" +
+              typeToC(NdType::makeInt(Members[I].Type->Size, false)) +
+              ", nd_record.field_" + std::to_string(I) + ")";
+          if (Offset != 0)
+            Term = "(" + Term + " << " + std::to_string(Offset * 8) + ")";
+          Fields += (I ? " | " : "") + Term;
+          Offset += Members[I].Type->Size;
+        }
+        return typedText(E,
+                         "({ " + typeToC(Return) + " nd_record = " + Text +
+                             "; " + Fields + "; })",
+                         Carrier->Size, Carrier->IsSigned);
+      }
+    // A struct the callee returns in more registers than its C declaration
+    // carries has fields the C cannot read: they are unknown, not zeros.
+    if (&E != StatementCall && E.Type && E.Type->Kind == NdTypeKind::Int &&
+        E.Type->Size > 8)
+      if (const TypeRef Return = knownCallReturnType(E);
+          Return && Return->Kind != NdTypeKind::Struct &&
+          Return->Size < E.Type->Size)
+        return "((void)" + Text + ", (__builtin_trap(), (" + typeToC(E.Type) +
+               ")0 /* unknown struct return fields */))";
     // A floating result returns in the low lane of a register the HighIR
     // reads as integer bits: the C reads those bits, not the value converted
     // to an integer.  The lane's other bytes are unspecified after a call.
@@ -4743,9 +5019,10 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
   if (!Seg || !Seg->isReadable())
     return false;
   // Instruction bytes are not data objects.  Read-only constants live in
-  // .rdata / .rodata (readable, not writable, not executable).
+  // .rdata / .rodata (readable, not writable, not executable), and where
+  // the debug information places data among the code.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return false;
+    return isCodeSectionData(Opts.Image, Addr);
   return true;
 }
 
@@ -4794,16 +5071,26 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
         const HighExpr *Inner = peelIntegerViewOps(&E);
         if (!Inner || Depth > limits::kMaxIntegerViewUnwrapDepth)
           return false;
-        if (Inner->Kind == ExprKind::BinOp && Inner->Op == NdOp::INT_ADD &&
-            Inner->Operands.size() == 2 && Inner->Operands[0] &&
-            Inner->Operands[1])
-          return Collect(*Inner->Operands[0], Depth + 1) &&
-                 Collect(*Inner->Operands[1], Depth + 1);
+        if (Inner->Kind == ExprKind::BinOp && Inner->Operands.size() == 2 &&
+            Inner->Operands[0] && Inner->Operands[1]) {
+          if (Inner->Op == NdOp::INT_ADD)
+            return Collect(*Inner->Operands[0], Depth + 1) &&
+                   Collect(*Inner->Operands[1], Depth + 1);
+          // A number taken off a sum leaves its terms: `SA[i - 1]` reads
+          // `SA + i - 1`.
+          if (Inner->Op == NdOp::INT_SUB)
+            if (const HighExpr *Taken =
+                    peelIntegerViewOps(Inner->Operands[1].get());
+                Taken && Taken->Kind == ExprKind::Const &&
+                !isExactAddressProvenance(Taken->ConstProvenance))
+              return Collect(*Inner->Operands[0], Depth + 1);
+        }
         Terms.push_back(Inner);
         return true;
       };
   const HighExpr *Inner = peelIntegerViewOps(&Address);
-  if (!Inner || Inner->Kind != ExprKind::BinOp || Inner->Op != NdOp::INT_ADD ||
+  if (!Inner || Inner->Kind != ExprKind::BinOp ||
+      (Inner->Op != NdOp::INT_ADD && Inner->Op != NdOp::INT_SUB) ||
       !Collect(Address, 0))
     return nullptr;
   // One term is the object's address and another varies.  A number equal to
@@ -4818,7 +5105,7 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
     }
     if (Term->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Term->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        !isImageDataAddress(Term->ConstVal) || !sizedObjectAt(Term->ConstVal))
+        !isImageDataAddress(Term->ConstVal) || !indexedObjectAt(Term->ConstVal))
       continue;
     if (Base)
       return nullptr;
@@ -4842,6 +5129,48 @@ HighCWriter::sizedObjectAt(va_t Addr) const {
   return Outermost;
 }
 
+std::optional<std::pair<va_t, uint64_t>>
+HighCWriter::indexedObjectAt(va_t Addr) const {
+  if (auto Object = sizedObjectAt(Addr))
+    return Object;
+  const Section *Sec = Opts.Image ? Opts.Image->getSectionFor(Addr) : nullptr;
+  if (!Sec || !Sec->isReadable() || Sec->isExecutable() || !Sec->Size ||
+      Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+    return std::nullopt;
+  va_t Begin = Sec->VA;
+  va_t End = Sec->VA + Sec->Size;
+  const auto After = llvm::upper_bound(
+      SizedObjects, Addr,
+      [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
+  if (After != SizedObjects.end() && After->first < End)
+    End = After->first;
+  if (After != SizedObjects.begin()) {
+    const va_t Reach = SizedObjectReach[After - SizedObjects.begin() - 1];
+    if (Reach > Begin)
+      Begin = Reach;
+  }
+  // A data symbol begins another object even when unsized, as each PDB
+  // public does: the table runs from the nearest one at or before it to the
+  // next, as a disassembler bounds an item, not across every unsized object
+  // in the section.
+  const auto NextSymbol = llvm::upper_bound(DataSymbolStarts, Addr);
+  if (NextSymbol != DataSymbolStarts.end() && *NextSymbol < End)
+    End = *NextSymbol;
+  if (NextSymbol != DataSymbolStarts.begin() && *std::prev(NextSymbol) > Begin)
+    Begin = *std::prev(NextSymbol);
+  if (Dbg) {
+    const auto [Before, After] = Dbg->dataSymbolsAround(Addr);
+    if (After && *After > Addr && *After < End)
+      End = *After;
+    if (Before && *Before <= Addr && *Before > Begin)
+      Begin = *Before;
+  }
+  if (Begin > Addr || End <= Addr ||
+      End - Begin > limits::kMaxSingleGlobalEmbedLen)
+    return std::nullopt;
+  return std::pair{Begin, static_cast<uint64_t>(End - Begin)};
+}
+
 std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
   for (const ImageBacking &Backing : ImageBackings) {
     if (Addr < Backing.Base)
@@ -4853,6 +5182,96 @@ std::optional<std::string> HighCWriter::imageBackingAddress(va_t Addr) const {
   return std::nullopt;
 }
 
+std::optional<std::string>
+HighCWriter::ownedImageBackingAddress(const HighExpr &Const) const {
+  // A relocation's owner is the section it names.  Inside that section an
+  // address is whatever object lies there; one past its end no object of
+  // the section starts, and the next section's first object is no owner.
+  const va_t Owner = Const.AddressOwnerVA;
+  if (Opts.Image && isExactAddressProvenance(Const.ConstProvenance) &&
+      Owner != InvalidVA && Const.ConstVal != 0)
+    for (const Section &Sec : Opts.Image->Sections) {
+      if (!Sec.isReadable() || Sec.VA != Owner || Sec.Size == 0 ||
+          Sec.Size > InvalidVA - Sec.VA || Const.ConstVal != Sec.VA + Sec.Size)
+        continue;
+      const va_t Last = Const.ConstVal - 1;
+      for (const ImageBacking &Backing : ImageBackings) {
+        if (Last < Backing.Base)
+          break;
+        if (Last < Backing.End)
+          return "&" + Backing.Name + "[" +
+                 std::to_string(Backing.Pad + (Const.ConstVal - Backing.Base)) +
+                 "]";
+      }
+      break;
+    }
+  return imageBackingAddress(Const.ConstVal);
+}
+
+std::optional<va_t> HighCWriter::anchoredOwner(const HighExpr &Const) const {
+  if (!Opts.Image || Const.Kind != ExprKind::Const ||
+      !isExactAddressProvenance(Const.ConstProvenance) ||
+      Const.AddressOwnerVA == InvalidVA)
+    return std::nullopt;
+  const auto Anchor = Opts.Image->RodataAnchorSeg.find(Const.ConstVal);
+  if (Anchor == Opts.Image->RodataAnchorSeg.end() ||
+      Anchor->second != Const.AddressOwnerVA ||
+      Const.ConstVal >= Anchor->second)
+    return std::nullopt;
+  return Anchor->second;
+}
+
+std::optional<std::string>
+HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
+  const std::optional<va_t> Owner = anchoredOwner(Const);
+  if (!Owner)
+    return std::nullopt;
+  std::optional<std::string> Object = stringLiteralAt(Opts.Image, Dbg, *Owner);
+  if (!Object)
+    Object = imageBackingAddress(*Owner);
+  if (!Object)
+    if (const auto Name = imageObjectName(*Owner)) {
+      const auto It = ImageObjects.find(*Owner);
+      Object =
+          It != ImageObjects.end() && It->second.String ? *Name : "&" + *Name;
+    }
+  if (!Object)
+    return std::nullopt;
+  return "((uintptr_t)" + *Object + " - " +
+         std::to_string(*Owner - Const.ConstVal) + ")";
+}
+
+HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
+  ImageSymbolName Named;
+  if (Opts.UserNames)
+    if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+      Named.Raw = It->second;
+  // A literal's symbol spells its text, not a name (MSVC's `??_C@`).
+  if (Named.Raw.empty() && Dbg) {
+    if (auto Data = Dbg->resolveDataObject(Addr);
+        Data && !Data->Name.empty() && !isStringLiteralName(Data->Name))
+      Named.Raw = Data->Name;
+  }
+  if (Named.Raw.empty() && Opts.Image) {
+    if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
+        Sym && !Sym->IsFunc && !Sym->Name.empty() &&
+        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
+      // A mangled name keeps the underscores its scheme starts with
+      // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
+      // identifier is spelled from: `vtable for QDomNode`, Go's
+      // `main.Flags`.
+      const llvm::StringRef CName =
+          cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+      Named.Raw = symbolScheme(CName) != SymbolScheme::None
+                      ? CName.str()
+                      : stripLeadingUnderscores(Sym->Name).str();
+      Named.Readable = demangledComment(CName);
+      Named.Symbol = Sym->Name;
+    }
+  }
+  return Named;
+}
+
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                                   bool MemoryAccess) {
   if (!isImageDataAddress(Addr))
@@ -4861,35 +5280,15 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
   if (MemoryAccess && Ty)
     Obj.MemoryWidths.insert(Ty->Size);
   if (Obj.Name.empty()) {
-    std::string Raw;
-    if (Opts.UserNames)
-      if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
-        Raw = It->second;
-    if (Raw.empty() && Dbg) {
-      if (auto Data = Dbg->resolveDataObject(Addr); Data && !Data->Name.empty())
-        Raw = Data->Name;
-    }
-    if (Raw.empty() && Opts.Image) {
-      if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
-          Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-          llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
-        // A mangled name keeps the underscores its scheme starts with
-        // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
-        // identifier is spelled from: `vtable for QDomNode`, Go's
-        // `main.Flags`.
-        const llvm::StringRef CName =
-            cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
-        Raw = symbolScheme(CName) != SymbolScheme::None
-                  ? CName.str()
-                  : stripLeadingUnderscores(Sym->Name).str();
-        Obj.Readable = demangledComment(CName);
-        Obj.Symbol = Sym->Name;
-      }
-    }
-    if (!Raw.empty())
-      Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");
+    const ImageSymbolName Named = imageSymbolName(Addr);
+    if (!Named.Raw.empty())
+      Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
+    if (!Named.Readable.empty())
+      Obj.Readable = Named.Readable;
+    if (!Named.Symbol.empty())
+      Obj.Symbol = Named.Symbol;
     if (Obj.Symbol.empty())
-      Obj.Symbol = Raw;
+      Obj.Symbol = Named.Raw;
   }
   auto NamedDisplayPointer = [](const TypeRef &Type) {
     return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
@@ -4919,14 +5318,33 @@ void HighCWriter::noteImageAddress(va_t Addr) {
       It != ImageObjects.end() && It->second.Type)
     return;
   // The address alone stands in with an integer as wide as the object its
-  // symbol sizes, which the type of any access replaces.
-  const uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  // symbol sizes, else as the accesses that name it, or the pointer a
+  // relocated slot holds, which the type of any access replaces.
+  uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  if (!Size && Opts.AccessWidths)
+    Size = Opts.AccessWidths->at(Addr).value_or(0);
+  if (!Size && Opts.Image &&
+      (Opts.Image->CodePtrRelocSlots.count(Addr) ||
+       Opts.Image->DataPtrRelocSlots.count(Addr)))
+    Size = Opts.Image->getPointerSize();
   noteImageObject(
       Addr,
       NdType::makeInt(Size == 1 || Size == 2 || Size == 4 || Size == 8 ? Size
                                                                        : 2),
       false);
   ImageObjects[Addr].WeakType = true;
+}
+
+std::optional<uint64_t>
+HighCWriter::dataNameWidth(va_t Addr, const ImageObject &Obj) const {
+  if (Opts.AccessWidths) {
+    if (const auto Width = Opts.AccessWidths->at(Addr); Width && *Width)
+      return *Width;
+    return std::nullopt;
+  }
+  if (Obj.MemoryWidths.size() == 1)
+    return *Obj.MemoryWidths.begin();
+  return std::nullopt;
 }
 
 bool HighCWriter::isParamCopy(const HighExpr &E) const {

@@ -434,6 +434,7 @@ add_neverd_unittest(NeverDSemanticTests
   allplatform/optstress/AllPlatform_OptStress338RTTests.cpp
   allplatform/optstress/AllPlatform_OptStress339RTTests.cpp
   allplatform/optstress/AllPlatform_OptStress33RTTests.cpp
+  allplatform/optstress/AllPlatform_OptStress340RTTests.cpp
   allplatform/optstress/AllPlatform_OptStress34RTTests.cpp
   allplatform/optstress/AllPlatform_OptStress35RTTests.cpp
   allplatform/optstress/AllPlatform_OptStress36RTTests.cpp

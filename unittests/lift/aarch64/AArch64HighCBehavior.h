@@ -35,12 +35,30 @@ protected:
     fs::create_directory(Include);
     std::ofstream(Include / "string.h")
         << "void *memcpy(void *, const void *, __SIZE_TYPE__);\n";
+    // arm_acle.h includes stdint.h. Bind these fixture types to the target
+    // compiler without searching an unrelated host libc or changing hosted
+    // memcpy lowering into opaque freestanding calls.
+    std::ofstream(Include / "stdint.h") << R"(
+#ifndef NEVERD_TEST_FLOW_STDINT_H
+#define NEVERD_TEST_FLOW_STDINT_H
+typedef __INT8_TYPE__ int8_t;
+typedef __UINT8_TYPE__ uint8_t;
+typedef __INT16_TYPE__ int16_t;
+typedef __UINT16_TYPE__ uint16_t;
+typedef __INT32_TYPE__ int32_t;
+typedef __UINT32_TYPE__ uint32_t;
+typedef __INT64_TYPE__ int64_t;
+typedef __UINT64_TYPE__ uint64_t;
+typedef __INTPTR_TYPE__ intptr_t;
+typedef __UINTPTR_TYPE__ uintptr_t;
+#endif
+)";
     const auto IR = tmpFile("highc-flow.ll");
     // Use hosted memcpy semantics so Clang exposes the actual byte copies as
     // IR loads/stores. No behavioral stubs replace the instructions under test.
     auto Compile =
         exec(NEVERD_TEST_CLANG,
-             {"-target", "aarch64-none-elf", "-march=" + March, "-std=gnu11",
+             {"-target", "aarch64-linux-gnu", "-march=" + March, "-std=gnu11",
               "-O2", "-S", "-emit-llvm", "-I", Include.string(), "-include",
               std::string(TEST_SOURCE_DIR) + "/aarch64/HostClangBuiltins.h",
               Source.string(), "-o", IR.string()});

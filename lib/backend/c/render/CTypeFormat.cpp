@@ -12,8 +12,10 @@
 #include "neverd/backend/c/render/CTypeFormat.h"
 
 #include "neverd/Limits.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/StringScan.h"
 
@@ -89,6 +91,34 @@ namespace {
 bool terminatesStrings(const BinaryImage &Img) {
   return Img.ExceptionMetadata.Runtime.Runtime != SourceLanguageRuntime::Go;
 }
+
+/// Appends the character \p Ch to a C literal's text, escaped where C needs
+/// it; false for a character a literal does not show, a control or one
+/// past ASCII.
+bool appendLiteralCharacter(uint32_t Ch, std::string &Out) {
+  switch (Ch) {
+  case '\\':
+    Out += "\\\\";
+    return true;
+  case '"':
+    Out += "\\\"";
+    return true;
+  case '\n':
+    Out += "\\n";
+    return true;
+  case '\t':
+    Out += "\\t";
+    return true;
+  case '\r':
+    Out += "\\r";
+    return true;
+  default:
+    if (Ch < 0x20 || Ch > 0x7E)
+      return false;
+    Out += static_cast<char>(Ch);
+    return true;
+  }
+}
 } // namespace
 
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
@@ -105,48 +135,22 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
   if (!Img->hasObjectDataProvenance(Addr))
     return std::nullopt;
   constexpr unsigned kMaxLit = 64;
-  auto Escape = [](uint32_t Ch, std::string &Out) {
-    switch (Ch) {
-    case '\\':
-      Out += "\\\\";
-      return true;
-    case '"':
-      Out += "\\\"";
-      return true;
-    case '\n':
-      Out += "\\n";
-      return true;
-    case '\t':
-      Out += "\\t";
-      return true;
-    case '\r':
-      Out += "\\r";
-      return true;
-    default:
-      if (Ch < 0x20 || Ch > 0x7E)
-        return false;
-      Out += static_cast<char>(Ch);
-      return true;
-    }
-  };
+  const auto Escape = appendLiteralCharacter;
   const uint64_t Off = Addr - Seg->VA;
   if (Off >= Seg->Data.size())
     return std::nullopt;
   const uint8_t *Base = Seg->Data.data() + Off;
   const size_t Remain = Seg->Data.size() - static_cast<size_t>(Off);
-  // A sized data object that holds the bytes must be the string itself,
-  // padded with zeros at most.  Bytes past the segment's data are zeros.
+  // A sized data object that holds the bytes must be the string itself.  A
+  // literal shorter than its object would leave the bytes past it unread: a
+  // struct of a short number and a null pointer reads as a one-character
+  // wide string.
   auto IsOwnObject = [&](size_t Extent) {
     for (const Symbol &Sym : Img->Symbols) {
       if (Sym.IsFunc || !Sym.Size || Addr < Sym.Addr ||
           Addr - Sym.Addr >= Sym.Size)
         continue;
-      if (Sym.Addr != Addr || Sym.Size < Extent)
-        return false;
-      const size_t End =
-          static_cast<size_t>(std::min<uint64_t>(Sym.Size, Remain));
-      if (End > Extent && !std::all_of(Base + Extent, Base + End,
-                                       [](uint8_t Byte) { return !Byte; }))
+      if (Sym.Addr != Addr || Sym.Size != Extent)
         return false;
     }
     return true;
@@ -158,7 +162,13 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     // address. A fixup, including one beginning before this candidate, makes
     // those bytes unsuitable for replacement by a string literal. Use the
     // loader's shared storage-provenance query for every supported format.
-    const va_t First = Addr >= 7 ? Addr - 7 : 0;
+    // The query names where a slot begins, and no data slot is wider than a
+    // pointer: one that begins a pointer's width before the candidate ends
+    // where it starts (the last entry of a table of 32-bit pointers to the
+    // strings right after it).
+    const uint32_t PointerBytes = Img->getPointerSize();
+    const va_t Reach = PointerBytes ? PointerBytes - 1 : 7;
+    const va_t First = Addr >= Reach ? Addr - Reach : 0;
     const va_t End = Addr + Extent;
     for (va_t Byte = First; Byte < End; ++Byte)
       if (Img->hasRelocationProvenanceAt(Byte))
@@ -197,6 +207,52 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
       return std::nullopt;
   }
   return std::nullopt;
+}
+
+std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
+                                           const DebugContext *Dbg, va_t Addr,
+                                           bool AllowEmpty) {
+  if (auto Literal = imageStringLiteral(Img, Addr, AllowEmpty))
+    return Literal;
+  if (!Img || Addr == 0 || Addr == InvalidVA)
+    return std::nullopt;
+  if (const Segment *Seg = Img->getSegmentFor(Addr); !Seg || !Seg->isReadable())
+    return std::nullopt;
+  // The debug information names the literals, the image's symbols merged
+  // from it among them; without it, the image's own symbols do.
+  std::string Name;
+  if (Dbg) {
+    if (const auto Data = Dbg->resolveDataObject(Addr);
+        Data && isStringLiteralName(Data->Name))
+      Name = Data->Name;
+  } else {
+    Name = stringLiteralSymbolAt(*Img, Addr).str();
+  }
+  if (Name.empty())
+    return std::nullopt;
+  const auto Literal = symbolStringLiteralAt(*Img, Addr, Name);
+  if (!Literal)
+    return std::nullopt;
+  const uint8_t *Bytes =
+      Literal->Bytes ? Img->readVA(Addr, Literal->Bytes) : nullptr;
+  if (Literal->Bytes && !Bytes)
+    return std::nullopt;
+  std::string Text;
+  for (uint64_t At = 0; At < Literal->Bytes; At += Literal->UnitBytes) {
+    uint32_t Ch = 0;
+    for (unsigned Byte = 0; Byte < Literal->UnitBytes; ++Byte)
+      Ch |= static_cast<uint32_t>(Bytes[At + Byte]) << (8 * Byte);
+    if (!appendLiteralCharacter(Ch, Text))
+      return std::nullopt;
+  }
+  const llvm::StringRef Prefix = Literal->UnitBytes == 2   ? "L"
+                                 : Literal->UnitBytes == 4 ? "U"
+                                                           : "";
+  return (Prefix + "\"" + Text + "\"").str();
+}
+
+bool isCodeSectionData(const BinaryImage *Img, va_t Addr) {
+  return Img && Img->DataInCode.count(Addr) != 0;
 }
 
 namespace {

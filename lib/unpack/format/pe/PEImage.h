@@ -66,9 +66,10 @@ private:
 
 /// Write the observed memory as a PE32+ file with the recovered entry point
 /// and a new import directory over the cells the program already uses. The
-/// result is
-/// fixed at the observed base: relocation metadata for generated content is
-/// unknown and is therefore removed, not assumed.
+/// Generated-content relocations are unknown. Kernel snapshots retain only
+/// source-bound loader fields with intact write histories and still carry an
+/// unresolved runtime dependency; other images remain fixed at the observed
+/// base. An input relocation table alone does not authorize output entries.
 llvm::Expected<RebuiltImage>
 rebuild(const Image &Input, const Capture &Observed, const RebuildPlan &Plan);
 

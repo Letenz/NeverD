@@ -90,6 +90,8 @@ void resolveCopyChains(VarKeyMap<ExprPtr> &Map) {
 // and expression inlining owners use this same conservative stability proof.
 void filterStableCopyCandidates(const std::vector<HighStmt> &Stmts,
                                 VarKeyMap<ExprPtr> &Candidates) {
+  if (Candidates.empty())
+    return;
   VarKeyMap<int> Definitions;
   VarKeyMap<VarKeySet> Dependents;
   VarKeySet Unstable;
@@ -152,6 +154,8 @@ void rewriteRhsVars(std::vector<HighStmt> &Stmts,
                     const VarKeyMap<ExprPtr> &Candidates) {
   auto Map = Candidates;
   filterStableCopyCandidates(Stmts, Map);
+  if (Map.empty())
+    return;
   HighExprSet Seen;
   std::function<void(ExprPtr &)> Rewrite = [&](ExprPtr &E) {
     if (!E)
@@ -206,10 +210,13 @@ void countExprVarUsesUpToTwo(
   }
 }
 
-void inlineSingleDefs(std::vector<HighStmt> &Stmts,
+bool inlineSingleDefs(std::vector<HighStmt> &Stmts,
                       const VarKeyMap<ExprPtr> &Candidates) {
   auto Defs = Candidates;
   filterStableCopyCandidates(Stmts, Defs);
+  if (Defs.empty())
+    return false;
+  bool Changed = false;
   HighExprSet Seen;
   std::function<void(ExprPtr &)> DoInline = [&](ExprPtr &E) {
     if (!E)
@@ -217,6 +224,7 @@ void inlineSingleDefs(std::vector<HighStmt> &Stmts,
     if (E->Kind == ExprKind::Var) {
       auto It = Defs.find(VK(E->Var));
       if (It != Defs.end()) {
+        Changed |= E != It->second;
         E = It->second;
         return;
       }
@@ -225,6 +233,7 @@ void inlineSingleDefs(std::vector<HighStmt> &Stmts,
         !E->Operands.empty() && E->Operands[0]->Kind == ExprKind::Var) {
       auto It = Defs.find(VK(E->Operands[0]->Var));
       if (It != Defs.end()) {
+        Changed |= E->Operands[0] != It->second;
         E->Operands[0] = It->second;
         return;
       }
@@ -236,6 +245,7 @@ void inlineSingleDefs(std::vector<HighStmt> &Stmts,
     DoInline(E->IndirectTarget);
   };
   walkStmts(Stmts, [&](HighStmt &S) { forEachRhsExpr(S, DoInline); });
+  return Changed;
 }
 
 //===----------------------------------------------------------------------===//

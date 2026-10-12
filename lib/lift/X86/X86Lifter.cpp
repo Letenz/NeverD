@@ -874,16 +874,18 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
 
   for (const RelocatedScalarOperand &Scalar : ScalarRelocs) {
     if (Scalar.Semantics !=
-            RelocatedScalarOperand::Kind::I386ELFUnrelocatedImmediate ||
-        TargetArch != Arch::X86 || !ImmediateOperand ||
+            RelocatedScalarOperand::Kind::X86ELFUnrelocatedImmediate ||
+        !ImmediateOperand ||
         (Insn->id != X86_INS_MOV && Insn->id != X86_INS_MOVABS &&
          Insn->id != X86_INS_PUSH) ||
-        Scalar.Width == 0 || Scalar.Width > 4 ||
+        Scalar.Width == 0 || Scalar.Width > 8 ||
         Scalar.Width != X86.encoding.imm_size ||
         Scalar.FieldVA != Insn->address + X86.encoding.imm_offset ||
         S.RelocatedImmediate || ConflictingImmediateOwners)
       continue;
-    const uint64_t Mask = (uint64_t{1} << (Scalar.Width * 8)) - 1;
+    const uint64_t Mask = Scalar.Width == 8
+                              ? ~uint64_t{0}
+                              : (uint64_t{1} << (Scalar.Width * 8)) - 1;
     if ((static_cast<uint64_t>(ImmediateOperand->imm) & Mask) ==
         (Scalar.EncodedValue & Mask))
       S.RelocatedImmediate = NdVar::scalar(

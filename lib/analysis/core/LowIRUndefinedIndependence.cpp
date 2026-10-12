@@ -8,8 +8,8 @@
 #include "neverd/analysis/LowIRUndefinedIndependence.h"
 
 #include "../arch/x86_64/NativeStackControl.h"
+#include "../arch/x86_64/X64MachineFlags.h"
 #include "../arch/x86_64/X64Recovery.h"
-#include "../arch/x86_64/X64UserFlags.h"
 #include "CompleteModel.h"
 #include "CompletedQueryCache.h"
 #include "CompletedTargetFacts.h"
@@ -19,6 +19,7 @@
 #include "FiniteValues.h"
 #include "FrameEntryConstraints.h"
 #include "FrameOffsets.h"
+#include "FreshChoiceProjection.h"
 #include "LowIRLoopInference.h"
 #include "NativeUndefinedIndependence.h"
 #include "OrderedQuery.h"
@@ -45,7 +46,7 @@ namespace neverd::analysis {
 namespace {
 using namespace symbolic;
 using Status = LowIRIndependenceStatus;
-using FlagProfile = detail::X64UserFlags;
+using FlagProfile = detail::X64MachineFlags;
 constexpr uint64_t AddressTemporary = UINT64_MAX - 7;
 constexpr uint64_t NativeStackTemporary = AddressTemporary - 8;
 
@@ -493,7 +494,7 @@ class Checker {
   std::map<va_t, int> Addresses;
   std::map<std::pair<int, va_t>, const LowInstructionBoundary *> Boundaries;
   std::map<std::pair<int, va_t>, const LowIRUndefinedInstruction *> Effects;
-  std::unordered_map<uint32_t, SymRef> ZeroLeftChoices;
+  detail::FreshChoiceProjection ZeroLeftChoices{Ctx, Limits.MaxSymbolicNodes};
   uint64_t FrameBytes = 0;
   uint64_t OwnedScheduledPaths = 0;
   uint64_t &ScheduledPaths = OwnedScheduledPaths;
@@ -973,8 +974,9 @@ class Checker {
   }
 
   SymRef ordinary(SymRef Value) {
-    // Map keys are expression indices, not symbolic variable IDs.
-    const auto Answer = Ctx.substitute(Value, ZeroLeftChoices);
+    const auto Answer = ZeroLeftChoices.project(Ctx, Value);
+    if (!Answer)
+      fail(Status::Invalid, "invalid fresh-choice projection");
     nodes();
     return Answer;
   }
@@ -1032,12 +1034,14 @@ class Checker {
     if (Canonical.NumInputs == 2)
       Canonical.Inputs[1] = NdVar::reg(ImageOffset, Original.Inputs[1].Size);
     uint64_t NextTemporary = 8;
-    auto Transition = detail::lowerX64UserFlags(
-        Canonical, NdVar::reg(SystemOffset, 8), [&](uint16_t Size) {
+    auto Transition = detail::lowerX64MachineFlags(
+        Canonical, NdVar::reg(SystemOffset, 8),
+        [&](uint16_t Size) {
           const auto Value = NdVar::tmp(NextTemporary, Size);
           NextTemporary += 8;
           return Value;
-        });
+        },
+        *Contract.X64FlagsProfile);
     if (!Transition)
       fail(Status::Unsupported, "unsupported native flags intrinsic shape");
     if (!Effects.Effects.empty())
@@ -1140,8 +1144,8 @@ class Checker {
                        : Ctx.mkFreshVar(Effect.BitCount, "undefined_left");
     const auto V =
         Refinement ? U : Ctx.mkFreshVar(Effect.BitCount, "undefined_right");
-    if (!Refinement)
-      ZeroLeftChoices.emplace(U.index(), Ctx.mkZero(Effect.BitCount));
+    if (!Refinement && !ZeroLeftChoices.addFreshZero(Ctx, U))
+      fail(Status::Invalid, "invalid fresh-choice projection producer");
     const auto Mask = llvm::APInt::getBitsSet(
         Width, Effect.BitOffset, Effect.BitOffset + Effect.BitCount);
     const auto Apply = [&](SymState &State, SymRef Fresh, SymRef When) {
@@ -2174,8 +2178,7 @@ class Checker {
     if (Contract.X64FlagsProfile) {
       if (!Provider && !CandidateExecution)
         fail(Status::Unsupported, "flags profiles require the native API");
-      if (*Contract.X64FlagsProfile !=
-          InterpreterMachineStateProfile::UserX64NoFaultV1)
+      if (!FlagProfile::supportsProfile(*Contract.X64FlagsProfile))
         fail(Status::Invalid, "unknown native flags profile");
       if (Contract.ByteOrder != llvm::endianness::little)
         fail(Status::Invalid, "native flags profile requires little endian");

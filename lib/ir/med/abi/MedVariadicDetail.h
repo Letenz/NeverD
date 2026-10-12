@@ -125,7 +125,9 @@ private:
 };
 
 /// Whether the function has the variadic prologue of each convention.
-bool hasX64VariadicPrologue(VariadicScan &S);
+/// The x86-64 one also gives its va_start word, whose offsets say how many
+/// integer and vector registers carry named parameters.
+bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord);
 std::optional<int> aapcs64FirstVariadicRegister(VariadicScan &S);
 bool hasI386VariadicPrologue(VariadicScan &S);
 bool hasAAPCS64VariadicPrologue(VariadicScan &S);

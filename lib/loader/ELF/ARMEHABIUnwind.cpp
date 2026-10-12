@@ -13,6 +13,8 @@
 
 #include "ARMEHABIDetail.h"
 
+#include "neverd/loader/ELF/ARMEHABI.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -279,4 +281,14 @@ bool decodeUnwindOpcodes(llvm::ArrayRef<uint8_t> Bytes,
 }
 
 } // namespace detail
+
+bool isSupportedUnwindProgram(llvm::ArrayRef<uint8_t> Bytes) {
+  std::vector<UnwindOperation> Operations;
+  bool Refuses = false;
+  return !Bytes.empty() &&
+         detail::decodeUnwindOpcodes(Bytes, Operations, Refuses) &&
+         llvm::none_of(Operations, [](const UnwindOperation &Operation) {
+           return Operation.Kind == UnwindOperationKind::Opaque;
+         });
+}
 } // namespace neverd::arm_ehabi

@@ -23,6 +23,7 @@ namespace neverd {
 struct BinaryImage;
 struct CSourceMap;
 struct CSourceName;
+class DataAccessWidths;
 
 struct CEmitterOptions {
   bool EmitIncludes = true;
@@ -70,6 +71,12 @@ struct CEmitterOptions {
   /// The names the user gave addresses, which name image data ahead of debug
   /// information and symbols.
   const std::map<va_t, std::string> *UserNames = nullptr;
+  /// The widths of the reads and writes the code of the whole image states
+  /// at each address, which name unnamed image data as the listing names it
+  /// (neverd/DataNames.def): `qword_` for data every such access reads or
+  /// writes eight bytes at, `unk_` where they differ or none states one.
+  /// Without it, data is named by the accesses of the functions emitted.
+  const DataAccessWidths *AccessWidths = nullptr;
   /// Optional source-map sink. Recording never changes the emitted C text.
   CSourceMap *SourceMap = nullptr;
   /// Receives the names the text spells (CSourceMap::Names) without the

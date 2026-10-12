@@ -112,15 +112,18 @@ protected:
         S, Revision.data(), Revision.size(), ID.data(), ID.size(), Offset,
         Limit));
   }
-  static std::string fixture() {
+  static std::string fixture(bool GNU = false) {
+    const auto Member = GNU ? oldGNUTarMember : tarMember;
     return finishTar(
-        tarMember(
+        Member(
             "package/package.json",
-            R"({"name":"CANARY_NAME","main":"a.js","scripts":{"install":"CANARY_DO_NOT_RUN"}})") +
-        tarMember("package/a.js", "export const CANARY_VALUE = 7;") +
-        tarMember("package/bun", BunFixture(true, {}, nativeELF()).Bytes) +
-        tarMember("package/native.node", nativeELF()) +
-        tarMember("package/link", "", '2', "../../CANARY_OUTSIDE"));
+            R"({"name":"CANARY_NAME","main":"a.js","scripts":{"install":"CANARY_DO_NOT_RUN"}})",
+            '0', {}) +
+        Member("package/a.js", "export const CANARY_VALUE = 7;", '0', {}) +
+        Member("package/bun", BunFixture(true, {}, nativeELF()).Bytes, '0',
+               {}) +
+        Member("package/native.node", nativeELF(), '0', {}) +
+        Member("package/link", "", '2', "../../CANARY_OUTSIDE"));
   }
   static std::string zipFixture(bool Deflate) {
     const uint16_t Method = Deflate ? 8 : 0;
@@ -140,15 +143,19 @@ protected:
 TEST_F(WebPackageArchiveSDK,
        ConsumersShareMembersAndKeepCompressedCoordinates) {
   for (const std::string_view Case :
-       {"tar", "tgz", "zip-stored", "zip-deflate"}) {
+       {"tar", "tgz", "gnu-tar", "gnu-tgz", "zip-stored", "zip-deflate"}) {
     const bool Zip = Case.starts_with("zip");
-    const bool Compressed = Case == "tgz" || Case == "zip-deflate";
-    const auto Format = Zip ? std::string_view("zip") : Case;
+    const bool GNU = Case.starts_with("gnu");
+    const bool Compressed =
+        Case == "tgz" || Case == "gnu-tgz" || Case == "zip-deflate";
+    const auto Format = Zip          ? std::string_view("zip")
+                        : Compressed ? std::string_view("tgz")
+                                     : std::string_view("tar");
     if (Compressed && !Gzip)
       continue;
     capture(Zip          ? zipFixture(Compressed)
-            : Compressed ? storedGzip(fixture())
-                         : fixture());
+            : Compressed ? storedGzip(fixture(GNU))
+                         : fixture(GNU));
     const auto A = extract(Format);
     ASSERT_EQ(field(A, "status"), "ok");
     const auto ID = field(A, "archive_id");
@@ -215,15 +222,15 @@ TEST_F(WebPackageArchiveSDK,
               ID);
     neverd_session_destroy(Native);
     const auto Link = field(Members[4], "member_id");
+#if NEVERD_TEST_WEB_JAVASCRIPT
+    constexpr auto UnavailableCode = "artifact_bytes_unavailable";
+#else
+    constexpr auto UnavailableCode = "capability_unavailable";
+#endif
     EXPECT_EQ(code(take(neverd_web_source_analyze_json(
                   S, Revision.data(), Revision.size(), Link.data(), Link.size(),
                   "module", 6))),
-#if NEVERD_TEST_WEB_JAVASCRIPT
-              "artifact_bytes_unavailable"
-#else
-              "capability_unavailable"
-#endif
-    );
+              UnavailableCode);
   }
 }
 
@@ -554,6 +561,112 @@ TEST_F(WebPackageArchiveSDK, FourArchiveCacheAllowsHitsAndReleasesOnImport) {
 }
 
 #ifdef NEVERD_WEB_TEST_CLI
+TEST_F(WebPackageArchiveSDK, CLIExportPreservesOriginAndExistingDestinations) {
+  const auto Out = (Root / "out").string(), Err = (Root / "err").string();
+  const llvm::StringRef Env[] = {"PATH=/neverd-no-external-tools", "LC_ALL=C"};
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
+  const auto Read = [](const std::filesystem::path &P) {
+    std::ifstream F(P, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(F), {});
+  };
+  for (const std::string_view Case :
+       {"tar", "tgz", "gnu-tar", "gnu-tgz", "zip-stored", "zip-deflate"}) {
+    const bool Zip = Case.starts_with("zip");
+    const bool GNU = Case.starts_with("gnu");
+    const bool Compressed =
+        Case == "tgz" || Case == "gnu-tgz" || Case == "zip-deflate";
+    if (Compressed && !Gzip)
+      continue;
+    const auto Format = Zip          ? std::string_view("zip")
+                        : Compressed ? std::string_view("tgz")
+                                     : std::string_view("tar");
+    capture(Zip          ? zipFixture(Compressed)
+            : Compressed ? storedGzip(fixture(GNU))
+                         : fixture(GNU));
+    const auto A = extract(Format);
+    ASSERT_EQ(field(A, "status"), "ok");
+    const auto ArchiveID = field(A, "archive_id");
+    const auto Members = page(ArchiveID);
+    const auto MemberID =
+        field((*Members.getAsObject()->getArray("items"))[2], "member_id");
+    const auto Destination = Root / ("recovered-" + std::string(Case));
+    const auto Directory = Destination.string();
+    const llvm::StringRef Args[] = {NEVERD_WEB_TEST_CLI,
+                                    "web",
+                                    "archive-bun-export",
+                                    Path,
+                                    Format,
+                                    "0",
+                                    "2",
+                                    Directory};
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Env,
+                                        Redirects, 30),
+              0);
+    const auto ManifestText = Read(Destination / "manifest.json");
+    auto Manifest = llvm::json::parse(ManifestText);
+    ASSERT_TRUE(bool(Manifest));
+    EXPECT_EQ(Manifest->getAsObject()->getInteger("source_count"), 2);
+    const auto *Origin = Manifest->getAsObject()->getObject("original_origin");
+    ASSERT_NE(Origin, nullptr);
+    EXPECT_EQ(Origin->getString("archive_id"), ArchiveID);
+    EXPECT_EQ(Origin->getString("member_id"), MemberID);
+    EXPECT_EQ(Origin->getString("byte_offset_basis"),
+              Compressed ? "expanded_stream" : "storage_artifact");
+    const BunFixture Expected(true, {}, nativeELF());
+    EXPECT_EQ(Read(Destination / "original.bin"), Expected.Bytes);
+    EXPECT_EQ(Read(Destination / "m00000.js"),
+              "export const secret = 'BUN_SOURCE_CANARY';");
+    EXPECT_EQ(Read(Destination / "m00001.js"), "export const x = '中文🌱';");
+#if NEVERD_TEST_WEB_JAVASCRIPT
+    EXPECT_EQ(Manifest->getAsObject()->getInteger("readable_source_count"), 2);
+#else
+    EXPECT_EQ(Manifest->getAsObject()->getInteger("parsed_source_count"), 0);
+    EXPECT_EQ(Manifest->getAsObject()->getInteger("readable_source_count"), 0);
+    EXPECT_FALSE(std::filesystem::exists(Destination / "m00000.readable.js"));
+#endif
+    EXPECT_EQ(Read(Out).find("CANARY"), std::string::npos);
+    EXPECT_EQ(Read(Err).find("CANARY"), std::string::npos);
+    EXPECT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Env,
+                                        Redirects, 30),
+              1);
+    EXPECT_EQ(Read(Destination / "manifest.json"), ManifestText);
+    EXPECT_EQ(Read(Destination / "original.bin"), Expected.Bytes);
+    EXPECT_EQ(Read(Out).find("CANARY"), std::string::npos);
+    EXPECT_EQ(Read(Err).find("CANARY"), std::string::npos);
+  }
+}
+
+TEST_F(WebPackageArchiveSDK, CLIExportRejectsUnavailableAndNonBunMembers) {
+  const auto Out = (Root / "out").string(), Err = (Root / "err").string();
+  const llvm::StringRef Env[] = {"PATH=/neverd-no-external-tools", "LC_ALL=C"};
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
+  for (const llvm::StringRef Format : {"tar", "zip"}) {
+    capture(Format == "tar" ? fixture() : zipFixture(false));
+    for (const llvm::StringRef Member : {"1", "4"}) {
+      const auto Destination = Root / "refused";
+      const auto Directory = Destination.string();
+      const llvm::StringRef Args[] = {NEVERD_WEB_TEST_CLI,
+                                      "web",
+                                      "archive-bun-export",
+                                      Path,
+                                      Format,
+                                      "0",
+                                      Member,
+                                      Directory};
+      EXPECT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Env,
+                                          Redirects, 30),
+                1);
+      EXPECT_FALSE(std::filesystem::exists(Destination));
+      std::ifstream F(Out), E(Err);
+      const std::string Text{std::istreambuf_iterator<char>(F), {}};
+      const std::string Errors{std::istreambuf_iterator<char>(E), {}};
+      EXPECT_EQ(Text.find("CANARY"), std::string::npos);
+      EXPECT_EQ(Errors.find("CANARY"), std::string::npos);
+      EXPECT_EQ(Text.find("export_profile"), std::string::npos);
+    }
+  }
+}
+
 TEST_F(WebPackageArchiveSDK, CLIUsesCapturedMembersWithAnUnusablePath) {
   const auto Out = (Root / "out").string(), Err = (Root / "err").string();
   const llvm::StringRef Env[] = {"PATH=/neverd-no-external-tools", "LC_ALL=C"};

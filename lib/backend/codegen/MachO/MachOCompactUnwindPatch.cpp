@@ -199,6 +199,66 @@ findMachOCompactUnwindRegion(llvm::ArrayRef<uint8_t> Binary) {
   return Found;
 }
 
+llvm::Error reserveMachOCompactUnwindStorage(std::vector<uint8_t> &Binary,
+                                             uint64_t RequiredSize) {
+  auto Located = findMachOCompactUnwindRegion(Binary);
+  if (!Located)
+    return Located.takeError();
+  if (!*Located)
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "no compact-unwind section to enlarge");
+  const MachOCompactUnwindRegion Region = **Located;
+  if (RequiredSize <= Region.SectionSize)
+    return llvm::Error::success();
+  std::vector<macho_patch_detail::MachOFileRange> Segments, Sections;
+  if (!macho_patch_detail::collectMachOFileRanges(Binary, Segments, Sections))
+    return llvm::createStringError(llvm::errc::invalid_argument,
+                                   "invalid compact-unwind storage layout");
+  uint64_t Limit = Region.LimitFileOff;
+  for (const auto &Segment : Segments)
+    if (Segment.Begin <= Region.SectionFileOff &&
+        Segment.End >= Region.LimitFileOff) {
+      Limit = Segment.End;
+      break;
+    }
+  for (const auto &Section : Sections)
+    if (Section.HeaderOff != Region.SectionHeaderOff &&
+        Section.Begin >= Region.LimitFileOff)
+      Limit = std::min(Limit, Section.Begin);
+  uint64_t NewEnd = 0;
+  if (!macho_patch_detail::checkedAdd(Region.SectionFileOff, RequiredSize,
+                                      NewEnd) ||
+      NewEnd > Limit || NewEnd > Binary.size() ||
+      (!Region.Is64 && RequiredSize > UINT32_MAX))
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "compact-unwind growth exceeds adjacent segment padding");
+  if (!std::all_of(Binary.begin() + Region.LimitFileOff,
+                   Binary.begin() + NewEnd,
+                   [](uint8_t Byte) { return Byte == 0; }))
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "compact-unwind padding contains nonzero bytes");
+
+  std::vector<uint8_t> Candidate = Binary;
+  uint8_t *Header = Candidate.data() + Region.SectionHeaderOff;
+  if (Region.Is64)
+    reinterpret_cast<llvm::MachO::section_64 *>(Header)->size = RequiredSize;
+  else
+    reinterpret_cast<llvm::MachO::section *>(Header)->size = RequiredSize;
+  auto Expanded = findMachOCompactUnwindRegion(Candidate);
+  if (!Expanded)
+    return Expanded.takeError();
+  if (!*Expanded || (**Expanded).SectionSize != RequiredSize ||
+      (**Expanded).SectionVA != Region.SectionVA ||
+      (**Expanded).SectionFileOff != Region.SectionFileOff)
+    return llvm::createStringError(
+        llvm::errc::invalid_argument,
+        "compact-unwind growth changed its address mapping");
+  Binary.swap(Candidate);
+  return llvm::Error::success();
+}
+
 MachOCompactUnwindParseError::MachOCompactUnwindParseError(
     MachOCompactUnwindParseFailure Reason, uint64_t RecordIndex,
     std::string Detail)
@@ -1642,7 +1702,7 @@ buildMachOCompactUnwindRangeMappings(
     llvm::ArrayRef<uint8_t> Binary, Arch TargetArch,
     const MachOCompactUnwindRecords &Generated,
     llvm::ArrayRef<PatchedFunctionEntry> InstalledTrampolines,
-    llvm::endianness ByteOrder) {
+    llvm::endianness ByteOrder, const CompiledImage *SourceCompilation) {
   using MapFailure = MachOCompactUnwindRangeMapFailure;
 
   if (Generated.Records.empty())
@@ -1703,6 +1763,29 @@ buildMachOCompactUnwindRangeMappings(
       if (!Trampoline)
         Trampoline = &Installed;
       ++TrampolineCount;
+    }
+    if (TrampolineCount == 0 && SourceCompilation &&
+        SourceCompilation->InputKind == RewriteInputKind::ReplacementIR) {
+      const size_t HelperOwners = std::count_if(
+          SourceCompilation->SourceFunctionOwners.begin(),
+          SourceCompilation->SourceFunctionOwners.end(),
+          [&](const auto &Owner) {
+            return Owner.OwnerSymbol == GeneratedRecord.OwnerSymbol &&
+                   Owner.OwnerVA == GeneratedRecord.OwnerVA &&
+                   !SourceCompilation->SourceFunctionOriginalVAs.contains(
+                       Owner.SourceFunction);
+          });
+      if (HelperOwners == 1) {
+        MachOCompactUnwindRangeMapping Mapping;
+        Mapping.DestinationVA = GeneratedRecord.FunctionVA;
+        Mapping.DestinationEndVA = GeneratedRecord.FunctionEndVA;
+        Mapping.Mode = MachOCompactUnwindRangeMode::AddedFunction;
+        Mapping.FunctionRangeId = GeneratedRecord.FunctionRangeId;
+        Mapping.OwnerSymbol = GeneratedRecord.OwnerSymbol;
+        Mapping.OwnerVA = GeneratedRecord.OwnerVA;
+        Result.push_back(std::move(Mapping));
+        continue;
+      }
     }
     if (TrampolineCount == 0) {
       const bool HasOwnerVA = llvm::any_of(
@@ -1823,13 +1906,18 @@ llvm::Expected<MachOCompactUnwindMergeResult> mergeMachOCompactUnwind(
       return mergeError(MergeFailure::FunctionRangeIdentityMismatch,
                         MergeInputKind::RangeMapping, I,
                         "owner symbol is empty");
-    if (Mapping.SourceVA >= Mapping.SourceEndVA ||
+    const bool Added =
+        Mapping.Mode == MachOCompactUnwindRangeMode::AddedFunction;
+    if ((!Added && Mapping.SourceVA >= Mapping.SourceEndVA) ||
+        (Added && (Mapping.SourceVA != 0 || Mapping.SourceEndVA != 0)) ||
         Mapping.DestinationVA >= Mapping.DestinationEndVA)
       return mergeError(MergeFailure::InvalidRangeMapping,
                         MergeInputKind::RangeMapping, I,
                         "range is empty or reversed");
 
     switch (Mapping.Mode) {
+    case MachOCompactUnwindRangeMode::AddedFunction:
+      break;
     case MachOCompactUnwindRangeMode::NewSegment:
       if (Mapping.SourceVA == Mapping.DestinationVA)
         return mergeError(MergeFailure::InvalidRangeMapping,
@@ -1847,16 +1935,6 @@ llvm::Expected<MachOCompactUnwindMergeResult> mergeMachOCompactUnwind(
                         MergeInputKind::RangeMapping, I, "unknown mode");
     }
 
-    auto SourceRVA =
-        toImageRVA(Mapping.SourceVA, MachHeaderVA, MergeInputKind::RangeMapping,
-                   I, "source start");
-    if (!SourceRVA)
-      return SourceRVA.takeError();
-    auto SourceEndRVA =
-        toImageRVA(Mapping.SourceEndVA, MachHeaderVA,
-                   MergeInputKind::RangeMapping, I, "source end");
-    if (!SourceEndRVA)
-      return SourceEndRVA.takeError();
     auto DestinationRVA =
         toImageRVA(Mapping.DestinationVA, MachHeaderVA,
                    MergeInputKind::RangeMapping, I, "destination start");
@@ -1869,31 +1947,43 @@ llvm::Expected<MachOCompactUnwindMergeResult> mergeMachOCompactUnwind(
       return DestinationEndRVA.takeError();
 
     std::optional<size_t> SourceIndex;
-    for (size_t S = 0; S < OriginalTable->Records.size(); ++S) {
-      const MergedRecord &Record = OriginalTable->Records[S];
-      const bool ExactRecipe = Record.FunctionRVA == *SourceRVA &&
-                               Record.FunctionEndRVA == *SourceEndRVA;
-      const bool CoalescedNewSegment =
-          Mapping.Mode == MachOCompactUnwindRangeMode::NewSegment &&
-          Record.FunctionRVA <= *SourceRVA &&
-          *SourceRVA < Record.FunctionEndRVA &&
-          Record.FunctionEndRVA == *SourceEndRVA;
-      if (ExactRecipe || CoalescedNewSegment) {
-        SourceIndex = S;
-        break;
+    if (!Added) {
+      auto SourceRVA =
+          toImageRVA(Mapping.SourceVA, MachHeaderVA,
+                     MergeInputKind::RangeMapping, I, "source start");
+      if (!SourceRVA)
+        return SourceRVA.takeError();
+      auto SourceEndRVA =
+          toImageRVA(Mapping.SourceEndVA, MachHeaderVA,
+                     MergeInputKind::RangeMapping, I, "source end");
+      if (!SourceEndRVA)
+        return SourceEndRVA.takeError();
+      for (size_t S = 0; S < OriginalTable->Records.size(); ++S) {
+        const MergedRecord &Record = OriginalTable->Records[S];
+        const bool ExactRecipe = Record.FunctionRVA == *SourceRVA &&
+                                 Record.FunctionEndRVA == *SourceEndRVA;
+        const bool CoalescedNewSegment =
+            Mapping.Mode == MachOCompactUnwindRangeMode::NewSegment &&
+            Record.FunctionRVA <= *SourceRVA &&
+            *SourceRVA < Record.FunctionEndRVA &&
+            Record.FunctionEndRVA == *SourceEndRVA;
+        if (ExactRecipe || CoalescedNewSegment) {
+          SourceIndex = S;
+          break;
+        }
       }
+      if (!SourceIndex)
+        return mergeError(MergeFailure::SourceRangeNotExact,
+                          MergeInputKind::RangeMapping, I);
+      SourceOwner &BoundOwner = SourceOwners[*SourceRVA];
+      if (BoundOwner.Used && (BoundOwner.Symbol != Mapping.OwnerSymbol ||
+                              BoundOwner.VA != Mapping.OwnerVA))
+        return mergeError(MergeFailure::CrossOwnerSourceReuse,
+                          MergeInputKind::RangeMapping, I);
+      BoundOwner.Used = true;
+      BoundOwner.Symbol = Mapping.OwnerSymbol;
+      BoundOwner.VA = Mapping.OwnerVA;
     }
-    if (!SourceIndex)
-      return mergeError(MergeFailure::SourceRangeNotExact,
-                        MergeInputKind::RangeMapping, I);
-    SourceOwner &BoundOwner = SourceOwners[*SourceRVA];
-    if (BoundOwner.Used && (BoundOwner.Symbol != Mapping.OwnerSymbol ||
-                            BoundOwner.VA != Mapping.OwnerVA))
-      return mergeError(MergeFailure::CrossOwnerSourceReuse,
-                        MergeInputKind::RangeMapping, I);
-    BoundOwner.Used = true;
-    BoundOwner.Symbol = Mapping.OwnerSymbol;
-    BoundOwner.VA = Mapping.OwnerVA;
 
     std::optional<size_t> GeneratedIndex;
     for (size_t G = 0; G < GeneratedRecords->size(); ++G) {
@@ -2699,6 +2789,245 @@ applyMachOCompactUnwindInstall(std::vector<uint8_t> &Binary,
   Receipt.RangeMappings = Plan.RangeMappings;
   Binary.swap(Candidate);
   return Receipt;
+}
+
+namespace {
+llvm::Expected<uint64_t> nativeCompactHeaderVA(llvm::ArrayRef<uint8_t> Binary) {
+  std::optional<uint64_t> Base;
+  forEachMachOLoadCommand(
+      Binary.data(), Binary.size(),
+      [&](const uint8_t *P, uint32_t Cmd, uint32_t, bool Is64) {
+        if (Cmd !=
+            (Is64 ? llvm::MachO::LC_SEGMENT_64 : llvm::MachO::LC_SEGMENT))
+          return;
+        const auto F = readMachOSegment(P, Is64);
+        if (F.FileOff == 0 && F.FileSize && !Base)
+          Base = F.VMAddr;
+      });
+  if (!Base)
+    return llvm::createStringError(
+        llvm::errc::not_supported,
+        "native unwind needs an authenticated Mach header mapping");
+  return *Base;
+}
+llvm::Error declareNativeCompactSection(std::vector<uint8_t> &Binary,
+                                        uint64_t Size) {
+  using namespace llvm::MachO;
+  const auto H = parseMachOHeader(Binary.data(), Binary.size());
+  const uint64_t End = uint64_t(H.HeaderSize) + H.SizeOfCmds;
+  const unsigned SectionSize = H.Is64 ? sizeof(section_64) : sizeof(section);
+  if (!rangeInBounds(End, SectionSize, Binary.size()) ||
+      llvm::any_of(llvm::ArrayRef<uint8_t>(Binary).slice(End, SectionSize),
+                   [](uint8_t B) { return B != 0; }))
+    return llvm::createStringError(
+        llvm::errc::not_supported,
+        "native compact section needs unused load-command capacity");
+  std::optional<uint64_t> TextCommand, Insert, NewOff, NewVA;
+  uint32_t TextCommandSize = 0;
+  uint64_t FirstData = Binary.size();
+  bool Invalid = false;
+  forEachMachOLoadCommand(
+      Binary.data(), Binary.size(),
+      [&](const uint8_t *P, uint32_t Cmd, uint32_t CmdSize, bool Is64) {
+        if (Cmd != (Is64 ? LC_SEGMENT_64 : LC_SEGMENT))
+          return;
+        const auto F = readMachOSegment(P, Is64);
+        const bool Text = readMachOName(F.SegName) == "__TEXT";
+        uint64_t Last = F.FileOff;
+        const uint64_t Required =
+            (Is64 ? sizeof(segment_command_64) : sizeof(segment_command)) +
+            uint64_t(F.NSects) * SectionSize;
+        if (CmdSize != Required) {
+          Invalid = true;
+          return;
+        }
+        forEachMachOSectionAuto(
+            P, Is64,
+            [&](uint64_t Addr, uint64_t Extent, uint32_t Offset, uint32_t,
+                uint32_t, const char *) {
+              if (Offset && Extent)
+                FirstData = std::min<uint64_t>(FirstData, Offset);
+              if (Text && Offset && Extent) {
+                if (!rangeInBounds(Offset, Extent, Binary.size()) ||
+                    Addr < F.VMAddr || Offset < F.FileOff ||
+                    Addr - F.VMAddr != Offset - F.FileOff)
+                  Invalid = true;
+                else
+                  Last = std::max(Last, uint64_t(Offset) + Extent);
+              }
+            });
+        if (!Text)
+          return;
+        if (TextCommand || CmdSize < (Is64 ? sizeof(segment_command_64)
+                                           : sizeof(segment_command)) +
+                                         uint64_t(F.NSects) * SectionSize) {
+          Invalid = true;
+          return;
+        }
+        TextCommand = P - Binary.data();
+        TextCommandSize = CmdSize;
+        Insert = *TextCommand + CmdSize;
+        NewOff = llvm::alignTo(Last, 4);
+        NewVA = F.VMAddr + *NewOff - F.FileOff;
+        if (*NewOff < F.FileOff ||
+            !rangeInBounds(*NewOff - F.FileOff, Size, F.FileSize) ||
+            !rangeInBounds(*NewOff, Size, Binary.size()) ||
+            llvm::any_of(
+                llvm::ArrayRef<uint8_t>(Binary).slice(*NewOff, Size),
+                [](uint8_t B) { return B != 0; }))
+          Invalid = true;
+      });
+  if (Invalid || !TextCommand || End + SectionSize > FirstData ||
+      (!H.Is64 &&
+       (*NewOff > UINT32_MAX || *NewVA > UINT32_MAX || Size > UINT32_MAX)))
+    return llvm::createStringError(
+        llvm::errc::not_supported,
+        "native compact section needs unused mapped TEXT capacity");
+  std::memmove(Binary.data() + *Insert + SectionSize, Binary.data() + *Insert,
+               End - *Insert);
+  std::memset(Binary.data() + *Insert, 0, SectionSize);
+  if (H.Is64) {
+    auto *Seg =
+        reinterpret_cast<segment_command_64 *>(Binary.data() + *TextCommand);
+    Seg->cmdsize = TextCommandSize + SectionSize;
+    ++Seg->nsects;
+    auto *S = reinterpret_cast<section_64 *>(Binary.data() + *Insert);
+    std::memcpy(S->sectname, "__unwind_info", 13);
+    std::memcpy(S->segname, "__TEXT", 7);
+    S->addr = *NewVA;
+    S->size = Size;
+    S->offset = *NewOff;
+    S->align = 2;
+    reinterpret_cast<mach_header_64 *>(Binary.data())->sizeofcmds +=
+        SectionSize;
+  } else {
+    auto *Seg =
+        reinterpret_cast<segment_command *>(Binary.data() + *TextCommand);
+    Seg->cmdsize = TextCommandSize + SectionSize;
+    ++Seg->nsects;
+    auto *S = reinterpret_cast<section *>(Binary.data() + *Insert);
+    std::memcpy(S->sectname, "__unwind_info", 13);
+    std::memcpy(S->segname, "__TEXT", 7);
+    S->addr = *NewVA;
+    S->size = Size;
+    S->offset = *NewOff;
+    S->align = 2;
+    reinterpret_cast<mach_header *>(Binary.data())->sizeofcmds += SectionSize;
+  }
+  return llvm::Error::success();
+}
+} // namespace
+
+llvm::Error installNativeMachOCompactUnwind(
+    std::vector<uint8_t> &Binary, Arch Architecture,
+    llvm::ArrayRef<NativeMachOCompactRange> Ranges) {
+  if (Ranges.empty())
+    return llvm::Error::success();
+  auto Located = findMachOCompactUnwindRegion(Binary);
+  if (!Located)
+    return Located.takeError();
+  auto HeaderVA = nativeCompactHeaderVA(Binary);
+  if (!HeaderVA)
+    return HeaderVA.takeError();
+  MachOCompactUnwindMergeResult Merged;
+  Merged.TargetArch = Architecture;
+  if (*Located) {
+    const auto Region = **Located;
+    auto Raw = macho_unwind::parseCompactUnwindRaw(
+        llvm::ArrayRef<uint8_t>(Binary).slice(Region.SectionFileOff,
+                                              Region.SectionSize));
+    if (!Raw)
+      return Raw.takeError();
+    auto Old = normalizeOriginalTable(Architecture, *Raw);
+    if (!Old)
+      return Old.takeError();
+    Merged.PersonalitySlotRVAs = Raw->PersonalitySlotOffsets;
+    Merged.Records = Old->Records;
+  }
+  for (auto &R : Merged.Records)
+    if (R.PersonalitySlotRVA) {
+      auto Slot = llvm::find(Merged.PersonalitySlotRVAs, *R.PersonalitySlotRVA);
+      R.Encoding |= (uint32_t(Slot - Merged.PersonalitySlotRVAs.begin()) + 1)
+                    << macho_unwind::kPersonalityShift;
+    }
+  for (const auto &Range : Ranges) {
+    if (Range.BeginVA < *HeaderVA || Range.EndVA <= Range.BeginVA ||
+        Range.EndVA - *HeaderVA > UINT32_MAX ||
+        (Range.Encoding &
+         (macho_unwind::kPersonalityMask | macho_unwind::kHasLSDA)))
+      return llvm::createStringError(
+          llvm::errc::not_supported,
+          "invalid native compact range or language contract");
+    MergedRecord R;
+    R.FunctionRVA = Range.BeginVA - *HeaderVA;
+    R.FunctionEndRVA = Range.EndVA - *HeaderVA;
+    R.Encoding = Range.Encoding;
+    R.Origin = MachOCompactUnwindRecordOrigin::NativeObject;
+    Merged.Records.push_back(R);
+  }
+  llvm::sort(Merged.Records, [](const auto &A, const auto &B) {
+    return A.FunctionRVA < B.FunctionRVA;
+  });
+  std::vector<MergedRecord> Contiguous;
+  for (auto R : Merged.Records) {
+    if (!Contiguous.empty()) {
+      const uint32_t End = Contiguous.back().FunctionEndRVA;
+      if (End > R.FunctionRVA)
+        return llvm::createStringError(
+            llvm::errc::not_supported,
+            "native compact ranges overlap original records");
+      if (End < R.FunctionRVA) {
+        MergedRecord Gap;
+        Gap.FunctionRVA = End;
+        Gap.FunctionEndRVA = R.FunctionRVA;
+        Gap.Origin = MachOCompactUnwindRecordOrigin::GapBoundary;
+        Contiguous.push_back(Gap);
+      }
+    }
+    Contiguous.push_back(std::move(R));
+  }
+  Merged.Records = std::move(Contiguous);
+  Merged.TerminalFunctionRVA = Merged.Records.back().FunctionEndRVA;
+  auto Encoded =
+      encodeMachOCompactUnwindRegular(Merged, llvm::endianness::little);
+  if (!Encoded)
+    return Encoded.takeError();
+  auto Candidate = Binary;
+  if (!*Located) {
+    if (auto E = declareNativeCompactSection(Candidate, Encoded->size()))
+      return E;
+  } else if (auto E =
+                 reserveMachOCompactUnwindStorage(Candidate, Encoded->size()))
+    return E;
+  auto Final = findMachOCompactUnwindRegion(Candidate);
+  if (!Final)
+    return Final.takeError();
+  if (!*Final)
+    return llvm::createStringError(llvm::errc::not_supported,
+                                   "native compact section disappeared");
+  std::copy(Encoded->begin(), Encoded->end(),
+            Candidate.begin() + (**Final).SectionFileOff);
+  std::fill(
+      Candidate.begin() + (**Final).SectionFileOff + Encoded->size(),
+      Candidate.begin() + (**Final).SectionFileOff + (**Final).SectionSize, 0);
+  auto Replay = macho_unwind::parseCompactUnwindRaw(
+      llvm::ArrayRef<uint8_t>(Candidate).slice((**Final).SectionFileOff,
+                                               (**Final).SectionSize));
+  if (!Replay)
+    return Replay.takeError();
+  auto Expected = macho_unwind::parseCompactUnwindRaw(*Encoded);
+  if (!Expected)
+    return Expected.takeError();
+  if (Replay->Index != Expected->Index || Replay->Pages != Expected->Pages ||
+      Replay->LSDAEntries != Expected->LSDAEntries ||
+      Replay->PersonalitySlotOffsets != Expected->PersonalitySlotOffsets ||
+      !std::equal(Encoded->begin(), Encoded->end(),
+                  Candidate.begin() + (**Final).SectionFileOff))
+    return llvm::createStringError(
+        llvm::errc::not_supported,
+        "native compact registration failed semantic replay");
+  Binary.swap(Candidate);
+  return llvm::Error::success();
 }
 
 } // namespace neverd

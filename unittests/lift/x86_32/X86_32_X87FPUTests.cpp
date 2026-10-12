@@ -5,10 +5,13 @@
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/ImportCallee.h"
+#include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -30,6 +33,9 @@ struct X87CallGraphCacheTestAccess {
   }
   static std::array<size_t, 5> flightStats(const CFGBuilder &Builder) {
     return Builder.x87CallGraphFlightStatsForTesting();
+  }
+  static std::array<size_t, 2> summaryStats(const CFGBuilder &Builder) {
+    return Builder.callRegisterBodyCacheStatsForTesting();
   }
   static bool waitForWaiters(const CFGBuilder &Builder, size_t Count) {
     return Builder.waitForX87CallGraphWaitersForTesting(Count);
@@ -76,11 +82,11 @@ TEST_F(X86_32_X87FPU, FdivPreservesSemantics) {
 }
 
 TEST_F(X86_32_X87FPU, FabsPreservesSemantics) {
-  verifyLowIRContains(testObj(), "test_fabs32", "FLOAT_ABS");
+  verifyLowIRContains(testObj(), "test_fabs32", "INT_AND");
 }
 
 TEST_F(X86_32_X87FPU, FchsPreservesSemantics) {
-  verifyLowIRContains(testObj(), "test_fchs32", "FLOAT_NEG");
+  verifyLowIRContains(testObj(), "test_fchs32", "INT_XOR");
 }
 
 TEST_F(X86_32_X87FPU, FildFistpPreservesSemantics) {
@@ -557,6 +563,62 @@ TEST(X87CallGraphCache, IndependentBuildersRetainTheSameCallAndReturnIR) {
   }
 }
 
+TEST(X87CallGraphCache,
+     PublishedCodeReferencesRefreshTagsWithoutChangingRawGraphs) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(static_cast<int>(Architecture));
+      SCOPED_TRACE(static_cast<int>(Format));
+      // The successor initially inherits the full slot. Publishing its
+      // address makes it an independent tag-proof entry with unknown state.
+      auto Image =
+          x87ExamineImage(Architecture, Format,
+                          {0xd9, 0xe8, 0xeb, 0, 0xd9, 0xe5, 0xdf, 0xe0, 0xc3});
+      const std::set<va_t> Entries{Image.Entry};
+      const libc::NoReturnTargetIndex Names(Image);
+      const InternalNoReturnIndex NoReturn(Image, &Entries, &Names, nullptr,
+                                           nullptr);
+      auto Cache = createX87CallGraphCache(&NoReturn, &Names);
+      CFGBuilder Warm, Cold;
+      for (auto *Builder : {&Warm, &Cold}) {
+        Builder->setKnownFuncEntries(&Entries);
+        Builder->setNoReturnTargetIndex(&Names);
+        Builder->setNoReturnCalleeProver(&NoReturn);
+      }
+      Warm.setX87CallGraphCache(Cache);
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      ASSERT_TRUE(
+          Warm.build(Image, Dec, Image.Entry).hasCompleteInstructionLift());
+      constexpr size_t Budget = limits::kMaxX87CallProofWork;
+      const auto Original = Access::query(Warm, Image, Image.Entry, Budget);
+      ASSERT_EQ(Original.first, std::optional<int>(-1));
+      const size_t Work = Budget - Original.second;
+      ASSERT_LT(Work, 1000u);
+      const size_t Hits = Access::stats(Warm)[0];
+      Image.CodeRefTargets.insert(0x1004);
+      for (size_t Limit = 0; Limit <= Work; ++Limit)
+        EXPECT_EQ(Access::query(Warm, Image, Image.Entry, Limit),
+                  Access::query(Cold, Image, Image.Entry, Limit));
+      EXPECT_GT(Access::stats(Warm)[0], Hits);
+
+      const auto WarmLow = Warm.build(Image, Dec, Image.Entry);
+      const auto ColdLow = Cold.build(Image, Dec, Image.Entry);
+      EXPECT_FALSE(WarmLow.hasCompleteInstructionLift());
+      EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
+                std::vector<va_t>{0x1004});
+      EXPECT_EQ(WarmLow.UnsupportedInstructionAddresses,
+                ColdLow.UnsupportedInstructionAddresses);
+      std::string WarmDump, ColdDump;
+      llvm::raw_string_ostream WarmOS(WarmDump), ColdOS(ColdDump);
+      Pipeline::dumpLowIR({WarmLow}, WarmOS);
+      Pipeline::dumpLowIR({ColdLow}, ColdOS);
+      EXPECT_EQ(WarmDump, ColdDump);
+    }
+}
+
 TEST(X87CallGraphCache, WarmGraphsReplayEveryProofBudgetExactly) {
   using Access = detail::X87CallGraphCacheTestAccess;
   BinaryImage Image = x87CallLoopImage(Arch::X86, BinaryFormat::ELF);
@@ -702,6 +764,688 @@ BinaryImage x87RejectedGraphImage(Arch Architecture, bool Exceptional) {
   Image.KnownCodeRanges.emplace_back(Image.Entry, Image.Entry + Text.Size);
   Image.Segments.push_back(std::move(Text));
   return Image;
+}
+
+namespace {
+BinaryImage registerBodyImage(BinaryFormat Format,
+                              const std::vector<uint8_t> &Bytes,
+                              const std::vector<uint8_t> &Callee = {0xc3}) {
+  auto Image = x87ExamineImage(Arch::X64, Format, Bytes);
+  auto &Text = Image.Segments.front();
+  Text.Data.resize(0x100 + Callee.size(), 0xcc);
+  std::copy(Callee.begin(), Callee.end(), Text.Data.begin() + 0x100);
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Symbols.push_back(Symbol::makeFunc(0x1100, Callee.size()));
+  Image.KnownCodeRanges.emplace_back(0x1100, 0x1100 + Callee.size());
+  return Image;
+}
+
+std::shared_ptr<const CallRegisterBody>
+cachedRegisterBody(const std::shared_ptr<X87CallGraphCache> &Cache,
+                   const BinaryImage &Image,
+                   const std::set<va_t> *Entries = nullptr,
+                   const NoReturnCalleeProver *Prover = nullptr) {
+  return CFGBuilder::cachedCallRegisterBody(Cache, Image, Image.Entry, Entries,
+                                            nullptr, Prover, nullptr, nullptr);
+}
+
+std::optional<LowFunc>
+cachedFunction(const std::shared_ptr<X87CallGraphCache> &Cache,
+               const BinaryImage &Image,
+               const std::set<va_t> *Entries = nullptr,
+               const NoReturnCalleeProver *Prover = nullptr,
+               const std::string &Name = "") {
+  return CFGBuilder::cachedDefaultFunction(Cache, Image, Image.Entry, Name,
+                                           Entries, nullptr, Prover, nullptr,
+                                           nullptr);
+}
+
+void expectSameRegisterBody(const LowFunc &Cold, const CallRegisterBody &Warm) {
+  EXPECT_EQ(Warm.Complete, Cold.hasCompleteLiftCoverage());
+  EXPECT_EQ(Warm.UnsafeIndirectBranches,
+            !Cold.UnsafeIndirectBranchAddresses.empty());
+  ASSERT_EQ(Warm.Blocks.size(), Cold.Blocks.size());
+  for (size_t I = 0; I < Cold.Blocks.size(); ++I) {
+    const auto &A = Cold.Blocks[I], &B = Warm.Blocks[I];
+    EXPECT_EQ(A.Id, B.Id);
+    EXPECT_EQ(A.StartAddr, B.StartAddr);
+    EXPECT_EQ(A.EndAddr, B.EndAddr);
+    EXPECT_EQ(A.Preds, B.Preds);
+    EXPECT_EQ(A.Succs, B.Succs);
+    EXPECT_EQ(A.ExceptionalPreds, B.ExceptionalPreds);
+    EXPECT_EQ(A.ExceptionalSuccs, B.ExceptionalSuccs);
+    ASSERT_EQ(A.Ops.size(), B.Ops.size());
+    for (size_t J = 0; J < A.Ops.size(); ++J) {
+      const auto &X = A.Ops[J], &Y = B.Ops[J];
+      EXPECT_EQ(X.Opcode, Y.Opcode);
+      EXPECT_EQ(X.Output, Y.Output);
+      ASSERT_EQ(X.NumInputs, Y.NumInputs);
+      for (unsigned K = 0; K < X.NumInputs; ++K)
+        EXPECT_EQ(X.Inputs[K], Y.Inputs[K]);
+      EXPECT_EQ(X.Addr, Y.Addr);
+      EXPECT_EQ(X.Seq, Y.Seq);
+      EXPECT_EQ(X.MemoryOrdering, Y.MemoryOrdering);
+      EXPECT_EQ(X.MemoryAddressSpace, Y.MemoryAddressSpace);
+    }
+    ASSERT_EQ(A.InstructionBoundaries.size(), B.InstructionBoundaries.size());
+    for (size_t J = 0; J < A.InstructionBoundaries.size(); ++J) {
+      const auto &X = A.InstructionBoundaries[J];
+      const auto &Y = B.InstructionBoundaries[J];
+      EXPECT_EQ(X.Address, Y.Address);
+      EXPECT_EQ(X.Size, Y.Size);
+      EXPECT_EQ(X.FirstOp, Y.FirstOp);
+      EXPECT_EQ(X.OpCount, Y.OpCount);
+      EXPECT_EQ(X.Mode, Y.Mode);
+      EXPECT_EQ(X.Control, Y.Control);
+      EXPECT_EQ(X.ControlFlags, Y.ControlFlags);
+      EXPECT_EQ(X.TargetMode, Y.TargetMode);
+      EXPECT_EQ(X.Immediate, Y.Immediate);
+    }
+  }
+}
+
+void expectSameFunctionFacts(const LowFunc &Cold, const LowFunc &Warm) {
+  CallRegisterBody Body;
+  Body.Blocks = Warm.Blocks;
+  Body.Complete = Warm.hasCompleteLiftCoverage();
+  Body.UnsafeIndirectBranches = !Warm.UnsafeIndirectBranchAddresses.empty();
+  expectSameRegisterBody(Cold, Body);
+  EXPECT_EQ(Warm.Entry, Cold.Entry);
+  EXPECT_EQ(Warm.OriginalSize, Cold.OriginalSize);
+  EXPECT_EQ(Warm.Name, Cold.Name);
+  EXPECT_EQ(Warm.DebugName, Cold.DebugName);
+  EXPECT_EQ(Warm.SourceFile, Cold.SourceFile);
+  EXPECT_EQ(Warm.SourceLine, Cold.SourceLine);
+  EXPECT_EQ(Warm.ModuleAnalysisRoots, Cold.ModuleAnalysisRoots);
+  EXPECT_EQ(Warm.OrdinaryModuleAnalysisRoots, Cold.OrdinaryModuleAnalysisRoots);
+  EXPECT_EQ(Warm.EverPublishedJumpTableBranchAddresses,
+            Cold.EverPublishedJumpTableBranchAddresses);
+  EXPECT_EQ(Warm.UnsafeIndirectBranchAddresses,
+            Cold.UnsafeIndirectBranchAddresses);
+  EXPECT_EQ(Warm.RelocatedInstructionAddressOccurrences,
+            Cold.RelocatedInstructionAddressOccurrences);
+  EXPECT_EQ(Warm.RelocatedInstructionScalarModelOccurrences,
+            Cold.RelocatedInstructionScalarModelOccurrences);
+  EXPECT_EQ(Warm.I386GetPcOccurrences, Cold.I386GetPcOccurrences);
+  EXPECT_EQ(Warm.CodeRefTargets, Cold.CodeRefTargets);
+  EXPECT_EQ(Warm.DecodedInstructionCount, Cold.DecodedInstructionCount);
+  EXPECT_EQ(Warm.LiftedInstructionCount, Cold.LiftedInstructionCount);
+  EXPECT_EQ(Warm.DecodeFailureAddresses, Cold.DecodeFailureAddresses);
+  EXPECT_EQ(Warm.UnsupportedInstructionAddresses,
+            Cold.UnsupportedInstructionAddresses);
+  EXPECT_EQ(Warm.UnprovenReturnAddresses, Cold.UnprovenReturnAddresses);
+  EXPECT_EQ(Warm.TruncatedPathAddresses, Cold.TruncatedPathAddresses);
+  EXPECT_EQ(Warm.CalleePopBytes, Cold.CalleePopBytes);
+  ASSERT_EQ(Warm.FunctionTemporaries.size(), Cold.FunctionTemporaries.size());
+  for (size_t I = 0; I < Cold.FunctionTemporaries.size(); ++I) {
+    EXPECT_EQ(Warm.FunctionTemporaries[I].Offset,
+              Cold.FunctionTemporaries[I].Offset);
+    EXPECT_EQ(Warm.FunctionTemporaries[I].Bytes,
+              Cold.FunctionTemporaries[I].Bytes);
+  }
+  ASSERT_EQ(Warm.JumpTables.size(), Cold.JumpTables.size());
+  for (size_t I = 0; I < Cold.JumpTables.size(); ++I) {
+    const auto &A = Cold.JumpTables[I], &B = Warm.JumpTables[I];
+    EXPECT_EQ(B.InsnAddr, A.InsnAddr);
+    EXPECT_EQ(B.BaseAddr, A.BaseAddr);
+    EXPECT_EQ(B.HasBaseAddr, A.HasBaseAddr);
+    EXPECT_EQ(B.EntrySize, A.EntrySize);
+    EXPECT_EQ(B.EntryStride, A.EntryStride);
+    EXPECT_EQ(B.StorageRanges, A.StorageRanges);
+    EXPECT_EQ(B.ExactPhysicalStorageRange, A.ExactPhysicalStorageRange);
+    EXPECT_EQ(B.SuppressibleRelocationSlots, A.SuppressibleRelocationSlots);
+    EXPECT_EQ(B.AuthenticatedTableLoads, A.AuthenticatedTableLoads);
+    EXPECT_EQ(B.SelectorUseRefs, A.SelectorUseRefs);
+    EXPECT_EQ(B.CompositeSelectorUseRef, A.CompositeSelectorUseRef);
+    EXPECT_EQ(B.IndexRegOff, A.IndexRegOff);
+    EXPECT_EQ(B.IsRelative, A.IsRelative);
+    EXPECT_EQ(B.IsSigned, A.IsSigned);
+    EXPECT_EQ(B.TargetBase, A.TargetBase);
+    EXPECT_EQ(B.HasTargetBase, A.HasTargetBase);
+    EXPECT_EQ(B.IsPEImageRelativeRVA, A.IsPEImageRelativeRVA);
+    EXPECT_EQ(B.TableLoadAddr, A.TableLoadAddr);
+    EXPECT_EQ(B.PreScaledIndex, A.PreScaledIndex);
+    EXPECT_EQ(B.TwoTableSelect, A.TwoTableSelect);
+    EXPECT_EQ(B.TwoTableOffset, A.TwoTableOffset);
+    EXPECT_EQ(B.TwoTableHiPositive, A.TwoTableHiPositive);
+    EXPECT_EQ(B.TwoLevelIndex, A.TwoLevelIndex);
+    EXPECT_EQ(B.MutatedUnsafe, A.MutatedUnsafe);
+    EXPECT_EQ(B.Targets, A.Targets);
+    EXPECT_EQ(B.SlotIndices, A.SlotIndices);
+    EXPECT_EQ(B.HasDispatchSlotMap, A.HasDispatchSlotMap);
+    EXPECT_EQ(B.CaseLabels, A.CaseLabels);
+  }
+  EXPECT_EQ(Warm.ExceptionMetadata.has_value(),
+            Cold.ExceptionMetadata.has_value());
+  EXPECT_EQ(Warm.RegistrationStates.has_value(),
+            Cold.RegistrationStates.has_value());
+  EXPECT_EQ(Warm.CxxContinuationExitAnalysisComplete,
+            Cold.CxxContinuationExitAnalysisComplete);
+  EXPECT_EQ(Warm.CxxContinuationExits.size(), Cold.CxxContinuationExits.size());
+  EXPECT_EQ(Warm.CxxContinuationEntries.size(),
+            Cold.CxxContinuationEntries.size());
+  EXPECT_EQ(Warm.SEHLocalUnwindContinuations.size(),
+            Cold.SEHLocalUnwindContinuations.size());
+}
+} // namespace
+
+TEST(CompleteFunctionCache, DefaultBodiesPreserveFactsAndUseTheRequestedName) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    auto Image = registerBodyImage(
+        Format, {0x48, 0x8d, 0x05, 0xf9, 0, 0, 0, 0x85, 0xff, 0x74, 1, 0xc3,
+                 0x31, 0xc0, 0xc3}); // address-taken callee; two returns
+    const std::set<va_t> Entries{0x1000, 0x1100};
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed, Cold;
+    Seed.setKnownFuncEntries(&Entries);
+    Cold.setKnownFuncEntries(&Entries);
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    for (const std::string Name :
+         {std::string{}, std::string("selected_name")}) {
+      auto Warm = cachedFunction(Cache, Image, &Entries, nullptr, Name);
+      ASSERT_TRUE(Warm);
+      const auto Original = Cold.build(Image, Dec, Image.Entry, Name);
+      ASSERT_FALSE(Original.CodeRefTargets.empty());
+      expectSameFunctionFacts(Original, *Warm);
+      // A consumer may mutate its own output without changing the cache.
+      Warm->Blocks.clear();
+      EXPECT_FALSE(cachedFunction(Cache, Image, &Entries)->Blocks.empty());
+    }
+  }
+}
+
+TEST(CompleteFunctionCache, JumpTableStorageAndOccurrenceMetadataSurviveReuse) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  // Bound the full RDI used by the address, and authenticate the fixed linked
+  // table address. A 32-bit CMP alone would leave its upper address bits free.
+  auto Image = registerBodyImage(
+      BinaryFormat::ELF,
+      {0x48, 0x83, 0xff, 1,    0x77, 0x16, 0xff, 0x24, 0xfd, 0, 0x20,
+       0,    0,    0xcc, 0xcc, 0xcc, 0xb8, 1,    0,    0,    0, 0xc3,
+       0xb8, 2,    0,    0,    0,    0xc3, 0x31, 0xc0, 0xc3});
+  Image.LoadsAtLinkAddress = true;
+  Segment Table;
+  Table.Name = ".rodata";
+  Table.VA = 0x2000;
+  Table.Size = Table.FileSz = 16;
+  Table.Flags = SegmentFlags::Readable;
+  Table.Data.resize(16);
+  for (unsigned I = 0; I != 2; ++I) {
+    const va_t Target = 0x1010 + I * 6;
+    for (unsigned J = 0; J != 8; ++J)
+      Table.Data[I * 8 + J] = static_cast<uint8_t>(Target >> (J * 8));
+    Image.DataPtrRelocSlots.insert(Table.VA + I * 8);
+  }
+  Image.Segments.push_back(std::move(Table));
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed, Cold;
+  Seed.setX87CallGraphCache(Cache);
+  Access::query(Seed, Image, Image.Entry);
+  const auto Warm = cachedFunction(Cache, Image);
+  ASSERT_TRUE(Warm);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  const auto Original = Cold.build(Image, Dec, Image.Entry);
+  ASSERT_EQ(Original.JumpTables.size(), 1u);
+  EXPECT_EQ(Original.JumpTables.front().Targets.size(), 2u);
+  ASSERT_FALSE(Original.JumpTables.front().AuthenticatedTableLoads.empty());
+  expectSameFunctionFacts(Original, *Warm);
+}
+
+TEST(CompleteFunctionCache, ExceptionRecordsAreCopiedFromTheFrozenImage) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image = x87RejectedGraphImage(Arch::X64, true);
+  Image.Segments.front().Data[0] = 0x31;
+  Image.Segments.front().Data[1] = 0xc0;
+  Image.Segments.front().Data[0x10] = 0x31;
+  Image.Segments.front().Data[0x11] = 0xc9;
+  auto &EH = Image.ExceptionMetadata.Functions.front();
+  EH.PersonalityName = "__gxx_personality_v0";
+  EH.Diagnostics.push_back(std::string(128 * 1024, 'x'));
+  EH.Dwarf.emplace();
+  EH.Dwarf->Instructions.emplace_back();
+  EH.Dwarf->Instructions.back().Expression = {1, 2, 3};
+  EH.Itanium->TypeTable.emplace_back();
+  EH.Itanium->TypeTable.back().TypeName = "test_exception_type";
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed, Cold;
+  Seed.setX87CallGraphCache(Cache);
+  Access::query(Seed, Image, Image.Entry);
+  auto Warm = cachedFunction(Cache, Image);
+  ASSERT_TRUE(Warm);
+  ASSERT_TRUE(Warm->ExceptionMetadata);
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  const auto Original = Cold.build(Image, Dec, Image.Entry);
+  expectSameFunctionFacts(Original, *Warm);
+  EXPECT_EQ(Warm->ExceptionMetadata->Itanium->CallSites.size(), 1u);
+  // The large loader-owned diagnostic is not duplicated inside the cache.
+  EXPECT_LT(Access::summaryStats(Seed)[1], 128u * 1024);
+  Seed.setX87CallGraphCache(nullptr);
+  Cache.reset();
+  Image = BinaryImage{};
+  EXPECT_EQ(Warm->ExceptionMetadata->PersonalityName, "__gxx_personality_v0");
+  EXPECT_EQ(Warm->ExceptionMetadata->Diagnostics.front(),
+            std::string(128 * 1024, 'x'));
+  EXPECT_EQ(Warm->ExceptionMetadata->Dwarf->Instructions.front().Expression,
+            (std::vector<uint8_t>{1, 2, 3}));
+  EXPECT_EQ(Warm->ExceptionMetadata->Itanium->TypeTable.front().TypeName,
+            "test_exception_type");
+}
+
+TEST(CallRegisterBodyCache, CompleteBranchesKeepMachineAndRegisterFacts) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(static_cast<unsigned>(Format));
+    auto Image =
+        registerBodyImage(Format, {0x85, 0xff, 0x74, 7, 0xb8, 7, 0, 0, 0, 0xeb,
+                                   5, 0xb8, 9, 0, 0, 0, 0xc3});
+    const std::set<va_t> Entries{0x1000, 0x1100};
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed, Cold;
+    Seed.setKnownFuncEntries(&Entries);
+    Cold.setKnownFuncEntries(&Entries);
+    Seed.setX87CallGraphCache(Cache);
+    EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
+              std::optional<int>(0));
+    const auto Body = cachedRegisterBody(Cache, Image, &Entries);
+    ASSERT_TRUE(Body);
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Image));
+    const auto Original = Cold.build(Image, Dec, Image.Entry);
+    expectSameRegisterBody(Original, *Body);
+    const auto Effect = localRegisterEffect(Image, CallRegisterBodyView(*Body));
+    EXPECT_EQ(Effect.Writes, GPRFamilyMask(1) << (x86reg::RAX / 8));
+    EXPECT_FALSE(Effect.Unknown);
+    EXPECT_FALSE(Effect.Incomplete);
+    EXPECT_TRUE(Effect.Callees.empty());
+    // Cached machine data still pays every x87 proof step at every budget.
+    const auto Full = Access::query(Cold, Image, Image.Entry);
+    const size_t Cost = limits::kMaxX87CallProofWork - Full.second;
+    for (size_t Budget = 0; Budget <= Cost + 1; ++Budget)
+      EXPECT_EQ(Access::query(Seed, Image, Image.Entry, Budget),
+                Access::query(Cold, Image, Image.Entry, Budget));
+  }
+}
+
+TEST(CallRegisterBodyCache,
+     LocalStackStateAndFloatingCallResultsKeepColdBuilds) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  const std::vector<std::vector<uint8_t>> Local{
+      {0xd9, 0xe8, 0xdd, 0xd8, 0xc3}, // fld1; fstp st0; ret
+      {0xdb, 0xe3, 0xc3},             // fninit; ret
+      {0xd9, 0xf7, 0xc3},             // fincstp; ret
+      {0xd9, 0xe5, 0xc3},             // fxam; ret
+      {0x0f, 0x6f, 0xc1, 0xc3}};      // movq mm0,mm1; ret
+  for (const auto &Bytes : Local) {
+    auto Image = registerBodyImage(BinaryFormat::ELF, Bytes);
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed;
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
+  }
+  auto Image = registerBodyImage(BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xc3},
+                                 {0xd9, 0xe8, 0xc3});
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
+            std::optional<int>(-1));
+  EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+  EXPECT_FALSE(cachedFunction(Cache, Image));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  EXPECT_TRUE(hasX87CallDefinition(Seed.build(Image, Dec, Image.Entry)));
+}
+
+TEST(CallRegisterBodyCache, NoReturnDecisionsMustAgreeAtOrdinaryDepth) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  struct Prover : NoReturnCalleeProver {
+    bool Different;
+    explicit Prover(bool Value) : Different(Value) {}
+    bool mayNeverReturn(va_t Target) const override { return Target == 0x1100; }
+    bool neverReturns(va_t, unsigned Depth) const override {
+      return Different && Depth == 0;
+    }
+  };
+  for (bool Different : {false, true}) {
+    SCOPED_TRACE(Different);
+    Prover Proof(Different);
+    auto Image = registerBodyImage(
+        BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xb8, 7, 0, 0, 0, 0xc3});
+    auto Cache = createX87CallGraphCache(&Proof, nullptr, true);
+    CFGBuilder Seed;
+    Seed.setNoReturnCalleeProver(&Proof);
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    EXPECT_GT(Access::summaryStats(Seed)[0], 0u);
+    const auto Body = cachedRegisterBody(Cache, Image, nullptr, &Proof);
+    EXPECT_EQ(bool(Body), !Different);
+    EXPECT_EQ(bool(cachedFunction(Cache, Image, nullptr, &Proof)), !Different);
+    if (Body) {
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      expectSameRegisterBody(Seed.build(Image, Dec, Image.Entry), *Body);
+    }
+  }
+}
+
+TEST(CallRegisterBodyCache, LoadedImportSlotsRetainFloatingReturnDefinitions) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image =
+      registerBodyImage(BinaryFormat::ELF, {0x48, 0x8b, 0x05, 0xf9, 1, 0,
+                                            0, // mov rax,[rip+0x1f9] -> 0x1200
+                                            0xff, 0xd0, 0xc3}); // call rax; ret
+  Segment Slot;
+  Slot.Name = ".got";
+  Slot.VA = 0x1200;
+  Slot.Size = Slot.FileSz = 8;
+  Slot.Data.resize(8);
+  Slot.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Segments.push_back(std::move(Slot));
+  Import Imported;
+  // This import has an explicit long-double return contract. A recognized
+  // routine name alone does not supply the x87 result proof.
+  Imported.Name = "strtold";
+  Imported.IATAddr = 0x1200;
+  Image.Imports.push_back(std::move(Imported));
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  EXPECT_EQ(Access::query(Seed, Image, Image.Entry).first,
+            std::optional<int>(-1));
+  EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+  EXPECT_FALSE(cachedFunction(Cache, Image));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  EXPECT_TRUE(hasX87CallDefinition(Seed.build(Image, Dec, Image.Entry)));
+}
+
+TEST(CallRegisterBodyCache, ReplayReentryAndExceptionsKeepAnOrdinaryFallback) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  struct Prover : NoReturnCalleeProver {
+    std::function<void()> OnReplay;
+    bool mayNeverReturn(va_t Target) const override { return Target == 0x1100; }
+    bool neverReturns(va_t, unsigned Depth) const override {
+      if (Depth == 0 && OnReplay)
+        OnReplay();
+      return false;
+    }
+  } Proof;
+  auto Image =
+      registerBodyImage(BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xc3});
+  auto Cache = createX87CallGraphCache(&Proof, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  Seed.setNoReturnCalleeProver(&Proof);
+  Access::query(Seed, Image, Image.Entry);
+  unsigned Reentries = 0;
+  Proof.OnReplay = [&] {
+    ++Reentries;
+    EXPECT_FALSE(cachedRegisterBody(Cache, Image, nullptr, &Proof));
+    EXPECT_FALSE(cachedFunction(Cache, Image, nullptr, &Proof));
+  };
+  EXPECT_TRUE(cachedRegisterBody(Cache, Image, nullptr, &Proof));
+  EXPECT_GT(Reentries, 0u);
+  Proof.OnReplay = [] { throw std::runtime_error("replay failed"); };
+  EXPECT_THROW(cachedRegisterBody(Cache, Image, nullptr, &Proof),
+               std::runtime_error);
+  EXPECT_THROW(cachedFunction(Cache, Image, nullptr, &Proof),
+               std::runtime_error);
+  Proof.OnReplay = {};
+  EXPECT_TRUE(cachedRegisterBody(Cache, Image, nullptr, &Proof));
+}
+
+TEST(CallRegisterBodyCache, FixedCallArgumentsAreBoundAtTheConsumer) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image =
+      registerBodyImage(BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xc3});
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  Access::query(Seed, Image, Image.Entry);
+  const auto Body = cachedRegisterBody(Cache, Image);
+  ASSERT_TRUE(Body);
+  std::map<va_t, GPRReadWidths> Fixed;
+  Fixed[0x1000][x86reg::RDI / 8] = 4;
+  const auto Plain = localRegisterEffect(Image, CallRegisterBodyView(*Body));
+  const auto Bound =
+      localRegisterEffect(Image, CallRegisterBodyView(*Body), nullptr, &Fixed);
+  EXPECT_FALSE(Plain.CallsFixedContract);
+  EXPECT_EQ(Plain.Callees, (std::set<va_t>{0x1100}));
+  EXPECT_TRUE(Bound.CallsFixedContract);
+  EXPECT_TRUE(Bound.Callees.empty());
+  unsigned BoundSteps = 0;
+  for (const auto &Block : Bound.Blocks)
+    for (const auto &Step : Block.Steps)
+      if (Step.FixedArguments) {
+        ++BoundSteps;
+        EXPECT_EQ(*Step.FixedArguments, Fixed.at(0x1000));
+      }
+  EXPECT_EQ(BoundSteps, 1u);
+}
+
+TEST(CallRegisterBodyCache, ExactContextAndExplicitOptInAreRequired) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image = registerBodyImage(BinaryFormat::ELF, {0xb8, 7, 0, 0, 0, 0xc3});
+  auto Other = Image;
+  const std::set<va_t> Entries{0x1000, 0x1100}, Changed{0x1000, 0x1001, 0x1100};
+  for (bool Enabled : {false, true}) {
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, Enabled);
+    CFGBuilder Seed;
+    Seed.setKnownFuncEntries(&Entries);
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    EXPECT_EQ(bool(cachedRegisterBody(Cache, Image, &Entries)), Enabled);
+    EXPECT_EQ(bool(cachedFunction(Cache, Image, &Entries)), Enabled);
+    EXPECT_FALSE(cachedRegisterBody(Cache, Image, &Changed));
+    EXPECT_FALSE(cachedFunction(Cache, Image, &Changed));
+    EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
+    EXPECT_FALSE(cachedRegisterBody(Cache, Other, &Entries));
+    EXPECT_FALSE(cachedFunction(Cache, Other, &Entries));
+  }
+  for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed;
+    const std::set<va_t> Empty;
+    if (Mutation == 0)
+      Seed.setProtectedJumpTableRelocationSlots(&Empty);
+    else if (Mutation == 1)
+      Seed.setUnsafeJumpTableBranches(&Empty);
+    else if (Mutation == 2)
+      Seed.setNoReturnCalleeProver(nullptr, 1);
+    else
+      Image.Mode = InstructionMode::Default;
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    if (Mutation < 3) {
+      EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+      EXPECT_FALSE(cachedFunction(Cache, Image));
+    } else {
+      // The caller must retire the cache on byte/metadata mutation. A fresh
+      // operation has no receipt from an earlier image even at the same VA.
+      Cache = createX87CallGraphCache(nullptr, nullptr, true);
+      EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+      EXPECT_FALSE(cachedFunction(Cache, Image));
+    }
+  }
+}
+
+TEST(CallRegisterBodyCache, ExceptionEdgesRemainAvailableToSummaryReaders) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image = x87RejectedGraphImage(Arch::X64, true);
+  // Replace the two FLD1 instructions with GPR-only instructions. The x87
+  // projection still refuses exceptional edges, while the complete machine
+  // graph remains useful to ordinary argument/register analysis.
+  Image.Segments.front().Data[0] = 0x31;
+  Image.Segments.front().Data[1] = 0xc0;
+  Image.Segments.front().Data[0x10] = 0x31;
+  Image.Segments.front().Data[0x11] = 0xc9;
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  EXPECT_FALSE(Access::query(Seed, Image, Image.Entry).first);
+  const auto Body = cachedRegisterBody(Cache, Image);
+  ASSERT_TRUE(Body);
+  EXPECT_TRUE(llvm::any_of(Body->Blocks, [](const LowBlock &Block) {
+    return !Block.ExceptionalSuccs.empty();
+  }));
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  expectSameRegisterBody(Seed.build(Image, Dec, Image.Entry), *Body);
+}
+
+TEST(CallRegisterBodyCache, IncompleteBodiesAreNotRetained) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (const std::vector<uint8_t> Bytes :
+       {std::vector<uint8_t>{0x0f},
+        std::vector<uint8_t>{0xe9, 0xfb, 0x7f, 0, 0}}) {
+    auto Image = x87ExamineImage(Arch::X64, BinaryFormat::ELF, Bytes);
+    auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+    CFGBuilder Seed;
+    Seed.setX87CallGraphCache(Cache);
+    Access::query(Seed, Image, Image.Entry);
+    EXPECT_FALSE(cachedRegisterBody(Cache, Image));
+    EXPECT_FALSE(cachedFunction(Cache, Image));
+    EXPECT_EQ(Access::summaryStats(Seed)[0], 0u);
+  }
+}
+
+TEST(CallRegisterBodyCache, UnknownCallEffectsRemainUnknownAndCallbacksOptIn) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image =
+      registerBodyImage(BinaryFormat::ELF, {0xe8, 0xfb, 0, 0, 0, 0xc3}, {0x0f});
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setX87CallGraphCache(Cache);
+  EXPECT_FALSE(Access::query(Seed, Image, Image.Entry).first);
+  const auto Body = cachedRegisterBody(Cache, Image);
+  ASSERT_TRUE(Body);
+  EXPECT_FALSE(Access::query(Seed, Image, Image.Entry).first);
+  const auto Effect = localRegisterEffect(Image, CallRegisterBodyView(*Body));
+  EXPECT_EQ(Effect.Callees, (std::set<va_t>{0x1100}));
+  struct Prover : NoReturnCalleeProver {
+    bool neverReturns(va_t, unsigned) const override { return false; }
+  } Unregistered;
+  auto OtherCache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Other;
+  Other.setX87CallGraphCache(OtherCache);
+  Other.setNoReturnCalleeProver(&Unregistered);
+  Access::query(Other, Image, Image.Entry);
+  EXPECT_FALSE(cachedRegisterBody(OtherCache, Image, nullptr, &Unregistered));
+  EXPECT_EQ(Access::summaryStats(Other)[0], 0u);
+}
+
+TEST(CallRegisterBodyCache, BlockPayloadEnforcesTheByteLimitBeforeEntryLimit) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  constexpr unsigned Count = 40, Instructions = 4096, Stride = 0x8000;
+  auto Image = x87ExamineImage(Arch::X64, BinaryFormat::ELF,
+                               std::vector<uint8_t>(Count * Stride, 0xcc));
+  Image.Symbols.clear();
+  Image.KnownCodeRanges.clear();
+  std::set<va_t> Entries;
+  for (unsigned I = 0; I != Count; ++I) {
+    const va_t Entry = 0x1000 + I * Stride;
+    for (unsigned J = 0; J != Instructions; ++J) {
+      auto It = Image.Segments.front().Data.begin() + I * Stride + J * 5;
+      const std::array<uint8_t, 5> Move{0xb8, 7, 0, 0, 0};
+      std::copy(Move.begin(), Move.end(), It);
+    }
+    Image.Segments.front().Data[I * Stride + Instructions * 5] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(Entry, Instructions * 5 + 1));
+    Image.KnownCodeRanges.emplace_back(Entry, Entry + Instructions * 5 + 1);
+    Entries.insert(Entry);
+  }
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setKnownFuncEntries(&Entries);
+  Seed.setX87CallGraphCache(Cache);
+  size_t Filled = 0, BodiesThatFit = 0;
+  for (va_t Entry : Entries) {
+    Access::query(Seed, Image, Entry);
+    if (++Filled == 1) {
+      const auto Body = cachedRegisterBody(Cache, Image, &Entries);
+      ASSERT_TRUE(Body);
+      size_t LiveBytes = Body->Blocks.size() * sizeof(LowBlock);
+      for (const auto &Block : Body->Blocks)
+        LiveBytes += Block.Ops.size() * sizeof(LowOp) +
+                     Block.InstructionBoundaries.size() *
+                         sizeof(LowInstructionBoundary) +
+                     (Block.Succs.size() + Block.Preds.size()) * sizeof(int);
+      ASSERT_GT(LiveBytes, 0u);
+      // Identical straight-line bodies fit together after reserving 4 MiB
+      // for their contexts/metadata. Construction slack must not evict them.
+      BodiesThatFit = 28u * 1024 * 1024 / LiveBytes;
+      ASSERT_GT(BodiesThatFit, 1u);
+      ASSERT_LT(BodiesThatFit, Count);
+    }
+    if (Filled == BodiesThatFit) {
+      EXPECT_EQ(Access::summaryStats(Seed)[0], Filled);
+      EXPECT_TRUE(cachedRegisterBody(Cache, Image, &Entries));
+      EXPECT_TRUE(cachedFunction(Cache, Image, &Entries));
+    }
+    EXPECT_LE(Access::summaryStats(Seed)[1], 32u * 1024 * 1024);
+  }
+  EXPECT_GT(Access::summaryStats(Seed)[0], 0u);
+  EXPECT_LT(Access::summaryStats(Seed)[0], Count);
+  EXPECT_FALSE(cachedRegisterBody(Cache, Image, &Entries));
+  EXPECT_FALSE(cachedFunction(Cache, Image, &Entries));
+  EXPECT_TRUE(CFGBuilder::cachedCallRegisterBody(
+      Cache, Image, *Entries.rbegin(), &Entries, nullptr, nullptr, nullptr,
+      nullptr));
+}
+
+TEST(CallRegisterBodyCache, ParallelReadersAndEvictionKeepBorrowedBodiesAlive) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  auto Image = x87ExamineImage(Arch::X64, BinaryFormat::ELF,
+                               std::vector<uint8_t>(160 * 16, 0xcc));
+  Image.Symbols.clear();
+  Image.KnownCodeRanges.clear();
+  std::set<va_t> Entries;
+  for (unsigned I = 0; I != 160; ++I) {
+    const va_t Address = 0x1000 + I * 16;
+    Image.Segments.front().Data[I * 16] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(Address, 1));
+    Image.KnownCodeRanges.emplace_back(Address, Address + 1);
+    Entries.insert(Address);
+  }
+  auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+  CFGBuilder Seed;
+  Seed.setKnownFuncEntries(&Entries);
+  Seed.setX87CallGraphCache(Cache);
+  Access::query(Seed, Image, Image.Entry);
+  const auto First = cachedRegisterBody(Cache, Image, &Entries);
+  ASSERT_TRUE(First);
+  std::barrier Start(4);
+  std::vector<std::future<bool>> Workers;
+  for (unsigned I = 0; I != 4; ++I)
+    Workers.push_back(std::async(std::launch::async, [&] {
+      Start.arrive_and_wait();
+      for (unsigned J = 0; J != 16; ++J)
+        if (cachedRegisterBody(Cache, Image, &Entries) != First ||
+            !cachedFunction(Cache, Image, &Entries))
+          return false;
+      return true;
+    }));
+  for (auto &Worker : Workers)
+    EXPECT_TRUE(Worker.get());
+  for (va_t Entry : Entries)
+    Access::query(Seed, Image, Entry);
+  EXPECT_FALSE(cachedRegisterBody(Cache, Image, &Entries));
+  EXPECT_FALSE(cachedFunction(Cache, Image, &Entries));
+  EXPECT_LE(Access::summaryStats(Seed)[0], 128u);
+  EXPECT_LE(Access::summaryStats(Seed)[1], 32u * 1024 * 1024);
+  ASSERT_EQ(First->Blocks.size(), 1u);
+  EXPECT_EQ(First->Blocks.front().StartAddr, Image.Entry);
 }
 
 TEST(X87CallGraphCache, ImmutableProjectionRejectionsReplayBudgetsExactly) {
@@ -897,7 +1641,157 @@ public:
   bool mayNeverReturn(va_t) const override { return true; }
   bool neverReturns(va_t, unsigned) const override { return false; }
 };
+
+struct ScopedX87Threads {
+  unsigned Previous = workerThreadOverride().load();
+  ScopedX87Threads() { setWorkerThreadCount(4); }
+  ~ScopedX87Threads() { setWorkerThreadCount(Previous); }
+};
+
+class GatedIndependentX87Prover final : public NoReturnCalleeProver {
+  mutable std::mutex Mutex;
+  mutable std::condition_variable Changed;
+  mutable std::set<va_t> Entered;
+  bool Released = false;
+  bool Throw;
+
+public:
+  explicit GatedIndependentX87Prover(bool Throw) : Throw(Throw) {}
+  bool mayNeverReturn(va_t Target) const override {
+    return Target == 0x6000 || Target == 0x6020;
+  }
+  bool neverReturns(va_t Target, unsigned) const override {
+    std::unique_lock<std::mutex> Lock(Mutex);
+    Entered.insert(Target);
+    Changed.notify_all();
+    Changed.wait(Lock, [&] { return Released; });
+    if (Throw && Target == 0x6000)
+      throw std::runtime_error("independent floating proof failure");
+    return false;
+  }
+  bool waitForBoth() const {
+    std::unique_lock<std::mutex> Lock(Mutex);
+    return Changed.wait_for(Lock, std::chrono::seconds(5),
+                            [&] { return Entered.size() == 2; });
+  }
+  void release() {
+    std::lock_guard<std::mutex> Lock(Mutex);
+    Released = true;
+    Changed.notify_all();
+  }
+};
+
+BinaryImage independentFloatingCalls(Arch Architecture, BinaryFormat Format) {
+  auto Image = x87ExamineImage(Architecture, Format, {});
+  auto &Text = Image.Segments.front();
+  Text.Size = Text.FileSz = 0x5100;
+  Text.Data.assign(Text.Size, 0xcc);
+  Image.Symbols.clear();
+  Image.KnownCodeRanges.clear();
+  auto call = [&](va_t From, va_t To) {
+    const size_t Offset = From - Text.VA;
+    Text.Data[Offset] = 0xe8;
+    const auto Relative = static_cast<uint32_t>(To - From - 5);
+    for (unsigned I = 0; I != 4; ++I)
+      Text.Data[Offset + 1 + I] = static_cast<uint8_t>(Relative >> (8 * I));
+  };
+  call(0x1000, 0x2000);
+  Text.Data[5] = 0xdd; // discard the first binary80 result
+  Text.Data[6] = 0xd8;
+  call(0x1007, 0x3000);
+  Text.Data[12] = 0xc3;
+  Image.Symbols.push_back(Symbol::makeFunc(0x1000, 13));
+  for (const auto [Entry, Leaf] :
+       {std::pair{0x2000, 0x6000}, std::pair{0x3000, 0x6020}}) {
+    const size_t Offset = Entry - Text.VA;
+    // Real decoded bodies exceed the parallel admission threshold.
+    std::fill_n(Text.Data.begin() + Offset, 0x900, 0x90);
+    call(Entry, Leaf);
+    Text.Data[Offset + 0x8ff] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(Entry, 0x900));
+    Text.Data[Leaf - Text.VA] = 0xd9;
+    Text.Data[Leaf - Text.VA + 1] = 0xe8; // fld1; ret
+    Text.Data[Leaf - Text.VA + 2] = 0xc3;
+    Image.Symbols.push_back(Symbol::makeFunc(Leaf, 3));
+  }
+  return Image;
+}
 } // namespace
+
+TEST(X87CallGraphCache, IndependentCallProofsOverlapAndJoinBeforePublication) {
+  ScopedX87Threads Threads;
+  for (Arch Architecture : {Arch::X86, Arch::X64})
+    for (BinaryFormat Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (bool Throw : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Architecture));
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(Throw);
+        const auto Image = independentFloatingCalls(Architecture, Format);
+        const std::set<va_t> Entries{0x1000, 0x2000, 0x3000, 0x6000, 0x6020};
+        GatedIndependentX87Prover Prover(Throw);
+        auto Cache = createX87CallGraphCache(&Prover, nullptr);
+        auto Build = std::async(std::launch::async, [&] {
+          Decoder Dec;
+          if (!Dec.init(Image))
+            throw std::runtime_error("test decoder failed");
+          CFGBuilder Builder;
+          Builder.setKnownFuncEntries(&Entries);
+          Builder.setNoReturnCalleeProver(&Prover);
+          Builder.setX87CallGraphCache(Cache);
+          Builder.setX87CallProofThreads(4);
+          return Builder.build(Image, Dec, Image.Entry);
+        });
+        const bool Overlapped = Prover.waitForBoth();
+        Prover.release(); // Always unblock and join, including on failure.
+        EXPECT_TRUE(Overlapped);
+        if (Throw) {
+          EXPECT_THROW(Build.get(), std::runtime_error);
+          continue;
+        }
+        const LowFunc Parallel = Build.get();
+        ASSERT_TRUE(Parallel.hasCompleteInstructionLift());
+        Decoder Dec;
+        ASSERT_TRUE(Dec.init(Image));
+        CFGBuilder SerialBuilder;
+        SerialBuilder.setKnownFuncEntries(&Entries);
+        const LowFunc Serial = SerialBuilder.build(Image, Dec, Image.Entry);
+        std::string ParallelDump, SerialDump;
+        llvm::raw_string_ostream ParallelOS(ParallelDump), SerialOS(SerialDump);
+        Pipeline::dumpLowIR({Parallel}, ParallelOS);
+        Pipeline::dumpLowIR({Serial}, SerialOS);
+        EXPECT_EQ(ParallelDump, SerialDump);
+      }
+}
+
+TEST(X87CallGraphCache, ParallelQuotaDoesNotScheduleUnregisteredCallbacks) {
+  ScopedX87Threads Threads;
+  struct Prover final : NoReturnCalleeProver {
+    std::thread::id Owner = std::this_thread::get_id();
+    mutable std::atomic<unsigned> Calls{0};
+    mutable std::atomic<bool> Moved{false};
+    bool mayNeverReturn(va_t) const override { return true; }
+    bool neverReturns(va_t, unsigned) const override {
+      ++Calls;
+      if (std::this_thread::get_id() != Owner)
+        Moved.store(true);
+      return false;
+    }
+  } Counter;
+  const auto Image = independentFloatingCalls(Arch::X64, BinaryFormat::ELF);
+  const std::set<va_t> Entries{0x1000, 0x2000, 0x3000, 0x6000, 0x6020};
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Image));
+  CFGBuilder Builder;
+  Builder.setKnownFuncEntries(&Entries);
+  Builder.setNoReturnCalleeProver(&Counter);
+  Builder.setX87CallGraphCache(createX87CallGraphCache());
+  Builder.setX87CallProofThreads(4);
+  EXPECT_TRUE(
+      Builder.build(Image, Dec, Image.Entry).hasCompleteInstructionLift());
+  EXPECT_GT(Counter.Calls.load(), 0u);
+  EXPECT_FALSE(Counter.Moved.load());
+}
 
 TEST(X87CallGraphCache,
      IdenticalConcurrentBuildsHaveOneLeaderAndPrivateBudgets) {

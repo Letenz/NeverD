@@ -580,9 +580,22 @@ bool collectLowAddressUses(
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const std::vector<TargetRegisterRange> PreservedRanges =
       TRI.callPreservedRanges(Img.abiFormat());
+  std::map<va_t, const LowFunc *> SEHCallees;
+  if (LocalUnwind)
+    for (const auto &Func : Funcs)
+      if (!SEHCallees.emplace(Func.Entry, &Func).second)
+        return false;
   constexpr size_t kMaxModuleAddressScanOps =
       size_t{limits::kMaxJumpTableEvidenceWork} *
       size_t{limits::kMaxMultiStageRetries};
+  // Address-use receipts and complete-CFG frame dataflow count different
+  // work. Charging every lifted operation to the small address-use budget
+  // would reject a straight-line function before its first continuation and
+  // would also discard unrelated module ownership evidence. Keep a separate,
+  // cumulative cap for frame transfers, joins and dependency hashing.
+  constexpr size_t kMaxSEHFrameWork = kMaxModuleAddressScanOps * 16;
+  size_t SEHFrameWorkRemaining =
+      std::min(TestBudget.value_or(kMaxSEHFrameWork), kMaxSEHFrameWork);
   size_t ScanOps = 0;
   auto failCollect = [](const char *, size_t = 0, va_t = InvalidVA) {
     return false;
@@ -1547,8 +1560,8 @@ bool collectLowAddressUses(
                           SP.isPrivateFrameOnly() &&
                           Frame.FrameOffsets == SP.FrameOffsets) {
                         if (!SEHFrameProof)
-                          SEHFrameProof =
-                              proveLowSEHFrames(Func, TRI, Budget.Remaining);
+                          SEHFrameProof = proveLowSEHFrames(
+                              Func, TRI, SEHFrameWorkRemaining, &SEHCallees);
                         const auto Proof =
                             SEHFrameProof->Calls.find({Op.Addr, Op.Seq});
                         if (Proof != SEHFrameProof->Calls.end() &&
@@ -1556,7 +1569,8 @@ bool collectLowAddressUses(
                           LocalUnwind->SameFrameCallsByFunction[FuncIndex]
                               .push_back({Target, Op.Addr, Op.Seq, CalleeVA,
                                           Proof->second,
-                                          SEHFrameProof->DependencyDigest});
+                                          SEHFrameProof->DependencyDigest,
+                                          SEHFrameProof->CalleeDependencies});
                       }
                     }
                   }
@@ -2945,10 +2959,11 @@ namespace {
 /// Guard dispatch pointer, as ntoskrnl's KeGuardDispatchICall does with
 /// `jmp [__guard_dispatch_icall_fptr]`.  Whichever dispatcher the runtime
 /// installs in that pointer calls RAX with the caller's argument registers.
-bool forwardsToGuardDispatch(const BinaryImage &Img, const LowFunc &F) {
-  if (F.Blocks.size() != 1)
+bool forwardsToGuardDispatch(const BinaryImage &Img,
+                             llvm::ArrayRef<LowBlock> Blocks) {
+  if (Blocks.size() != 1)
     return false;
-  const std::vector<LowOp> &Ops = F.Blocks.front().Ops;
+  const std::vector<LowOp> &Ops = Blocks.front().Ops;
   if (Ops.size() != 2 || Ops[0].Opcode != NdOp::INDIR_CALL ||
       Ops[0].NumInputs != 1 || Ops[1].Opcode != NdOp::RETURN)
     return false;
@@ -3173,9 +3188,10 @@ void computeCallRegisterEffects(
   // A call a constant format describes reads exactly what it names; the
   // functions MedIR converts also pass those arguments (FormattedCall).
   std::map<va_t, GPRReadWidths> FixedCallReads;
-  auto CollectFormattedCalls = [&](const LowFunc &F, bool Converted) {
+  auto CollectFormattedCalls = [&](llvm::ArrayRef<LowBlock> Blocks,
+                                   bool Converted) {
     std::map<va_t, FormattedCall> Calls;
-    pipeline_detail::collectFormattedCalls(Img, F, Calls);
+    pipeline_detail::collectFormattedCalls(Img, Blocks, Calls);
     for (auto &[Address, Call] : Calls) {
       GPRReadWidths &Reads = FixedCallReads[Address];
       for (const FormattedCallArgument &Argument : Call.Arguments)
@@ -3188,10 +3204,10 @@ void computeCallRegisterEffects(
     }
   };
   for (const LowFunc &LF : Result.LowFuncs) {
-    CollectFormattedCalls(LF, /*Converted=*/true);
+    CollectFormattedCalls(LF.Blocks, /*Converted=*/true);
     Effects[LF.Entry] =
         localRegisterEffect(Img, LF, &NoReturnTargets, &FixedCallReads);
-    if (forwardsToGuardDispatch(Img, LF))
+    if (forwardsToGuardDispatch(Img, LF.Blocks))
       GuardForwarders.insert(LF.Entry);
     Depth[LF.Entry] = 0;
     Work.push_back(LF.Entry);
@@ -3232,6 +3248,7 @@ void computeCallRegisterEffects(
     for (size_t Begin = 0; Begin < Pending.size(); Begin += BatchSize) {
       const size_t Count = std::min(BatchSize, Pending.size() - Begin);
       std::vector<LowFunc> Bodies(Count);
+      std::vector<std::shared_ptr<const CallRegisterBody>> CachedBodies(Count);
       std::vector<uint64_t> Weights(Count, 0);
       std::atomic<bool> Initialized{true};
       uint64_t Bytes = 0;
@@ -3259,6 +3276,11 @@ void computeCallRegisterEffects(
             ExtraCFG.setX87CallGraphCache(X87Graphs);
             for (size_t I; (I = Claim()) < N;) {
               const auto &[Entry, Name] = Pending[Begin + I];
+              CachedBodies[I] = CFGBuilder::cachedCallRegisterBody(
+                  X87Graphs, Img, Entry, &FuncEntries, &NoReturnTargets,
+                  &NoReturnCallees, &AbsoluteRelocationRoots, CodeOwnerIndex);
+              if (CachedBodies[I])
+                continue;
               Bodies[I] = ExtraCFG.build(Img, ExtraDec, Entry, Name);
             }
           },
@@ -3268,11 +3290,13 @@ void computeCallRegisterEffects(
         return;
       for (size_t I = 0; I < Count; ++I) {
         const va_t Callee = Pending[Begin + I].first;
-        const LowFunc &Body = Bodies[I];
-        CollectFormattedCalls(Body, /*Converted=*/false);
+        const CallRegisterBodyView Body =
+            CachedBodies[I] ? CallRegisterBodyView(*CachedBodies[I])
+                            : CallRegisterBodyView(Bodies[I]);
+        CollectFormattedCalls(Body.Blocks, /*Converted=*/false);
         Effects[Callee] =
             localRegisterEffect(Img, Body, &NoReturnTargets, &FixedCallReads);
-        if (forwardsToGuardDispatch(Img, Body))
+        if (forwardsToGuardDispatch(Img, Body.Blocks))
           GuardForwarders.insert(Callee);
         Work.push_back(Callee);
       }
@@ -3355,25 +3379,45 @@ void computeCallRegisterEffects(
 }
 } // namespace
 
+struct PipelineAnalysisCache::Impl {
+  const BinaryImage *Image;
+  DebugContext *Debug;
+  std::set<va_t> Entries;
+  std::set<uint64_t> VerifiedEntries;
+  libc::NoReturnTargetIndex Targets;
+  detail::AbsoluteRelocationRootIndex Roots;
+  ExecutableCodeOwnerIndex Owners;
+  InternalNoReturnIndex Callees;
+  std::shared_ptr<X87CallGraphCache> Graphs;
+
+  Impl(const BinaryImage &Img, DebugContext *Dbg, std::set<va_t> Entries,
+       bool RetainBodies)
+      : Image(&Img), Debug(Dbg), Entries(std::move(Entries)),
+        VerifiedEntries(Img.VerifiedFunctionEntries),
+        Targets(Img,
+                Dbg ? libc::NoReturnTargetIndex::NameResolver(
+                          [Dbg](va_t Addr) { return Dbg->functionName(Addr); })
+                    : libc::NoReturnTargetIndex::NameResolver()),
+        Roots(Img), Owners(Img),
+        Callees(Img, &this->Entries, &Targets, &Roots, &Owners),
+        Graphs(createX87CallGraphCache(&Callees, &Targets, RetainBodies)) {}
+
+  bool matches(const BinaryImage &Img, DebugContext *Dbg,
+               const std::set<va_t> &CandidateEntries) const {
+    // Object identity is only a guard: the owner must retire this state on
+    // reload/mutation. These two inventories can grow during const analysis,
+    // and affect CFG boundaries, ownership and proof work charges.
+    return Image == &Img && Debug == Dbg && Entries == CandidateEntries &&
+           VerifiedEntries == Img.VerifiedFunctionEntries;
+  }
+};
+
 void Pipeline::buildLowIR(
     const BinaryImage &Img,
     const std::vector<std::pair<va_t, std::string>> &Candidates,
     const PipelineOptions &Opts, DebugContext *Dbg, PipelineResult &Result) {
   const size_t Total = Candidates.size();
   std::vector<LowFunc> AllLow(Total);
-  // A restricted load names callees on demand; ask the debug context about
-  // a callee it has not named yet, so `--func` agrees with a whole-image run.
-  libc::NoReturnTargetIndex::NameResolver ResolveName;
-  if (Dbg)
-    ResolveName = [Dbg](va_t Addr) { return Dbg->functionName(Addr); };
-  const libc::NoReturnTargetIndex NoReturnTargets(Img, std::move(ResolveName));
-  const detail::AbsoluteRelocationRootIndex AbsoluteRelocationRoots(Img);
-  // One immutable index is shared by CFG workers. Besides code ownership it
-  // gives jump-table target validation a sorted function-symbol inventory;
-  // building that inventory lazily on BinaryImage would race between workers.
-  const ExecutableCodeOwnerIndex ExecutableCodeOwners(Img);
-  const ExecutableCodeOwnerIndex *CodeOwnerIndex = &ExecutableCodeOwners;
-
   // Detected candidates plus every confirmed function-symbol start. Selecting
   // bodies must not change their boundaries: one unwind range can cover
   // independently callable entries, including address-taken ones. CFGBuilder
@@ -3384,34 +3428,53 @@ void Pipeline::buildLowIR(
   // hot/cold chunks of one function with the same int3 padding, and a jump
   // into such a chunk must keep its code in the jumping function.
   const std::set<va_t> BoundaryGuesses = Img.boundaryGuessFunctionStarts();
-  std::set<va_t> FuncEntries;
+  std::set<va_t> CandidateEntries;
   for (const auto &C : Candidates)
     if (!BoundaryGuesses.count(C.first))
-      FuncEntries.insert(C.first);
+      CandidateEntries.insert(C.first);
   // The same symbol inventory owns both full-image and selected-function CFGs;
   // unselected bodies need not be lifted to preserve their entry boundaries.
   for (const auto &Sym : Img.Symbols)
     if (Sym.IsFunc && !BoundaryGuesses.count(Sym.Addr))
-      FuncEntries.insert(Sym.Addr);
+      CandidateEntries.insert(Sym.Addr);
   if (Opts.OnlyFunctionEntries.empty()) {
     // A chained-unwind continuation is part of its parent function: a jump
     // to it must be followed, not modeled as a tail call to a missing one.
     for (const auto &[Start, End] : Img.KnownCodeRanges) {
       (void)End;
       if (Start != 0 && !Img.ContinuationCodeStarts.count(Start))
-        FuncEntries.insert(Start);
+        CandidateEntries.insert(Start);
     }
   }
-  // Internal no-return proofs are requested during CFG construction, before
-  // later register-effect summaries are available. Independent builders share
-  // this index.
-  const InternalNoReturnIndex NoReturnCallees(
-      Img, &FuncEntries, &NoReturnTargets, &AbsoluteRelocationRoots,
-      CodeOwnerIndex);
-  // Share immutable x87 graph facts only inside this image analysis.
-  // Context keys snapshot the changing CFG protection sets; the immutable
-  // indexes above outlive every worker and every graph retained here.
-  auto X87Graphs = createX87CallGraphCache(&NoReturnCallees, &NoReturnTargets);
+  const bool Restricted =
+      !Opts.OnlyFunctionEntries.empty() || Opts.MaxFunctions != 0;
+  PipelineAnalysisCache LocalCache;
+  PipelineAnalysisCache &Cache =
+      Opts.AnalysisCache && Restricted && Img.Arch == Arch::X64
+          ? *Opts.AnalysisCache
+          : LocalCache;
+  if (!Cache.Facts || !Cache.Facts->matches(Img, Dbg, CandidateEntries))
+    Cache.Facts = std::make_shared<PipelineAnalysisCache::Impl>(
+        Img, Dbg, std::move(CandidateEntries), Restricted);
+  else {
+    // Keep no-return memo storage local to each run, as before. Its stable
+    // owning index still binds the bounded raw graph/body cache contexts.
+    Cache.Facts->Callees.clearMemoizedProofs();
+    Cache.Facts->Targets.clearMemoizedNames();
+  }
+  const auto &Facts = *Cache.Facts;
+  const auto &FuncEntries = Facts.Entries;
+  const auto &NoReturnTargets = Facts.Targets;
+  const auto &AbsoluteRelocationRoots = Facts.Roots;
+  const auto *CodeOwnerIndex = &Facts.Owners;
+  const auto &NoReturnCallees = Facts.Callees;
+  const auto &X87Graphs = Facts.Graphs;
+  // A small selected-function batch runs inline. Give its independent call
+  // proofs the otherwise unused worker quota; parallel CFG batches and the
+  // extra-callee frontier keep their existing outer parallelism.
+  const unsigned X87ProofThreads = Total < limits::kMinParallelIRWorkItems
+                                       ? std::min(workerThreadCount(), 4u)
+                                       : 1;
 
   // Decode cost tracks a function's instruction count, which is unknown before
   // the recursive-descent build runs.  Candidates are address-sorted, so the
@@ -3439,9 +3502,18 @@ void Pipeline::buildLowIR(
     LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
     LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
     LocalCFG.setX87CallGraphCache(X87Graphs);
+    LocalCFG.setX87CallProofThreads(X87ProofThreads);
     for (size_t I; (I = Claim()) < N;) {
-      AllLow[I] = LocalCFG.build(Img, LocalDec, Candidates[I].first,
-                                 Candidates[I].second);
+      // Only the initial default construction may reuse a complete body.
+      // Module table arbitration and continuation closure below still rebuild
+      // with their own protected roots and policies.
+      auto Cached = CFGBuilder::cachedDefaultFunction(
+          X87Graphs, Img, Candidates[I].first, Candidates[I].second,
+          &FuncEntries, &NoReturnTargets, &NoReturnCallees,
+          &AbsoluteRelocationRoots, CodeOwnerIndex);
+      AllLow[I] = Cached ? std::move(*Cached)
+                         : LocalCFG.build(Img, LocalDec, Candidates[I].first,
+                                          Candidates[I].second);
       trimFuncStorage(AllLow[I]);
     }
   });
@@ -3495,6 +3567,7 @@ void Pipeline::buildLowIR(
       LocalCFG.setAbsoluteRelocationRootIndex(&AbsoluteRelocationRoots);
       LocalCFG.setExecutableCodeOwnerIndex(CodeOwnerIndex);
       LocalCFG.setX87CallGraphCache(X87Graphs);
+      LocalCFG.setX87CallProofThreads(X87ProofThreads);
       LocalCFG.setProtectedJumpTableRelocationSlots(&ProtectedRelocationSlots);
       LocalCFG.setUnsafeJumpTableBranches(&UnsafeJumpTableBranches);
       LocalCFG.setPreservePotentialJumpTableBranches(
@@ -3781,14 +3854,16 @@ void Pipeline::buildLowIR(
   // code identities.  Keeping publication after both fixed points prevents a
   // provisional producer or withdrawn continuation from becoming stale
   // image-global evidence.
-  bool PublishedCodeRefs = false;
   for (const LowFunc &Function : AllLow)
     for (va_t Ref : Function.CodeRefTargets)
-      PublishedCodeRefs |= Img.CodeRefTargets.insert(Ref).second;
-  // Newly published image facts can change a callee's address provenance.
-  // Extra-callee analysis begins a fresh cache lifetime after such a change.
-  if (PublishedCodeRefs)
-    X87Graphs = createX87CallGraphCache(&NoReturnCallees, &NoReturnTargets);
+      Img.CodeRefTargets.insert(Ref);
+  // CodeRefTargets affects later address propagation and x87 tag entry seeds,
+  // but not the raw machine graphs retained by X87Graphs: their builders skip
+  // floating-stack normalization. Keep those facts for extra-callee analysis.
+  // Ordinary builders normalize stack and tags against the newly published
+  // roots. Complete-function reuse requires the independent no-stack witness;
+  // neither a tag-dependent normalized CFG nor a caller's effect answer is
+  // shared.
 
   size_t FuncCount = 0;
   for (size_t I = 0; I < Total; ++I) {

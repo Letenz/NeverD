@@ -781,6 +781,14 @@ llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
       *Requirements, Compiled);
   if (!RequiredFunctions)
     return RequiredFunctions.takeError();
+  return buildRelocatedELFEHFrameHdr(Binary, Region, Compiled,
+                                     *RequiredFunctions, HdrVA);
+}
+
+llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
+    llvm::ArrayRef<uint8_t> Binary, const ELFEHFrameRegion &Region,
+    const CompiledImage &Compiled, llvm::ArrayRef<uint64_t> RequiredFunctions,
+    uint64_t HdrVA) {
   if (!Region.HasHdr || !isCurrentRegion(Binary, Region))
     return patchError("no .eh_frame_hdr search table to relocate");
 
@@ -804,7 +812,7 @@ llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
       decodeRegeneratedEntries(
           llvm::ArrayRef<uint8_t>(Compiled.Bytes.data() + Generated->Offset,
                                   static_cast<size_t>(Generated->Size)),
-          Generated->VA, Region.Is64, *RequiredFunctions);
+          Generated->VA, Region.Is64, RequiredFunctions);
   if (!NewEntries)
     return patchError("regenerated .eh_frame does not describe every "
                       "required function");

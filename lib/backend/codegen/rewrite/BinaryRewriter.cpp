@@ -75,6 +75,19 @@ bool repairMixedARMInterworkingCalls(CompiledImage &Compiled,
     if (Owner.Kind !=
         llvm::mc_rewrite::RewriteSourceFunctionOwnerKind::FunctionEntry)
       continue;
+    if (Compiled.InputKind == RewriteInputKind::ReplacementIR) {
+      // Replacement helpers have their own compiler ABI. Their instruction
+      // state is independent of the original entry that receives a trampoline.
+      const auto Mode = Compiled.ReplacementFunctionModes.find(Owner.OwnerVA);
+      if (Mode == Compiled.ReplacementFunctionModes.end() ||
+          (Mode->second != InstructionMode::ARM &&
+           Mode->second != InstructionMode::Thumb) ||
+          !OwnerModes.emplace(Owner.OwnerVA, Mode->second).second) {
+        Detail = "replacement ARM function has ambiguous compiler mode";
+        return false;
+      }
+      continue;
+    }
     const auto Original =
         Compiled.SourceFunctionOriginalVAs.find(Owner.SourceFunction);
     if (Original == Compiled.SourceFunctionOriginalVAs.end()) {
@@ -578,8 +591,7 @@ provenNextEntrySpan(uint64_t OrigVA, uint64_t TextStartVA, uint64_t TextEndVA,
   return Found ? Next - OrigVA : 0;
 }
 
-static bool sourceEntryCanHostTrampoline(const BinaryImage &Image,
-                                         va_t OriginalVA) {
+bool sourceEntryCanHostTrampoline(const BinaryImage &Image, va_t OriginalVA) {
   const auto Mode = Image.instructionModeAt(OriginalVA);
   if (!Mode)
     return false;
@@ -618,7 +630,8 @@ static bool sourceEntryCanHostTrampoline(const BinaryImage &Image,
 
 bool BinaryPatcher::prepareSourceFunctionsForPatch(
     llvm::Module &Module, const BinaryImage *Image,
-    SourceFunctionPreparation &Preparation, std::string &Detail) {
+    SourceFunctionPreparation &Preparation, std::string &Detail,
+    RewriteInputKind InputKind) {
   Preparation = SourceFunctionPreparation{};
   Detail.clear();
 
@@ -627,7 +640,9 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
   // closure while every body and every named-table row is still intact; a
   // later planner must never be asked to infer whether a declaration used to
   // be a valid source definition.
-  if (Image && Image->Format == BinaryFormat::COFF) {
+  const bool LiftedCOFF = Image && Image->Format == BinaryFormat::COFF &&
+                          InputKind == RewriteInputKind::LiftedIR;
+  if (LiftedCOFF) {
     if (llvm::Error Error =
             validateCOFFExceptionSourceIdentityClosure(Module, *Image)) {
       Detail = llvm::toString(std::move(Error));
@@ -677,7 +692,8 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
       return false;
     }
     if (Image->Arch == Arch::ARM &&
-        Image->Mode == InstructionMode::MixedARMThumb) {
+        (Image->Mode == InstructionMode::MixedARMThumb ||
+         InputKind == RewriteInputKind::ReplacementIR)) {
       // A tail B/B.W cannot change instruction state without a veneer. Keep
       // direct calls as calls so final-image interworking can use BLX.
       Function.addFnAttr("disable-tail-calls", "true");
@@ -690,7 +706,18 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
           *Mode == InstructionMode::Thumb ? "+thumb-mode" : "-thumb-mode";
       const llvm::StringRef Conflict =
           *Mode == InstructionMode::Thumb ? "-thumb-mode" : "+thumb-mode";
-      if (llvm::StringRef(Features).contains(Conflict)) {
+      if (InputKind == RewriteInputKind::ReplacementIR) {
+        const std::string OriginalFeatures = Features;
+        llvm::SmallVector<llvm::StringRef, 16> Parts;
+        llvm::StringRef(OriginalFeatures).split(Parts, ',');
+        Features.clear();
+        for (auto Part : Parts)
+          if (!Part.empty() && Part != "+thumb-mode" && Part != "-thumb-mode") {
+            if (!Features.empty())
+              Features += ',';
+            Features += Part.str();
+          }
+      } else if (llvm::StringRef(Features).contains(Conflict)) {
         Detail = "source target features contradict authenticated ARM mode";
         return false;
       }
@@ -715,7 +742,7 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
     (void)FunctionName;
     ReplaceableEntries.push_back(OriginalVA);
   }
-  if (Image && Image->Format == BinaryFormat::COFF) {
+  if (LiftedCOFF) {
     if (llvm::Error Error = validateCOFFCxxGroupReplacementClosure(
             Module, *Image, ReplaceableEntries)) {
       Detail = llvm::toString(std::move(Error));
@@ -786,7 +813,7 @@ bool BinaryPatcher::prepareSourceFunctionsForPatch(
     }
   }
 
-  if (Image && Image->Format == BinaryFormat::COFF) {
+  if (LiftedCOFF) {
     if (llvm::Error Error = retainCOFFCxxGroupRewriteContractsForReplacement(
             Module, *Image, ReplaceableEntries)) {
       Detail = llvm::toString(std::move(Error));
@@ -896,7 +923,8 @@ size_t BinaryPatcher::installTrampolines(
     llvm::ArrayRef<llvm::mc_rewrite::RewriteSourceFunctionOwner>
         SourceFunctionOwners,
     const std::map<std::string, uint64_t> &SourceFunctionOriginalVAs,
-    const BinaryImage *SourceImage) {
+    const BinaryImage *SourceImage,
+    const std::map<uint64_t, InstructionMode> *ReplacementModes) {
   if (OrigTextSize > InvalidVA - OrigTextVA ||
       OrigTextVA > InvalidVA - ImageBase)
     return 0;
@@ -1000,8 +1028,20 @@ size_t BinaryPatcher::installTrampolines(
         MaxOverwriteBytes =
             std::min<uint64_t>(MaxOverwriteBytes, OtherVA - OrigAnalysisVA);
     }
-    if (writeTrampoline(Binary, OrigOff, FuncNewVA, ImageBase + OrigRVA,
-                        TargetArch, *EntryMode, MaxOverwriteBytes)) {
+    bool Written = false;
+    if (ReplacementModes && TargetArch == Arch::ARM) {
+      const auto Generated = ReplacementModes->find(FuncNewVA);
+      if (Generated == ReplacementModes->end() ||
+          Generated->second != *EntryMode)
+        return;
+      Written = getTargetCodegenInfo(TargetArch, *EntryMode)
+                    .writeSourceTrampoline(Binary, OrigOff, FuncNewVA,
+                                           OrigAnalysisVA, MaxOverwriteBytes);
+    } else {
+      Written = writeTrampoline(Binary, OrigOff, FuncNewVA, OrigAnalysisVA,
+                                TargetArch, *EntryMode, MaxOverwriteBytes);
+    }
+    if (Written) {
       ++Count;
       if (PatchedOriginalEntries)
         PatchedOriginalEntries->push_back(OrigAnalysisVA);

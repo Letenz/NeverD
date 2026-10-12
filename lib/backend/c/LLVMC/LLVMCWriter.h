@@ -103,7 +103,10 @@ public:
   void writeGlobals(llvm::Module &Mod);
   void writeImageByteArray(const llvm::GlobalVariable &Global,
                            llvm::StringRef Name);
-  void writeReferencedImageObjects(const llvm::Function &Fn);
+  /// Declare the image objects \p Fn reads or writes, and those whose
+  /// addresses alone its printed \p Text names.
+  void writeReferencedImageObjects(const llvm::Function &Fn,
+                                   llvm::StringRef Text);
   void writeForwardDecls(llvm::Module &Mod);
 
   //--- Function rendering (LLVMCFuncWriter.cpp) ---
@@ -605,6 +608,13 @@ public:
   //--- Expression rendering (LLVMCExprWriter.cpp) ---
   std::string resolveNdDataName(llvm::StringRef Name) const;
   bool isImageDataAddress(va_t Addr) const;
+  /// The address among the code that \p CI holds, which the LLVM emitter
+  /// keeps as a number: it gives only data sections globals to point into.
+  std::optional<va_t> codeSectionAddress(const llvm::ConstantInt &CI) const;
+  /// \p CI as the literal or the debug information's data object at its
+  /// address among the code, as HighC spells it.
+  std::optional<std::string>
+  codeSectionAddressText(const llvm::ConstantInt &CI) const;
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
@@ -638,6 +648,7 @@ public:
   std::string integerPointerOperandStr(const llvm::Value *Operand);
   std::optional<std::string>
   targetPointerMaskIdentity(const llvm::BinaryOperator &Op);
+  std::optional<std::string> lowBitsMaskCast(const llvm::BinaryOperator &Op);
   std::string castStr(unsigned Opcode, const std::string &Src,
                       llvm::Type *SrcTy, llvm::Type *DstTy);
   std::string cmpStr(llvm::CmpInst::Predicate Pred, const std::string &LHS,
@@ -676,6 +687,8 @@ public:
   bool EmitFunctionWrapper = true;
   CProjectionIdentifierAllocator GlobalIdentifierAllocator;
   std::map<std::pair<Intrinsic, unsigned>, std::string> FPStateHelperNames;
+  /// The helper each modeled supervisor call in the unit prints through.
+  std::map<Intrinsic, std::string> SyscallHelperNames;
   std::map<const llvm::Function *, std::string> FunctionIdentifiers;
   /// Exact projected prototypes captured while rendering definitions. They
   /// include source presentation choices such as inferred void and sret.

@@ -83,7 +83,11 @@ llvm::Constant *MedLLVMEmitter::resolveLiftedCodeAddress(va_t Address) {
     if (Block && Block->getParent())
       return llvm::BlockAddress::get(Block->getParent(), Block);
   }
-  return resolveLiftedFunctionInterior(Address);
+  if (auto *Interior = resolveLiftedFunctionInterior(Address))
+    return Interior;
+  // A retained handler identity belongs to the image, independently of the
+  // referencing function's EH metadata or inclusion of its original parent.
+  return resolveX86RegistrationHandlerReference(Address);
 }
 
 llvm::Constant *MedLLVMEmitter::resolveLiftedFunctionInterior(va_t Address) {
@@ -2344,10 +2348,13 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     if (auto *BlockAddress =
             llvm::dyn_cast_or_null<llvm::BlockAddress>(LiftedCodeIdentity))
       BlockOwner = BlockAddress->getFunction();
+    // Data the debug information places among the code is no code, though
+    // its section is.
     const bool HasLayoutCodeOwner =
         IncludeLayoutCodeOwners &&
         Current.Provenance == ConstantAddressProvenance::Address &&
-        Img->hasExecutableCodeOwnerAt(Normalized);
+        Img->hasExecutableCodeOwnerAt(Normalized) &&
+        !Img->DataInCode.count(Normalized);
     const bool IsCode =
         Current.Provenance == ConstantAddressProvenance::CodeAddress ||
         HasLoaderCodeProvenance ||

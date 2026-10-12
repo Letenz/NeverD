@@ -98,6 +98,20 @@ inline constexpr unsigned I1Bit = I2Bit + ThumbBranchJ2.Width;
 inline constexpr unsigned SignBit = I1Bit + ThumbBranchJ1.Width;
 } // namespace t32
 
+/// A same-mode T32 B.W. Its signed halfword displacement is independent of
+/// the loaded image base and requires no absolute pointer in original text.
+inline std::pair<uint16_t, uint16_t> t32Jump(int64_t Displacement) {
+  const uint32_t Bytes = static_cast<uint32_t>(Displacement);
+  const uint32_t S = (Bytes >> t32::SignBit) & 1;
+  const uint32_t J1 = ~((Bytes >> t32::I1Bit) ^ S) & 1;
+  const uint32_t J2 = ~((Bytes >> t32::I2Bit) ^ S) & 1;
+  return {uint16_t(ThumbWideBranchHigh.Match | (S << ThumbBranchSign.Low) |
+                   ((Bytes >> t32::HighOffset) & ThumbBranchHigh.mask())),
+          uint16_t(ThumbJumpLow.Match | (J1 << ThumbBranchJ1.Low) |
+                   (J2 << ThumbBranchJ2.Low) |
+                   ((Bytes >> t32::LowOffset) & ThumbBranchLow.mask()))};
+}
+
 /// Whether a T32 `blx` (immediate) can branch \p Displacement bytes: a whole
 /// number of words its offset holds.
 inline bool isT32BranchLinkExchangeDisplacement(int64_t Displacement) {

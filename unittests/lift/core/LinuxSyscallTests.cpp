@@ -1,0 +1,157 @@
+//===- LinuxSyscallTests.cpp - Linux supervisor call contracts ------------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+//
+// A Linux `svc #0` reads its number and argument registers and writes its
+// result register.  HighC, LLVM IR and LLVM-C keep each value in its register,
+// and a syscall whose arity is verified reads only its own arguments.
+//
+//===----------------------------------------------------------------------===//
+
+#include "NeverDLiftFixture.h"
+
+#include <fstream>
+#include <sstream>
+
+namespace {
+
+fs::path a64Obj() { return fs::path(TEST_OBJ_DIR) / "test_linux_svc_a64.o"; }
+fs::path armObj() { return fs::path(TEST_OBJ_DIR) / "test_linux_svc_arm.o"; }
+fs::path exitAfterCallObj() {
+  return fs::path(TEST_OBJ_DIR) / "test_call_arg_phi_a64_elf.o";
+}
+
+std::string readText(const fs::path &Path) {
+  std::ifstream In(Path);
+  std::ostringstream Text;
+  Text << In.rdbuf();
+  return Text.str();
+}
+
+/// The body of function \p Name in C source \p C.
+std::string cFunction(const std::string &C, const std::string &Name) {
+  const size_t Start = C.find(" " + Name + "(");
+  if (Start == std::string::npos)
+    return "";
+  return C.substr(Start, C.find("\n}", Start) - Start);
+}
+
+} // namespace
+
+class LinuxSyscall : public NeverDLiftTest {
+protected:
+  std::string highC(const fs::path &Object) {
+    const auto R = decompileToHighC(Object);
+    EXPECT_EQ(R.exitCode, 0) << R.err;
+    return readText(tmpFile("decompiled_high.c"));
+  }
+};
+
+TEST_F(LinuxSyscall, AArch64CallsPassTheirRegisters) {
+  const std::string C = highC(a64Obj());
+  EXPECT_NE(cFunction(C, "a64_linux_exit_group")
+                .find("neverd_a64_linux_syscall(94, 5, 0, 0, 0, 0, 0)"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(cFunction(C, "a64_linux_six")
+                .find("neverd_a64_linux_syscall(63, 20, 21, 22, 23, 24, 25)"),
+            std::string::npos)
+      << C;
+  EXPECT_EQ(cFunction(C, "a64_other_immediate").find("linux_syscall"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(C.find("register uint64_t in_number __asm__(\"x8\") = number;"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(C.find("__asm__ volatile(\"svc #0\""), std::string::npos) << C;
+}
+
+TEST_F(LinuxSyscall, ARMCallsPassTheirRegisters) {
+  const std::string C = highC(armObj());
+  EXPECT_NE(cFunction(C, "arm_linux_exit")
+                .find("neverd_arm_linux_syscall(1, 3, 0, 0, 0, 0, 0, 0)"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(
+      cFunction(C, "arm_linux_seven")
+          .find("neverd_arm_linux_syscall(4, 10, 11, 12, 13, 14, 15, 16)"),
+      std::string::npos)
+      << C;
+  EXPECT_EQ(cFunction(C, "arm_oabi_call").find("linux_syscall"),
+            std::string::npos)
+      << C;
+  EXPECT_NE(C.find("register uint32_t in_number __asm__(\"r7\") = number;"),
+            std::string::npos)
+      << C;
+}
+
+// A syscall that reads a verified number of arguments takes no parameter from
+// the registers it ignores.
+TEST_F(LinuxSyscall, AnExitReadsOnlyItsStatus) {
+  const std::string C = highC(a64Obj());
+  EXPECT_NE(C.find("void a64_linux_exit_group(void)"), std::string::npos) << C;
+}
+
+// exit after a call takes the call's result: it is a value HighC renders,
+// not an SVC result it must refuse.
+TEST_F(LinuxSyscall, AnExitAfterACallDecompiles) {
+  const std::string C = highC(exitAfterCallObj());
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(93, "), std::string::npos) << C;
+}
+
+TEST_F(LinuxSyscall, LLVMIRBindsEachRegister) {
+  const auto A64 = liftToLLVMIR(a64Obj());
+  ASSERT_EQ(A64.exitCode, 0) << A64.err;
+  EXPECT_TRUE(
+      A64.contains("asm sideeffect \"svc #0\", "
+                   "\"={x0},{x8},0,{x1},{x2},{x3},{x4},{x5},~{memory}\""))
+      << A64.out;
+  const auto ARM = liftToLLVMIR(armObj());
+  ASSERT_EQ(ARM.exitCode, 0) << ARM.err;
+  EXPECT_TRUE(
+      ARM.contains("asm sideeffect \"svc #0\", "
+                   "\"={r0},{r7},0,{r1},{r2},{r3},{r4},{r5},{r6},~{memory}\""))
+      << ARM.out;
+}
+
+TEST_F(LinuxSyscall, LLVMCCallsTheHelper) {
+  const auto R = decompileToC(a64Obj());
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  const std::string C = readText(tmpFile("decompiled.c"));
+  EXPECT_NE(C.find("static inline uint64_t neverd_a64_linux_syscall("),
+            std::string::npos)
+      << C;
+  EXPECT_NE(C.find("neverd_a64_linux_syscall(63, "), std::string::npos) << C;
+}
+
+// The helpers build for the system the code was lifted from.
+TEST_F(LinuxSyscall, TheCBuildsForItsTarget) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const std::pair<fs::path, const char *> Cases[] = {
+      {a64Obj(), "aarch64-linux-gnu"}, {armObj(), "armv7-linux-gnueabi"}};
+  for (const auto &[Object, Target] : Cases) {
+    SCOPED_TRACE(Target);
+    const auto Source = tmpFile(std::string("syscall-") + Target + ".c");
+    std::ofstream(Source) << highC(Object);
+    const auto Built =
+        exec(NEVERD_TEST_CLANG, {"-target", Target, "-fsyntax-only",
+                                 "-fno-strict-aliasing", Source.string()});
+    EXPECT_EQ(Built.exitCode, 0) << Built.err;
+  }
+}
+
+// An image for another operating system gives `svc #0` no Linux contract.
+TEST_F(LinuxSyscall, AnotherSystemKeepsTheBareCall) {
+  const auto Object = tmpFile("freebsd-svc.o");
+  fs::copy_file(armObj(), Object, fs::copy_options::overwrite_existing);
+  {
+    std::fstream File(Object, std::ios::in | std::ios::out | std::ios::binary);
+    File.seekp(7);                  // e_ident[EI_OSABI]
+    File.put(static_cast<char>(9)); // ELFOSABI_FREEBSD
+  }
+  const std::string C = highC(Object);
+  EXPECT_EQ(C.find("neverd_arm_linux_syscall"), std::string::npos) << C;
+}

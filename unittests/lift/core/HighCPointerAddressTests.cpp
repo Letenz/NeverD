@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -14,6 +15,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -1198,6 +1200,70 @@ int main(void) {
 )c");
 }
 
+TEST(HighCPointerAddresses, DebugSymbolsBoundAnUnsizedIndexedTable) {
+  // An eight-byte table no symbol sizes, with other data after it in its
+  // section.  Without debug information the table the code indexes runs to
+  // the section's end; with a data symbol right after it, as a PDB public
+  // names the next object without sizing it, the table ends there.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003700, {1, 10, 10, 10, 11, 11, 11, 11, 7, 7, 7, 7, 7, 7, 7, 7,
+                    7, 7,  7,  7,  7,  7,  7,  7,  7, 7, 7, 7, 7, 7, 7, 7},
+      false);
+  Section Sec;
+  Sec.Name = ".rdata";
+  Sec.VA = 0x140003700;
+  Sec.Size = 32;
+  Sec.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Sec);
+  class NextPublicDbg : public NullDebugContext {
+  public:
+    std::pair<std::optional<va_t>, std::optional<va_t>>
+    dataSymbolsAround(va_t Addr) const override {
+      if (Addr >= 0x140003700 && Addr < 0x140003708)
+        return {va_t{0x140003700}, va_t{0x140003708}};
+      return {};
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Func;
+  Func.Name = "pick";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"arg0", Word}};
+  auto Index = HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Word),
+                                   HighExpr::makeConst(7, 8));
+  auto Element = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(0x140003700, 8),
+                          std::move(Index)),
+      NdType::makeInt(1, false));
+  auto Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Element));
+  Value->Type = Func.ReturnType;
+  returnValue(Func, std::move(Value));
+
+  const auto Emit = [&](DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Img;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
+    OS.flush();
+    return Source;
+  };
+  const std::string Section = Emit(nullptr);
+  EXPECT_NE(Section.find("[32]"), std::string::npos) << Section;
+  const std::string Bounded = Emit(&Dbg);
+  EXPECT_NE(Bounded.find("[8]"), std::string::npos) << Bounded;
+  EXPECT_EQ(Bounded.find("[32]"), std::string::npos) << Bounded;
+  compileAndRunCallOrdering(Bounded + R"c(
+int main(void) {
+  return pick(0) == 1 && pick(4) == 11 && pick(9) == 10 ? 0 : 1;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   // A branchless select masks two string addresses. The literal is an array
   // in C; the mask needs its address. A call argument keeps the literal.
@@ -1351,6 +1417,91 @@ TEST(HighCPointerAddresses, ReadonlyNarrowImageStringPrintsLiteral) {
   OS.flush();
   EXPECT_NE(Source.find("\"hi\""), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L\"hi\""), std::string::npos) << Source;
+}
+
+/// An image whose executable PAGE section keeps, after its code, the
+/// literal L"SA" and a two-byte table, as a kernel keeps data among its
+/// code; its .rdata keeps an empty literal.
+BinaryImage makeDataAmongCodeFixture() {
+  BinaryImage Img =
+      makeImageObjectFixture(0x140005000,
+                             {0xC3, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+                              'S', 0, 'A', 0, 0, 0, 0, 0, 0x34, 0x12},
+                             false);
+  Img.Segments[0].Name = "PAGE";
+  Img.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Segment Rdata;
+  Rdata.Name = ".rdata";
+  Rdata.VA = 0x140006000;
+  Rdata.Size = 1;
+  Rdata.Flags = SegmentFlags::Readable;
+  Rdata.Data = {0};
+  Img.Segments.push_back(std::move(Rdata));
+  return Img;
+}
+
+/// The PDB of that image: MSVC's names for its literals, and the table's.
+class DataAmongCodeDbg : public NullDebugContext {
+public:
+  std::vector<DataObjectSym> allDataObjects() const override {
+    const auto Object = [](const char *Name, va_t Addr, uint64_t Size) {
+      DataObjectSym Sym;
+      Sym.Name = Name;
+      Sym.Addr = Addr;
+      Sym.Size = Size;
+      return Sym;
+    };
+    return {Object("??_C@_15OHIPBLFN@?$AAS?$AAA@", 0x140005008, 6),
+            Object("KeyTable", 0x140005010, 2),
+            Object("??_C@_00CNPNBAHC@@", 0x140006000, 1)};
+  }
+  bool hasInfo() const override { return true; }
+};
+
+TEST(HighCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
+  // The literals print as their text and the table by its name, as the
+  // listing shows them; without the PDB the bytes among the code are code.
+  const BinaryImage Img = makeDataAmongCodeFixture();
+  DataAmongCodeDbg Dbg;
+  BinaryImage Debugged = Img;
+  applyDebugSymbols(Debugged, Dbg);
+  HighFunc Func;
+  Func.Name = "page_data";
+  Func.ReturnType = NdType::makeInt(8, false);
+  HighStmt Wide;
+  Wide.Kind = StmtKind::Call;
+  Wide.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                     {HighExpr::makeConst(0x140005008, 8)});
+  HighStmt Empty;
+  Empty.Kind = StmtKind::Call;
+  Empty.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                      {HighExpr::makeConst(0x140006000, 8)});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal =
+      HighExpr::makeConst(0x140005010, 8, ConstantAddressProvenance::Address);
+  Func.Body = {Wide, Empty, Return};
+  const DataAccessWidths Widths;
+  const auto Emit = [&](const BinaryImage &Image, DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Image;
+    Options.AccessWidths = &Widths;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
+    OS.flush();
+    return Source;
+  };
+  const std::string Named = Emit(Debugged, &Dbg);
+  EXPECT_NE(Named.find("Format(L\"SA\")"), std::string::npos) << Named;
+  EXPECT_NE(Named.find("Format(\"\")"), std::string::npos) << Named;
+  EXPECT_NE(Named.find("&KeyTable"), std::string::npos) << Named;
+  const std::string Bare = Emit(Img, nullptr);
+  EXPECT_NE(Bare.find("0x140005008"), std::string::npos) << Bare;
+  EXPECT_NE(Bare.find("0x140005010"), std::string::npos) << Bare;
+  EXPECT_EQ(Bare.find("KeyTable"), std::string::npos) << Bare;
 }
 
 TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
@@ -1508,6 +1659,98 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   OS.flush();
   EXPECT_NE(Source.find("L\"%s\""), std::string::npos) << Source;
   EXPECT_EQ(Source.find("0x140003400"), std::string::npos) << Source;
+}
+
+TEST(LLVMCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
+  // The LLVM module keeps addresses among the code as numbers; they print as
+  // HighC prints them, and the table is declared.
+  const BinaryImage Img = makeDataAmongCodeFixture();
+  DataAmongCodeDbg Dbg;
+  BinaryImage Debugged = Img;
+  applyDebugSymbols(Debugged, Dbg);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-page-data", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::FunctionType *FormatTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                              {llvm::PointerType::getUnqual(I8)}, false);
+  llvm::Function *Format = llvm::Function::Create(
+      FormatTy, llvm::GlobalValue::ExternalLinkage, "Format", Module);
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "page_data", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateCall(Format, {llvm::ConstantExpr::getIntToPtr(
+                                 llvm::ConstantInt::get(I64, 0x140005008),
+                                 llvm::PointerType::getUnqual(I8))});
+  Builder.CreateRet(llvm::ConstantInt::get(I64, 0x140005010));
+
+  const auto Emit = [&](const BinaryImage &Image, DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.EmitIncludes = false;
+    EXPECT_TRUE(
+        LLVMCEmitter().emit(Module, OS, Options, Debug, &Image, Function));
+    OS.flush();
+    return Source;
+  };
+  const std::string Named = Emit(Debugged, &Dbg);
+  EXPECT_NE(Named.find("L\"SA\""), std::string::npos) << Named;
+  EXPECT_NE(Named.find("(uintptr_t)&KeyTable"), std::string::npos) << Named;
+  EXPECT_NE(Named.find("extern uint8_t KeyTable;"), std::string::npos) << Named;
+  const std::string Bare = Emit(Img, nullptr);
+  EXPECT_EQ(Bare.find("KeyTable"), std::string::npos) << Bare;
+  EXPECT_EQ(Bare.find("L\"SA\""), std::string::npos) << Bare;
+}
+
+TEST(LLVMCPointerAddresses, DataOnlyAddressedIsDeclared) {
+  // The module mirrors the image's data section, and the function only
+  // returns the address of an object inside it: the C declares the object
+  // as the listing names it, by the width of the accesses there.
+  BinaryImage Img =
+      makeImageObjectFixture(0x140003000, std::vector<uint8_t>(32, 1),
+                             /*Writable=*/true);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-address-only", Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  auto *SectionTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(Context), 32);
+  auto *Section =
+      new llvm::GlobalVariable(Module, SectionTy, /*isConstant=*/false,
+                               llvm::GlobalValue::ExternalLinkage,
+                               llvm::ConstantAggregateZero::get(SectionTy),
+                               makeNdDataSymbol(0x140003000));
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "data_address", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRet(llvm::ConstantExpr::getPtrToInt(
+      llvm::ConstantExpr::getInBoundsGetElementPtr(
+          SectionTy, Section,
+          llvm::ArrayRef<llvm::Constant *>{llvm::ConstantInt::get(I64, 0),
+                                           llvm::ConstantInt::get(I64, 0x10)}),
+      I64));
+
+  DataAccessWidths Widths;
+  Widths.add(0x140003010, 8);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.EmitIncludes = false;
+  Options.AccessWidths = &Widths;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
+  OS.flush();
+  EXPECT_NE(Source.find("&qword_140003010"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern uint64_t qword_140003010;"), std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
@@ -42623,7 +42866,13 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
       << HighC;
-  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+  // Both conversions complete MXCSR state, so the rounding path prints as
+  // the state helpers rather than as a bare C cast.
+  const auto ToInteger =
+      HighC.find("neverd_x86_fp_cvt_to_int_state_f64_i64(arg0, ");
+  ASSERT_NE(ToInteger, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64(", ToInteger),
+            std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))
@@ -44102,12 +44351,13 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 }
 
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
-/// C must compute in `long double` and return \p Expected.
-void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
+/// C must hold its x87 values as \p Storage and return \p Expected.
+void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
+                     llvm::StringRef Storage = "long double") {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("long double"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
@@ -44143,7 +44393,9 @@ TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
 TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
   // The extended value fills ten bytes; the qword after it survives, and
   // the stored exponent word reads back.  A store of a whole C object of
-  // 12 or 16 bytes would overwrite the neighbor.
+  // 12 or 16 bytes would overwrite the neighbor.  The value comes straight
+  // from the constant ROM, which executes into raw eighty-bit storage, so
+  // nothing here computes in long double.
   expectX87Result({0x48, 0xc7, 0x44, 0x24, 0xea,
                    0x2a, 0,    0,    0,          // mov qword [rsp-16h], 42
                    0xd9, 0xe8,                   // fld1
@@ -44152,7 +44404,7 @@ TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
                    0x0f, 0xb7, 0x4c, 0x24, 0xe8, // movzx ecx, word [rsp-18h]
                    0x48, 0x01, 0xc8,             // add rax, rcx
                    0xc3},
-                  42 + 0x3FFF);
+                  42 + 0x3FFF, "_BitInt(80)");
 }
 
 TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {

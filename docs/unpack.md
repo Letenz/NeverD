@@ -12,7 +12,7 @@ The container selects how a file is validated and rebuilt, the instruction set s
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | runtime observation |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | runtime observation |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 PE32+ DLL inputs are selected by `IMAGE_FILE_DLL`. A modeled guest EXE calls `LoadLibraryA`, then `FreeLibrary`, using the ordinary dependency, TLS and `DllMain` lifecycle. The accepted DLL entry is its process-attach invocation; arbitrary exports are not called with invented arguments. Export names, ordinals, aliases, data and forwarders remain in the rebuilt DLL. Pointers to its own exports remain internal pointers rather than self-imports. This also covers helper-returned addresses: an internal result withdraws earlier import-repair evidence for that site.
 
@@ -24,8 +24,22 @@ Driver UNPACK disables per-write report retention while keeping memory validatio
 
 Recovery checks the incoming driver arguments, return/shadow frame, nonvolatile registers, direction flag and floating-point controls, together with kernel object ownership. Retained pools, borrowed kernel pointers, changed loader objects or unaccounted kernel effects return `unsupported_state`; explicit `snapshot_only` keeps their diagnostics. Kernel state has no `restore_runtime` materializer. Import rebuilding uses kernel export identities, validates original exports and recomputes the PE checksum. The fixed-base result does not establish a Windows kernel load, signature validity or execution of unreached driver paths.
 
+With `backend: "unicorn"` and `execution_contract: "driver-strict"`, x64 driver recovery uses stopped instruction decoding and committed RAM write watches across physical aliases. This contract uses Unicorn's instruction semantics; `checked-x64-v1` provides checked instruction admission.
+
+Temporary MDLs over loader-owned image pages no longer add a recovery dependency after every alias is unmapped, every lock is released and every descriptor is freed. This contract admits kernel-mode cached aliases without a requested address. Live MDLs, other ownership or mapping kinds, and guest reads of physical PFN identities remain dependencies; reads by modeled copy, move and compare services count too.
+
+Clock reads through `KeQueryPerformanceCounter`, `RDTSC`, or `RDTSCP` retain an explicit driver recovery dependency. Captured counter and frequency values have no rebinding contract for a fresh kernel environment. Default recovery reports `unsupported_state`; `snapshot_only` retains the diagnostic.
+
+`runtime_state.additional_dependency_reasons` lists the driver model’s observed reasons, including live pools or MDLs, changed loader objects, kernel effects and a changed entry invocation context. Default refusal and explicit snapshots retain the same reasons. An empty list does not override `has_additional_dependencies` or establish a restoration contract.
+
+`ProcessView::runtimeState(include_backing)` exposes `WindowsDriverState` for stopped drivers. The kernel owner retains each live pool's allocation API, exact requested size, tag and effective legacy type or complete modern flags. Requested backing is an independent copy of exactly those bytes; metadata-only capture leaves it absent. Freed pools, borrowed loader objects and device objects do not become pool records. This capture supplies neither pointer provenance nor a native initializer; existing dependency and relocation refusals still apply.
+
+`WindowsDriverState::Entry` retains the original DriverEntry register baseline and return/shadow frame, the stopped integer/XMM/floating-control registers, and the active OS-owned stack range. Requested backing copies the complete active stack. Later dispatch and unload invocations retain the original baseline and are explicitly marked as outside DriverEntry. These concrete observations do not establish pointer provenance or bindings to a fresh caller. After instruction admission, equal or later restored register and frame values still require fresh-caller reconstruction; numeric equality does not establish the continuation's incoming bindings or live outputs.
+
+Kernel image relocations remain a separate loader dependency even when no pool or borrowed object survives. Default driver recovery returns `unsupported_state` without creating or truncating output. Explicit `snapshot_only` retains this diagnostic and may preserve original DIR64 fields whose physical write witnesses remain intact. The facts are bound to the validated input by SHA-256 and both image bases; identical-value writes, ABA restoration, lost mappings and opaque execution remove the proof. Fields replaced by import repair or metadata formatting are excluded. This partial inventory does not cover generated pointers or bind a fresh DriverEntry caller.
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## Use
@@ -74,7 +88,7 @@ Execution does not permanently retire a 4 KiB page from observation. Committed g
 
 ## The rebuilt image
 
-Sections keep their RVAs and hold the observed memory, including effects of initializers that already ran; each section has its observed page access. A final `.neverd` section holds a new import directory over existing export cells. Additional cells needed for observed export calls and address loads live in that new section, so original zero-filled storage is preserved. `imports` lists every cell with its `origin`: `static` cells were bound from the input directory, `runtime` cells were stored by guest code or added for a repaired call. The image is fixed at its observed base: relocations of generated content were not observed, so the relocation directory is removed and `IMAGE_FILE_RELOCS_STRIPPED` is set.
+Sections retain their RVAs, observed memory and page access. A final `.neverd` section holds new import metadata and cells needed for repaired export calls and address loads, preserving original zero-filled storage. `imports.origin` distinguishes input-directory `static` cells from guest-written or repaired `runtime` cells. Generated-content relocations remain unknown. User images remain fixed at the observed base; kernel snapshots may emit only the retained loader fields described above. `IMAGE_FILE_RELOCS_STRIPPED` is cleared only when that directory is nonempty, and the kernel runtime dependency remains unresolved.
 
 User-mode section ranges round `VirtualSize` (or `SizeOfRawData` when zero) up to guest pages; `SectionAlignment` positions RVAs. Raw bytes within the final mapped page are retained; bytes beyond that range are not mapped. Rebuilding preserves `FileAlignment` and zero-fills file padding without reading section gaps. Native evidence for this rule covers only x64 Windows DLLs. Runtime admission, metadata readers and fixed-image validation share the unrounded logical extent. Zero `VirtualSize` uses `SizeOfRawData`; a nonzero value still bounds metadata. The loader uses private reader storage for LLVM compatibility and retains original bytes for execution, debug identities and authentication. Driver mapping remains outside the user-page rule.
 
@@ -127,3 +141,9 @@ RVA-based delay imports preserve pending in-image thunks and rebind already reso
 When a recovered DLL entry differs from its original PE entry, the writer emits a loader-notification adapter: process attach goes to the selected entry; detach and thread notifications go to the original live executable entry so outer-wrapper cleanup remains reachable. An unavailable original entry fails rebuilding. Reported `entry_rva` still identifies the selected program entry; the PE header can point to the adapter. The independent wrapped-DLL fixture checks cleanup outside the selected function on both emulated architectures and native Windows.
 
 `runtime_state.additional_state_inventory_known` and `has_additional_dependencies` report the OS owner’s remaining private heaps, virtual reservations, locks, handles, views and exception state. Missing inventory or retained resources blocks default recovery even when no heap-pointer match exists. Explicit snapshots retain this diagnostic; runtime restoration must reconstruct the supported owners.
+
+Checked x64 execution validates the concrete loader caller again when DriverEntry returns: RBX/RBP/RSI/RDI/R12–15, all 128 bits of XMM6–15, MXCSR controls, FPCSR and a clear direction flag. Volatile registers and MXCSR status bits may change. Failure stops before publishing NTSTATUS or running the lifecycle. This return check does not reconstruct a captured entry, prove other callers or certify a native kernel load.
+
+Driver execution-watch handoffs reuse earlier code snapshots only when the previously installed RAM write watches remained untouched. Committed stores invalidate this guarantee even when they write the same value. Kernel services, scheduling boundaries and new invocations require refresh; newly watched ranges still need their initial snapshot.
+
+Live kernel pools retain their typed allocation dependency without also being classified as unknown arena objects when address and exact extent match the pool owner. Other objects remain dependencies when pools coexist or are freed. This classification does not establish pointer provenance or enable native runtime restoration.
