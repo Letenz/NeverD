@@ -103,6 +103,7 @@ jobs:
           output.mkdir(exist_ok=False)
           limit = 4 * 1024 * 1024
           files = {
+              "units.txt": "ci-diagnostics/units.txt",
               "controller.txt": "ci-diagnostics/controller.txt",
               "controller.xml": "ci-diagnostics/controller.xml",
               "ctest.xml": "ci-diagnostics/ctest.xml",

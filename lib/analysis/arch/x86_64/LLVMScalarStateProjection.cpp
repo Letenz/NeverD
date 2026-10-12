@@ -5,7 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "neverd/analysis/arch/x86_64/LLVMScalarStateProjection.h"
 
-#include "X64UserFlags.h"
+#include "X64MachineFlags.h"
 
 #include "neverd/analysis/arch/x86_64/InterpreterMachineState.h"
 
@@ -22,7 +22,7 @@ llvm::Expected<LLVMScalarStateContract> llvmScalarStateContractX64(
   Contract.StateBytes = sizeof(InterpreterMachineStateX64V1);
   Contract.CellBits = 32;
   constexpr auto Flags = offsetof(InterpreterMachineStateX64V1, RFlags) / 4;
-  constexpr auto Mask = detail::X64UserFlags::EntryMask;
+  constexpr auto Mask = detail::X64MachineFlags::EntryMask;
   Contract.Entry = {{Flags, uint32_t(Mask), 2}, {Flags + 1, Mask >> 32, 0}};
   if (Alignment) {
     constexpr auto Stack =

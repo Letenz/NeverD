@@ -1719,3 +1719,5 @@ ctest --test-dir build-source -L \
   '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
   --output-on-failure --parallel 4
 ```
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*` は CPL0 の IF クリア／設定と CPL3 の対照、プロファイル一致とダイジェスト分離、TF/AC/IOPL の拒否、通常観測を無効化した場合の最終 IF 依存、復元、正確／一操作不足の予算を確認します。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` もユーザーモードのソース ABI が暗黙に選ばれないことを確認します。実運用の未定義命令 admission とドライバー復元 guards は変更しません。
