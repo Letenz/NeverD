@@ -131,7 +131,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
        Options.OwnershipMutations || Options.AdvisoryLocks ||
-       Options.Synchronization || Options.DataSynchronization))
+       Options.Synchronization || Options.DataSynchronization ||
+       Options.FullSynchronization || Options.BarrierSynchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -409,6 +410,13 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     return E;
   if (auto E = AdmitObjectProvider(Options.DataSynchronization,
                                    diagnostic::FileDataSynchronizationOption))
+    return E;
+  if (auto E = AdmitObjectProvider(Options.FullSynchronization,
+                                   diagnostic::FileFullSynchronizationOption))
+    return E;
+  if (auto E =
+          AdmitObjectProvider(Options.BarrierSynchronization,
+                              diagnostic::FileBarrierSynchronizationOption))
     return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
@@ -690,6 +698,12 @@ void DarwinFiles::initializeNamespace() {
     Node->DataSynchronization =
         Options->DataSynchronization &&
         Options->DataSynchronization->Objects.contains(Path);
+    Node->FullSynchronization =
+        Options->FullSynchronization &&
+        Options->FullSynchronization->Objects.contains(Path);
+    Node->BarrierSynchronization =
+        Options->BarrierSynchronization &&
+        Options->BarrierSynchronization->Objects.contains(Path);
     if (Options->OwnershipMutations) {
       const auto Time = Options->OwnershipMutations->Objects.find(Path);
       if (Time != Options->OwnershipMutations->Objects.end())
@@ -2576,6 +2590,12 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     Node->DataSynchronization =
         Options->DataSynchronization &&
         Options->DataSynchronization->CreatedRegularObjects;
+    Node->FullSynchronization =
+        Options->FullSynchronization &&
+        Options->FullSynchronization->CreatedRegularObjects;
+    Node->BarrierSynchronization =
+        Options->BarrierSynchronization &&
+        Options->BarrierSynchronization->CreatedRegularObjects;
   }
   // A new object never inherits an old observation/policy at the same name.
   auto Entry = std::make_shared<FileEntry>(Node);
@@ -2810,6 +2830,16 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
       break;
     default:
       return unsupported(Result, authorizationScope());
+    }
+  }
+  if (Service == ServiceKind::Fcntl) {
+    switch (uint32_t(A[1])) {
+    case FullSynchronizationCommand:
+      return synchronize(SynchronizationKind::Full, Event, Result);
+    case BarrierSynchronizationCommand:
+      return synchronize(SynchronizationKind::Barrier, Event, Result);
+    default:
+      break;
     }
   }
   if (Service == ServiceKind::Fsync)

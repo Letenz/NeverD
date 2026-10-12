@@ -803,6 +803,100 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_full_barrier_synchronization_keep_independent_object_state(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        def metadata(mode: int, inode: int, size: int) -> dict:
+            return {"device":7,"inode":inode,"mode":mode,"link_count":2 if mode==0o40700 else 1,"uid":501,"gid":20,"size":size,"block_size":512,"blocks":1 if size else 0,"flags":0,"generation":9,"access_time":{"seconds":1,"nanoseconds":2},"modification_time":{"seconds":3,"nanoseconds":4},"change_time":{"seconds":5,"nanoseconds":6},"birth_time":{"seconds":7,"nanoseconds":8}}
+        base = {"files":[{"path":"/data","bytes_hex":"616200ff6566","metadata":metadata(0o100600,2,6)}],"directories":[{"path":"/","metadata":metadata(0o40700,1,0)}],"working_directory":"/","full_synchronization":{"objects":["/data"]},"barrier_synchronization":{"objects":["/data"]}}
+        common = [(5,3,False,None,0,0),(5,4,False,None,0,0),(41,5,False,3,0,0),(199,2,False,5,2,0),(339,0,False,3,None,0),(92,0,False,3,3,0)]
+        for h, high in enumerate((0,0x1234567800000000,0xffffffff00000000)):
+            for number in (92,406):
+                for command in (51,85):
+                    argument = (0,1,0xffffffffffffffff)[h]
+                    for fd in (3,5,4,0xffffffff):
+                        common.append((high|number,9 if fd==0xffffffff else 0,fd==0xffffffff,high|fd,high|command,argument))
+                    common += [(339,0,False,3,None,0),(339,0,False,4,None,0),(339,0,False,5,None,0),(199,2,False,5,0,1),(199,0,False,4,0,1),(92,0,False,3,3,0),(92,0,False,4,3,0)]
+        common += [(6,0,False,3,0,0),(92,9,True,3,51,0xffffffffffffffff),(406,0,False,5,85,0xffffffffffffffff),(6,0,False,5,0,0),(92,9,True,5,51,0xffffffffffffffff),(406,0,False,4,85,0xffffffffffffffff),(339,0,False,4,None,0),(92,0,False,4,3,0),(6,0,False,4,0,0),(4,1,False,1,None,1)]
+        virtual = [(5,3,False,None,0x202,0o600),(339,0,False,3,None,0),(92,0,False,3,51,0xffffffffffffffff),(406,0,False,3,85,0xffffffffffffffff),(339,0,False,3,None,0),(6,0,False,3,0,0),(92,9,True,3,51,0xffffffffffffffff),(406,9,True,3,85,0xffffffffffffffff),(4,160,False,1,None,160),(4,160,False,1,None,160)]
+        self.assertEqual(len(common),148)
+        record = bytearray(160)
+        record[:8] = record[152:] = b"\xa5"*8
+        def store(offset: int, width: int, value: int) -> None:
+            record[8+offset:8+offset+width] = value.to_bytes(width,"little")
+        for offset,width,value in ((0,4,7),(4,2,0o100600),(6,2,1),(8,8,100),(16,4,501),(20,4,20),(112,4,512),(120,4,9)):
+            store(offset,width,value)
+        for offset in (32,48,64,80):
+            store(offset,8,41)
+            store(offset+8,8,42)
+        for file, profile in (("macos-arm64","macos-macho64-v1"),("macos-x86_64","macos-macho64-v1"),("ios-arm64","ios-macho64-v1"),("ios-simulator-arm64","ios-simulator-macho64-v1"),("ios-simulator-x86_64","ios-simulator-macho64-v1")):
+            cls = 0x2000000 if file.endswith("x86_64") else 0
+            for created in (False,True):
+                files = json.loads(json.dumps(base))
+                if created:
+                    files["umask"] = 18
+                    files["directories"][0].update(mutable=True,mutation_policy={"directory_entry_size":16,"mutation_time":{"seconds":91,"nanoseconds":92}})
+                    files["creation_policy"] = {"first_inode":100,"block_size":512,"generation":9,"creation_time":{"seconds":41,"nanoseconds":42},"mutation_policy":{"allocation_unit":512,"mutation_time":{"seconds":101,"nanoseconds":102}}}
+                    for purpose in ("full_synchronization","barrier_synchronization"):
+                        files[purpose] = {"objects":[],"created_regular_objects":True}
+                request = {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["guest","virtual-full-barrier-creation" if created else "ordinary-full-barrier-synchronization","/data"],"darwin_system":{"credentials":{"real_uid":700,"effective_uid":501,"real_gid":31,"effective_gid":20}},"darwin_files":files}
+                original = json.dumps(request,sort_keys=True)
+                for repeat in range(2):
+                    with self.subTest(file=file,created=created,repeat=repeat):
+                        result = session.emulate_process(str(Path(fixtures)/file),profile,json.dumps(request))
+                        self.assertEqual(result["stop_reason"],"exited",result["diagnostic"])
+                        self.assertEqual(result["exit_status"],47 if created else 46)
+                        self.assertEqual(result["stdout_hex"],(record*2).hex() if created else "46")
+                        self.assertEqual(result["stderr_hex"],"")
+                        calls = result["services"]
+                        wanted = virtual if created else common
+                        self.assertEqual(len(calls),len(wanted))
+                        for call,(number,value,error,fd,command,argument) in zip(calls,wanted):
+                            self.assertEqual(call["number"],format(cls|number,"x"))
+                            self.assertEqual(call["result"],format(value,"x"))
+                            self.assertEqual(call["error"],error)
+                            for index,known in enumerate((fd,command,argument)):
+                                if known is not None:
+                                    self.assertEqual(call["arguments"][index],format(known,"x"))
+                        self.assertEqual(json.dumps(request,sort_keys=True),original)
+                        self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
+                for full in (True,False):
+                    for missing in (True,False):
+                        refused = json.loads(original)
+                        purpose = "full_synchronization" if full else "barrier_synchronization"
+                        if missing:
+                            del refused["darwin_files"][purpose]
+                        else:
+                            refused["darwin_files"][purpose] = {"objects":[],"created_regular_objects":False}
+                        result = session.emulate_process(str(Path(fixtures)/file),profile,json.dumps(refused))
+                        self.assertEqual(result["stop_reason"],"unsupported_service")
+                        prefix = (2 if full else 3) if created else (6 if full else 17)
+                        self.assertEqual(len(result["services"]),prefix+1)
+                        self.assertIsNone(result["services"][-1]["result"])
+                        self.assertNotIn("error",result["services"][-1])
+                        selected = "full" if full else "barrier"
+                        self.assertEqual(result["diagnostic"],f"Darwin {selected} synchronization environment is not configured" if missing else f"Darwin regular-object {selected} synchronization provider is not configured")
+                for purpose in ("full_synchronization","barrier_synchronization"):
+                    refused = json.loads(original)
+                    refused["darwin_files"][purpose]["created_regular_objects"] = 1
+                    with self.assertRaises(NeverDError):
+                        session.emulate_process(str(Path(fixtures)/file),profile,json.dumps(refused))
+                    self.assertEqual(host.call("neverd_session_is_loaded",handle),0)
+
     def test_darwin_ordinary_file_synchronization_keeps_provider_and_committed_state(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

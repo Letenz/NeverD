@@ -10,6 +10,7 @@
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
+#include "DarwinFullSynchronizationTestData.h"
 #include "DarwinModeTestData.h"
 #include "DarwinOwnershipTestData.h"
 #include "DarwinSynchronizationTestData.h"
@@ -2808,6 +2809,123 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
   EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess, FullAndBarrierSynchronizationKeepIndependentObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto Common = darwin_test::fullSynchronizationServices();
+  const auto Virtual = darwin_test::createdFullSynchronizationServices();
+  const auto Bytes = darwin_test::createdFullSynchronizationRecord();
+  std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                      Bytes.size());
+  Literal += Literal;
+  auto check =
+      [&](const ProcessResult &R,
+          llvm::ArrayRef<darwin_test::FullSynchronizationService> Wanted,
+          int Code, llvm::StringRef Output) {
+        ASSERT_EQ(R.Stop, ProcessStopReason::Exited)
+            << R.Diagnostic << " instructions=" << R.Instructions
+            << " services=" << R.Services.size();
+        EXPECT_EQ(R.ExitStatus, Code);
+        EXPECT_EQ(R.ReturnValue, uint64_t(Code));
+        EXPECT_EQ(R.StandardOutput, Output);
+        EXPECT_TRUE(R.StandardError.empty());
+        EXPECT_EQ(R.SelectedBackend, GetParam().Backend);
+        ASSERT_EQ(R.Services.size(), Wanted.size());
+        for (unsigned I = 0; I != Wanted.size(); ++I) {
+          SCOPED_TRACE(I);
+          const auto &E = R.Services[I];
+          const auto &W = Wanted[I];
+          EXPECT_EQ(E.Number, Class | W.Number);
+          EXPECT_EQ(E.Result, W.Value);
+          EXPECT_EQ(E.Error, W.Error);
+          if (W.FD)
+            EXPECT_EQ(E.Arguments[0], *W.FD);
+          if (W.Command)
+            EXPECT_EQ(E.Arguments[1], *W.Command);
+          if (W.Argument)
+            EXPECT_EQ(E.Arguments[2], *W.Argument);
+          const bool Sync =
+              (W.Number & 0xffffff) == 92 || (W.Number & 0xffffff) == 406;
+          const bool Full =
+              Sync && W.Command &&
+              (uint32_t(*W.Command) == 51 || uint32_t(*W.Command) == 85);
+          for (unsigned J = 3; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], Full ? UINT64_MAX : 0u);
+        }
+      };
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    Options.DarwinFiles = darwin_test::fullSynchronizationOptions();
+    auto R = run("ordinary-full-barrier-synchronization");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    check(*R, Common, 46, "F");
+    Options.DarwinFiles = darwin_test::createdFullSynchronizationOptions();
+    R = run("virtual-full-barrier-creation");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    check(*R, Virtual, 47, Literal);
+  }
+  for (bool Created : {false, true})
+    for (bool Full : {true, false})
+      for (bool Missing : {false, true}) {
+        Options.DarwinFiles =
+            Created ? darwin_test::createdFullSynchronizationOptions()
+                    : darwin_test::fullSynchronizationOptions();
+        if (Full) {
+          if (Missing)
+            Options.DarwinFiles->FullSynchronization.reset();
+          else {
+            Options.DarwinFiles->FullSynchronization->Objects.clear();
+            Options.DarwinFiles->FullSynchronization->CreatedRegularObjects =
+                false;
+          }
+        } else {
+          if (Missing)
+            Options.DarwinFiles->BarrierSynchronization.reset();
+          else {
+            Options.DarwinFiles->BarrierSynchronization->Objects.clear();
+            Options.DarwinFiles->BarrierSynchronization->CreatedRegularObjects =
+                false;
+          }
+        }
+        auto R = run(Created ? "virtual-full-barrier-creation"
+                             : "ordinary-full-barrier-synchronization");
+        ASSERT_TRUE(bool(R));
+        EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+        EXPECT_EQ(R->Diagnostic,
+                  std::string("Darwin ") +
+                      (Missing
+                           ? (Full ? "full synchronization environment is not "
+                                     "configured"
+                                   : "barrier synchronization environment is "
+                                     "not configured")
+                           : (Full ? "regular-object full synchronization "
+                                     "provider is not configured"
+                                   : "regular-object barrier synchronization "
+                                     "provider is not configured")));
+        const unsigned Prefix = Created ? (Full ? 2 : 3) : (Full ? 6 : 17);
+        ASSERT_EQ(R->Services.size(), Prefix + 1);
+        const auto &Last = R->Services.back();
+        EXPECT_EQ(Last.Number, Class | (Created && !Full ? 406u : 92u));
+        EXPECT_EQ(Last.Arguments[0], 3u);
+        EXPECT_EQ(Last.Arguments[1], Full ? 51u : 85u);
+        EXPECT_FALSE(Last.Result);
+        EXPECT_FALSE(Last.Error);
+      }
+  Options.DarwinFiles = darwin_test::fullSynchronizationOptions();
+  Options.DarwinFiles->FullSynchronization.reset();
+  Options.DarwinFiles->BarrierSynchronization.reset();
+  Options.DarwinFiles->Synchronization.emplace().Objects.insert("/data");
+  Options.DarwinFiles->DataSynchronization.emplace().Objects.insert("/data");
+  auto R = run("ordinary-full-barrier-synchronization");
+  ASSERT_TRUE(bool(R));
+  EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+  ASSERT_EQ(R->Services.size(), 7u);
+  EXPECT_FALSE(R->Services.back().Result);
 }
 
 TEST_P(DarwinProcess,

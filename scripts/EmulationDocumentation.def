@@ -2102,3 +2102,53 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin,
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
                            "native Intel and physical iOS unverified / "
                            "complete macOS iOS frameworks remain incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "full_synchronization={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "barrier_synchronization={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "F_FULLFSYNC51 / F_BARRIERFSYNC85 / existing raw "
+                           "fcntl92 and406 / low32 FD and command")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "two independent initial and new-regular providers / strict "
+            "objects array / defaultfalse / complete CreationPolicy")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "full and barrier grants never borrow file data or "
+                           "each other / reused names transfer no authority")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "direct barrier support / no mount promotion or "
+                           "fallback / no host flush or physical durability")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "bad FD before opaque kind query scope regular "
+                           "target environment and exact object grant")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "unused argument ignored without reading memory / "
+                           "complete model observations unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "directory link and failed creation publish no regular grant / VM "
+            "mappings never revive closed FDs")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "FullAndBarrierSynchronizationKeepIndependentObjectState")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "51 private test identities / pages4096 and16384 / commands51 and85")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "SDK-free148 authored service records / 38 guarded full stat "
+            "observations / separate main46 / stdout F")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-only ten services / separate main47 / 320 independent "
+            "literal guarded bytes / not native metadata")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "70 current native-common cases / 85 mandatory workloads per "
+            "platform / ARM64 matching native mandatory255")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "216 original native raw calls / 648 guarded176-byte stat "
+            "comparisons / native pipe EBADF9")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native observed completion does not distinguish "
+                           "direct barrier from mount promotion")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "native Intel and physical iOS unverified / "
+                                   "full Apple frameworks remain incomplete")

@@ -8111,6 +8111,135 @@ static int ordinary_data_synchronization(const char *path) {
   return 0;
 }
 
+/* Original SDK-free ordinary full/barrier completion controls. */
+union full_barrier_stat_guard {
+  u64 words[20];
+  unsigned char bytes[160];
+};
+static int full_barrier_capture(u64 fd, union full_barrier_stat_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  unsigned error;
+  if (call(339, fd, (u64)(out->bytes + 8), 0, 0, 0, 0, &error) || error ||
+      secondary || out->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      out->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(out->bytes + 12, 2) & 0170000) != 0100000)
+    return 311;
+  return 0;
+}
+static int full_barrier_status(u64 fd,
+                               const union full_barrier_stat_guard *initial) {
+  union full_barrier_stat_guard observed;
+  if (full_barrier_capture(fd, &observed))
+    return 312;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (observed.words[i] != initial->words[i])
+      return 312;
+  return 0;
+}
+static int full_barrier_result(u64 number, u64 fd, u64 command, u64 argument,
+                               u64 expected) {
+  unsigned error;
+  const u64 result =
+      call(number, fd, command, argument, -1UL, -1UL, -1UL, &error);
+  if (result != expected || error != !!expected)
+    return 313;
+#if defined(__aarch64__)
+  if (secondary)
+#else
+  if (secondary != (expected ? argument : 0))
+#endif
+    return 313;
+  return 0;
+}
+static int full_barrier_flags(u64 fd, u64 expected) {
+  unsigned error;
+  return call(92, fd, 3, 0, 0, 0, 0, &error) != expected || error || secondary
+             ? 314
+             : 0;
+}
+static __attribute__((noinline)) int
+full_barrier_synchronization(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 315;
+  const u64 b = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || a == b)
+    return 315;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || d == a || d == b ||
+      call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error || secondary)
+    return 315;
+  union full_barrier_stat_guard initial;
+  if (full_barrier_capture(a, &initial))
+    return 316;
+  const u64 flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 316;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 arguments[] = {0, 1, -1UL};
+  const u64 commands[] = {51, 85};
+  for (unsigned h = 0; h != 3; ++h)
+    for (unsigned n = 0; n != 2; ++n)
+      for (unsigned c = 0; c != 2; ++c) {
+        const u64 high = highs[h], number = high | (n ? 406 : 92),
+                  command = high | commands[c], argument = arguments[h];
+        if (full_barrier_result(number, high | a, command, argument, 0) ||
+            full_barrier_result(number, high | d, command, argument, 0) ||
+            full_barrier_result(number, high | b, command, argument, 0) ||
+            full_barrier_result(number, high | 0xffffffffUL, command, argument,
+                                9) ||
+            full_barrier_status(a, &initial) ||
+            full_barrier_status(b, &initial) ||
+            full_barrier_status(d, &initial) || file_sync_offset(d, 2) ||
+            file_sync_offset(b, 0) || full_barrier_flags(a, flags) ||
+            full_barrier_flags(b, flags))
+          return 317;
+      }
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      full_barrier_result(92, a, 51, -1UL, 9) ||
+      full_barrier_result(406, d, 85, -1UL, 0) ||
+      call(6, d, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      full_barrier_result(92, d, 51, -1UL, 9) ||
+      full_barrier_result(406, b, 85, -1UL, 0) ||
+      full_barrier_status(b, &initial) || full_barrier_flags(b, flags) ||
+      call(6, b, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 318;
+  if (call(4, 1, (u64) "F", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 319;
+  return 0;
+}
+
+/* Explicit virtual creation metadata is not a native byte/time oracle. */
+static __attribute__((noinline)) int virtual_full_barrier_creation(void) {
+  unsigned error;
+  const u64 fd = call(5, (u64) "/fresh", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary)
+    return 320;
+  union full_barrier_stat_guard before, after;
+  if (full_barrier_capture(fd, &before) ||
+      full_barrier_result(92, fd, 51, -1UL, 0) ||
+      full_barrier_result(406, fd, 85, -1UL, 0) ||
+      full_barrier_capture(fd, &after))
+    return 321;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (before.words[i] != after.words[i])
+      return 321;
+  if (call(6, fd, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      full_barrier_result(92, fd, 51, -1UL, 9) ||
+      full_barrier_result(406, fd, 85, -1UL, 9))
+    return 322;
+  if (call(4, 1, (u64)before.bytes, 160, 0, 0, 0, &error) != 160 || error ||
+      secondary || call(4, 1, (u64)after.bytes, 160, 0, 0, 0, &error) != 160 ||
+      error || secondary)
+    return 323;
+  return 0;
+}
+
 /* Original SDK-free completion on explicitly declared created regular objects.
  */
 union created_sync_stat_guard {
@@ -8589,6 +8718,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "ordinary-full-barrier-synchronization")) {
+    const int status = argc < 3 ? 310 : full_barrier_synchronization(argv[2]);
+    return status ? status : 46;
+  }
+  if (equal(argv[1], "virtual-full-barrier-creation")) {
+    const int status = virtual_full_barrier_creation();
+    return status ? status : 47;
+  }
   if (equal(argv[1], "created-regular-attributes")) {
     const int status = created_regular_attributes(argv[2]);
     return status ? status : 44;

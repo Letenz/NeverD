@@ -87,6 +87,8 @@ NEVERD_DARWIN_VALUE(RenameSwap, 2)
 NEVERD_DARWIN_VALUE(RenameExclusive, 4)
 NEVERD_DARWIN_VALUE(RenameNoFollowAny, 0x10)
 NEVERD_DARWIN_VALUE(GetPath, 50)
+NEVERD_DARWIN_VALUE(FullSynchronizationCommand, 51)
+NEVERD_DARWIN_VALUE(BarrierSynchronizationCommand, 85)
 NEVERD_DARWIN_VALUE(DuplicateFD, 0)
 NEVERD_DARWIN_VALUE(GetDescriptorFlags, 1)
 NEVERD_DARWIN_VALUE(SetDescriptorFlags, 2)
@@ -571,6 +573,36 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(FileDataSynchronizationProvider,
                          "Darwin regular-object data integrity completion "
                          "provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileFullSynchronizationOption,
+                         "Darwin full synchronization grants require complete "
+                         "ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationEnvironment,
+    "Darwin full synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationKind,
+    "Darwin full synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationTarget,
+    "Darwin full synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileFullSynchronizationProvider,
+    "Darwin regular-object full synchronization provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileBarrierSynchronizationOption,
+                         "Darwin barrier synchronization grants require "
+                         "complete ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationEnvironment,
+    "Darwin barrier synchronization environment is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationKind,
+    "Darwin barrier synchronization descriptor kind is not implemented")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationTarget,
+    "Darwin barrier synchronization requires an ordinary regular vnode")
+NEVERD_DARWIN_DIAGNOSTIC(
+    FileBarrierSynchronizationProvider,
+    "Darwin regular-object barrier synchronization provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(DirectoryCreationLimit,
                          "Darwin directory creation exceeds catalogue limits")
 NEVERD_DARWIN_DIAGNOSTIC(

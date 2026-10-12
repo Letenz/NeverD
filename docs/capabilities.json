@@ -13589,7 +13589,8 @@
         "fdatasync187 has a distinct Fdatasync Int purpose requesting XNU MNT_DWAIT, not an fsync95/fsync_nocancel408 MNT_WAIT alias. Strict independent data_synchronization objects supply immediate successful ordinary regular-vnode data integrity completion after successful modeled data commits, with no deferred work or requested cancellation. File/data declarations never supply each other. Complete ordinary initial flags0/link_count1/no-alias objects and path+NUL budgets retain one admission owner. Low32 FD lookup first returns EBADF9 for absent/closed descriptors; opaque streams and directory/symlink targets remain unsupported, readonly regular descriptions require the data grant, and missing/empty providers differ. Contents grants follow runtime names, dup/fcntl/dup2 and held zero-name lifetime; created/reused objects inherit no initial grant and VM retention cannot revive closed FDs. No bytes/cursor/flags/stat/xattrs/allocation/namespace/lock mutation or observation restoration. Both query declarations reject even empty environments and close52 other logical routes. SDK-free41 records/11 guarded full stat observations/main41/stdout D use C/CLI/Python and matching ARM64 HVF. Native-common68/mandatory83 per platform require all249 matching ARM64 identities to actually pass. Original252 ARM64 O0/O1/O2 literal observations retain176-byte guarded native stat/cursors; directory/pipe/new-object captures do not expand the provider. No host flush, physical durability, full cancellation, provider errors, leases/revocation/resource-fork/shadow flush or asynchronous waits. F_FULLFSYNC51/F_BARRIERFSYNC85/global sync and complete macOS/iOS frameworks remain incomplete; native Intel and physical iOS remain unverified.",
         "Each independent file/data completion environment requires objects and admits optional Boolean created_regular_objects (CreatedRegularObjects), defaultfalse. True requires the complete CreationPolicy, current umask, known parent identity and bounded ordinary regular creation admission. Only successful regular create assigns fresh independent Contents grants; initial Objects do not supply creation, existing O_CREAT grants nothing, and name reuse never transfers old authority. An explicitly granted replacement receives a new creation grant. Directory/link/stream constructors remain ungranted. One parser, admission and existing byte/FD/entry/inode/namespace owners preserve rollback with no extra grant charges. Grants follow current dup/fcntl/dup2/reuse, runtime names, held zero-name and real VM lifetime; closed FD9 cannot be revived. No bytes/stat/cursor/flags/xattrs/allocation/namespace/lock change, observation restoration or mode/ownership/xattr/flock/general DAC authority. Both static query declarations reject even false/empty environments and retain52 other logical closed routes. SDK-free147 records/33 guarded full stat/main42/C run five software and three matching HVF profiles plus C/CLI/Python. Native-common68/mandatory83 require all249 matching ARM64 identities to actually pass. Original702 O0/O1/O2 literal controls observe the fresh unflushed target itself; native and model post-write F_GETFL65538 include the existing FileWasWritten0x10000 owner; corrected checks capture and preserve the whole initial flags without introducing status-bit support. Immediate success acknowledges committed modeled mutations and a declared provider; no host flush, physical durability, full cancellation, provider errors, leases or waits are claimed. Intel native, physical iOS and complete Apple frameworks remain incomplete.",
         "AdvisoryLocks admits independent default-false CreatedRegularObjects, strict advisory_locks mandatory unique objects and optional Boolean created_regular_objects. True requires complete existing CreationPolicy and supplies only successfully created ordinary regular Contents, without extra path/byte/FD/entry/inode charges or weakened rollback. Initial Objects, existing O_CREAT, reused names, directories/links/streams and other capabilities supply no authority. Current descriptions share lock and persistent FWASLOCKED0x4000 through dup/fcntl/dup2; independent opens have separate history. Successful non-unlock flock sets history, unlock keeps it, failed/unsupported actions do not set it. F_GETFL includes it; F_SETFL accepts roundtrip but cannot manufacture or clear it. Recognized symbolic history returns existing ENOTTY25 while opaque streams return zero, both preserving actual status and the genuine unsupported-flag boundary;162 native controls qualify these results. Written65538 becomes81922, readonly0 becomes16384. Nonblocking35 precedes old-lock removal; unsupported blocking waits remain mutation-free. Mapping retains Contents but not a final closed description lock; closed FD9 stays invalid. No bytes/stat/cursor/xattr/allocation/namespace/observation restoration or mode/ownership/completion/xattr/general DAC authority. Shared set-provider parser/admission and all52-route query closure stay authoritative. SDK-free131 records/twelve guarded stat/main43/L cover five software and three matching HVF profiles plus C/CLI/Python. Native-common68/mandatory83 require all249 matching ARM64 identities actually passing. Original486 flock observations plus72 fcntl controls retain whole176-byte stat, dirty bytes/cursors, literal history and real VM lifetime; the original failed flag-preservation assumption remains evidence. Native5s/guest5000000us/quantum1024/public10s unchanged. External peers/range locks/waits/revocation/provider failures/native leases, Intel native, physical iOS and complete Apple frameworks remain unsupported or unverified.",
-        "New ordinary regular files can receive independent mode and ownership providers through an explicit declaration. Each flag defaults to false and requires a complete creation policy when true. Existing objects keep separately declared grants; reused names transfer no authority. Successful attribute changes use mutation_time as virtual ctime. Both inactive ownership IDs still require a provider and preserve every byte. Unknown metadata or group membership remains unsupported. DarwinFiles keeps initial ordinary-object admission and the complete creation transaction authoritative. One common JSON provider header validates required objects and optional strict created_regular_objects across five independent providers; the timed-map helper retains both initial path/time formats. One shared creation-provider admission rule requires complete CreationPolicy for true. Only successful ordinary regular create assigns ModeTime and OwnershipTime independently to CreationPolicy.Mutation.Time before publication, with no new budget charge or rollback path. DarwinModes.cpp and DarwinOwnership.cpp retain current metadata, sole credential/membership authorization, carriers, observation preservation and provider execution. Initial fixed times remain independent. Object grants survive dup/independent opens, runtime links/rename and held zero-name lifetime. Mapping leases retain Contents without reviving closed FDs. Missing independent mutation policy still invalidates initial namespace metadata; attribute or creation grants cannot restore it. Writes, namespace mutation, completion, locks and xattrs remain independent. No service, alias, C ABI or static-query logical route is added. DarwinCreatedAttributeOptions and DarwinCreatedAttributeTest register three admission/default cases and thirteen cases on each of 4096/16384-byte pages: 29 identities. They check independent flags/initial times, existing O_CREAT, fresh replacements, dirty bytes/cursors/status, three high carriers and all mode/owner routes, readonly/duplicate/independent descriptions, inactive ownership and active equal IDs, errors/unknown security or groups, names/held unlink, private mappings, failed FD/entry/byte/inode admission, directory/link exclusions, independent authorities and invalidated metadata. CreatedRegularAttributesKeepIndependentProvidersAndObjectState is mandatory on available matching ARM64 transports. Strict JSON runs in NeverDLinuxProcessTests. C/CLI and one whole Python SDK method check five software profiles: 235 authored common services/main44/stdout A/137 guarded stat observations and nine virtual services/main45/320 independent literal guarded bytes. Process and SDK success cases each use two fresh common and virtual runs. Virtual GID31 explicitly declares effective groups20/31; real GID31 alone proves nothing. Common native69 and mandatory84 per platform require all252 matching ARM64 identities to pass. The complete Darwin owner must discover3098 identities (2090 runnable/1008 unavailable), with broad C++ owners requiring1808 passes; actual receipts determine qualification. Fresh O0/O1/O2 native controls record450 mode and720 ownership observations at native5s with whole176-byte guarded stat records. Native timestamps are not literal virtual ctime; SDK-free native execution proves main44/A without a captured service trace. Preparation/compile failures and older HVF time-limit failures remain evidence. Whole-method revalidation, if required, is an explicit aggregate without a timing-stability claim. Guest/Python5000000us/quantum1024 and original bounds stay unchanged. Intel native, physical iOS, full frameworks, root privilege, general DAC and host provider lifecycle remain unqualified.\nThe first process expectation failure is retained:136 assertions omitted upper raw syscall or FD carrier bits. Fresh expectations derive the complete raw carriers from the unchanged workload; optional FD expectations also check literal UINT64_MAX instead of conflating it with an absent check. Runtime decisions, scalar/errno results, guarded records and timing bounds are unchanged.\n\nThe complete-owner first round retained two x64 stack-budget failures. Compiler inlining reserved13688 bytes on every main branch, so the unchanged four-page stack test selected an unmapped page below SP and could not release budget. Only the two new workload helpers now use noinline; main reserves56 bytes, and all eight runnable original budget cases pass without a larger budget. Later guest time-limit failures remain retained. Five fixed-length loops in the shared stat helpers use compile-time full unrolling: every original guard, mask, scalar/error check, all137 complete observations and all235 raw calls remain. The runtime implementation, guest5s, method/owner bounds and scheduling policy remain unchanged. Failure diagnostics retain mode/repeat, instructions, PC and completed service count. Isolated entitled CLI completion does not establish timing stability or prove the cause of another host timeout.\n"
+        "New ordinary regular files can receive independent mode and ownership providers through an explicit declaration. Each flag defaults to false and requires a complete creation policy when true. Existing objects keep separately declared grants; reused names transfer no authority. Successful attribute changes use mutation_time as virtual ctime. Both inactive ownership IDs still require a provider and preserve every byte. Unknown metadata or group membership remains unsupported. DarwinFiles keeps initial ordinary-object admission and the complete creation transaction authoritative. One common JSON provider header validates required objects and optional strict created_regular_objects across five independent providers; the timed-map helper retains both initial path/time formats. One shared creation-provider admission rule requires complete CreationPolicy for true. Only successful ordinary regular create assigns ModeTime and OwnershipTime independently to CreationPolicy.Mutation.Time before publication, with no new budget charge or rollback path. DarwinModes.cpp and DarwinOwnership.cpp retain current metadata, sole credential/membership authorization, carriers, observation preservation and provider execution. Initial fixed times remain independent. Object grants survive dup/independent opens, runtime links/rename and held zero-name lifetime. Mapping leases retain Contents without reviving closed FDs. Missing independent mutation policy still invalidates initial namespace metadata; attribute or creation grants cannot restore it. Writes, namespace mutation, completion, locks and xattrs remain independent. No service, alias, C ABI or static-query logical route is added. DarwinCreatedAttributeOptions and DarwinCreatedAttributeTest register three admission/default cases and thirteen cases on each of 4096/16384-byte pages: 29 identities. They check independent flags/initial times, existing O_CREAT, fresh replacements, dirty bytes/cursors/status, three high carriers and all mode/owner routes, readonly/duplicate/independent descriptions, inactive ownership and active equal IDs, errors/unknown security or groups, names/held unlink, private mappings, failed FD/entry/byte/inode admission, directory/link exclusions, independent authorities and invalidated metadata. CreatedRegularAttributesKeepIndependentProvidersAndObjectState is mandatory on available matching ARM64 transports. Strict JSON runs in NeverDLinuxProcessTests. C/CLI and one whole Python SDK method check five software profiles: 235 authored common services/main44/stdout A/137 guarded stat observations and nine virtual services/main45/320 independent literal guarded bytes. Process and SDK success cases each use two fresh common and virtual runs. Virtual GID31 explicitly declares effective groups20/31; real GID31 alone proves nothing. Common native69 and mandatory84 per platform require all252 matching ARM64 identities to pass. The complete Darwin owner must discover3098 identities (2090 runnable/1008 unavailable), with broad C++ owners requiring1808 passes; actual receipts determine qualification. Fresh O0/O1/O2 native controls record450 mode and720 ownership observations at native5s with whole176-byte guarded stat records. Native timestamps are not literal virtual ctime; SDK-free native execution proves main44/A without a captured service trace. Preparation/compile failures and older HVF time-limit failures remain evidence. Whole-method revalidation, if required, is an explicit aggregate without a timing-stability claim. Guest/Python5000000us/quantum1024 and original bounds stay unchanged. Intel native, physical iOS, full frameworks, root privilege, general DAC and host provider lifecycle remain unqualified.\nThe first process expectation failure is retained:136 assertions omitted upper raw syscall or FD carrier bits. Fresh expectations derive the complete raw carriers from the unchanged workload; optional FD expectations also check literal UINT64_MAX instead of conflating it with an absent check. Runtime decisions, scalar/errno results, guarded records and timing bounds are unchanged.\n\nThe complete-owner first round retained two x64 stack-budget failures. Compiler inlining reserved13688 bytes on every main branch, so the unchanged four-page stack test selected an unmapped page below SP and could not release budget. Only the two new workload helpers now use noinline; main reserves56 bytes, and all eight runnable original budget cases pass without a larger budget. Later guest time-limit failures remain retained. Five fixed-length loops in the shared stat helpers use compile-time full unrolling: every original guard, mask, scalar/error check, all137 complete observations and all235 raw calls remain. The runtime implementation, guest5s, method/owner bounds and scheduling policy remain unchanged. Failure diagnostics retain mode/repeat, instructions, PC and completed service count. Isolated entitled CLI completion does not establish timing stability or prove the cause of another host timeout.\n",
+        "Explicit full and barrier synchronization providers independently complete operations on ordinary regular objects. Initial object grants and newly created object grants are separate; creation flags default to false and require a complete creation policy when true. Completion preserves every model observation and ignores the unused argument. Barrier support is direct, without mount promotion or fallback. Neither declaration flushes host storage or proves physical durability. DarwinFiles owns admission and one successful regular creation transaction. Its shared provider admission applies complete CreationPolicy and the existing reference-byte budget to FullSynchronization and BarrierSynchronization independently. One strict JSON object-provider header now serves seven independent declarations: mode, ownership, advisory lock, file, data, full and barrier completion. DarwinSynchronization.cpp selects four distinct completion purposes in one authoritative helper. Fcntl dispatch recognizes low32 commands51/85 through existing raw services92/406; low32 FD lookup precedes opaque-kind refusal, immutable-query scope, ordinary regular-target checks and independent environment/grant checks. The unused argument is never read as memory. Existing fsync/fdatasync ordering and all52 immutable-query logical routes retain their own contracts. Initial grants follow actual Contents through dup, independent opens, links, rename and held zero-name lifetime; reused names and retained VM mappings do not revive closed FDs or inherit grants. Successful new regular creation alone applies each explicit created flag before publication. Directory/link creation and failed FD/entry/byte/inode admission publish no grant. Completion changes no bytes, whole stat, cursor, status/history, lock, xattr or metadata-validity observation and borrows no authority from any other purpose. The barrier declaration describes direct support only; no mount model promotes it to full synchronization or supplies an ioctl fallback. Provider errors, deferred work, cancellation, revocation and native leases remain unsupported. No new service alias or C ABI is added. DarwinFullSynchronizationOptions and DarwinFullSynchronizationTest register three admission cases and twelve parameterized cases over4096/16384-byte pages and commands51/85:51 identities. They cover initial/created defaults and policy prerequisites, shared reference budgets, access modes, raw upper carriers, ignored invalid pointers, bad/closed FDs and kind/scope ordering, missing/empty/other-purpose grants, duplicate/fcntl/dup2/reuse, links/rename/held removal/recreation, real VM retention, dirty bytes/truncate/mode/ownership/locks/xattrs, invalid metadata, directory/link exclusion and failed admission. FullAndBarrierSynchronizationKeepIndependentObjectState is mandatory on each available matching ARM64 transport. The SDK-free common workload has148 authored services,38 guarded full stat observations and separate main46/stdout F. Its native execution establishes46/F without a captured service trace. Virtual-only creation uses ten services, separate main47 and320 independent literal guarded bytes; this is not a native timestamp oracle. Process and Python success paths use two fresh common and virtual runs across five software profiles; C/CLI checks strict independent success and missing/empty providers. New strict JSON cases run in NeverDLinuxProcessTests. Common native70 and mandatory85 per platform require all255 matching ARM64 native identities to execute successfully. The complete Darwin inventory is3169 identities; expected2149 runnable and1020 unavailable identities must be reconciled against actual execution receipts. Broad public/Linux/service/budget/safety/integration owners and nineteen complete Python methods are separate acceptance checks. Fresh O0/O1/O2 native controls record216 raw calls and648 guarded176-byte whole-stat comparisons, including known native pipe EBADF9, low carriers and ignored arguments. Those controls establish observed completions, not whether a native mount used direct barriers or promotion, and not physical durability. Retain initial test-only failures: write access had no explicit write grant, and exhausted virtual inode admission is unsupported rather than a guessed ENOSPC28. Original guest/Python5000000us/quantum1024, native5s, public10s, registered method and owner bounds remain unchanged. Older stack and HVF timing failures remain evidence. Native Intel, physical iOS, default-fatal child cleanup, provider/wait lifecycle and complete Apple frameworks remain unqualified."
       ],
       "tests": [
         {
@@ -18644,6 +18645,215 @@
           "target": "NeverDLinuxProcessTests",
           "source": "unittests/emulation/ProcessReportTests.cpp",
           "filter": "ProcessReport.DarwinCreatedAttributeRejectsMalformedMapsFlagsAndPolicy",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "DarwinFullSynchronizationOptions.DefaultsInitialAdmissionAndQueryClosure",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "DarwinFullSynchronizationOptions.BothProvidersShareReferenceByteBudget",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "DarwinFullSynchronizationOptions.CreationFlagsRequireCompletePolicyIndependently",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.CarriersIgnoredArgumentAccessAndWholeState/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.BadFDBeforeUnknownKindAndEnvironment/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.MissingAndExplicitEmptyDeclarationsDiffer/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.FileDataAndOtherCommandCannotSupplyGrant/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.KnownDirectoryAndSymbolicTargetsRemainSeparate/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.DuplicateReplacementReuseSelectActualContents/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.LinksRenameHeldUnlinkAndFreshReplacement/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.ActualPrivateMappingDoesNotKeepClosedFDValid/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.DirtyBytesTruncateAttributesAndLocksStayIndependent/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.CompletionNeverRestoresInvalidObservations/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.IndependentNewObjectFlagsAndInitialNames/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinFullSynchronizationTests.cpp",
+          "filter": "*/DarwinFullSynchronizationTest.FailedCreationDoesNotConsumeGrantOrInode/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDDarwinProcessTests",
+          "source": "unittests/emulation/DarwinProcessTests.cpp",
+          "filter": "*/DarwinProcess.FullAndBarrierSynchronizationKeepIndependentObjectState/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.DarwinFullBarrierSynchronizationPreservesIndependentProvidersAcrossCAndCLI",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinFullBarrierDeclarationsRemainIndependentAndStrict",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLinuxProcessTests",
+          "source": "unittests/emulation/ProcessReportTests.cpp",
+          "filter": "ProcessReport.DarwinFullBarrierRejectMalformedObjectsFlagsAndPolicy",
           "platforms": [
             "darwin",
             "linux",

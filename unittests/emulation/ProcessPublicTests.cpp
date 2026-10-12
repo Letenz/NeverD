@@ -11,6 +11,7 @@
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileTestData.h"
+#include "DarwinFullSynchronizationTestData.h"
 #include "DarwinModeTestData.h"
 #include "DarwinOwnershipTestData.h"
 #include "DarwinSynchronizationTestData.h"
@@ -3773,6 +3774,148 @@ TEST_F(ProcessPublic,
                     .empty());
     EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+#endif
+}
+
+TEST_F(
+    ProcessPublic,
+    DarwinFullBarrierSynchronizationPreservesIndependentProvidersAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Common = emulation::darwin_test::fullSynchronizationServices();
+  const auto Virtual =
+      emulation::darwin_test::createdFullSynchronizationServices();
+  const auto Bytes = emulation::darwin_test::createdFullSynchronizationRecord();
+  std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                      Bytes.size());
+  Literal += Literal;
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    const uint64_t Class =
+        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+    for (bool Created : {false, true})
+      for (unsigned Variant = 0; Variant != 5; ++Variant) {
+        auto Files = llvm::cantFail(llvm::json::parse(
+            emulation::darwin_test::FullSynchronizationFilesJSON));
+        auto &F = *Files.getAsObject();
+        if (Created) {
+          F["umask"] = 18;
+          auto &Parent = *(*F.getArray("directories"))[0].getAsObject();
+          Parent["mutable"] = true;
+          Parent["mutation_policy"] = llvm::json::Object{
+              {"directory_entry_size", 16},
+              {"mutation_time",
+               llvm::json::Object{{"seconds", 91}, {"nanoseconds", 92}}}};
+          F["creation_policy"] = llvm::cantFail(llvm::json::parse(
+              R"({"first_inode":100,"block_size":512,"generation":9,"creation_time":{"seconds":41,"nanoseconds":42},"mutation_policy":{"allocation_unit":512,"mutation_time":{"seconds":101,"nanoseconds":102}}})"));
+          for (const char *P :
+               {"full_synchronization", "barrier_synchronization"}) {
+            (*F.getObject(P))["objects"] = llvm::json::Array{};
+            (*F.getObject(P))["created_regular_objects"] = true;
+          }
+        }
+        const char *Selected =
+            Variant <= 2 ? "full_synchronization" : "barrier_synchronization";
+        if (Variant == 1 || Variant == 3)
+          F.erase(Selected);
+        if (Variant == 2 || Variant == 4) {
+          (*F.getObject(Selected))["objects"] = llvm::json::Array{};
+          (*F.getObject(Selected))["created_regular_objects"] = false;
+        }
+        llvm::json::Value Input = llvm::json::Object{
+            {"backend", "unicorn"},
+            {"instruction_quantum", 1024},
+            {"timeout_microseconds", 5000000},
+            {"arguments",
+             llvm::json::Array{"guest",
+                               Created
+                                   ? "virtual-full-barrier-creation"
+                                   : "ordinary-full-barrier-synchronization",
+                               "/data"}},
+            {"darwin_system",
+             llvm::cantFail(llvm::json::parse(
+                 emulation::darwin_test::ModeCredentialsJSON))},
+            {"darwin_files", std::move(Files)}};
+        const auto Options = llvm::formatv("{0}", Input).str();
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), Profile, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::json::parse(Text);
+        ASSERT_TRUE(bool(Report));
+        const auto *O = Report->getAsObject();
+        ASSERT_NE(O, nullptr);
+        EXPECT_EQ(O->getString(field::Stop),
+                  Variant ? "unsupported_service" : "exited");
+        EXPECT_EQ(O->getString(field::Stderr), "");
+        const auto *Calls = O->getArray(field::Services);
+        ASSERT_NE(Calls, nullptr);
+        if (!Variant) {
+          const auto Wanted =
+              Created ? llvm::ArrayRef(Virtual) : llvm::ArrayRef(Common);
+          ASSERT_EQ(Calls->size(), Wanted.size());
+          EXPECT_EQ(O->getInteger(field::ExitStatus), Created ? 47 : 46);
+          EXPECT_EQ(O->getString(field::Stdout),
+                    Created ? llvm::toHex(Literal, true) : "46");
+          for (unsigned I = 0; I != Wanted.size(); ++I) {
+            const auto *E = (*Calls)[I].getAsObject();
+            ASSERT_NE(E, nullptr);
+            const auto &W = Wanted[I];
+            EXPECT_EQ(E->getString(field::Number),
+                      llvm::utohexstr(Class | W.Number, true));
+            EXPECT_EQ(E->getString(field::Result),
+                      llvm::utohexstr(W.Value, true));
+            EXPECT_EQ(E->getBoolean(field::Error), W.Error);
+            const auto *Args = E->getArray(field::Arguments);
+            ASSERT_NE(Args, nullptr);
+            ASSERT_EQ(Args->size(), 6u);
+            if (W.FD)
+              EXPECT_EQ((*Args)[0].getAsString(), llvm::utohexstr(*W.FD, true));
+            if (W.Command)
+              EXPECT_EQ((*Args)[1].getAsString(),
+                        llvm::utohexstr(*W.Command, true));
+            if (W.Argument)
+              EXPECT_EQ((*Args)[2].getAsString(),
+                        llvm::utohexstr(*W.Argument, true));
+          }
+        } else {
+          const bool Full = Variant <= 2,
+                     Missing = Variant == 1 || Variant == 3;
+          const unsigned Prefix = Created ? (Full ? 2 : 3) : (Full ? 6 : 17);
+          ASSERT_EQ(Calls->size(), Prefix + 1);
+          const auto *Last = Calls->back().getAsObject();
+          ASSERT_NE(Last, nullptr);
+          EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+          EXPECT_EQ(Last->get(field::Error), nullptr);
+          EXPECT_EQ(O->getString(field::Diagnostic),
+                    std::string("Darwin ") +
+                        (Missing
+                             ? (Full ? "full synchronization environment is "
+                                       "not configured"
+                                     : "barrier synchronization environment is "
+                                       "not configured")
+                             : (Full ? "regular-object full synchronization "
+                                       "provider is not configured"
+                                     : "regular-object barrier synchronization "
+                                       "provider is not configured")));
+        }
+        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+        EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                  Variant ? process_cli::Incomplete
+                          : process_cli::GuestFailure);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+      }
   }
 #endif
 }

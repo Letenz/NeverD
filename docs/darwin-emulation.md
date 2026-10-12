@@ -2214,7 +2214,7 @@ The objects array grants only initial ordinary regular objects with complete met
 
 Low32 descriptor lookup comes first, returning EBADF9 for absent or closed descriptors even without a provider. Opaque streams, directory descriptions and symlink descriptions remain unsupported independently of the ordinary regular provider. Readonly regular descriptions may complete with an explicit object grant, without inferring general DAC authority. Contents owns the grant through runtime hardlinks, rename and held zero-name unlink. Current duplicate, fcntl and dup2 descriptions select the current object; created objects and reused names never inherit an initial grant; fresh objects require the separate creation provider below. A mapping or retained Contents cannot make a closed descriptor valid. Completion changes no bytes, cursor, descriptor flags, stat fields, xattrs, allocation, namespace or advisory locks, and cannot restore invalidated observations. Mutation and authorization owners remain independent.
 
-The original SDK-free workload retains68 service records and20 guarded full stat observations, with separate main return40 and stdout S. It covers five software profiles, C/CLI/Python and the three matching ARM64 HVF profiles. Current inventories require68 common native cases and83 mandatory workloads per platform: all249 matching ARM64 identities must actually pass. Original ARM64 O0/O1/O2 controls contain504 literal observations through raw SVC and syscall with three upper-carrier variants. Their complete guarded native records and cursors are unchanged, using actual native times. Directory and pipe results in those captures are observations outside the admitted ordinary regular-object provider. F_FULLFSYNC51, F_BARRIERFSYNC85, global synchronization, provider errors, resource-fork/shadow flushes, leases, revocation and asynchronous waits remain separate gaps. Native Intel and physical iOS remain unverified; the complete OS/framework environment is still incomplete.
+The original SDK-free workload retains68 service records and20 guarded full stat observations, with separate main return40 and stdout S. It covers five software profiles, C/CLI/Python and the three matching ARM64 HVF profiles. Current inventories require68 common native cases and83 mandatory workloads per platform: all249 matching ARM64 identities must actually pass. Original ARM64 O0/O1/O2 controls contain504 literal observations through raw SVC and syscall with three upper-carrier variants. Their complete guarded native records and cursors are unchanged, using actual native times. Directory and pipe results in those captures are observations outside the admitted ordinary regular-object provider. The file completion provider supplies no full/barrier authority; separate declarations are described below. Global synchronization, provider errors, resource-fork/shadow flushes, leases, revocation and asynchronous waits remain separate gaps. Native Intel and physical iOS remain unverified; the complete OS/framework environment is still incomplete.
 
 
 ```text
@@ -2243,7 +2243,7 @@ OrdinaryFileSynchronizationKeepsProviderAndCommittedState
 ARM64 matching native mandatory249 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
-F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
 no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -2259,7 +2259,7 @@ The required objects array grants initial objects; the independent optional crea
 
 Low32 FD lookup precedes provider selection and returns EBADF9 for absent/closed descriptors. Opaque streams and directory/symlink descriptions remain independent unsupported kinds or targets. Readonly regular descriptions may complete with the explicit data grant, without general DAC inference. A successful completion changes no bytes, cursor, flags, stat, xattrs, allocation, namespace or advisory locks, and restores no invalid observations. Write/truncate, mode/ownership and other mutation owners keep their existing state and authority.
 
-The original SDK-free data workload records41 services and11 whole guarded stat observations, with main41/stdout D, through five software profiles, C/CLI/Python and three matching ARM64 HVF profiles. Current native inventories require68 common cases and83 mandatory workloads per platform, including all249 matching ARM64 identities actually passing. The original ARM64 O0/O1/O2 captures have252 literal observations through libc/raw calls and three high carriers, with actual native times and unchanged176-byte guarded native records/cursors. Native directory/pipe/new-object results do not supply an initial-object model provider. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Provider failures, cancellation, leases, resource-fork/shadow flushes, asynchronous waits, physical durability, full/barrier/global synchronization and the complete Apple framework environment remain unsupported or unverified.
+The original SDK-free data workload records41 services and11 whole guarded stat observations, with main41/stdout D, through five software profiles, C/CLI/Python and three matching ARM64 HVF profiles. Current native inventories require68 common cases and83 mandatory workloads per platform, including all249 matching ARM64 identities actually passing. The original ARM64 O0/O1/O2 captures have252 literal observations through libc/raw calls and three high carriers, with actual native times and unchanged176-byte guarded native records/cursors. Native directory/pipe/new-object results do not supply an initial-object model provider. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Provider failures, cancellation, leases, resource-fork/shadow flushes, asynchronous waits, physical durability, global synchronization and the complete Apple framework environment remain unsupported or unverified. The data provider supplies no full/barrier grant; the separate declarations below remain independent.
 
 ```text
 fdatasync187 / distinct Fdatasync Int purpose / low32 FD / raw high carriers retained
@@ -2289,7 +2289,7 @@ ARM64 matching native mandatory249 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
-F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
 no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -2387,3 +2387,31 @@ CreatedRegularAttributesKeepIndependentProvidersAndObjectState
 native trace not captured / virtual literal bytes not a native timestamp oracle
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```
+
+
+## Explicit full and barrier completion providers
+
+Explicit full and barrier synchronization providers independently complete operations on ordinary regular objects. Initial object grants and newly created object grants are separate; creation flags default to false and require a complete creation policy when true. Completion preserves every model observation and ignores the unused argument. Barrier support is direct, without mount promotion or fallback. Neither declaration flushes host storage or proves physical durability.
+
+
+```text
+full_synchronization={"objects":[],"created_regular_objects":true}
+barrier_synchronization={"objects":[],"created_regular_objects":true}
+F_FULLFSYNC51 / F_BARRIERFSYNC85 / existing raw fcntl92 and406 / low32 FD and command
+two independent initial and new-regular providers / strict objects array / defaultfalse / complete CreationPolicy
+full and barrier grants never borrow file data or each other / reused names transfer no authority
+direct barrier support / no mount promotion or fallback / no host flush or physical durability
+bad FD before opaque kind query scope regular target environment and exact object grant
+unused argument ignored without reading memory / complete model observations unchanged
+directory link and failed creation publish no regular grant / VM mappings never revive closed FDs
+FullAndBarrierSynchronizationKeepIndependentObjectState
+51 private test identities / pages4096 and16384 / commands51 and85
+SDK-free148 authored service records / 38 guarded full stat observations / separate main46 / stdout F
+virtual-only ten services / separate main47 / 320 independent literal guarded bytes / not native metadata
+70 current native-common cases / 85 mandatory workloads per platform / ARM64 matching native mandatory255
+216 original native raw calls / 648 guarded176-byte stat comparisons / native pipe EBADF9
+native observed completion does not distinguish direct barrier from mount promotion
+native Intel and physical iOS unverified / full Apple frameworks remain incomplete
+```
+
+The native constants and descriptor behavior are checked against [Apple XNU xnu-11417.140.69 kern_descrip.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c) and [fcntl.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h). Native non-vnode EBADF observations do not identify opaque model-native kinds.

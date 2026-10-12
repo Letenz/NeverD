@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 335c1b063992fcb8312e570237641e618484a3e7952bac01dc9091f63a50ee8d -->
+<!-- i18n-source: 62ef0f8494149bbb2b6483560dffbb5ec96f8e589d75360e84f6d40aa6426704 -->
 
 [← 문서 목록](README.md)
 
@@ -1356,7 +1356,7 @@ OrdinaryFileSynchronizationKeepsProviderAndCommittedState
 ARM64 matching native mandatory249 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
-F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
 no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1396,7 +1396,7 @@ ARM64 matching native mandatory249 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
-F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
 no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1494,3 +1494,31 @@ CreatedRegularAttributesKeepIndependentProvidersAndObjectState
 native trace not captured / virtual literal bytes not a native timestamp oracle
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```
+
+
+## Explicit full and barrier completion providers
+
+명시적인 전체 동기화와 배리어 동기화 제공자는 일반 파일 작업을 독립적으로 완료합니다. 기존 객체와 새 객체의 권한은 별개이며 생성 플래그는 기본적으로 false이고 true에는 완전한 생성 정책이 필요합니다. 완료는 모델의 모든 관측을 보존하고 사용하지 않는 인수를 무시합니다. 배리어는 마운트 승격이나 대체 처리 없이 직접 지원됩니다. 호스트 저장소를 플러시하거나 물리적 내구성을 입증하지 않습니다.
+
+
+```text
+full_synchronization={"objects":[],"created_regular_objects":true}
+barrier_synchronization={"objects":[],"created_regular_objects":true}
+F_FULLFSYNC51 / F_BARRIERFSYNC85 / existing raw fcntl92 and406 / low32 FD and command
+two independent initial and new-regular providers / strict objects array / defaultfalse / complete CreationPolicy
+full and barrier grants never borrow file data or each other / reused names transfer no authority
+direct barrier support / no mount promotion or fallback / no host flush or physical durability
+bad FD before opaque kind query scope regular target environment and exact object grant
+unused argument ignored without reading memory / complete model observations unchanged
+directory link and failed creation publish no regular grant / VM mappings never revive closed FDs
+FullAndBarrierSynchronizationKeepIndependentObjectState
+51 private test identities / pages4096 and16384 / commands51 and85
+SDK-free148 authored service records / 38 guarded full stat observations / separate main46 / stdout F
+virtual-only ten services / separate main47 / 320 independent literal guarded bytes / not native metadata
+70 current native-common cases / 85 mandatory workloads per platform / ARM64 matching native mandatory255
+216 original native raw calls / 648 guarded176-byte stat comparisons / native pipe EBADF9
+native observed completion does not distinguish direct barrier from mount promotion
+native Intel and physical iOS unverified / full Apple frameworks remain incomplete
+```
+
+The native constants and descriptor behavior are checked against [Apple XNU xnu-11417.140.69 kern_descrip.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c) and [fcntl.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h). Native non-vnode EBADF observations do not identify opaque model-native kinds.

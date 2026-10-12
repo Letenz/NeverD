@@ -7,6 +7,7 @@
 #include "DarwinCreatedAttributeTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinFileTestData.h"
+#include "DarwinFullSynchronizationTestData.h"
 #include "DarwinSystemTestData.h"
 #include "DarwinTimeTestData.h"
 #include "LinuxFileTestMetadata.h"
@@ -28,6 +29,94 @@ namespace field = process_report;
 #define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "FaultReportCases.def"
 #undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport, DarwinFullBarrierDeclarationsRemainIndependentAndStrict) {
+  for (const char *Purpose :
+       {"full_synchronization", "barrier_synchronization"})
+    for (unsigned Variant = 0; Variant != 3; ++Variant) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedSynchronizationFilesJSON));
+      Files.getAsObject()->erase("synchronization");
+      Files.getAsObject()->erase("data_synchronization");
+      llvm::json::Object Provider{{"objects", llvm::json::Array{}}};
+      if (Variant)
+        Provider["created_regular_objects"] = Variant == 2;
+      (*Files.getAsObject())[Purpose] = std::move(Provider);
+      if (Variant != 2)
+        Files.getAsObject()->erase("creation_policy");
+      auto Parsed = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto &O = *Parsed->DarwinFiles;
+      EXPECT_EQ(bool(O.FullSynchronization),
+                llvm::StringRef(Purpose) == "full_synchronization");
+      EXPECT_EQ(bool(O.BarrierSynchronization),
+                llvm::StringRef(Purpose) == "barrier_synchronization");
+      EXPECT_EQ(O.FullSynchronization
+                    ? O.FullSynchronization->CreatedRegularObjects
+                    : O.BarrierSynchronization->CreatedRegularObjects,
+                Variant == 2);
+      EXPECT_FALSE(O.Synchronization);
+      EXPECT_FALSE(O.DataSynchronization);
+    }
+}
+TEST(ProcessReport, DarwinFullBarrierRejectMalformedObjectsFlagsAndPolicy) {
+  for (const char *Purpose :
+       {"full_synchronization", "barrier_synchronization"}) {
+    for (const char *Bad :
+         {R"({})", R"({"objects":null})", R"({"objects":"/data"})",
+          R"({"objects":[3]})", R"({"objects":[{"path":"/data"}]})",
+          R"({"objects":["/data","/data"]})", R"({"objects":["relative"]})",
+          R"({"objects":["/data/../data"]})", R"({"objects":["/missing"]})",
+          R"({"objects":["/data\u0000tail"]})",
+          R"({"objects":[],"created_regular_objects":1})",
+          R"({"objects":[],"created_regular_objects":null})",
+          R"({"objects":[],"created_regular_objects":"true"})",
+          R"({"objects":[],"created_regular_objects":[]})",
+          R"({"objects":[],"created_regular_objects":{}})",
+          R"({"objects":[],"created_regular_objects":true,"extra":false})"}) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::FullSynchronizationFilesJSON));
+      (*Files.getAsObject())[Purpose] = llvm::cantFail(llvm::json::parse(Bad));
+      auto P = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_FALSE(bool(P)) << Bad;
+      EXPECT_FALSE(llvm::toString(P.takeError()).empty());
+    }
+    for (unsigned Variant = 0; Variant != 5; ++Variant) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::FullSynchronizationFilesJSON));
+      auto &F = *Files.getAsObject();
+      if (Variant == 0)
+        (*F.getObject(Purpose))["created_regular_objects"] = true;
+      if (Variant == 1)
+        F["authorization"] = "static-owner-queries";
+      if (Variant == 2)
+        F["authorization"] = "static-ordinary-queries";
+      if (Variant == 3) {
+        llvm::json::Array TooMany;
+        for (unsigned I = 0; I != 257; ++I)
+          TooMany.push_back("/data");
+        (*F.getObject(Purpose))["objects"] = std::move(TooMany);
+      }
+      if (Variant == 4) {
+        auto &M =
+            *(*F.getArray("files"))[0].getAsObject()->getObject("metadata");
+        M["flags"] = 1;
+      }
+      auto P = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_FALSE(bool(P));
+      EXPECT_FALSE(llvm::toString(P.takeError()).empty());
+    }
+  }
+}
 
 TEST(ProcessReport, DarwinCreatedAttributeFlagsAreIndependentAndCompatible) {
   for (const char *Purpose : {"mode_mutations", "ownership_mutations"})

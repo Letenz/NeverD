@@ -276,6 +276,32 @@ struct DarwinFileDataSynchronizationOptions {
   bool CreatedRegularObjects = false;
 };
 
+/// Independent immediate successful ordinary regular-vnode F_FULLFSYNC
+/// completion. Model mutations have already committed, with no deferred work,
+/// requested cancellation, provider errors, revocation or native leases. This
+/// neither flushes host storage nor establishes physical durability.
+struct DarwinFileFullSynchronizationOptions {
+  /// Initial ordinary regular objects; actual Contents retain grants through
+  /// links, rename and open zero-name lifetime. Replacements never inherit
+  /// them.
+  std::set<std::string> Objects;
+  /// Independent newly admitted regular-object grant. True requires complete
+  /// CreationPolicy; existing objects and directory/link creation receive none.
+  bool CreatedRegularObjects = false;
+};
+
+/// Independent immediate successful ordinary regular-vnode F_BARRIERFSYNC
+/// completion with direct barrier support and no mount promotion or fallback.
+/// It borrows no file/data/full completion grant, changes no model observations
+/// and proves no physical durability. Provider failures and waits stay unknown.
+struct DarwinFileBarrierSynchronizationOptions {
+  /// Initial regular grants follow Contents, never reused pathnames.
+  std::set<std::string> Objects;
+  /// Independent new-regular grant; true requires complete CreationPolicy.
+  /// Existing objects, directories and links receive none from this flag.
+  bool CreatedRegularObjects = false;
+};
+
 /// Closed initial catalogue, with canonical absolute guest paths. No host
 /// filesystem is consulted. Separate opens have independent offsets; dup
 /// shares an open description. Ancestor directories are implicit.
@@ -306,6 +332,12 @@ struct DarwinFileOptions {
   /// Independent fdatasync completion provider; omission remains unknown.
   /// Both static query environments reject even an empty declaration.
   std::optional<DarwinFileDataSynchronizationOptions> DataSynchronization;
+  /// Independent F_FULLFSYNC provider; omission remains unknown. Both static
+  /// query environments reject even an empty declaration.
+  std::optional<DarwinFileFullSynchronizationOptions> FullSynchronization;
+  /// Independent directly supported F_BARRIERFSYNC provider. This grants no
+  /// mount fallback and is incompatible with either immutable query domain.
+  std::optional<DarwinFileBarrierSynchronizationOptions> BarrierSynchronization;
   /// Absent means unknown input; an explicitly empty stream is EOF.
   std::optional<std::vector<uint8_t>> StandardInput;
   /// Exclusive FD ceiling, including the initially open descriptors 0/1/2.

@@ -65,7 +65,7 @@ private:
     RenameDirectoryTarget
   };
   enum class Subject { Real, Effective };
-  enum class SynchronizationKind { File, Data };
+  enum class SynchronizationKind { File, Data, Full, Barrier };
   enum class AuthorizationPurpose {
     Query,
     ModeSearch,
@@ -178,6 +178,8 @@ private:
     bool AdvisoryLocks = false;
     bool Synchronization = false;
     bool DataSynchronization = false;
+    bool FullSynchronization = false;
+    bool BarrierSynchronization = false;
     std::optional<llvm::BitVector> Allocated;
     bool Writable = false;
     bool MetadataInvalidated = false;

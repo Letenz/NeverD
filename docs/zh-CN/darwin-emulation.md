@@ -1,6 +1,6 @@
 **语言**: [English](../darwin-emulation.md) | [简体中文](darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 335c1b063992fcb8312e570237641e618484a3e7952bac01dc9091f63a50ee8d -->
+<!-- i18n-source: 62ef0f8494149bbb2b6483560dffbb5ec96f8e589d75360e84f6d40aa6426704 -->
 
 [← 文档索引](README.md)
 
@@ -1460,7 +1460,7 @@ OrdinaryFileSynchronizationKeepsProviderAndCommittedState
 ARM64 matching native mandatory249 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
-F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
 no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1500,7 +1500,7 @@ ARM64 matching native mandatory249 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
-F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
+file/data grants never supply F_FULLFSYNC51 F_BARRIERFSYNC85 / global sync remains unsupported
 no provider error resource-fork shadow-flush lease revocation wait or full cancellation lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1598,3 +1598,31 @@ CreatedRegularAttributesKeepIndependentProvidersAndObjectState
 native trace not captured / virtual literal bytes not a native timestamp oracle
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```
+
+
+## Explicit full and barrier completion providers
+
+完整同步与屏障同步通过明确声明的提供器分别完成普通文件操作。既有对象与新建对象的授权独立；创建开关默认关闭，开启时需要完整创建策略。完成操作保持模型所有观察不变，并忽略未使用的参数。屏障能力直接提供，不执行挂载提升或回退。两种声明都不刷新宿主存储，也不证明物理持久化。
+
+
+```text
+full_synchronization={"objects":[],"created_regular_objects":true}
+barrier_synchronization={"objects":[],"created_regular_objects":true}
+F_FULLFSYNC51 / F_BARRIERFSYNC85 / existing raw fcntl92 and406 / low32 FD and command
+two independent initial and new-regular providers / strict objects array / defaultfalse / complete CreationPolicy
+full and barrier grants never borrow file data or each other / reused names transfer no authority
+direct barrier support / no mount promotion or fallback / no host flush or physical durability
+bad FD before opaque kind query scope regular target environment and exact object grant
+unused argument ignored without reading memory / complete model observations unchanged
+directory link and failed creation publish no regular grant / VM mappings never revive closed FDs
+FullAndBarrierSynchronizationKeepIndependentObjectState
+51 private test identities / pages4096 and16384 / commands51 and85
+SDK-free148 authored service records / 38 guarded full stat observations / separate main46 / stdout F
+virtual-only ten services / separate main47 / 320 independent literal guarded bytes / not native metadata
+70 current native-common cases / 85 mandatory workloads per platform / ARM64 matching native mandatory255
+216 original native raw calls / 648 guarded176-byte stat comparisons / native pipe EBADF9
+native observed completion does not distinguish direct barrier from mount promotion
+native Intel and physical iOS unverified / full Apple frameworks remain incomplete
+```
+
+The native constants and descriptor behavior are checked against [Apple XNU xnu-11417.140.69 kern_descrip.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/kern/kern_descrip.c) and [fcntl.h](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/sys/fcntl.h). Native non-vnode EBADF observations do not identify opaque model-native kinds.

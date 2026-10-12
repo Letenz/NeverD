@@ -392,6 +392,12 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     } else if (Name == field::FileModeMutations) {
       if (auto E = TimedObjectProvider(V, Name, Out.ModeMutations))
         return E;
+    } else if (Name == field::FileFullSynchronization) {
+      if (auto E = ObjectProvider(V, Name, Out.FullSynchronization))
+        return E;
+    } else if (Name == field::FileBarrierSynchronization) {
+      if (auto E = ObjectProvider(V, Name, Out.BarrierSynchronization))
+        return E;
     } else if (Name == field::FileDataSynchronization) {
       if (auto E = ObjectProvider(V, Name, Out.DataSynchronization))
         return E;
