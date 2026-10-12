@@ -3,6 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "../../lib/unpack/format/pe/PEDriverRelocations.h"
 #include "../TestProcess.h"
 #include "UnpackTestSupport.h"
 
@@ -17,6 +18,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
+#include "llvm/Support/SHA256.h"
 
 #ifdef NEVERD_UNPACK_DRIVER_CLI
 #include "neverd/sdk/NeverDCAPI.h"
@@ -25,6 +27,10 @@
 #include <windows.h>
 // ImageHlp declarations require the Windows types above.
 #include <imagehlp.h>
+// SDK macros otherwise expand LLVM's qualified PE constants below.
+#undef IMAGE_FILE_DLL
+#undef IMAGE_FILE_RELOCS_STRIPPED
+#undef IMAGE_REL_BASED_DIR64
 #endif
 
 namespace neverd::unpack {
@@ -160,6 +166,42 @@ protected:
     test::writeFile(Path, Bytes);
     return Path;
   }
+  void expectSameOpaqueSnapshot(const UnpackResult &Opaque,
+                                const UnpackResult &Checked) {
+    // Opaque software execution cannot retain loader-field provenance. Compare
+    // every input section and the existing import metadata byte for byte while
+    // checking the independently decoded relocation difference explicitly.
+    const auto A = test::readImage(Opaque.Image);
+    const auto B = test::readImage(Checked.Image);
+    EXPECT_EQ(A.Base, B.Base);
+    EXPECT_EQ(A.Entry, B.Entry);
+    EXPECT_EQ(A.DLLCharacteristics, B.DLLCharacteristics);
+    EXPECT_EQ(A.FileCharacteristics & ~llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED,
+              B.FileCharacteristics & ~llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED);
+    EXPECT_EQ(A.Imports, B.Imports);
+    EXPECT_EQ(A.Exports, B.Exports);
+    for (const auto &S : Original.Sections) {
+      SCOPED_TRACE(S.Name);
+      const uint64_t Size = std::max(S.VirtualSize, S.FileSize);
+      ASSERT_LE(uint64_t(S.RVA) + Size, A.Mapped.size());
+      ASSERT_LE(uint64_t(S.RVA) + Size, B.Mapped.size());
+      EXPECT_EQ(llvm::ArrayRef(A.Mapped).slice(S.RVA, Size),
+                llvm::ArrayRef(B.Mapped).slice(S.RVA, Size));
+    }
+    const auto AD = A.directory(llvm::COFF::BASE_RELOCATION_TABLE);
+    const auto BD = B.directory(llvm::COFF::BASE_RELOCATION_TABLE);
+    EXPECT_EQ(AD.Size, 0u);
+    EXPECT_GT(BD.Size, 0u);
+    const auto *Metadata = A.section(".neverd");
+    ASSERT_NE(Metadata, nullptr);
+    ASSERT_NE(B.section(".neverd"), nullptr);
+    EXPECT_EQ(Metadata->RVA, B.section(".neverd")->RVA);
+    EXPECT_EQ(
+        llvm::ArrayRef(A.Mapped).slice(Metadata->RVA, Metadata->VirtualSize),
+        llvm::ArrayRef(B.Mapped).slice(Metadata->RVA, Metadata->VirtualSize));
+    EXPECT_GE(BD.RelativeVirtualAddress, Metadata->RVA + Metadata->VirtualSize);
+    EXPECT_EQ(Opaque.Diagnostic, Checked.Diagnostic);
+  }
   DriverOptions scenario() const {
     DriverOptions D;
     D.Backend = GetParam().Kind;
@@ -178,6 +220,84 @@ protected:
     D.Requests.push_back({DriverRequestKind::Cleanup});
     D.Requests.push_back({DriverRequestKind::Close});
     return D;
+  }
+  std::filesystem::path relocationHistoryInput(bool DebugRecords = false) {
+    auto Bytes = Original.File;
+    const auto *Program = Original.section(".prog");
+    const auto *Data = Original.section(".pack");
+    if (!Program || !Data || Program->FileSize < 50 || Data->FileSize < 80) {
+      ADD_FAILURE() << "driver relocation control has no storage";
+      return {};
+    }
+    const llvm::MemoryBufferRef Buffer(
+        llvm::StringRef(reinterpret_cast<const char *>(Bytes.data()),
+                        Bytes.size()),
+        "relocation-history");
+    auto Object = llvm::object::COFFObjectFile::create(Buffer);
+    if (!Object) {
+      ADD_FAILURE() << llvm::toString(Object.takeError());
+      return {};
+    }
+    const auto *Directory =
+        (*Object)->getDataDirectory(llvm::COFF::BASE_RELOCATION_TABLE);
+    if (!Directory) {
+      ADD_FAILURE() << "driver relocation control has no directory slot";
+      return {};
+    }
+    const auto DirectoryOffset =
+        reinterpret_cast<const uint8_t *>(Directory) - Bytes.data();
+    if (DebugRecords) {
+      const auto *Debug =
+          (*Object)->getDataDirectory(llvm::COFF::DEBUG_DIRECTORY);
+      if (!Debug) {
+        ADD_FAILURE()
+            << "driver relocation control has no debug directory slot";
+        return {};
+      }
+      const auto Offset =
+          reinterpret_cast<const uint8_t *>(Debug) - Bytes.data();
+      write32le(Bytes.data() + Offset, Data->RVA);
+      write32le(Bytes.data() + Offset + 4,
+                sizeof(llvm::object::debug_directory));
+    }
+    write32le(Bytes.data() + DirectoryOffset, Data->RVA + 64);
+    write32le(Bytes.data() + DirectoryOffset + 4, 16);
+    uint8_t *Record = Bytes.data() + Data->FileOffset;
+    const uint64_t Values[] = {Original.Base + Program->RVA + 16,
+                               Original.Base + Program->RVA + 24,
+                               UINT64_MAX - 16};
+    for (size_t I = 0; I < std::size(Values); ++I)
+      llvm::support::endian::write64le(Record + I * 8, Values[I]);
+    write32le(Record + 64, Data->RVA);
+    write32le(Record + 68, 16);
+    for (size_t I = 0; I < 4; ++I)
+      llvm::support::endian::write16le(Record + 72 + I * 2,
+                                       I < 3 ? 0xa000 + I * 8 : 0);
+    std::vector<uint8_t> Code;
+    auto RIP = [&](std::initializer_list<uint8_t> Opcode, uint32_t Field,
+                   bool Immediate = false) {
+      Code.insert(Code.end(), Opcode.begin(), Opcode.end());
+      const auto Offset = Code.size();
+      Code.resize(Offset + 4);
+      write32le(Code.data() + Offset,
+                Data->RVA + Field -
+                    (Program->RVA + Code.size() + (Immediate ? 4 : 0)));
+      if (Immediate)
+        Code.insert(Code.end(), {0x34, 0x12, 0, 0});
+    };
+    RIP({0xc7, 0x05}, 32, true); // Unrelated scalar store.
+    Code.push_back(0x90);        // First stopped observation at byte 10.
+    RIP({0x48, 0x8b, 0x05}, 0);  // mov rax,[field 0]
+    RIP({0x48, 0x89, 0x05}, 0);  // Same-value store.
+    RIP({0x48, 0x8b, 0x05}, 8);  // mov rax,[field 1]
+    RIP({0x48, 0xff, 0x05}, 8);  // inc qword ptr [field 1]
+    RIP({0x48, 0xff, 0x0d}, 8);  // dec qword ptr [field 1]; restore bytes.
+    Code.insert(Code.end(), {0x90, 0x31, 0xc0, 0xc3});
+    std::copy(Code.begin(), Code.end(), Bytes.begin() + Program->FileOffset);
+    write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+    const auto Path = Scratch / "relocation-history.sys";
+    test::writeFile(Path, Bytes);
+    return Path;
   }
   void checkLifecycle(const std::filesystem::path &Path) {
     auto Run = emulateDriver(Path, scenario());
@@ -209,15 +329,17 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
   ASSERT_EQ(Result->Outcome, UnpackOutcome::UnsupportedState)
       << unpackResultJSON(*Result);
   EXPECT_TRUE(Result->Image.empty());
-  EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
+  EXPECT_NE(Result->Diagnostic.find("additional owned OS resources"),
             std::string::npos);
-  // Native Windows rejects the fixed output even when this fresh model replay
-  // passes. A snapshot must not certify the kernel loader boundary.
+  // Loader fields alone do not cover generated pointers or a fresh caller.
+  // A successful model replay cannot certify the kernel loader boundary.
   Options.SnapshotOnly = true;
   Result = unpackFile(Input, Options);
   ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
   ASSERT_EQ(Result->Outcome, UnpackOutcome::Snapshot)
       << unpackResultJSON(*Result);
+  EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
+            std::string::npos);
   EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
             std::string::npos);
   EXPECT_EQ(Result->Profile, profile::ReportProfile);
@@ -226,8 +348,10 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
   ASSERT_FALSE(Result->Transfers.empty());
   EXPECT_TRUE(Result->Transfers.back().ProgramInvocation);
   EXPECT_TRUE(Result->RuntimeState.AdditionalStateInventoryKnown);
-  EXPECT_FALSE(Result->RuntimeState.HasAdditionalDependencies);
-  EXPECT_TRUE(Result->RuntimeState.AdditionalDependencyReasons.empty());
+  EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+  EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto Rebuilt = test::readImage(Result->Image);
   EXPECT_NE(Rebuilt.FileCharacteristics & llvm::COFF::IMAGE_FILE_DLL, 0u);
   EXPECT_EQ(Rebuilt.Entry, Original.Entry);
@@ -318,8 +442,12 @@ TEST_P(UnpackDriver, RecoversAfterReleasingTransientImageMDLs) {
   ASSERT_EQ(Result->Outcome, UnpackOutcome::Snapshot)
       << unpackResultJSON(*Result);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
-  EXPECT_FALSE(Result->RuntimeState.HasAdditionalDependencies);
-  EXPECT_TRUE(Result->RuntimeState.AdditionalDependencyReasons.empty());
+  EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+  // The released MDL no longer contributes a dependency; projecting the
+  // executed prefix onto a fresh DriverEntry caller remains unproved.
+  EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto Output = Scratch / "released-mdl.sys";
   test::writeFile(Output, Result->Image);
   checkLifecycle(Output);
@@ -330,7 +458,7 @@ TEST_P(UnpackDriver, RecoversAfterReleasingTransientImageMDLs) {
     ASSERT_TRUE(bool(Legacy)) << llvm::toString(Legacy.takeError());
     ASSERT_EQ(Legacy->Outcome, UnpackOutcome::Snapshot) << Legacy->Diagnostic;
     EXPECT_EQ(Legacy->EntryRVA, Result->EntryRVA);
-    EXPECT_EQ(Legacy->Image, Result->Image);
+    expectSameOpaqueSnapshot(*Legacy, *Result);
   }
 }
 
@@ -549,10 +677,12 @@ private:
 
 class DriverContextObserver final : public ProcessObserver {
 public:
-  explicit DriverContextObserver(std::vector<uint64_t> Stops)
-      : Stops(std::move(Stops)) {}
+  explicit DriverContextObserver(std::vector<uint64_t> Stops,
+                                 std::vector<uint64_t> Fields = {})
+      : Stops(std::move(Stops)), Fields(std::move(Fields)) {}
   std::shared_ptr<const ProcessRuntimeState> Initial;
   std::vector<std::shared_ptr<const ProcessRuntimeState>> Metadata, Contents;
+  std::vector<std::vector<uint64_t>> FieldValues;
   llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
     auto State = P.runtimeState(true);
     if (!State)
@@ -563,6 +693,14 @@ public:
   }
   llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
   watched(ProcessView &P, uint64_t) override {
+    std::vector<uint64_t> Values;
+    for (auto RVA : Fields) {
+      std::array<uint8_t, 8> Bytes;
+      if (auto E = P.read(Base + RVA, Bytes))
+        return std::move(E);
+      Values.push_back(llvm::support::endian::read64le(Bytes.data()));
+    }
+    FieldValues.push_back(std::move(Values));
     auto State = P.runtimeState(false);
     if (!State)
       return State.takeError();
@@ -582,9 +720,274 @@ private:
     return {{Base + Stops.at(Index), 1}};
   }
   std::vector<uint64_t> Stops;
+  std::vector<uint64_t> Fields;
   uint64_t Base = 0;
   size_t Index = 0;
 };
+
+TEST_P(UnpackDriver, RelocationFactsRequireUninterruptedLoaderWrites) {
+  const auto Input = relocationHistoryInput();
+  ASSERT_FALSE(HasFailure());
+  const uint64_t ProgramRVA = Original.section(".prog")->RVA;
+  const uint64_t DataRVA = Original.section(".pack")->RVA;
+  for (uint64_t Base :
+       {Original.Base, uint64_t(0x130000000), uint64_t(0xfffff80140000000)}) {
+    SCOPED_TRACE(Base);
+    DriverContextObserver Observer({ProgramRVA + 10, ProgramRVA + 46},
+                                   {DataRVA, DataRVA + 8, DataRVA + 16});
+    auto D = scenario();
+    D.LoadAddress = Base;
+    auto Run = observeDriver(Input, D, Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    ASSERT_TRUE(Observer.Initial);
+    ASSERT_EQ(Observer.Contents.size(), 2u);
+    ASSERT_EQ(Observer.Metadata.size(), 2u);
+    ASSERT_EQ(Observer.FieldValues.size(), 2u);
+    const std::vector<uint64_t> Expected{
+        Base + ProgramRVA + 16, Base + ProgramRVA + 24,
+        UINT64_MAX - 16 + (Base - Original.Base)};
+    EXPECT_EQ(Observer.FieldValues[0], Expected);
+    EXPECT_EQ(Observer.FieldValues[1], Expected); // Equal bytes after writes.
+    const auto &Initial =
+        static_cast<const WindowsDriverState &>(*Observer.Initial);
+    ASSERT_TRUE(Initial.Relocations);
+    EXPECT_EQ(Initial.Relocations->ImageBase, Base);
+    EXPECT_EQ(Initial.Relocations->PreferredBase, Original.Base);
+    EXPECT_EQ(Initial.Relocations->FileHash,
+              llvm::SHA256::hash(test::readFile(Input)));
+    ASSERT_EQ(Initial.Relocations->Fields.size(), 3u);
+    for (size_t I = 0; I < 3; ++I) {
+      EXPECT_EQ(Initial.Relocations->Fields[I].RVA, DataRVA + I * 8);
+      EXPECT_EQ(Initial.Relocations->Fields[I].LoadedValue, Expected[I]);
+      EXPECT_TRUE(Initial.Relocations->Fields[I].LoaderWritePreserved);
+    }
+    for (size_t Stop = 0; Stop < 2; ++Stop)
+      for (const auto &Capture :
+           {Observer.Metadata[Stop], Observer.Contents[Stop]}) {
+        const auto &State = static_cast<const WindowsDriverState &>(*Capture);
+        ASSERT_TRUE(State.Relocations);
+        ASSERT_EQ(State.Relocations->Fields.size(), 3u);
+        for (size_t I = 0; I < 3; ++I)
+          EXPECT_EQ(State.Relocations->Fields[I].LoaderWritePreserved,
+                    Stop == 0 || I == 2);
+      }
+    // Earlier facts remain owned after later writes and session destruction.
+    for (const auto &Field : Initial.Relocations->Fields)
+      EXPECT_TRUE(Field.LoaderWritePreserved);
+  }
+}
+
+TEST_P(UnpackDriver, SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts) {
+  const uint64_t ProgramRVA = Original.section(".prog")->RVA;
+  const uint32_t DataRVA = Original.section(".pack")->RVA;
+  for (auto [Stop, DebugRecords] :
+       {std::pair<uint64_t, bool>{10, false}, {46, false}, {10, true}}) {
+    const auto Input = relocationHistoryInput(DebugRecords);
+    ASSERT_FALSE(HasFailure());
+    DriverContextObserver Observed({ProgramRVA + Stop},
+                                   {DataRVA, DataRVA + 8, DataRVA + 16});
+    auto D = scenario();
+    D.LoadAddress = 0xfffff80140000000;
+    auto OriginalRun = observeDriver(Input, D, Observed);
+    ASSERT_TRUE(bool(OriginalRun)) << llvm::toString(OriginalRun.takeError());
+    ASSERT_EQ(Observed.Contents.size(), 1u);
+    const auto File = test::readFile(Input);
+    auto InputImage = pe::Image::read(File);
+    ASSERT_TRUE(bool(InputImage)) << llvm::toString(InputImage.takeError());
+    const auto OriginalImage = test::readImage(File);
+    Capture C{};
+    C.Base = D.LoadAddress;
+    C.EntryRVA = ProgramRVA + Stop;
+    C.Memory = C.Baseline = OriginalImage.Mapped;
+    C.PageAccess.assign(C.Memory.size() / 4096, Read | Write | Execute);
+    C.OwnedState = Observed.Contents.front();
+    for (size_t I = 0; I < Observed.FieldValues.front().size(); ++I)
+      llvm::support::endian::write64le(C.Memory.data() + DataRVA + I * 8,
+                                       Observed.FieldValues.front()[I]);
+    auto Result = pe::rebuild(**InputImage, C, {});
+    ASSERT_TRUE(bool(Result)) << llvm::toString(Result.takeError());
+    // Retaining loader fields does not close generated-pointer or invocation
+    // dependencies. The production orchestrator still refuses normal recovery.
+    EXPECT_EQ(Result->RuntimeDependency,
+              "kernel image relocation state requires reconstruction");
+    const auto Image = test::readImage(Result->File);
+    const auto Directory = Image.directory(llvm::COFF::BASE_RELOCATION_TABLE);
+    EXPECT_EQ(Directory.Size != 0, !DebugRecords);
+    EXPECT_EQ(bool(Image.FileCharacteristics &
+                   llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED),
+              DebugRecords);
+    std::set<uint32_t> Fields;
+    for (uint64_t Offset = 0; Offset < Directory.Size;) {
+      const auto *Block =
+          Image.Mapped.data() + Directory.RelativeVirtualAddress + Offset;
+      const uint32_t Page = read32le(Block), Size = read32le(Block + 4);
+      ASSERT_GE(Size, 8u);
+      ASSERT_LE(Size, Directory.Size - Offset);
+      ASSERT_EQ(Size % 4, 0u);
+      for (uint32_t At = 8; At < Size; At += 2) {
+        const uint16_t Record = llvm::support::endian::read16le(Block + At);
+        if (!Record)
+          continue;
+        ASSERT_EQ(Record >> 12, llvm::COFF::IMAGE_REL_BASED_DIR64);
+        EXPECT_TRUE(Fields.insert(Page + (Record & 4095)).second);
+      }
+      Offset += Size;
+    }
+    const std::set<uint32_t> Expected =
+        DebugRecords ? std::set<uint32_t>{}
+        : Stop == 10 ? std::set<uint32_t>{DataRVA, DataRVA + 8, DataRVA + 16}
+                     : std::set<uint32_t>{DataRVA + 16};
+    EXPECT_EQ(Fields, Expected);
+    for (uint32_t Field : Fields) {
+      const auto Index = (Field - DataRVA) / 8;
+      const uint64_t Value =
+          Index == 2 ? UINT64_MAX - 16 + (Image.Base - Original.Base)
+                     : Image.Base + ProgramRVA + 16 + Index * 8;
+      EXPECT_EQ(llvm::support::endian::read64le(Image.Mapped.data() + Field),
+                Value);
+    }
+    const auto Output = Scratch / (DebugRecords ? "debug-records.sys"
+                                   : Stop == 10 ? "intact.sys"
+                                                : "changed.sys");
+    test::writeFile(Output, Result->File);
+    auto Rebased = scenario();
+    Rebased.LoadAddress = 0xfffff80150000000;
+    DriverContextObserver Observer({ProgramRVA + Stop});
+    auto Run = observeDriver(Output, Rebased, Observer);
+    if (DebugRecords) {
+      ASSERT_FALSE(bool(Run));
+      EXPECT_NE(llvm::toString(Run.takeError()).find("relocat"),
+                std::string::npos);
+      continue;
+    }
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    const auto &State =
+        static_cast<const WindowsDriverState &>(*Observer.Initial);
+    ASSERT_TRUE(State.Relocations);
+    ASSERT_EQ(State.Relocations->Fields.size(), Expected.size());
+    for (const auto &Field : State.Relocations->Fields)
+      EXPECT_TRUE(Field.LoaderWritePreserved);
+  }
+}
+
+TEST_P(UnpackDriver, SnapshotRelocationFactsBindSourceAndFormatWrites) {
+  const auto Input = relocationHistoryInput();
+  ASSERT_FALSE(HasFailure());
+  const auto ProgramRVA = Original.section(".prog")->RVA;
+  const auto DataRVA = Original.section(".pack")->RVA;
+  DriverContextObserver Observer({ProgramRVA + 10});
+  auto Run = observeDriver(Input, scenario(), Observer);
+  ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+  ASSERT_TRUE(Observer.Initial);
+  auto File = test::readFile(Input);
+  auto Image = pe::Image::read(File);
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  const auto Bytes = test::readImage(File);
+  Capture C{};
+  C.Base = Original.Base;
+  C.OwnedState = Observer.Initial;
+  const auto &Initial =
+      static_cast<const WindowsDriverState &>(*Observer.Initial);
+  auto Encode = [&](const Capture &State,
+                    llvm::ArrayRef<std::pair<uint64_t, uint64_t>> Replaced) {
+    std::vector<uint8_t> Metadata;
+    return pe::retainDriverRelocations(**Image, State, Bytes.Mapped, Replaced,
+                                       Bytes.Mapped.size(), Metadata);
+  };
+  auto Intact = Encode(C, {});
+  ASSERT_TRUE(bool(Intact)) << llvm::toString(Intact.takeError());
+  EXPECT_EQ(Intact->Fields,
+            (std::vector<uint32_t>{DataRVA, DataRVA + 8, DataRVA + 16}));
+  // Replacing a field invalidates its role even if formatting wrote the same
+  // numeric bytes. This is not inferred from a before/after byte comparison.
+  const std::pair<uint64_t, uint64_t> Replaced{DataRVA + 8, DataRVA + 16};
+  auto Edited = Encode(C, Replaced);
+  ASSERT_TRUE(bool(Edited)) << llvm::toString(Edited.takeError());
+  EXPECT_EQ(Edited->Fields, (std::vector<uint32_t>{DataRVA, DataRVA + 16}));
+  for (unsigned Fault = 0; Fault < 3; ++Fault) {
+    auto Wrong = std::make_shared<WindowsDriverState>(Initial);
+    if (Fault == 0)
+      Wrong->Relocations->FileHash[0] ^= 1;
+    else if (Fault == 1)
+      ++Wrong->Relocations->ImageBase;
+    else
+      Wrong->Relocations->Fields[1].RVA = DataRVA;
+    Capture Broken = C;
+    Broken.OwnedState = std::move(Wrong);
+    auto Rejected = Encode(Broken, {});
+    ASSERT_FALSE(bool(Rejected));
+    EXPECT_NE(llvm::toString(Rejected.takeError()).find("relocation"),
+              std::string::npos);
+  }
+
+  // A loader-authenticated value can become zero after rebasing. It must
+  // remain file backed beyond an earlier debug record, rather than being
+  // trimmed as section padding or losing its required extent to debug layout.
+  const auto *Data = Original.section(".pack");
+  ASSERT_GE(Data->FileSize, 1032u);
+  const uint32_t ZeroField = DataRVA + 1024;
+  const uint64_t LoadBase = 0xfffff80140000000;
+  llvm::support::endian::write16le(File.data() + Data->FileOffset + 76, 0xa400);
+  llvm::support::endian::write64le(File.data() + Data->FileOffset + 1024,
+                                   Original.Base - LoadBase);
+  const llvm::MemoryBufferRef Buffer(
+      llvm::StringRef(reinterpret_cast<const char *>(File.data()), File.size()),
+      "zero-relocation-field");
+  auto Object = llvm::object::COFFObjectFile::create(Buffer);
+  ASSERT_TRUE(bool(Object)) << llvm::toString(Object.takeError());
+  const auto *Debug = (*Object)->getDataDirectory(llvm::COFF::DEBUG_DIRECTORY);
+  ASSERT_NE(Debug, nullptr);
+  const auto DebugOffset =
+      reinterpret_cast<const uint8_t *>(Debug) - File.data();
+  write32le(File.data() + DebugOffset, DataRVA + 64);
+  write32le(File.data() + DebugOffset + 4,
+            sizeof(llvm::object::debug_directory));
+  const auto ZeroInput = Scratch / "zero-field.sys";
+  test::writeFile(ZeroInput, File);
+  auto D = scenario();
+  D.LoadAddress = LoadBase;
+  DriverContextObserver ZeroObserver({ProgramRVA + 10},
+                                     {DataRVA, DataRVA + 8, ZeroField});
+  auto ZeroRun = observeDriver(ZeroInput, D, ZeroObserver);
+  ASSERT_TRUE(bool(ZeroRun)) << llvm::toString(ZeroRun.takeError());
+  ASSERT_EQ(ZeroObserver.Contents.size(), 1u);
+  EXPECT_EQ(ZeroObserver.FieldValues.front()[2], 0u);
+  auto ZeroImage = pe::Image::read(File);
+  ASSERT_TRUE(bool(ZeroImage)) << llvm::toString(ZeroImage.takeError());
+  const auto OriginalZero = test::readImage(File);
+  Capture ZeroCapture{};
+  ZeroCapture.Base = LoadBase;
+  ZeroCapture.EntryRVA = ProgramRVA + 10;
+  ZeroCapture.Memory = ZeroCapture.Baseline = OriginalZero.Mapped;
+  ZeroCapture.PageAccess.assign(ZeroCapture.Memory.size() / 4096,
+                                Read | Write | Execute);
+  ZeroCapture.OwnedState = ZeroObserver.Contents.front();
+  for (size_t I = 0; I < 3; ++I)
+    llvm::support::endian::write64le(ZeroCapture.Memory.data() +
+                                         (I == 2 ? ZeroField : DataRVA + I * 8),
+                                     ZeroObserver.FieldValues.front()[I]);
+  auto ZeroOutput = pe::rebuild(**ZeroImage, ZeroCapture, {});
+  ASSERT_TRUE(bool(ZeroOutput)) << llvm::toString(ZeroOutput.takeError());
+  const auto Rebuilt = test::readImage(ZeroOutput->File);
+  ASSERT_NE(Rebuilt.section(".pack"), nullptr);
+  EXPECT_GE(Rebuilt.section(".pack")->FileSize, 1032u);
+  EXPECT_EQ(llvm::support::endian::read64le(Rebuilt.Mapped.data() + ZeroField),
+            0u);
+  const auto ZeroSnapshot = Scratch / "zero-snapshot.sys";
+  test::writeFile(ZeroSnapshot, ZeroOutput->File);
+  D.LoadAddress += 0x10000000;
+  DriverContextObserver Rebased({ProgramRVA + 10});
+  auto Replay = observeDriver(ZeroSnapshot, D, Rebased);
+  ASSERT_TRUE(bool(Replay)) << llvm::toString(Replay.takeError());
+  ASSERT_TRUE(Rebased.Initial);
+  const auto &State = static_cast<const WindowsDriverState &>(*Rebased.Initial);
+  ASSERT_TRUE(State.Relocations);
+  ASSERT_EQ(State.Relocations->Fields.size(), 3u);
+  EXPECT_EQ(State.Relocations->Fields.back().RVA, ZeroField);
+  EXPECT_EQ(State.Relocations->Fields.back().LoadedValue, 0x10000000u);
+}
 
 TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
   const auto Input = entryContextInput();
@@ -658,6 +1061,62 @@ TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
   }
 }
 
+TEST_P(UnpackDriver, EqualEntryValuesDoNotProveFreshCallerBindings) {
+  const auto *Program = Original.section(".prog");
+  ASSERT_NE(Program, nullptr);
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    for (unsigned Mode : {0u, 1u}) {
+      SCOPED_TRACE(Mode);
+      // Each XOR leaves the model's incoming zero value unchanged. A fresh
+      // caller can supply another value, and skipping the AX write also loses
+      // the computed DriverEntry status. Numeric equality is not a binding.
+      const auto Register = Mode ? CPURegister::X64R13 : CPURegister::X64AX;
+      const std::vector<uint8_t> Code =
+          Mode ? std::vector<uint8_t>{0x45, 0x31, 0xed, 0x90, 0xc3}
+               : std::vector<uint8_t>{0x31, 0xc0, 0x90, 0xc3};
+      ASSERT_GE(Program->FileSize, Code.size());
+      auto Bytes = Original.File;
+      std::copy(Code.begin(), Code.end(), Bytes.begin() + Program->FileOffset);
+      write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+      const auto Input = Scratch / "equal-entry.sys";
+      test::writeFile(Input, Bytes);
+      auto D = scenario();
+      D.Contract = Contract;
+      DriverContextObserver Observer(
+          {Program->RVA, Program->RVA + Code.size() - 2});
+      auto Run = observeDriver(Input, D, Observer);
+      ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+      ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+      EXPECT_EQ(Run->Instructions, 1u);
+      ASSERT_TRUE(Observer.Initial);
+      const auto &Initial =
+          static_cast<const WindowsDriverState &>(*Observer.Initial);
+      ASSERT_TRUE(Initial.Entry);
+      EXPECT_FALSE(Initial.hasAdditionalDependencies());
+      ASSERT_EQ(Initial.Entry->InitialRegisters.at(Register)[0], 0u);
+      ASSERT_EQ(Observer.Contents.size(), 2u);
+      const auto &Before =
+          static_cast<const WindowsDriverState &>(*Observer.Contents.front());
+      EXPECT_FALSE(Before.hasAdditionalDependencies());
+      const auto &State =
+          static_cast<const WindowsDriverState &>(*Observer.Contents.back());
+      ASSERT_TRUE(State.Entry);
+      const auto &Entry = *State.Entry;
+      EXPECT_EQ(Entry.Registers.at(Register),
+                Entry.InitialRegisters.at(Register));
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
+                Entry.InitialRegisters.at(CPURegister::X64SP));
+      EXPECT_EQ(Entry.Frame, Entry.InitialFrame);
+      EXPECT_TRUE(State.hasAdditionalDependencies());
+      EXPECT_EQ(State.Reasons,
+                (std::vector<std::string>{"DriverEntry continuation requires "
+                                          "fresh-caller reconstruction"}));
+    }
+  }
+}
+
 TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   const auto Input = entryContextInput();
   ASSERT_FALSE(HasFailure());
@@ -675,7 +1134,10 @@ TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   ASSERT_TRUE(Before.Entry);
   ASSERT_TRUE(After.Entry);
   EXPECT_TRUE(Before.hasAdditionalDependencies());
-  EXPECT_FALSE(After.hasAdditionalDependencies());
+  EXPECT_TRUE(After.hasAdditionalDependencies());
+  EXPECT_EQ(After.Reasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto &Entry = *After.Entry;
   EXPECT_EQ(Entry.InitialRegisters, Before.Entry->InitialRegisters);
   EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
@@ -811,7 +1273,9 @@ TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
     EXPECT_TRUE(Driver.hasAdditionalDependencies());
     EXPECT_EQ(Driver.additionalDependencyReasons(),
               (std::vector<std::string>{"live kernel pool allocations",
-                                        "retained kernel object allocations"}));
+                                        "retained kernel object allocations",
+                                        "DriverEntry continuation requires "
+                                        "fresh-caller reconstruction"}));
     if (State == Observer.Metadata)
       EXPECT_FALSE(Pool.Bytes);
     else {
@@ -874,7 +1338,10 @@ TEST_P(UnpackDriver, SchedulingSlicesPreserveInvocationAndTransferIdentity) {
   ASSERT_TRUE(bool(Legacy)) << llvm::toString(Legacy.takeError());
   ASSERT_EQ(Legacy->Outcome, UnpackOutcome::Snapshot) << Legacy->Diagnostic;
   EXPECT_EQ(Legacy->EntryRVA, Unscheduled->EntryRVA);
-  EXPECT_EQ(Legacy->Image, Unscheduled->Image);
+  if (GetParam().Kind == ExecutionBackendKind::Unicorn)
+    expectSameOpaqueSnapshot(*Legacy, *Unscheduled);
+  else
+    EXPECT_EQ(Legacy->Image, Unscheduled->Image);
 }
 
 TEST_P(UnpackDriver, ObserverFailuresAreAPIErrors) {

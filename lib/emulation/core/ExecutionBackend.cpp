@@ -16,7 +16,8 @@ llvm::Error ExecutionBackend::run(uint64_t PC, uint64_t Timeout) {
   if (!Exit)
     return Exit.takeError();
   if (Exit->Kind == ExecutionExitKind::UnsupportedOperation)
-    return llvm::make_error<UnsupportedExecutionError>();
+    return llvm::make_error<diagnostic::InstructionRejectionError>(
+        Exit->Diagnostic);
   if (Exit->Kind == ExecutionExitKind::ServiceRequest)
     return diagnostic::error(diagnostic::PendingService);
   if (!Exit->Diagnostic.empty())
@@ -97,6 +98,7 @@ char UnsupportedExecutionError::ID;
 void UnsupportedExecutionError::log(llvm::raw_ostream &OS) const {
   OS << diagnostic::Instruction;
 }
+char diagnostic::InstructionRejectionError::ID;
 
 const char *backendFaultKindName(BackendFaultKind Kind) {
   switch (Kind) {

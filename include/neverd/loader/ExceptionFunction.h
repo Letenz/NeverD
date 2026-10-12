@@ -149,6 +149,19 @@ struct ExceptionFunction {
     return codeChunkContaining(Range).has_value();
   }
 
+  /// Where the function's body ends: after \ref CodeRange and the fragments
+  /// that follow it without a gap.  MSVC splits a function's pdata wherever
+  /// its unwind state changes and only the first record names the function,
+  /// so a disassembler shows those records as one body; a fragment past a
+  /// gap stays an outlying chunk.
+  va_t contiguousEnd() const {
+    va_t End = CodeRange.End;
+    for (const ExceptionAddressRange &Fragment : FragmentRanges)
+      if (Fragment.Begin == End)
+        End = Fragment.End;
+    return End;
+  }
+
   /// True when \p Address is in this function's code.
   bool ownsCode(va_t Address) const {
     return Address != InvalidVA &&

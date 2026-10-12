@@ -635,6 +635,44 @@ bool NdOpEmulator::executeX86ScalarFPState(const LowOp &Op) {
   for (unsigned Index = 1; Index < Op.NumInputs; ++Index)
     if (!Op.Inputs[Index].isConst() && !getRegister(Op.Inputs[Index].Offset))
       return false;
+  if (isX86FPMaskCompareStateIntrinsic(Id)) {
+    const bool Memory = Id == Intrinsic::X86FPMaskCompareMemoryState;
+    const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;
+    const unsigned Immediate = Op.Inputs[Memory ? 3 : 2].Offset;
+    const unsigned Predicate = x86FPMaskComparePredicate(Control, Immediate);
+    const unsigned Bytes = Op.Output.Size - 4;
+    const unsigned Element = x86FPMaskCompareElementBytes(Control);
+    const uint32_t Incoming = readOperand(Op.Inputs[5]);
+    if (!MXCSRKnown || Incoming != MXCSR)
+      return false;
+    const auto Left = readOperandBytes(Op.Inputs[Memory ? 4 : 3]);
+    const auto Right =
+        Memory ? loadX86FPStateMemory(Op, Bytes,
+                                      x86FPMaskCompareMemoryAlignment(Control))
+                     .value_or(std::vector<uint8_t>{})
+               : readOperandBytes(Op.Inputs[4]);
+    if (Left.size() != Bytes || Right.size() != Bytes)
+      return false;
+    std::vector<uint8_t> Result(Bytes + 4, 0);
+    uint32_t Raised = 0;
+    for (unsigned Offset = 0; Offset < Bytes; Offset += Element) {
+      const auto Compared = evaluateX86FPComparison(
+          readLane(Left, Offset, Element), readLane(Right, Offset, Element),
+          Element, X86FPComparisonSignalingPredicates[Predicate], Incoming);
+      if (!Compared)
+        return false;
+      Raised |= Compared->Raised;
+      if (X86FPComparisonPredicateResults[Predicate] &
+          (1u << Compared->Relation))
+        writeLane(Result, Offset, Element, UINT64_MAX);
+    }
+    MXCSR = Incoming | Raised;
+    if (Raised & ~(Incoming >> 7) & 0x3f)
+      return false;
+    writeLane(Result, Bytes, 4, MXCSR);
+    writeOutputBytes(Op.Output, Result);
+    return true;
+  }
   if (isX86FPComiStateIntrinsic(Id)) {
     const bool Memory = Id == Intrinsic::X86FPComiMemoryState;
     const unsigned Control = Op.Inputs[Memory ? 2 : 1].Offset;

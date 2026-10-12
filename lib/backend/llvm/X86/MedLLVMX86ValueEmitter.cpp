@@ -649,6 +649,44 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
       Mark(Builder.CreateCall(Asm, {State}));
       return IC == I::X86ReadMXCSR ? Builder.CreateLoad(I32, State) : nullptr;
     }
+    if (isX86FPMaskCompareStateIntrinsic(IC)) {
+      const bool Memory = IC == I::X86FPMaskCompareMemoryState;
+      const unsigned Bytes = Op.Output.Size - 4;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPMaskCompareLLVMType(*Ctx, Layout);
+      auto *Left = Builder.CreateBitCast(Raw(Memory ? 4 : 3, Bytes), Type);
+      llvm::Value *Right;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Right = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else
+        Right = Builder.CreateBitCast(Raw(4, Bytes), Type);
+      Builder.CreateStore(Raw(5, 4), State);
+      auto *Fn =
+          llvm::FunctionType::get(Type, {Type, Right->getType(), Ptr}, false);
+      auto *Asm =
+          llvm::InlineAsm::get(Fn, x86FPMaskCompareAsm(Layout, Memory),
+                               x86FPMaskCompareConstraints(Memory), true);
+      auto *Result = Builder.CreateCall(Asm, {Left, Right, State}, "cmp_mask");
+      Mark(Result);
+      Result->setMetadata(
+          X86FPMaskCompareAsmMetadata,
+          llvm::MDNode::get(
+              *Ctx, llvm::ConstantAsMetadata::get(Builder.getInt32(Layout))));
+      auto *Bits =
+          Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "cmp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+    }
     if (isX86FPComiStateIntrinsic(IC)) {
       const bool Memory = IC == I::X86FPComiMemoryState;
       const unsigned Layout = x86FPStateHelperLayout(IC, Shape);

@@ -25,6 +25,10 @@ struct RegistrationRealignedFrame;
 
 namespace neverd::registration_state {
 
+/// This intrinsic preserves normal-path frame facts. The source operation
+/// and its pending x87 exception dispatch remain part of the original code.
+bool isCanonicalX87Wait(const LowOp &Op);
+
 /// A runtime callback owns a separate invocation stack. Its offsets cannot
 /// alias either source-frame coordinate, even at the same displacement.
 struct CallbackFrameAddress {

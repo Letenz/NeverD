@@ -11,6 +11,7 @@
 
 #include "KernelModel.h"
 
+#include "../../../core/RAMInitializationWatch.h"
 #include "../driver/DriverImage.h"
 #include "KernelException.h"
 #include "KernelModelRuntime.h"
@@ -261,7 +262,43 @@ llvm::Error KernelModel::initialize(const DriverImage &Image,
     configureFrameworkRequestHost();
     configureFrameworkInterruptHost();
   }
+  auto Watch = watchInitialization(DriverObject + DriverDispatchOffset,
+                                   DispatchBytesWritten.size());
+  if (!Watch)
+    return Watch.takeError();
+  DispatchInitialization = std::move(*Watch);
   return llvm::Error::success();
+}
+
+llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
+KernelModel::watchInitialization(uint64_t Address, uint64_t Size) {
+  auto View = Memory.pinBacking(Address, Size);
+  if (!View)
+    return View.takeError();
+  return RAMInitializationWatch::create(*View);
+}
+
+bool KernelModel::initialized(
+    llvm::ArrayRef<bool> Flags,
+    const std::shared_ptr<RAMInitializationWatch> &Watch, uint64_t Offset,
+    uint64_t Size) {
+  if (Offset > Flags.size() || Size > Flags.size() - Offset)
+    return false;
+  for (uint64_t I = Offset; I < Offset + Size; ++I)
+    if (!Flags[I] && (!Watch || !Watch->initialized(I)))
+      return false;
+  return true;
+}
+bool KernelModel::anyInitialized(
+    llvm::ArrayRef<bool> Flags,
+    const std::shared_ptr<RAMInitializationWatch> &Watch, uint64_t Offset,
+    uint64_t Size) {
+  if (Offset > Flags.size() || Size > Flags.size() - Offset)
+    return false;
+  for (uint64_t I = Offset; I < Offset + Size; ++I)
+    if (initialized(Flags, Watch, I))
+      return true;
+  return false;
 }
 
 llvm::Error KernelModel::finishEntry() {
@@ -553,13 +590,12 @@ llvm::Error KernelModel::snapshot() {
     return AddDevice.takeError();
   Result.AddDevice = *AddDevice;
   for (size_t I = 0; I < Result.MajorFunctions.size(); ++I) {
-    const auto First = DispatchBytesWritten.begin() + I * 8;
-    const auto Last = First + 8;
-    if (!std::any_of(First, Last, [](bool Written) { return Written; })) {
+    if (!anyInitialized(DispatchBytesWritten, DispatchInitialization, I * 8,
+                        8)) {
       Result.MajorFunctions[I] = 0;
       continue;
     }
-    if (!std::all_of(First, Last, [](bool Written) { return Written; }))
+    if (!initialized(DispatchBytesWritten, DispatchInitialization, I * 8, 8))
       return modelError("driver left a partially initialized dispatch pointer");
     auto Function = Read(DriverObject + DriverDispatchOffset + I * 8);
     if (!Function)
@@ -715,7 +751,8 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
                  Offset < DriverExtensionOffset))
               return false;
             if (Offset >= DriverDispatchOffset)
-              return DispatchBytesWritten[Offset - DriverDispatchOffset];
+              return initialized(DispatchBytesWritten, DispatchInitialization,
+                                 Offset - DriverDispatchOffset);
             return true;
           }))
     return E;
@@ -758,21 +795,6 @@ llvm::Error KernelModel::validateGuestAccessImpl(uint64_t Address,
                  Offset >= DeviceReservedOffset;
         }))
       return E;
-  }
-  if (IsWrite)
-    for (const auto &[IRP, Allocation] : DriverIRPs) {
-      if (Allocation.Submitted || Allocation.StorageReleased)
-        continue;
-      for (uint64_t Byte = std::max(Address, IRP + IRPStatusOffset);
-           Byte < std::min(End, IRP + IRPRequestorModeOffset); ++Byte)
-        Allocation.IOStatusWritten[Byte - IRP - IRPStatusOffset] = true;
-    }
-  if (IsWrite && DriverObject) {
-    const uint64_t Start = DriverObject + DriverDispatchOffset;
-    const uint64_t Last = DriverObject + DriverObjectSize;
-    for (uint64_t Byte = std::max(Address, Start); Byte < std::min(End, Last);
-         ++Byte)
-      DispatchBytesWritten[Byte - Start] = true;
   }
   return llvm::Error::success();
 }

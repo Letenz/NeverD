@@ -1297,6 +1297,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       Missing = HighExpr::makeUndef(8);
       Op = Missing.get();
     }
+    // A variadic callee saves an argument register the call never set, and
+    // va_arg reads no more arguments than a caller passes: no defined run
+    // observes it, and it passes as zero.
+    if (Defined && Defined->IsVariadic && isUnknownCallOperand(Op)) {
+      Missing = HighExpr::makeConst(
+          0, Op->Type && Op->Type->Size ? Op->Type->Size : 8);
+      Op = Missing.get();
+    }
     Note = stringArgumentNote(*Op);
     if (const HighExpr *Imm = unwrapIntegerView(Op)) {
       if ((Imm->Kind == ExprKind::Var || Imm->Kind == ExprKind::Phi)) {
@@ -5104,6 +5112,22 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
     const va_t Reach = SizedObjectReach[After - SizedObjects.begin() - 1];
     if (Reach > Begin)
       Begin = Reach;
+  }
+  // A data symbol begins another object even when unsized, as each PDB
+  // public does: the table runs from the nearest one at or before it to the
+  // next, as a disassembler bounds an item, not across every unsized object
+  // in the section.
+  const auto NextSymbol = llvm::upper_bound(DataSymbolStarts, Addr);
+  if (NextSymbol != DataSymbolStarts.end() && *NextSymbol < End)
+    End = *NextSymbol;
+  if (NextSymbol != DataSymbolStarts.begin() && *std::prev(NextSymbol) > Begin)
+    Begin = *std::prev(NextSymbol);
+  if (Dbg) {
+    const auto [Before, After] = Dbg->dataSymbolsAround(Addr);
+    if (After && *After > Addr && *After < End)
+      End = *After;
+    if (Before && *Before <= Addr && *Before > Begin)
+      Begin = *Before;
   }
   if (Begin > Addr || End <= Addr ||
       End - Begin > limits::kMaxSingleGlobalEmbedLen)

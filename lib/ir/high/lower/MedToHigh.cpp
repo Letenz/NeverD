@@ -1232,6 +1232,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
   Func.ReturnsNoValue = Med.ReturnsNoValue;
+  Func.IsVariadic = Med.IsVariadic;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   for (const auto &Entry : Med.CxxContinuationEntries)

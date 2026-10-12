@@ -17,6 +17,7 @@
 
 #include "llvm/Support/Error.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -43,6 +44,9 @@ struct DriverGuardControlFlow {
   std::vector<uint64_t> ValidTargets;
 };
 struct DriverImage {
+  struct Relocation {
+    uint64_t RVA, LoadedValue;
+  };
   std::string Name;
   uint64_t Base = 0;
   uint64_t PreferredBase = 0;
@@ -52,6 +56,10 @@ struct DriverImage {
   DriverGuardControlFlow Guard;
   std::vector<DriverImageRegion> Regions;
   std::vector<DriverImport> Imports;
+  /// Exact validated DIR64 fields after applying this load's base difference.
+  std::vector<Relocation> Relocations;
+  /// Identity of the validated file, before rebasing and session fixups.
+  std::array<uint8_t, 32> FileHash{};
   /// Validated loader metadata in preferred-image coordinates. Exception
   /// dispatch performs the checked translation to this session's actual base.
   ExceptionInfo Exceptions;

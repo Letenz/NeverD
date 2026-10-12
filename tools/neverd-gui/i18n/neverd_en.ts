@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Show the operand&apos;s number with its bits inverted</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>C&amp;ode</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Define instructions from the current address</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Offline package &amp;review...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Inspect local package evidence and analyst reviews</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1447,14 @@ Double-click to go to the declaration.</translation>
             <numerusform>%n declarations shown as C</numerusform>
             <numerusform>%n declarations shown as C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Cancelled</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Saved variable names belong to a different source rendering</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2076,38 @@ Signed: %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>The ways to load %1 are unknown: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Comment this source line:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>New name:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Rename</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Select a declared variable or an image name to rename</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Select a source line; expand folded code before commenting it</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>The selected name has no image address</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>This instruction has no source-line address mapping.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>This source line has no instruction address mapping; showing the function entry</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2246,10 @@ Signed: %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>The files you open appear here. Choose New, or drop a file on this window.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Last opened: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2372,10 @@ Signed: %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Platform: %1, read from the code: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>An instruction is already defined at %1</translation>
     </message>
 </context>
 <context>
@@ -2548,6 +2612,21 @@ Signed: %4</translation>
     <message>
         <source>Close</source>
         <translation>Close</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Analysis worker stopped.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Only analysis reads are allowed.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>The worker cannot restore analysis state.</translation>
     </message>
 </context>
 </TS>

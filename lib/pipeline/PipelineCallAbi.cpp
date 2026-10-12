@@ -184,7 +184,8 @@ void propagateForwardedCallArities(
     const std::map<va_t, bool> &CalleeHasSret,
     std::map<va_t, bool> &CalleeIsVariadic,
     const std::map<va_t, bool> &CalleeConsumesVaList,
-    std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs) {
+    std::map<va_t, std::vector<uint64_t>> &CalleeIntRegs,
+    const std::set<va_t> &VectorArgumentCallees) {
   if (Funcs.empty())
     return;
 
@@ -220,7 +221,7 @@ void propagateForwardedCallArities(
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, /*FrameLocalLeafCallees=*/nullptr,
-                   &CalleeIntRegs);
+                   &CalleeIntRegs, &VectorArgumentCallees);
     int MaxRegIdx = -1;
     int MaxIdx = -1;
     std::vector<uint64_t> FPRegs;
@@ -305,6 +306,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   std::map<va_t, uint16_t> CalleeFPReturnSize;
   std::map<va_t, bool> CalleeHasSret;
   std::map<va_t, bool> CalleeIsVariadic;
+  std::set<va_t> VectorArgumentCallees;
   std::map<va_t, bool> CalleeConsumesVaList;
   // The integer argument registers of each function that takes them in its
   // own order (MedFunc::IntegerArgumentRegisters).
@@ -394,6 +396,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       CalleeTotalArity[MF.Entry] = callRecoveryTotalArity(MF, MaxIdx);
       CalleeHasSret[MF.Entry] = HasSret;
       CalleeIsVariadic[MF.Entry] = MF.IsVariadic;
+      if (MF.takesVectorArgumentRegisters())
+        VectorArgumentCallees.insert(MF.Entry);
       int FpArity = static_cast<int>(FPRegs.size());
       // Params are not recovered yet (recoverCallAbi runs later), so fall back
       // to entry live-in self-copies for intra-module FP callees like `mkD2`.
@@ -561,10 +565,11 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       }
   }
 
-  propagateForwardedCallArities(
-      SignatureBodies, Img.Arch, AllFuncNames, Img, CalleeRegArity,
-      CalleeTotalArity, CalleeFPArity, CalleeFPReturnSize, CalleeFPRegs,
-      CalleeHasSret, CalleeIsVariadic, CalleeConsumesVaList, CalleeIntRegs);
+  propagateForwardedCallArities(SignatureBodies, Img.Arch, AllFuncNames, Img,
+                                CalleeRegArity, CalleeTotalArity, CalleeFPArity,
+                                CalleeFPReturnSize, CalleeFPRegs, CalleeHasSret,
+                                CalleeIsVariadic, CalleeConsumesVaList,
+                                CalleeIntRegs, VectorArgumentCallees);
 
   const auto FrameLocalLeafCallees =
       Convention && Convention->TargetSpillsSurviveLeafCalls
@@ -576,7 +581,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                    &CalleeTotalArity, &CalleeFPArity, &CalleeFPReturnSize,
                    &CalleeFPRegs, &CalleeHasSret, &CalleeIsVariadic,
                    &CalleeConsumesVaList, &FrameLocalLeafCallees,
-                   &CalleeIntRegs);
+                   &CalleeIntRegs, &VectorArgumentCallees);
   }
 
   // Regparm two-pass call recovery (i386): the first pass promotes forwarder
@@ -613,7 +618,8 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
       recoverCallAbi(MF, Img.Arch, AllFuncNames, &Img, &CRA2, &CTA2,
                      &CalleeFPArity, &CalleeFPReturnSize, &CalleeFPRegs,
                      &CalleeHasSret, &CalleeIsVariadic, &CalleeConsumesVaList,
-                     /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2);
+                     /*FrameLocalLeafCallees=*/nullptr, &CalleeIntRegs2,
+                     &VectorArgumentCallees);
     }
   }
   // An omitted definition cannot give the emitter its parameter count.

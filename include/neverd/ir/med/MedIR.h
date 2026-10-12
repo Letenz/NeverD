@@ -509,6 +509,21 @@ struct MedFunc {
   /// where unknown.
   int VariadicFirstRegister = -1;
 
+  /// The position of the first vector argument register a variadic
+  /// function's register save area spills (System V x86-64, from va_start's
+  /// fp_offset): from it on, the vector registers carry the floating
+  /// arguments each caller passes, every one promoted to double.  -1 where
+  /// the convention saves none.
+  int VariadicFirstVectorRegister = -1;
+
+  /// Whether this variadic function's register save area holds the vector
+  /// argument registers (System V x86-64): it then takes every integer and
+  /// vector argument register as a parameter, in that order, before the
+  /// overflow its callers pass on the stack.
+  bool takesVectorArgumentRegisters() const {
+    return IsVariadic && VariadicFirstVectorRegister >= 0;
+  }
+
   /// The registers this function takes its integer register arguments in,
   /// in argument order, where they are not its convention's
   /// (TargetRegInfo::integerArgumentLayout): a local i386 function GCC
