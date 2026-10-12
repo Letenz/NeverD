@@ -2,10 +2,12 @@
 """Manual PDB analysis, legacy display aliases and replica provenance."""
 from contextlib import ExitStack
 from pathlib import Path
+import os
 import shutil
 import struct
 import sys
 import tempfile
+import time
 
 from transport_test import Client
 
@@ -62,6 +64,8 @@ def run(executable):
         rename_state = user_renames(owner)
         selected = ok(owner, "pdb_inspect", {"path": str(pdb)})
         assert selected["verified"]
+        verified_selection = {"path": selected["path"], "mode": "verified",
+                              "stamp": selected["stamp"]}
         assert ok(owner, "functions", {"filter": "user_name"}) == before
         loaded = ok(owner, "pdb_load", dict(selected, mode="verified"))
         assert loaded["verified"] and loaded["name_count"] > 0
@@ -124,9 +128,35 @@ def run(executable):
         restored_page = ok(forced_replica, "decompile", {"address": ADDRESS, "representation": "c", "limit": 256})
         assert restored_page["text"] == page["text"]
 
+        # A saved project names its PDB outside itself. Reopening proves a
+        # matching PDB again by its identity, though its stamp changed; one
+        # the user confirmed without an identity must be confirmed again,
+        # and the project opens without it rather than not at all.
+        later = time.time() + 60
+        os.utime(pdb, (later, later))
+        reopened = clients.enter_context(Client(executable))
+        opened = ok(reopened, "open", {"path": str(binary), "read_only": True,
+                                       "analysis": False, "pdb": verified_selection})
+        assert opened["pdb"]["verified"]
+        assert not [warning for warning in opened["warnings"] if "PDB" in warning]
+        assert ok(reopened, "functions", {"filter": "user_name"})["total"] == 1
+        unconfirmed = clients.enter_context(Client(executable))
+        opened = ok(unconfirmed, "open", {"path": str(stripped), "read_only": True,
+                                          "analysis": False, "pdb": snapshot["pdb"]})
+        assert opened["pdb"] is None
+        assert [warning for warning in opened["warnings"] if "PDB was not loaded" in warning]
+        assert ok(unconfirmed, "functions", {"filter": FUNCTION})["total"] == 0
+
         pdb.write_bytes(pdb.read_bytes() + b"changed")
         stale = clients.enter_context(Client(executable))
         assert stale.call("analysis_restore", snapshot)["error"]["code"] == "input_changed"
+
+        pdb.unlink()
+        missing = clients.enter_context(Client(executable))
+        opened = ok(missing, "open", {"path": str(binary), "read_only": True,
+                                      "analysis": False, "pdb": verified_selection})
+        assert opened["pdb"] is None
+        assert [warning for warning in opened["warnings"] if "PDB was not loaded" in warning]
 
 
 if __name__ == "__main__":
