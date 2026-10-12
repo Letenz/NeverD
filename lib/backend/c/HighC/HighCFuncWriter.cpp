@@ -3744,6 +3744,42 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       // changes memory. This also checks loads reached through candidates.
       if (EffectfulLoadAddress)
         continue;
+      // A folded atomic read-modify-write runs at its use: no other memory
+      // access may run between, or sit unsequenced beside it in the use,
+      // including one another fold brings there.
+      const bool WritesMemory = ExprWrites(*C.Stmt->Val, ExprWrites);
+      std::set<std::string> AccessSeen{C.Name};
+      std::function<bool(const HighExpr &, unsigned)> AccessesMemory =
+          [&](const HighExpr &E, unsigned Depth) -> bool {
+        if (Depth > 64 || E.Kind == ExprKind::Load ||
+            E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+            E.MemoryOrdering != NdMemoryOrdering::None)
+          return true;
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            AccessSeen.insert(varName(E.Var)).second) {
+          const std::string Read = varName(E.Var);
+          if (auto It = ValueForward.find(Read);
+              It != ValueForward.end() && It->second &&
+              AccessesMemory(*It->second, Depth + 1))
+            return true;
+          if (auto It = CandidateDefs.find(Read);
+              It != CandidateDefs.end() && It->second->Val &&
+              AccessesMemory(*It->second->Val, Depth + 1))
+            return true;
+        }
+        bool Hit = false;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          Hit = Hit || AccessesMemory(*Child, Depth + 1);
+        });
+        return Hit;
+      };
+      auto StmtAccessesMemory = [&](const HighStmt &S) {
+        bool Hit = false;
+        forEachExpr(S, [&](const ExprPtr &E) {
+          Hit = Hit || (E && AccessesMemory(*E, 0));
+        });
+        return Hit;
+      };
       const HighExpr *Load = peelIntegerViewOps(C.Stmt->Val.get());
       if (!Load || Load->Kind != ExprKind::Load || Load->Operands.empty() ||
           !Load->Operands[0])
@@ -3764,6 +3800,9 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           [&](const HighStmt &S) -> bool {
         if (Analysis.DeadStmts.count(&S))
           return false;
+        if (WritesMemory &&
+            (S.Kind == StmtKind::Store || StmtAccessesMemory(S)))
+          return true;
         if (S.Kind == StmtKind::Assign && S.Dst &&
             (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
             Reads.count(varName(S.Dst->Var)))
@@ -3860,6 +3899,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           Changed = Changed || (OtherEffect && Escapes) ||
                     (OtherEffect && US->Kind == StmtKind::Store);
         }
+        if (WritesMemory)
+          Changed = Changed || StmtAccessesMemory(*US);
         if (const auto Join = JoinAfterTry.find(C.Region);
             Join != JoinAfterTry.end() && Join->second == UIt->second.Region) {
           const auto TryIt = TryForBody.find(C.Region);

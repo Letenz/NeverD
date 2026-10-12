@@ -300,3 +300,19 @@ int boolsc(int a) {
 )C",
                        "boolsc", {"boolsc"});
 }
+
+// LDADD adds to m and returns its old value; the load after it reads the
+// sum.  Folded into one expression, `*(m) + 31 * __atomic_fetch_add(...)`
+// leaves the load and the add unsequenced, so the C may read m first.
+TEST_F(AArch64_HighCExecution, AnAtomicAddStaysBeforeTheLoadAfterIt) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-march=armv8.1-a"},
+      R"C(
+int ldadd(int a) {
+  long m = 10;
+  long o = __atomic_fetch_add(&m, (long)a, __ATOMIC_RELAXED);
+  return (int)(o * 31 + m);
+}
+)C",
+      "ldadd", {"ldadd"}, {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
+}
