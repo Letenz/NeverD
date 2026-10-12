@@ -1795,3 +1795,5 @@ Le regressioni dell’osservatore delle scritture verificano la visibilità prim
 `OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` verifica nove forme intrinsic, la scrittura di finally nel frame padre, il ripristino dell’ESP degli argomenti, la rimozione di registration e gli ingressi del dispatch delle eccezioni. Solo il FWAIT canonico passa; le altre otto forme errate o diverse restano rifiutate.
 
 `NeverDNativeFinallyInputTests` contiene separatamente la matrice degli input MSVC. `NeverDPipelineOutcomeTests` resta obbligatorio su ogni piattaforma CI e non dipende da file nativi opzionali. Il job Windows EH compila ed esegue il target con le immagini verificate. La CI macOS seleziona esplicitamente Homebrew Clang 22 per le prove di sostituzione del sorgente, indipendentemente dal compilatore di NeverD. I metodi di sondaggio dello stack non supportati restano rifiutati.
+
+I target dei test MSVC usano `/bigobj` per le numerose sezioni COFF generate dai template GoogleTest e LLVM. Gli altri compilatori restano invariati. I test di configurazione verificano il comando generato; la CI Windows nativa verifica compilazione ed esecuzione.

@@ -1645,3 +1645,5 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` 檢查九種 intrinsic 形式、finally 的父框架寫入效果、還原後的參數 ESP、registration 移除與保留的例外分派入口。僅規範 FWAIT 通過，其餘八種畸形或不同 intrinsic 形式繼續拒絕。
 
 `NeverDNativeFinallyInputTests` 獨立承載 MSVC 輸入矩陣。通用 `NeverDPipelineOutcomeTests` 在所有 CI 平台仍須執行，不依賴可選原生夾具。聚焦 Windows EH 作業以已驗證映像編譯並執行原生輸入目標。macOS CI 為原始碼替換夾具明確選用 Homebrew Clang 22，與建置 NeverD 的編譯器獨立；不支援的替換堆疊探測方法仍被拒絕。
+
+MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實例產生更多 COFF 節；其他編譯器設定不變。設定檢查核對實際產生的測試編譯命令，編譯及執行仍由原生 Windows CI 驗證。

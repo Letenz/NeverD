@@ -1699,3 +1699,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` は九つの intrinsic 形式、finally による親フレームの書き込み、復元された引数 ESP、registration の解除、および例外ディスパッチ入口の保持を検査します。正規の FWAIT だけが成功し、他の八つの不正または異なる intrinsic 形式は拒否されます。
 
 `NeverDNativeFinallyInputTests` が MSVC 入力行列を独立して担当します。汎用の `NeverDPipelineOutcomeTests` はすべての CI プラットフォームで必須のままで、任意のネイティブ入力に依存しません。Windows EH 専用ジョブは検証済みイメージで入力用ターゲットをビルドし実行します。macOS CI はソース置換用に Homebrew Clang 22 を明示的に選び、NeverD 自体のコンパイラとは分離します。未対応のスタックプローブ方式は引き続き拒否されます。
+
+MSVC の単体テストは `/bigobj` を指定し、GoogleTest と LLVM のテンプレート展開による大きな COFF セクション数に対応します。他のコンパイラ設定は変わりません。設定テストは生成されたコンパイルコマンドを確認し、ネイティブ Windows CI がコンパイルと実行を検証します。
