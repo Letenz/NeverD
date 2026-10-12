@@ -222,15 +222,15 @@ TEST_F(WebPackageArchiveSDK,
               ID);
     neverd_session_destroy(Native);
     const auto Link = field(Members[4], "member_id");
+#if NEVERD_TEST_WEB_JAVASCRIPT
+    constexpr auto UnavailableCode = "artifact_bytes_unavailable";
+#else
+    constexpr auto UnavailableCode = "capability_unavailable";
+#endif
     EXPECT_EQ(code(take(neverd_web_source_analyze_json(
                   S, Revision.data(), Revision.size(), Link.data(), Link.size(),
                   "module", 6))),
-#if NEVERD_TEST_WEB_JAVASCRIPT
-              "artifact_bytes_unavailable"
-#else
-              "capability_unavailable"
-#endif
-    );
+              UnavailableCode);
   }
 }
 
