@@ -480,10 +480,24 @@ int neverd_session_is_loaded(neverd_session_t Sess) {
 // ===--------------------------------------------------------------------===//
 
 void neverd_session_set_pdb_path(neverd_session_t Sess, const char *Path) {
-  if (auto *S = toSession(Sess)) {
-    S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
-    S->DbgRequest.AllowMissingPDBIdentity = false;
+  (void)neverd_session_set_pdb_path_ex(Sess, Path, 0);
+}
+
+int neverd_session_set_pdb_path_ex(neverd_session_t Sess, const char *Path,
+                                   int UseWithoutIdentity) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return 0;
+  S->clearError();
+  if (UseWithoutIdentity != 0 && UseWithoutIdentity != 1) {
+    S->setError("UseWithoutIdentity must be 0 or 1");
+    return 0;
   }
+  S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
+  // Only a named PDB carries the user's choice; discovery stays strict.
+  S->DbgRequest.AllowMissingPDBIdentity =
+      UseWithoutIdentity == 1 && !S->DbgRequest.PDBPath.empty();
+  return 1;
 }
 
 const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
