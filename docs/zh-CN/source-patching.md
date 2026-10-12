@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 817e1308a48a9a751b9ef618b8094d4082fed99234c2b7381269f524196f5c80 -->
+<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
 
 [← Documentation Index](README.md)
 
@@ -124,3 +124,5 @@ ctest --test-dir build-source -L \
 ```
 
 LLVM 构建副本还修正了 Mach-O x64 的 GOT 数据引用：Clang 的类型捕获表以四字节重定位字段末尾为基准。r3/r4 预编译版会偏移四字节；发布前检查会拒绝未修正的结果。开发 Mac 的 x64 Mach-O 用例通过 Rosetta 2 执行，ARM64 用例直接执行。
+
+Windows x64 原生验收 [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) 的 15 个 PE/对象/trampoline 专项用例和 48 个目标矩阵用例全部通过，无跳过。FH3 用例执行了七种 C++ 运行场景。该轮使用 Clang 22.1.6 及原生 MSVC、Windows SDK 输入。

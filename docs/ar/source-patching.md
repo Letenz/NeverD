@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 817e1308a48a9a751b9ef618b8094d4082fed99234c2b7381269f524196f5c80 -->
+<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
 
 [← Documentation Index](README.md)
 
@@ -124,3 +124,5 @@ ctest --test-dir build-source -L \
 ```
 
 تصحح نسخة LLVM أيضاً مراجع بيانات GOT في Mach-O x64؛ تقاس جداول catch ذات النوع في Clang من نهاية حقل إعادة التموضع ذي أربعة بايتات. تزحزحه r3/r4 أربعة بايتات، وترفضه مراجعة ما قبل النشر. تنفذ حالات x64 على Mac عبر Rosetta 2، وحالات ARM64 مباشرةً.
+
+اجتاز التحقق في بيئة Windows x64 الأصلية [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) جميع الاختبارات المتخصصة الخمسة عشر لمسارات PE والكائنات وtrampoline، وجميع اختبارات مصفوفة الأهداف الثمانية والأربعين، دون تخطي أي حالة. نفّذ اختبار FH3 سبعة سيناريوهات تشغيل C++. استُخدم Clang 22.1.6 مع MSVC وWindows SDK الأصليين.
