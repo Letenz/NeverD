@@ -14,6 +14,8 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/ScopeExit.h"
 
+#include <optional>
+
 namespace {
 #if (defined(__x86_64__) || defined(_M_X64)) &&                                \
     (defined(__clang__) || defined(__GNUC__))
@@ -212,27 +214,37 @@ TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
     for (bool NoOpt : {false, true})
-      for (unsigned Scenario = 0; Scenario < 10; ++Scenario) {
+      for (unsigned Scenario = 0; Scenario < 13; ++Scenario) {
         std::vector<uint8_t> Bytes;
-        // Scenarios 1 and 9 start at the function boundary, whose calling
+        // Scenarios 1, 9 and 10 start at the function boundary, whose calling
         // convention empties the register stack, as compiled FILD relies on.
         const bool Accepted = Scenario == 0 || Scenario == 1 || Scenario == 4 ||
-                              Scenario == 6 || Scenario == 7;
-        if (Scenario != 1 && Scenario != 9)
+                              Scenario == 5 || Scenario == 6 || Scenario == 7 ||
+                              Scenario == 10;
+        if (Scenario != 1 && Scenario != 9 && Scenario != 10)
           Bytes = {0xdb, 0xe3}; // fninit authenticates empty tags
-        if (Scenario == 2 || Scenario == 3 || Scenario == 9)
+        if (Scenario == 2 || Scenario == 3 || Scenario == 9 || Scenario == 11 ||
+            Scenario == 12)
           for (unsigned I = 0; I < 8; ++I)
             Bytes.insert(Bytes.end(), {0xd9, 0xe8}); // fill all slots
         if (Scenario == 3)
           Bytes.insert(Bytes.end(), {0x85, 0xc9, 0x74, 0x02, 0xdd, 0xd8});
         if (Scenario == 4)
           Bytes.insert(Bytes.end(), {0xd9, 0xe8, 0xdd, 0xd8}); // pop frees slot
-        if (Scenario == 5)
-          Bytes.insert(Bytes.end(),
-                       {0xff, 0xd0}); // unknown call invalidates tags
+        // An unknown callee also returns under its calling convention: the
+        // empty slots stay empty (5), the full ones become unknown (12).
+        if (Scenario == 5 || Scenario == 12)
+          Bytes.insert(Bytes.end(), {0xff, 0xd0}); // call rax
         if (Scenario == 6)
           Bytes.insert(Bytes.end(),
                        {0x85, 0xc9, 0x74, 0x02, 0xd9, 0xe8}); // two TOPs
+        // So does a direct call to a callee whose x87 effect is proven (10,
+        // 11).
+        std::optional<size_t> CallAt;
+        if (Scenario == 10 || Scenario == 11) {
+          CallAt = Bytes.size();
+          Bytes.insert(Bytes.end(), {0xe8, 0, 0, 0, 0});
+        }
         const va_t Address = Entry + Bytes.size();
         Bytes.insert(Bytes.end(), {0xdf, 0x2a});
         if (Scenario == 7 || Scenario == 8) {
@@ -244,6 +256,13 @@ TEST_F(X87IntegerLoadAdmission, EmptyDestinationMustBeProvenOnEveryPath) {
           Bytes.insert(Bytes.end(), {0xdb, 0x3a});
         }
         Bytes.push_back(0xc3);
+        if (CallAt) {
+          // The callee is a bare return after the function.
+          const uint32_t Displacement = uint32_t(Bytes.size() - (*CallAt + 5));
+          for (unsigned I = 0; I < 4; ++I)
+            Bytes[*CallAt + 1 + I] = uint8_t(Displacement >> (8 * I));
+          Bytes.push_back(0xc3);
+        }
         auto Image = image(Bytes, Format);
         llvm::LLVMContext Context;
         PipelineOptions Options;

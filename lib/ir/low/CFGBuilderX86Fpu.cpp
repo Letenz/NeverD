@@ -1750,8 +1750,14 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
             if ((State.Full & State.Payload) & Bit)
               ProvenTags[{Id, O}] = false;
           }
+          // A callee returns under its calling convention, the contract the
+          // TOP pass above already applies to every call it cannot prove:
+          // the slots the call found empty are empty again (a callee that
+          // "pops" with FINCSTP would break that), and those it found full
+          // are its arguments or clobbers, so unknown. A proven return
+          // definition below fills one slot.
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-            State = {}; // The return definition below can establish one slot.
+            State = Tags{0, State.Empty, 0};
           if (Op.Opcode == NdOp::INTRINSIC) {
             if (!Op.NumInputs || !Op.Inputs[0].isConst()) {
               State = {};

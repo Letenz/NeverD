@@ -2238,9 +2238,11 @@ This does not establish complete x87 architectural state or general arithmetic.
 
 The same tag solver admits FILD only when every incoming path proves its push
 destination empty. A function entry starts from the calling convention's empty
-register stack, the contract `X87CallEffects` applies to every callee; its slot
-payloads stay undefined, so it proves push destinations but no FXAM or sign
-source. The successful
+register stack, and every call returns under the same contract, which the TOP
+pass already assumes for callees it cannot prove: slots a call found empty stay
+empty, full ones become unknown. Payloads stay undefined, so these seeds prove
+push destinations but no FXAM or sign source. x87 value instructions
+(`X87ValueInstructions.def`, FPREM) define only their outputs. The successful
 16/32/64-bit signed load becomes an exact raw binary80 image and clears C1 in
 shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
 the signed minimum without overflow. Waiting precedes the source memory load.
