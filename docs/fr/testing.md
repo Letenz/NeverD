@@ -1811,6 +1811,10 @@ Les régressions de surveillance des écritures vérifient leur visibilité avan
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` vérifie la sortie PE, un lecteur DIR64 indépendant, le rebasage du modèle et l’exclusion des enregistrements de débogage réécrits. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` refuse les incohérences de source, base ou ordre et exclut les remplacements de formatage même à octets identiques. Ces contrôles valident les métadonnées de diagnostic, pas une récupération native.
 
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` vérifie neuf formes intrinsic, l’écriture du finally dans le cadre parent, la restauration de l’ESP des arguments, le retrait de registration et les entrées de distribution des exceptions. Seul le FWAIT canonique réussit ; les huit autres formes incorrectes ou différentes restent refusées.
+
 `NeverDNativeFinallyInputTests` possède séparément la matrice des entrées MSVC. `NeverDPipelineOutcomeTests` reste obligatoire sur chaque plateforme CI et ne dépend pas de fichiers natifs facultatifs. Le travail Windows EH construit et exécute cette cible avec ses images vérifiées. Le CI macOS sélectionne explicitement Homebrew Clang 22 pour les tests de remplacement de source, indépendamment du compilateur de NeverD. Les méthodes de sondage de pile non prises en charge restent refusées.
 
 Les cibles de tests MSVC utilisent `/bigobj` pour les nombreux segments COFF issus des modèles GoogleTest et LLVM. Les autres compilateurs sont inchangés. Les tests de configuration vérifient la commande générée ; le CI Windows natif vérifie encore la compilation et l’exécution.
+
+Le refus contrôlé des doubles décalages indique le compteur masqué et la largeur de l’opérande lorsque la destination et les indicateurs sont indéfinis. `X64DoubleShift` vérifie la conservation du motif par les sorties typées et l’ancienne API d’erreur, sans changement des registres ou de la RAM ni observation d’accès mémoire ; le test de pilote vérifie ce même motif avant l’envoi du scénario.

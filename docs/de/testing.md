@@ -1812,6 +1812,10 @@ Die Schreibbeobachter-Regressionen prüfen Sichtbarkeit vor der nächsten Anweis
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` prüft PE-Ausgabe, einen unabhängigen DIR64-Leser, Modell-Rebasierung und den Ausschluss umgeschriebener Debug-Einträge. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` lehnt falsche Quelle, Basis oder Reihenfolge ab und schließt Formatierungsersetzungen auch bei gleichen Bytes aus. Das prüft Diagnosemetadaten, keine native Wiederherstellung.
 
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` prüft neun intrinsic-Formen, den Schreibeffekt des finally im Elternframe, den wiederhergestellten Argument-ESP, die Entfernung von registration und die erhaltenen Ausnahme-Einstiege. Nur das kanonische FWAIT besteht; die acht fehlerhaften oder anderen intrinsic-Formen werden weiterhin abgelehnt.
+
 `NeverDNativeFinallyInputTests` enthält die MSVC-Eingabematrix als eigenes Testziel. `NeverDPipelineOutcomeTests` bleibt auf jeder CI-Plattform verpflichtend und hängt nicht von optionalen nativen Dateien ab. Der Windows-EH-Job baut und prüft das Eingabeziel mit seinen verifizierten Images. macOS-CI wählt Homebrew Clang 22 ausdrücklich für Quelltext-Ersetzungstests, unabhängig vom NeverD-Buildcompiler. Nicht unterstützte Stack-Probe-Verfahren werden weiterhin abgelehnt.
 
 MSVC-Testziele verwenden `/bigobj` für die vielen COFF-Sektionen aus GoogleTest- und LLVM-Template-Instanziierungen. Andere Compilerprofile bleiben unverändert. Konfigurationstests prüfen den erzeugten Compileraufruf; native Windows-CI prüft weiterhin Kompilierung und Ausführung.
+
+Die geprüfte Ablehnung doppelter Verschiebungen meldet den maskierten Zähler und die Operandenbreite, wenn Ziel und Flags undefiniert sind. `X64DoubleShift` prüft, dass typisierte Ausgänge und die bisherige Fehler-API den Grund ohne Register- oder RAM-Änderungen und ohne Speicherbeobachtungen erhalten; der Treibertest prüft denselben Grund vor der Szenarioausführung.

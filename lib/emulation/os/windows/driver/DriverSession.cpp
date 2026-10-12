@@ -986,7 +986,11 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       PendingEnvironmentRead.reset();
       PendingObservation = PendingMemoryWrite = false;
       if (auto E = CPU.run(NextPC, Remaining)) {
+        const bool Rejected = E.isA<UnsupportedExecutionError>();
         std::string Message = llvm::toString(std::move(E));
+        if (Stopped && Rejected &&
+            Result.Diagnostic == session_diagnostic::RejectedInstruction)
+          Result.Diagnostic = Message;
         if (!Stopped)
           Stop(CPU.hasMemoryFault()   ? DriverStopReason::MemoryFault
                : CPU.hasDeviceError() ? DriverStopReason::ModelError

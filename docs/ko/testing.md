@@ -1686,6 +1686,10 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts`는 PE 출력, 독립 DIR64 판독기, 모델 재배치와 다시 쓴 디버그 레코드 제외를 검사합니다. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites`는 입력·기준 주소·순서 불일치를 거부하고 바이트가 같아도 형식화 대체를 제외합니다. 이 검사는 진단 메타데이터를 검증하며 네이티브 복구를 인증하지 않습니다.
 
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects`는 아홉 intrinsic 형식, finally의 부모 프레임 쓰기 효과, 복원된 인자 ESP, registration 해제 및 예외 디스패치 진입점 보존을 검사합니다. 정규 FWAIT만 통과하며 나머지 여덟 잘못된 또는 다른 intrinsic 형식은 계속 거부됩니다.
+
 `NeverDNativeFinallyInputTests`가 MSVC 입력 행렬을 별도로 담당합니다. 일반 `NeverDPipelineOutcomeTests`는 모든 CI 플랫폼에서 필수이며 선택적 네이티브 입력에 의존하지 않습니다. Windows EH 전용 작업은 검증된 이미지로 입력 대상을 빌드하고 실행합니다. macOS CI는 소스 교체용으로 Homebrew Clang 22를 명시적으로 선택하며 NeverD 빌드 컴파일러와 분리합니다. 지원하지 않는 스택 프로브 방식은 계속 거부합니다.
 
 MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템플릿 인스턴스의 많은 COFF 섹션을 지원합니다. 다른 컴파일러 설정은 변경되지 않습니다. 구성 검사는 생성된 컴파일 명령을 확인하고 네이티브 Windows CI가 컴파일과 실행을 검증합니다.
+
+검사 모드의 이중 시프트 거부는 결과와 플래그가 정의되지 않을 때 마스크 적용 후 개수와 피연산자 너비를 보고합니다. `X64DoubleShift`는 형식화된 종료와 기존 오류 API가 이유를 유지하고 레지스터와 RAM을 변경하거나 메모리 관찰을 발생시키지 않는지 확인합니다. 드라이버 픽스처는 시나리오 전달 전에도 같은 이유가 유지되는지 확인합니다.

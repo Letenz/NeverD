@@ -1642,6 +1642,10 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 檢查 PE 輸出、獨立 DIR64 讀取器、模型重定位及對重寫除錯記錄的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒絕來源、基址或順序不符，並排除格式化替換，即使位元組相同。這些檢查驗證診斷中繼資料，不代表原生復原成功。
 
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` 檢查九種 intrinsic 形式、finally 的父框架寫入效果、還原後的參數 ESP、registration 移除與保留的例外分派入口。僅規範 FWAIT 通過，其餘八種畸形或不同 intrinsic 形式繼續拒絕。
+
 `NeverDNativeFinallyInputTests` 獨立承載 MSVC 輸入矩陣。通用 `NeverDPipelineOutcomeTests` 在所有 CI 平台仍須執行，不依賴可選原生夾具。聚焦 Windows EH 作業以已驗證映像編譯並執行原生輸入目標。macOS CI 為原始碼替換夾具明確選用 Homebrew Clang 22，與建置 NeverD 的編譯器獨立；不支援的替換堆疊探測方法仍被拒絕。
 
 MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實例產生更多 COFF 節；其他編譯器設定不變。設定檢查核對實際產生的測試編譯命令，編譯及執行仍由原生 Windows CI 驗證。
+
+檢查模式的雙移位在目標和 flags 未定義時，報告遮罩後的計數及運算元寬度。`X64DoubleShift` 驗證型別化退出與舊錯誤介面保留原因，且沒有暫存器或 RAM 改變以及記憶體存取觀察；驅動夾具驗證該原因在情境派發前仍保留。

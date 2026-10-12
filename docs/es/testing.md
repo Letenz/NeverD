@@ -1797,6 +1797,10 @@ Las regresiones del observador de escrituras verifican la visibilidad antes de l
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` comprueba la salida PE, un lector DIR64 independiente, la reubicación del modelo y la exclusión de registros de depuración reescritos. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` rechaza inconsistencias de origen, base u orden y excluye sustituciones de formato incluso con bytes iguales. Estas pruebas validan metadatos diagnósticos, no una recuperación nativa.
 
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` comprueba nueve formas intrinsic, la escritura de finally en el marco padre, la restauración del ESP de argumentos, la retirada de registration y las entradas de despacho de excepciones. Solo pasa el FWAIT canónico; las otras ocho formas incorrectas o diferentes siguen rechazadas.
+
 `NeverDNativeFinallyInputTests` contiene por separado la matriz de entradas MSVC. `NeverDPipelineOutcomeTests` sigue siendo obligatorio en cada plataforma CI y no depende de archivos nativos opcionales. El trabajo Windows EH compila y ejecuta el objetivo con sus imágenes verificadas. El CI de macOS selecciona explícitamente Homebrew Clang 22 para las pruebas de reemplazo de código fuente, independientemente del compilador de NeverD. Los métodos de sondeo de pila no admitidos siguen rechazándose.
 
 Los objetivos de pruebas MSVC usan `/bigobj` para los numerosos segmentos COFF de las plantillas de GoogleTest y LLVM. Los demás compiladores no cambian. Las pruebas de configuración verifican el comando generado; el CI nativo de Windows verifica la compilación y ejecución.
+
+El rechazo verificado de desplazamientos dobles informa del contador enmascarado y del ancho del operando cuando el destino y los indicadores están indefinidos. `X64DoubleShift` verifica que las salidas tipadas y la API de errores anterior conservan el motivo sin cambios de registros o RAM ni observaciones de memoria; la prueba del controlador comprueba el mismo motivo antes de enviar el escenario.

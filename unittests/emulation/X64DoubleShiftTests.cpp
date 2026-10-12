@@ -501,6 +501,24 @@ TEST_P(X64DoubleShift, LockedAndUndefinedFormsRejectBeforeEffects) {
         EXPECT_EQ(memory(), RAM);
         EXPECT_EQ(Reads, 0u);
         EXPECT_EQ(Writes, 0u);
+        if (!Locked) {
+          EXPECT_NE(Exit.Diagnostic.find("double-shift count 17"),
+                    std::string::npos);
+          EXPECT_NE(Exit.Diagnostic.find("16-bit"), std::string::npos);
+          EXPECT_NE(Exit.Diagnostic.find("undefined"), std::string::npos);
+
+          // The legacy error interface must retain the typed exit's reason.
+          // A fresh CPU avoids attempting to resume the terminal rejection.
+          initialize();
+          if (HasFatalFailure() || IsSkipped())
+            return;
+          prepare(Raw, CL, Memory);
+          auto Error = CPU->run(Code, Timeout);
+          EXPECT_TRUE(Error.isA<UnsupportedExecutionError>());
+          EXPECT_EQ(llvm::toString(std::move(Error)), Exit.Diagnostic);
+          EXPECT_EQ(snapshot(), State);
+          EXPECT_EQ(memory(), RAM);
+        }
       }
 }
 
