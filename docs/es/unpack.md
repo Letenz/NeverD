@@ -14,7 +14,7 @@ El contenedor determina cómo se valida y reconstruye un archivo, el conjunto de
 | --- | --- | --- | --- |
 | PE32+ (`pe64`) | x86-64 | [`windows-pe64-v1`](process-emulation.md) | observación en ejecución |
 | PE32+ (`pe64`) | ARM64 | [`windows-pe64-v1`](process-emulation.md) | observación en ejecución |
-| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v95`](driver-emulation.md) | `DriverEntry` |
+| PE32+ native (`.sys`) | x86-64 | [`wdm-x64-scheduled-v101`](driver-emulation.md) | `DriverEntry` |
 
 Las DLL PE32+ se identifican por `IMAGE_FILE_DLL`. Un EXE invitado modelado llama a `LoadLibraryA` y después a `FreeLibrary` mediante el ciclo ordinario de dependencias, TLS y `DllMain`. La entrada DLL aceptada es su llamada de asociación al proceso; no se inventan argumentos para exportaciones arbitrarias. Se conservan nombres, ordinales, alias, datos y reenvíos. Los punteros a exportaciones propias permanecen internos, sin autoimportaciones. La misma regla cubre las direcciones devueltas por helpers: un resultado interno retira las pruebas anteriores de reparación de importaciones para ese sitio.
 
@@ -26,8 +26,22 @@ UNPACK de controladores desactiva el registro de cada escritura y conserva la va
 
 La recuperación comprueba argumentos de entrada, marco de retorno y espacio reservado, registros no volátiles, indicador de dirección, controles de coma flotante y propiedad de objetos del núcleo. Pools retenidos, punteros prestados, objetos del cargador modificados o efectos no contabilizados producen `unsupported_state`; `snapshot_only` conserva el diagnóstico. No existe un materializador `restore_runtime` para el núcleo. Los imports usan identidades de exports del núcleo; se validan exports originales y se recalcula la suma PE. El resultado con base fija no demuestra carga en el núcleo Windows, validez de firma ni ejecución de rutas no alcanzadas.
 
+Con `backend: "unicorn"` y `execution_contract: "driver-strict"`, la recuperación de controladores x64 usa decodificación de instrucciones en estado detenido y vigilancia de escrituras RAM completadas entre alias físicos. Este contrato usa la semántica de instrucciones de Unicorn; `checked-x64-v1` comprueba su admisión antes de ejecutarlas.
+
+Los MDL temporales de páginas de imagen del cargador dejan de añadir una dependencia de recuperación cuando se desmapean todos los alias, se liberan todos los bloqueos y se liberan todos los descriptores. Este contrato admite alias en modo kernel con caché sin dirección solicitada. Los MDL activos, otros tipos de propiedad o mapeo y las lecturas del invitado de identidades físicas PFN siguen siendo dependencias; también cuentan las lecturas de servicios modelados de copia, movimiento y comparación.
+
+Las lecturas del reloj mediante `KeQueryPerformanceCounter`, `RDTSC` o `RDTSCP` conservan una dependencia explícita de recuperación del controlador. No existe un contrato para revincular los valores capturados del contador y su frecuencia a un nuevo entorno del núcleo. La recuperación predeterminada devuelve `unsupported_state`; `snapshot_only` conserva el diagnóstico.
+
+`runtime_state.additional_dependency_reasons` enumera los motivos observados por el modelo del controlador: pools o MDL activos, objetos del cargador modificados, efectos del kernel y cambios en el contexto de la llamada de entrada. El rechazo predeterminado y las instantáneas explícitas conservan los mismos motivos. Una lista vacía no anula `has_additional_dependencies` ni demuestra un contrato de restauración.
+
+`ProcessView::runtimeState(include_backing)` proporciona `WindowsDriverState` para controladores detenidos. El propietario del núcleo conserva la API de asignación, el tamaño exacto solicitado, la etiqueta y el tipo heredado efectivo o todas las banderas modernas de cada pool vivo. El contenido solicitado es una copia independiente de esos bytes exactos; la captura de solo metadatos no incluye contenido. Los pools liberados, los objetos prestados del cargador y los objetos de dispositivos no se convierten en registros de pool. Esta captura no proporciona procedencia de punteros ni un inicializador nativo; siguen vigentes los rechazos existentes por dependencias y reubicaciones.
+
+`WindowsDriverState::Entry` conserva los registros iniciales de DriverEntry y su marco de retorno/shadow space, los registros enteros, XMM y de control flotante al detenerse, y el rango de la pila activa que pertenece al SO. Al solicitar backing se copia toda la pila activa. Las llamadas posteriores de despacho y descarga conservan la referencia original y se marcan explícitamente como externas a DriverEntry. Estas observaciones concretas no prueban la procedencia de los punteros ni su vinculación con un nuevo llamador. Tras admitir instrucciones, los valores iguales o restaurados de registros y marco siguen requiriendo reconstrucción para un nuevo llamador; la igualdad numérica no prueba los vínculos de entrada ni las salidas vivas de la continuación.
+
+Las reubicaciones del núcleo siguen siendo una dependencia del cargador aunque no queden pools ni objetos prestados. La recuperación predeterminada devuelve `unsupported_state` sin crear ni truncar la salida. `snapshot_only` conserva el diagnóstico y puede retener únicamente campos DIR64 originales cuyo testigo de escritura física siga intacto. SHA-256 y ambas bases vinculan los hechos al archivo validado. Las escrituras idénticas, la restauración ABA, los mapeos perdidos y el seguimiento opaco eliminan la prueba. Se excluyen los campos sustituidos por reparación de importaciones o formato de metadatos. Este inventario parcial no cubre punteros generados ni un nuevo llamador de DriverEntry.
+
 ```bash
-neverd unpack packed.sys -o unpacked.sys --options='{"backend":"kvm","driver":{"service_name":"Example"}}'
+neverd unpack packed.sys -o snapshot.sys --options='{"backend":"kvm","snapshot_only":true,"driver":{"service_name":"Example"}}'
 ```
 
 ## Uso
@@ -76,7 +90,7 @@ Una página de 4 KiB ejecutada sigue siendo observable. Las escrituras RAM del i
 
 ## La imagen reconstruida
 
-Las secciones conservan RVA, memoria observada (incluidos los efectos de inicializadores ya ejecutados) y permisos. La nueva sección `.neverd` contiene el directorio de importaciones y las nuevas celdas IAT para llamadas exportadas y cargas de direcciones, preservando las zonas de ceros originales. `origin` en `imports` distingue las celdas `static` enlazadas desde la entrada y las `runtime` escritas por el invitado o añadidas al reparar. Como no se observaron las reubicaciones del contenido generado, la imagen queda en la base observada, se elimina ese directorio y se activa `IMAGE_FILE_RELOCS_STRIPPED`.
+Las secciones conservan sus RVA, memoria observada y permisos. La sección final `.neverd` contiene nuevos metadatos de importación y celdas necesarias para llamadas a exportaciones y cargas de direcciones reparadas, preservando el almacenamiento inicialmente nulo. `imports.origin` distingue celdas `static` del directorio de entrada de celdas `runtime` escritas o reparadas. Las reubicaciones del contenido generado siguen siendo desconocidas. Las imágenes de usuario quedan fijas en la base observada; los snapshots del núcleo solo pueden emitir los campos del cargador descritos arriba. `IMAGE_FILE_RELOCS_STRIPPED` se borra únicamente con un directorio no vacío. La dependencia del núcleo sigue sin resolverse.
 
 Los rangos de sección en modo usuario redondean `VirtualSize` (o `SizeOfRawData` si es cero) a páginas del invitado; `SectionAlignment` sitúa los RVA. Se conservan los bytes de archivo dentro de la última página mapeada; los posteriores no se mapean. La reconstrucción conserva `FileAlignment` y rellena con ceros el padding del archivo sin leer huecos entre secciones. La evidencia nativa de esta regla cubre solo DLL de Windows x64. La admisión en ejecución, los lectores de metadatos y la validación de imágenes fijas comparten el tamaño lógico antes del redondeo. Un `VirtualSize` cero usa `SizeOfRawData`; un valor distinto de cero sigue limitando los metadatos. El cargador usa una vista de lectura privada para LLVM y conserva los bytes originales para ejecución, identidades de depuración y autenticación. El mapeo de controladores queda fuera de la regla de páginas de usuario.
 

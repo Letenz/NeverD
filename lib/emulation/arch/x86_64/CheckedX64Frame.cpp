@@ -131,6 +131,7 @@ llvm::Error CheckedX64Backend::executeEnter(const cs_insn &I) {
     for (const auto &[P, Byte] : Pending) {
       Memory->recordRAMWrite(P, sizeof(Byte));
       *Memory->physicalPointer(P) = Byte;
+      Memory->recordRAMInitialization(P, sizeof(Byte));
     }
     const auto &A = Accesses[Completed];
     return access(A.Address, Width, A.Permission, true, true);

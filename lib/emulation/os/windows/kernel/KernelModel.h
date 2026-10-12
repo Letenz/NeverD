@@ -28,6 +28,7 @@
 
 #include "neverd/emulation/DriverSession.h"
 #include "neverd/emulation/GuestMemory.h"
+#include "neverd/emulation/WindowsDriverState.h"
 
 #include "llvm/ADT/STLFunctionalExtras.h"
 
@@ -37,6 +38,7 @@
 #include <set>
 #include <variant>
 namespace neverd::emulation {
+class RAMInitializationWatch;
 struct DriverImage;
 class KernelExportRegistry;
 enum class KernelAPIKind;
@@ -70,7 +72,10 @@ public:
   /// A stopped DriverEntry can be rebuilt only when borrowed loader objects
   /// retain their initial state and every retained kernel effect is known.
   llvm::Error captureUnpackBaseline();
-  llvm::Expected<bool> hasUnpackDependencies() const;
+  void recordUnpackEnvironmentRead();
+  llvm::Expected<std::vector<std::string>> unpackDependencies() const;
+  llvm::Expected<WindowsDriverState>
+  captureUnpackRuntime(bool IncludeBacking) const;
   std::map<uint64_t, uint64_t> unpackAllocations() const;
   uint64_t driverObject() const { return DriverObject; }
   uint64_t registryPath() const { return RegistryPath; }
@@ -308,6 +313,15 @@ private:
                                       llvm::ArrayRef<uint64_t> A);
 
   GuestMemory &Memory;
+  llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
+  watchInitialization(uint64_t Address, uint64_t Size);
+  static bool initialized(llvm::ArrayRef<bool> Flags,
+                          const std::shared_ptr<RAMInitializationWatch> &Watch,
+                          uint64_t Offset, uint64_t Size = 1);
+  static bool
+  anyInitialized(llvm::ArrayRef<bool> Flags,
+                 const std::shared_ptr<RAMInitializationWatch> &Watch,
+                 uint64_t Offset, uint64_t Size);
   DriverResult &Result;
   KernelExportRegistry *Exports;
   std::unique_ptr<KernelFramework> Framework;
@@ -741,6 +755,10 @@ private:
                                              bool Changing) const;
   llvm::Expected<uint64_t> queryThreadPriority(uint64_t Object) const;
   llvm::Expected<uint64_t> setThreadPriority(uint64_t Object, int32_t Priority);
+  // Canonical logical-thread ownership survives parked and nested executions.
+  std::set<uint64_t> SystemAffinityThreads;
+  llvm::Expected<uint64_t> setSystemAffinity(uint64_t Mask);
+  llvm::Expected<uint64_t> revertSystemAffinity();
   std::map<uint64_t, size_t> RemoveLockWaitReferences;
   llvm::Expected<uint64_t>
   initializeRemoveLock(llvm::ArrayRef<uint64_t> Arguments);
@@ -803,18 +821,27 @@ private:
   // Only loader-owned mapped spans, excluding image holes. Physical backing is
   // registered lazily when a permitted image range is first locked.
   std::map<uint64_t, uint64_t> ImageRAM;
+  std::optional<uint64_t> imageOwnerForRange(uint64_t Address,
+                                             uint64_t Size) const;
+  bool unpackImageMDLCall(KernelAPIKind Kind,
+                          llvm::ArrayRef<uint64_t> Arguments) const;
   uint64_t DriverObject = 0;
   uint64_t RegistryPath = 0;
   uint64_t DriverExtension = 0;
   bool EntryFinished = false;
   std::optional<std::map<uint64_t, std::vector<uint8_t>>> UnpackBaseline;
   bool UnpackOpaqueEffects = false;
+  // Admission conservatively records reads that can expose model PFNs,
+  // including reads performed by modeled copy/compare services.
+  mutable bool UnpackMDLIdentityRead = false;
   uint64_t NextAllocation = 0;
   uint64_t AllocationEnd = 0;
   struct PoolAllocation {
     uint64_t Size;
     uint32_t Tag;
     bool NonPaged;
+    WindowsDriverState::PoolAPI API;
+    uint64_t TypeOrFlags;
   };
   std::map<uint64_t, PoolAllocation> Allocations;
   std::map<uint64_t, uint64_t> ArenaAllocations;
@@ -876,7 +903,8 @@ private:
   llvm::Error retirePnpProvider(uint64_t PDO);
   llvm::Error snapshotPnpDevices();
   std::map<uint64_t, uint64_t> FreedRanges;
-  mutable std::array<bool, 28 * 8> DispatchBytesWritten{};
+  std::array<bool, 28 * 8> DispatchBytesWritten{};
+  std::shared_ptr<RAMInitializationWatch> DispatchInitialization;
   std::map<std::string, std::string> SymbolicLinks;
   enum class FileState { Closed, Opening, Open, Cleaned };
   struct OpenFile {
@@ -930,7 +958,8 @@ private:
     std::optional<uint64_t> InitialDispatchToken;
     std::optional<uint32_t> ProviderDispatchReturn;
     std::optional<uint64_t> FreeCompletionToken;
-    mutable std::array<bool, 16> IOStatusWritten{};
+    std::array<bool, 16> IOStatusWritten{};
+    std::shared_ptr<RAMInitializationWatch> IOStatusInitialization;
   };
   std::map<uint64_t, DriverIRPAllocation> DriverIRPs;
   llvm::Expected<uint64_t>
@@ -997,7 +1026,8 @@ private:
     bool Neither = false;
     uint64_t Mdl = 0;
     uint64_t SystemMdl = 0;
-    mutable std::array<bool, 16> IOStatusWritten{};
+    std::array<bool, 16> IOStatusWritten{};
+    std::shared_ptr<RAMInitializationWatch> IOStatusInitialization;
   };
   std::map<uint64_t, ActiveRequest> Requests;
   bool canDeliverCancellation(const ActiveRequest &Request) const;
@@ -1274,8 +1304,13 @@ private:
   llvm::Error retireDeviceIfUnreferenced(uint64_t Address);
   llvm::Expected<uint64_t> topAttachedDevice(uint64_t Base) const;
   llvm::Expected<std::vector<uint64_t>> deviceStack(uint64_t Top) const;
-  llvm::Error validateDeviceTopology() const;
-  llvm::Expected<std::vector<uint64_t>> driverDeviceInventory() const;
+  enum class ObjectRead { Execution, Snapshot };
+  llvm::Expected<uint64_t> readObjectField(uint64_t Address, unsigned Width,
+                                           ObjectRead Mode) const;
+  llvm::Error
+  validateDeviceTopology(ObjectRead Mode = ObjectRead::Execution) const;
+  llvm::Expected<std::vector<uint64_t>>
+  driverDeviceInventory(ObjectRead Mode = ObjectRead::Execution) const;
   llvm::Expected<uint64_t> attachDevice(uint64_t Source, uint64_t Target);
   llvm::Error detachDevice(uint64_t Lower);
   llvm::Error retainDevice(uint64_t Device);

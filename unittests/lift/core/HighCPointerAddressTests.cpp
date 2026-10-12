@@ -1198,6 +1198,70 @@ int main(void) {
 )c");
 }
 
+TEST(HighCPointerAddresses, DebugSymbolsBoundAnUnsizedIndexedTable) {
+  // An eight-byte table no symbol sizes, with other data after it in its
+  // section.  Without debug information the table the code indexes runs to
+  // the section's end; with a data symbol right after it, as a PDB public
+  // names the next object without sizing it, the table ends there.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003700, {1, 10, 10, 10, 11, 11, 11, 11, 7, 7, 7, 7, 7, 7, 7, 7,
+                    7, 7,  7,  7,  7,  7,  7,  7,  7, 7, 7, 7, 7, 7, 7, 7},
+      false);
+  Section Sec;
+  Sec.Name = ".rdata";
+  Sec.VA = 0x140003700;
+  Sec.Size = 32;
+  Sec.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Sec);
+  class NextPublicDbg : public NullDebugContext {
+  public:
+    std::pair<std::optional<va_t>, std::optional<va_t>>
+    dataSymbolsAround(va_t Addr) const override {
+      if (Addr >= 0x140003700 && Addr < 0x140003708)
+        return {va_t{0x140003700}, va_t{0x140003708}};
+      return {};
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Func;
+  Func.Name = "pick";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"arg0", Word}};
+  auto Index = HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Word),
+                                   HighExpr::makeConst(7, 8));
+  auto Element = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(0x140003700, 8),
+                          std::move(Index)),
+      NdType::makeInt(1, false));
+  auto Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Element));
+  Value->Type = Func.ReturnType;
+  returnValue(Func, std::move(Value));
+
+  const auto Emit = [&](DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Img;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
+    OS.flush();
+    return Source;
+  };
+  const std::string Section = Emit(nullptr);
+  EXPECT_NE(Section.find("[32]"), std::string::npos) << Section;
+  const std::string Bounded = Emit(&Dbg);
+  EXPECT_NE(Bounded.find("[8]"), std::string::npos) << Bounded;
+  EXPECT_EQ(Bounded.find("[32]"), std::string::npos) << Bounded;
+  compileAndRunCallOrdering(Bounded + R"c(
+int main(void) {
+  return pick(0) == 1 && pick(4) == 11 && pick(9) == 10 ? 0 : 1;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   // A branchless select masks two string addresses. The literal is an array
   // in C; the mask needs its address. A call argument keeps the literal.
@@ -42623,7 +42687,13 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
       << HighC;
-  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+  // Both conversions complete MXCSR state, so the rounding path prints as
+  // the state helpers rather than as a bare C cast.
+  const auto ToInteger =
+      HighC.find("neverd_x86_fp_cvt_to_int_state_f64_i64(arg0, ");
+  ASSERT_NE(ToInteger, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64(", ToInteger),
+            std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))
@@ -44102,12 +44172,13 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 }
 
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
-/// C must compute in `long double` and return \p Expected.
-void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
+/// C must hold its x87 values as \p Storage and return \p Expected.
+void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
+                     llvm::StringRef Storage = "long double") {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("long double"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
@@ -44143,7 +44214,9 @@ TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
 TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
   // The extended value fills ten bytes; the qword after it survives, and
   // the stored exponent word reads back.  A store of a whole C object of
-  // 12 or 16 bytes would overwrite the neighbor.
+  // 12 or 16 bytes would overwrite the neighbor.  The value comes straight
+  // from the constant ROM, which executes into raw eighty-bit storage, so
+  // nothing here computes in long double.
   expectX87Result({0x48, 0xc7, 0x44, 0x24, 0xea,
                    0x2a, 0,    0,    0,          // mov qword [rsp-16h], 42
                    0xd9, 0xe8,                   // fld1
@@ -44152,7 +44225,7 @@ TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
                    0x0f, 0xb7, 0x4c, 0x24, 0xe8, // movzx ecx, word [rsp-18h]
                    0x48, 0x01, 0xc8,             // add rax, rcx
                    0xc3},
-                  42 + 0x3FFF);
+                  42 + 0x3FFF, "_BitInt(80)");
 }
 
 TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {

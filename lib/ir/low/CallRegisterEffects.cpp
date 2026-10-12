@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/X86FPState.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
@@ -78,7 +79,7 @@ void joinReads(GPRReadWidths &Into, const GPRReadWidths &From) {
 /// registers spilled in the block a test of AL alone branches around are the
 /// save area's too: a caller passes the vector arguments AL counts.
 std::set<std::pair<size_t, size_t>>
-findRegisterSaveAreaSpills(const BinaryImage &Img, const LowFunc &F,
+findRegisterSaveAreaSpills(const BinaryImage &Img, CallRegisterBodyView F,
                            const std::map<int, size_t> &IndexOfId) {
   std::set<std::pair<size_t, size_t>> Spills;
   if (Img.Arch != Arch::X64 || Img.abiFormat() == BinaryFormat::COFF ||
@@ -447,7 +448,7 @@ StackValue stackValueOf(const StackState &S, const NdVar &V) {
 /// K * SlotBytes, directly or through a tail call made at the entry stack
 /// pointer.  Anything that could read those slots out of sight makes the
 /// bound unknown.
-void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
+void summarizeIncomingStackReads(const BinaryImage &Img, CallRegisterBodyView F,
                                  const std::map<int, size_t> &IndexOfId,
                                  const std::set<va_t> &BlockStarts,
                                  LocalRegisterEffect &Effect) {
@@ -613,15 +614,51 @@ void summarizeIncomingStackReads(const BinaryImage &Img, const LowFunc &F,
       case NdOp::COND_BR:
       case NdOp::INDIR_BR:
         break;
-      default:
+      default: {
+        // An x86 floating-point memory form (`addsd 8(%rsp), %xmm1`) reads
+        // its operand at the address its second input holds, as many bytes
+        // as its shape says: a read bounded like a load's.
+        std::optional<unsigned> FPRead;
+        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 2 &&
+            Op.Inputs[0].isConst() && Op.Inputs[2].isConst() &&
+            Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+            Op.MemoryOrdering == NdMemoryOrdering::None) {
+          const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+          if (Op.Inputs[0].Offset == unsigned(Id) &&
+              isX86FPStateMemoryIntrinsic(Id) &&
+              Id != Intrinsic::X86F16CStoreState)
+            if (const unsigned Bytes = x86FPStateMemoryBytes(
+                    Id, Op.Output.Size,
+                    static_cast<unsigned>(Op.Inputs[2].Offset)))
+              FPRead = Bytes;
+        }
+        if (FPRead) {
+          const StackValue A = In(1);
+          if (A.K == StackValue::Unknown) {
+            Unknown = true;
+          } else if (A.K == StackValue::Range) {
+            const int64_t Last = A.Hi + static_cast<int64_t>(*FPRead) - 1;
+            for (size_t K = 0; K < NumArgRegs; ++K)
+              if (A.Lo < HomeSlot(K) + static_cast<int64_t>(Layout.SlotBytes) &&
+                  HomeSlot(K) <= Last)
+                HomeLoaded[K] = true;
+            if (Last >= Layout.EntryStackBase)
+              StackArgs = std::max<int64_t>(
+                  StackArgs,
+                  static_cast<int64_t>(Layout.Registers.size()) +
+                      (Last - Layout.EntryStackBase) / Layout.SlotBytes + 1);
+          }
+        }
         // Arithmetic on a stack address (a flag, an alignment mask) yields
         // no address; an operation that may dereference a pointer into the
         // incoming slots is a read this summary cannot bound.
         if (Op.Opcode == NdOp::INTRINSIC)
           for (unsigned K = 0; K < Op.NumInputs; ++K)
-            Unknown |= Escapes(In(K));
+            if (!(FPRead && K == 1))
+              Unknown |= Escapes(In(K));
         Set(Op.Output, {});
         continue;
+      }
       }
       // Control transfer.
       const bool LeavesFunction =
@@ -765,13 +802,29 @@ std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
                    static_cast<unsigned>(Offset)};
 }
 
+bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
+                                uint16_t Size) {
+  if (const auto Family = gprFamilyOf(A, RegOff))
+    return (Preserved >> *Family) & 1;
+  const auto Family = registerFamilyOf(A, RegOff);
+  return Family && Family->first >= kX64VectorFamilyBase &&
+         ((Preserved >> Family->first) & 1) && Family->second + Size <= 16;
+}
+
 LocalRegisterEffect
 localRegisterEffect(const BinaryImage &Img, const LowFunc &F,
                     const libc::NoReturnTargetIndex *NoReturnTargets,
                     const std::map<va_t, GPRReadWidths> *FixedCallReads) {
+  return localRegisterEffect(Img, CallRegisterBodyView(F), NoReturnTargets,
+                             FixedCallReads);
+}
+
+LocalRegisterEffect
+localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
+                    const libc::NoReturnTargetIndex *NoReturnTargets,
+                    const std::map<va_t, GPRReadWidths> *FixedCallReads) {
   LocalRegisterEffect Effect;
-  if (!F.hasCompleteLiftCoverage() ||
-      !F.UnsafeIndirectBranchAddresses.empty() || F.Blocks.empty()) {
+  if (!F.Complete || F.UnsafeIndirectBranches || F.Blocks.empty()) {
     Effect.Unknown = true;
     Effect.Incomplete = true;
     Effect.UnknownStackReads = true;

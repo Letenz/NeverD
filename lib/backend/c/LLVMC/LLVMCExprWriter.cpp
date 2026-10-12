@@ -15,6 +15,7 @@
 
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/LLVMName.h"
@@ -361,8 +362,13 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
                  Img->DataPtrRelocSlots.count(Addr))) ||
         (Use != ImageDataUses.end() && Use->second.CallSlot);
     std::optional<uint64_t> AccessBytes;
-    if (Use != ImageDataUses.end() && Use->second.AccessBytes.size() == 1)
+    if (Opts.AccessWidths) {
+      if (const auto Width = Opts.AccessWidths->at(Addr); Width && *Width)
+        AccessBytes = *Width;
+    } else if (Use != ImageDataUses.end() &&
+               Use->second.AccessBytes.size() == 1) {
       AccessBytes = *Use->second.AccessBytes.begin();
+    }
     Raw = makeDataName(Addr, PointerSlot, AccessBytes);
     SynthesizedImageObjects.insert(Addr);
   }
@@ -2820,6 +2826,36 @@ LLVMCWriter::targetPointerMaskIdentity(const llvm::BinaryOperator &Op) {
          valueStr(Cast->getOperand(0)) + ")";
 }
 
+std::optional<std::string>
+LLVMCWriter::lowBitsMaskCast(const llvm::BinaryOperator &Op) {
+  if (Op.getOpcode() != llvm::Instruction::And || !Op.getType()->isIntegerTy())
+    return std::nullopt;
+  const unsigned Width = Op.getType()->getIntegerBitWidth();
+  if (Width != 16 && Width != 32 && Width != 64)
+    return std::nullopt;
+  const auto *Mask = llvm::dyn_cast<llvm::ConstantInt>(Op.getOperand(1));
+  const llvm::Value *Base = Op.getOperand(0);
+  if (!Mask) {
+    Mask = llvm::dyn_cast<llvm::ConstantInt>(Base);
+    Base = Op.getOperand(1);
+  }
+  if (!Mask || llvm::isa<llvm::Constant>(Base))
+    return std::nullopt;
+  for (unsigned Bits : {8U, 16U, 32U}) {
+    if (Bits >= Width ||
+        Mask->getValue() != llvm::APInt::getLowBitsSet(Width, Bits))
+      continue;
+    // With a target data layout InstCombine canonicalizes zext(trunc X) to
+    // this mask. C states the same bits as the cast through the narrow
+    // unsigned carrier that castStr prints for zext(trunc X). The operand
+    // text is not inspected, so source-map delimiters cannot change it.
+    return "(" + typeToCLLVM(Op.getType()) + ")((" +
+           typeToCLLVM(llvm::IntegerType::get(Op.getContext(), Bits)) + ")(" +
+           integerPointerOperandStr(Base) + "))";
+  }
+  return std::nullopt;
+}
+
 std::string LLVMCWriter::castStr(unsigned Opcode, const std::string &Src,
                                  llvm::Type *SrcTy, llvm::Type *DstTy) {
   const std::string Dst = typeToCLLVM(DstTy);
@@ -3185,6 +3221,8 @@ std::string LLVMCWriter::renderInlineImpl(const llvm::Instruction &Inst) {
     if (auto Identity =
             targetPointerMaskIdentity(llvm::cast<llvm::BinaryOperator>(Inst)))
       return *Identity;
+    if (auto Cast = lowBitsMaskCast(llvm::cast<llvm::BinaryOperator>(Inst)))
+      return *Cast;
     const bool NeedsIntegerPointerOperand = Inst.getType()->isIntegerTy();
     std::string LHS =
         logicalShiftLhs(Inst, NeedsIntegerPointerOperand

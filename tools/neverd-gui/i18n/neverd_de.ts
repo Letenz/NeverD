@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Die Zahl des Operanden mit invertierten Bits zeigen</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>&amp;Code</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Befehle ab der aktuellen Adresse definieren</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Offline-&amp;Paketprüfung...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Lokale Paketnachweise und Analystenbewertungen prüfen</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>&amp;PDB-Datei...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Symbole aus einer ausgewählten PDB-Datei laden</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1455,14 @@ Doppelklicken springt zur Deklaration.</translation>
             <numerusform>%n Deklaration als C gezeigt</numerusform>
             <numerusform>%n Deklarationen als C gezeigt</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Abgebrochen</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Die gespeicherten Variablennamen gehören zu einer anderen Darstellung des Quelltexts</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2084,62 @@ Mit Vorzeichen: %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>Wie %1 geladen wird, ist unbekannt: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Kommentar zu dieser Quelltextzeile:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Neuer Name:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Umbenennen</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Wählen Sie eine deklarierte Variable oder einen Namen im Image zum Umbenennen aus</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Wählen Sie eine Quelltextzeile aus; klappen Sie eingeklappten Code vor dem Kommentieren auf</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>Der ausgewählte Name hat keine Adresse im Image</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Dieser Befehl ist keiner Quelltextzeile zugeordnet.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Diese Quelltextzeile ist keiner Befehlsadresse zugeordnet; der Funktionseinstieg wird angezeigt</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB-Datei laden</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB-Dateien (*.pdb);;Alle Dateien (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Ungeprüfte PDB zur Analyse verwenden</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>Dieser PE fehlt die PDB-Identität (GUID/age). Architektur und Abschnittslayout der ausgewählten PDB stimmen überein, aber ihr Build lässt sich nicht bestätigen.
+
+Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Adressbereiche werden als Analyseeingaben verwendet. Eine falsche PDB kann zu falschen Ergebnissen führen.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Diese Engine kann keine ungeprüfte PDB zur Analyse verwenden</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2278,10 @@ Mit Vorzeichen: %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Hier erscheinen die Dateien, die Sie öffnen. Wählen Sie „Neu“ oder ziehen Sie eine Datei auf dieses Fenster.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Zuletzt geöffnet: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2404,22 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Plattform: %1, aus dem Code erkannt: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>An %1 ist bereits ein Befehl definiert</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB geladen: %1 (%2 Namen, Identität geprüft)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB-Anzeigenamen importiert: %1 (%2 Namen, ungeprüft)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB zur Analyse geladen: %1 (%2 Namen, vom Benutzer bestätigt, Identität ungeprüft)</translation>
     </message>
 </context>
 <context>
@@ -2529,6 +2637,40 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Minimieren</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Maximieren</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Schließen</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Analyseprozess gestoppt.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Nur lesende Analyseanfragen sind erlaubt.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>Der Analyseprozess kann den Analysezustand nicht wiederherstellen.</translation>
     </message>
 </context>
 </TS>

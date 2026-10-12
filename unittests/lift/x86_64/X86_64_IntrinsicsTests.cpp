@@ -1,6 +1,9 @@
 #include "HighCHostExecution.h"
 #include "NeverDLiftFixture.h"
 
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringRef.h"
+
 namespace {
 
 // Keep the generated declaration and body intact. Only the named intrinsic is
@@ -30,19 +33,30 @@ std::string generatedFunction(const std::string &Source,
   return {};
 }
 
-void expectIntrinsicStyle(const std::string &Source) {
+void expectIntrinsicStyle(const std::string &Source, bool LLVMRoute = false) {
   // Linux SYSCALL has no equivalent MSVC intrinsic: its established C
   // projection uses GNU constraints to preserve the Linux register ABI.
+  // The LLVM C route also emits CPUID and XGETBV as volatile queries with a
+  // memory barrier (#823), so an unused result cannot drop a query.
   // Other system instructions must continue to use the existing C intrinsics.
   const std::string SyscallAsm = "__asm__ volatile(\"syscall\"";
+  const std::string QueryAsm[] = {"__asm__ volatile(\"cpuid\"",
+                                  "__asm__ volatile(\"xgetbv\""};
+  const auto IsQuery = [&](size_t At) {
+    return LLVMRoute && llvm::any_of(QueryAsm, [&](const std::string &Query) {
+             return Source.compare(At, Query.size(), Query) == 0;
+           });
+  };
   size_t Search = 0;
   unsigned Syscalls = 0;
   while ((Search = Source.find("__asm__ volatile", Search)) !=
          std::string::npos) {
-    EXPECT_EQ(Source.compare(Search, SyscallAsm.size(), SyscallAsm), 0)
-        << Source.substr(Search, 200);
+    if (!IsQuery(Search)) {
+      EXPECT_EQ(Source.compare(Search, SyscallAsm.size(), SyscallAsm), 0)
+          << Source.substr(Search, 200);
+      ++Syscalls;
+    }
     Search += SyscallAsm.size();
-    ++Syscalls;
   }
   EXPECT_EQ(Syscalls, 1u) << Source;
   for (const char *Name : {"test_rdtsc_intrinsic", "test_pause_intrinsic",
@@ -52,7 +66,12 @@ void expectIntrinsicStyle(const std::string &Source) {
                            "test_rdtscp_intrinsic", "test_wrmsr_intrinsic"}) {
     const auto Body = generatedFunction(Source, Name);
     ASSERT_FALSE(Body.empty()) << Name;
-    EXPECT_EQ(Body.find("__asm__ volatile"), std::string::npos) << Body;
+    const llvm::StringRef Function(Name);
+    if (LLVMRoute && (Function == "test_cpuid_intrinsic" ||
+                      Function == "test_xgetbv_intrinsic"))
+      EXPECT_NE(Body.find(": \"memory\");"), std::string::npos) << Body;
+    else
+      EXPECT_EQ(Body.find("__asm__ volatile"), std::string::npos) << Body;
   }
 }
 
@@ -215,16 +234,24 @@ TEST_F(X86_64_Intrinsics, LlvmC_UsesCorrectStyle) {
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  expectIntrinsicStyle(content);
+  expectIntrinsicStyle(content, /*LLVMRoute=*/true);
 }
 
 TEST_F(X86_64_Intrinsics, LlvmC_CpuidUsesIntrinsic) {
+  // LLVM C keeps each CPUID as a volatile query with its full subleaf and a
+  // memory barrier (#823); the __cpuid builtin could vanish when unused.
   auto r = decompileToC(obj("test_intrinsics_system.o"));
   ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
   auto content = readDecompiledFile("decompiled.c");
-  EXPECT_TRUE(content.find("__cpuid") != std::string::npos)
-      << "Expected __cpuid(cpuInfo, ...) in LLVM C decompile:\n"
+  const auto Query = content.find("__asm__ volatile(\"cpuid\"");
+  ASSERT_NE(Query, std::string::npos)
+      << "Expected a volatile CPUID query in LLVM C decompile:\n"
       << content.substr(0, 3000);
+  const auto End = content.find(';', Query);
+  ASSERT_NE(End, std::string::npos);
+  const auto Statement = content.substr(Query, End - Query);
+  EXPECT_NE(Statement.find("\"c\"("), std::string::npos) << Statement;
+  EXPECT_NE(Statement.find(": \"memory\")"), std::string::npos) << Statement;
   EXPECT_TRUE(content.find("cpuInfo[") != std::string::npos)
       << "Expected cpuInfo array extraction in LLVM C decompile:\n"
       << content.substr(0, 3000);
@@ -769,6 +796,24 @@ __attribute__((target("sse4.2"))) int checksum(int a) {
                             {0, 1, -1, 0x7F, 0x12345678, -0x7FFFFFFF});
 }
 
+// MULSD and ADDSS read their constant-pool operand through the address they
+// take, so each constant is the double or float the instruction reads.
+TEST_F(X86_64_HighCIntrinsics, ConstantPoolOperandsKeepTheirWidth) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+int scale(int a) {
+  double x = (double)a * 1e-4;
+  float y = (float)a + 2.5f;
+  unsigned long long b;
+  unsigned c;
+  __builtin_memcpy(&b, &x, 8);
+  __builtin_memcpy(&c, &y, 4);
+  return (int)(b ^ (b >> 32) ^ c);
+}
+)C",
+                            "scale", {"scale"},
+                            {0, 1, -1, 31416, 0x12345, -0x7FFFFFFF});
+}
+
 // An instruction past the x86-64 baseline prints as its intrinsic in a
 // function that takes the intrinsic's target feature, so the C compiles with
 // no -m option.
@@ -850,4 +895,31 @@ cas16:
       checkHighCClangCompile(CFile, {"-target", "x86_64-linux-gnu", "-mcx16",
                                      "-ffreestanding", "-std=gnu11"});
   EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
+}
+
+// The magnitude mask of an fabs is a double constant that `vmovddup` loads
+// from memory and broadcasts, which HighC folds to its eight bytes: the
+// intrinsic reads only those, and they widen to its vector operand.
+TEST_F(X86_64_HighCIntrinsics, ABroadcastConstantWidensToItsVector) {
+  HostFlags = {"-mfma"};
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu", "-mfma", "-fno-math-errno"}, R"C(
+int fma_chain(int a) {
+  unsigned h = (unsigned)a, acc = 0;
+  double s = 1.0;
+  for (int i = 0; i < 64; i++) {
+    h = h * 1103515245u + 12345u;
+    double x = (double)(int)(h & 0x1FFFF) * 0.0000131 - 3.0;
+    double y = (double)(int)((h >> 8) & 0x1FFFF) * 0.0000071 + 1.0;
+    s = __builtin_fma(x, y, s);
+    if (s > 1e9 || s < -1e9)
+      s *= 0.0009765625;
+    unsigned long long bb;
+    __builtin_memcpy(&bb, &s, 8);
+    acc = acc * 131u + (unsigned)bb + (unsigned)(bb >> 32);
+  }
+  return (int)acc;
+}
+)C",
+      "fma_chain", {"fma_chain"}, {0, 1, -1, 0x4567, 77});
 }

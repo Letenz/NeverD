@@ -18,6 +18,7 @@
 #include "neverd/debug/MSVCMapLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -34,6 +35,50 @@
 namespace neverd {
 
 namespace {
+
+/// Record as pointers to data the relocated pointers that the image took for
+/// pointers to code but whose targets \p Dbg places in data: at a data
+/// symbol, the image's own among them (\p DataByAddr), or after one that no
+/// function follows.
+void recordDebugDataPointerTargets(BinaryImage &Img, const DebugContext &Dbg,
+                                   const std::map<va_t, size_t> &DataByAddr) {
+  recordDataPointerTargets(Img, [&](va_t Addr) {
+    if (DataByAddr.count(Addr) != 0)
+      return true;
+    return (Dbg.resolveDataObject(Addr) || Dbg.precedingDataSymbol(Addr)) &&
+           !Dbg.resolveFunction(Addr);
+  });
+}
+
+/// Drop the functions the loader only guessed after padding where \p Dbg
+/// names a data object, the image's own data symbols (\p DataByAddr) among
+/// them: a string literal that an executable section keeps begins no
+/// function, however its first bytes read as a prologue.
+void dropDebugDataBoundaryGuesses(BinaryImage &Img, const DebugContext &Dbg,
+                                  const std::map<va_t, size_t> &DataByAddr) {
+  const auto IsGuess = [](const Symbol &Sym) {
+    return Sym.IsFunc && Sym.IsBoundaryGuess && isSynthesizedFuncName(Sym.Name);
+  };
+  // What else says a function begins there, which the data does not refute.
+  std::set<va_t> Confirmed;
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && !IsGuess(Sym))
+      Confirmed.insert(Sym.Addr);
+  for (const auto &[Start, End] : Img.KnownCodeRanges)
+    if (!Img.ContinuationCodeStarts.count(Start))
+      Confirmed.insert(Start);
+  std::set<va_t> Refuted;
+  for (const Symbol &Sym : Img.Symbols)
+    if (IsGuess(Sym) && !Confirmed.count(Sym.Addr) &&
+        (DataByAddr.count(Sym.Addr) != 0 ||
+         (Dbg.resolveDataObject(Sym.Addr) && !Dbg.resolveFunction(Sym.Addr))))
+      Refuted.insert(Sym.Addr);
+  if (Refuted.empty())
+    return;
+  llvm::erase_if(Img.Symbols, [&](const Symbol &Sym) {
+    return IsGuess(Sym) && Refuted.count(Sym.Addr) != 0;
+  });
+}
 
 bool isReadableFile(const std::filesystem::path &P) {
   if (P.empty())
@@ -114,9 +159,12 @@ mapCandidates(const std::filesystem::path &BinaryPath) {
 }
 
 DebugInfoResult loadPDB(const std::filesystem::path &P, const BinaryImage &Img,
-                        const LoadProgress &Progress) {
+                        const LoadProgress &Progress,
+                        bool AllowMissingIdentity = false) {
   DebugInfoResult R;
-  auto CtxOr = PDBDebugContext::load(P, Img, Progress);
+  auto CtxOr = AllowMissingIdentity
+                   ? PDBDebugContext::loadUserSelected(P, Img, Progress)
+                   : PDBDebugContext::load(P, Img, Progress);
   if (!CtxOr) {
     R.Error = llvm::toString(CtxOr.takeError());
     return R;
@@ -203,7 +251,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
       Result.Error = "PDB file not found: " + pathToUTF8(Req.PDBPath);
       return Result;
     }
-    Result = loadPDB(Req.PDBPath, Img, Progress);
+    Result = loadPDB(Req.PDBPath, Img, Progress, Req.AllowMissingPDBIdentity);
     if (!Result && Result.Error.empty())
       Result.Error = "no function symbols in " + pathToUTF8(Req.PDBPath);
     return Result;
@@ -323,8 +371,13 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     Img.Symbols.push_back(std::move(New));
   }
 
-  if (DbgFuncs.empty())
+  // A guessed function that a data object refutes claims no pointer to it
+  // as one to code, so the guesses go first.
+  if (DbgFuncs.empty()) {
+    dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
+    recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
     return 0;
+  }
 
   // Index the function symbols once rather than scanning the table per debug
   // entry; both sides run to tens of thousands of entries on a real image.
@@ -369,6 +422,8 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     ++Applied;
   }
 
+  dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
+  recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

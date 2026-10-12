@@ -390,3 +390,55 @@ neon_estimates:
         "@llvm.arm.neon.vrsqrte.v2i32("})
     EXPECT_NE(IR.out.find(Name), std::string::npos) << Name << "\n" << IR.out;
 }
+
+// The NEON count of a byte array compares each lane with a zero vector,
+// which the C spells as a 32-bit literal: its bytes past the fourth are
+// zeros, never a shift of the literal by 32 or more, which C leaves
+// undefined (and an optimizer may delete every path through).
+TEST_F(ARM32_Intrinsics, ALaneOfAZeroLiteralIsZero) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const auto Source = tmpFile("subset.c");
+  const auto Object = tmpFile("subset.o");
+  std::ofstream(Source) << R"C(
+static const unsigned char vals[16] = {13, 7, 21, 4, 9, 30, 2, 18,
+                                       25, 11, 6, 28, 3, 15, 22, 8};
+int subset(int a) {
+  unsigned s = (unsigned)a, out = 0;
+  for (int it = 0; it < 4; it++) {
+    s = s * 1103515245u + 12345u;
+    unsigned target = 64u + ((s >> 4) & 31u);
+    unsigned char reach[256];
+    for (int i = 0; i < 256; i++)
+      reach[i] = 0;
+    reach[0] = 1;
+    for (int i = 0; i < 16; i++) {
+      unsigned v = (vals[i] & 31u) + 1u;
+      for (int sm = 255; sm >= (int)v; sm--)
+        if (reach[sm - (int)v])
+          reach[sm] = 1;
+    }
+    unsigned cnt = 0u;
+    for (int i = 0; i < 256; i++)
+      if (reach[i])
+        cnt++;
+    out = out * 1311u + cnt + (reach[target & 255u] ? 7u : 0u);
+  }
+  return (int)out;
+}
+)C";
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "arm-linux-gnueabi",
+                               "-mcpu=cortex-a15", "-mfloat-abi=softfp", "-O2",
+                               "-c", Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  const auto Decompiled = decompileToHighC(Object);
+  ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+  const auto Checked =
+      exec(NEVERD_TEST_CLANG, {"-target", "arm-linux-gnueabi",
+                               "-mcpu=cortex-a15", "-mfloat-abi=softfp",
+                               "-fsyntax-only", "-Werror=shift-count-overflow",
+                               tmpFile("decompiled_high.c").string()});
+  EXPECT_EQ(Checked.exitCode, 0) << Checked.err << "\n"
+                                 << readDecompiledFile("decompiled_high.c");
+}

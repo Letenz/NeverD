@@ -15,6 +15,8 @@
 #include "os/windows/driver/GuardControlFlow.h"
 
 #include "neverd/emulation/DriverSession.h"
+#include "neverd/emulation/ProcessObserver.h"
+#include "neverd/emulation/WindowsDriverState.h"
 
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/Object/COFF.h"
@@ -90,6 +92,52 @@ TEST(DriverGuardLoader, DormantInstrumentationKeepsGuestFallbackPointers) {
             imagePointer(*Original, A.CheckPointerAddress) - Original->Base);
   EXPECT_EQ(imagePointer(*Rebased, B.DispatchPointerAddress) - Rebased->Base,
             imagePointer(*Original, A.DispatchPointerAddress) - Original->Base);
+}
+
+TEST(DriverGuardExecution, SessionFixupsInvalidateOriginalLoaderFacts) {
+  class InitialObserver final : public ProcessObserver {
+  public:
+    std::shared_ptr<const ProcessRuntimeState> State;
+    llvm::Expected<std::vector<ExecutionWatch>>
+    started(ProcessView &P) override {
+      auto Captured = P.runtimeState(false);
+      if (!Captured)
+        return Captured.takeError();
+      State = std::move(*Captured);
+      return std::vector<ExecutionWatch>{{P.inputModule()->Entry, 1}};
+    }
+    llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
+    watched(ProcessView &, uint64_t) override {
+      return std::nullopt;
+    }
+  };
+  for (const char *Name : {"driver_guard", "driver_guard_inactive"}) {
+    const auto Path = guardFixture(Name);
+    DriverOptions Options;
+    Options.LoadAddress = 0xfffff80010000000ULL;
+    auto Image =
+        loadDriverImage(Path, Options.MemoryLimit, Options.LoadAddress);
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    InitialObserver Observer;
+    auto Run = observeDriver(Path, Options, Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    ASSERT_TRUE(Observer.State);
+    const auto &State =
+        static_cast<const WindowsDriverState &>(*Observer.State);
+    ASSERT_TRUE(State.Relocations);
+    unsigned GuardSlots = 0;
+    for (const auto &Field : State.Relocations->Fields) {
+      const auto Address = Options.LoadAddress + Field.RVA;
+      const bool GuardSlot = Address == Image->Guard.CheckPointerAddress ||
+                             Address == Image->Guard.DispatchPointerAddress;
+      GuardSlots += GuardSlot;
+      EXPECT_EQ(Field.LoaderWritePreserved,
+                !(Image->Guard.Enabled && GuardSlot));
+      EXPECT_EQ(Field.LoadedValue, imagePointer(*Image, Address));
+    }
+    EXPECT_EQ(GuardSlots, 2u);
+  }
 }
 
 TEST(DriverGuardLoader, ImagesCannotOccupyHelpersOrNestedCallbackStacks) {

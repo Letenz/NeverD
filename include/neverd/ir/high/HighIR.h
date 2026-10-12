@@ -23,6 +23,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include <algorithm>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -579,6 +580,9 @@ struct HighFunc {
   bool DoesNotReturn = false;
   /// MedFunc::ReturnsNoValue: C shows the function as void.
   bool ReturnsNoValue = false;
+  /// MedFunc::IsVariadic: its prologue saves its argument registers for
+  /// va_arg, which reads no more of them than a caller passes.
+  bool IsVariadic = false;
   /// How execution reaches Entry (MedFunc::EntryKind).
   StackEntryKind EntryKind = StackEntryKind::Call;
   TypeRef ReturnType;
@@ -641,6 +645,77 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
       ByEntry[Func.Entry] = Func.Body;
       ContinuationsByEntry[Func.Entry] = Func.CxxContinuationTargets;
     }
+  // The out-of-SSA names of a funclet are its own function's, numbered from
+  // zero as the parent's are: attached as they are, a funclet's `v0` would
+  // be the parent's `v0` in C.  Each attached body takes names past every
+  // name the function holds so far.
+  auto MaxRenameTag = [](auto &&Self, const std::vector<HighStmt> &Stmts,
+                         int Max) -> int {
+    auto Visit = [&](auto &&VisitSelf, const ExprPtr &E) -> void {
+      if (!E)
+        return;
+      Max = std::max<int>(Max, E->Var.RenameTag);
+      for (const MedVar &Out : E->IntrinsicOutputs)
+        Max = std::max<int>(Max, Out.RenameTag);
+      E->forEachChildExpr(
+          [&](const ExprPtr &Child) { VisitSelf(VisitSelf, Child); });
+    };
+    for (const HighStmt &S : Stmts) {
+      forEachExpr(S, [&](const ExprPtr &E) { Visit(Visit, E); });
+      for (const HighEHClause &Clause : S.EHClauses)
+        Visit(Visit, Clause.FilterValue);
+      Max = Self(Self, S.Body, Max);
+      Max = Self(Self, S.ElseBody, Max);
+      for (const auto &Case : S.Cases)
+        Max = Self(Self, Case.Body, Max);
+      Max = Self(Self, S.DefaultBody, Max);
+      for (const auto &Clause : S.EHClauseBodies)
+        Max = Self(Self, Clause, Max);
+    }
+    return Max;
+  };
+  // Copies each expression of \p Stmts, which the funclet's own function
+  // shares, with every name moved by \p Offset.  A node shared within the
+  // body stays shared.
+  auto Retag = [](std::vector<HighStmt> &Stmts, int Offset) {
+    std::map<const HighExpr *, ExprPtr> Copies;
+    auto Move = [&](MedVar &V) {
+      if (V.RenameTag >= 0)
+        V.RenameTag = static_cast<int16_t>(V.RenameTag + Offset);
+    };
+    auto Copy = [&](auto &&Self, ExprPtr &E) -> void {
+      if (!E)
+        return;
+      if (auto It = Copies.find(E.get()); It != Copies.end()) {
+        E = It->second;
+        return;
+      }
+      auto Moved = std::make_shared<HighExpr>(*E);
+      Copies.emplace(E.get(), Moved);
+      Move(Moved->Var);
+      for (MedVar &Out : Moved->IntrinsicOutputs)
+        Move(Out);
+      for (ExprPtr &Operand : Moved->Operands)
+        Self(Self, Operand);
+      Self(Self, Moved->IndirectTarget);
+      E = std::move(Moved);
+    };
+    auto Walk = [&](auto &&Self, std::vector<HighStmt> &Body) -> void {
+      for (HighStmt &S : Body) {
+        forEachExpr(S, [&](ExprPtr &E) { Copy(Copy, E); });
+        for (HighEHClause &Clause : S.EHClauses)
+          Copy(Copy, Clause.FilterValue);
+        Self(Self, S.Body);
+        Self(Self, S.ElseBody);
+        for (auto &Case : S.Cases)
+          Self(Self, Case.Body);
+        Self(Self, S.DefaultBody);
+        for (auto &Clause : S.EHClauseBodies)
+          Self(Self, Clause);
+      }
+    };
+    Walk(Walk, Stmts);
+  };
   for (HighFunc &Func : Funcs) {
     // A PE32 callback uses the parent's EBP and a private runtime stack.
     // A separately converted ordinary HighFunc carries no projection of
@@ -648,6 +723,7 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
     // is proved; bodies already recovered inside the parent remain intact.
     if (Func.ExceptionMetadata && Func.ExceptionMetadata->Registration)
       continue;
+    int NextTag = MaxRenameTag(MaxRenameTag, Func.Body, -1) + 1;
     std::set<va_t> Active;
     std::set<va_t> Continuations = Func.CxxContinuationTargets;
     bool Attached = false;
@@ -724,6 +800,13 @@ inline void attachCxxFuncletBodies(std::vector<HighFunc> &Funcs) {
                   Continuations.insert(NestedContinuations.begin(),
                                        NestedContinuations.end());
                   Stmt.EHClauseBodies[I] = It->second;
+                  const int Last =
+                      MaxRenameTag(MaxRenameTag, Stmt.EHClauseBodies[I], -1);
+                  if (Last >= 0 &&
+                      NextTag + Last <= std::numeric_limits<int16_t>::max()) {
+                    Retag(Stmt.EHClauseBodies[I], NextTag);
+                    NextTag += Last + 1;
+                  }
                   Attached = true;
                   Self(Self, Stmt.EHClauseBodies[I]);
                   Continuations = SavedContinuations;

@@ -53,6 +53,28 @@ void coalesceBranchEntryStatements(HighFunc &Func);
 
 namespace {
 
+/// The C record a struct returned across several registers is: one member
+/// per field register, in the order the call site packs them (an AArch64
+/// HFA, x86-64 SSE or mixed eightbytes).  The target ABI returns such a
+/// record in those same registers.  Nothing for a field C has no member for.
+TypeRef multiRegisterReturnType(const std::vector<MedReturnReg> &Fields) {
+  std::vector<TypeRef> Members;
+  for (const MedReturnReg &Field : Fields) {
+    const bool Supported = Field.IsFP ? Field.Size == 4 || Field.Size == 8
+                                      : Field.Size == 1 || Field.Size == 2 ||
+                                            Field.Size == 4 || Field.Size == 8;
+    if (!Supported)
+      return {};
+    Members.push_back(Field.IsFP ? NdType::makeFloat(Field.Size)
+                                 : NdType::makeInt(Field.Size, false));
+  }
+  TypeRef Record = NdType::makeStruct(std::move(Members));
+  if (!Record)
+    return {};
+  Record->RegisterReturnRecord = true;
+  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+}
+
 // Temporary, opt-in observation of the actual source-recovery conversion.
 // Keep this independent of the analysis state and remove it with the CI probe.
 class HighConversionTrace {
@@ -1189,9 +1211,28 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.Entry = Med.Entry;
   Func.FrameSize = Med.FrameSize;
   Func.FrameHeadroom = Med.FrameHeadroom;
+  // The incoming stack argument homes seeded below, written in place or read
+  // in place by a variadic function's va_arg walk.
+  std::vector<std::pair<int, int64_t>> IncomingStackHomes =
+      Med.MutableStackParamHomes;
+  if (Med.IsVariadic && Med.VariadicOverflowCount > 0 && !Med.SourceTypeHint) {
+    const auto &TRI = getTargetRegInfo(TheArch);
+    const int Count = Med.VariadicOverflowCount;
+    const int First = static_cast<int>(Med.Params.size()) - Count;
+    for (int I = 0; I < Count && First >= 0; ++I)
+      IncomingStackHomes.emplace_back(
+          First + I,
+          Med.VariadicOverflowBase + static_cast<int64_t>(I) * TRI.PointerSize);
+    // As the LLVM emitter reserves it, with the same slop past the last.
+    Func.FrameHeadroom = std::max(
+        Func.FrameHeadroom, Med.VariadicOverflowBase +
+                                static_cast<int64_t>(Count) * TRI.PointerSize +
+                                limits::kVariadicOverflowSlop);
+  }
   Func.Name = Med.Name;
   Func.DoesNotReturn = Med.DoesNotReturn;
   Func.ReturnsNoValue = Med.ReturnsNoValue;
+  Func.IsVariadic = Med.IsVariadic;
   Func.EntryKind = Med.EntryKind;
   Func.ExceptionMetadata = Med.ExceptionMetadata;
   for (const auto &Entry : Med.CxxContinuationEntries)
@@ -1205,6 +1246,10 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
        Med.ExceptionMetadata->Registration->hasCxxCallbackStack());
   Func.ReturnType = Med.ReturnType ? Med.ReturnType : inferReturnType(Med);
   const auto &ReturnTRI = getTargetRegInfo(TargetArch);
+  // A whole vector returned in the FP return register is its bits, which C
+  // carries as the unsigned 128-bit integer HighC holds vector registers in.
+  if (Med.ReturnsVectorRegister && Func.ReturnType)
+    Func.ReturnType = NdType::makeInt(Func.ReturnType->Size, false);
   if (!Med.SourceParametersBound && Med.MultiReturn.size() == 2 &&
       !Med.MultiReturn[0].IsFP && !Med.MultiReturn[1].IsFP &&
       Med.MultiReturn[0].RegOff == ReturnTRI.IntReturnReg &&
@@ -1212,6 +1257,9 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       Med.MultiReturn[0].Size == ReturnTRI.PointerSize &&
       Med.MultiReturn[1].Size == ReturnTRI.PointerSize)
     Func.ReturnType = NdType::makeInt(2 * ReturnTRI.PointerSize);
+  else if (!Med.SourceParametersBound && Med.MultiReturn.size() >= 2)
+    if (TypeRef Record = multiRegisterReturnType(Med.MultiReturn))
+      Func.ReturnType = std::move(Record);
   Func.SourceTypeHint = Med.SourceTypeHint;
   Func.RegisterCopyProjections = Med.RegisterCopyProjections;
   Func.ClassGetterCallFacts = Med.ClassGetterCallFacts;
@@ -1255,9 +1303,11 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   // MedIR keeps the loads and stores of an incoming stack argument the
   // function writes in place as memory accesses to its home slot. Seed each
   // home with its parameter at entry, as the LLVM emitter does, so the first
-  // read sees the argument rather than an uninitialized local.
+  // read sees the argument rather than an uninitialized local.  A variadic
+  // function's va_arg walk reads its overflow arguments in place the same
+  // way: finalizeVariadicCallees gives each a trailing parameter.
   auto SeedMutableStackParamHomes = [&] {
-    if (Med.MutableStackParamHomes.empty() || Med.SourceTypeHint)
+    if (IncomingStackHomes.empty() || Med.SourceTypeHint)
       return;
     std::optional<MedVar> EntrySP;
     for (const MedBlock &Block : Med.Blocks) {
@@ -1273,7 +1323,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
     if (!EntrySP)
       return;
     std::vector<HighStmt> Seeds;
-    for (const auto &[ParamIdx, Offset] : Med.MutableStackParamHomes) {
+    for (const auto &[ParamIdx, Offset] : IncomingStackHomes) {
       if (ParamIdx < 0 || static_cast<size_t>(ParamIdx) >= Med.Params.size())
         continue;
       HighStmt Seed;
@@ -1282,9 +1332,10 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       Seed.StoreAddr = HighExpr::makeBinop(
           NdOp::INT_ADD, HighExpr::makeVar(*EntrySP),
           HighExpr::makeConst(static_cast<uint64_t>(Offset), EntrySP->Size));
+      // The parameter keeps its own id: its index can be another's id, as
+      // ARM32's r1 carries id 8, the ninth parameter's index.
       MedVar Param = Med.Params[ParamIdx];
       Param.Kind = MedVar::Param;
-      Param.Id = ParamIdx;
       Seed.StoreVal = medvarToExpr(Param);
       Seeds.push_back(std::move(Seed));
     }
@@ -1317,7 +1368,11 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                  PtrParamIds.count(static_cast<int>(PI)))
         HP.Type = NdType::makePtr();
       else
-        HP.Type = NdType::makeInt(MP.Size);
+        // The code reads only part of a register it may extend itself, so the
+        // C promises no more about the incoming value than an int.  A narrower
+        // parameter is one AAPCS, Apple's arm64 ABI and Clang's x86-64 have
+        // the caller extend, and its C would skip the code's own extension.
+        HP.Type = NdType::makeInt(MP.Size > 0 && MP.Size < 4 ? 4 : MP.Size);
       Func.Params.push_back(HP);
     }
 

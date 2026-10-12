@@ -17,6 +17,7 @@
 #include "ImageStrings.h"
 #include "LoadOptions.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
@@ -102,6 +103,7 @@ struct Session {
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
+  PipelineAnalysisCache AnalysisCache;
   bool PipeRan = false;
   uint64_t PipelineFeatureGeneration = 0;
   std::optional<bool> LlvmModuleNoOpt;
@@ -147,6 +149,11 @@ struct Session {
   /// The sources of the functions shown last, the newest first.
   std::list<FunctionSource> FunctionSources;
   static constexpr size_t MaxFunctionSources = 8;
+  /// The widths of the reads and writes the code of every function states
+  /// at each address (dataAccessWidths), and a fingerprint of the functions
+  /// they were read from.
+  std::optional<DataAccessWidths> AccessWidths;
+  uint64_t AccessWidthsFunctions = 0;
   /// Whether every native function's call ABI was recovered for this
   /// pipeline's LLVM emission.
   bool NativeCallAbiRecovered = false;
@@ -172,6 +179,7 @@ struct Session {
   std::vector<FuncInfo> Functions;
 
   PatchResult LastPatch;
+  std::string LastSourcePatchReport;
 
   /// Internal JSON-boundary seams used to prove that no C++ exception crosses
   /// extern C. Empty in production.
@@ -399,8 +407,16 @@ struct Session {
   }
 
   void resetFunctionsFromImage() {
+    // A debug import changes canonical image names, but the original spelling
+    // recorded with a committed user rename is part of its durable history.
+    std::map<va_t, std::string> RenameOriginals;
+    for (const auto &[Address, Name] : Renames)
+      if (const auto Original = OriginalNames.find(Address);
+          Original != OriginalNames.end())
+        RenameOriginals.emplace(Address, Original->second);
     Functions.clear();
     OriginalNames.clear();
+    AccessWidths.reset();
     if (!Loaded)
       return;
     const auto Symbols = Img.getFunctionSymbols();
@@ -419,6 +435,8 @@ struct Session {
     appendDiscoveredFunctions();
     appendCreatedFunctions();
     refreshFunctionNames();
+    for (auto &[Address, Name] : RenameOriginals)
+      OriginalNames.insert_or_assign(Address, std::move(Name));
   }
 
   /// Add the functions the user made that the list does not hold yet.
@@ -486,6 +504,14 @@ struct Session {
   /// what was emitted before it.
   void forgetEmittedSources() { FunctionSources.clear(); }
 
+  /// The widths of the reads and writes the code of every function states at
+  /// each address (collectDataAccessWidths), which name unnamed image data in
+  /// the C as the listing names it (CEmitterOptions::AccessWidths).  Read
+  /// again when the functions change, which drops the C kept with the names
+  /// of the old widths.  Null for an image without native code references
+  /// (EVM, SBF) or when no decoder could be set up.
+  const DataAccessWidths *dataAccessWidths();
+
   /// The source \p Route emitted for \p Entry under this pipeline, made the
   /// newest; null if it has not emitted one.
   FunctionSource *findFunctionSource(va_t Entry, SourceRoute Route) {
@@ -517,7 +543,7 @@ struct Session {
     Source->Map->LLVMSources = nullptr;
   }
 
-  void clearPipeline() {
+  void clearPipelineResult() {
     // Every module lives in the context.
     FunctionLlvmModules.clear();
     FunctionSources.clear();
@@ -530,6 +556,19 @@ struct Session {
     NativeFunctionsSynchronized = false;
   }
 
+  void clearPipeline() {
+    clearPipelineResult();
+    AnalysisCache.reset();
+  }
+
+  /// Only navigation may keep immutable image facts. Edits, reloads and
+  /// policy changes continue through clearPipeline()/invalidatePipeline().
+  void selectFunction(va_t Entry) {
+    clearPipelineResult();
+    resetFunctionsFromImage();
+    OnlyFunctionEntries = {Entry};
+  }
+
   void invalidatePipeline() {
     clearPipeline();
     resetFunctionsFromImage();
@@ -540,12 +579,13 @@ struct Session {
       setError("no binary loaded");
       return false;
     }
-    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+    if (PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
     if (!PipeRan) {
       LLVMCtx = std::make_unique<llvm::LLVMContext>();
       PipelineOptions Opts;
       applyAnalysisOptions(Opts);
+      Opts.AnalysisCache = &AnalysisCache;
       Pipeline ThePipeline;
       // Debug names already reached Img.Symbols at load time; handing the
       // context to the pipeline also carries source locations, declared sizes,

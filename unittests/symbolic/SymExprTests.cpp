@@ -341,7 +341,8 @@ TEST(SymExpr, ZeroPrefixedWordsShareTheZeroExtensionForm) {
                 Ctx.mkZExt(Value, Bits + Padding + 5));
       llvm::APInt Inputs[] = {llvm::APInt::getAllOnes(Bits)};
       EXPECT_EQ(Ctx.eval(Expected, Inputs),
-                (Inputs[0] + llvm::APInt(Bits, 3)).zext(Bits + Padding));
+                (Inputs[0] + llvm::APInt(64, 3).zextOrTrunc(Bits))
+                    .zext(Bits + Padding));
     }
 }
 

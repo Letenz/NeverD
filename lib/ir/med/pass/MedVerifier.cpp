@@ -20,6 +20,7 @@
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/ir/med/X86RegistrationCallback.h"
 #include "neverd/ir/med/X86RegistrationFrame.h"
 
 #include "llvm/Support/Debug.h"
@@ -60,6 +61,11 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
         else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
                  Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+          if (isX87ConstantControlIntrinsic(Id) &&
+              !x87ConstantControlShapeIsValid(
+                  Id, x87ConstantControlMedShape(Op, Arch::Unknown)))
+            Err("x87 constant/control intrinsic has an invalid contract",
+                Blk.Id, Op.Addr);
           if (Id == Intrinsic::CetRdSsp &&
               !x86ShadowStackReadShapeIsValid(x86ShadowStackReadMedShape(Op)))
             Err("shadow stack read has an invalid full-GPR contract", Blk.Id,
@@ -154,6 +160,11 @@ bool verifyMedFunc(const MedFunc &Func, const char *PassName) {
                                              RealignedRestoredStackPointer) &&
                  !registrationRootFrameCoordinate(Func, Op))
           Err("registration root has no checked source coordinate", Blk.Id,
+              Op.Addr);
+        else if (Op.RegistrationRoot == MedOp::RegistrationRootKind::
+                                            RestoredCallbackStackPointer &&
+                 !registrationCallbackStackCoordinate(Func, Op))
+          Err("registration root has no suspended callback coordinate", Blk.Id,
               Op.Addr);
       } else if (Op.RegistrationStackOffset != 0)
         Err("restored stack offset has no registration runtime root", Blk.Id,

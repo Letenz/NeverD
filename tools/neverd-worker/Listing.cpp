@@ -5,6 +5,7 @@
 #include "StringReferences.h"
 #include "TextFold.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
@@ -29,6 +30,7 @@ using DisasmExFunction = const char *(*)(neverd_session_t, neverd_va_t, int,
 using CodeRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using ImportSlotsFunction = const char *(*)(neverd_session_t);
 using UnwindFrameFunction = const char *(*)(neverd_session_t, neverd_va_t);
+using FunctionChunksFunction = const char *(*)(neverd_session_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
 using DiscoverFunctionsFunction = int (*)(neverd_session_t);
 using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
@@ -56,8 +58,6 @@ constexpr std::size_t CommentColumn = 40;
 constexpr std::size_t MaxXrefLines = 2;
 /// The strings one neverd_strings_page_json call reads.
 constexpr int StringPageRows = 65536;
-/// The widest access a reference may name: a zmmword.
-constexpr std::uint64_t MaxAccessWidth = 64;
 constexpr std::size_t MaxPageLines = 2000;
 constexpr std::size_t MaxOpcodeBytes = 12;
 constexpr std::size_t MaxDecodeChunk = 2048;
@@ -93,6 +93,8 @@ constexpr char SubroutineRule[] =
 constexpr char AttributesLead[] = "; Attributes: ";
 constexpr char UnwindOpen[] = "; __unwind {";
 constexpr char UnwindClose[] = "; } // starts at ";
+constexpr char ChunkStartLead[] = "; START OF FUNCTION CHUNK FOR ";
+constexpr char ChunkEndLead[] = "; END OF FUNCTION CHUNK FOR ";
 constexpr char SegmentRule[] = "; ============================================="
                                "==============================";
 // A loader segment's remainder outside every section is mapped in pages.
@@ -227,6 +229,9 @@ struct Function {
   bool library = false, exported = false;
   /// An executable veneer forwarding to an import (ELF PLT entry, stub).
   bool thunk = false;
+  /// For a part of a function's code apart from its body, a chunk, the
+  /// entry of the function it belongs to.  A chunk has no name of its own.
+  std::optional<std::uint64_t> chunkOf;
 };
 /// Where an instruction leaves the stack pointer (NEVERD_DISASM_STACK): its
 /// value before the instruction plus delta, or base's value plus delta.
@@ -508,6 +513,7 @@ struct Listing::Impl {
   CodeRefsFunction codeRefs = nullptr;
   ImportSlotsFunction importSlots = nullptr;
   UnwindFrameFunction unwindFrame = nullptr;
+  FunctionChunksFunction functionChunks = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
   DiscoverFunctionsFunction discoverFunctions = nullptr;
   PointerAtFunction pointerAtQuery = nullptr;
@@ -577,14 +583,17 @@ struct Listing::Impl {
   std::map<std::string, std::uint64_t, std::less<>> importTargets;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
+  std::unordered_map<std::uint64_t, std::string> pdbDisplayNames;
+  std::unordered_set<std::uint64_t> pdbFunctionNames;
   Json functionRowsCache;
   std::uint64_t functionRowsGeneration = 0;
   std::vector<std::uint64_t> namedData;
   /// The size each named object's symbol gives, where it gives one.
   std::unordered_map<std::uint64_t, std::uint64_t> dataSizes;
   /// The width of every read and write of each address the code reads or
-  /// writes, by address; 0 where those widths differ.  Built with the index.
-  std::vector<std::pair<std::uint64_t, unsigned>> accessWidths;
+  /// writes, by address; 0 where those widths differ.  Built with the index,
+  /// as the engine builds the widths that name data in the C.
+  DataAccessWidths accessWidths;
   /// The automatic data items by start; none overlaps another item.
   std::map<std::uint64_t, AutoData> autoData;
   /// Where a run of unwritten bytes stops: named data and the automatic
@@ -619,6 +628,8 @@ struct Listing::Impl {
     codeRefs = engineSymbol<CodeRefsFunction>("neverd_code_refs_json");
     importSlots = engineSymbol<ImportSlotsFunction>("neverd_import_slots_json");
     unwindFrame = engineSymbol<UnwindFrameFunction>("neverd_unwind_frame_json");
+    functionChunks =
+        engineSymbol<FunctionChunksFunction>("neverd_function_chunks_json");
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
@@ -710,6 +721,12 @@ struct Listing::Impl {
   /// after their import, the image entry point, and main as passed to the C
   /// runtime's start routine.  Engine, symbol and user names always win.
   void applyDisplayNames() {
+    for (auto &function : functions)
+      if (const auto name = pdbDisplayNames.find(function.entry);
+          name != pdbDisplayNames.end() &&
+          pdbFunctionNames.contains(function.entry) &&
+          parseDummyName(function.name) && !listingNames.contains(name->second))
+        function.name = name->second;
     const auto rename = [&](Function &function, std::string name) {
       if (!parseDummyName(function.name) || listingNames.contains(name))
         return false;
@@ -1039,6 +1056,7 @@ struct Listing::Impl {
                                   return a.entry == b.entry;
                                 }),
                     functions.end());
+    addChunks();
     for (std::size_t i = 0; i < functions.size(); ++i) {
       auto &function = functions[i];
       const int region = regionIndex(function.entry);
@@ -1059,6 +1077,72 @@ struct Listing::Impl {
         if (auto *function =
                 functionAtEntry(jsonAddress(match.value("addr", Json()))))
           function->library = true;
+    // A chunk is code of the kind its function is.
+    for (auto &function : functions)
+      if (function.chunkOf)
+        if (const auto *owner = functionAtEntry(*function.chunkOf)) {
+          function.library = owner->library;
+          function.thunk = owner->thunk;
+        }
+  }
+
+  /// List the parts of functions that lie apart from their bodies, as the
+  /// engine reports them, among the functions.  A part that overlaps a
+  /// function, or whose function is not listed, stays out.
+  void addChunks() {
+    if (!functionChunks)
+      return;
+    const auto rows = takeJson(functionChunks(session));
+    if (!rows.is_array())
+      return;
+    std::vector<Function> chunks;
+    for (const auto &row : rows) {
+      Function chunk;
+      chunk.entry = jsonAddress(row.value("begin", Json()));
+      const auto end = jsonAddress(row.value("end", Json()));
+      const auto owner = jsonAddress(row.value("function", Json()));
+      if (end <= chunk.entry || !functionAtEntry(owner))
+        continue;
+      // The first function at or after the chunk's start must begin past
+      // it, and the one before it must end before it.
+      auto next =
+          std::lower_bound(functions.begin(), functions.end(), chunk.entry,
+                           [](const Function &f, std::uint64_t value) {
+                             return f.entry < value;
+                           });
+      if (next != functions.end() && next->entry < end)
+        continue;
+      if (next != functions.begin()) {
+        const auto &previous = *std::prev(next);
+        if (previous.size && previous.entry + previous.size > chunk.entry)
+          continue;
+      }
+      chunk.size = end - chunk.entry;
+      chunk.chunkOf = owner;
+      chunks.push_back(std::move(chunk));
+    }
+    if (chunks.empty())
+      return;
+    functions.insert(functions.end(), std::make_move_iterator(chunks.begin()),
+                     std::make_move_iterator(chunks.end()));
+    std::stable_sort(
+        functions.begin(), functions.end(),
+        [](const Function &a, const Function &b) { return a.entry < b.entry; });
+  }
+
+  /// The function \p f is, or the one a chunk belongs to.
+  const Function &ownerOf(int f) const {
+    const Function &function = functions[f];
+    if (function.chunkOf) {
+      const auto it = std::lower_bound(
+          functions.begin(), functions.end(), *function.chunkOf,
+          [](const Function &f, std::uint64_t value) {
+            return f.entry < value;
+          });
+      if (it != functions.end() && it->entry == *function.chunkOf)
+        return *it;
+    }
+    return function;
   }
 
   void buildNames(bool Rescan) {
@@ -1082,8 +1166,15 @@ struct Listing::Impl {
         // The largest symbol at an address sizes its object.
         if (const auto size = jsonCount(row.value("size", Json())))
           dataSizes[address] = std::max(dataSizes[address], size);
-        dataNames.emplace(address, std::move(name));
+        // A name that spells a string literal (MSVC's `??_C@`) gives way
+        // to the string's own, as IDA names it.
+        if (!row.value("literal", false))
+          dataNames.emplace(address, std::move(name));
       }
+    for (const auto &[address, name] : pdbDisplayNames)
+      if (!pdbFunctionNames.contains(address) && !functionAtEntry(address) &&
+          regionIndex(address) >= 0 && !dataNames.contains(address))
+        dataNames.emplace(address, name);
     if (Rescan) {
       importRows = takeJson(neverd_imports_json(session));
       importSlotRows = importSlots ? takeJson(importSlots(session)) : Json();
@@ -1228,29 +1319,15 @@ struct Listing::Impl {
   /// The widths of the code's reads and writes, from the index.
   void noteAccessWidths() {
     accessWidths.clear();
-    for (const auto &reference : references) {
-      if ((reference.kind != RefKind::Read &&
-           reference.kind != RefKind::Write) ||
-          !reference.width)
-        continue;
-      if (accessWidths.empty() || accessWidths.back().first != reference.to)
-        accessWidths.emplace_back(reference.to, reference.width);
-      else if (accessWidths.back().second != reference.width)
-        accessWidths.back().second = 0;
-    }
+    for (const auto &reference : references)
+      if (reference.kind == RefKind::Read || reference.kind == RefKind::Write)
+        accessWidths.add(reference.to, reference.width);
   }
 
   /// The width of every access to \p address, 0 where they differ, or none
   /// when the code reads and writes no data there.
   std::optional<unsigned> accessWidthAt(std::uint64_t address) const {
-    const auto it =
-        std::lower_bound(accessWidths.begin(), accessWidths.end(), address,
-                         [](const auto &entry, std::uint64_t value) {
-                           return entry.first < value;
-                         });
-    if (it == accessWidths.end() || it->first != address)
-      return std::nullopt;
-    return it->second;
+    return accessWidths.at(address);
   }
 
   /// Lays out the automatic data items. A named object is as large as its
@@ -1487,11 +1564,14 @@ struct Listing::Impl {
     --it;
     return address < it->end ? static_cast<int>(it - regions.begin()) : -1;
   }
+  /// The function that begins at \p address; a chunk begins none.
   Function *functionAtEntry(std::uint64_t address) {
     auto it = std::lower_bound(
         functions.begin(), functions.end(), address,
         [](const Function &f, std::uint64_t value) { return f.entry < value; });
-    return it != functions.end() && it->entry == address ? &*it : nullptr;
+    return it != functions.end() && it->entry == address && !it->chunkOf
+               ? &*it
+               : nullptr;
   }
   /// Index of the function whose decoded extent contains \p address.
   int functionIndex(std::uint64_t address) {
@@ -1504,7 +1584,13 @@ struct Listing::Impl {
     const int index = static_cast<int>(it - functions.begin());
     if (address >= it->end)
       return -1;
-    if (!it->size && address != it->entry && address >= decode(index).end)
+    // Decoding sets where an unsized body ends, and moves a sized one's end
+    // before its padding.
+    if (it->size) {
+      decode(index);
+      return address < it->end ? index : -1;
+    }
+    if (address != it->entry && address >= decode(index).end)
       return -1;
     return index;
   }
@@ -1816,6 +1902,8 @@ struct Listing::Impl {
     if (!function.size)
       function.end =
           std::max(function.entry + 1, std::min(function.end, body.end));
+    else if (trimPadding(body))
+      function.end = body.end;
     for (const auto &instruction : body.instructions)
       if (instruction.target && isBranch(instruction.flow) &&
           *instruction.target > function.entry &&
@@ -1831,7 +1919,9 @@ struct Listing::Impl {
             it->kind == RefKind::IndirectJump)
           body.labels.insert(it->to);
     }
-    if (dialect == OperandDialect::X86)
+    // A chunk runs in its function's frame, which its own code does not
+    // set up: its stack operands stay as they are.
+    if (dialect == OperandDialect::X86 && !function.chunkOf)
       buildFrame(body);
     body.unwind = unwindAt(function.entry);
     // Only real instruction boundaries can carry labels.
@@ -1851,6 +1941,28 @@ struct Listing::Impl {
       decodedOrder.pop_back();
     }
     return decoded.emplace(function.entry, std::move(body)).first->second;
+  }
+
+  /// End a sized body after its last instruction that a return or a jump
+  /// leaves: the int3 traps and no-ops a compiler pads it with, which pdata
+  /// ranges cover, read as padding outside the function, as in IDA.  Padding
+  /// a branch of the body reaches stays in it.  Returns whether it trimmed.
+  bool trimPadding(DecodedFunction &body) const {
+    auto &instructions = body.instructions;
+    auto padding = instructions.end();
+    while (padding != instructions.begin() &&
+           isPaddingMnemonic(std::prev(padding)->mnemonic))
+      --padding;
+    if (padding == instructions.begin() || padding == instructions.end() ||
+        fallsThrough(std::prev(padding)->flow))
+      return false;
+    const std::uint64_t end = padding->address;
+    for (auto it = instructions.begin(); it != padding; ++it)
+      if (it->target && *it->target >= end && *it->target < body.end)
+        return false;
+    instructions.erase(padding, instructions.end());
+    body.end = end;
+    return true;
   }
 
   /// End of the function preceding \p address, or the region start.
@@ -2050,9 +2162,33 @@ struct Listing::Impl {
       // A table between functions, as MSVC places one after its function.
       if (asSwitchEntry(item, region, address))
         return item;
-      const std::uint64_t gapStart = previousCodeEnd(address, region);
-      const std::uint64_t gapEnd =
+      std::uint64_t gapStart = previousCodeEnd(address, region);
+      std::uint64_t gapEnd =
           std::min(nextFunctionStart(address, region), region.initializedEnd);
+      // A string between functions, as MSVC's literals sit among the code
+      // of a kernel's sections; the padding around it aligns it.
+      if (gapStart <= address && address < gapEnd) {
+        if (const auto *string = stringAt(address);
+            string && string->address >= gapStart &&
+            string->address + string->length + string->unit <= gapEnd) {
+          item.kind = ItemKind::String;
+          item.start = string->address;
+          item.size = string->length + string->unit;
+          item.index = static_cast<std::size_t>(string - strings.data());
+          return item;
+        }
+        const auto next =
+            std::upper_bound(strings.begin(), strings.end(), address,
+                             [](std::uint64_t value, const StringItem &s) {
+                               return value < s.address;
+                             });
+        if (next != strings.end() && next->address < gapEnd)
+          gapEnd = next->address;
+        if (next != strings.begin())
+          if (const auto &before = *std::prev(next);
+              before.address + before.length + before.unit > gapStart)
+            gapStart = before.address + before.length + before.unit;
+      }
       if (gapStart <= address && address < gapEnd)
         if (const auto alignment = paddingAlignment(gapStart, gapEnd)) {
           item.kind = ItemKind::Align;
@@ -2233,10 +2369,13 @@ struct Listing::Impl {
 
   std::string locationText(std::uint64_t address) {
     if (const int f = functionIndexCoarse(address); f >= 0) {
-      const auto &function = functions[f];
+      // A chunk's code reads as its function's, before or after the entry.
+      const auto &function = ownerOf(f);
       if (address == function.entry)
         return function.name;
-      return function.name + "+" + upperHex(address - function.entry);
+      return address > function.entry
+                 ? function.name + "+" + upperHex(address - function.entry)
+                 : function.name + "-" + upperHex(function.entry - address);
     }
     const int region = regionIndex(address);
     if (region < 0)
@@ -2574,7 +2713,22 @@ struct Listing::Impl {
     const DecodedFunction &body =
         item.function >= 0 ? decode(item.function) : standaloneBody;
     const Instruction &instruction = instructionOf(item);
-    if (item.function >= 0 && item.start == function.entry) {
+    if (function.chunkOf && item.start == function.entry) {
+      // A chunk opens with its function's name, then its label; the code
+      // before it brings the rule a jump or return ends with.
+      const auto &owner = ownerOf(item.function);
+      StyledText open = lead(base - NameColumnWidth);
+      open.append(ChunkStartLead, ListingRole::AutoComment);
+      open.append(owner.name, ListingRole::CodeName, owner.entry);
+      addLine(out, item, item.start, "comment", std::move(open));
+      addLine(out, item, item.start, "blank", {});
+      StyledText label = lead(base - NameColumnWidth);
+      label.append(nameOf(item.start, NameUse::Transfer, {}).text,
+                   ListingRole::Label, item.start);
+      label.append(":", ListingRole::Punctuation);
+      addNamedLine(out, item, base - NameColumnWidth, std::move(label),
+                   item.start, "label");
+    } else if (item.function >= 0 && item.start == function.entry) {
       // Function header: a rule, the attribute block (each ends with a blank
       // line), exports and the proc line with references.
       addLine(out, item, item.start, "blank", {});
@@ -2725,11 +2879,18 @@ struct Listing::Impl {
       // The footer belongs to the last instruction.  Code that no function
       // owns, padding or data follows a rule; a function brings its own.
       StyledText end = lead(base - NameColumnWidth);
-      end.append(function.name, ListingRole::CodeName, function.entry);
-      end.padTo(base);
-      end.append("endp", ListingRole::Directive);
-      addLine(out, item, item.start, "footer", std::move(end));
-      addLine(out, item, item.start, "blank", {});
+      if (function.chunkOf) {
+        const auto &owner = ownerOf(item.function);
+        end.append(ChunkEndLead, ListingRole::AutoComment);
+        end.append(owner.name, ListingRole::CodeName, owner.entry);
+        addLine(out, item, item.start, "footer", std::move(end));
+      } else {
+        end.append(function.name, ListingRole::CodeName, function.entry);
+        end.padTo(base);
+        end.append("endp", ListingRole::Directive);
+        addLine(out, item, item.start, "footer", std::move(end));
+        addLine(out, item, item.start, "blank", {});
+      }
       if (next < regions[item.region].end && !functionAtEntry(next)) {
         StyledText rule = lead(base - NameColumnWidth);
         rule.append(SeparatorRule, ListingRole::Separator);
@@ -3003,8 +3164,9 @@ struct Listing::Impl {
       json["flow"] = line.flow;
     if (line.function >= 0 &&
         static_cast<std::size_t>(line.function) < functions.size()) {
-      json["function"] = functions[line.function].name;
-      json["function_address"] = hexAddress(functions[line.function].entry);
+      const auto &function = ownerOf(line.function);
+      json["function"] = function.name;
+      json["function_address"] = hexAddress(function.entry);
     }
     return json;
   }
@@ -3047,9 +3209,9 @@ struct Listing::Impl {
         if (!kind)
           continue;
         const auto width = row.size() == 4 ? jsonCount(row[3]) : 0;
-        references.push_back(
-            {jsonAddress(row[1]), jsonAddress(row[0]), *kind,
-             static_cast<std::uint8_t>(width <= MaxAccessWidth ? width : 0)});
+        references.push_back({jsonAddress(row[1]), jsonAddress(row[0]), *kind,
+                              static_cast<std::uint8_t>(
+                                  width <= MaxDataAccessWidth ? width : 0)});
       }
     const auto next = page.value("next_entry", Json());
     const auto previous = *indexCursor;
@@ -3411,7 +3573,40 @@ void Listing::setStringOptions(std::string options) {
   invalidate();
 }
 
+void Listing::setPdbDisplayNames(const Json &names) {
+  std::unordered_map<std::uint64_t, std::string> selected;
+  std::unordered_set<std::uint64_t> functions;
+  for (const auto &row : names) {
+    const auto name = row.value("name", std::string());
+    if (name.empty() || name.size() > 4096 ||
+        std::any_of(name.begin(), name.end(),
+                    [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
+      continue;
+    const auto address = jsonAddress(row.at("address"));
+    selected.emplace(address, name);
+    if (row.value("function", false))
+      functions.insert(address);
+  }
+  if (impl_->pdbDisplayNames == selected &&
+      impl_->pdbFunctionNames == functions)
+    return;
+  impl_->pdbDisplayNames = std::move(selected);
+  impl_->pdbFunctionNames = std::move(functions);
+  namesChanged();
+}
+
 std::uint64_t Listing::generation() const { return impl_->generation; }
+
+std::optional<std::string> Listing::pdbDataName(std::uint64_t address) {
+  impl_->build();
+  const auto imported = impl_->pdbDisplayNames.find(address);
+  const auto shown = impl_->dataNames.find(address);
+  if (imported != impl_->pdbDisplayNames.end() &&
+      !impl_->pdbFunctionNames.contains(address) &&
+      shown != impl_->dataNames.end() && shown->second == imported->second)
+    return imported->second;
+  return std::nullopt;
+}
 
 bool Listing::hasIdleWork() const {
   return (impl_->discoverFunctions && !impl_->discovered) ||
@@ -3432,14 +3627,17 @@ void Listing::idleStep() {
 }
 
 Json Listing::indexState() const {
-  return {{"state", impl_->indexStateName()},
-          {"done", impl_->indexDone},
-          {"total", impl_->indexTotal},
-          {"references", impl_->indexState == Impl::IndexState::Ready
-                             ? impl_->references.size()
-                             : 0},
-          {"generation", std::to_string(impl_->generation)},
-          {"functions", impl_->functions.size()}};
+  return {
+      {"state", impl_->indexStateName()},
+      {"done", impl_->indexDone},
+      {"total", impl_->indexTotal},
+      {"references", impl_->indexState == Impl::IndexState::Ready
+                         ? impl_->references.size()
+                         : 0},
+      {"generation", std::to_string(impl_->generation)},
+      {"functions",
+       std::count_if(impl_->functions.begin(), impl_->functions.end(),
+                     [](const auto &function) { return !function.chunkOf; })}};
 }
 
 Json Listing::page(const Json &payload) {
@@ -3641,9 +3839,9 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
                  {"kind", refKindName(kind)},
                  {"type", std::string(1, refKindLetter(kind))},
                  {"text", d.locationText(direction == "to" ? from : to)},
-                 {"function", f >= 0 ? d.functions[f].name : std::string()}};
+                 {"function", f >= 0 ? d.ownerOf(f).name : std::string()}};
     if (f >= 0)
-      item["function_address"] = hexAddress(d.functions[f].entry);
+      item["function_address"] = hexAddress(d.ownerOf(f).entry);
     return item;
   };
   if (direction == "to") {
@@ -3759,12 +3957,11 @@ Json Listing::stringReferences(const Json &payload) {
     std::optional<std::uint64_t>
     functionEntry(const StringReference &ref) const override {
       const int f = d.functionIndexCoarse(ref.from);
-      return f >= 0 ? std::optional(d.functions[f].entry) : std::nullopt;
+      return f >= 0 ? std::optional(d.ownerOf(f).entry) : std::nullopt;
     }
     std::string_view functionName(const StringReference &ref) const override {
       const int f = d.functionIndexCoarse(ref.from);
-      return f >= 0 ? std::string_view(d.functions[f].name)
-                    : std::string_view();
+      return f >= 0 ? std::string_view(d.ownerOf(f).name) : std::string_view();
     }
     std::string disassembly(std::uint64_t address) override {
       return d.instructionTextAt(address);
@@ -3786,6 +3983,15 @@ std::string Listing::nameAt(std::uint64_t address) {
                                                     : NameUse::Data,
               {})
       .text;
+}
+
+std::optional<std::uint64_t> Listing::chunkOwner(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const int f = d.functionIndexCoarse(address);
+  if (f < 0 || !d.functions[f].chunkOf)
+    return std::nullopt;
+  return d.ownerOf(f).entry;
 }
 
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
@@ -3882,7 +4088,7 @@ Json Listing::blockLines(std::uint64_t start, std::uint64_t end) {
                      {"spans", spansJson(text)}});
   };
   const auto &function = d.functions[f];
-  if (start == function.entry) {
+  if (start == function.entry && !function.chunkOf) {
     StyledText head;
     head.append(function.name,
                 function.library ? ListingRole::LibraryName
@@ -3890,7 +4096,7 @@ Json Listing::blockLines(std::uint64_t start, std::uint64_t end) {
                 function.entry);
     head.append(" proc near", ListingRole::Directive);
     emit(start, head, "header");
-  } else if (body.labels.contains(start)) {
+  } else if (body.labels.contains(start) || start == function.entry) {
     StyledText label;
     label.append(d.nameOf(start, NameUse::Transfer, {}).text,
                  ListingRole::Label, start);
@@ -3915,6 +4121,8 @@ const Json &Listing::functionRows() {
       d.functionRowsCache.is_null()) {
     Json rows = Json::array();
     for (const auto &function : d.functions) {
+      if (function.chunkOf)
+        continue;
       Json row = {{"name", function.name},
                   {"address", hexAddress(function.entry)},
                   {"size", function.end - function.entry},
@@ -3944,11 +4152,12 @@ Json Listing::names() {
   d.build();
   Json items = Json::array();
   for (const auto &function : d.functions)
-    items.push_back({{"name", function.name},
-                     {"address", hexAddress(function.entry)},
-                     {"kind", function.thunk     ? "thunk"
-                              : function.library ? "library"
-                                                 : "function"}});
+    if (!function.chunkOf)
+      items.push_back({{"name", function.name},
+                       {"address", hexAddress(function.entry)},
+                       {"kind", function.thunk     ? "thunk"
+                                : function.library ? "library"
+                                                   : "function"}});
   for (const auto &[address, name] : d.dataNames)
     items.push_back(
         {{"name", name}, {"address", hexAddress(address)}, {"kind", "data"}});
@@ -3988,7 +4197,7 @@ Json Listing::regions() {
                      {"alignment", region.alignment},
                      {"class", region.exec                             ? "CODE"
                                : region.initializedEnd == region.start ? "BSS"
-                               : region.write ? "DATA"
+                               : region.write                          ? "DATA"
                                               : "CONST"}});
   }
   return items;

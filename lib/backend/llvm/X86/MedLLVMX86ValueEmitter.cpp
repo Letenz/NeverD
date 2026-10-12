@@ -19,6 +19,7 @@
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/LLVMX86StackEffects.h"
+#include "neverd/backend/llvm/LLVMX87ConstantAsm.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
@@ -557,6 +558,40 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     return Result;
   }
 
+  if (isX87ConstantControlIntrinsic(IC)) {
+    if (!x87ConstantControlShapeIsValid(
+            IC, x87ConstantControlMedShape(Op, TargetArch)))
+      llvm::report_fatal_error("invalid x87 constant/control contract");
+    llvm::IRBuilder<> EntryBuilder(&CurFunc->getEntryBlock(),
+                                   CurFunc->getEntryBlock().begin());
+    auto *Word =
+        EntryBuilder.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_control");
+    auto *Ptr = llvm::PointerType::get(*Ctx, 0);
+    llvm::SmallVector<llvm::Type *, 2> Types{Ptr};
+    llvm::SmallVector<llvm::Value *, 2> Args{Word};
+    std::string Text = IC == I::X87ReadControl ? "fnstcw ($0)" : "fldcw ($0)";
+    const char *Constraints = X87ControlConstraints;
+    llvm::AllocaInst *Value = nullptr;
+    if (IC != I::X87ReadControl)
+      Builder.CreateStore(
+          getVar(Op.Inputs[IC == I::X87LoadConstant ? 2 : 1], Builder), Word);
+    if (IC == I::X87LoadConstant) {
+      Value = EntryBuilder.CreateAlloca(Builder.getIntNTy(80), nullptr,
+                                        "x87_constant");
+      Text = x87ConstantAsm(Op.Inputs[1].ConstVal);
+      Constraints = X87ConstantConstraints;
+      Types.push_back(Ptr);
+      Args = {Value, Word};
+    }
+    auto *Type = llvm::FunctionType::get(Builder.getVoidTy(), Types, false);
+    auto *Asm = llvm::InlineAsm::get(Type, Text, Constraints, true);
+    auto *Call = Builder.CreateCall(Asm, Args);
+    Call->setMetadata(X87ConstantAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+    return Value ? Builder.CreateLoad(Builder.getIntNTy(80), Value)
+           : IC == I::X87ReadControl
+               ? Builder.CreateLoad(Builder.getInt16Ty(), Word)
+               : nullptr;
+  }
   if (isX86FPStateIntrinsic(IC)) {
     const auto Shape = x86FPStateMedShape(Op, TargetArch);
     if (!x86FPStateShapeIsValid(IC, Shape))
@@ -613,6 +648,207 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
           X86FPStateTransferConstraints, true);
       Mark(Builder.CreateCall(Asm, {State}));
       return IC == I::X86ReadMXCSR ? Builder.CreateLoad(I32, State) : nullptr;
+    }
+    if (isX86FPMaskCompareStateIntrinsic(IC)) {
+      const bool Memory = IC == I::X86FPMaskCompareMemoryState;
+      const unsigned Bytes = Op.Output.Size - 4;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPMaskCompareLLVMType(*Ctx, Layout);
+      auto *Left = Builder.CreateBitCast(Raw(Memory ? 4 : 3, Bytes), Type);
+      llvm::Value *Right;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Right = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else
+        Right = Builder.CreateBitCast(Raw(4, Bytes), Type);
+      Builder.CreateStore(Raw(5, 4), State);
+      auto *Fn =
+          llvm::FunctionType::get(Type, {Type, Right->getType(), Ptr}, false);
+      auto *Asm =
+          llvm::InlineAsm::get(Fn, x86FPMaskCompareAsm(Layout, Memory),
+                               x86FPMaskCompareConstraints(Memory), true);
+      auto *Result = Builder.CreateCall(Asm, {Left, Right, State}, "cmp_mask");
+      Mark(Result);
+      Result->setMetadata(
+          X86FPMaskCompareAsmMetadata,
+          llvm::MDNode::get(
+              *Ctx, llvm::ConstantAsMetadata::get(Builder.getInt32(Layout))));
+      auto *Bits =
+          Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "cmp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+    }
+    if (isX86FPComiStateIntrinsic(IC)) {
+      const bool Memory = IC == I::X86FPComiMemoryState;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      const unsigned Bytes = x86FPComiElementBytes(Shape.Control);
+      auto *Type = Bytes == 4 ? Builder.getFloatTy() : Builder.getDoubleTy();
+      auto *Left = Builder.CreateBitCast(Raw(Memory ? 3 : 2, Bytes), Type);
+      llvm::Value *Right;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Right = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else
+        Right = Builder.CreateBitCast(Raw(3, Bytes), Type);
+      Builder.CreateStore(Raw(4, 4), State);
+      auto *Fn =
+          llvm::FunctionType::get(I32, {Type, Right->getType(), Ptr}, false);
+      auto *Asm = llvm::InlineAsm::get(Fn, x86FPComiAsm(Layout, Memory),
+                                       x86FPComiConstraints(Memory), true);
+      auto *Flags = Builder.CreateCall(Asm, {Left, Right, State}, "comi_flags");
+      Mark(Flags);
+      auto *OutTy = Builder.getInt64Ty();
+      auto *Status = Builder.CreateLoad(I32, State, "comi_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Flags, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), 32));
+    }
+    if (isX86F16CStateIntrinsic(IC)) {
+      const bool Store = IC == I::X86F16CStoreState,
+                 Read = IC == I::X86F16CReadState;
+      const unsigned Control = Shape.Control,
+                     Bytes = x86F16CDestinationBytes(Control);
+      llvm::Value *Source = nullptr, *Address = nullptr;
+      if (Read || Store) {
+        Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Address = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      }
+      if (!Read) {
+        auto *Carrier = Builder.CreateZExtOrTrunc(
+            Raw(Store ? 2 : 1, x86F16CSourceBytes(Control)),
+            llvm::Type::getIntNTy(
+                *Ctx, std::max(16u, x86F16CSourceBytes(Control)) * 8));
+        Source =
+            Builder.CreateBitCast(Carrier, x86F16CSourceType(*Ctx, Control));
+      }
+      Builder.CreateStore(Raw(Store ? 5 : 4, 4), State);
+      std::vector<llvm::Value *> Args;
+      if (Store || Read)
+        Args.push_back(Address);
+      if (!Read)
+        Args.push_back(Source);
+      Args.push_back(State);
+      std::vector<llvm::Type *> Types;
+      for (auto *Arg : Args)
+        Types.push_back(Arg->getType());
+      auto *Type = Store ? llvm::Type::getVoidTy(*Ctx)
+                         : x86F16CResultType(*Ctx, Control);
+      auto *Fn = llvm::FunctionType::get(Type, Types, false);
+      auto *Asm = llvm::InlineAsm::get(
+          Fn, x86F16CAsm(IC, x86FPStateHelperLayout(IC, Shape)),
+          x86F16CConstraints(IC), true);
+      auto *Result = Builder.CreateCall(Asm, Args);
+      Mark(Result);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      if (Store)
+        return Status;
+      auto *Bits =
+          Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+    }
+    if (isX86FPPackedConvertStateIntrinsic(IC)) {
+      const unsigned Control = Shape.Control;
+      const unsigned SourceBytes = x86FPPackedConvertSourceBytes(Control);
+      const unsigned Bytes = x86FPPackedConvertDestinationBytes(Control);
+      const bool Memory = IC == I::X86FPPackedConvertMemoryState;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPPackedConvertResultType(*Ctx, Control);
+      llvm::Value *Source;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Source = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else {
+        // The logical m64/low64 source still occupies one physical XMM carrier.
+        // Sub-XMM vectors can legalize into separate scalar asm operands.
+        auto *Carrier = Builder.CreateZExtOrTrunc(
+            Raw(1, SourceBytes),
+            llvm::Type::getIntNTy(*Ctx, std::max(16u, SourceBytes) * 8));
+        Source = Builder.CreateBitCast(
+            Carrier, x86FPPackedConvertSourceType(*Ctx, Control));
+      }
+      Builder.CreateStore(Raw(3, 4), State);
+      auto *Fn = llvm::FunctionType::get(Type, {Source->getType(), Ptr}, false);
+      auto *Asm =
+          llvm::InlineAsm::get(Fn, x86FPPackedConvertAsm(Layout, Memory),
+                               x86FPPackedConvertConstraints(Memory), true);
+      auto *Result = Builder.CreateCall(Asm, {Source, State}, "packed_convert");
+      Mark(Result);
+      auto *Bits =
+          Builder.CreateBitCast(Result, llvm::Type::getIntNTy(*Ctx, Bytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy), Bytes * 8));
+    }
+    if (isX86FPScalarConvertStateIntrinsic(IC)) {
+      const unsigned Control = Shape.Control;
+      const unsigned SourceBytes = x86FPScalarConvertSourceBytes(Control);
+      const unsigned DestinationBytes =
+          x86FPScalarConvertDestinationBytes(Control);
+      const bool Memory = IC == I::X86FPScalarConvertMemoryState;
+      const unsigned Layout = x86FPStateHelperLayout(IC, Shape);
+      auto *Type = x86FPScalarConvertResultType(*Ctx, Control);
+      llvm::Value *Source;
+      if (Memory) {
+        auto *Address = getVar(Op.Inputs[1], Builder);
+        auto *I64 = Builder.getInt64Ty();
+        Address = Address->getType()->isPointerTy()
+                      ? Builder.CreatePtrToInt(Address, I64)
+                      : Builder.CreateZExtOrTrunc(Address, I64);
+        Source = Builder.CreateIntToPtr(
+            Address, llvm::PointerType::get(*Ctx, llvmX86MemoryAddressSpace(
+                                                      Op.MemoryAddressSpace)));
+      } else
+        Source = Builder.CreateBitCast(
+            Raw(1, SourceBytes), x86FPScalarConvertSourceType(*Ctx, Control));
+      Builder.CreateStore(Raw(3, 4), State);
+      auto *Fn =
+          llvm::FunctionType::get(Type, {Type, Source->getType(), Ptr}, false);
+      auto *Asm = llvm::InlineAsm::get(
+          Fn, x86FPScalarConvertAsm(Layout, Memory),
+          x86FPScalarConvertConstraints(Control, Memory), true);
+      auto *Result = Builder.CreateCall(
+          Asm, {llvm::ConstantFP::get(Type, 0.0), Source, State}, "fp_convert");
+      Mark(Result);
+      auto *Bits = Builder.CreateBitCast(
+          Result, llvm::Type::getIntNTy(*Ctx, DestinationBytes * 8));
+      auto *OutTy = sizeToType(Op.Output.Size);
+      auto *Status = Builder.CreateLoad(I32, State, "fp_state");
+      return Builder.CreateOr(
+          Builder.CreateZExt(Bits, OutTy),
+          Builder.CreateShl(Builder.CreateZExt(Status, OutTy),
+                            DestinationBytes * 8));
     }
     if (isX86FPConversionStateIntrinsic(IC)) {
       const unsigned SourceBytes = Op.Inputs[1].Size;

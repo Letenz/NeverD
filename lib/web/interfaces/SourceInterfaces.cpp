@@ -28,9 +28,11 @@ SourceInterfaces analyzeSourceInterfaces(const SourceAnalysis &Source,
   try {
     C.prepare();
     const auto Constructors = interfaces::xhrConstructors(C);
+    const auto Wrappers = interfaces::requestWrappers(C);
     for (uint32_t I = 0; I < Source.Nodes.size(); ++I) {
       C.step();
-      interfaces::inspectDirectRequest(C, I);
+      interfaces::inspectRequestSyntax(C, I);
+      interfaces::inspectRequestWrapper(C, Wrappers, I);
       interfaces::inspectXHR(C, Constructors, I);
     }
     C.A.Status = "partial";
@@ -38,6 +40,7 @@ SourceInterfaces analyzeSourceInterfaces(const SourceAnalysis &Source,
   } catch (const Error &E) {
     C.A.Records.clear();
     C.A.PrivateBytes = 0;
+    C.A.WrapperDefinitions = 0;
     C.A.Reason = E.what();
     C.A.Status = C.A.Reason.find("budget_exceeded") != std::string::npos
                      ? "budget_exceeded"

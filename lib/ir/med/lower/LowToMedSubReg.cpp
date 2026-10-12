@@ -370,10 +370,9 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
 
         // A register the callee's summary shows it never writes keeps the
         // caller's value across the call as a callee-saved one does.
-        auto SummaryPreserved = [&](uint64_t RegOff) {
-          const std::optional<unsigned> Family =
-              gprFamilyOf(TargetArch, RegOff);
-          return Family && ((MOp.CallPreservedGPRs >> *Family) & 1) != 0;
+        auto SummaryPreserved = [&](uint64_t RegOff, uint16_t Size) {
+          return callPreservesRegisterBytes(TargetArch, MOp.CallPreservedGPRs,
+                                            RegOff, Size);
         };
         auto DiscardClobbered = [&](RegWriteMap &Writes) {
           for (auto It = Writes.begin(); It != Writes.end();) {
@@ -381,7 +380,7 @@ void LowToMedConverter::fixupSubRegisters(MedFunc &Func) {
             uint16_t Size = It->first.second;
             if (!TRI.isFrameOrLinkReg(RegOff) &&
                 !TRI.isCallPreserved(RegOff, Size, TargetFormat) &&
-                !SummaryPreserved(RegOff))
+                !SummaryPreserved(RegOff, Size))
               It = Writes.erase(It);
             else
               ++It;
