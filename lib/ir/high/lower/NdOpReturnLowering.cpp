@@ -241,10 +241,62 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         return medvarToExpr(Entry);
       return nullptr;
     };
+    // A field narrower than its register (a float in an SSE eightbyte) is
+    // merged into what the register held on entry.  Where no parameter
+    // arrives there, those bytes hold nothing a caller passed: they are the
+    // record's padding, and the field returns them as zero.
+    auto OverEntryPadding = [&](const MedReturnReg &Field) -> ExprPtr {
+      if (!Field.IsFP || std::any_of(Med.Params.begin(), Med.Params.end(),
+                                     [&](const MedVar &P) {
+                                       return P.RegOff == Field.RegOff;
+                                     }))
+        return nullptr;
+      const MedOp *Merge = nullptr;
+      std::set<const MedBlock *> Seen;
+      for (const MedBlock *Block = &CurBlock;
+           Block && !Merge && Seen.insert(Block).second;
+           Block = onlyPredecessor(Med, *Block)) {
+        for (auto RIt = Block->Ops.rbegin(); RIt != Block->Ops.rend(); ++RIt)
+          if (RIt->Opcode != NdOp::RETURN && RIt->Output.Kind == MedVar::Reg &&
+              RIt->Output.Size > 0 && RIt->Output.RegOff == Field.RegOff &&
+              !isRegisterLowView(*RIt)) {
+            Merge = &*RIt;
+            break;
+          }
+        if (!Merge && std::any_of(Block->Phis.begin(), Block->Phis.end(),
+                                  [&](const PhiNode &Phi) {
+                                    return Phi.Output.Kind == MedVar::Reg &&
+                                           Phi.Output.RegOff == Field.RegOff;
+                                  }))
+          return nullptr;
+      }
+      if (!Merge || Merge->Opcode != NdOp::CONCAT || Merge->NumInputs != 2)
+        return nullptr;
+      const MedVar &High = Merge->Inputs[0], &Low = Merge->Inputs[1];
+      if (!Low.Size || Low.Size >= Field.Size || High.isConst())
+        return nullptr;
+      const MedOp *Slice = uniqueMedDefinition(High);
+      if (!Slice || Slice->Opcode != NdOp::SUBBYTES || Slice->NumInputs != 2 ||
+          !Slice->Inputs[1].isConst() ||
+          Slice->Inputs[1].ConstVal != Low.Size ||
+          Slice->Inputs[0].Kind != MedVar::Reg ||
+          Slice->Inputs[0].RegOff != Field.RegOff ||
+          !isEntryIdentity(Med, Slice->Inputs[0]))
+        return nullptr;
+      ExprPtr Bits = sourceBitSlice(medvarToExpr(Low), 0, Low.Size);
+      if (!Bits->Type || Bits->Type->Kind != NdTypeKind::Int)
+        Bits = HighExpr::makeBitCast(std::move(Bits),
+                                     NdType::makeInt(Low.Size, false));
+      ExprPtr Padded = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Bits));
+      Padded->Type = NdType::makeInt(Field.Size, false);
+      return Padded;
+    };
     std::vector<ExprPtr> Leaves;
     for (size_t I = 0; I < Med.MultiReturn.size(); ++I) {
       const MedReturnReg &Field = Med.MultiReturn[I];
-      ExprPtr Value = Reaching(Field.RegOff);
+      ExprPtr Value = OverEntryPadding(Field);
+      if (!Value)
+        Value = Reaching(Field.RegOff);
       // A field the function never writes returns the argument its caller
       // passed in the register, which recoverCallAbi made a parameter.
       if (!Value &&
