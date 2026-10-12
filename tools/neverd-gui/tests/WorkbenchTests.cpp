@@ -50,6 +50,7 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QSizeGrip>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -425,9 +426,11 @@ private slots:
       QCOMPARE(code->function(),
                std::optional<Address>(change == "function" ? Base + 0x180
                                                            : Base + 0x140));
-      QCOMPARE(assembly->currentFunction(),
-               std::optional<Address>(change == "navigation" ? Base + 0x180
-                                                             : Base + 0x140));
+      // Navigation reads its page from the worker; a slow runner may still
+      // be on the way there.
+      QTRY_COMPARE(assembly->currentFunction(),
+                   std::optional<Address>(
+                       change == "navigation" ? Base + 0x180 : Base + 0x140));
     }
   }
 
@@ -2626,7 +2629,12 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QCOMPARE(bench.session.projectPath(), path);
     const QString copy = bench.session.filePath();
-    QVERIFY2(copy.startsWith(data.path()), qPrintable(copy));
+    // XDG_DATA_HOME moves the data directory on Linux; macOS and Windows
+    // keep their own, which Qt names.
+    QVERIFY2(copy.startsWith(QStandardPaths::writableLocation(
+                 QStandardPaths::AppLocalDataLocation)),
+             qPrintable(copy));
+    QVERIFY2(!copy.startsWith(directory.path()), qPrintable(copy));
     QCOMPARE(readAll(copy), readAll(path));
     auto *log = bench.window->findChild<OutputWindow *>()
                     ->findChild<QPlainTextEdit *>();
