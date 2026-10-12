@@ -838,6 +838,23 @@ __attribute__((target("avx2"))) int gather(int a) {
                             {0, 1, -1, 0x13579, 0x12345678});
 }
 
+// VPERMD names its indices before its data, and the lifter keeps that order;
+// _mm256_permutevar8x32_epi32 takes the data first.
+TEST_F(X86_64_HighCIntrinsics, APermuteByIndexTakesTheDataFirst) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef int v8si __attribute__((vector_size(32)));
+__attribute__((target("avx2"))) int permd(int a) {
+  v8si b = {a, a, a, a, a, a, a, a};
+  v8si io = {0, 1, 2, 3, 4, 5, 6, 7};
+  v8si x = b * 7 + io, idx = (b + io) & 7;
+  v8si z = __builtin_ia32_permvarsi256(x, idx);
+  return z[0] + z[1] * 2 + z[2] * 3 + z[3] * 4 + z[4] * 5 + z[5] * 6 +
+         z[6] * 7 + z[7] * 8;
+}
+)C",
+                            "permd", {"permd"}, {0, 1, -1, 0x4d, 77, 0x12345});
+}
+
 // MULSD and ADDSS read their constant-pool operand through the address they
 // take, so each constant is the double or float the instruction reads.
 TEST_F(X86_64_HighCIntrinsics, ConstantPoolOperandsKeepTheirWidth) {

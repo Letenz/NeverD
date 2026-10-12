@@ -1541,9 +1541,19 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
   if (Width != 16 && Callee.starts_with("_mm_"))
     Spelled =
         (Width == 32 ? "_mm256_" : "_mm512_") + Callee.drop_front(4).str();
+  // The lifted operand each argument of the C intrinsic is.
+  std::vector<size_t> Order(Call.Operands.size());
+  for (size_t I = 0; I < Order.size(); ++I)
+    Order[I] = I;
+#define NEVERD_X86_C_OPERAND_ORDER(ID, First, Second)                          \
+  if (Call.IntrinsicId == Intrinsic::ID && Order.size() >= 2) {                \
+    Order[0] = (First);                                                        \
+    Order[1] = (Second);                                                       \
+  }
+#include "neverd/backend/c/render/HighC/X86IntrinsicOperandOrder.def"
   std::string S = "__builtin_bit_cast(" + Raw + ", " + Spelled + "(";
   for (size_t I = 0; I < Call.Operands.size(); ++I) {
-    const HighExpr *Op = Call.Operands[I].get();
+    const HighExpr *Op = Call.Operands[Order[I]].get();
     if (I > 0)
       S += ", ";
     if (!Op) {
