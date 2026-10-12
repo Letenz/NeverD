@@ -1355,6 +1355,12 @@ refusals and related or opaque inputs that still require full simplification.
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
 
+`HighSymSimplify.ParallelSegments*` compares serial and parallel rewriting
+over shared DAGs with distinct branch, switch and exception-body definitions.
+Independent arithmetic oracles check the rewritten results. Calls, labels,
+exception continuations, PHI copies, address escapes and ordered effects must
+still kill definitions; ordinary stores must retain them.
+
 ```sh
 cmake --build build-release --target NeverDSymbolicTests NeverDSolverTests \
   NeverDSymSimplifyGuardTests NeverDLiftTests NeverDMBASourceTests \
