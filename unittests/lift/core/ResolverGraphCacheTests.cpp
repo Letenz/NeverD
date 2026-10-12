@@ -363,6 +363,84 @@ struct ResolverGraphCacheTestAccess {
       Op.Inputs[0].Space = VnodeSpace::RAM;
   }
 
+  static std::vector<Query> seedEntryMemory(CFGBuilder &B,
+                                            const BinaryImage &Image,
+                                            bool Initialize, bool Loop) {
+    B.CurrentImg = &Image;
+    B.CurrentFuncEntry = 0x100;
+    B.JumpTableProofContextComplete = true;
+    B.PersistentCFGRoots = {0x100};
+    B.BlockStarts = {0x100, 0x103};
+    const auto &TRI = getTargetRegInfo(Image.Arch);
+    const auto Width = static_cast<uint16_t>(Image.getPointerSize());
+    const auto SP = NdVar::reg(TRI.StackPointer, Width);
+    const auto Address = NdVar::tmp(0x8000, Width);
+    const auto Read = NdVar::reg(TRI.IntReturnReg, Width);
+    auto Emit = [&](va_t Addr, NdOp Code, NdVar Output,
+                    std::initializer_list<NdVar> Inputs) -> LowOp & {
+      auto &Rec = B.Insns[Addr];
+      Rec.Addr = Addr;
+      Rec.Size = 1;
+      LowOp Op;
+      Op.Addr = Addr;
+      Op.Seq = static_cast<int>(Rec.Ops.size());
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      Rec.Ops.push_back(Op);
+      return Rec.Ops.back();
+    };
+    auto SlotAddress = [&](va_t Addr) {
+      Emit(Addr, NdOp::INT_ADD, Address,
+           {SP, NdVar::scalar(uint64_t{0} - Width, Width)});
+    };
+    SlotAddress(0x100);
+    if (Initialize)
+      Emit(0x100, NdOp::STORE, {}, {Address, NdVar::scalar(7, Width)});
+    const int LoadSeq = Emit(0x100, NdOp::LOAD, Read, {Address}).Seq;
+    Emit(0x100, NdOp::INT_AND, Read, {Read, NdVar::scalar(3, Width)});
+    const int UseSeq = Emit(0x100, NdOp::NOP, {}, {}).Seq;
+    SlotAddress(0x101);
+    const int StoreSeq =
+        Emit(0x101, NdOp::STORE, {}, {Address, NdVar::scalar(7, Width)}).Seq;
+    if (Loop) {
+      Emit(0x102, NdOp::COND_BR, {},
+           {NdVar::address(0x100, Width), NdVar::reg(TRI.FlagZF, 1)});
+      B.Insns.at(0x102).IsBranch = B.Insns.at(0x102).IsCond = true;
+      B.Insns.at(0x102).BranchTarget = 0x100;
+    } else
+      Emit(0x102, NdOp::NOP, {}, {});
+    Emit(0x103, NdOp::RETURN, {}, {});
+    B.Insns.at(0x103).IsRet = true;
+
+    Query Memory;
+    Memory.Candidate = SP;
+    Memory.UseAddr = 0x100;
+    Memory.UseSeq = LoadSeq;
+    Memory.FrameByteAddend = -Width;
+    Memory.FrameMemorySize = Width;
+    Memory.Relation = Relation::FrameMemoryMatches;
+    Memory.Alternatives = {{NdVar::scalar(7, Width), InvalidVA, -1, false}};
+    Memory.AlternativeFrameValueOffsets = {0};
+    Query Writer = Memory;
+    Writer.Relation = Relation::AuthenticatedFrameMemory;
+    Writer.Alternatives.clear();
+    Writer.AlternativeFrameValueOffsets.clear();
+    Writer.AuthenticatedFrameStoreWriters = {
+        {NdVar::scalar(7, Width), 0x101, StoreSeq, false}};
+    if (Initialize)
+      Writer.AuthenticatedFrameStoreWriters.push_back(
+          {NdVar::scalar(7, Width), 0x100, LoadSeq - 1, false});
+    Query Numeric;
+    Numeric.Candidate = Read;
+    Numeric.UseAddr = 0x100;
+    Numeric.UseSeq = UseSeq;
+    Numeric.Relation = Relation::UnsignedLessThan;
+    Numeric.UnsignedUpperBound = 4;
+    return {Memory, Writer, Numeric};
+  }
+
   static void addBackedge(CFGBuilder &B) {
     auto &R = B.Insns.at(0x103);
     R.IsRet = false;
@@ -1728,6 +1806,54 @@ TEST(ResolverValueQueryCache, MalformedScalarRecordsCannotPublishProofs) {
         Access::clear(B);
         EXPECT_EQ(Access::batch(B, {Access::valueQuery()}), Refused);
       }
+    }
+}
+
+TEST(ResolverValueQueryCache,
+     EntryMemoryCannotBorrowAStoreFromALaterIteration) {
+  for (const auto Architecture :
+       {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (const auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      auto Image = image();
+      Image.Arch = Architecture;
+      Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                       ? Bitness::Bits32
+                       : Bitness::Bits64;
+      Image.Format = Format;
+      for (bool Initialize : {false, true})
+        for (bool Loop : {false, true})
+          for (bool Reverse : {false, true}) {
+            SCOPED_TRACE(static_cast<unsigned>(Architecture));
+            SCOPED_TRACE(static_cast<unsigned>(Format));
+            SCOPED_TRACE(Initialize);
+            SCOPED_TRACE(Loop);
+            SCOPED_TRACE(Reverse);
+            CFGBuilder B;
+            auto Queries = Access::seedEntryMemory(B, Image, Initialize, Loop);
+            if (Reverse)
+              std::reverse(Queries.begin(), Queries.end());
+            const auto Answer = Access::batch(B, Queries);
+            EXPECT_TRUE(Answer.Complete);
+            EXPECT_EQ(Answer.Values,
+                      Reverse
+                          ? (std::vector<bool>{true, Initialize, Initialize})
+                          : (std::vector<bool>{Initialize, Initialize, true}));
+            EXPECT_EQ(Access::batch(B, Queries), Answer);
+            Access::clear(B);
+            EXPECT_EQ(Access::batch(B, Queries), Answer);
+            const size_t Work = 1000000 - Answer.Remaining;
+            const auto Exact = Access::batch(B, Queries, Work);
+            EXPECT_TRUE(Exact.Complete);
+            EXPECT_EQ(Exact.Values, Answer.Values);
+            const auto Short = Access::batch(B, Queries, Work - 1);
+            EXPECT_FALSE(Short.Complete);
+            EXPECT_EQ(Short.Values, (std::vector<bool>{false, false, false}));
+            EXPECT_EQ(Short.QueryComplete,
+                      (std::vector<bool>{false, false, false}));
+            Access::clear(B);
+            EXPECT_EQ(Access::batch(B, Queries, Work - 1), Short);
+          }
     }
 }
 

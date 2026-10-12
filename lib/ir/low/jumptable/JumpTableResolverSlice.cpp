@@ -6641,12 +6641,18 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
 
     if (!Found) {
       std::vector<ResolverResult> Incoming;
-      if (!consumeEvidenceProduct(B.Preds.size(), 2) || !consumeEvidence(2)) {
+      const size_t IncomingCount = B.Preds.size() + size_t(IsRootBlock[Block]);
+      if (!consumeEvidenceProduct(IncomingCount, 2) || !consumeEvidence(2)) {
         MemoryMemo.erase(MemoIt);
         ++ResolverMemoGeneration;
         return resolverInvalid();
       }
-      Incoming.reserve(B.Preds.size());
+      Incoming.reserve(IncomingCount);
+      // A proof root also has an invocation-entry arm, even with back edges.
+      // Its incoming memory is unknown until a writer before this use defines
+      // it. A later iteration's STORE cannot initialize the first iteration.
+      if (IsRootBlock[Block])
+        Incoming.push_back(resolverInvalid());
       for (int Pred : B.Preds) {
         if (!consumeEvidence(2)) {
           Incoming.clear();

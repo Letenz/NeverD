@@ -1347,6 +1347,13 @@ first populates a valid cache, mutates an equally sized record, and requires
 incomplete results on warm and cold queries. Valid input must still prove its
 value; malformed input cannot become a completed negative proof.
 
+`ResolverValueQueryCache.EntryMemoryCannotBorrowAStoreFromALaterIteration`
+checks first-iteration frame-memory identity and authenticated writers across
+the same architecture/format matrix. A back-edge STORE cannot initialize the
+entry LOAD. A preceding definite STORE is a positive control, and masking the
+unknown LOAD still proves its independent numeric bound. Both query orders and
+cold/warm caches must agree.
+
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
 fixtures select slots 2 and 3 from four-slot and 96-slot absolute pointer

@@ -906,6 +906,12 @@ incomplete rather than supplying an unconstrained value or a negative dependency
 certificate. Validation debits the same shared graph work account on cold and
 cached queries; unsupported opcodes acquire no semantics from this check.
 
+Frame-memory reaching values include an unknown entry arm at every active proof
+root, including roots with loop predecessors. A future back-edge STORE cannot
+certify first-iteration contents or an authenticated writer. Definite writers
+before the use still provide ordinary value evidence; independent scalar masks
+may still prove bounds on an otherwise unknown loaded value.
+
 The resolver's point-sensitive stack identity uses anchored affine equations.
 Cyclic predecessors share equation nodes instead of recursively expanding the
 same frame state for each query. Every incoming value must agree; unanchored
