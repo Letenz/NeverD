@@ -120,8 +120,9 @@ private:
   /// analysis view used, otherwise the disassembly.
   void jump(Address address);
   void navigateExpression(const QString &text);
-  /// Follow a name double-clicked in the code view \p view.
-  void activateCodeName(CodeView *view, const QString &name);
+  /// Follow a code name in \p view, optionally selecting its instruction.
+  void activateCodeName(CodeView *view, const QString &name,
+                        bool selectSourceAddress = false);
   void navigateCodeFunction(CodeView *view, Address address, Address function,
                             std::optional<Address> from);
   void navigateHistory(bool forward);
@@ -145,6 +146,8 @@ private:
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
+  void showReferencesDialog(std::optional<Address> address, bool to,
+                            CodeView *origin);
   void showPseudocode(const QString &representation,
                       bool selectAssemblyAddress = false);
   void toggleGraph();

@@ -67,6 +67,13 @@ the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
 than the dispatcher admits. Functions activation covers Pseudocode, explicit C,
 LLVM C and IR windows, multiple windows, pinned views and back/forward history.
+Cross-reference cases query the name under the code cursor while assembly is
+at a different function, then select an instruction in the caller. They check
+the originating window, representation and pin, proven source-line mapping,
+the unmapped warning and assembly-origin navigation. Published source names
+use their image addresses even when their displayed identifiers cannot be
+resolved by name. Delayed lookups are discarded after navigation, function or
+representation changes, project closure and hiding the originating window.
 The file-drop cases wait for the worker's loader-identification capability and
 check UTF-8 filenames through the Windows fixture boundary.
 Character-selection cases drag address prefixes, assembly text, C and Go
