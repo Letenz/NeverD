@@ -56,6 +56,11 @@ namespace neverd {
 
 namespace {
 
+/// How many pointer words, and how many nonzero bytes, a long image
+/// initializer gives each line.
+constexpr uint64_t ImageWordsPerLine = 8;
+constexpr uint64_t ImageBytesPerLine = 16;
+
 unsigned partialIntegerBytes(const TypeRef &Type) {
   if (!Type ||
       (Type->Kind != NdTypeKind::Int && Type->Kind != NdTypeKind::Unknown))
@@ -2224,6 +2229,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     SizedObjectReach.push_back(
         std::max(SizedObjectReach.empty() ? va_t{0} : SizedObjectReach.back(),
                  Addr + Size));
+  DataSymbolStarts.clear();
+  for (const Symbol &Sym : Opts.Image->Symbols)
+    if (!Sym.IsFunc && isImageDataAddress(Sym.Addr))
+      DataSymbolStarts.push_back(Sym.Addr);
+  llvm::sort(DataSymbolStarts);
+  DataSymbolStarts.erase(
+      std::unique(DataSymbolStarts.begin(), DataSymbolStarts.end()),
+      DataSymbolStarts.end());
   // The code reaches all of an object through an address that varies or
   // points into it: the object is declared whole, as bytes.
   auto NoteWhole = [&](va_t Addr, const TypeRef &Access, bool Written) {
@@ -2767,20 +2780,28 @@ void HighCWriter::writeImageObjects() {
       OS << "_Alignas(" << Backing.Align << ") ";
     OS << "unsigned char " << Backing.Name << "["
        << Backing.Pad + (Backing.End - Backing.Base) << "]";
-    bool Initialized = false;
+    // A long initializer takes a few bytes a line, so no line runs to the
+    // object's size.
+    uint64_t NonZero = 0;
+    for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr)
+      if (const uint8_t *Byte = Opts.Image->readVA(Addr, 1); Byte && *Byte)
+        ++NonZero;
+    const bool Wrapped = NonZero > ImageBytesPerLine;
+    uint64_t Written = 0;
     for (va_t Addr = Backing.Base; Addr < Backing.End; ++Addr) {
       const uint8_t *Byte = Opts.Image->readVA(Addr, 1);
       if (!Byte || !*Byte)
         continue;
-      if (!Initialized) {
+      if (!Written)
         OS << " = {";
-        Initialized = true;
-      }
+      if (Wrapped && Written % ImageBytesPerLine == 0)
+        OS << "\n ";
       OS << " [" << Backing.Pad + (Addr - Backing.Base) << "] = 0x"
          << llvm::utohexstr(*Byte) << ",";
+      ++Written;
     }
-    if (Initialized)
-      OS << " }";
+    if (Written)
+      OS << (Wrapped ? "\n}" : " }");
     OS << ";\n";
   }
   // Every object has its name before any initializer names it.
@@ -2880,9 +2901,16 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
          << llvm::utohexstr(Backing.End) << " */\n";
     OS << "union " << Backing.Words << "_words " << Backing.Words
        << " = { .w = {";
-    for (uint64_t I = 0; I < WordCount(Backing); ++I) {
+    // A long initializer takes a few words a line, so no line runs to the
+    // object's size.
+    const uint64_t Words = WordCount(Backing);
+    const bool Wrapped = Words > ImageWordsPerLine;
+    for (uint64_t I = 0; I < Words; ++I) {
       const va_t Slot = Backing.Base + I * PointerBytes;
-      OS << (I ? ", " : " ");
+      if (Wrapped && I % ImageWordsPerLine == 0)
+        OS << (I ? ",\n  " : "\n  ");
+      else
+        OS << (I ? ", " : " ");
       if (llvm::is_contained(Backing.PointerSlots, Slot))
         if (auto Target = relocatedSlotTarget(Slot)) {
           OS << *Target;
@@ -2898,7 +2926,7 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
                          (PointerBytes == 8 ? "ull" : "u")
                    : std::string("0"));
     }
-    OS << " } };\n";
+    OS << (Wrapped ? "\n} };\n" : " } };\n");
   }
 }
 
