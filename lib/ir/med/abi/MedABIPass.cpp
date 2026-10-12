@@ -2121,6 +2121,24 @@ void recoverCallAbi(
             K += Span - 1;
         }
       }
+      // A variadic callee that takes its vector argument registers as
+      // parameters (System V) takes every integer and vector argument
+      // register, which a call passes in that order before its stack
+      // arguments.  One the caller never set passes zero: the callee only
+      // saves it, and va_arg reads no more arguments than a caller passes.
+      if (!CI.IsIndirect && CalleeHasFP && CalleeIsVariadic &&
+          CalleeIsVariadic->count(CI.TargetAddr) &&
+          CalleeIsVariadic->at(CI.TargetAddr)) {
+        while (static_cast<int>(IntPart.size()) < IntCap)
+          IntPart.push_back(
+              MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize)));
+        const int Vectors = CalleeFPArity->at(CI.TargetAddr);
+        const uint16_t VectorBytes =
+            TRI.FPABIRegWidth ? TRI.FPABIRegWidth
+                              : static_cast<uint16_t>(TRI.VecRegStride);
+        while (static_cast<int>(FoundFP.size()) < Vectors)
+          FoundFP.push_back(MedVar::makeConst(0, VectorBytes));
+      }
       for (auto &A : IntPart)
         CI.Args.push_back(A);
       for (auto &A : FoundFP)
@@ -2549,10 +2567,14 @@ void finalizeVariadicCallees(std::vector<MedFunc> &Funcs, Arch TheArch,
     int RegParamCount = 0;
     int MaxId = 0;
     const auto CalleeIntParamRegs = TRI.integerArgumentLayout(Fmt).Registers;
+    // A System V variadic function also takes its vector argument
+    // registers as parameters, which a call passes after the integer ones.
     for (const auto &P : Callee.Params) {
       if (P.RegOff != kNoParamReg &&
-          std::find(CalleeIntParamRegs.begin(), CalleeIntParamRegs.end(),
-                    P.RegOff) != CalleeIntParamRegs.end())
+          (std::find(CalleeIntParamRegs.begin(), CalleeIntParamRegs.end(),
+                     P.RegOff) != CalleeIntParamRegs.end() ||
+           (Callee.VariadicFirstVectorRegister >= 0 &&
+            TRI.isFPArgReg(P.RegOff, Fmt))))
         ++RegParamCount;
       if (P.Id > MaxId)
         MaxId = P.Id;
