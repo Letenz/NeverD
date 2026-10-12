@@ -5233,6 +5233,14 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 
 `NeverDUnpackDriverTests` covers packed DriverEntry recovery, static/dynamic kernel imports, retained kernel resources, entry ABI/control state, malformed exports, scheduling, request/unload lifecycle, C API/CLI parity and PE checksums. The native driver inventory requires matching KVM/WHP cases; Windows also checks ImageHlp. This does not certify a native kernel load. See [unpacking](unpack.md).
 
+`DriverEntryCaller.*` checks nonzero incoming values for all eight nonvolatile
+GPRs, both halves of XMM6–15, volatile MXCSR status versus preserved controls,
+FPCSR and the returned direction flag. The independent machine-code control
+`UnpackDriver.CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus`
+keeps a balanced stack and STATUS_SUCCESS while corrupting R13; its companion
+restores R13. Checked execution must reject the corruption before publishing
+NTSTATUS or scheduling lifecycle work. Matching KVM/WHP cases are required.
+
 `NeverDKernelSnapshotTests` checks diagnostic object snapshots after terminal memory faults and unsupported instructions. Committed device and dispatch state remains observable without clearing the first fault or permitting further CPU access. Corrupted ownership, cyclic device lists, invalid driver extensions and partial dispatch pointers still fail. Native KVM/WHP acceptance requires the matching backend cases.
 
 `KernelUnpackStateTests.cpp` adds nine portable cases to `NeverDKernelSnapshotTests` covering pool allocation contracts, copied contents, released lifetimes, missing backing and remaining dependencies. Terminal-fault cases also capture live pools. `UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` verifies the public observer state after session destruction. These cases are mandatory in the native driver gate and do not certify native kernel restoration.

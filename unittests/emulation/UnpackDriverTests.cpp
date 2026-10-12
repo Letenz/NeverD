@@ -362,6 +362,43 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
   checkLifecycle(Output);
 }
 
+TEST_P(UnpackDriver,
+       CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus) {
+  const auto *Program = Original.section(".prog");
+  ASSERT_NE(Program, nullptr);
+  const std::vector<uint8_t> Bodies[] = {
+      // A valid callee restores R13 before returning STATUS_SUCCESS.
+      {0x41, 0x55, 0x49, 0xc7, 0xc5, 77, 0, 0, 0, 0x41, 0x5d, 0x31, 0xc0, 0xc3},
+      // Balanced RSP and a successful NTSTATUS do not excuse the clobber.
+      {0x49, 0xc7, 0xc5, 77, 0, 0, 0, 0x31, 0xc0, 0xc3},
+  };
+  for (size_t I = 0; I < std::size(Bodies); ++I) {
+    ASSERT_LE(Bodies[I].size(), Program->FileSize);
+    auto Bytes = Original.File;
+    std::copy(Bodies[I].begin(), Bodies[I].end(),
+              Bytes.begin() + Program->FileOffset);
+    write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+    const auto Input = Scratch / "entry-caller.sys";
+    test::writeFile(Input, Bytes);
+    DriverOptions D;
+    D.Backend = GetParam().Kind;
+    D.Contract = ExecutionContract::CheckedX64;
+    auto Run = emulateDriver(Input, D);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    if (!I) {
+      EXPECT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+      EXPECT_EQ(Run->NTStatus, 0u);
+    } else {
+      EXPECT_EQ(Run->Stop, DriverStopReason::ModelError) << Run->Diagnostic;
+      EXPECT_EQ(Run->Diagnostic,
+                "DriverEntry returned with changed nonvolatile r13");
+      EXPECT_FALSE(Run->NTStatus);
+      EXPECT_FALSE(Run->UnloadCompleted);
+    }
+    EXPECT_TRUE(Run->Requests.empty());
+  }
+}
+
 TEST_P(UnpackDriver, RetainedKernelObjectsAndBorrowedPointersAreNotRecovery) {
   for (unsigned Mode : {1, 2, 3, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20}) {
     SCOPED_TRACE(Mode);

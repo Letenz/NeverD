@@ -19,6 +19,7 @@ add_custom_command(OUTPUT "${_unpack_driver_image}" "${_unpack_driver_object}"
 # header. The positive fixture must not trigger that conservative state guard.
 add_custom_target(NeverDUnpackDriverFixtures DEPENDS "${_unpack_driver_image}")
 add_neverd_unittest(NeverDUnpackDriverTests
+  DriverEntryABITests.cpp
   UnpackDriverTests.cpp
   TIMEOUT 120
   LINK_COMPONENTS Unpack Emulation)
