@@ -148,6 +148,7 @@ add_neverd_component_library(NeverDLoader
   language/LanguageEH.cpp
   language/LanguagePersonality.cpp
   language/LanguageRuntime.cpp
+  language/StringLiteralSymbols.cpp
   language/SymbolSpelling.cpp
   language/SymbolSpellingCxx.cpp
   language/SymbolSpellingD.cpp
