@@ -1,7 +1,6 @@
 #include "app/DisassemblyView.h"
 #include "app/Docking.h"
 #include "app/GnomeModalDialogs.h"
-#include "app/GnomeWindowEdges.h"
 #include "app/InteractionMetrics.h"
 #include "app/Language.h"
 #include "app/ListingView.h"
@@ -198,7 +197,13 @@ int main(int argc, char **argv) {
   if (automated || parser.isSet(QStringLiteral("fresh-layout")))
     window.setLayoutPath(testLayout.filePath(QStringLiteral("layout.json")));
   restoreGeometry(window);
-  window.initializeLayout();
+  // Without a file the quick start greets alone; the workbench lays out its
+  // desktop and shows once the user chooses how to start.
+  const bool greet = !openingFile && !automated &&
+                     !parser.isSet(QStringLiteral("capture")) &&
+                     QSettings().value(settings::QuickStart, true).toBool();
+  if (!greet)
+    window.initializeLayout();
   if (startupMetrics)
     startupMetrics->observeWindow(&window);
   std::unique_ptr<InteractionMetrics> interactionMetrics;
@@ -216,9 +221,8 @@ int main(int argc, char **argv) {
         window, session, parser.value(QStringLiteral("interaction-benchmark")),
         timeout, &app);
   }
-  gnome::boundMaximumSize(window);
-  window.show();
-  gnome::widenResizeEdges(window);
+  if (!greet)
+    window.showWorkbench();
   QObject::connect(&app, &QApplication::aboutToQuit, &window, [&window] {
     QSettings().setValue(GeometryKey, window.saveGeometry());
   });
@@ -236,8 +240,7 @@ int main(int argc, char **argv) {
   if (openingFile)
     window.openFile(
         QFileInfo(parser.positionalArguments().first()).absoluteFilePath());
-  else if (!automated && !parser.isSet(QStringLiteral("capture")) &&
-           QSettings().value(settings::QuickStart, true).toBool())
+  else if (greet)
     window.scheduleQuickStart();
 
   if (parser.isSet(QStringLiteral("capture"))) {
