@@ -19,6 +19,7 @@
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -350,9 +351,14 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     if (!Img.Symbols[I].IsFunc)
       DataByAddr.try_emplace(Img.Symbols[I].Addr, I);
   }
+  // The objects that may lie among code.  A literal, which its symbol names
+  // by its text, reads as that text rather than as an object.
+  std::vector<va_t> DataObjects;
   for (const DataObjectSym &Object : Dbg.allDataObjects()) {
     if (Object.Name.empty() || Object.Addr == InvalidVA)
       continue;
+    if (!isStringLiteralName(Object.Name))
+      DataObjects.push_back(Object.Addr);
     auto It = DataByAddr.find(Object.Addr);
     if (It != DataByAddr.end()) {
       Symbol &Existing = Img.Symbols[It->second];
@@ -376,6 +382,7 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
   if (DbgFuncs.empty()) {
     dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
     recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
+    recordDataInCode(Img, DataObjects);
     return 0;
   }
 
@@ -424,6 +431,7 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
 
   dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
   recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
+  recordDataInCode(Img, DataObjects);
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

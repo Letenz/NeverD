@@ -1433,20 +1433,7 @@ std::optional<size_t> rvaToFileOffset(const PEHeaderPtrs &PE,
   return Result;
 }
 
-struct RuntimeEntry {
-  uint32_t Begin = 0;
-  uint32_t End = 0;
-  uint32_t Unwind = 0;
-  uint32_t Handler = 0;
-  uint32_t HandlerData = 0;
-  bool HasLanguageHandler = false;
-  std::array<uint32_t, 3> Words{};
-  uint8_t WordCount = 0;
-
-  friend bool operator==(const RuntimeEntry &A, const RuntimeEntry &B) {
-    return A.WordCount == B.WordCount && A.Words == B.Words;
-  }
-};
+using RuntimeEntry = COFFRuntimeFunctionRecord;
 
 template <typename ReadRVA>
 llvm::Expected<RuntimeEntry> decodeRuntimeEntry(const uint8_t *Record,
@@ -1944,6 +1931,17 @@ llvm::Error validateRuntimeEntries(llvm::ArrayRef<RuntimeEntry> Entries,
 
 } // namespace
 
+llvm::Expected<COFFRuntimeFunctionRecord> decodeCOFFRuntimeFunction(
+    llvm::ArrayRef<uint8_t> Record, Arch Architecture,
+    llvm::function_ref<const uint8_t *(uint32_t, uint64_t)> ReadAtRVA) {
+  const unsigned Size = Architecture == Arch::X64 ? 12 : 8;
+  if ((Architecture != Arch::X64 && Architecture != Arch::ARM &&
+       Architecture != Arch::AArch64) ||
+      Record.size() != Size)
+    return patchError("invalid runtime-function architecture or row size");
+  return decodeRuntimeEntry(Record.data(), Architecture, ReadAtRVA);
+}
+
 llvm::Error
 validateCOFFExceptionSourceIdentityClosure(const llvm::Module &Mod,
                                            const BinaryImage &Image) {
@@ -2014,30 +2012,35 @@ std::optional<va_t> findCOFFExceptionPersonalityVA(const BinaryImage &Image,
   return std::nullopt;
 }
 
-llvm::Expected<COFFExceptionPatchPlan>
-planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
-                    Arch TargetArch) {
-  if (TargetArch != Arch::X64)
-    return patchError("replacement source unwind currently requires PE x64");
+llvm::Error validateCOFFReplacementFeatures(const BinaryImage &Image,
+                                            Arch TargetArch) {
   const auto Headers = locatePEHeaders(const_cast<uint8_t *>(Image.Raw.data()),
                                        Image.Raw.size());
-  if (!Headers.valid() || !Headers.Is64)
-    return patchError("replacement source requires valid PE32+ headers");
-  const auto *Optional =
-      reinterpret_cast<const llvm::object::pe32plus_header *>(
-          Headers.OptionalHeader);
+  if (!Headers.valid() ||
+      Headers.Is64 != (TargetArch == Arch::X64 || TargetArch == Arch::AArch64))
+    return patchError("replacement source requires matching PE headers");
+  const uint16_t DLLCharacteristics =
+      Headers.Is64 ? getPE32PlusOptionalHeader(Headers)->DLLCharacteristics
+                   : getPE32OptionalHeader(Headers)->DLLCharacteristics;
   // CRT contributions can advertise instrumentation without enabling CFG.
   // Preserve these flags; active guard modes need a source compiler contract.
   constexpr uint32_t InformationalGuardFlags =
       uint32_t(llvm::COFF::GuardFlags::CF_INSTRUMENTED) |
       uint32_t(llvm::COFF::GuardFlags::SECURITY_COOKIE_UNUSED);
   if ((Image.DynInfo.GuardFlags & ~InformationalGuardFlags) != 0 ||
-      (Optional->DLLCharacteristics &
-       llvm::COFF::IMAGE_DLL_CHARACTERISTICS_GUARD_CF))
+      (DLLCharacteristics & llvm::COFF::IMAGE_DLL_CHARACTERISTICS_GUARD_CF))
     return patchError("input guard instrumentation is unsupported for source "
                       "replacement");
   if (Image.ExceptionMetadata.ParseStatus == ExceptionParseStatus::Malformed)
     return patchError("input exception directory is malformed");
+  return llvm::Error::success();
+}
+
+llvm::Expected<COFFExceptionPatchPlan>
+planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
+                    Arch TargetArch) {
+  if (auto Error = validateCOFFReplacementFeatures(Image, TargetArch))
+    return std::move(Error);
   if (const auto *Guard = Mod.getModuleFlag("cfguard")) {
     const auto *Value = llvm::mdconst::dyn_extract<llvm::ConstantInt>(Guard);
     if (!Value || !Value->isZero())
@@ -2057,6 +2060,9 @@ planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
     if (Function.isDeclaration())
       continue;
     if (Function.hasPersonalityFn()) {
+      if (TargetArch != Arch::X64)
+        return patchError("replacement language handlers require a verified "
+                          "architecture-specific source ABI");
       const auto *Personality = llvm::dyn_cast<llvm::Function>(
           Function.getPersonalityFn()->stripPointerCasts());
       if (!Personality || Personality->getName() != "__CxxFrameHandler3")

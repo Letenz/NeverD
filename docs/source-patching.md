@@ -48,19 +48,19 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
-These are checked profiles, not promises for every compiler version or option. `dyncode` and NeverC C++ are not admitted. GCC cannot produce LLVM IR. Native COFF/Mach-O objects are not admitted; native object installation requires ELF x64. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
+These are checked OS runtime profiles, not promises for every compiler version or option. The native installers accept all four architectures in ELF, PE and Mach-O. `dyncode` and NeverC C++ are not admitted; GCC requires a matching ELF driver and cannot produce LLVM IR. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
 
-The separate CPU matrix exercises four architectures (`x86`, `x64`, `ARM32`, `ARM64`) and three formats (`ELF`, `PE`, `Mach-O`), checking source installation or explicit refusal. Isolated CPU execution does not certify an OS loader, C++ unwinder or arbitrary ABI. Use the OS runtime profiles above for those claims.
+The CPU matrix requires successful source, supplied-IR and native-object installation on all twelve combinations. It also covers ARMv7k watchOS and ARMv7 iOS separately, mutable/readonly state, original floating-point and stack-argument bindings, and entry execution after image rebasing. CPU execution does not certify an OS loader, C++ unwinder or arbitrary ABI; use the OS profiles above for those claims.
 
 | Format | `x86` | `x64` | `ARM32` | `ARM64` |
 |---|---|---|---|---|
-| `ELF` | `CPU` | `CPU` | `REFUSED` | `CPU` |
-| `PE` | `REFUSED` | `CPU` | `REFUSED` | `REFUSED` |
-| `Mach-O` | `REFUSED` | `CPU` | `REFUSED` | `CPU` |
+| `ELF` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `PE` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `Mach-O` | `CPU` | `CPU` | `CPU` | `CPU` |
 
-`CPU` means source installation and isolated function execution; `REFUSED` means an explicit missing installation contract. ARM32 ELF needs EHABI registration; 32-bit Mach-O needs a verified loader/frontend/unwind contract; PE source installation currently requires x64.
+`CPU` means source/IR/object installation, reload and exact function execution. ARM ELF selects EABI5, ARM/Thumb state and the floating-point ABI from the image and registers a complete sorted `EHABI` index. PE preserves x64/ARM runtime rows and `HIGHLOW`/`DIR64`/`MOV32T` base relocations; x86 uses compiler registration code. Mach-O selects the image's CPU subtype and preserves the distinct watchOS DWARF and iOS `SjLj` contracts. Source ARM/Thumb entry branches are relative and survive rebasing.
 
-The CPU matrix uses freestanding arithmetic, branches and helper calls. ELF x86/ARM64 data references and ARM64 C++ imports are not certified by those results; the additional runtime probes refused their unsupported relocation contracts.
+Native objects use their own bounded function symbols, auxiliary/section definitions and unwind records; they never receive invented MC owner IDs or an IR recompilation. COFF producers need exact auxiliary sizes or singleton function sections (`-ffunction-sections`). The watchOS compiler adapter retains leaf frames to obtain real unwind rows. Native COFF/Mach-O language handlers remain outside the verified object profile; use the verified IR route for C++ exceptions. A statically linked ARM unwinder with a baked exidx registry is refused, as are unregistered absolute pointers in Mach-O and unsupported RELRO storage.
 
 <!-- i18n-section: references -->
 ## Original references and storage
@@ -107,7 +107,7 @@ report = session.patch_source(
 
 Use a compatible source producer through `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` (Clang 22.1.6 was checked). Integrated LLVM receives a scoped correction in a build-directory copy; the submodule and shared prebuilt cache remain unchanged. The r3/r4 prebuilt x64 PLT bug can cause an IR patch to be refused; native objects avoid that MC path. `NEVERD_TEST_REQUIRE_FIXED_LLVM=1` requires the exact corrected PLT producer.
 
-`NeverDSourcePatchTests` contains native C/API/object/EH cases; `NeverDSourcePatchMatrixTests` checks all target combinations through Unicorn. `SourcePatchPE` runs seven C++ scenarios when `NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and `NEVERD_TEST_WINDOWS_SDK_LIB` are supplied. Non-Windows hosts also need `NEVERD_TEST_WINDOWS_RUNNER`. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing runtime inputs fail. The dedicated Windows workflow requires native execution and rejects skipped cases.
+`NeverDSourcePatchTests` contains native C/API/object/EH cases; `NeverDSourcePatchMatrixTests` requires 143 checks across the thirteen target profiles through Unicorn. `SourcePatchPE` runs seven C++ scenarios when `NEVERD_TEST_WINDOWS_CRT_LIB`, `NEVERD_TEST_WINDOWS_UCRT_LIB` and `NEVERD_TEST_WINDOWS_SDK_LIB` are supplied. Non-Windows hosts also need `NEVERD_TEST_WINDOWS_RUNNER`. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing runtime inputs fail. The dedicated Windows workflow requires native execution and rejects skipped cases.
 
 Linux evidence from the development Mac uses Docker and an explicit Linux loader; PE evidence uses Wine 11. Mach-O ARM64 runs on the Mac itself. Native Windows CI results must be checked separately; a configured job is not a passing run. Historical counts, baseline failures and emulator limits are in [the detailed contracts and validation record](source-patching-details.md).
 

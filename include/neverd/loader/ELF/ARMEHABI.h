@@ -48,6 +48,11 @@ namespace neverd::arm_ehabi {
 /// a different direction.
 void parseARMEHABIExceptions(BinaryImage &Img);
 
+/// Validate a bounded unwind program with the loader's opcode decoder. A
+/// complete program has an implicit finish at its end; an explicit B0 is not
+/// required when the final pop fills all three inline opcode bytes.
+bool isSupportedUnwindProgram(llvm::ArrayRef<uint8_t> Bytes);
+
 } // namespace neverd::arm_ehabi
 
 #endif // NEVERD_LOADER_ELF_ARMEHABI_H

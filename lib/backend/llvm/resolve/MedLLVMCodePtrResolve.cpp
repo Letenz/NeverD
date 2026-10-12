@@ -2349,10 +2349,13 @@ llvm::Value *MedLLVMEmitter::tryResolveCodeAddressValue(
     if (auto *BlockAddress =
             llvm::dyn_cast_or_null<llvm::BlockAddress>(LiftedCodeIdentity))
       BlockOwner = BlockAddress->getFunction();
+    // Data the debug information places among the code is no code, though
+    // its section is.
     const bool HasLayoutCodeOwner =
         IncludeLayoutCodeOwners &&
         Current.Provenance == ConstantAddressProvenance::Address &&
-        Img->hasExecutableCodeOwnerAt(Normalized);
+        Img->hasExecutableCodeOwnerAt(Normalized) &&
+        !Img->DataInCode.count(Normalized);
     const bool IsCode =
         Current.Provenance == ConstantAddressProvenance::CodeAddress ||
         HasLoaderCodeProvenance ||

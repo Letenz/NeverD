@@ -993,6 +993,9 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       PendingGuard = 0;
       PendingEnvironmentRead.reset();
       PendingObservation = PendingMemoryWrite = false;
+      // The preceding proof belongs to the stopped observer callback. Every
+      // resumed CPU interval must establish its own watched-memory guarantee.
+      Observation.setWatchedMemoryUnchanged(false);
       if (auto E = CPU.run(NextPC, Remaining)) {
         const bool Rejected = E.isA<UnsupportedExecutionError>();
         std::string Message = llvm::toString(std::move(E));
@@ -1008,6 +1011,10 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       if (Stopped)
         break;
       if (PendingObservation) {
+        // Only a pure execution watch proves the previously installed RAM
+        // watches untouched. A committed store invalidates this guarantee
+        // even if it writes the same value or shares the execution boundary.
+        Observation.setWatchedMemoryUnchanged(!PendingMemoryWrite);
         auto Resume = Observation.watched(Result.PC);
         if (!Resume)
           return ObservationFailed(Resume.takeError());

@@ -101,6 +101,12 @@ KernelModel::unpackDependencies() const {
     Reasons.emplace_back("driver unload is in progress");
   for (const auto &[Address, Size] : ArenaAllocations)
     if (!UnpackBaseline->count(Address) && !FreedRanges.count(Address)) {
+      // The live pool owner already captures this exact allocation's API,
+      // lifetime and extent. Only that identity can exclude an arena object
+      // from the untyped inventory; unrelated objects remain dependencies.
+      const auto Pool = Allocations.find(Address);
+      if (Pool != Allocations.end() && Pool->second.Size == Size)
+        continue;
       Reasons.emplace_back("retained kernel object allocations");
       break;
     }

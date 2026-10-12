@@ -18,7 +18,6 @@
 
 namespace neverd {
 namespace {
-using ELF = llvm::object::ELF64LE;
 
 llvm::Error fail(const llvm::Twine &Detail) {
   return llvm::createStringError(llvm::errc::not_supported,
@@ -51,17 +50,21 @@ llvm::Expected<uint64_t> fileOffset(llvm::ArrayRef<uint8_t> Binary, uint64_t VA,
   return *Offset;
 }
 
+template <typename ELF>
 llvm::Expected<DynamicLayout> dynamicLayout(llvm::ArrayRef<uint8_t> Binary) {
   DynamicLayout Result;
   if (!validateELFHeaderTables(Binary.data(), Binary.size(), Result.Header) ||
-      !Result.Header.Is64)
-    return fail("ELF64 header required");
-  ELF::Ehdr Header;
+      Result.Header.Is64 != (sizeof(typename ELF::Addr) == 8))
+    return fail("matching little-endian ELF header required");
+  typename ELF::Ehdr Header;
   std::memcpy(&Header, Binary.data(), sizeof(Header));
-  if (Header.e_machine != llvm::ELF::EM_X86_64 ||
+  if ((Header.e_machine != llvm::ELF::EM_X86_64 &&
+       Header.e_machine != llvm::ELF::EM_AARCH64 &&
+       Header.e_machine != llvm::ELF::EM_386 &&
+       Header.e_machine != llvm::ELF::EM_ARM) ||
       (Header.e_type != llvm::ELF::ET_EXEC &&
        Header.e_type != llvm::ELF::ET_DYN))
-    return fail("load-time pointer registration currently requires ELF x64");
+    return fail("unsupported ELF load-time pointer target");
   std::optional<ELFPhdrFields> Dynamic;
   unsigned Count = 0;
   forEachELFPhdr(Binary.data(), Binary.size(),
@@ -71,7 +74,7 @@ llvm::Expected<DynamicLayout> dynamicLayout(llvm::ArrayRef<uint8_t> Binary) {
                      ++Count;
                    }
                  });
-  if (Count != 1 || !Dynamic || Dynamic->FileSz % sizeof(ELF::Dyn) ||
+  if (Count != 1 || !Dynamic || Dynamic->FileSz % sizeof(typename ELF::Dyn) ||
       !rangeInBounds(Dynamic->Offset, Dynamic->FileSz, Binary.size()))
     return fail("a unique bounded PT_DYNAMIC is required");
   auto Mapped = fileOffset(Binary, Dynamic->VAddr, Dynamic->FileSz);
@@ -80,8 +83,8 @@ llvm::Expected<DynamicLayout> dynamicLayout(llvm::ArrayRef<uint8_t> Binary) {
   if (*Mapped != Dynamic->Offset)
     return fail("PT_DYNAMIC disagrees with its load segment");
   bool Terminated = false;
-  for (uint64_t I = 0; I < Dynamic->FileSz; I += sizeof(ELF::Dyn)) {
-    ELF::Dyn Item;
+  for (uint64_t I = 0; I < Dynamic->FileSz; I += sizeof(typename ELF::Dyn)) {
+    typename ELF::Dyn Item;
     const uint64_t Offset = Dynamic->Offset + I;
     std::memcpy(&Item, Binary.data() + Offset, sizeof(Item));
     if (Item.getTag() == llvm::ELF::DT_NULL) {
@@ -90,9 +93,10 @@ llvm::Expected<DynamicLayout> dynamicLayout(llvm::ArrayRef<uint8_t> Binary) {
     }
     const int64_t Tag = Item.getTag();
     if (Tag == llvm::ELF::DT_RELA || Tag == llvm::ELF::DT_RELASZ ||
-        Tag == llvm::ELF::DT_RELAENT || Tag == llvm::ELF::DT_SYMTAB ||
-        Tag == llvm::ELF::DT_SYMENT || Tag == llvm::ELF::DT_STRTAB ||
-        Tag == llvm::ELF::DT_STRSZ) {
+        Tag == llvm::ELF::DT_RELAENT || Tag == llvm::ELF::DT_REL ||
+        Tag == llvm::ELF::DT_RELSZ || Tag == llvm::ELF::DT_RELENT ||
+        Tag == llvm::ELF::DT_SYMTAB || Tag == llvm::ELF::DT_SYMENT ||
+        Tag == llvm::ELF::DT_STRTAB || Tag == llvm::ELF::DT_STRSZ) {
       if (!Result.Tags.emplace(Tag, std::make_pair(Item.getVal(), Offset))
                .second)
         return fail("duplicate dynamic table tag");
@@ -109,9 +113,10 @@ llvm::Expected<DynamicLayout> dynamicLayout(llvm::ArrayRef<uint8_t> Binary) {
 
 } // namespace
 
+template <typename ELF>
 llvm::Expected<std::optional<uint32_t>>
-findELFSourceDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
-  auto Layout = dynamicLayout(Original.Raw);
+findDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
+  auto Layout = dynamicLayout<ELF>(Original.Raw);
   if (!Layout)
     return Layout.takeError();
   const auto &Tags = Layout->Tags;
@@ -119,7 +124,7 @@ findELFSourceDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
                       llvm::ELF::DT_STRTAB, llvm::ELF::DT_STRSZ})
     if (!Tags.count(Tag))
       return fail("missing dynamic symbol/string table");
-  if (Tags.at(llvm::ELF::DT_SYMENT).first != sizeof(ELF::Sym))
+  if (Tags.at(llvm::ELF::DT_SYMENT).first != sizeof(typename ELF::Sym))
     return fail("invalid dynamic symbol entry size");
   const uint64_t VA = Tags.at(llvm::ELF::DT_SYMTAB).first;
   const ELFShdrFields *Symbols = nullptr;
@@ -129,8 +134,8 @@ findELFSourceDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
         return fail("ambiguous dynamic symbol table");
       Symbols = &Section;
     }
-  if (!Symbols || Symbols->EntSize != sizeof(ELF::Sym) ||
-      Symbols->Size % sizeof(ELF::Sym) ||
+  if (!Symbols || Symbols->EntSize != sizeof(typename ELF::Sym) ||
+      Symbols->Size % sizeof(typename ELF::Sym) ||
       Symbols->Link >= Layout->Sections.size())
     return fail("invalid dynamic symbol section");
   auto SymOffset = fileOffset(Original.Raw, VA, Symbols->Size);
@@ -150,8 +155,8 @@ findELFSourceDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
       reinterpret_cast<const char *>(Original.Raw.data() + *StrOffset),
       Strings.Size);
   std::optional<uint32_t> Match;
-  for (uint64_t I = 1; I < Symbols->Size / sizeof(ELF::Sym); ++I) {
-    ELF::Sym Symbol;
+  for (uint64_t I = 1; I < Symbols->Size / sizeof(typename ELF::Sym); ++I) {
+    typename ELF::Sym Symbol;
     std::memcpy(&Symbol, Original.Raw.data() + *SymOffset + I * sizeof(Symbol),
                 sizeof(Symbol));
     if (Symbol.st_name >= Names.size())
@@ -172,6 +177,13 @@ findELFSourceDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
   return Match;
 }
 
+llvm::Expected<std::optional<uint32_t>>
+findELFSourceDynamicSymbol(const BinaryImage &Original, llvm::StringRef Name) {
+  return Original.getPointerSize() == 8
+             ? findDynamicSymbol<llvm::object::ELF64LE>(Original, Name)
+             : findDynamicSymbol<llvm::object::ELF32LE>(Original, Name);
+}
+
 llvm::Expected<ELFSourceRelocationTable>
 prepareELFSourceRelocations(const BinaryImage &Original,
                             const llvm::Module &Module, CompiledImage &Compiled,
@@ -187,12 +199,32 @@ prepareELFSourceRelocations(const BinaryImage &Original,
       // fixups retain that distinction in the compiler's authenticated kind.
       if (Fixup.Kind != llvm::FK_Data_8 && Fixup.Kind != llvm::FK_Data_4)
         continue;
-      if (Fixup.Specifier || Fixup.Kind != llvm::FK_Data_8 ||
-          Fixup.BitWidth != 64 || Original.Arch != Arch::X64)
-        return fail("unsupported absolute symbolic field: " + Section.Name);
+      // ARM's S_PREL31 is an expression specifier, not an MCFixup PC-relative
+      // flag. Its index/descriptor fields have already been authenticated and
+      // registered by the EHABI installer; they are not load-time pointers.
+      if (Original.Arch == Arch::ARM && Fixup.SpecifierName == "none" &&
+          llvm::StringRef(Section.Name).starts_with(".ARM.exidx") &&
+          llvm::StringRef(Fixup.Symbol).starts_with("__aeabi_unwind_cpp_pr"))
+        continue; // R_ARM_NONE is an unwind-runtime dependency, not a writer.
+      if (Original.Arch == Arch::ARM && Fixup.SpecifierName == "prel31" &&
+          (llvm::StringRef(Section.Name).starts_with(".ARM.exidx") ||
+           llvm::StringRef(Section.Name).starts_with(".ARM.extab")))
+        continue;
+      if (Original.Arch == Arch::X86 &&
+          ((Fixup.Symbol == "_GLOBAL_OFFSET_TABLE_" && !Fixup.Specifier) ||
+           Fixup.SpecifierName == "GOTOFF" || Fixup.SpecifierName == "GOT"))
+        continue; // The address model encodes these relative to the GOT anchor.
+      const unsigned Width = Original.getPointerSize();
+      if (Fixup.Specifier ||
+          Fixup.Kind != (Width == 8 ? llvm::FK_Data_8 : llvm::FK_Data_4) ||
+          Fixup.BitWidth != Width * 8)
+        return fail("unsupported absolute symbolic field: " + Section.Name +
+                    " kind=" + Fixup.KindName +
+                    " specifier=" + llvm::Twine(Fixup.Specifier) +
+                    " width=" + llvm::Twine(Fixup.BitWidth));
       if (Section.Kind != llvm::mc_rewrite::RewriteSectionKind::WritableData ||
-          !rangeInBounds(Fixup.Offset, 8, Section.Size) || !Fixup.IsResolved ||
-          Fixup.Symbol.empty())
+          !rangeInBounds(Fixup.Offset, Width, Section.Size) ||
+          !Fixup.IsResolved || Fixup.Symbol.empty())
         return fail("absolute pointer lacks resolved writable storage: " +
                     Section.Name);
       const uint64_t Field = Section.VA + Fixup.Offset;
@@ -220,11 +252,40 @@ prepareELFSourceRelocations(const BinaryImage &Original,
                                       MetadataOffset);
 }
 
-llvm::Expected<ELFSourceRelocationTable> prepareELFPointerRelocations(
-    const BinaryImage &Original, CompiledImage &Compiled,
-    llvm::ArrayRef<ELFSourcePointerRelocation> Pointers,
-    uint64_t MetadataOffset) {
-  std::vector<ELF::Rela> Added;
+template <typename ELF>
+llvm::Expected<ELFSourceRelocationTable>
+preparePointerRelocations(const BinaryImage &Original, CompiledImage &Compiled,
+                          llvm::ArrayRef<ELFSourcePointerRelocation> Pointers,
+                          uint64_t MetadataOffset) {
+  constexpr bool Is64 = sizeof(typename ELF::Addr) == 8;
+  constexpr unsigned Width = sizeof(typename ELF::Addr);
+  using Rel = std::conditional_t<Is64, typename ELF::Rela, typename ELF::Rel>;
+  constexpr int64_t AddressTag = Is64 ? llvm::ELF::DT_RELA : llvm::ELF::DT_REL;
+  constexpr int64_t SizeTag = Is64 ? llvm::ELF::DT_RELASZ : llvm::ELF::DT_RELSZ;
+  constexpr int64_t EntryTag =
+      Is64 ? llvm::ELF::DT_RELAENT : llvm::ELF::DT_RELENT;
+  uint32_t Absolute = 0, Relative = 0;
+  switch (Original.Arch) {
+  case Arch::X86:
+    Absolute = llvm::ELF::R_386_32;
+    Relative = llvm::ELF::R_386_RELATIVE;
+    break;
+  case Arch::X64:
+    Absolute = llvm::ELF::R_X86_64_64;
+    Relative = llvm::ELF::R_X86_64_RELATIVE;
+    break;
+  case Arch::ARM:
+    Absolute = llvm::ELF::R_ARM_ABS32;
+    Relative = llvm::ELF::R_ARM_RELATIVE;
+    break;
+  case Arch::AArch64:
+    Absolute = llvm::ELF::R_AARCH64_ABS64;
+    Relative = llvm::ELF::R_AARCH64_RELATIVE;
+    break;
+  default:
+    return fail("unsupported native pointer architecture");
+  }
+  std::vector<Rel> Added;
   std::set<uint64_t> Fields;
   for (const auto &Pointer : Pointers) {
     bool Owned = false;
@@ -234,38 +295,42 @@ llvm::Expected<ELFSourceRelocationTable> prepareELFPointerRelocations(
            Section.Kind ==
                llvm::mc_rewrite::RewriteSectionKind::UninitializedData) &&
           Pointer.FieldVA >= Section.VA &&
-          rangeInBounds(Pointer.FieldVA - Section.VA, 8, Section.Size))
+          rangeInBounds(Pointer.FieldVA - Section.VA, Width, Section.Size))
         Owned = true;
     if (!Owned)
       return fail("absolute pointer lacks bounded writable storage");
     auto Next = Fields.lower_bound(Pointer.FieldVA);
-    if ((Next != Fields.end() && *Next - Pointer.FieldVA < 8) ||
-        (Next != Fields.begin() && Pointer.FieldVA - *std::prev(Next) < 8))
+    if ((Next != Fields.end() && *Next - Pointer.FieldVA < Width) ||
+        (Next != Fields.begin() && Pointer.FieldVA - *std::prev(Next) < Width))
       return fail("overlapping pointer relocation fields");
     Fields.insert(Pointer.FieldVA);
-    ELF::Rela Relocation{};
+    Rel Relocation{};
     Relocation.r_offset = Pointer.FieldVA;
     Relocation.setSymbolAndType(Pointer.DynamicSymbol,
-                                Pointer.DynamicSymbol
-                                    ? llvm::ELF::R_X86_64_64
-                                    : llvm::ELF::R_X86_64_RELATIVE,
+                                Pointer.DynamicSymbol ? Absolute : Relative,
                                 false);
-    Relocation.r_addend = Pointer.Addend;
+    if constexpr (Is64)
+      Relocation.r_addend = Pointer.Addend;
+    else if (Pointer.FieldVA > UINT32_MAX || Pointer.DynamicSymbol > 0xffffff ||
+             (Pointer.DynamicSymbol
+                  ? !llvm::isInt<32>(Pointer.Addend)
+                  : Pointer.Addend < 0 ||
+                        uint64_t(Pointer.Addend) > UINT32_MAX))
+      return fail("ELF32 pointer relocation exceeds its field width");
     Added.push_back(Relocation);
   }
   if (Added.empty())
     return ELFSourceRelocationTable{};
-  auto Layout = dynamicLayout(Original.Raw);
+  auto Layout = dynamicLayout<ELF>(Original.Raw);
   if (!Layout)
     return Layout.takeError();
-  for (int64_t Tag :
-       {llvm::ELF::DT_RELA, llvm::ELF::DT_RELASZ, llvm::ELF::DT_RELAENT})
+  for (int64_t Tag : {AddressTag, SizeTag, EntryTag})
     if (!Layout->Tags.count(Tag))
       return fail("existing DT_RELA table required");
-  const auto &Address = Layout->Tags.at(llvm::ELF::DT_RELA);
-  const auto &Size = Layout->Tags.at(llvm::ELF::DT_RELASZ);
-  if (Layout->Tags.at(llvm::ELF::DT_RELAENT).first != sizeof(ELF::Rela) ||
-      Size.first % sizeof(ELF::Rela))
+  const auto &Address = Layout->Tags.at(AddressTag);
+  const auto &Size = Layout->Tags.at(SizeTag);
+  if (Layout->Tags.at(EntryTag).first != sizeof(Rel) ||
+      Size.first % sizeof(Rel))
     return fail("invalid original RELA table size");
   auto Offset = fileOffset(Original.Raw, Address.first, Size.first);
   if (!Offset)
@@ -273,9 +338,10 @@ llvm::Expected<ELFSourceRelocationTable> prepareELFPointerRelocations(
   std::optional<uint64_t> SectionHeader;
   for (size_t I = 0; I < Layout->Sections.size(); ++I) {
     const auto &Section = Layout->Sections[I];
-    if (Section.Type == llvm::ELF::SHT_RELA && Section.Addr == Address.first) {
+    if (Section.Type == (Is64 ? llvm::ELF::SHT_RELA : llvm::ELF::SHT_REL) &&
+        Section.Addr == Address.first) {
       if (SectionHeader || Section.Offset != *Offset ||
-          Section.Size != Size.first || Section.EntSize != sizeof(ELF::Rela))
+          Section.Size != Size.first || Section.EntSize != sizeof(Rel))
         return fail("RELA table disagrees with section identity");
       SectionHeader = Layout->Header.ShOff + I * Layout->Header.ShEntSize;
     }
@@ -285,11 +351,11 @@ llvm::Expected<ELFSourceRelocationTable> prepareELFPointerRelocations(
   auto Storage = validatePatchStorageLayout(Compiled, 4096);
   if (!Storage)
     return Storage.takeError();
-  if (MetadataOffset > UINT64_MAX - 7 ||
-      Added.size() > (UINT64_MAX - Size.first) / sizeof(ELF::Rela))
+  if (MetadataOffset > UINT64_MAX - (Width - 1) ||
+      Added.size() > (UINT64_MAX - Size.first) / sizeof(Rel))
     return fail("relocation table size or alignment overflows");
-  MetadataOffset = llvm::alignTo(MetadataOffset, 8);
-  const uint64_t TableSize = Size.first + Added.size() * sizeof(ELF::Rela);
+  MetadataOffset = llvm::alignTo(MetadataOffset, Width);
+  const uint64_t TableSize = Size.first + Added.size() * sizeof(Rel);
   if (!Storage->WritableOffset || MetadataOffset < Storage->ReadOnlySize ||
       !rangeInBounds(MetadataOffset, TableSize, Storage->WritableOffset))
     return fail("relocation table exceeds reserved read-only padding");
@@ -299,35 +365,46 @@ llvm::Expected<ELFSourceRelocationTable> prepareELFPointerRelocations(
     const auto *Bytes = reinterpret_cast<const uint8_t *>(&Relocation);
     Table.insert(Table.end(), Bytes, Bytes + sizeof(Relocation));
   }
+  if constexpr (!Is64)
+    for (const auto &Pointer : Pointers)
+      writeLE<uint32_t>(Compiled.Bytes.data() + Pointer.FieldVA -
+                            Compiled.BaseVA,
+                        static_cast<uint32_t>(Pointer.Addend));
   std::copy(Table.begin(), Table.end(),
             Compiled.Bytes.begin() + MetadataOffset);
-  return ELFSourceRelocationTable{Compiled.BaseVA + MetadataOffset, TableSize,
-                                  Address.second, Size.second, *SectionHeader};
+  return ELFSourceRelocationTable{Compiled.BaseVA + MetadataOffset,
+                                  TableSize,
+                                  Address.second,
+                                  Size.second,
+                                  *SectionHeader,
+                                  Is64};
 }
 
-llvm::Error installELFSourceRelocations(std::vector<uint8_t> &Binary,
-                                        const ELFSourceRelocationTable &Table) {
+template <typename ELF>
+llvm::Error installPointerRelocations(std::vector<uint8_t> &Binary,
+                                      const ELFSourceRelocationTable &Table) {
   if (!Table.Size)
     return llvm::Error::success();
   auto Offset = fileOffset(Binary, Table.VA, Table.Size);
   if (!Offset)
     return Offset.takeError();
   for (uint64_t Field : {Table.AddressTagOffset, Table.SizeTagOffset})
-    if (!rangeInBounds(Field, sizeof(ELF::Dyn), Binary.size()))
+    if (!rangeInBounds(Field, sizeof(typename ELF::Dyn), Binary.size()))
       return fail("dynamic tag exceeds candidate file");
-  if (!rangeInBounds(Table.SectionHeaderOffset, sizeof(ELF::Shdr),
+  if (!rangeInBounds(Table.SectionHeaderOffset, sizeof(typename ELF::Shdr),
                      Binary.size()))
     return fail("relocation section header exceeds candidate file");
-  ELF::Dyn Address, Size;
+  typename ELF::Dyn Address, Size;
   std::memcpy(&Address, Binary.data() + Table.AddressTagOffset,
               sizeof(Address));
   std::memcpy(&Size, Binary.data() + Table.SizeTagOffset, sizeof(Size));
-  if (Address.getTag() != llvm::ELF::DT_RELA ||
-      Size.getTag() != llvm::ELF::DT_RELASZ)
+  constexpr bool Is64 = sizeof(typename ELF::Addr) == 8;
+  if (Address.getTag() != (Is64 ? llvm::ELF::DT_RELA : llvm::ELF::DT_REL) ||
+      Size.getTag() != (Is64 ? llvm::ELF::DT_RELASZ : llvm::ELF::DT_RELSZ))
     return fail("dynamic tag identity changed during installation");
-  auto Section = readELFShdr(Binary.data() + Table.SectionHeaderOffset, true);
-  if (Section.Type != llvm::ELF::SHT_RELA || Section.Addr != Address.getVal() ||
-      Section.Size != Size.getVal())
+  auto Section = readELFShdr(Binary.data() + Table.SectionHeaderOffset, Is64);
+  if (Section.Type != (Is64 ? llvm::ELF::SHT_RELA : llvm::ELF::SHT_REL) ||
+      Section.Addr != Address.getVal() || Section.Size != Size.getVal())
     return fail("relocation section identity changed during installation");
   Address.d_un.d_ptr = Table.VA;
   Size.d_un.d_val = Table.Size;
@@ -337,8 +414,24 @@ llvm::Error installELFSourceRelocations(std::vector<uint8_t> &Binary,
   std::memcpy(Binary.data() + Table.AddressTagOffset, &Address,
               sizeof(Address));
   std::memcpy(Binary.data() + Table.SizeTagOffset, &Size, sizeof(Size));
-  writeELFShdr(Binary.data() + Table.SectionHeaderOffset, true, Section);
+  writeELFShdr(Binary.data() + Table.SectionHeaderOffset, Is64, Section);
   return llvm::Error::success();
 }
 
+llvm::Expected<ELFSourceRelocationTable> prepareELFPointerRelocations(
+    const BinaryImage &Original, CompiledImage &Compiled,
+    llvm::ArrayRef<ELFSourcePointerRelocation> Pointers,
+    uint64_t MetadataOffset) {
+  return Original.getPointerSize() == 8
+             ? preparePointerRelocations<llvm::object::ELF64LE>(
+                   Original, Compiled, Pointers, MetadataOffset)
+             : preparePointerRelocations<llvm::object::ELF32LE>(
+                   Original, Compiled, Pointers, MetadataOffset);
+}
+llvm::Error installELFSourceRelocations(std::vector<uint8_t> &Binary,
+                                        const ELFSourceRelocationTable &Table) {
+  return Table.Is64
+             ? installPointerRelocations<llvm::object::ELF64LE>(Binary, Table)
+             : installPointerRelocations<llvm::object::ELF32LE>(Binary, Table);
+}
 } // namespace neverd

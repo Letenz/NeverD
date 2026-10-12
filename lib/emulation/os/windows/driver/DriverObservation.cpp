@@ -88,6 +88,7 @@ DriverObservation::replaceWatches(std::vector<ExecutionWatch> Next) {
 }
 
 llvm::Error DriverObservation::entered(bool Entry, ProcessStackView NewStack) {
+  MemoryUnchanged = false;
   EntryInvocation = Entry;
   Stack = NewStack;
   if (!Observer)

@@ -84,9 +84,9 @@ class SourcePatchDocumentationTests(unittest.TestCase):
         errors = self.check({path: path.read_text(encoding="utf-8").replace("--func=0x401140", "--func=0x401141")})
         self.assertTrue(any("examples differ in compiler" in e for e in errors), errors)
 
-    def test_target_refusal_cannot_be_translated_into_cpu_support(self) -> None:
+    def test_target_support_cannot_be_translated_into_refusal(self) -> None:
         path = Path("docs/de/source-patching.md")
-        errors = self.check({path: path.read_text(encoding="utf-8").replace("| `PE` | `REFUSED`", "| `PE` | `CPU`")})
+        errors = self.check({path: path.read_text(encoding="utf-8").replace("| `PE` | `CPU`", "| `PE` | `REFUSED`")})
         self.assertTrue(any("target dispositions differ" in e for e in errors), errors)
 
     def test_runtime_requirement_cannot_disappear_into_a_comment(self) -> None:
