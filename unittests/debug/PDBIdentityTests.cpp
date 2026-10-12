@@ -597,6 +597,33 @@ TEST(PDBIdentityIntegration, DataSymbolsAroundAnAddressAreTheNearestPublics) {
   EXPECT_EQ(*After, 0x14000200Eu);
 }
 
+TEST(PDBIdentityIntegration, AnAddressFollowsTheDataPublicBeforeIt) {
+  // A whole load reads every public; one limited to some functions reads
+  // them through the address map as asked.
+  for (const bool Limited : {false, true}) {
+    SCOPED_TRACE(Limited);
+    auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+    ASSERT_TRUE(static_cast<bool>(ImageOr))
+        << llvm::toString(ImageOr.takeError());
+    if (Limited)
+      ImageOr->LoadOnlyFunctionEntries.insert(0x140001250);
+    auto ContextOr = PDBDebugContext::load(
+        safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+    ASSERT_TRUE(static_cast<bool>(ContextOr))
+        << llvm::toString(ContextOr.takeError());
+    const DebugContext &Context = **ContextOr;
+    // "EARLY" begins at 0x140002008, and the bytes after it up to "CLEAN" at
+    // 0x14000200E follow it.
+    EXPECT_EQ(Context.precedingDataSymbol(0x14000200A),
+              std::optional<va_t>(0x140002008));
+    EXPECT_EQ(Context.precedingDataSymbol(0x140002008),
+              std::optional<va_t>(0x140002008));
+    // The function public "main" begins at 0x140001250: its bytes follow
+    // code.
+    EXPECT_EQ(Context.precedingDataSymbol(0x140001254), std::nullopt);
+  }
+}
+
 TEST(PDBIdentityIntegration, MatchingFixtureAuthenticatesNamesButNotExtents) {
   auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
   ASSERT_TRUE(static_cast<bool>(ImageOr))

@@ -149,6 +149,7 @@ public:
   std::optional<DataObjectSym> resolveDataObject(va_t Addr) const override;
   std::pair<std::optional<va_t>, std::optional<va_t>>
   dataSymbolsAround(va_t Addr) const override;
+  std::optional<va_t> precedingDataSymbol(va_t Addr) const override;
   bool hasInfo() const override;
   bool hasAuthenticatedFunctionSignatures() const override;
   bool hasAuthenticatedObjectExtents() const override;

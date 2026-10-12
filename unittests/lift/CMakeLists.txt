@@ -1480,6 +1480,7 @@ endif()
 
 add_neverd_unittest(NeverDLLVMCPhiTests
   core/LLVMCPhiTests.cpp
+  core/LLVMCLongInitializerTests.cpp
   core/LLVMCNonHeaderRegionTests.cpp
   LINK_COMPONENTS BackendC
 )
