@@ -70,6 +70,9 @@ DarwinFiles::advisoryLock(const ProcessServiceEvent &Event,
     }
   }
   File.Lock = Requested;
+  // Pinned XNU sets FWASLOCKED only after a successful lock acquisition.
+  // Unlock preserves this description history; failures never create it.
+  File.Flags |= FileWasLocked;
   return returned(0);
 }
 } // namespace neverd::emulation::darwin_model

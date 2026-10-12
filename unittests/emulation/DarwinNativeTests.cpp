@@ -52,6 +52,28 @@ extern "C" ssize_t __getdirentries64(int, void *, size_t, off_t *);
 
 namespace neverd::emulation {
 namespace {
+#if defined(__APPLE__)
+// Original async-safe observation of an EOF mapping fault. Default fatal
+// exit may leave a fork child in kernel exit state. Observe the kernel signal,
+// its fault code and exact address, then verify normal child exit.
+struct NativeMappingFault {
+  int Signal;
+  int Code;
+  uintptr_t Address;
+};
+volatile sig_atomic_t NativeMappingFaultFD = -1;
+void captureNativeMappingFault(int Signal, siginfo_t *Info, void *Context) {
+  (void)Context;
+  const NativeMappingFault Fault{
+      Signal, Info ? Info->si_code : 0,
+      Info ? reinterpret_cast<uintptr_t>(Info->si_addr) : 0};
+  ssize_t Written;
+  do {
+    Written = ::write(NativeMappingFaultFD, &Fault, sizeof(Fault));
+  } while (Written < 0 && errno == EINTR);
+  ::_exit(Written == ssize_t(sizeof(Fault)) ? 77 : 78);
+}
+#endif
 TEST(DarwinNative, ProcessNiceMatchesSDKAndOneSignedRawCapture) {
 #if !defined(__APPLE__) || (!defined(__aarch64__) && !defined(__x86_64__))
   GTEST_SKIP() << "native Darwin priority capture requires macOS";
@@ -882,19 +904,44 @@ TEST(DarwinNative, PrivateFileOffsetAndTailMatchHostMapping) {
   EXPECT_EQ(
       llvm::ArrayRef<uint8_t>(Observed),
       llvm::ArrayRef<uint8_t>(static_cast<const uint8_t *>(Native), Page));
+  int FaultPipe[2];
+  ASSERT_EQ(::pipe(FaultPipe), 0);
+  auto ClosePipe = llvm::scope_exit([&] {
+    for (const int FD : FaultPipe)
+      if (FD >= 0)
+        ::close(FD);
+  });
+  struct sigaction FaultAction{};
+  FaultAction.sa_sigaction = captureNativeMappingFault;
+  FaultAction.sa_flags = SA_SIGINFO;
+  ASSERT_EQ(sigemptyset(&FaultAction.sa_mask), 0);
   const auto Child = ::fork();
   ASSERT_GE(Child, 0);
   if (!Child) {
     const struct rlimit NoCore{0, 0};
-    ::setrlimit(RLIMIT_CORE, &NoCore);
+    if (::setrlimit(RLIMIT_CORE, &NoCore))
+      ::_exit(79);
+    ::close(FaultPipe[0]);
+    NativeMappingFaultFD = FaultPipe[1];
+    if (::sigaction(SIGBUS, &FaultAction, nullptr))
+      ::_exit(80);
     const volatile auto Beyond = static_cast<volatile uint8_t *>(Native)[Page];
     (void)Beyond;
     ::_exit(0);
   }
+  ASSERT_EQ(::close(FaultPipe[1]), 0);
+  FaultPipe[1] = -1;
   int Status = 0;
   ASSERT_EQ(::waitpid(Child, &Status, 0), Child);
-  ASSERT_TRUE(WIFSIGNALED(Status));
-  EXPECT_EQ(WTERMSIG(Status), SIGBUS);
+  ASSERT_TRUE(WIFEXITED(Status));
+  ASSERT_EQ(WEXITSTATUS(Status), 77);
+  NativeMappingFault Fault{};
+  ASSERT_EQ(::read(FaultPipe[0], &Fault, sizeof(Fault)),
+            ssize_t(sizeof(Fault)));
+  EXPECT_EQ(Fault.Signal, SIGBUS);
+  EXPECT_TRUE(Fault.Code == BUS_ADRALN || Fault.Code == BUS_ADRERR ||
+              Fault.Code == BUS_OBJERR);
+  EXPECT_EQ(Fault.Address, reinterpret_cast<uintptr_t>(Native) + Page);
 #endif
 }
 TEST(DarwinNative, Stat64WireRecordMatchesHostSDKAndFilesystemObservation) {
@@ -1109,7 +1156,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         llvm::StringRef(Test.Mode) == "ordinary-advisory-locks" ||
         llvm::StringRef(Test.Mode) == "ordinary-file-synchronization" ||
         llvm::StringRef(Test.Mode) == "ordinary-data-synchronization" ||
-        llvm::StringRef(Test.Mode) == "created-regular-synchronization") {
+        llvm::StringRef(Test.Mode) == "created-regular-synchronization" ||
+        llvm::StringRef(Test.Mode) == "created-regular-advisory-locks") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
       CaseInput = (Catalogue / "data").string();

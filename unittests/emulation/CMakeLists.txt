@@ -238,6 +238,7 @@ add_neverd_unittest(NeverDDarwinProcessTests
   DarwinSynchronizationTests.cpp
   DarwinDataSynchronizationTests.cpp
   DarwinCreatedSynchronizationTests.cpp
+    DarwinCreatedAdvisoryLockTests.cpp
   DarwinPollTests.cpp
   DarwinSelectTests.cpp
   DarwinPselectTests.cpp

@@ -316,8 +316,9 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     }
     return llvm::Error::success();
   };
-  auto Completion = [&](const llvm::json::Value &Value, llvm::StringRef Name,
-                        auto &Options) -> llvm::Error {
+  auto ObjectProvider = [&](const llvm::json::Value &Value,
+                            llvm::StringRef Name,
+                            auto &Options) -> llvm::Error {
     const auto *Environment = Value.getAsObject();
     const auto *Objects =
         Environment ? Environment->getArray(field::FileSynchronizationObjects)
@@ -379,27 +380,14 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         Remaining -= Path->size() + 1;
       }
     } else if (Name == field::FileDataSynchronization) {
-      if (auto E = Completion(V, Name, Out.DataSynchronization))
+      if (auto E = ObjectProvider(V, Name, Out.DataSynchronization))
         return E;
     } else if (Name == field::FileSynchronization) {
-      if (auto E = Completion(V, Name, Out.Synchronization))
+      if (auto E = ObjectProvider(V, Name, Out.Synchronization))
         return E;
     } else if (Name == field::FileAdvisoryLocks) {
-      const auto *Environment = V.getAsObject();
-      const auto *Objects =
-          Environment ? Environment->getArray(field::FileAdvisoryLockObjects)
-                      : nullptr;
-      if (!Environment || Environment->size() != 1 || !Objects ||
-          Objects->size() > darwin_file_limits::Files)
-        return invalid(Name);
-      auto &Locks = Out.AdvisoryLocks.emplace();
-      for (const auto &Value : *Objects) {
-        const auto Path = Value.getAsString();
-        if (!Path || Path->size() >= Remaining ||
-            !Locks.Objects.insert(Path->str()).second)
-          return invalid(Name);
-        Remaining -= Path->size() + 1;
-      }
+      if (auto E = ObjectProvider(V, Name, Out.AdvisoryLocks))
+        return E;
     } else if (Name == field::FileOwnershipMutations) {
       const auto *Environment = V.getAsObject();
       const auto *Objects =

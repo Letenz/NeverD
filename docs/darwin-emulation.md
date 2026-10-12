@@ -2170,7 +2170,7 @@ Raw BSD `flock`131 uses `DarwinFileOptions::AdvisoryLocks` or strict `darwin_fil
 
 The declared whole-file provider starts with no locks and includes only current modeled open descriptions as possible owners. Low32 FD lookup precedes action handling. A known vnode with no SH/EX/UN action returns EBADF9. UN8 takes priority over EX2, which takes priority over SH1; unrelated bits are ignored when an action is present, and NB4 selects a nonblocking attempt. Readonly descriptions can take EX without consulting modeled credentials or deriving a general DAC grant. Different descriptions of the same Contents share the lock domain: SH/SH is compatible and any EX conflicts. Nonblocking conflicts return EAGAIN35 before removing the caller’s old lock, so a failed upgrade preserves SH. A successful upgrade or downgrade replaces that description’s lock, and uncontended blocking requests complete immediately. A contended blocking request stops unsupported before any model mutation; this does not model the native wait path, which may drop an old shared lock while waiting.
 
-Dup, fcntl duplication and dup2 share a description owner. Current descriptor membership determines its lifetime: the last duplicate close or final dup2 replacement releases the lock even when Contents survive in a real VM mapping or a temporary stat/mapping reference. Separate opens cannot unlock another description. Grants and conflicts follow the object through runtime hardlinks, rename and held unlink, including zero remaining names. Created objects and reused names do not inherit the original grant. Flock changes no bytes, offsets, descriptor flags, stat fields, xattrs, allocation or namespace, and never restores invalidated metadata. Existing mode, ownership, data and namespace policies keep their own authority and times.
+Dup, fcntl duplication and dup2 share a description owner. Current descriptor membership determines its lifetime: the last duplicate close or final dup2 replacement releases the lock even when Contents survive in a real VM mapping or a temporary stat/mapping reference. Separate opens cannot unlock another description. Grants and conflicts follow the object through runtime hardlinks, rename and held unlink, including zero remaining names. Created objects and reused names do not inherit the original grant. Flock changes no bytes, offsets, stat fields, xattrs, allocation or namespace, and never restores invalidated metadata. Successful acquisition sets persistent description status FWASLOCKED0x4000; unlock keeps it, while errors and refused waits never set it. Existing mode, ownership, data and namespace policies keep their own authority and times.
 
 The original SDK-free workload contains77 service records and13 guarded full stat comparisons, with separate main return39 and stdout K. It is registered for five software profiles, C/CLI/Python, and all three matching ARM64 HVF profiles. Current native inventories are64 common cases and79 mandatory workloads per platform; all237 matching ARM64 native identities require actual successful execution. Original ARM64 O0/O1/O2 captures retain720 literal lock observations:522 action controls and198 lifetime controls, each through raw SVC and syscall with three upper-carrier variants. The lifetime probe includes runtime links, rename, held zero-name unlink, name recreation, duplicate close and a real private mapping. Complete records use the actual native times. These probes do not qualify external/interprocess peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC/listeners, revocation, provider errors, native leases or blocking waits. Signals, sockets, kqueue, dyld, Mach IPC and Apple frameworks remain separate gaps; fsync is limited to the declared provider below. Native Intel and physical iOS remain unverified, and the full macOS/iOS environment is incomplete.
 
@@ -2191,7 +2191,7 @@ current descriptor membership owns lock lifetime / last duplicate close releases
 VM mapping Contents leases do not retain description locks
 runtime hardlink rename held zero-name unlink keep object grant
 created or reused names do not inherit provider grants / path registry not lock authority
-bytes cursors descriptor flags stat records xattrs and allocation unchanged by flock
+flock preserves bytes cursors stat xattrs and allocation / successful lock sets persistent FWASLOCKED0x4000
 mode ownership data namespace policies independent / invalidated records never restored
 all52 other file routes closed before preflight / either static query rejects even empty declaration
 SDK-free77 service records / 13 guarded full stat observations / separate main return39
@@ -2214,7 +2214,7 @@ The objects array grants only initial ordinary regular objects with complete met
 
 Low32 descriptor lookup comes first, returning EBADF9 for absent or closed descriptors even without a provider. Opaque streams, directory descriptions and symlink descriptions remain unsupported independently of the ordinary regular provider. Readonly regular descriptions may complete with an explicit object grant, without inferring general DAC authority. Contents owns the grant through runtime hardlinks, rename and held zero-name unlink. Current duplicate, fcntl and dup2 descriptions select the current object; created objects and reused names never inherit an initial grant; fresh objects require the separate creation provider below. A mapping or retained Contents cannot make a closed descriptor valid. Completion changes no bytes, cursor, descriptor flags, stat fields, xattrs, allocation, namespace or advisory locks, and cannot restore invalidated observations. Mutation and authorization owners remain independent.
 
-The original SDK-free workload retains68 service records and20 guarded full stat observations, with separate main return40 and stdout S. It covers five software profiles, C/CLI/Python and the three matching ARM64 HVF profiles. Current inventories require67 common native cases and82 mandatory workloads per platform: all246 matching ARM64 identities must actually pass. Original ARM64 O0/O1/O2 controls contain504 literal observations through raw SVC and syscall with three upper-carrier variants. Their complete guarded native records and cursors are unchanged, using actual native times. Directory and pipe results in those captures are observations outside the admitted ordinary regular-object provider. F_FULLFSYNC51, F_BARRIERFSYNC85, global synchronization, provider errors, resource-fork/shadow flushes, leases, revocation and asynchronous waits remain separate gaps. Native Intel and physical iOS remain unverified; the complete OS/framework environment is still incomplete.
+The original SDK-free workload retains68 service records and20 guarded full stat observations, with separate main return40 and stdout S. It covers five software profiles, C/CLI/Python and the three matching ARM64 HVF profiles. Current inventories require68 common native cases and83 mandatory workloads per platform: all249 matching ARM64 identities must actually pass. Original ARM64 O0/O1/O2 controls contain504 literal observations through raw SVC and syscall with three upper-carrier variants. Their complete guarded native records and cursors are unchanged, using actual native times. Directory and pipe results in those captures are observations outside the admitted ordinary regular-object provider. F_FULLFSYNC51, F_BARRIERFSYNC85, global synchronization, provider errors, resource-fork/shadow flushes, leases, revocation and asynchronous waits remain separate gaps. Native Intel and physical iOS remain unverified; the complete OS/framework environment is still incomplete.
 
 
 ```text
@@ -2239,8 +2239,8 @@ all52 other logical file routes closed before preflight / both static queries re
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
-67 current native-common cases / 82 mandatory workloads per platform
-ARM64 matching native mandatory246 / actual successful execution required
+68 current native-common cases / 83 mandatory workloads per platform
+ARM64 matching native mandatory249 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
@@ -2259,7 +2259,7 @@ The required objects array grants initial objects; the independent optional crea
 
 Low32 FD lookup precedes provider selection and returns EBADF9 for absent/closed descriptors. Opaque streams and directory/symlink descriptions remain independent unsupported kinds or targets. Readonly regular descriptions may complete with the explicit data grant, without general DAC inference. A successful completion changes no bytes, cursor, flags, stat, xattrs, allocation, namespace or advisory locks, and restores no invalid observations. Write/truncate, mode/ownership and other mutation owners keep their existing state and authority.
 
-The original SDK-free data workload records41 services and11 whole guarded stat observations, with main41/stdout D, through five software profiles, C/CLI/Python and three matching ARM64 HVF profiles. Current native inventories require67 common cases and82 mandatory workloads per platform, including all246 matching ARM64 identities actually passing. The original ARM64 O0/O1/O2 captures have252 literal observations through libc/raw calls and three high carriers, with actual native times and unchanged176-byte guarded native records/cursors. Native directory/pipe/new-object results do not supply an initial-object model provider. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Provider failures, cancellation, leases, resource-fork/shadow flushes, asynchronous waits, physical durability, full/barrier/global synchronization and the complete Apple framework environment remain unsupported or unverified.
+The original SDK-free data workload records41 services and11 whole guarded stat observations, with main41/stdout D, through five software profiles, C/CLI/Python and three matching ARM64 HVF profiles. Current native inventories require68 common cases and83 mandatory workloads per platform, including all249 matching ARM64 identities actually passing. The original ARM64 O0/O1/O2 captures have252 literal observations through libc/raw calls and three high carriers, with actual native times and unchanged176-byte guarded native records/cursors. Native directory/pipe/new-object results do not supply an initial-object model provider. Native5s, guest/Python5,000,000us/quantum1024 and public10s remain unchanged. Provider failures, cancellation, leases, resource-fork/shadow flushes, asynchronous waits, physical durability, full/barrier/global synchronization and the complete Apple framework environment remain unsupported or unverified.
 
 ```text
 fdatasync187 / distinct Fdatasync Int purpose / low32 FD / raw high carriers retained
@@ -2284,8 +2284,8 @@ all52 other logical file routes closed before preflight / both static queries re
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
-67 current native-common cases / 82 mandatory workloads per platform
-ARM64 matching native mandatory246 / actual successful execution required
+68 current native-common cases / 83 mandatory workloads per platform
+ARM64 matching native mandatory249 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
@@ -2310,7 +2310,7 @@ ordinary regular creation commit only / independent File95+408 and Data187 grant
 initial grants and creation grants never supply each other / existing O_CREAT receives no new grant
 name reuse never transfers old authority / fresh explicit creation grant may authorize a replacement
 false or omission retains old default / missing and empty environments remain distinct
-single completion parser and input byte owner / no extra path entry FD inode or byte charge
+single set-provider parser and input byte owner / no extra path entry FD inode or byte charge
 failed creation preserves admission resources and grants / directories links streams remain unsupported
 Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and mapping leases
 closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
@@ -2319,11 +2319,47 @@ completion grants supply no mode ownership xattr flock or general DAC authority
 both immutable query environments reject even false declarations / all52 other logical routes remain closed
 SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
 CreatedRegularSynchronizationKeepsIndependentProvidersAndState
-67 current native-common cases / 82 mandatory workloads per platform / ARM64 matching native mandatory246
+68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
 702 original native literal observations / O0 O1 O2 / raw SVC and syscall / three upper carriers
 freshly created target without preparatory sync / own176-byte guarded native stat and content preserved
 native and model post-write F_GETFL65538 / existing FileWasWritten0x10000 / own initial flags captured and preserved
 immediate successful declared provider / committed model mutations / no deferred work or requested cancellation
 no host flush or physical durability / general cancellation provider errors leases waits remain unknown
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## Explicit locks for created ordinary files
+
+The independent advisory_locks declaration accepts optional created_regular_objects (C++ CreatedRegularObjects), defaultfalse. True requires a complete CreationPolicy and grants only successfully created ordinary regular objects. Required objects still grants initial objects separately; O_CREAT of an existing object and name reuse never transfer authority. Successful flock also sets persistent description status FWASLOCKED0x4000, visible through F_GETFL. Unlock keeps that history; F_SETFL cannot manufacture or clear it.
+
+```text
+advisory_locks={"objects":[],"created_regular_objects":true}
+CreatedRegularObjects / created_regular_objects / defaultfalse / mandatory unique objects array
+true requires complete CreationPolicy / regular creation commit only / initial objects independent
+existing O_CREAT and reused names transfer no authority / explicit replacement grant is fresh
+single set-provider parser and admission / shared path+NUL budget / no extra entry byte FD or inode
+failed creation preserves budgets and next inode / directories links streams receive no regular grant
+Contents grants follow hardlink rename held zero-name and mapping / current FD lookup first
+description owns lock and history / dup fcntl dup2 share / independent opens own separate history
+successful flock sets FileWasLocked FWASLOCKED0x4000 / F_GETFL includes persistent description status
+unlock preserves history / failed and unsupported actions do not set it
+F_SETFL accepts observed history for roundtrip but cannot manufacture or clear it
+symbolic recognized history returns ENOTTY25 / opaque streams zero / actual history unchanged
+written created F_GETFL65538 becomes81922 after successful flock / readonly0 becomes16384
+nonblocking conflict35 before old-lock removal / failed upgrade retains shared lock
+last description close releases lock / VM Contents lease cannot retain lock or revive closed FD9
+flock preserves bytes stat cursor xattrs allocation namespace and observation validity
+mode ownership completion xattr permissions remain independent / no general DAC grant
+both static query declarations reject even false environment / all52 other file routes closed
+SDK-free131 service records / 12 guarded full stat observations / separate main return43 / stdout L
+CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus
+68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
+486 original native flock observations / 72 fcntl history controls / O0 O1 O2 / raw SVC and libc
+162 additional native symbolic and pipe status controls / O0 O1 O2 / two APIs three carriers
+whole176-byte guarded native stat / dirty bytes and current cursors preserved / literal flag transitions
+failed first flag-preservation assumption retained / sole semantic owner repaired from native and pinned XNU
+native5s guest5000000us quantum1024 public10s unchanged / no timing stability claim
+no external peers range locks blocking waits cancellation revocation leases or host provider qualification
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```

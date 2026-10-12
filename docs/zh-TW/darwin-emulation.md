@@ -1,6 +1,6 @@
 **語言**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 8ab7d80b05dfd2be0fd0a6e4fe66faf0a0e895ca83a5a5a9234e6e2192437546 -->
+<!-- i18n-source: 746ac31df562ef8b09a70859e9eb72950ee1539cd1d9a8d7d11e127d0a0e4b79 -->
 
 [← 文件索引](README.md)
 
@@ -1311,7 +1311,7 @@ current descriptor membership owns lock lifetime / last duplicate close releases
 VM mapping Contents leases do not retain description locks
 runtime hardlink rename held zero-name unlink keep object grant
 created or reused names do not inherit provider grants / path registry not lock authority
-bytes cursors descriptor flags stat records xattrs and allocation unchanged by flock
+flock preserves bytes cursors stat xattrs and allocation / successful lock sets persistent FWASLOCKED0x4000
 mode ownership data namespace policies independent / invalidated records never restored
 all52 other file routes closed before preflight / either static query rejects even empty declaration
 SDK-free77 service records / 13 guarded full stat observations / separate main return39
@@ -1352,8 +1352,8 @@ all52 other logical file routes closed before preflight / both static queries re
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
-67 current native-common cases / 82 mandatory workloads per platform
-ARM64 matching native mandatory246 / actual successful execution required
+68 current native-common cases / 83 mandatory workloads per platform
+ARM64 matching native mandatory249 / actual successful execution required
 504 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 F_FULLFSYNC51 F_BARRIERFSYNC85 and global sync remain unsupported
@@ -1391,8 +1391,8 @@ all52 other logical file routes closed before preflight / both static queries re
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
-67 current native-common cases / 82 mandatory workloads per platform
-ARM64 matching native mandatory246 / actual successful execution required
+68 current native-common cases / 83 mandatory workloads per platform
+ARM64 matching native mandatory249 / actual successful execution required
 252 original native literal observations / O0 O1 O2 / raw SVC and syscall / three high carriers
 176-byte guarded native stat and cursors unchanged / actual native times
 directory and pipe captures do not expand ordinary initial regular-object provider
@@ -1417,7 +1417,7 @@ ordinary regular creation commit only / independent File95+408 and Data187 grant
 initial grants and creation grants never supply each other / existing O_CREAT receives no new grant
 name reuse never transfers old authority / fresh explicit creation grant may authorize a replacement
 false or omission retains old default / missing and empty environments remain distinct
-single completion parser and input byte owner / no extra path entry FD inode or byte charge
+single set-provider parser and input byte owner / no extra path entry FD inode or byte charge
 failed creation preserves admission resources and grants / directories links streams remain unsupported
 Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and mapping leases
 closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
@@ -1426,11 +1426,47 @@ completion grants supply no mode ownership xattr flock or general DAC authority
 both immutable query environments reject even false declarations / all52 other logical routes remain closed
 SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
 CreatedRegularSynchronizationKeepsIndependentProvidersAndState
-67 current native-common cases / 82 mandatory workloads per platform / ARM64 matching native mandatory246
+68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
 702 original native literal observations / O0 O1 O2 / raw SVC and syscall / three upper carriers
 freshly created target without preparatory sync / own176-byte guarded native stat and content preserved
 native and model post-write F_GETFL65538 / existing FileWasWritten0x10000 / own initial flags captured and preserved
 immediate successful declared provider / committed model mutations / no deferred work or requested cancellation
 no host flush or physical durability / general cancellation provider errors leases waits remain unknown
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## 新建普通檔案的明確鎖定授權
+
+獨立 advisory_locks 宣告可包含 created_regular_objects 布林值，對應 C++ CreatedRegularObjects，預設 false。true 要求完整 CreationPolicy，只授權成功新建的普通檔案；必填 objects 獨立授權初始物件，開啟已有檔案或重用名稱都不轉移授權。成功 flock 會設定開啟描述共享的持續 FWASLOCKED0x4000 狀態，可由 F_GETFL 觀察；解除鎖定保留此狀態，F_SETFL 不能憑空設定或清除它。
+
+```text
+advisory_locks={"objects":[],"created_regular_objects":true}
+CreatedRegularObjects / created_regular_objects / defaultfalse / mandatory unique objects array
+true requires complete CreationPolicy / regular creation commit only / initial objects independent
+existing O_CREAT and reused names transfer no authority / explicit replacement grant is fresh
+single set-provider parser and admission / shared path+NUL budget / no extra entry byte FD or inode
+failed creation preserves budgets and next inode / directories links streams receive no regular grant
+Contents grants follow hardlink rename held zero-name and mapping / current FD lookup first
+description owns lock and history / dup fcntl dup2 share / independent opens own separate history
+successful flock sets FileWasLocked FWASLOCKED0x4000 / F_GETFL includes persistent description status
+unlock preserves history / failed and unsupported actions do not set it
+F_SETFL accepts observed history for roundtrip but cannot manufacture or clear it
+symbolic recognized history returns ENOTTY25 / opaque streams zero / actual history unchanged
+written created F_GETFL65538 becomes81922 after successful flock / readonly0 becomes16384
+nonblocking conflict35 before old-lock removal / failed upgrade retains shared lock
+last description close releases lock / VM Contents lease cannot retain lock or revive closed FD9
+flock preserves bytes stat cursor xattrs allocation namespace and observation validity
+mode ownership completion xattr permissions remain independent / no general DAC grant
+both static query declarations reject even false environment / all52 other file routes closed
+SDK-free131 service records / 12 guarded full stat observations / separate main return43 / stdout L
+CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus
+68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
+486 original native flock observations / 72 fcntl history controls / O0 O1 O2 / raw SVC and libc
+162 additional native symbolic and pipe status controls / O0 O1 O2 / two APIs three carriers
+whole176-byte guarded native stat / dirty bytes and current cursors preserved / literal flag transitions
+failed first flag-preservation assumption retained / sole semantic owner repaired from native and pinned XNU
+native5s guest5000000us quantum1024 public10s unchanged / no timing stability claim
+no external peers range locks blocking waits cancellation revocation leases or host provider qualification
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```

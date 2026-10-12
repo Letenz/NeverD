@@ -148,3 +148,5 @@ NEVERD_NATIVE_DARWIN_CASE(
     OrdinaryDataSynchronizationKeepsProviderAndCommittedState)
 NEVERD_NATIVE_DARWIN_CASE(
     CreatedRegularSynchronizationKeepsIndependentProvidersAndState)
+NEVERD_NATIVE_DARWIN_CASE(
+    CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus)

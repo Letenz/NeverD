@@ -885,6 +885,181 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_created_regular_advisory_locks_keep_provider_and_description_status(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        base = json.loads(r'''{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "616200ff6566",
+      "metadata": {
+        "device": 7,
+        "inode": 2,
+        "mode": 33152,
+        "link_count": 1,
+        "uid": 501,
+        "gid": 20,
+        "size": 6,
+        "block_size": 512,
+        "blocks": 1,
+        "flags": 0,
+        "generation": 9,
+        "access_time": {
+          "seconds": 1,
+          "nanoseconds": 2
+        },
+        "modification_time": {
+          "seconds": 3,
+          "nanoseconds": 4
+        },
+        "change_time": {
+          "seconds": 5,
+          "nanoseconds": 6
+        },
+        "birth_time": {
+          "seconds": 7,
+          "nanoseconds": 8
+        }
+      }
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "metadata": {
+        "device": 7,
+        "inode": 1,
+        "mode": 16832,
+        "link_count": 2,
+        "uid": 501,
+        "gid": 20,
+        "size": 0,
+        "block_size": 512,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 9,
+        "access_time": {
+          "seconds": 1,
+          "nanoseconds": 2
+        },
+        "modification_time": {
+          "seconds": 3,
+          "nanoseconds": 4
+        },
+        "change_time": {
+          "seconds": 5,
+          "nanoseconds": 6
+        },
+        "birth_time": {
+          "seconds": 7,
+          "nanoseconds": 8
+        }
+      },
+      "mutable": true,
+      "mutation_policy": {
+        "directory_entry_size": 16,
+        "mutation_time": {
+          "seconds": 91,
+          "nanoseconds": 92
+        }
+      }
+    }
+  ],
+  "working_directory": "/",
+  "umask": 18,
+  "creation_policy": {
+    "first_inode": 100,
+    "block_size": 512,
+    "generation": 9,
+    "creation_time": {
+      "seconds": 41,
+      "nanoseconds": 42
+    },
+    "mutation_policy": {
+      "allocation_unit": 512,
+      "mutation_time": {
+        "seconds": 101,
+        "nanoseconds": 102
+      }
+    },
+    "namespace_policy": {
+      "symbolic_link_allocation_unit": 512,
+      "directory_entry_size": 32,
+      "directory_blocks": 7
+    }
+  },
+  "advisory_locks": {
+    "objects": [],
+    "created_regular_objects": true
+  }
+}''')
+        expected = [{'number': 5, 'result': 3, 'error': False}, {'number': 4, 'result': 10, 'error': False, 'fd': 3}, {'number': 5, 'result': 4, 'error': False}, {'number': 41, 'result': 5, 'error': False, 'fd': 3}, {'number': 92, 'result': 10, 'error': False, 'fd': 3}, {'number': 90, 'result': 20, 'error': False, 'fd': 3}, {'number': 199, 'result': 3, 'error': False, 'fd': 4}, {'number': 92, 'result': 0, 'error': False, 'fd': 3}, {'number': 92, 'result': 65538, 'error': False, 'fd': 3}, {'number': 339, 'result': 0, 'error': False, 'fd': 3}, {'number': 131, 'result': 0, 'error': False, 'fd': 3, 'how': 6}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 92, 'result': 81922, 'error': False, 'fd': 5}, {'number': 92, 'result': 0, 'error': False, 'fd': 4}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 5}, {'number': 92, 'result': 0, 'error': False, 'fd': 4}, {'number': 131, 'result': 0, 'error': False, 'fd': 5, 'how': 8}, {'number': 92, 'result': 0, 'error': False, 'fd': 3}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 131, 'result': 0, 'error': False, 'fd': 3, 'how': 1}, {'number': 131, 'result': 0, 'error': False, 'fd': 4, 'how': 1}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 131, 'result': 35, 'error': True, 'fd': 3, 'how': 6}, {'number': 131, 'result': 0, 'error': False, 'fd': 4, 'how': 8}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 131, 'result': 0, 'error': False, 'fd': 10, 'how': 6}, {'number': 131, 'result': 0, 'error': False, 'fd': 20, 'how': 8}, {'number': 131, 'result': 0, 'error': False, 'fd': 4, 'how': 6}, {'number': 131, 'result': 0, 'error': False, 'fd': 4, 'how': 8}, {'number': 131, 'result': 9, 'error': True, 'fd': 3, 'how': 0}, {'number': 131, 'result': 9, 'error': True, 'fd': 4294967295, 'how': 6}, {'number': 339, 'result': 0, 'error': False, 'fd': 3}, {'number': 339, 'result': 0, 'error': False, 'fd': 4}, {'number': 339, 'result': 0, 'error': False, 'fd': 5}, {'number': 199, 'result': 10, 'error': False, 'fd': 3}, {'number': 199, 'result': 3, 'error': False, 'fd': 4}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721219, 'how': 1311768464867721222}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 92, 'result': 81922, 'error': False, 'fd': 5}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 1311768464867721347, 'result': 35, 'error': True, 'fd': 1311768464867721220, 'how': 1311768464867721221}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721221, 'how': 1311768464867721224}, {'number': 92, 'result': 0, 'error': False, 'fd': 3}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721219, 'how': 1311768464867721217}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721220, 'how': 1311768464867721217}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 1311768464867721347, 'result': 35, 'error': True, 'fd': 1311768464867721219, 'how': 1311768464867721222}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721220, 'how': 1311768464867721224}, {'number': 1311768464867721347, 'result': 35, 'error': True, 'fd': 1311768464867721220, 'how': 1311768464867721222}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721226, 'how': 1311768464867721222}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721236, 'how': 1311768464867721224}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721220, 'how': 1311768464867721222}, {'number': 1311768464867721347, 'result': 0, 'error': False, 'fd': 1311768464867721220, 'how': 1311768464867721224}, {'number': 1311768464867721347, 'result': 9, 'error': True, 'fd': 1311768464867721219, 'how': 1311768464867721216}, {'number': 1311768464867721347, 'result': 9, 'error': True, 'fd': 1311768469162688511, 'how': 1311768464867721222}, {'number': 339, 'result': 0, 'error': False, 'fd': 3}, {'number': 339, 'result': 0, 'error': False, 'fd': 4}, {'number': 339, 'result': 0, 'error': False, 'fd': 5}, {'number': 199, 'result': 10, 'error': False, 'fd': 3}, {'number': 199, 'result': 3, 'error': False, 'fd': 4}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584323, 'how': 18446744069414584326}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 92, 'result': 81922, 'error': False, 'fd': 5}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 18446744069414584451, 'result': 35, 'error': True, 'fd': 18446744069414584324, 'how': 18446744069414584325}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584325, 'how': 18446744069414584328}, {'number': 92, 'result': 0, 'error': False, 'fd': 3}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584323, 'how': 18446744069414584321}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584324, 'how': 18446744069414584321}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 18446744069414584451, 'result': 35, 'error': True, 'fd': 18446744069414584323, 'how': 18446744069414584326}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584324, 'how': 18446744069414584328}, {'number': 18446744069414584451, 'result': 35, 'error': True, 'fd': 18446744069414584324, 'how': 18446744069414584326}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584330, 'how': 18446744069414584326}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584340, 'how': 18446744069414584328}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584324, 'how': 18446744069414584326}, {'number': 18446744069414584451, 'result': 0, 'error': False, 'fd': 18446744069414584324, 'how': 18446744069414584328}, {'number': 18446744069414584451, 'result': 9, 'error': True, 'fd': 18446744069414584323, 'how': 18446744069414584320}, {'number': 18446744069414584451, 'result': 9, 'error': True, 'fd': 18446744073709551615, 'how': 18446744069414584326}, {'number': 339, 'result': 0, 'error': False, 'fd': 3}, {'number': 339, 'result': 0, 'error': False, 'fd': 4}, {'number': 339, 'result': 0, 'error': False, 'fd': 5}, {'number': 199, 'result': 10, 'error': False, 'fd': 3}, {'number': 199, 'result': 3, 'error': False, 'fd': 4}, {'number': 92, 'result': 81922, 'error': False, 'fd': 3}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 9, 'result': 0, 'error': False}, {'number': 131, 'result': 0, 'error': False, 'fd': 3, 'how': 6}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 5, 'result': 6, 'error': False}, {'number': 131, 'result': 35, 'error': True, 'fd': 6, 'how': 6}, {'number': 128, 'result': 0, 'error': False}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 10, 'result': 0, 'error': False}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 10, 'result': 0, 'error': False}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 339, 'result': 0, 'error': False, 'fd': 4}, {'number': 5, 'result': 7, 'error': False}, {'number': 4, 'result': 10, 'error': False, 'fd': 7}, {'number': 131, 'result': 0, 'error': False, 'fd': 7, 'how': 6}, {'number': 92, 'result': 81922, 'error': False, 'fd': 7}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 131, 'result': 0, 'error': False, 'fd': 7, 'how': 8}, {'number': 6, 'result': 0, 'error': False, 'fd': 7}, {'number': 6, 'result': 0, 'error': False, 'fd': 3}, {'number': 131, 'result': 9, 'error': True, 'fd': 3, 'how': 6}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 6, 'result': 0, 'error': False, 'fd': 5}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 6, 'result': 0, 'error': False, 'fd': 10}, {'number': 131, 'result': 35, 'error': True, 'fd': 4, 'how': 6}, {'number': 6, 'result': 0, 'error': False, 'fd': 20}, {'number': 131, 'result': 0, 'error': False, 'fd': 4, 'how': 6}, {'number': 92, 'result': 16384, 'error': False, 'fd': 4}, {'number': 131, 'result': 0, 'error': False, 'fd': 4, 'how': 8}, {'number': 339, 'result': 0, 'error': False, 'fd': 4}, {'number': 199, 'result': 0, 'error': False, 'fd': 4}, {'number': 3, 'result': 10, 'error': False, 'fd': 4}, {'number': 6, 'result': 0, 'error': False, 'fd': 6}, {'number': 6, 'result': 0, 'error': False, 'fd': 4}, {'number': 10, 'result': 0, 'error': False}, {'number': 4, 'result': 1, 'error': False, 'fd': 1}]
+        self.assertEqual(len(expected), 131)
+        for fixture, profile in (("macos-arm64","macos-macho64-v1"),("macos-x86_64","macos-macho64-v1"),("ios-arm64","ios-macho64-v1"),("ios-simulator-arm64","ios-simulator-macho64-v1"),("ios-simulator-x86_64","ios-simulator-macho64-v1")):
+            path = str((Path(fixtures) / fixture).resolve(strict=True))
+            cls = 0x2000000 if fixture.endswith("x86_64") else 0
+            for variant in range(5):
+                request = {"backend":"unicorn","instruction_quantum":1024,"timeout_microseconds":5000000,"arguments":["guest","created-regular-advisory-locks","/data"],"darwin_files":json.loads(json.dumps(base))}
+                provider = request["darwin_files"]["advisory_locks"]
+                if variant == 1:
+                    provider["created_regular_objects"] = False
+                elif variant == 2:
+                    del provider["created_regular_objects"]
+                elif variant == 3:
+                    del request["darwin_files"]["advisory_locks"]
+                elif variant == 4:
+                    provider["created_regular_objects"] = False
+                    provider["objects"] = ["/data"]
+                options = json.dumps(request, sort_keys=True)
+                for _ in range(2 if variant == 0 else 1):
+                    result = session.emulate_process(path, profile, options)
+                    self.assertEqual(result["stop_reason"], "exited" if variant == 0 else "unsupported_service")
+                    self.assertEqual(result["stdout_hex"], "4c" if variant == 0 else "")
+                    self.assertEqual(result["stderr_hex"], "")
+                    calls = result["services"]
+                    self.assertEqual(len(calls), 131 if variant == 0 else 11)
+                    if variant == 0:
+                        self.assertEqual(result["exit_status"], 43)
+                        for call, wanted in zip(calls, expected):
+                            self.assertEqual(call["number"], format(cls | wanted["number"], "x"))
+                            self.assertEqual(call["result"], format(wanted["result"], "x"))
+                            self.assertEqual(call["error"], wanted["error"])
+                            for index, key in ((0, "fd"), (1, "how")):
+                                if key in wanted:
+                                    self.assertEqual(call["arguments"][index], format(wanted[key], "x"))
+                    else:
+                        self.assertEqual(calls[-1]["number"], format(cls | 131, "x"))
+                        self.assertIsNone(calls[-1]["result"])
+                        self.assertNotIn("error", calls[-1])
+                    self.assertEqual(json.dumps(request, sort_keys=True), options)
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            for bad in (None, 1, "true", [], {}):
+                request = {"darwin_files":json.loads(json.dumps(base))}
+                request["darwin_files"]["advisory_locks"]["created_regular_objects"] = bad
+                with self.assertRaises(NeverDError):
+                    session.emulate_process(path, profile, json.dumps(request))
+                self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            request = {"darwin_files":json.loads(json.dumps(base))}
+            del request["darwin_files"]["creation_policy"]
+            with self.assertRaises(NeverDError):
+                session.emulate_process(path, profile, json.dumps(request))
+            self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_created_regular_completion_keeps_independent_providers_and_state(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

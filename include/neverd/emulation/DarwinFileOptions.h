@@ -218,7 +218,7 @@ struct DarwinOwnershipMutationOptions {
   std::map<std::string, DarwinFileTime> Objects;
 };
 
-/// Explicit whole-file flock provider for initial ordinary regular objects.
+/// Explicit whole-file flock provider for ordinary regular objects.
 /// Initial locks are empty; every owner is a modeled current open description.
 /// No external peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC,
 /// listeners, revocation, provider errors, native leases or wait lifecycle.
@@ -228,6 +228,10 @@ struct DarwinAdvisoryLockOptions {
   /// Created/reused names do not inherit them. Closing the last duplicate
   /// releases its description's lock; VM leases do not retain descriptions.
   std::set<std::string> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy; false preserves the old default.
+  /// Existing objects and directory/link creation receive no grant from this.
+  bool CreatedRegularObjects = false;
 };
 
 /// Explicit immediate successful regular-vnode file integrity completion.

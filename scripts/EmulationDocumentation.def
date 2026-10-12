@@ -1957,7 +1957,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "20 guarded full stat observations")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return40")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory246")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "504 original native literal observations")
 
@@ -1986,9 +1986,9 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "11 guarded full stat observations")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return41")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "82 mandatory workloads per platform")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "83 mandatory workloads per platform")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory246")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "252 original native literal observations")
 
@@ -2009,9 +2009,9 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "33 guarded full stat observations")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return42")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "82 mandatory workloads per platform")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "83 mandatory workloads per platform")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory246")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "702 original native literal observations")
 
@@ -2021,3 +2021,42 @@ NEVERD_EMULATION_DOC_TOKEN(
 
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "CreatedRegularSynchronizationKeepsIndependentProvidersAndState")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "advisory_locks={\"objects\":[],\"created_regular_objects\":true}")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "single set-provider parser and admission")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "successful flock sets FileWasLocked FWASLOCKED0x4000")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "F_SETFL accepts observed history for roundtrip but "
+                           "cannot manufacture or clear it")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "written created F_GETFL65538 becomes81922")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free131 service records")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "12 guarded full stat observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "separate main return43")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "68 current native-common cases")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "83 mandatory workloads per platform")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "ARM64 matching native mandatory249")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "486 original native flock observations")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "72 fcntl history controls")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "symbolic recognized history returns ENOTTY25")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "162 additional native symbolic and pipe status controls")

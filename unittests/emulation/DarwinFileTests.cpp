@@ -15789,7 +15789,18 @@ TEST_P(DarwinFileTest,
   EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
   error(ServiceKind::Fcntl, {A, 4, 1}, 25);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), 0x10002u);
-  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 0x4000}));
+  // Recognized history is never user-settable, including symbolic controls.
+  // XNU still reports ENOTTY after the existing settable-mask treatment.
+  for (uint64_t Request : {uint64_t(0x4000), uint64_t(0x14002), uint64_t(2)}) {
+    error(ServiceKind::Fcntl, {A, 4, Request}, 25);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {Copy, 3}), 0x10002u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {B, 3}), 2u);
+    EXPECT_EQ(ok(ServiceKind::Fcntl, {ReadOnly, 3}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 7u);
+    EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+    EXPECT_EQ(status(A), Before);
+  }
+  EXPECT_FALSE(invoke(ServiceKind::Fcntl, {A, 4, 0x8000}));
   EXPECT_EQ(Result.Diagnostic, diagnostic::FileControl);
   EXPECT_EQ(ok(ServiceKind::Fcntl, {A, 3}), 0x10002u);
   EXPECT_EQ(status(A), Before);

@@ -381,13 +381,8 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations->Objects,
                                      diagnostic::FileOwnershipOption))
       return E;
-  if (Options.AdvisoryLocks)
-    for (const auto &Path : Options.AdvisoryLocks->Objects)
-      if (auto E =
-              AdmitOrdinaryObject(Path, diagnostic::FileAdvisoryLockOption))
-        return E;
-  const auto AdmitCompletion = [&](const auto &Environment,
-                                   const char *Reason) -> llvm::Error {
+  const auto AdmitObjectProvider = [&](const auto &Environment,
+                                       const char *Reason) -> llvm::Error {
     if (!Environment)
       return llvm::Error::success();
     if (Environment->CreatedRegularObjects && !Options.CreationPolicy)
@@ -397,11 +392,14 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
         return E;
     return llvm::Error::success();
   };
-  if (auto E = AdmitCompletion(Options.Synchronization,
-                               diagnostic::FileSynchronizationOption))
+  if (auto E = AdmitObjectProvider(Options.AdvisoryLocks,
+                                   diagnostic::FileAdvisoryLockOption))
     return E;
-  if (auto E = AdmitCompletion(Options.DataSynchronization,
-                               diagnostic::FileDataSynchronizationOption))
+  if (auto E = AdmitObjectProvider(Options.Synchronization,
+                                   diagnostic::FileSynchronizationOption))
+    return E;
+  if (auto E = AdmitObjectProvider(Options.DataSynchronization,
+                                   diagnostic::FileDataSynchronizationOption))
     return E;
   for (const auto &Path : Options.MutableExtendedAttributes) {
     const auto Kind = pathKind(Options, Path);
@@ -2557,6 +2555,8 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     Node->Policy = &Policy.Mutation;
     // These independent creation providers belong only to this newly admitted
     // ordinary regular object, never to an old name or initial grant.
+    Node->AdvisoryLocks =
+        Options->AdvisoryLocks && Options->AdvisoryLocks->CreatedRegularObjects;
     Node->Synchronization = Options->Synchronization &&
                             Options->Synchronization->CreatedRegularObjects;
     Node->DataSynchronization =
@@ -3162,12 +3162,14 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     case GetFileFlags:
       return returned(File.Flags);
     case SetFileFlags:
-      if (uint32_t(A[2]) & ~uint32_t(OpenAccessMask | OpenNonBlocking |
-                                     OpenAppend | FileWasWritten))
+      if (uint32_t(A[2]) &
+          ~uint32_t(OpenAccessMask | OpenNonBlocking | OpenAppend |
+                    FileWasWritten | FileWasLocked))
         return unsupported(Result, diagnostic::FileControl);
       // XNU converts the low32 open-flag request to file flags first. Access
       // bits3 carry into NONBLOCK (and through APPEND); the actual access and
-      // write history belong to the existing description, not this request.
+      // write/lock history belong to the existing description, not this
+      // request.
       File.Flags = (File.Flags & ~(OpenAppend | OpenNonBlocking)) |
                    ((uint32_t(A[2]) + 1) & (OpenAppend | OpenNonBlocking));
       return returned(File.Type == Kind::SymbolicLink ? NotTerminal : 0,

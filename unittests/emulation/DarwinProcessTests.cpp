@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinAdvisoryLockTestData.h"
+#include "DarwinCreatedAdvisoryLockTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
@@ -2884,6 +2885,63 @@ TEST_P(DarwinProcess,
   EXPECT_EQ(Unknown->Services.back().Number, Class | 95);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinFiles = darwin_test::createdAdvisoryLockOptions();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+    auto R = run("created-regular-advisory-locks");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+    EXPECT_EQ(R->ExitStatus, 43);
+    EXPECT_EQ(R->ReturnValue, 43u);
+    EXPECT_EQ(R->StandardOutput, "L");
+    EXPECT_TRUE(R->StandardError.empty());
+    EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R->Services.size(),
+              std::size(darwin_test::CreatedAdvisoryServices));
+    for (unsigned I = 0; I != std::size(darwin_test::CreatedAdvisoryServices);
+         ++I) {
+      SCOPED_TRACE(I);
+      const auto &Expected = darwin_test::CreatedAdvisoryServices[I];
+      const auto &E = R->Services[I];
+      EXPECT_EQ(E.Number, Class | Expected.Number);
+      EXPECT_EQ(E.Result, Expected.Value);
+      EXPECT_EQ(E.Error, Expected.Error);
+      if (Expected.FD != UINT64_MAX)
+        EXPECT_EQ(E.Arguments[0], Expected.FD);
+      if (Expected.How != UINT64_MAX)
+        EXPECT_EQ(E.Arguments[1], Expected.How);
+    }
+    EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+              (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+    EXPECT_EQ(Options.DarwinFiles->CreationPolicy->FirstInode, 100u);
+  }
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    Options.DarwinFiles = darwin_test::createdAdvisoryLockOptions(false);
+    if (Variant == 1)
+      Options.DarwinFiles->AdvisoryLocks.reset();
+    if (Variant == 2)
+      Options.DarwinFiles->AdvisoryLocks->Objects.insert("/data");
+    auto R = run("created-regular-advisory-locks");
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    ASSERT_EQ(R->Services.size(), 11u);
+    EXPECT_EQ(R->Services.back().Number, Class | 131u);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+    EXPECT_EQ(
+        R->Diagnostic,
+        Variant == 1
+            ? "Darwin whole-file advisory lock environment is not configured"
+            : "Darwin regular-object advisory lock provider is not configured");
+  }
 }
 
 TEST_P(DarwinProcess,

@@ -8236,6 +8236,117 @@ static int created_regular_synchronization(const char *path) {
   return 0;
 }
 
+/* Original SDK-free created-object locks and persistent description status. */
+static int created_lock_flags(u64 fd, u64 expected) {
+  unsigned error;
+  return call(92, fd, 3, 0, 0, 0, 0, &error) != expected || error || secondary
+             ? 281
+             : 0;
+}
+static int created_regular_advisory_locks(const char *path) {
+  char name[4096], alias[4096], moved[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4080)
+      return 282;
+    name[size] = alias[size] = moved[size] = path[size];
+    ++size;
+  }
+  const char a_suffix[] = ".locked", b_suffix[] = ".alias",
+             c_suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(a_suffix); ++i)
+    name[size + i] = a_suffix[i];
+  for (unsigned i = 0; i != sizeof(b_suffix); ++i)
+    alias[size + i] = b_suffix[i];
+  for (unsigned i = 0; i != sizeof(c_suffix); ++i)
+    moved[size + i] = c_suffix[i];
+  unsigned error;
+  const u64 a = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, a, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary)
+    return 283;
+  const u64 b = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 283;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(92, a, 0, 10, 0, 0, 0, &error) != 10 ||
+      error || secondary || call(90, a, 20, 0, 0, 0, 0, &error) != 20 ||
+      error || secondary || call(199, b, 3, 0, 0, 0, 0, &error) != 3 || error ||
+      secondary || call(92, a, 4, 0x14002, 0, 0, 0, &error) || error ||
+      secondary || created_lock_flags(a, 0x10002))
+    return 283;
+  union created_sync_stat_guard initial;
+  if (created_sync_capture(a, &initial))
+    return 284;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h) {
+    const u64 high = highs[h], number = high | 131;
+    if (flock_result(number, high | a, high | 6, 0) ||
+        created_lock_flags(a, 0x14002) || created_lock_flags(d, 0x14002) ||
+        created_lock_flags(b, h ? 0x4000 : 0) ||
+        flock_result(number, high | b, high | 5, 35) ||
+        created_lock_flags(b, h ? 0x4000 : 0) ||
+        flock_result(number, high | d, high | 8, 0) ||
+        call(92, a, 4, 2, 0, 0, 0, &error) || error || secondary ||
+        created_lock_flags(a, 0x14002) ||
+        flock_result(number, high | a, high | 1, 0) ||
+        flock_result(number, high | b, high | 1, 0) ||
+        created_lock_flags(b, 0x4000) ||
+        flock_result(number, high | a, high | 6, 35) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 35) ||
+        flock_result(number, high | 10, high | 6, 0) ||
+        flock_result(number, high | 20, high | 8, 0) ||
+        flock_result(number, high | b, high | 6, 0) ||
+        flock_result(number, high | b, high | 8, 0) ||
+        flock_result(number, high | a, high | 0, 9) ||
+        flock_result(number, high | 0xffffffffUL, high | 6, 9) ||
+        created_sync_status(a, &initial) || created_sync_status(b, &initial) ||
+        created_sync_status(d, &initial) || created_sync_offset(a, 10) ||
+        created_sync_offset(b, 3) || created_lock_flags(a, 0x14002) ||
+        created_lock_flags(b, 0x4000))
+      return 285;
+  }
+  if (call(9, (u64)name, (u64)alias, 0, 0, 0, 0, &error) || error ||
+      secondary || flock_result(131, a, 6, 0) || flock_result(131, b, 6, 35))
+    return 286;
+  const u64 other = call(5, (u64)alias, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || flock_result(131, other, 6, 35) ||
+      call(128, (u64)alias, (u64)moved, 0, 0, 0, 0, &error) || error ||
+      secondary || flock_result(131, b, 6, 35) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      flock_result(131, b, 6, 35) ||
+      call(10, (u64)moved, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      flock_result(131, b, 6, 35) || created_sync_capture(b, &initial))
+    return 286;
+  const u64 fresh = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, fresh, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary || flock_result(131, fresh, 6, 0) ||
+      created_lock_flags(fresh, 0x14002) || flock_result(131, b, 6, 35) ||
+      flock_result(131, fresh, 8, 0) || flock_result(6, fresh, 0, 0) ||
+      flock_result(6, a, 0, 0) || flock_result(131, a, 6, 9) ||
+      flock_result(131, b, 6, 35) || flock_result(6, d, 0, 0) ||
+      flock_result(131, b, 6, 35) || flock_result(6, 10, 0, 0) ||
+      flock_result(131, b, 6, 35) || flock_result(6, 20, 0, 0) ||
+      flock_result(131, b, 6, 0) || created_lock_flags(b, 0x4000) ||
+      flock_result(131, b, 8, 0) || created_sync_status(b, &initial) ||
+      call(199, b, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 287;
+  char bytes[10];
+  if (call(3, b, (u64)bytes, 10, 0, 0, 0, &error) != 10 || error || secondary)
+    return 288;
+  for (unsigned i = 0; i != 10; ++i)
+    if (bytes[i] != '0' + i)
+      return 288;
+  if (flock_result(6, other, 0, 0) || flock_result(6, b, 0, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "L", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 289;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -8282,6 +8393,10 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "created-regular-advisory-locks")) {
+    const int status = argc < 3 ? 209 : created_regular_advisory_locks(argv[2]);
+    return status ? status : 43;
+  }
   if (equal(argv[1], "created-regular-synchronization")) {
     const int status =
         argc < 3 ? 282 : created_regular_synchronization(argv[2]);
