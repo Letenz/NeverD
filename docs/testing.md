@@ -1006,6 +1006,17 @@ omission and restore both Web/JS options ON. These checks qualify source syntax,
 not native command registration or runtime activation. See the
 [desktop bridge profile](web-desktop-bridge-profile.md).
 
+`WebConfigurationOrder.*` checks source loading/merge relationships, exact
+unknown-key barriers, duplicate/accessor/computed definitions, redeclarations,
+reassignment, dynamic scope and independent object/term exhaustion. Optional
+fixed units use `NEVERD_CLAUDE_CODE_21296_CONFIG_JS` (module 1676) and
+`NEVERD_CLAUDE_CODE_21296_CONFIG_UNKNOWN_JS` (module 6); the existing whole
+Claude client corpus adds order-object/term/unknown-field coverage receipts.
+`WebSDK.ConfigurationOrder*`, the offline navigation CLI and worker/MCP tests
+check private values, shared anchors, cached/paged identity and import revocation.
+Run the complete owning Web directory and affected transports, then parser
+omission and restoration. See the [profile](web-configuration-order-profile.md).
+
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
 surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
 directive preservation, tagged-template refusal, ASI outer-tree mismatches,
