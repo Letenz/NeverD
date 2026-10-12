@@ -81,6 +81,11 @@ int runWeb() {
        WebArguments[0] == "archive-pkg-source"))
     return runWebPkg();
   if (!WebArguments.empty() &&
+      (WebArguments[0] == "wails" || WebArguments[0] == "wails-source" ||
+       WebArguments[0] == "wails-html" || WebArguments[0] == "wails-native" ||
+       WebArguments[0] == "wails-export"))
+    return runWebWails();
+  if (!WebArguments.empty() &&
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
        WebArguments[0] == "interface-relations" ||
@@ -303,7 +308,12 @@ int runWeb() {
            "<source-type> | archive-nexe[-source] <root> <profile> "
            "<tar|tgz|zip> <archive-index> <archive-member-index> "
            "[<member-index> <source-type>] "
-           "| pkg <root> <profile> [artifact-index] "
+           "| wails|wails-native <root> <profile> [artifact-index] "
+           "| wails-export <root> <profile> <new-output-directory> "
+           "[artifact-index] "
+           "| wails-html <root> <profile> <artifact-index> <member-index> "
+           "| wails-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | pkg <root> <profile> [artifact-index] "
            "| pkg-source <root> <profile> <artifact-index> <member-index> "
            "<source-type> | archive-pkg[-source] <root> <profile> "
            "<tar|tgz|zip> <archive-index> <archive-member-index> "

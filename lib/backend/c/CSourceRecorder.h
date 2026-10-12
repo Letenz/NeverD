@@ -31,8 +31,16 @@ struct HighStmt;
 /// are discarded and the ordinary render remains the output.
 class CSourceRecorder {
 public:
+  enum class Recording : uint8_t {
+    LibraryRegions,
+    Instructions,
+    /// With no library evidence, one private render can prove both kinds of
+    /// navigation location. It must not publish library coverage.
+    DefinitionsAndInstructions
+  };
+
   CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
-                  bool InstructionsOnly = false);
+                  Recording Mode = Recording::LibraryRegions);
   void prepareHighSources();
   void prepareLLVMSources(const LLVMSourceMap &Sources);
   std::string expression(va_t Function, const HighExpr &Expr, std::string Text);
@@ -58,7 +66,8 @@ private:
                std::vector<sigs::LibraryOccurrence> Coverage,
                std::optional<va_t> Function = std::nullopt);
   CSourceMap &Map;
-  bool InstructionsOnly;
+  Recording Mode;
+  bool recordsInstructions() const { return Mode != Recording::LibraryRegions; }
   std::string Prefix;
   struct Event {
     std::optional<size_t> Region;

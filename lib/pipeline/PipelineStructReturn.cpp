@@ -13,6 +13,7 @@
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include <algorithm>
@@ -216,11 +217,10 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
                      Field.Size == Candidate.Fields.front().Size;
           Shape.push_back({Field.RegOff, Field.Size, /*IsFP=*/true});
         }
-        // Without the body to fall back on, the integer return registers a
-        // caller reads in order are the fields of a non-HFA record as well.
-        // Each holds eight of its bytes, as if loaded by LDP, though the
-        // caller may read only the low word.
-        if (!Complete && Evidence == StructReturnEvidence::Callers) {
+        // The integer return registers a caller reads in order are the
+        // fields of a non-HFA record.  Each holds eight of its bytes, as if
+        // loaded by LDP, though the caller may read only the low word.
+        if (!Complete) {
           Shape.clear();
           Complete = Candidate.Fields.size() >= 2 &&
                      Candidate.Fields.size() <= TRI.IntReturnRegs.size();
@@ -247,9 +247,10 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
     for (va_t Target : ConflictingCallerShapes)
       CallerHFAShapes.erase(Target);
     // The callee must itself leave every field: each field register has its
-    // own write, after the last call, before every RETURN.
-    auto writesEveryField = [](const MedFunc &MF,
-                               const std::vector<MedReturnReg> &Shape) {
+    // own write, after the last call, before every RETURN, or is an argument
+    // register the callee never writes, which returns the argument.
+    auto writesEveryField = [&](const MedFunc &MF,
+                                const std::vector<MedReturnReg> &Shape) {
       bool SawReturn = false;
       for (const auto &Blk : MF.Blocks) {
         for (size_t RetIdx = 0; RetIdx < Blk.Ops.size(); ++RetIdx) {
@@ -257,6 +258,8 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
             continue;
           SawReturn = true;
           for (const MedReturnReg &Field : Shape) {
+            if (returnsArgumentUnchanged(MF, Field, TRI, Img.abiFormat()))
+              continue;
             bool Written = false;
             for (size_t J = RetIdx; J-- > 0 && !Written;) {
               const MedOp &O = Blk.Ops[J];

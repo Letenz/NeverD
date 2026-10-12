@@ -13,6 +13,7 @@
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
 #include "neverd-web-mcp/WebTools.h"
@@ -109,7 +110,8 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+    const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
+                         Name == "native_analyze" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
@@ -953,6 +955,47 @@ int main() {
                                      {"source_id", Source.at("source_id")},
                                      {"byte_offset", "6"},
                                      {"byte_length", "1"}});
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "wails_extract") != Ops.end()) {
+      F.write("sea", neverd::web::wails_test::elf());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto E = H.same("web_wails_extract", Args);
+      require(E.at("table_count") == 1 && E.at("member_count") == 3 &&
+                  E.at("asset_server_binding") == "not_checked",
+              "Wails stored table evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto M = H.same("web_wails_records", Page);
+      require(M.at("next_offset") == 2 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Wails page differs or exposes private names");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_wails_extract", Invalid); });
+      auto InvalidPage = Page;
+      InvalidPage["limit"] = 129;
+      invalid([&] { H.get("web_wails_records", InvalidPage); });
+      H.fail("web_wails_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "paths"}},
+             "invalid_record_kind");
+      if (HasParser) {
+        const auto S =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(S.at("parse_status") == "parsed",
+                "Wails member source is unavailable");
       }
     }
     offlineAdvisories();

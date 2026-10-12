@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QLabel>
 #include <QSizePolicy>
 #include <QWidget>
 
@@ -13,6 +14,15 @@ namespace neverd::gui {
 /// at the right edge.
 inline void makeRowShrinkable(QWidget &row) {
   row.setSizePolicy(QSizePolicy::Ignored, row.sizePolicy().verticalPolicy());
+}
+
+/// Makes \p label the status line under a docked view: a shrinkable row that
+/// the theme style sheet draws in the secondary text color, so the position it
+/// describes stays quieter than the view itself.
+inline void makeStatusLine(QLabel &label) {
+  label.setContentsMargins(6, 2, 6, 2);
+  label.setProperty("statusLine", true);
+  makeRowShrinkable(label);
 }
 
 } // namespace neverd::gui
