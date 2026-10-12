@@ -656,8 +656,10 @@ only admitted occurrences. Content, opaque V8 caches and private metadata have
 distinct roles; source/cache equivalence and symlink resolution remain unknown.
 `ArtifactView` retains occurrence namespaces and nested coordinates for shared
 consumers. See the [pkg profile](web-pkg-profile.md).
-`desktop/wails/ELF` owns one measured producer mapping layout; `BuildInfo`
-owns declared-version framing, `Tables` owns recognizable slice/record and
+`desktop/wails/Profiles` owns explicit producer/platform/container selection;
+`ELF` and `PE` own independently qualified header/address translation, while
+`Mappings` owns the shared file-backed permission and overlap policy. `BuildInfo`
+owns declared-version/platform framing, `Tables` owns recognizable slice/record and
 portable namespace admission, and `Contents` owns stored compiler hashes and
 overlap proof. `Reader` owns bounded atomic extraction. `SessionWails` publishes
 metadata; `ArtifactView` composes nested storage coordinates and keeps each

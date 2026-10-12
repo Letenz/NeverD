@@ -17,6 +17,8 @@
 namespace neverd::web {
 inline constexpr std::string_view WailsProfile =
     "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1";
+inline constexpr std::string_view WailsPEProfile =
+    "wails-2.11.0-go-1.25.7-windows-x64-pe-embedfs-v1";
 inline constexpr uint64_t MaxWailsInputBytes = 256ULL * 1024 * 1024;
 inline constexpr uint32_t MaxCachedWailsExtractions = 4;
 inline constexpr uint64_t MaxCachedWailsPrivateBytes = 8ULL * 1024 * 1024;
@@ -44,6 +46,7 @@ struct WailsTable {
 
 struct WailsExtraction {
   std::string ID, ArtifactID, BlobHash;
+  std::string Profile, ContainerFormat, Platform, Architecture;
   uint64_t BuildInfoOffset = 0, BuildInfoSize = 0;
   uint64_t Steps = 0, ScannedBytes = 0, HashedBytes = 0;
   uint64_t PayloadBytes = 0, PrivateBytes = 0;
@@ -52,6 +55,7 @@ struct WailsExtraction {
 };
 
 bool wailsAvailable();
+std::vector<std::string_view> wailsProfiles();
 /// Version declarations select a qualified stored layout; they authenticate
 /// neither compiler nor publisher. Every candidate table must validate.
 /// Custom limits may lower the published bounds, never raise them. Failure

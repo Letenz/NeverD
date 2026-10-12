@@ -140,9 +140,13 @@ std::string Session::capabilities() {
     Operations.emplace_back("wails_records");
     Operations.emplace_back("wails_export");
     const WailsLimits Limits;
+    llvm::json::Array Profiles;
+    for (const auto P : wailsProfiles())
+      Profiles.emplace_back(std::string(P));
     Analyses.emplace_back(llvm::json::Object{
         {"kind", "wails_extraction"},
         {"profile", std::string(WailsProfile)},
+        {"profiles", std::move(Profiles)},
         {"max_input_bytes", std::to_string(MaxWailsInputBytes)},
         {"max_tables", Limits.Tables},
         {"max_members", Limits.Members},

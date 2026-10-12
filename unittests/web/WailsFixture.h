@@ -1,5 +1,4 @@
-//===- WailsFixture.h - C++ stored embed.FS fixtures -------------*- C++
-//-*-===//
+//===- WailsFixture.h - Stored embed.FS fixtures ----------------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -48,11 +47,12 @@ inline void string(std::string &Out, const std::string &Text) {
   } while (Size);
   Out += Text;
 }
-inline std::string moduleInfo() {
+inline std::string moduleInfo(std::string_view OS = "linux") {
   return "path\tPRIVATE_BUILD_CANARY\n"
          "dep\tgithub.com/wailsapp/wails/v2\tv2.11.0\th1:fixture\n"
          "build\tGOARCH=amd64\n"
-         "build\tGOOS=linux\n";
+         "build\tGOOS=" +
+         std::string(OS) + "\n";
 }
 inline void buildInfo(std::string &B, std::string Go = "go1.25.7",
                       std::string Mod = moduleInfo()) {
@@ -119,6 +119,54 @@ inline std::string elf(std::vector<std::vector<Entry>> Tables = {entries()}) {
       put(B, Row + 24, E.Contents.size());
       B.replace(Row + 32, 16, prefix(E.Contents));
       Data += E.Contents.size();
+    }
+  }
+  return B;
+}
+inline constexpr uint64_t PEBase = 0x140000000, PEOptional = 0x98;
+inline constexpr uint64_t PESections = 0x188;
+inline uint64_t peAddress(uint64_t Offset) {
+  return PEBase + 0x10000 + Offset - 0x1000;
+}
+inline std::string pe(std::vector<std::vector<Entry>> Tables = {entries()}) {
+  auto B = elf(Tables);
+  B.replace(0, 0x1000, std::string(0x1000, '\0'));
+  B.replace(0, 2, "MZ");
+  put(B, 60, 0x80, 4);
+  B.replace(0x80, 4, "PE\0\0", 4);
+  put(B, 0x84, 0x8664, 2);
+  put(B, 0x86, 3, 2);
+  put(B, 0x94, 240, 2);
+  put(B, 0x96, 0x22, 2);
+  put(B, PEOptional, 0x20b, 2);
+  put(B, PEOptional + 24, PEBase);
+  put(B, PEOptional + 32, 0x1000, 4);
+  put(B, PEOptional + 36, 0x200, 4);
+  put(B, PEOptional + 56, 0x51000, 4);
+  put(B, PEOptional + 60, 0x1000, 4);
+  put(B, PEOptional + 108, 16, 4);
+  for (uint64_t I = 0; I < 3; ++I) {
+    const auto At = PESections + I * 40;
+    put(B, At + 8, I == 0 ? 0x2000 : 0x1000, 4);
+    put(B, At + 12, I == 0 ? 0x10000 : I == 1 ? 0x40000 : 0x50000, 4);
+    put(B, At + 16, I == 0 ? 0x2000 : 0x1000, 4);
+    put(B, At + 20, I == 0 ? 0x1000 : I == 1 ? 0x3000 : 0x4000, 4);
+    put(B, At + 36, I == 0 ? 0x40000040 : I == 1 ? 0xc0000040 : 0x60000020, 4);
+  }
+  buildInfo(B, "go1.25.7", moduleInfo("windows"));
+  uint64_t Names = 0x1000, Data = 0x1400;
+  for (uint64_t T = 0; T < Tables.size(); ++T) {
+    const auto At = 0x2000 + T * 0x400;
+    put(B, At, peAddress(At + 24));
+    for (uint64_t I = 0; I < Tables[T].size(); ++I) {
+      const auto &E = Tables[T][I];
+      const auto Row = At + 24 + I * 48;
+      put(B, Row, peAddress(Names));
+      Names += E.Path.size();
+      if (!E.Path.ends_with('/')) {
+        put(B, Row + 16, peAddress(Data));
+        Data += E.Contents.size();
+      }
     }
   }
   return B;

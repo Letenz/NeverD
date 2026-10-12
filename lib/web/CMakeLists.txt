@@ -65,6 +65,9 @@ add_neverd_component_library(NeverDWeb
   desktop/NWManifest.cpp
   desktop/VSIXManifest.cpp
   desktop/wails/ELF.cpp
+  desktop/wails/PE.cpp
+  desktop/wails/Mappings.cpp
+  desktop/wails/Profiles.cpp
   desktop/wails/BuildInfo.cpp
   desktop/wails/Tables.cpp
   desktop/wails/Contents.cpp
