@@ -546,7 +546,8 @@ protected:
 
 } // namespace
 
-QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
+QuickStartDialog::QuickStartDialog(FilePicker pickFile, QWidget *parent)
+    : QDialog(parent), pickFile_(std::move(pickFile)) {
   setObjectName(QStringLiteral("quickStartDialog"));
   setWindowTitle(tr("Quick start"));
   setWindowIcon(icon(QStringLiteral("app")));
@@ -662,9 +663,8 @@ QuickStartDialog::QuickStartDialog(QWidget *parent) : QDialog(parent) {
     update();
   });
 
-  connect(newButton, &QPushButton::clicked, this,
-          [this] { choose(Start::New); });
-  connect(goButton, &QPushButton::clicked, this, &QDialog::reject);
+  connect(newButton, &QPushButton::clicked, this, &QuickStartDialog::chooseNew);
+  connect(goButton, &QPushButton::clicked, this, [this] { choose(Start::Go); });
   connect(previous_, &QPushButton::clicked, this,
           &QuickStartDialog::loadSelected);
   connect(recent_, &QListWidget::itemActivated, this,
@@ -711,6 +711,21 @@ void QuickStartDialog::showDropTarget(bool shown) {
     dropTarget_->raise();
 }
 
+void QuickStartDialog::startNew(const QString &path) {
+  file_ = path;
+  choose(Start::New);
+}
+
+void QuickStartDialog::keyPressEvent(QKeyEvent *event) {
+  // As in IDA, Escape works on one's own; only closing the window leaves
+  // the start unchosen.
+  if (event->matches(QKeySequence::Cancel)) {
+    choose(Start::Go);
+    return;
+  }
+  QDialog::keyPressEvent(event);
+}
+
 void QuickStartDialog::resizeEvent(QResizeEvent *event) {
   QDialog::resizeEvent(event);
   dropTarget_->setGeometry(rect());
@@ -719,6 +734,11 @@ void QuickStartDialog::resizeEvent(QResizeEvent *event) {
 void QuickStartDialog::choose(Start start) {
   start_ = start;
   accept();
+}
+
+void QuickStartDialog::chooseNew() {
+  if (const QString path = pickFile_(this); !path.isEmpty())
+    startNew(path);
 }
 
 void QuickStartDialog::loadSelected() {

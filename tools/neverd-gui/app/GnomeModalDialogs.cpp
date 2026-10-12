@@ -21,13 +21,16 @@ public:
 protected:
   bool eventFilter(QObject *object, QEvent *event) override {
     // A dialog's show event comes before its window is mapped, while the
-    // window manager still reads the type it is given.
+    // window manager still reads the type it is given.  A dialog without a
+    // parent window, such as the quick start greeting alone, has nothing to
+    // be attached to and stays a dialog the window manager places and
+    // focuses.
     if (event->type() == QEvent::Show)
       if (auto *dialog = qobject_cast<QDialog *>(object);
           dialog && dialog->isWindow())
         if (QWindow *window = dialog->windowHandle();
             window && window->type() == Qt::Dialog &&
-            window->modality() != Qt::NonModal)
+            window->modality() != Qt::NonModal && window->transientParent())
           window->setFlags((window->flags() & ~Qt::WindowType_Mask) | Qt::Tool);
     return QObject::eventFilter(object, event);
   }
