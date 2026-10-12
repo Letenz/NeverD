@@ -3506,3 +3506,28 @@ criterion mapping is [the acceptance audit](web-epic-acceptance.md), with the
 increment receipts remain historical; new runtime profiles, general dataflow,
 erased TypeScript/names, opaque bytecode decoding and other host qualification
 are explicit extensions/unsupported boundaries rather than universal promises.
+
+### Final dev integration — 2026-10-13
+
+The implementation commit is `e7ff8f2e9`. Normal integration first merged
+`5e8593cb8` as `0190e5c8d`; its 646-target build completed, owning Web retained
+805 distinct cases / 777 passed / 28 explicit skips (157.29 s), all ten selected
+native/worker/MCP checks passed (4.48 s), and Qt review passed (34.12 s).
+The actual Claude source report again completed with zero stderr and an unusable
+external-tool PATH.
+
+A later normal integration merged `a4f50d9cc` as `599393002`. Its changes concern
+native x87/rendering/loader, PDB and driver entry work; Web algorithms, new source
+profiles and Web fixtures were unchanged. The 160-target engine/SDK build and
+GUI build completed. Affected source/report/resource/Tauri/native/worker/MCP
+coverage passed 28 of 29 checks, with one absent optional full Bun compiler input
+explicitly skipped (21.41 s). Qt review passed again (18.99 s). Source provenance
+passed for 7,542 files and canonical ownership remained valid for 23 capabilities.
+Web, JS and ASAR are ON. No submodule revision, original checkout, diagnostic
+artifact or proprietary source was changed by this integration.
+
+The criterion audit now covers the original #714–#718 acceptance items and
+named supplement profiles. Future builds/hosts and unknown runtime behavior
+remain unsupported or partial as documented; no GitHub issue was closed or
+commented on by this task. Publication uses an ordinary fast-forward-compatible
+push to `dev`, with no history rewrite.
