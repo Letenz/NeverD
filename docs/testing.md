@@ -62,6 +62,12 @@ policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
 
+`SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
+fresh native decoding, preserves renamed source, and checks changed function
+addresses, extents and inventories. It also covers edits, policy/signature
+changes, feature changes between selections, failed loads and same-address
+image replacement. Width changes discard source using the preceding data names.
+
 With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
 the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
@@ -5381,3 +5387,7 @@ MSVC unit test targets use `/bigobj` to allow the larger COFF section counts pro
 Checked double-shift rejection reports the masked count and operand width when its destination and flags are undefined. `X64DoubleShift` verifies that typed exits and the legacy error API retain the reason without register or RAM changes or memory observations; the driver fixture verifies that the same reason survives before scenario dispatch.
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` checks CPL0 IF clear/set against a CPL3 countercontrol, profile matching and digest separation, TF/AC/IOPL refusals, mandatory final IF dependence even with ordinary observations disabled, restoration and exact/one-short work limits. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` also checks that this native kernel profile cannot silently select the user source ABI. The production undefined-instruction admission and driver recovery guards are unchanged.
+
+Driver write-watch controls independently encode changed-value and repeated same-value stores with raw write tracing disabled. Both legacy and checked x64 contracts must suspend after each watched commit, withdraw the unchanged-memory guarantee, and restore it at a later pure execution watch. Lifecycle observation verifies that new invocations and kernel export callbacks withdraw that guarantee. The same-value case is mandatory in native KVM/WHP inventory.
+
+`KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.

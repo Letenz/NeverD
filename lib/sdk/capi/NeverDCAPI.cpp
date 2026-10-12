@@ -802,6 +802,13 @@ int neverd_func_find_by_name(neverd_session_t Sess, const char *Name) {
   for (size_t I = 0; I < S->Functions.size(); ++I)
     if (S->Functions[I].Name == Name)
       return static_cast<int>(I);
+  // Every name the image exports a function under finds it: a linker that
+  // folds identical functions exports several names for one entry.
+  for (const Export &Exp : S->Img.Exports)
+    if (Exp.Name == Name)
+      for (size_t I = 0; I < S->Functions.size(); ++I)
+        if (S->Functions[I].Entry == Exp.Addr)
+          return static_cast<int>(I);
   return -1;
 }
 
