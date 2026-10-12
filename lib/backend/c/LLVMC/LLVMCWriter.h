@@ -106,7 +106,10 @@ public:
   void writeGlobals(llvm::Module &Mod);
   void writeImageByteArray(const llvm::GlobalVariable &Global,
                            llvm::StringRef Name);
-  void writeReferencedImageObjects(const llvm::Function &Fn);
+  /// Declare the image objects \p Fn reads or writes, and those whose
+  /// addresses alone its printed \p Text names.
+  void writeReferencedImageObjects(const llvm::Function &Fn,
+                                   llvm::StringRef Text);
   void writeForwardDecls(llvm::Module &Mod);
 
   //--- Function rendering (LLVMCFuncWriter.cpp) ---
@@ -608,6 +611,13 @@ public:
   //--- Expression rendering (LLVMCExprWriter.cpp) ---
   std::string resolveNdDataName(llvm::StringRef Name) const;
   bool isImageDataAddress(va_t Addr) const;
+  /// The address among the code that \p CI holds, which the LLVM emitter
+  /// keeps as a number: it gives only data sections globals to point into.
+  std::optional<va_t> codeSectionAddress(const llvm::ConstantInt &CI) const;
+  /// \p CI as the literal or the debug information's data object at its
+  /// address among the code, as HighC spells it.
+  std::optional<std::string>
+  codeSectionAddressText(const llvm::ConstantInt &CI) const;
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;

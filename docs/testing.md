@@ -62,6 +62,12 @@ policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
 
+`SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
+fresh native decoding, preserves renamed source, and checks changed function
+addresses, extents and inventories. It also covers edits, policy/signature
+changes, feature changes between selections, failed loads and same-address
+image replacement. Width changes discard source using the preceding data names.
+
 With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
 the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
@@ -196,6 +202,45 @@ separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
+
+`NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
+with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Raw binary80
+values, complete output guards, control words and defined C1 cover all RC,
+defined PC and exception-mask combinations. Concrete checks execute every
+16-bit input and wide power-of-two boundaries; pure conversions preserve FP
+state and padding. Pending/unknown waiting state, exact memory extents,
+malformed metadata, and all-path empty-destination admission receive negative
+controls, including branches, balanced/unbalanced loops and unknown calls.
+An ABI entry alone does not prove an empty stack: unknown or occupied FILD
+destinations reject complete function publication. Native oracles require x64
+GCC/Clang. These checks do not certify complete x87 TOP/tags/status delivery,
+stack-overflow emulation, native exception/memory-fault priority, or native
+Linux/macOS/x86-32 execution. `NeverDLLVMCIntrinsicSemanticTests` additionally
+executes scalar `llvm.abs` projections through 64 bits at C O0/O2 with undefined
+behavior traps, including the defined signed minimum and single evaluation.
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
+`NeverDX86X87SignAccuracyTests` compares original FABS/FCHS byte sequences
+with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Full binary80
+images and guards cover precision/range beyond binary64, signed zeros,
+subnormals, infinities, NaN payloads and noncanonical encodings. FXAM seeds
+C1 before sign changes; observers retain only the subsequently defined C1.
+The concrete matrix compares every sign/exponent word against original
+instructions with zero/full significands. Contract checks cover physical
+slots/padding, malformed and unknown pure values, pending waiting boundaries,
+and all-path tag admission across branches and loops in ELF/Mach-O/COFF.
+Native checks require x64 and GCC/Clang. This does not certify complete x87
+TOP/tags/status delivery, general arithmetic precision, memory-fault priority,
+or native Linux/macOS/x86-32 execution.
+
+```sh
+cmake --build build-release --target NeverDX86X87SignAccuracyTests
+ctest --test-dir build-release -L '^NeverDX86X87SignAccuracyTests$' --output-on-failure
+```
 
 `NeverDX86MaskCompareStateTests` compares twenty legacy/VEX scalar/packed
 register/memory forms with original bytes, Codegen, HighC and LLVMC at
@@ -5363,6 +5408,14 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 
 `NeverDUnpackDriverTests` covers packed DriverEntry recovery, static/dynamic kernel imports, retained kernel resources, entry ABI/control state, malformed exports, scheduling, request/unload lifecycle, C API/CLI parity and PE checksums. The native driver inventory requires matching KVM/WHP cases; Windows also checks ImageHlp. This does not certify a native kernel load. See [unpacking](unpack.md).
 
+`DriverEntryCaller.*` checks nonzero incoming values for all eight nonvolatile
+GPRs, both halves of XMM6–15, volatile MXCSR status versus preserved controls,
+FPCSR and the returned direction flag. The independent machine-code control
+`UnpackDriver.CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus`
+keeps a balanced stack and STATUS_SUCCESS while corrupting R13; its companion
+restores R13. Checked execution must reject the corruption before publishing
+NTSTATUS or scheduling lifecycle work. Matching KVM/WHP cases are required.
+
 `NeverDKernelSnapshotTests` checks diagnostic object snapshots after terminal memory faults and unsupported instructions. Committed device and dispatch state remains observable without clearing the first fault or permitting further CPU access. Corrupted ownership, cyclic device lists, invalid driver extensions and partial dispatch pointers still fail. Native KVM/WHP acceptance requires the matching backend cases.
 
 `KernelUnpackStateTests.cpp` adds nine portable cases to `NeverDKernelSnapshotTests` covering pool allocation contracts, copied contents, released lifetimes, missing backing and remaining dependencies. Terminal-fault cases also capture live pools. `UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` verifies the public observer state after session destruction. These cases are mandatory in the native driver gate and do not certify native kernel restoration.
@@ -5478,3 +5531,7 @@ for all six C whitespace characters, signs, empty/nondigit inputs, decimal-only
 prefixes and signed 32/64-bit endpoints. They check errno preservation, dynamic
 provider lifetime, first-nondigit/page-tail access and fail-loud overflow under
 the same O0/O2 and ordinary/APS2/RELR fixture matrix.
+
+Driver write-watch controls independently encode changed-value and repeated same-value stores with raw write tracing disabled. Both legacy and checked x64 contracts must suspend after each watched commit, withdraw the unchanged-memory guarantee, and restore it at a later pure execution watch. Lifecycle observation verifies that new invocations and kernel export callbacks withdraw that guarantee. The same-value case is mandatory in native KVM/WHP inventory.
+
+`KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.

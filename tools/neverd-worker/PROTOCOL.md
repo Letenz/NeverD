@@ -95,6 +95,21 @@ same drain policy. A parent can terminate and restart an unresponsive worker.
 
 ## Operations
 
+Manual PDB loading uses `pdb_inspect` with `{path}` first. It returns
+`{path,stamp,verified,name_count,supports_unverified_analysis}` without changing
+the project. `pdb_load` takes `{path,stamp,mode}`: `verified` requires a matching
+PE identity; `analysis` records explicit user confirmation to use the PDB for
+analysis when that identity is missing. Types, signatures and symbol ranges
+use the same supported debug-context path as a matching PDB. Machine, section
+layout and any present identity still must agree. Older `display` selections
+retain their display-only behavior. A successful load changes the revision,
+invalidates old analysis and returns the mode, verification status, name count
+and function count. Analysis replicas require the owner's mode and file stamp;
+a changed PDB is rejected rather than silently reused. `open` takes a saved
+selection as `pdb`: a `verified` one is checked again by its identity, an
+`analysis` one by its stamp, and one that no longer loads leaves the file open
+without it, with a warning.
+
 Unless stated otherwise, operations require an open binary. Standard table pages
 take `{offset:0,limit:128,filter:""}`, with limit 1–512, and return
 `{items,total,offset,next_offset:integer|null,complete:boolean}`. `complete` means

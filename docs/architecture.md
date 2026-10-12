@@ -26,6 +26,25 @@ graphs. It rereads installed bytes and permissions before publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
+## Manual PDB presentation boundary
+
+`PDBDebugContext::inspect` owns manual PE/PDB validation. A missing CodeView
+identity allows machine- and section-checked inspection without changing the
+session. Present mismatched or ambiguous identities fail. After explicit user
+confirmation, `PDBDebugContext::loadUserSelected` gives the selected PDB the
+same supported analysis authority as a matching companion while retaining
+its unverified identity. The C API's `neverd_session_load_pdb_ex` and
+`neverd_session_set_pdb_path_ex` (the CLI's `--pdb-unverified`) carry that
+choice; automatic discovery remains strict.
+Imports publish through the session's transactional PDB loader, retire old
+analysis before replacing its image/debug owners, and retain user edits. File
+stamps and the analysis mode bind the PDB to owner snapshots and their
+read-only analysis replicas. A saved project checks a matching PDB again by
+its identity and a confirmed one by its stamp; a selection that no longer
+loads opens the project without it, with a warning. Older display-only
+selections remain presentation aliases until the user selects the PDB again
+for analysis.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -66,6 +85,12 @@ handler discovery conservatively retires facts before expanding metadata.
 Other architectures and whole-image analyses retain run-local ownership.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
+
+Function selection also retains decoded image data-access widths. Their exact
+ordered function address/size inventory is checked after synchronization;
+changed extents rebuild the widths and discard source using the former names.
+Image reloads, function edits, analysis-policy and signature changes retire
+these facts. Navigation still discards the preceding output IR and source.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -2330,6 +2355,28 @@ state. These value contracts share the existing CFG stack projection; they do
 not establish complete source TOP/tag/condition-code or fault-order semantics.
 Reserved control fields remain outside concrete admission. Swift refuses this
 completion surface until it has an equivalent lowering.
+
+`CFGBuilderX86Fpu` also owns binary80 FABS/FCHS admission and bit lowering.
+Its existing all-path tag solver requires a full source slot before replacing
+the sign operation with integer pieces. A sign change cannot establish a tag
+from an empty or unknown input, including joins and reset backedges. Unsupported
+paths retain their instruction audit. LLVM and both C routes consume the same
+raw lowering, preserving the other 79 bits without host long double. The lifter
+retains the pending-exception wait and defined C1 clear; FNINIT publishes its
+actual zero status to SSA consumers. The generic concrete FLOAT_NEG/FLOAT_ABS
+value owner handles known binary32/64/80 images without numerical conversion.
+This does not establish complete x87 architectural state or general arithmetic.
+
+The same tag solver admits FILD only when every incoming path proves its push
+destination empty; an ABI entry alone supplies no tag proof. The successful
+16/32/64-bit signed load becomes an exact raw binary80 image and clears C1 in
+shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
+the signed minimum without overflow. Waiting precedes the source memory load.
+Unknown/occupied destinations remain incomplete instead of inventing stack
+overflow behavior. The pure concrete integer-to-binary80 conversion uses exact
+APFloat semantics and preserves floating state independently of that machine
+instruction admission. General x87 TOP/tag/status and fault ordering remain
+outside this projection.
 
 `ir/X86FPState.h` owns x86 numerical/state contracts. Legacy
 ADD/SUB/MUL/DIV in SS/SD forms import MXCSR, compute one explicit aggregate
@@ -5327,6 +5374,14 @@ When a recovered DLL entry differs from its original PE entry, the writer emits 
 
 `observeImage` selects the process or driver owner from the PE execution domain. `observeDriver` shares stopped `ProcessObserver` callbacks through `EmulationRuntime`; kernel ownership and DriverEntry ABI checks remain in the driver layer. Scheduling slices retain invocation identity. See [driver unpacking](unpack.md).
 
+`DriverEntryABI` owns the checked invocation's Win64 return-state validation.
+The foreground DriverEntry owner captures the loader caller before execution
+and retains that baseline across nested calls, waits and SEH. A balanced return
+stack and successful NTSTATUS cannot publish success after a nonvolatile GPR,
+XMM lane, MXCSR control field or FPCSR change, or with DF set. MXCSR status bits
+and volatile argument/result registers remain ordinary outputs. This concrete
+invocation check supplies no fresh-caller recovery proof or kernel initializer.
+
 `support/X86Addressing.h` owns the width-specific interpretation of absent ordinary SIB indices for both lifting and checked execution. `EIZ` is absent only with a 32-bit address, and `RIZ` only with a 64-bit address; neither is a base register or VSIB vector index. REX.X-selected R12/R12D remains a real scaled index. `X64Address` regressions compare original processor execution, access observations, cancellation and memory faults at both privilege levels, while `X86NoIndexAddress` retains the strict lifting and malformed-alias checks.
 
 Ordinary RAM `XCHG` admits unaligned 8/16/32/64-bit operands with or without an explicit LOCK prefix. The shared RAM transaction retains the original effective address, serializes publication and discards cancelled or faulted writes; the processor executes the original exchange. `X64Address` tests cover address/register overlap, partial register writes, cache-line and page crossings, observers and missing-page faults. MMIO exchanges retain their provider and natural-alignment requirements; other locked instruction families retain their existing admission rules.
@@ -5347,3 +5402,7 @@ with regular files. The common classifier distinguishes link traversal from
 known missing paths, so other file services stop without inventing target
 contents or metadata. Bionic reuses this service and owns only errno conversion;
 CLI, C and Python consume the same strict `symbolic_links` JSON input.
+
+Driver execution watches publish the same stopped-memory guarantee as process execution watches. The session clears it before every CPU interval and establishes it only at a pure execution-watch exit without a committed watched write. Invocation entry clears it before callbacks. Kernel services, scheduler transitions and other exits remain conservative. The guarantee covers only the preceding installed RAM write watches; the transfer observer still initializes newly visited ranges.
+
+Kernel recovery classifies an arena allocation as a typed live pool only when the pool owner records the same allocation address and exact extent. Its pool dependency remains; unrelated retained objects keep their separate untyped dependency even while pools coexist or are later freed. Allocation identity does not prove pointer fields or supply a kernel materializer.

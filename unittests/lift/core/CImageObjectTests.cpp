@@ -7,11 +7,13 @@
 #include "SourceCallExecution.h"
 #include "gtest/gtest.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/ir/high/HighIR.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <string>
@@ -129,8 +131,10 @@ HighFunc function(const char *Name, TypeRef ReturnType, va_t Entry) {
 }
 
 /// Functions that pass the strings to libc, read the scalars and call through
-/// the slot, as decompiled C prints them.
-std::string emitObjects(const BinaryImage &Img, std::vector<HighFunc> *Out) {
+/// the slot, as decompiled C prints them, with the widths of the image's
+/// accesses \p Widths where the listing's names are wanted.
+std::string emitObjects(const BinaryImage &Img, std::vector<HighFunc> *Out,
+                        const DataAccessWidths *Widths = nullptr) {
   std::vector<HighFunc> Funcs;
   HighFunc Show = function("show", NdType::makeVoid(), TextVA);
   Show.Body = {
@@ -163,6 +167,7 @@ std::string emitObjects(const BinaryImage &Img, std::vector<HighFunc> *Out) {
   Options.TheArch = Arch::X64;
   Options.Format = BinaryFormat::ELF;
   Options.Image = &Img;
+  Options.AccessWidths = Widths;
   std::string Source;
   llvm::raw_string_ostream OS(Source);
   EXPECT_TRUE(HighCEmitter().emit(Funcs, OS, Options));
@@ -197,6 +202,48 @@ TEST(CImageObjects, StringsDeclareTheirTextAndScalarsTheirValues) {
   EXPECT_NE(Source.find("puts(gbk"), NotFound) << Source;
   EXPECT_NE(Source.find("puts(u8s"), NotFound) << Source;
   EXPECT_NE(Source.find("printf(\"%p\\n\", u16s"), NotFound) << Source;
+}
+
+TEST(CImageObjects, CalledSlotsTakeTheListingsNames) {
+  // The listing names a slot the code only calls through as a pointer, and
+  // one the code also reads by the width of its reads (`mov rax, [slot];
+  // call rax`).
+  const BinaryImage Img = objectImage();
+  for (const bool Read : {false, true}) {
+    DataAccessWidths Widths;
+    if (Read)
+      Widths.add(CallSlot, 8);
+    const std::string Source = emitObjects(Img, nullptr, &Widths);
+    EXPECT_NE(Source.find((Read ? "qword_" : "off_") +
+                          llvm::utohexstr(CallSlot) + ")()"),
+              NotFound)
+        << Source;
+  }
+}
+
+TEST(CImageObjects, RelocatedSlotNamesATargetCDoesNotDeclare) {
+  // A relocated slot that holds the address of data no symbol sizes: C
+  // declares no object to point at, so the slot keeps the number and the
+  // comment names the target as the listing does.
+  BinaryImage Img = objectImage();
+  constexpr va_t Slot = Unnamed, Target = Counter + 4;
+  std::vector<uint8_t> &Data = Img.Segments.back().Data;
+  putPointer(Data, Slot - DataVA, Target);
+  Img.DataPtrRelocSlots.insert(Slot);
+  Img.Symbols.push_back(dataSymbol("table", Target, 0));
+  HighFunc Read = function("read_slot", NdType::makeInt(8, true), TextVA);
+  Read.Body = {returnStatement(load(Slot, NdType::makeInt(8, true)))};
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::ELF;
+  Options.Image = &Img;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(HighCEmitter().emit({Read}, OS, Options));
+  OS.flush();
+  EXPECT_NE(Source.find(" = 0x" + llvm::utohexstr(Target) + "; /* &table */"),
+            NotFound)
+      << Source;
 }
 
 TEST(CImageObjects, DeclaredObjectsHoldTheImageBytes) {

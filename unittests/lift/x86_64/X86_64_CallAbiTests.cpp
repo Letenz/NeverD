@@ -203,6 +203,58 @@ static double sh4(H4 s, double e) {
                             {0, 1, -1, 0x10, 0x1234, 1000});
 }
 
+// A 48-byte record passes in memory, and the callee reads no register: its
+// six slots are its parameters, after a place for each register it does not
+// read.  The caller copies the record there with three 16-byte stores from
+// its own copy.
+TEST_F(X86_64_CallAbi, ARecordInMemoryAloneTakesTheSlotsPastTheRegisters) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  long a, b, c, d, e, f;
+} S6;
+long sum6(S6 s) __attribute__((noinline));
+int bigstruct(int x) {
+  S6 s;
+  s.a = x;
+  s.b = x + 1;
+  s.c = (long)x * 2;
+  s.d = x - 3;
+  s.e = (long)x * 5;
+  s.f = x + 7;
+  return (int)sum6(s);
+}
+long sum6(S6 s) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * s.e + 6 * s.f;
+}
+)C",
+                            "bigstruct", {"bigstruct", "sum6", "S6"},
+                            {0, 1, -1, 0x1234, 1000});
+}
+
+// A record in memory before three integers: they take the first three
+// registers, and the record's slots follow every register position, the
+// three the callee does not read included.
+TEST_F(X86_64_CallAbi, ARecordInMemoryAfterRegistersTakesTheSlotsPastThem) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  long a, b, c;
+} S3;
+long mix3(S3 s, long p, long q, long r) __attribute__((noinline));
+int mixstruct(int x) {
+  S3 s;
+  s.a = x;
+  s.b = x + 1;
+  s.c = x + 2;
+  return (int)mix3(s, (long)x * 2, (long)x * 3, (long)x * 4);
+}
+long mix3(S3 s, long p, long q, long r) {
+  return s.a + 3 * s.b + 7 * s.c + p * q - r;
+}
+)C",
+                            "mixstruct", {"mixstruct", "mix3", "S3"},
+                            {0, 1, -1, 0x99, 1000});
+}
+
 // `cvtsi2sd` writes xmm0's low double and keeps its incoming upper lane,
 // and `unpcklpd xmm1, xmm0` reads only the low double of each operand: the
 // function takes no vector argument, only its int.

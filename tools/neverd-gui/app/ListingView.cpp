@@ -102,8 +102,8 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
     viewport()->update();
   });
   connect(&session_, &Session::generationChanged, this, &ListingView::refresh);
-  connect(&session_, &Session::opened, this,
-          [this] { contentReported_ = false; });
+  connect(&session_, &Session::opened, this, &ListingView::clear);
+  connect(&session_, &Session::unloaded, this, &ListingView::clear);
   connect(&session_, &Session::revisionChanged, this, &ListingView::refresh);
   updateMetrics();
 }
@@ -111,6 +111,36 @@ ListingView::ListingView(Session &session, const AddressSpace &space,
 //===----------------------------------------------------------------------===//
 // Data
 //===----------------------------------------------------------------------===//
+
+void ListingView::clear() {
+  // Advance before cancellation: a queued completion must not repopulate
+  // the closed image, even before the worker finishes stopping.
+  ++serial_;
+  scrollJump_.stop();
+  session_.queries().unsubscribeOwner(this);
+  lines_.clear();
+  pendingJump_.reset();
+  pendingScrollAddress_ = 0;
+  fetchingBefore_ = fetchingAfter_ = false;
+  atStart_ = atEnd_ = false;
+  top_ = cursorLine_ = cursorColumn_ = 0;
+  anchor_.reset();
+  selecting_ = false;
+  highlight_.clear();
+  generation_.clear();
+  lastEmitted_.reset();
+  lastFunction_.reset();
+  contentReported_ = false;
+  // The arrow gutter is a font metric; only the prefix width follows the rows.
+  prefixChars_ = 0;
+  updatingScrollBar_ = true;
+  horizontalScrollBar()->setRange(0, 0);
+  verticalScrollBar()->setRange(0, 0);
+  updatingScrollBar_ = false;
+  QToolTip::hideText();
+  viewport()->setCursor(Qt::IBeamCursor);
+  viewport()->update();
+}
 
 void ListingView::jumpTo(Address address) {
   scrollJump_.stop();
@@ -175,7 +205,7 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
         accept(kind, result, serial, cursor, address);
       },
       [this, kind, serial](const QString &, const QString &message) {
-        if (serial != serial_)
+        if (serial != serial_ || !session_.loaded())
           return;
         if (kind == Fetch::Jump) {
           pendingJump_.reset();
@@ -192,7 +222,7 @@ void ListingView::request(Fetch kind, Address address, int sub, int before,
 void ListingView::accept(Fetch kind, const QJsonObject &payload, quint64 serial,
                          std::optional<CursorPlace> cursor,
                          Address jumpAddress) {
-  if (serial != serial_)
+  if (serial != serial_ || !session_.loaded())
     return;
   const bool settledJump = kind == Fetch::Jump;
   if (settledJump)
@@ -438,9 +468,10 @@ void ListingView::updateScrollBar() {
   // Lines scroll sideways only as far as their bodies outrun the view; with
   // no file there is nothing to scroll.
   auto *across = horizontalScrollBar();
-  const int content = space_.empty() ? 0
-                                     : textLeft() + across->value() +
-                                           int(charWidth_ * BodyChars);
+  const int content =
+      space_.empty() || lines_.empty()
+          ? 0
+          : textLeft() + across->value() + int(charWidth_ * BodyChars);
   across->setRange(0, std::max(0, content - viewport()->width()));
   across->setPageStep(viewport()->width());
   auto *bar = verticalScrollBar();
@@ -1018,6 +1049,8 @@ void ListingView::focusOutEvent(QFocusEvent *event) {
 }
 
 void ListingView::showHint(const QPoint &position) {
+  if (!session_.loaded())
+    return;
   const int index = lineAt(position.y());
   if (index >= int(lines_.size())) {
     QToolTip::hideText();
@@ -1030,12 +1063,15 @@ void ListingView::showHint(const QPoint &position) {
     return;
   }
   const QPoint global = viewport()->mapToGlobal(position);
+  const auto serial = serial_;
   const Address target = *span->address;
   session_.read(
       QStringLiteral("listing"),
       {{"address", hexAddress(target)}, {"before", 0}, {"after", HintLines}},
       this,
-      [this, global](const QJsonObject &payload) {
+      [this, global, serial](const QJsonObject &payload) {
+        if (serial != serial_ || !session_.loaded())
+          return;
         QStringList rows;
         for (const auto &value : payload.value("lines").toArray()) {
           const auto row = value.toObject();

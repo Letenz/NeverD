@@ -494,12 +494,13 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
         continue;
-      // Bit counts need source-width normalization and one captured operand.
-      // Their C statement lowering also owns the zero guard where needed.
+      // Bit counts and integer abs normalize source width and capture one
+      // operand. Their statement lowering owns zero guards/unsigned negation.
       if (const auto *II = llvm::dyn_cast<llvm::IntrinsicInst>(&Inst);
           II && (II->getIntrinsicID() == llvm::Intrinsic::ctpop ||
                  II->getIntrinsicID() == llvm::Intrinsic::ctlz ||
-                 II->getIntrinsicID() == llvm::Intrinsic::cttz))
+                 II->getIntrinsicID() == llvm::Intrinsic::cttz ||
+                 II->getIntrinsicID() == llvm::Intrinsic::abs))
         continue;
       // Updating one vector lane requires a copy followed by an assignment.
       if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(&Inst))
@@ -2742,7 +2743,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
   };
   if (Msvc && Msvc->Kind == MsvcCalleeKind::Format && Have >= 2) {
     if (auto VA = imageDataVA(Call.getArgOperand(1))) {
-      if (auto Lit = imageStringLiteral(Img, *VA, /*AllowEmpty=*/false)) {
+      if (auto Lit = stringLiteralAt(Img, Dbg, *VA, /*AllowEmpty=*/false)) {
         llvm::StringRef Body = *Lit;
         if (Body.consume_front("L"))
           Body.consume_front("\"");

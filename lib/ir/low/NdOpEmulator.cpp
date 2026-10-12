@@ -675,6 +675,7 @@ bool NdOpEmulator::step(const LowOp &Op) {
   case NdOp::FLOAT_DIV:
   case NdOp::FLOAT_FMA:
   case NdOp::FLOAT_NEG:
+  case NdOp::FLOAT_ABS:
   case NdOp::FLOAT_SQRT:
   case NdOp::FLOAT_LESS:
     return executeFloatArith(Op);

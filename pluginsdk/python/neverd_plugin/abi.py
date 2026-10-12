@@ -1027,6 +1027,27 @@ _declare(
     ["neverd_session_t", "const char *"],
 )
 _declare(
+    "neverd_session_set_pdb_path_ex",
+    "int",
+    ["neverd_session_t", "const char *", "int"],
+)
+_declare(
+    "neverd_session_inspect_pdb_json",
+    "const char *",
+    ["neverd_session_t", "const char *"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_session_load_pdb",
+    "int",
+    ["neverd_session_t", "const char *"],
+)
+_declare(
+    "neverd_session_load_pdb_ex",
+    "int",
+    ["neverd_session_t", "const char *", "int"],
+)
+_declare(
     "neverd_session_set_map_path",
     "void",
     ["neverd_session_t", "const char *"],

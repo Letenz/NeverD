@@ -278,6 +278,7 @@ extern llvm::cl::opt<bool> JsonOutput;
 extern llvm::cl::opt<bool> NoDebug;
 extern llvm::cl::list<std::string> ARMFunctionModeHints;
 extern llvm::cl::opt<std::string> PdbFile;
+extern llvm::cl::opt<bool> PdbUnverified;
 extern llvm::cl::opt<std::string> MapFile;
 extern llvm::cl::opt<bool> NoOpt;
 extern llvm::cl::opt<size_t> MaxFunc;

@@ -72,6 +72,10 @@ public:
   runtimeState(bool IncludeBacking) override;
   std::optional<uint64_t> nativeCallCount() const override;
   llvm::Expected<uint32_t> instructionSize(uint64_t Address) override;
+  bool watchedMemoryUnchanged() const override { return MemoryUnchanged; }
+  void setWatchedMemoryUnchanged(bool Unchanged) {
+    MemoryUnchanged = Unchanged;
+  }
 
 private:
   llvm::Error replaceWatches(std::vector<ExecutionWatch> Next);
@@ -88,6 +92,7 @@ private:
   std::vector<RelocationWitness> RelocationWrites;
   std::string Name;
   bool Started = false, EntryInvocation = false;
+  bool MemoryUnchanged = false;
   ProcessStackView Stack{};
   WindowsDriverState::RegisterFile InitialRegisters;
   std::array<uint8_t, 40> InitialFrame{};

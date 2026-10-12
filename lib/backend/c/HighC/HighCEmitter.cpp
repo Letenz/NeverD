@@ -28,6 +28,7 @@
 #define DEBUG_TYPE "neverd-highc-emitter"
 #include "neverd/ArchSupport.h"
 #include "neverd/Common.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/c/render/HighC/HighCIntrinsicRender.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
@@ -35,6 +36,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
@@ -2250,12 +2252,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // A relative table holds the offsets of its targets from its own start
   // (clang's `.rel` lookup tables), so the code reaches each target through
   // the table's address: the table's object spans the targets.  Code that
-  // adds an entry back to the table proves it relative, so a target may also
-  // be a string, in another section, the entry a relocation the loader
-  // applies as the same offset (an object's strings).  A table the code only
-  // keeps the address of is one where each entry is an offset the assembler
-  // fixed to a sized object after the table in its section; a relocated slot
-  // of it is a pointer.
+  // adds an entry back to the table proves it relative, and so does a loader
+  // that relocated every entry as such a displacement
+  // (BinaryImage::RelDataPtrRelocSlots); a target of a proven table may be
+  // any string, in another section (an object's strings).  Otherwise each
+  // entry is an offset the assembler fixed to a sized object or a string of
+  // text after the table in its section; a relocated slot of such a table is
+  // a pointer.
   auto StringExtent = [&](va_t Target) -> std::optional<uint64_t> {
     for (uint64_t Byte = 0; Byte < limits::kMaxStringScanLen; ++Byte) {
       const uint8_t *Unit = Opts.Image->readVA(Target + Byte, 1);
@@ -2266,27 +2269,39 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
     return std::nullopt;
   };
+  auto TextExtent = [&](va_t Target) -> std::optional<uint64_t> {
+    if (const auto Text = imageCString(Opts.Image, Target))
+      return Text->Bytes;
+    return std::nullopt;
+  };
   auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes,
                                  bool AddedBack) {
     const auto Object = sizedObjectAt(Table);
     const Section *Sec = Opts.Image->getSectionFor(Table);
     if (!Object || Object->first != Table ||
-        (EntryBytes != 4 && EntryBytes != 8) ||
-        (!AddedBack &&
-         (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)))
+        (EntryBytes != 4 && EntryBytes != 8))
+      return;
+    bool Relocated = Object->second >= EntryBytes;
+    for (va_t Slot = Table;
+         Relocated && Slot + EntryBytes <= Table + Object->second;
+         Slot += EntryBytes)
+      Relocated = Opts.Image->RelDataPtrRelocSlots.count(Slot) != 0;
+    const bool Proven = AddedBack || Relocated;
+    if (!Proven &&
+        (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA))
       return;
     va_t End = Table + Object->second;
     for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
          Slot += EntryBytes) {
       const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
-      if (!Bytes || (!AddedBack && Opts.Image->hasRelocationProvenanceAt(Slot)))
+      if (!Bytes || (!Proven && Opts.Image->hasRelocationProvenanceAt(Slot)))
         return;
       const int64_t Offset =
           EntryBytes == 4 ? static_cast<int64_t>(
                                 static_cast<int32_t>(readLE<uint32_t>(Bytes)))
                           : static_cast<int64_t>(readLE<uint64_t>(Bytes));
       if (Offset < static_cast<int64_t>(Object->second) ||
-          (AddedBack &&
+          (Proven &&
            Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes)))
         return;
       const va_t Target = Table + static_cast<va_t>(Offset);
@@ -2295,12 +2310,12 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           TargetObject && TargetObject->first == Target)
         TargetEnd = Target + TargetObject->second;
       else if (const auto String =
-                   AddedBack ? StringExtent(Target) : std::nullopt)
+                   Proven ? StringExtent(Target) : TextExtent(Target))
         TargetEnd = Target + *String;
       else
         return;
-      if (AddedBack ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
-                    : TargetEnd > Sec->VA + Sec->Size)
+      if (Proven ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
+                 : TargetEnd > Sec->VA + Sec->Size)
         return;
       End = std::max<va_t>(End, TargetEnd);
     }
@@ -2348,7 +2363,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     // address itself is no object the code uses.
     if (E.Kind == ExprKind::Const)
       if (const auto Owner = anchoredOwner(E)) {
-        if (!imageStringLiteral(Opts.Image, *Owner))
+        if (!stringLiteralAt(Opts.Image, Dbg, *Owner))
           NoteWhole(*Owner, nullptr, false);
         return;
       }
@@ -2361,12 +2376,11 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           Object && Object->first != E.ConstVal)
         NoteWhole(E.ConstVal, nullptr, false);
     if (E.Kind == ExprKind::Const && isImageDataAddress(E.ConstVal) &&
-        !imageStringLiteral(Opts.Image, E.ConstVal)) {
+        !stringLiteralAt(Opts.Image, Dbg, E.ConstVal)) {
       bool Named = Opts.UserNames && Opts.UserNames->count(E.ConstVal);
       if (!Named && Dbg) {
         if (auto Data = Dbg->resolveDataObject(E.ConstVal);
-            Data && !Data->Name.empty() &&
-            !llvm::StringRef(Data->Name).starts_with("??_C@"))
+            Data && !Data->Name.empty() && !isStringLiteralName(Data->Name))
           Named = true;
       }
       if (!Named && Opts.Image) {
@@ -2661,7 +2675,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                 ? FunctionAddressNames.count(Target) ||
                       FunctionAddressNames.count(Target & ~va_t{1})
                 : sizedObjectAt(Target) || ImageObjects.count(Target) ||
-                      imageStringLiteral(Opts.Image, Target).has_value();
+                      stringLiteralAt(Opts.Image, Dbg, Target).has_value();
       }
     }
   }
@@ -2884,9 +2898,14 @@ void HighCWriter::writeImageObjects() {
   for (auto &[Addr, Obj] : ImageObjects) {
     if (imageBackingAddress(Addr) || !Obj.Name.empty())
       continue;
-    const bool PointerSlot = Obj.CallSlot ||
-                             Opts.Image->CodePtrRelocSlots.count(Addr) ||
-                             Opts.Image->DataPtrRelocSlots.count(Addr);
+    // As the listing names it: a slot the loader relocates a pointer into,
+    // or one the code only calls through; the code's reads give a slot it
+    // loads a callee from their width.
+    const bool PointerSlot =
+        Opts.Image->CodePtrRelocSlots.count(Addr) ||
+        Opts.Image->DataPtrRelocSlots.count(Addr) ||
+        (Obj.CallSlot &&
+         !(Opts.AccessWidths && Opts.AccessWidths->at(Addr).has_value()));
     const auto Binding = DataSymbolBindings.find(Addr);
     Obj.Name = GlobalIdentifierAllocator.allocate(
         Binding != DataSymbolBindings.end()
@@ -2925,8 +2944,11 @@ void HighCWriter::writeImageObjects() {
       Note = Obj.PointsTo->Note;
     } else {
       OS << declarationToC(Obj.Type, Obj.Name);
-      if (auto Value = imageObjectInitializer(Addr, Obj))
+      if (auto Value = imageObjectInitializer(Addr, Obj)) {
         OS << " = " << *Value;
+        if (Obj.Type && Obj.Type->Size == pointerBytes(Opts.TheArch))
+          Note = relocatedTargetNote(Addr);
+      }
     }
     OS << ";";
     if (Opts.EmitComments && !Note.empty())
@@ -3056,9 +3078,22 @@ std::optional<std::string> HighCWriter::relocatedSlotTarget(va_t Slot) const {
     const bool Array = Obj != ImageObjects.end() && Obj->second.String;
     return "(uintptr_t)" + std::string(Array ? "" : "&") + *Name;
   }
-  if (auto Literal = imageStringLiteral(Opts.Image, Target))
+  if (auto Literal = stringLiteralAt(Opts.Image, Dbg, Target))
     return "(uintptr_t)" + *Literal;
   return std::nullopt;
+}
+
+std::string HighCWriter::relocatedTargetNote(va_t Slot) const {
+  if (!Opts.Image->DataPtrRelocSlots.count(Slot))
+    return {};
+  const unsigned PointerBytes = pointerBytes(Opts.TheArch);
+  const uint8_t *Bytes = Opts.Image->readVA(Slot, PointerBytes);
+  if (!Bytes)
+    return {};
+  const va_t Target =
+      PointerBytes == 8 ? readLE<uint64_t>(Bytes) : readLE<uint32_t>(Bytes);
+  const ImageSymbolName Named = imageSymbolName(Target);
+  return Named.Raw.empty() ? std::string() : "&" + Named.Raw;
 }
 
 std::optional<std::string>

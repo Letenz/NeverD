@@ -111,6 +111,8 @@ TEST_F(KernelUnpackState, RetainsTheExactLegacyAllocationContract) {
     EXPECT_EQ(*Contents.Pools[I].Bytes, std::vector<uint8_t>(Sizes[I], 0xcd));
   }
   reason(Contents, "live kernel pool allocations");
+  EXPECT_EQ(Contents.Reasons,
+            (std::vector<std::string>{"live kernel pool allocations"}));
 }
 
 TEST_F(KernelUnpackState, RetainsModernFlagsAndInitializationSemantics) {
@@ -133,6 +135,33 @@ TEST_F(KernelUnpackState, RetainsModernFlagsAndInitializationSemantics) {
   }
   EXPECT_EQ(State.Pools[2].Address % 64, 0u);
   reason(State, "live kernel pool allocations");
+  EXPECT_EQ(State.Reasons,
+            (std::vector<std::string>{"live kernel pool allocations"}));
+}
+
+TEST_F(KernelUnpackState, TypedPoolsCannotHideOtherRetainedObjects) {
+  ok(Model->captureUnpackBaseline());
+  const auto Pool = call(kernel_api::ExAllocatePool2, {0x40, 64, Tag});
+  ASSERT_NE(Pool, 0u);
+  ASSERT_EQ(call(kernel_api::IoCreateDevice,
+                 {Model->driverObject(), 32, 0, 0x22, 0, 0, Scratch}),
+            0u);
+  const auto Mixed = take(Model->captureUnpackRuntime(true));
+  ASSERT_EQ(Mixed.Pools.size(), 1u);
+  EXPECT_EQ(Mixed.Pools.front().Address, Pool);
+  reason(Mixed, "live kernel pool allocations");
+  reason(Mixed, "retained kernel object allocations");
+  reason(Mixed, "changed kernel loader objects");
+  reason(Mixed, "unreconstructed kernel or environment effects");
+  call(kernel_api::ExFreePoolWithTag, {Pool, Tag});
+  const auto ReleasedPool = take(Model->captureUnpackRuntime(true));
+  EXPECT_TRUE(ReleasedPool.Pools.empty());
+  EXPECT_EQ(std::find(ReleasedPool.Reasons.begin(), ReleasedPool.Reasons.end(),
+                      "live kernel pool allocations"),
+            ReleasedPool.Reasons.end());
+  reason(ReleasedPool, "retained kernel object allocations");
+  reason(ReleasedPool, "changed kernel loader objects");
+  reason(ReleasedPool, "unreconstructed kernel or environment effects");
 }
 
 TEST_F(KernelUnpackState, OwnsCurrentBytesAcrossMutationAndRelease) {
