@@ -423,7 +423,10 @@ icon and window buttons. The window resizes from every edge and corner,
 starting four pixels inside its visible edge. Under Wayland GNOME draws no
 shadow for such a window, so the window draws a ten-pixel shadow of its own,
 and that band resizes the window too, as GNOME's own windows allow; under X11
-GNOME draws the shadow. To keep the window manager's frame instead, set
+GNOME draws the shadow. Dialogs draw the same frame with a title bar of
+their own: the dialog's title in the middle, Close, and Maximize for a dialog
+that offers it, such as the quick start. A resizable dialog resizes from its
+edges and corners. To keep the window manager's frame instead, set
 `nativeTitleBar=true` in the `[ui]` group of
 `~/.config/NeverSight/NeverD.conf`; the workbench reads it at startup.
 

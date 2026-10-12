@@ -292,6 +292,60 @@ TEST_F(WebInterfaceSDK, SourceAndCorrelationCachesAreBounded) {
       1);
 }
 
+TEST_F(WebInterfaceSDK,
+       WrapperMetadataKeepsCallerAndDefinitionAnchorsRedacted) {
+  std::ofstream(Root / "b0.js") << R"(
+const CANARY_WRAPPER=(CANARY_OPTIONS,CANARY_URL)=>fetch(CANARY_URL,CANARY_OPTIONS);
+CANARY_WRAPPER({method:'POST',headers:{Authorization:'CANARY_TOKEN'},
+               body:'CANARY_BODY'},'https://CANARY_HOST/CANARY_PATH');
+CANARY_WRAPPER(...CANARY_ARGUMENTS);
+)";
+  open();
+  const auto A = source();
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-wrappers-syntax-v4");
+  EXPECT_EQ(field(A, "wrapper_profile"), "direct-lexical-fetch-forwarding-v1");
+  EXPECT_EQ(A.getAsObject()->getInteger("wrapper_definitions"), 1);
+  EXPECT_FALSE(
+      A.getAsObject()->getBoolean("wrapper_correlation").value_or(true));
+  const auto ID = field(A, "interface_analysis_id");
+  const auto Page = take(neverd_web_interface_records_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128));
+  const auto &Items = *Page.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 3u);
+  EXPECT_EQ(field(Items[1], "kind"), "fetch_wrapper_call");
+  EXPECT_EQ(field(Items[1], "wrapper_request_node_id"),
+            field(Items[0], "node_id"));
+  EXPECT_FALSE(field(Items[1], "wrapper_binding_id").empty());
+  EXPECT_FALSE(field(Items[1], "wrapper_node_id").empty());
+  EXPECT_FALSE(field(Items[1], "url_parameter_node_id").empty());
+  EXPECT_FALSE(field(Items[1], "options_parameter_node_id").empty());
+  EXPECT_EQ(Items[1].getAsObject()->getInteger("url_argument_index"), 1);
+  EXPECT_EQ(Items[1].getAsObject()->getInteger("options_argument_index"), 0);
+  EXPECT_EQ(field(Items[1], "method"), "POST");
+  EXPECT_FALSE(field(Items[1], "headers_node_id").empty());
+  EXPECT_FALSE(field(Items[1], "body_node_id").empty());
+  EXPECT_EQ(field(Items[2], "arguments_status"), "spread_unresolved");
+  EXPECT_TRUE(field(Items[2], "url_node_id").empty());
+  EXPECT_TRUE(field(Items[2], "options_node_id").empty());
+  EXPECT_FALSE(Items[2].getAsObject()->getInteger("url_argument_index"));
+  EXPECT_FALSE(Items[2].getAsObject()->getInteger("options_argument_index"));
+  EXPECT_EQ(field(Items[1], "wrapper_binding_id"),
+            field(Items[2], "wrapper_binding_id"));
+  EXPECT_EQ(compare(ID, admit()).getAsObject()->getInteger("pair_count"), 0);
+  const auto Again = source();
+  EXPECT_EQ(field(Again, "interface_analysis_id"), ID);
+  const auto OldRevision = Revision;
+  open();
+  EXPECT_EQ(code(take(neverd_web_interface_records_json(
+                S, OldRevision.data(), OldRevision.size(), ID.data(), ID.size(),
+                0, 128))),
+            "stale_revision");
+  EXPECT_EQ(
+      code(take(neverd_web_interface_records_json(
+          S, Revision.data(), Revision.size(), ID.data(), ID.size(), 0, 128))),
+      "unknown_interface_analysis");
+}
+
 TEST_F(WebInterfaceSDK, XHRMetadataRetainsSyntaxLinksAndWithholdsAllValues) {
   std::ofstream(Root / "b0.js") << R"(
 const CANARY_REQUEST = new XMLHttpRequest();
@@ -306,7 +360,7 @@ CANARY_REQUEST.send(...CANARY_ARGUMENTS);
 )";
   open();
   const auto A = source();
-  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v3");
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-wrappers-syntax-v4");
   EXPECT_EQ(field(A, "receiver_identity"), "lexical_and_member_syntax_only");
   EXPECT_EQ(field(A, "request_ordering"), "not_analyzed");
   EXPECT_FALSE(A.getAsObject()->getBoolean("xhr_correlation").value_or(true));
@@ -349,7 +403,7 @@ fetch('https://CANARY_HOST/CANARY_PATH', {method:'POST'});
 )";
   open();
   const auto A = source();
-  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-syntax-v3");
+  EXPECT_EQ(field(A, "profile"), "fetch-websocket-xhr-wrappers-syntax-v4");
   EXPECT_EQ(field(A, "fetch_member_identity"), "property_spelling_unverified");
   EXPECT_FALSE(
       A.getAsObject()->getBoolean("fetch_member_correlation").value_or(true));

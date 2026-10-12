@@ -2,11 +2,14 @@
 
 #include "SettingsKeys.h"
 #include "Theme.h"
+#include "TitleBar.h"
 
-#include <QGuiApplication>
+#include <QApplication>
+#include <QDialog>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSettings>
+#include <QSurfaceFormat>
 #include <QWidget>
 #include <QWindow>
 #include <qpa/qplatformwindow_p.h>
@@ -15,8 +18,6 @@ namespace neverd::gui {
 namespace {
 constexpr char WaylandPlatform[] = "wayland";
 constexpr char X11Platform[] = "xcb";
-/// The style sheet keeps a shadowed window's background clear.
-constexpr char DrawsShadowProperty[] = "drawsShadow";
 /// How far inside the visible edge a press still resizes the window.
 constexpr int InnerEdge = 4;
 /// How far along an edge from a corner a press resizes both edges.
@@ -41,6 +42,38 @@ Qt::CursorShape shapeFor(Qt::Edges edges) {
   const bool top = edges & Qt::TopEdge;
   return left == top ? Qt::SizeFDiagCursor : Qt::SizeBDiagCursor;
 }
+
+/// Whether \p dialog takes its own frame: a dialog window that is about to
+/// show for the first time and is neither a popup, such as the command
+/// palette, nor frameless already.
+bool takesFrame(const QDialog &dialog) {
+  if (!dialog.isWindow() || dialog.isVisible() ||
+      dialog.findChild<TitleBar *>(Qt::FindDirectChildrenOnly))
+    return false;
+  const Qt::WindowFlags flags = dialog.windowFlags();
+  const Qt::WindowFlags type = flags & Qt::WindowType_Mask;
+  return !(flags & Qt::FramelessWindowHint) && type != Qt::Popup &&
+         type != Qt::ToolTip && type != Qt::SplashScreen;
+}
+
+/// Frames each dialog as it is first polished: Qt has created its native
+/// window by then, but shows it only after the dialog has taken its size.
+class DialogFrames final : public QObject {
+public:
+  using QObject::QObject;
+
+protected:
+  bool eventFilter(QObject *object, QEvent *event) override {
+    if (event->type() == QEvent::Polish)
+      if (auto *dialog = qobject_cast<QDialog *>(object);
+          dialog && takesFrame(*dialog)) {
+        // The frame resizes the dialog from its corners.
+        dialog->setSizeGripEnabled(false);
+        WindowFrame::attach(*dialog, new TitleBar(*dialog));
+      }
+    return QObject::eventFilter(object, event);
+  }
+};
 } // namespace
 
 bool WindowFrame::enabled() {
@@ -50,14 +83,27 @@ bool WindowFrame::enabled() {
   return !QSettings().value(settings::NativeTitleBar).toBool();
 }
 
-WindowFrame *WindowFrame::attach(QWidget &window) {
+WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
   if (!enabled())
     return nullptr;
   const bool drawsShadow = onWayland();
-  window.setWindowFlag(Qt::FramelessWindowHint);
+  // A native window that has not shown yet takes the flag as it is, without
+  // being created again.
+  window.overrideWindowFlags(window.windowFlags() | Qt::FramelessWindowHint);
+  if (QWindow *handle = window.windowHandle())
+    handle->setFlags(handle->flags() | Qt::FramelessWindowHint);
+  // Qt then paints no background of the window's own; the frame paints it
+  // inside the shadow.
   if (drawsShadow) {
     window.setAttribute(Qt::WA_TranslucentBackground);
-    window.setProperty(DrawsShadowProperty, true);
+    // Qt keeps the format a created window had, so QtWayland would still
+    // mark the whole surface opaque and GNOME would not draw what lies
+    // under the shadow.
+    if (QWindow *handle = window.windowHandle()) {
+      QSurfaceFormat format = handle->requestedFormat();
+      format.setAlphaBufferSize(8);
+      handle->setFormat(format);
+    }
   }
   // The native window exists from here, so its margins can be set before
   // the compositor first sizes it.
@@ -65,12 +111,18 @@ WindowFrame *WindowFrame::attach(QWidget &window) {
   QWindow *handle = window.windowHandle();
   if (!handle)
     return nullptr;
-  return new WindowFrame(window, *handle, drawsShadow);
+  return new WindowFrame(window, *handle, titleBar, drawsShadow);
 }
 
-WindowFrame::WindowFrame(QWidget &window, QWindow &handle, bool drawsShadow)
-    : QObject(&window), window_(window), handle_(handle),
-      drawsShadow_(drawsShadow) {
+void WindowFrame::frameDialogs(QApplication &app) {
+  if (enabled())
+    app.installEventFilter(new DialogFrames(&app));
+}
+
+WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar,
+                         bool drawsShadow)
+    : QObject(&window), window_(window), handle_(handle), titleBar_(titleBar),
+      drawsShadow_(drawsShadow), content_(window.contentsMargins()) {
   window.installEventFilter(this);
   handle.installEventFilter(this);
   updateMargins();
@@ -120,6 +172,8 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   if (object == &window_) {
     if (event->type() == QEvent::WindowStateChange)
       updateMargins();
+    else if (event->type() == QEvent::Resize)
+      placeTitleBar();
     else if (event->type() == QEvent::Paint && drawsShadow_)
       paint();
     return false;
@@ -152,8 +206,12 @@ void WindowFrame::paint() {
   const auto &theme = Theme::instance();
   const QRect visible = window_.rect().marginsRemoved(margins_);
   QPainter painter(&window_);
-  if (drawsShadow_)
-    painter.fillRect(visible, theme.chrome(QStringLiteral("Window")));
+  // Clear what an earlier frame left in the shadow; the style sheet's
+  // background reaches the window through its palette.
+  painter.setCompositionMode(QPainter::CompositionMode_Source);
+  painter.fillRect(window_.rect(), Qt::transparent);
+  painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+  painter.fillRect(visible, window_.palette().brush(window_.backgroundRole()));
   if (margins_.isNull())
     return;
   // Rings fading away from the edge, then the edge's hairline over them.
@@ -177,18 +235,33 @@ void WindowFrame::updateMargins() {
       drawsShadow_ && framed
           ? QMargins(ShadowExtent, ShadowExtent, ShadowExtent, ShadowExtent)
           : QMargins();
-  if (margins == margins_)
-    return;
-  margins_ = margins;
+  if (margins != margins_) {
+    margins_ = margins;
 #if QT_CONFIG(wayland)
-  // The compositor sizes, places and tiles the visible window, not its
-  // shadow.
-  if (auto *wayland =
-          handle_.nativeInterface<QNativeInterface::Private::QWaylandWindow>())
-    wayland->setCustomMargins(margins);
+    // The compositor sizes, places and tiles the visible window, not its
+    // shadow.
+    if (auto *wayland =
+            handle_
+                .nativeInterface<QNativeInterface::Private::QWaylandWindow>())
+      wayland->setCustomMargins(margins);
 #endif
-  window_.setContentsMargins(margins);
-  window_.update();
+    window_.update();
+  }
+  const int titleHeight = titleBar_ ? titleBar_->sizeHint().height() : 0;
+  const QMargins contents = content_ + margins + QMargins(0, titleHeight, 0, 0);
+  if (window_.contentsMargins() != contents)
+    window_.setContentsMargins(contents);
+  placeTitleBar();
+}
+
+void WindowFrame::placeTitleBar() {
+  if (!titleBar_)
+    return;
+  const QRect visible = window_.rect().marginsRemoved(margins_);
+  titleBar_->setGeometry(visible.left(), visible.top(), visible.width(),
+                         titleBar_->sizeHint().height());
+  titleBar_->raise();
+  titleBar_->show();
 }
 
 void WindowFrame::showEdges(Qt::Edges edges) {

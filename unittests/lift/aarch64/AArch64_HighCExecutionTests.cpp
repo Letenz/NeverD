@@ -122,3 +122,42 @@ int minmax(int a) {
 )C",
                        "minmax", {"minmax"});
 }
+
+// Ten doubles: eight in v0-v7 and two on the stack.  The callee's lift also
+// lists x0-x7, which it never reads, and the call passes a value for each;
+// the call passes the ones the definition declares.
+TEST_F(AArch64_HighCExecution, AStackDoubleCallPassesWhatTheCalleeDeclares) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-ffp-contract=off"},
+      R"C(
+static double d10(double, double, double, double, double, double, double,
+                  double, double, double) __attribute__((noinline));
+int sumd10(int a) {
+  double b = (double)(a & 0xffff);
+  return (int)d10(b, b + 1, b + 2, b + 3, b + 4, b + 5, b + 6, b + 7, b + 8,
+                  b + 9);
+}
+static double d10(double a, double b, double c, double d, double e, double f,
+                  double g, double h, double i, double j) {
+  return a + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8 + i * 9 +
+         j * 10;
+}
+)C",
+      "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
+}
+
+// FCVTZS from a half register converts the half's value, which a float
+// holds exactly: the C converts it through float with the same saturation.
+TEST_F(AArch64_HighCExecution, AHalfConvertsToAnIntegerThroughFloat) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-march=armv8.2-a+fp16"}, R"C(
+int halfint(int a) {
+  unsigned short u = (unsigned short)a;
+  _Float16 h;
+  __builtin_memcpy(&h, &u, sizeof h);
+  return (int)h;
+}
+)C",
+      "halfint", {"halfint"},
+      {0, 0x0001, 0x3C00, 0x4300, 0xC100, 0x5640, 0x7BFF});
+}

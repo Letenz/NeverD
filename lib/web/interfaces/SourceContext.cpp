@@ -182,7 +182,8 @@ void SourceContext::url(SourceInterface &R) {
   if (Size > MaxInterfacePrivateBytes - A.PrivateBytes)
     throw Error("interface_private_budget_exceeded");
   A.PrivateBytes += Size;
-  if (R.Kind == "fetch" && R.Endpoint.CredentialsPresent)
+  if ((R.Kind == "fetch" || R.Kind == "fetch_wrapper_call") &&
+      R.Endpoint.CredentialsPresent)
     R.Endpoint.Status = "fetch_credentials_rejected";
   if (R.Kind == "websocket" && R.Endpoint.FragmentPresent)
     R.Endpoint.Status = "websocket_fragment_rejected";

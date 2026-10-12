@@ -50,14 +50,14 @@ Reimport clears pending and published analyses and comparisons.
 
 ## Source candidates
 
-`fetch-websocket-xhr-syntax-v3` consumes the shared parser, lexical binding
+`fetch-websocket-xhr-wrappers-syntax-v4` consumes the shared parser, lexical binding
 and primitive-value models. It recognizes direct external `fetch(...)` and
 `new WebSocket(...)` syntax. A lexically external name is **not proof of a
 platform intrinsic**: every result remains static inference with unknown
 runtime identity and reachability. Shadowed/written names are excluded;
-possible direct eval refuses the analysis. General aliases, wrapper implementation
-identity and interprocedural request flow remain unsupported. The v3 identity
-replaces v2; operation names remain available, with additive receiver metadata.
+possible direct eval refuses the analysis. General aliases, runtime wrapper
+identity and multi-layer request flow remain unsupported. The v4 identity
+replaces v3; operation names remain available, with additive wrapper metadata.
 
 ### Member spellings and argument boundaries
 
@@ -146,9 +146,43 @@ call, constructor and receiver link remain navigable. This applies to every
 XHR call, including `send` and `addEventListener`; spread listener options are
 also `spread_unresolved`, never asserted absent.
 
-Response dataflow, parameter schemas, wrapper ownership,
-serialization/compression/crypto chains and semantic behavior remain
-unimplemented.
+### One-layer lexical parameter forwarding
+
+`direct-lexical-fetch-forwarding-v1` adds `fetch_wrapper_call` rows. A uniquely
+declared, unwritten function declaration or a simple const identifier initialized
+directly by a function/arrow expression can supply a wrapper definition. The
+function has one or two distinct simple identifier parameters and either an
+arrow call body or a block containing exactly one return of a direct, external,
+unwritten `fetch` call. Each of the inner call's one or two arguments must be
+an exact lexical reference to one of those parameters. Their positions can
+differ from the caller's positions. Async/generator functions, default/rest/
+destructured parameters, other statements, argument transformations, extra inner
+arguments, optional inner dispatch and spreads do not supply a definition.
+
+Only direct lexical calls to that exact binding receive a row; spelling matches,
+aliases, member calls and recursive wrapper-chain composition are unsupported.
+The caller, wrapper function, internal fetch call, binding, parameter nodes and
+zero-based caller argument positions remain independently navigable. Caller
+argument syntax supplies URL/options/header/body anchors through the existing
+finite-value and fetch-option rules. A missing forwarded argument stays
+`wrapper_argument_missing`; an actually omitted inner fetch init alone supplies
+the existing default-method candidate. Caller spreads withhold all actual
+argument-role nodes, caller position fields and private URLs while retaining
+definition/parameter links. A missing actual argument also has no caller position.
+Optional caller syntax is recorded without asserting that the call executes.
+
+This is a source forwarding candidate, not a proof of initialization, runtime
+dispatch, API identity, effects, reachability or source execution. The internal
+fetch remains a separate source occurrence; its parameter value is not replaced
+by the caller's value. Independent lexical definitions with equal names stay
+separate. All discovery and projection share the existing work/record/private
+budgets, and exhaustion clears records and definition counts atomically. Public
+pages publish IDs, fixed classifications and positions, never wrapper names,
+source text, URLs, headers or body values. Wrapper rows are excluded from the
+unchanged HAR correlation and separate `request-source-relations-v1` result
+grammar. General response dataflow, parameter schemas, wrapper ownership,
+serialization/compression/crypto chains and semantic behavior remain outside
+this increment.
 
 ## Explicit correlation
 
