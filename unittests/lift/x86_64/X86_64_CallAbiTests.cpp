@@ -158,3 +158,29 @@ static double sh4(H4 s, double e) {
                             "hfa4d", {"hfa4d", "sh4", "H4"},
                             {0, 1, -1, 0x10, 0x1234, 1000});
 }
+
+// `cvtsi2sd` writes xmm0's low double and keeps its incoming upper lane,
+// and `unpcklpd xmm1, xmm0` reads only the low double of each operand: the
+// function takes no vector argument, only its int.
+TEST_F(X86_64_CallAbi, ABroadcastOfAConvertedIntTakesNoVectorArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  double a, b, c, d;
+} B4;
+static double sb4(B4 s, double e) __attribute__((noinline));
+int bcast(int x) {
+  double v = (double)x;
+  B4 s;
+  s.a = v;
+  s.b = v + 1;
+  s.c = v + 2;
+  s.d = v + 3;
+  return (int)sb4(s, v + 4);
+}
+static double sb4(B4 s, double e) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * e;
+}
+)C",
+                            "bcast", {"bcast", "sb4", "B4"},
+                            {0, 1, -1, 0x10, 77, 1000});
+}

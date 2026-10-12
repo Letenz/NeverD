@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 #include "neverd/ir/med/IntrinsicShapes.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedCallingConvDetail.h"
@@ -242,6 +243,22 @@ void detectXMMParams(
             return true;
         }
         return false;
+      case NdOp::INTRINSIC: {
+        // An intrinsic that reads only some bytes of its vector operands
+        // (`unpcklpd x, x` after `cvtsi2sd`, which kept x's incoming upper
+        // lane) observes none of the rest, and its result holds none.
+        if (Op.NumInputs < 2 || !Op.Inputs[0].isConst() || In[0] != 0)
+          return true;
+        const auto Id = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+        for (uint8_t I = 1; I < Op.NumInputs; ++I) {
+          if (!In[I])
+            continue;
+          const auto Read = x86VectorOperandReadBytes(Id, Op.Inputs[I].Size);
+          if (!Read || (In[I] & *Read))
+            return true;
+        }
+        return false;
+      }
       default:
         return true; // a genuine consumer of an incoming byte
       }
