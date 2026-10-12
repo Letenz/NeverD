@@ -134,3 +134,25 @@ int ptrdiff(int a) {
 )C",
                             "ptrdiff", {"ptrdiff"}, {0, 1, -1, 9, 0x12345678});
 }
+
+// The same zip and mask, the mask register defined by the first write to
+// it: its version is 0, and its one assignment still makes it the constant.
+TEST_F(ARM32_ObjectImmediate, AFirstWrittenMaskRegisterIsTheConstant) {
+  expectHighCRunsLikeSource({"-target", "armv7-linux-gnueabi",
+                             "-mcpu=cortex-a15", "-mfloat-abi=softfp"},
+                            R"C(
+int gray(int a) {
+  unsigned char r[32], g[32], b[32];
+  int s = 0;
+  for (int i = 0; i < 32; i++) {
+    r[i] = (unsigned char)(a * (i + 1));
+    g[i] = (unsigned char)(a * (i + 2) ^ i);
+    b[i] = (unsigned char)(a * (i + 3) ^ (i * 5));
+  }
+  for (int i = 0; i < 32; i++)
+    s += (77 * r[i] + 150 * g[i] + 29 * b[i]) >> 8;
+  return s;
+}
+)C",
+                            "gray", {"gray"}, {0, 1, -1, 0x9A1B, 0x12345678});
+}

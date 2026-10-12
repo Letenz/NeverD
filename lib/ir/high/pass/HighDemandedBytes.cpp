@@ -162,7 +162,7 @@ private:
   }
 
   /// The bytes of \p E that may be nonzero, where E is a constant: a number,
-  /// a concatenation or zero extension of constants, or a variable defined
+  /// a concatenation or zero extension of constants, or a variable assigned
   /// once to one (a vector mask built from two halves, `vand q, q9` after
   /// `vmov.i32 q9, #0xff`).
   std::optional<ByteMask> constantNonzeroBytes(const HighExpr &E,
@@ -185,8 +185,10 @@ private:
     if (E.Kind == ExprKind::UnaryOp && E.Op == NdOp::INT_ZEXT &&
         E.Operands.size() == 1 && E.Operands[0])
       return constantNonzeroBytes(*E.Operands[0], Depth + 1);
+    // One assignment defines the variable everywhere: an incoming value has
+    // none, and a join whose entry edge brings one is a join copy.
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
-        E.Var.SSAVer != 0 && !JoinCopied.count(varKey(E.Var))) {
+        !JoinCopied.count(varKey(E.Var))) {
       const auto It = Definitions.find(varKey(E.Var));
       if (It != Definitions.end() && It->second.size() == 1 && It->second[0])
         return constantNonzeroBytes(*It->second[0], Depth + 1);
