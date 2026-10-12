@@ -415,15 +415,27 @@ struct Session {
     const auto Symbols = Img.getFunctionSymbols();
     Functions.reserve(Symbols.size());
     for (const Symbol *Symbol : Symbols) {
-      std::string Name = Symbol->Name;
+      // A name that states nothing gives way to the export there, as the
+      // analysis names the function (getFunctionNameAt): a PE names its
+      // functions by exports, and one entry several times where its linker
+      // folded identical functions (ObDereferenceObject, ObfDereferenceObject).
+      std::string Linkage = Symbol->Name;
+      NameOrigin LinkageOrigin = Symbol->Origin;
+      if (LinkageOrigin < NameOrigin::Stated)
+        if (const Export *Exp = Img.findExportAt(Symbol->Addr);
+            Exp && !Exp->Name.empty()) {
+          Linkage = Exp->Name;
+          LinkageOrigin = NameOrigin::Stated;
+        }
+      std::string Name = Linkage;
       OriginalNames[Symbol->Addr] = Name;
       if (auto Rename = Renames.find(Symbol->Addr); Rename != Renames.end())
         Name = Rename->second;
       const NameOrigin Origin =
-          Renames.contains(Symbol->Addr) ? NameOrigin::User : Symbol->Origin;
+          Renames.contains(Symbol->Addr) ? NameOrigin::User : LinkageOrigin;
       if (!isDeletedFunction(Symbol->Addr))
         Functions.push_back({Symbol->Addr, Symbol->Size, std::move(Name),
-                             Origin, Symbol->Name, Symbol->Origin});
+                             Origin, std::move(Linkage), LinkageOrigin});
     }
     appendDiscoveredFunctions();
     appendCreatedFunctions();
