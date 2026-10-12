@@ -1664,6 +1664,58 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   EXPECT_EQ(Source.find("0x140003400"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, StatedLiteralsKeepEveryCharacterAndTheirZeros) {
+  // ntoskrnl's console literals hold escapes (PAGEHDLS's "\x1b[0m"), and a
+  // literal's zeros past its terminator are its own (`L"%04d\0"`): a literal
+  // a symbol states prints whole, its other characters escaped, rather than
+  // as a name or a shorter literal.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140005000, {0x1b, '[',  '0', 'm',  0,   0, 0,   0, // "\033[0m"
+                    '?',  '?',  ')', 0xe9, 0,   0, 0,   0, // "??)\351"
+                    '%',  0,    '0', 0,    '4', 0, 'd', 0, // L"%04d\0"
+                    0,    0,    0,   0,    0,   0, 0,   0, //
+                    0x3d, 0xd8, 0,   0xde, 0,   0},        // L"\U0001F600"
+      false);
+  Img.Segments[0].Name = "PAGEHDLS";
+  Img.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  const auto State = [&](const char *Name, va_t Addr) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Img.Symbols.push_back(Sym);
+  };
+  State("??_C@_04ABCDEFGH@?$BL?$FL0m@", 0x140005000);
+  State("??_C@_04ABCDEFGH@?$DP?$DP?$CJ?i@", 0x140005008);
+  State("??_C@_1M@ABCDEFGH@?$AA?$CF?$AA0?$AA4?$AAd@", 0x140005010);
+  State("??_C@_15ABCDEFGH@?$NI?$DN?$NO?$AA@", 0x140005020);
+  HighFunc Func;
+  Func.Name = "console";
+  Func.ReturnType = NdType::makeVoid();
+  for (const va_t Addr : {0x140005000, 0x140005008, 0x140005010, 0x140005020}) {
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                       {HighExpr::makeConst(Addr, 8)});
+    Func.Body.push_back(std::move(Call));
+  }
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  // An octal escape is three digits, so no character after it joins it, and
+  // `??)` would be the trigraph for `]`.
+  EXPECT_NE(Source.find(R"(Format("\033[0m"))"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(R"(Format("?\?)\351"))"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(R"(Format(L"%04d\0"))"), std::string::npos) << Source;
+  // A UTF-16 pair is one character.
+  EXPECT_NE(Source.find(R"(Format(L"\U0001F600"))"), std::string::npos)
+      << Source;
+}
+
 TEST(LLVMCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
   // The LLVM module keeps addresses among the code as numbers; they print as
   // HighC prints them, and the table is declared.
