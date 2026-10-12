@@ -316,9 +316,9 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
     }
     return llvm::Error::success();
   };
-  auto ObjectProvider = [&](const llvm::json::Value &Value,
-                            llvm::StringRef Name,
-                            auto &Options) -> llvm::Error {
+  auto ProviderObjects =
+      [&](const llvm::json::Value &Value, llvm::StringRef Name,
+          auto &Options) -> llvm::Expected<const llvm::json::Array *> {
     const auto *Environment = Value.getAsObject();
     const auto *Objects =
         Environment ? Environment->getArray(field::FileSynchronizationObjects)
@@ -337,10 +337,43 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         return invalid(Name);
       Provider.CreatedRegularObjects = *Enabled;
     }
+    return Objects;
+  };
+  auto ObjectProvider = [&](const llvm::json::Value &Value,
+                            llvm::StringRef Name,
+                            auto &Options) -> llvm::Error {
+    auto Parsed = ProviderObjects(Value, Name, Options);
+    if (!Parsed)
+      return Parsed.takeError();
+    const auto *Objects = *Parsed;
+    auto &Provider = *Options;
     for (const auto &Value : *Objects) {
       const auto Path = Value.getAsString();
       if (!Path || Path->size() >= Remaining ||
           !Provider.Objects.insert(Path->str()).second)
+        return invalid(Name);
+      Remaining -= Path->size() + 1;
+    }
+    return llvm::Error::success();
+  };
+  auto TimedObjectProvider = [&](const llvm::json::Value &Value,
+                                 llvm::StringRef Name,
+                                 auto &Options) -> llvm::Error {
+    auto Parsed = ProviderObjects(Value, Name, Options);
+    if (!Parsed)
+      return Parsed.takeError();
+    const auto *Objects = *Parsed;
+    auto &Provider = *Options;
+    for (const auto &Value : *Objects) {
+      const auto *Object = Value.getAsObject();
+      const auto Path = Object ? Object->getString(field::Path) : std::nullopt;
+      if (!Object || Object->size() != 2 || !Path || Path->size() >= Remaining)
+        return invalid(Name);
+      auto Time =
+          fileTime(Object->get(field::FileModeTime), field::FileModeTime);
+      if (!Time)
+        return Time.takeError();
+      if (!Provider.Objects.emplace(Path->str(), *Time).second)
         return invalid(Name);
       Remaining -= Path->size() + 1;
     }
@@ -357,28 +390,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
                               ? DarwinFileAuthorization::StaticOwnerQueries
                               : DarwinFileAuthorization::StaticOrdinaryQueries;
     } else if (Name == field::FileModeMutations) {
-      const auto *Environment = V.getAsObject();
-      const auto *Objects =
-          Environment ? Environment->getArray(field::FileModeObjects) : nullptr;
-      if (!Environment || Environment->size() != 1 || !Objects ||
-          Objects->size() > darwin_file_limits::Files)
-        return invalid(Name);
-      auto &Modes = Out.ModeMutations.emplace();
-      for (const auto &Value : *Objects) {
-        const auto *Object = Value.getAsObject();
-        const auto Path =
-            Object ? Object->getString(field::Path) : std::nullopt;
-        if (!Object || Object->size() != 2 || !Path ||
-            Path->size() >= Remaining)
-          return invalid(Name);
-        auto Time =
-            fileTime(Object->get(field::FileModeTime), field::FileModeTime);
-        if (!Time)
-          return Time.takeError();
-        if (!Modes.Objects.emplace(Path->str(), *Time).second)
-          return invalid(Name);
-        Remaining -= Path->size() + 1;
-      }
+      if (auto E = TimedObjectProvider(V, Name, Out.ModeMutations))
+        return E;
     } else if (Name == field::FileDataSynchronization) {
       if (auto E = ObjectProvider(V, Name, Out.DataSynchronization))
         return E;
@@ -389,29 +402,8 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       if (auto E = ObjectProvider(V, Name, Out.AdvisoryLocks))
         return E;
     } else if (Name == field::FileOwnershipMutations) {
-      const auto *Environment = V.getAsObject();
-      const auto *Objects =
-          Environment ? Environment->getArray(field::FileOwnershipObjects)
-                      : nullptr;
-      if (!Environment || Environment->size() != 1 || !Objects ||
-          Objects->size() > darwin_file_limits::Files)
-        return invalid(Name);
-      auto &Owners = Out.OwnershipMutations.emplace();
-      for (const auto &Value : *Objects) {
-        const auto *Object = Value.getAsObject();
-        const auto Path =
-            Object ? Object->getString(field::Path) : std::nullopt;
-        if (!Object || Object->size() != 2 || !Path ||
-            Path->size() >= Remaining)
-          return invalid(Name);
-        auto Time = fileTime(Object->get(field::FileOwnershipTime),
-                             field::FileOwnershipTime);
-        if (!Time)
-          return Time.takeError();
-        if (!Owners.Objects.emplace(Path->str(), *Time).second)
-          return invalid(Name);
-        Remaining -= Path->size() + 1;
-      }
+      if (auto E = TimedObjectProvider(V, Name, Out.OwnershipMutations))
+        return E;
     } else if (Name == field::DescriptorLimit) {
       auto N = V.getAsUINT64();
       if (!N || *N > UINT32_MAX)

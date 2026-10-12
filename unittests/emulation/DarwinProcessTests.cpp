@@ -5,6 +5,7 @@
 //===----------------------------------------------------------------------===//
 #include "DarwinAdvisoryLockTestData.h"
 #include "DarwinCreatedAdvisoryLockTestData.h"
+#include "DarwinCreatedAttributeTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
@@ -2885,6 +2886,109 @@ TEST_P(DarwinProcess,
   EXPECT_EQ(Unknown->Services.back().Number, Class | 95);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       CreatedRegularAttributesKeepIndependentProvidersAndObjectState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials =
+      darwin_test::createdAttributeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  auto check = [&](const ProcessResult &R,
+                   llvm::ArrayRef<darwin_test::CreatedAttributeService> Wanted,
+                   int Status, llvm::StringRef Output) {
+    ASSERT_EQ(R.Stop, ProcessStopReason::Exited)
+        << R.Diagnostic << " instructions=" << R.Instructions << " pc=" << R.PC
+        << " services=" << R.Services.size() << " last_number="
+        << (R.Services.empty() ? 0 : R.Services.back().Number);
+    EXPECT_EQ(R.ExitStatus, Status);
+    EXPECT_EQ(R.ReturnValue, uint64_t(Status));
+    EXPECT_EQ(R.StandardOutput, Output);
+    EXPECT_TRUE(R.StandardError.empty());
+    EXPECT_EQ(R.SelectedBackend, GetParam().Backend);
+    ASSERT_EQ(R.Services.size(), Wanted.size());
+    for (unsigned I = 0; I != Wanted.size(); ++I) {
+      SCOPED_TRACE(I);
+      const auto &E = R.Services[I];
+      EXPECT_EQ(E.Number, Class | Wanted[I].Number);
+      EXPECT_EQ(E.Result, Wanted[I].Value);
+      EXPECT_EQ(E.Error, Wanted[I].Error);
+      if (Wanted[I].FD)
+        EXPECT_EQ(E.Arguments[0], *Wanted[I].FD);
+    }
+  };
+  for (bool Virtual : {false, true}) {
+    const char *Mode = Virtual ? "virtual-created-regular-attributes"
+                               : "created-regular-attributes";
+    const auto Wanted =
+        Virtual ? llvm::ArrayRef(darwin_test::VirtualCreatedAttributeServices)
+                : llvm::ArrayRef(darwin_test::CreatedAttributeServices);
+    const auto Output =
+        Virtual ? llvm::fromHex(darwin_test::VirtualCreatedAttributeStdoutHex)
+                : "A";
+    Options.DarwinFiles = darwin_test::createdAttributeOptions();
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_NO_FATAL_FAILURE(check(*R, Wanted, Virtual ? 45 : 44, Output));
+      EXPECT_EQ(Options.DarwinFiles->CreationPolicy->FirstInode, 100u);
+      EXPECT_EQ(Options.DarwinFiles->Files.at("/data"),
+                (std::vector<uint8_t>{'a', 'b', 0, 255, 'e', 'f'}));
+      EXPECT_EQ(Options.DarwinSystem->Credentials->GroupAccessList,
+                (std::vector<uint32_t>{20, 31}));
+    }
+    for (bool Owner : {false, true})
+      for (unsigned Variant = 0; Variant != 4; ++Variant) {
+        Options.DarwinFiles =
+            darwin_test::createdAttributeOptions(Owner, !Owner);
+        if (Variant == 1) {
+          if (Owner)
+            Options.DarwinFiles->OwnershipMutations.reset();
+          else
+            Options.DarwinFiles->ModeMutations.reset();
+        } else if (Variant == 2) {
+          auto &Map = Owner ? Options.DarwinFiles->OwnershipMutations->Objects
+                            : Options.DarwinFiles->ModeMutations->Objects;
+          Map["/data"] =
+              Owner ? DarwinFileTime{81, 82} : DarwinFileTime{71, 72};
+        } else if (Variant == 3) {
+          if (Owner)
+            Options.DarwinFiles->OwnershipMutations.emplace();
+          else
+            Options.DarwinFiles->ModeMutations.emplace();
+        }
+        auto R = run(Mode);
+        ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+        EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+        const unsigned Count = Virtual ? (Owner ? 4 : 3) : (Owner ? 52 : 12);
+        ASSERT_EQ(R->Services.size(), Count);
+        for (unsigned I = 0; I + 1 < Count; ++I) {
+          EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+          EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+          EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+        }
+        EXPECT_EQ(R->Services.back().Number,
+                  Class | (Owner ? (Virtual ? 123u : 16u) : 124u));
+        EXPECT_FALSE(R->Services.back().Result);
+        EXPECT_FALSE(R->Services.back().Error);
+        EXPECT_EQ(R->Diagnostic,
+                  Owner ? (Variant == 1 ? "Darwin ordinary ownership "
+                                          "environment is not configured"
+                                        : "Darwin regular-object ownership "
+                                          "provider is not configured")
+                        : (Variant == 1 ? "Darwin ordinary mode mutation "
+                                          "environment is not configured"
+                                        : "Darwin regular-object mode provider "
+                                          "is not configured"));
+        EXPECT_TRUE(R->StandardOutput.empty());
+        EXPECT_TRUE(R->StandardError.empty());
+      }
+  }
 }
 
 TEST_P(DarwinProcess,

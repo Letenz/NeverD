@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "DarwinCreatedAdvisoryLockTestData.h"
+#include "DarwinCreatedAttributeTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinSystemTestData.h"
@@ -27,6 +28,128 @@ namespace field = process_report;
 #define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "FaultReportCases.def"
 #undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport, DarwinCreatedAttributeFlagsAreIndependentAndCompatible) {
+  for (const char *Purpose : {"mode_mutations", "ownership_mutations"})
+    for (unsigned Variant = 0; Variant != 3; ++Variant) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedAttributeFilesJSON));
+      Files.getAsObject()->erase("mode_mutations");
+      Files.getAsObject()->erase("ownership_mutations");
+      llvm::json::Object Provider{
+          {"objects", llvm::json::Array{llvm::json::Object{
+                          {"path", "/data"},
+                          {"time", llvm::json::Object{{"seconds", 71},
+                                                      {"nanoseconds", 72}}}}}}};
+      if (Variant)
+        Provider["created_regular_objects"] = Variant == 2;
+      (*Files.getAsObject())[Purpose] = std::move(Provider);
+      if (Variant != 2)
+        Files.getAsObject()->erase("creation_policy");
+      auto Parsed = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto &O = *Parsed->DarwinFiles;
+      EXPECT_EQ(bool(O.ModeMutations),
+                llvm::StringRef(Purpose) == "mode_mutations");
+      EXPECT_EQ(bool(O.OwnershipMutations),
+                llvm::StringRef(Purpose) == "ownership_mutations");
+      const auto &Map = O.ModeMutations ? O.ModeMutations->Objects
+                                        : O.OwnershipMutations->Objects;
+      ASSERT_EQ(Map.size(), 1u);
+      EXPECT_EQ(Map.at("/data").Seconds, 71);
+      EXPECT_EQ(Map.at("/data").Nanoseconds, 72);
+      EXPECT_EQ(O.ModeMutations ? O.ModeMutations->CreatedRegularObjects
+                                : O.OwnershipMutations->CreatedRegularObjects,
+                Variant == 2);
+      EXPECT_FALSE(O.Synchronization);
+      EXPECT_FALSE(O.DataSynchronization);
+      EXPECT_FALSE(O.AdvisoryLocks);
+    }
+}
+TEST(ProcessReport, DarwinCreatedAttributeRejectsMalformedMapsFlagsAndPolicy) {
+  for (const char *Purpose : {"mode_mutations", "ownership_mutations"}) {
+    for (
+        const char *Bad :
+        {R"({"objects":[],"created_regular_objects":null})",
+         R"({"objects":[],"created_regular_objects":1})",
+         R"({"objects":[],"created_regular_objects":"true"})",
+         R"({"objects":[],"created_regular_objects":[]})",
+         R"({"objects":[],"created_regular_objects":{}})",
+         R"({"created_regular_objects":true})",
+         R"({"objects":[],"created_regular_objects":true,"extra":false})",
+         R"({"objects":["/data"],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data"}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data","time":{"seconds":1,"nanoseconds":2},"extra":0}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data","time":null}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data","time":{"seconds":1,"nanoseconds":2}},{"path":"/data","time":{"seconds":1,"nanoseconds":2}}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/missing","time":{"seconds":1,"nanoseconds":2}}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data\u0000","time":{"seconds":1,"nanoseconds":2}}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"data","time":{"seconds":1,"nanoseconds":2}}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data","time":{"seconds":1,"nanoseconds":-1}}],"created_regular_objects":true})",
+         R"({"objects":[{"path":"/data","time":{"seconds":1,"nanoseconds":1000000000}}],"created_regular_objects":true})"}) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedAttributeFilesJSON));
+      (*Files.getAsObject())[Purpose] = llvm::cantFail(llvm::json::parse(Bad));
+      auto Rejected = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_FALSE(bool(Rejected)) << Purpose << ":" << Bad;
+      EXPECT_FALSE(llvm::toString(Rejected.takeError()).empty());
+    }
+    for (unsigned Variant = 0; Variant != 7; ++Variant) {
+      auto Files = llvm::cantFail(
+          llvm::json::parse(darwin_test::CreatedAttributeFilesJSON));
+      Files.getAsObject()->erase(llvm::StringRef(Purpose) == "mode_mutations"
+                                     ? "ownership_mutations"
+                                     : "mode_mutations");
+      if (!Variant)
+        Files.getAsObject()->erase("creation_policy");
+      else if (Variant == 1) {
+        llvm::json::Array Objects;
+        for (unsigned I = 0; I != 257; ++I)
+          Objects.push_back(llvm::json::Object{
+              {"path", "/a" + std::to_string(I)},
+              {"time",
+               llvm::json::Object{{"seconds", 1}, {"nanoseconds", 2}}}});
+        (*Files.getAsObject()->getObject(Purpose))["objects"] =
+            std::move(Objects);
+      } else if (Variant < 4) {
+        (*Files.getAsObject()->getObject(Purpose))["created_regular_objects"] =
+            false;
+        (*Files.getAsObject())["authorization"] =
+            Variant == 2 ? "static_owner_queries" : "static_ordinary_queries";
+      } else {
+        auto &Entry = *(*Files.getAsObject()->getArray("files"))[0]
+                           .getAsObject()
+                           ->getObject("metadata");
+        if (Variant == 4)
+          Entry["flags"] = 1;
+        if (Variant == 5)
+          Entry["mode"] = 0104600;
+        if (Variant == 6)
+          Entry["link_count"] = 2;
+        (*Files.getAsObject()->getObject(Purpose))["objects"] =
+            llvm::json::Array{llvm::json::Object{
+                {"path", "/data"},
+                {"time",
+                 llvm::json::Object{{"seconds", 71}, {"nanoseconds", 72}}}}};
+      }
+      auto Rejected = processOptionsFromJSON(
+          llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                   {"darwin_files", std::move(Files)}}))
+              .str());
+      ASSERT_FALSE(bool(Rejected));
+      const auto Reason = llvm::toString(Rejected.takeError());
+      EXPECT_FALSE(Reason.empty());
+      if (!Variant)
+        EXPECT_EQ(Reason, "invalid Darwin virtual file creation policy");
+    }
+  }
+}
 
 TEST(ProcessReport, DarwinCreatedAdvisoryFlagsAreStrictAndCompatible) {
   for (unsigned Variant = 0; Variant != 3; ++Variant) {

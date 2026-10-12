@@ -1,6 +1,6 @@
 **اللغات**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](darwin-emulation.md)
 
-<!-- i18n-source: 746ac31df562ef8b09a70859e9eb72950ee1539cd1d9a8d7d11e127d0a0e4b79 -->
+<!-- i18n-source: 335c1b063992fcb8312e570237641e618484a3e7952bac01dc9091f63a50ee8d -->
 
 [← فهرس الوثائق](README.md)
 
@@ -1466,5 +1466,29 @@ whole176-byte guarded native stat / dirty bytes and current cursors preserved / 
 failed first flag-preservation assumption retained / sole semantic owner repaired from native and pinned XNU
 native5s guest5000000us quantum1024 public10s unchanged / no timing stability claim
 no external peers range locks blocking waits cancellation revocation leases or host provider qualification
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## Explicit mode and ownership providers for created files
+
+تحصل الملفات العادية الجديدة على صلاحيتين مستقلتين لتعديل الأذونات والمالك عبر تصريح صريح. تكون العلامتان false افتراضياً، وتتطلب true سياسة إنشاء كاملة. لا ينقل إعادة استخدام الاسم الصلاحيات الموجودة. يستخدم التعديل الناجح mutation_time بوصفه ctime افتراضياً. حتى الطلب الذي لا يغير المالك ولا المجموعة يتطلب الموفر ويحافظ على كل بايت. تبقى البيانات الوصفية والمجموعات المجهولة غير مدعومة.
+
+
+```text
+mode_mutations={"objects":[],"created_regular_objects":true}
+ownership_mutations={"objects":[],"created_regular_objects":true}
+two independent timed creation providers / defaultfalse / mandatory objects array
+created ModeTime and OwnershipTime use CreationPolicy.Mutation.Time as explicit virtual ctime
+initial fixed times remain independent / existing O_CREAT grants nothing / fresh replacement only
+both UINT32_MAX IDs require provider execution and preserve every byte including ctime
+explicit effective groups20/31 / real GID31 alone does not prove effective membership
+attribute grants cannot restore invalidated metadata or supply write namespace lock completion xattr authority
+SDK-free235 service records / 137 guarded full stat observations / separate main return44 / stdout A
+virtual-only nine service records / separate main return45 / 320 independent literal guarded bytes
+CreatedRegularAttributesKeepIndependentProvidersAndObjectState
+69 current native-common cases / 84 mandatory workloads per platform / ARM64 matching native mandatory252
+450 original native mode observations / 720 original native ownership observations
+native trace not captured / virtual literal bytes not a native timestamp oracle
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```

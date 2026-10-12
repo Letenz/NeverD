@@ -1,6 +1,6 @@
 **언어**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](../de/darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 746ac31df562ef8b09a70859e9eb72950ee1539cd1d9a8d7d11e127d0a0e4b79 -->
+<!-- i18n-source: 335c1b063992fcb8312e570237641e618484a3e7952bac01dc9091f63a50ee8d -->
 
 [← 문서 목록](README.md)
 
@@ -1468,5 +1468,29 @@ whole176-byte guarded native stat / dirty bytes and current cursors preserved / 
 failed first flag-preservation assumption retained / sole semantic owner repaired from native and pinned XNU
 native5s guest5000000us quantum1024 public10s unchanged / no timing stability claim
 no external peers range locks blocking waits cancellation revocation leases or host provider qualification
+native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
+```
+
+
+## Explicit mode and ownership providers for created files
+
+새 일반 파일은 명시적 선언으로 모드 변경과 소유자 변경 권한을 각각 받습니다. 두 플래그의 기본값은 false이며 활성화하려면 완전한 생성 정책이 필요합니다. 기존 권한은 이름 재사용으로 이전되지 않습니다. 성공한 변경은 mutation_time을 가상 ctime으로 사용합니다. 소유자와 그룹을 변경하지 않는 요청도 제공자가 필요하며 모든 바이트를 보존합니다. 알 수 없는 메타데이터와 그룹 소속은 계속 미지원입니다.
+
+
+```text
+mode_mutations={"objects":[],"created_regular_objects":true}
+ownership_mutations={"objects":[],"created_regular_objects":true}
+two independent timed creation providers / defaultfalse / mandatory objects array
+created ModeTime and OwnershipTime use CreationPolicy.Mutation.Time as explicit virtual ctime
+initial fixed times remain independent / existing O_CREAT grants nothing / fresh replacement only
+both UINT32_MAX IDs require provider execution and preserve every byte including ctime
+explicit effective groups20/31 / real GID31 alone does not prove effective membership
+attribute grants cannot restore invalidated metadata or supply write namespace lock completion xattr authority
+SDK-free235 service records / 137 guarded full stat observations / separate main return44 / stdout A
+virtual-only nine service records / separate main return45 / 320 independent literal guarded bytes
+CreatedRegularAttributesKeepIndependentProvidersAndObjectState
+69 current native-common cases / 84 mandatory workloads per platform / ARM64 matching native mandatory252
+450 original native mode observations / 720 original native ownership observations
+native trace not captured / virtual literal bytes not a native timestamp oracle
 native Intel and physical iOS unverified / complete macOS iOS frameworks remain incomplete
 ```

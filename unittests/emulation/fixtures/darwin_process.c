@@ -7663,6 +7663,7 @@ static int mode_result(u64 number, u64 object, u64 a1, u64 a2, u64 a3,
 }
 static int mode_status(u64 number, u64 object, union mode_stat_guard *record,
                        unsigned mode, const union mode_stat_guard *initial) {
+#pragma clang loop unroll(full)
   for (unsigned i = 0; i != 20; ++i)
     record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
   if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
@@ -7675,7 +7676,8 @@ static int mode_status(u64 number, u64 object, union mode_stat_guard *record,
       (mode != 0xffffffffu && (actual & 0777) != mode) ||
       little_integer(record->bytes + 80, 8) >= 1000000000UL)
     return 214;
-  if (initial)
+  if (initial) {
+#pragma clang loop unroll(full)
     for (unsigned i = 1; i != 19; ++i) {
       if (i == 9 || i == 10) /* ctime seconds/nanoseconds */
         continue;
@@ -7683,6 +7685,7 @@ static int mode_status(u64 number, u64 object, union mode_stat_guard *record,
       if (((record->words[i] ^ initial->words[i]) & mask) != 0)
         return 215;
     }
+  }
   return 0;
 }
 static int ordinary_mode_mutations(const char *path) {
@@ -7768,6 +7771,7 @@ static int ownership_status(u64 number, u64 object,
                             union ownership_stat_guard *record, u64 uid,
                             u64 gid,
                             const union ownership_stat_guard *initial) {
+#pragma clang loop unroll(full)
   for (unsigned i = 0; i != 20; ++i)
     record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
   if (ownership_result(number, object, (u64)(record->bytes + 8), 0, 0, 0, 0))
@@ -7781,17 +7785,20 @@ static int ownership_status(u64 number, u64 object,
       (gid != -1UL && little_integer(record->bytes + 28, 4) != gid) ||
       little_integer(record->bytes + 80, 8) >= 1000000000UL)
     return 234;
-  if (initial)
+  if (initial) {
+#pragma clang loop unroll(full)
     for (unsigned i = 1; i != 19; ++i) {
       if (i == 3 || i == 9 || i == 10) /* UID/GID and ctime */
         continue;
       if (record->words[i] != initial->words[i])
         return 235;
     }
+  }
   return 0;
 }
 static int ownership_equal(const union ownership_stat_guard *a,
                            const union ownership_stat_guard *b) {
+#pragma clang loop unroll(full)
   for (unsigned i = 0; i != 20; ++i)
     if (a->words[i] != b->words[i])
       return 236;
@@ -8347,6 +8354,195 @@ static int created_regular_advisory_locks(const char *path) {
   return 0;
 }
 
+/* Independently authored SDK-free creation/attribute/object controls. */
+static __attribute__((noinline)) int
+created_regular_attributes(const char *path) {
+  char name[4096], alias[4096], moved[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4079)
+      return 290;
+    name[size] = alias[size] = moved[size] = path[size];
+    ++size;
+  }
+  const char a_suffix[] = ".attrs", b_suffix[] = ".attrs-alias",
+             c_suffix[] = ".attrs-moved";
+  for (unsigned i = 0; i != sizeof(a_suffix); ++i)
+    name[size + i] = a_suffix[i];
+  for (unsigned i = 0; i != sizeof(b_suffix); ++i)
+    alias[size + i] = b_suffix[i];
+  for (unsigned i = 0; i != sizeof(c_suffix); ++i)
+    moved[size + i] = c_suffix[i];
+  unsigned error;
+  const u64 uid = call(25, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || !uid || uid > 0xfffffffeUL)
+    return 291;
+  const u64 gid = call(43, 0, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || gid > 0xfffffffeUL)
+    return 291;
+  const u64 a = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(4, a, (u64) "0123456789", 10, 0, 0, 0, &error) != 10 || error ||
+      secondary)
+    return 292;
+  const u64 b = call(5, (u64)name, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 292;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || a == b || a == d || b == d ||
+      call(92, a, 0, 10, 0, 0, 0, &error) != 10 || error || secondary ||
+      call(90, a, 20, 0, 0, 0, 0, &error) != 20 || error || secondary ||
+      call(199, b, 3, 0, 0, 0, 0, &error) != 3 || error || secondary ||
+      created_lock_flags(a, 0x10002))
+    return 292;
+  union mode_stat_guard initial, ma, mb, md;
+  if (mode_status(339, a, &initial, 0600, 0) ||
+      mode_result(124, b, 0640, 0, 0, 0) ||
+      mode_status(339, a, &ma, 0640, &initial) ||
+      mode_status(339, b, &mb, 0640, &initial) ||
+      mode_status(339, d, &md, 0640, &initial))
+    return 293;
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const u64 modes[] = {0640, 0, 0604};
+  const u64 mode_numbers[] = {15, 124, 467};
+  for (unsigned route = 0; route != 3; ++route)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 mode = high[h] | 0x7fff0000UL | modes[h];
+      if (mode_result(high[h] | mode_numbers[route],
+                      route == 0 ? (u64)name : high[h] | b,
+                      route == 2 ? (u64)name : mode, route == 2 ? mode : 0, 0,
+                      0) ||
+          mode_status(339, a, &ma, modes[h], &initial) ||
+          mode_status(339, b, &mb, modes[h], &initial) ||
+          mode_status(339, d, &md, modes[h], &initial))
+        return 294;
+      for (unsigned i = 0; i != 20; ++i)
+        if (ma.words[i] != mb.words[i] || ma.words[i] != md.words[i])
+          return 294;
+    }
+  union ownership_stat_guard owned, oa, ob, od;
+  for (unsigned i = 0; i != 20; ++i)
+    owned.words[i] = ma.words[i];
+  const u64 owner_numbers[] = {16, 123, 468};
+  for (unsigned route = 0; route != 3; ++route)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 number = high[h] | owner_numbers[route];
+      const u64 object = route == 0 ? (u64)name : high[h] | b;
+      const u64 first = route == 2 ? (u64)name : high[h] | 0xffffffffUL;
+      if (ownership_result(number, object, first, high[h] | 0xffffffffUL,
+                           route == 2 ? high[h] | 0xffffffffUL : 0, 0, 0) ||
+          ownership_status(339, a, &oa, uid, gid, &owned) ||
+          ownership_status(339, b, &ob, uid, gid, &owned) ||
+          ownership_equal(&oa, &owned) || ownership_equal(&ob, &owned))
+        return 295;
+      for (unsigned request = 0; request != 3; ++request) {
+        const u64 requested_uid = request == 1 ? 0xffffffffUL : uid;
+        const u64 requested_gid = request == 0 ? 0xffffffffUL : gid;
+        if (ownership_result(number, object,
+                             route == 2 ? (u64)name : high[h] | requested_uid,
+                             route == 2 ? high[h] | requested_uid
+                                        : high[h] | requested_gid,
+                             route == 2 ? high[h] | requested_gid : 0, 0, 0) ||
+            ownership_status(339, a, &oa, uid, gid, &owned) ||
+            ownership_status(339, b, &ob, uid, gid, &owned) ||
+            ownership_status(339, d, &od, uid, gid, &owned) ||
+            ownership_equal(&oa, &ob) || ownership_equal(&oa, &od))
+          return 296;
+        for (unsigned i = 0; i != 20; ++i)
+          owned.words[i] = oa.words[i];
+      }
+    }
+  if (mode_result(15, -1UL, 07000, 0, 0, 14) ||
+      mode_result(124, -1UL, 07000, 0, 0, 9) ||
+      mode_result(467, -1UL, -1UL, 07000, 8, 22) ||
+      mode_result(467, -1UL, (u64) "data", 0600, 0, 9) ||
+      ownership_result(16, -1UL, uid, gid, 0, 0, 14) ||
+      ownership_result(123, -1UL, uid, gid, 0, 0, 9) ||
+      ownership_result(468, -1UL, -1UL, uid, gid, 0x800, 22) ||
+      ownership_result(468, -1UL, (u64) "data", uid, gid, 0, 9) ||
+      ownership_status(339, 20, &oa, uid, gid, &owned) ||
+      ownership_equal(&oa, &owned) || created_lock_flags(a, 0x10002) ||
+      created_lock_flags(b, 0) || created_sync_offset(a, 10) ||
+      created_sync_offset(d, 10) || created_sync_offset(b, 3))
+    return 297;
+  if (call(9, (u64)name, (u64)alias, 0, 0, 0, 0, &error) || error || secondary)
+    return 298;
+  const u64 other = call(5, (u64)alias, 0, 0, 0, 0, 0, &error);
+  if (error || secondary ||
+      call(128, (u64)alias, (u64)moved, 0, 0, 0, 0, &error) || error ||
+      secondary || mode_result(124, other, 0600, 0, 0, 0) ||
+      ownership_status(339, a, &owned, uid, gid, 0) ||
+      ownership_result(123, other, 0xffffffffUL, 0xffffffffUL, 0, 0, 0) ||
+      ownership_status(339, other, &oa, uid, gid, &owned) ||
+      ownership_equal(&oa, &owned) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(10, (u64)moved, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      ownership_status(339, b, &owned, uid, gid, 0) ||
+      little_integer(owned.bytes + 14, 2))
+    return 298;
+  for (unsigned i = 0; i != 20; ++i)
+    initial.words[i] = owned.words[i];
+  const u64 fresh = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  if (error || secondary || mode_result(124, fresh, 0640, 0, 0, 0) ||
+      ownership_result(123, fresh, uid, gid, 0, 0, 0) ||
+      ownership_status(339, fresh, &oa, uid, gid, 0) ||
+      little_integer(oa.bytes + 16, 8) == little_integer(owned.bytes + 16, 8) ||
+      mode_result(6, fresh, 0, 0, 0, 0) ||
+      mode_result(124, fresh, 0600, 0, 0, 9) ||
+      ownership_result(123, fresh, uid, gid, 0, 0, 9) ||
+      mode_result(6, a, 0, 0, 0, 0) || mode_result(124, a, 0600, 0, 0, 9) ||
+      ownership_result(123, a, uid, gid, 0, 0, 9) ||
+      mode_result(124, d, 0604, 0, 0, 0) ||
+      ownership_result(123, d, uid, gid, 0, 0, 0) ||
+      mode_result(6, d, 0, 0, 0, 0) || mode_result(6, 10, 0, 0, 0, 0) ||
+      mode_result(6, 20, 0, 0, 0, 0) || mode_result(124, b, 0604, 0, 0, 0) ||
+      ownership_result(123, b, uid, gid, 0, 0, 0) ||
+      mode_status(339, b, &ma, 0604, &initial) ||
+      ownership_status(339, b, &oa, uid, gid, 0) ||
+      call(199, b, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 299;
+  char bytes[10];
+  if (call(3, b, (u64)bytes, 10, 0, 0, 0, &error) != 10 || error || secondary)
+    return 300;
+  for (unsigned i = 0; i != 10; ++i)
+    if (bytes[i] != '0' + i)
+      return 300;
+  if (mode_result(6, other, 0, 0, 0, 0) || mode_result(6, b, 0, 0, 0, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "A", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 301;
+  return 0;
+}
+
+/* Independent configured record output; never used as a native byte oracle. */
+static __attribute__((noinline)) int
+virtual_created_regular_attributes(const char *path) {
+  char name[4096];
+  unsigned size = 0;
+  while (path[size]) {
+    if (size >= 4078)
+      return 302;
+    name[size] = path[size];
+    ++size;
+  }
+  const char suffix[] = ".attribute-record";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    name[size + i] = suffix[i];
+  unsigned error;
+  const u64 fd = call(5, (u64)name, 0xa02, 0600, 0, 0, 0, &error);
+  union mode_stat_guard before, after;
+  if (error || secondary || mode_status(339, fd, &before, 0600, 0) ||
+      mode_result(124, fd, 0640, 0, 0, 0) ||
+      ownership_result(123, fd, 501, 31, 0, 0, 0) ||
+      mode_status(339, fd, &after, 0640, 0) ||
+      call(4, 1, (u64)before.bytes, 160, 0, 0, 0, &error) != 160 || error ||
+      secondary || call(4, 1, (u64)after.bytes, 160, 0, 0, 0, &error) != 160 ||
+      error || secondary || mode_result(6, fd, 0, 0, 0, 0) ||
+      call(10, (u64)name, 0, 0, 0, 0, 0, &error) || error || secondary)
+    return 303;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -8393,6 +8589,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "created-regular-attributes")) {
+    const int status = created_regular_attributes(argv[2]);
+    return status ? status : 44;
+  }
+  if (equal(argv[1], "virtual-created-regular-attributes")) {
+    const int status = virtual_created_regular_attributes(argv[2]);
+    return status ? status : 45;
+  }
   if (equal(argv[1], "created-regular-advisory-locks")) {
     const int status = argc < 3 ? 209 : created_regular_advisory_locks(argv[2]);
     return status ? status : 43;

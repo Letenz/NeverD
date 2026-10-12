@@ -885,6 +885,432 @@ class ProcessIntegrationTests(unittest.TestCase):
                 session.emulate_process(path, profile, json.dumps(request))
             self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
 
+    def test_darwin_created_regular_attributes_keep_independent_providers_and_state(self) -> None:
+        library = os.environ.get("NEVERD_TEST_LIBNEVERD")
+        fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")
+        if not library or not fixtures:
+            self.skipTest("built libneverd and Darwin fixtures are not configured")
+        from neverd_plugin import Session, NeverDError
+        from neverd_plugin.ffi import HostAPI
+        library_path = Path(library).resolve(strict=True)
+        if hasattr(os, "add_dll_directory"):
+            directory = os.add_dll_directory(str(library_path.parent))
+            self.addCleanup(directory.close)
+        host = HostAPI(ctypes.CDLL(str(library_path)))
+        address = int(host.call("neverd_session_create") or 0)
+        self.assertGreater(address, 0)
+        handle = ctypes.c_void_p(address)
+        self.addCleanup(host.call, "neverd_session_destroy", handle)
+        session = Session(handle, _native=SimpleNamespace(session_address=lambda _: address), _host=host)
+        base = json.loads(r'''{
+  "files": [
+    {
+      "path": "/data",
+      "bytes_hex": "616200ff6566",
+      "metadata": {
+        "device": 7,
+        "inode": 2,
+        "mode": 33152,
+        "link_count": 1,
+        "uid": 501,
+        "gid": 20,
+        "size": 6,
+        "block_size": 512,
+        "blocks": 1,
+        "flags": 0,
+        "generation": 9,
+        "access_time": {
+          "seconds": 1,
+          "nanoseconds": 2
+        },
+        "modification_time": {
+          "seconds": 3,
+          "nanoseconds": 4
+        },
+        "change_time": {
+          "seconds": 5,
+          "nanoseconds": 6
+        },
+        "birth_time": {
+          "seconds": 7,
+          "nanoseconds": 8
+        }
+      }
+    }
+  ],
+  "directories": [
+    {
+      "path": "/",
+      "metadata": {
+        "device": 7,
+        "inode": 1,
+        "mode": 16832,
+        "link_count": 2,
+        "uid": 501,
+        "gid": 20,
+        "size": 0,
+        "block_size": 512,
+        "blocks": 0,
+        "flags": 0,
+        "generation": 9,
+        "access_time": {
+          "seconds": 1,
+          "nanoseconds": 2
+        },
+        "modification_time": {
+          "seconds": 3,
+          "nanoseconds": 4
+        },
+        "change_time": {
+          "seconds": 5,
+          "nanoseconds": 6
+        },
+        "birth_time": {
+          "seconds": 7,
+          "nanoseconds": 8
+        }
+      },
+      "mutable": true,
+      "mutation_policy": {
+        "directory_entry_size": 16,
+        "mutation_time": {
+          "seconds": 91,
+          "nanoseconds": 92
+        }
+      }
+    }
+  ],
+  "working_directory": "/",
+  "umask": 18,
+  "creation_policy": {
+    "first_inode": 100,
+    "block_size": 512,
+    "generation": 9,
+    "creation_time": {
+      "seconds": 41,
+      "nanoseconds": 42
+    },
+    "mutation_policy": {
+      "allocation_unit": 512,
+      "mutation_time": {
+        "seconds": 101,
+        "nanoseconds": 102
+      }
+    },
+    "namespace_policy": {
+      "symbolic_link_allocation_unit": 512,
+      "directory_entry_size": 32,
+      "directory_blocks": 7
+    }
+  },
+  "mode_mutations": {
+    "objects": [],
+    "created_regular_objects": true
+  },
+  "ownership_mutations": {
+    "objects": [],
+    "created_regular_objects": true
+  }
+}''')
+        credentials = {'credentials': {'real_uid': 700, 'effective_uid': 501, 'real_gid': 31, 'effective_gid': 20, 'groups': [20, 31]}}
+        # Authored raw outcomes and guarded bytes; no native trace/serializer oracle.
+        expected = [
+            (25, 501, None, False),
+            (43, 20, None, False),
+            (5, 3, None, False),
+            (4, 10, 3, False),
+            (5, 4, None, False),
+            (41, 5, 3, False),
+            (92, 10, 3, False),
+            (90, 20, 3, False),
+            (199, 3, 4, False),
+            (92, 65538, 3, False),
+            (339, 0, 3, False),
+            (124, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (15, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721231, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584335, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (124, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721340, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584444, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (467, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721683, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584787, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (16, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (16, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (16, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (16, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721232, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (1311768464867721232, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721232, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721232, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584336, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (18446744069414584336, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584336, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584336, 0, None, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (123, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (123, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (123, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (123, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721339, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (1311768464867721339, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721339, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721339, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584443, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (18446744069414584443, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584443, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584443, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (468, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (468, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (468, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (468, 0, 4, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721684, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (1311768464867721684, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721684, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (1311768464867721684, 0, 1311768464867721220, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584788, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (18446744069414584788, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584788, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (18446744069414584788, 0, 18446744069414584324, False),
+            (339, 0, 3, False),
+            (339, 0, 4, False),
+            (339, 0, 5, False),
+            (15, 14, None, True),
+            (124, 9, 18446744073709551615, True),
+            (467, 22, 18446744073709551615, True),
+            (467, 9, 18446744073709551615, True),
+            (16, 14, None, True),
+            (123, 9, 18446744073709551615, True),
+            (468, 22, 18446744073709551615, True),
+            (468, 9, 18446744073709551615, True),
+            (339, 0, 20, False),
+            (92, 65538, 3, False),
+            (92, 0, 4, False),
+            (199, 10, 3, False),
+            (199, 10, 5, False),
+            (199, 3, 4, False),
+            (9, 0, None, False),
+            (5, 6, None, False),
+            (128, 0, None, False),
+            (124, 0, 6, False),
+            (339, 0, 3, False),
+            (123, 0, 6, False),
+            (339, 0, 6, False),
+            (10, 0, None, False),
+            (10, 0, None, False),
+            (339, 0, 4, False),
+            (5, 7, None, False),
+            (124, 0, 7, False),
+            (123, 0, 7, False),
+            (339, 0, 7, False),
+            (6, 0, 7, False),
+            (124, 9, 7, True),
+            (123, 9, 7, True),
+            (6, 0, 3, False),
+            (124, 9, 3, True),
+            (123, 9, 3, True),
+            (124, 0, 5, False),
+            (123, 0, 5, False),
+            (6, 0, 5, False),
+            (6, 0, 10, False),
+            (6, 0, 20, False),
+            (124, 0, 4, False),
+            (123, 0, 4, False),
+            (339, 0, 4, False),
+            (339, 0, 4, False),
+            (199, 0, 4, False),
+            (3, 10, 4, False),
+            (6, 0, 6, False),
+            (6, 0, 4, False),
+            (10, 0, None, False),
+            (4, 1, 1, False),
+        ]
+        virtual_expected = [(5, 3, None, False), (339, 0, 3, False), (124, 0, 3, False), (123, 0, 3, False), (339, 0, 3, False), (4, 160, 1, False), (4, 160, 1, False), (6, 0, 3, False), (10, 0, None, False)]
+        virtual_hex = 'a5a5a5a5a5a5a5a507000000808101006400000000000000f501000014000000000000000000000029000000000000002a0000000000000029000000000000002a0000000000000029000000000000002a0000000000000029000000000000002a00000000000000000000000000000000000000000000000002000000000000090000000000000000000000000000000000000000000000a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a507000000a08101006400000000000000f50100001f000000000000000000000029000000000000002a0000000000000029000000000000002a000000000000006500000000000000660000000000000029000000000000002a00000000000000000000000000000000000000000000000002000000000000090000000000000000000000000000000000000000000000a5a5a5a5a5a5a5a5'
+        self.assertEqual(len(expected), 235)
+        self.assertEqual(len(virtual_expected), 9)
+        for fixture, profile in (("macos-arm64", "macos-macho64-v1"), ("macos-x86_64", "macos-macho64-v1"), ("ios-arm64", "ios-macho64-v1"), ("ios-simulator-arm64", "ios-simulator-macho64-v1"), ("ios-simulator-x86_64", "ios-simulator-macho64-v1")):
+            path = str((Path(fixtures) / fixture).resolve(strict=True))
+            cls = 0x2000000 if fixture.endswith("x86_64") else 0
+            for virtual in (False, True):
+                wanted = virtual_expected if virtual else expected
+                mode = "virtual-created-regular-attributes" if virtual else "created-regular-attributes"
+                for variant in range(9):
+                    owner = variant > 4
+                    change = variant - 4 if owner else variant
+                    purpose = "ownership_mutations" if owner else "mode_mutations"
+                    request = {"backend": "unicorn", "instruction_quantum": 1024, "timeout_microseconds": 5000000, "arguments": ["guest", mode, "/data"], "darwin_files": json.loads(json.dumps(base)), "darwin_system": credentials}
+                    if variant:
+                        provider = request["darwin_files"][purpose]
+                        if change in (1, 4):
+                            provider["created_regular_objects"] = False
+                        elif change == 2:
+                            del provider["created_regular_objects"]
+                        elif change == 3:
+                            del request["darwin_files"][purpose]
+                        if change == 4:
+                            provider["objects"] = [{"path": "/data", "time": {"seconds": 71, "nanoseconds": 72}}]
+                    options = json.dumps(request, sort_keys=True)
+                    for _ in range(2 if variant == 0 else 1):
+                        result = session.emulate_process(path, profile, options)
+                        self.assertEqual(result["stop_reason"], "unsupported_service" if variant else "exited")
+                        self.assertEqual(result["stdout_hex"], "" if variant else virtual_hex if virtual else "41")
+                        self.assertEqual(result["stderr_hex"], "")
+                        count = ((4 if owner else 3) if virtual else (52 if owner else 12)) if variant else len(wanted)
+                        calls = result["services"]
+                        self.assertEqual(len(calls), count)
+                        for i, call in enumerate(calls):
+                            number, value, fd, error = wanted[i]
+                            self.assertEqual(call["number"], format(cls | number, "x"))
+                            if variant and i + 1 == count:
+                                self.assertIsNone(call["result"])
+                                self.assertNotIn("error", call)
+                            else:
+                                self.assertEqual(call["result"], format(value, "x"))
+                                self.assertEqual(call["error"], error)
+                                if fd is not None:
+                                    self.assertEqual(call["arguments"][0], format(fd, "x"))
+                        if variant:
+                            expected_reason = ("Darwin ordinary ownership environment is not configured" if change == 3 else "Darwin regular-object ownership provider is not configured") if owner else ("Darwin ordinary mode mutation environment is not configured" if change == 3 else "Darwin regular-object mode provider is not configured")
+                            self.assertEqual(result["diagnostic"], expected_reason)
+                        else:
+                            self.assertEqual(result["exit_status"], 45 if virtual else 44)
+                        self.assertEqual(json.dumps(request, sort_keys=True), options)
+                        self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+            for purpose in ("mode_mutations", "ownership_mutations"):
+                for bad in (None, 1, "true", [], {}):
+                    request = {"darwin_files": json.loads(json.dumps(base))}
+                    request["darwin_files"][purpose]["created_regular_objects"] = bad
+                    with self.assertRaises(NeverDError):
+                        session.emulate_process(path, profile, json.dumps(request))
+                    self.assertEqual(host.call("neverd_session_is_loaded", handle), 0)
+
     def test_darwin_created_regular_advisory_locks_keep_provider_and_description_status(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")
         fixtures = os.environ.get("NEVERD_TEST_DARWIN_FIXTURES")

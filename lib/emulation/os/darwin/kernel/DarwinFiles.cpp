@@ -363,9 +363,20 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       return failure(Reason);
     return PathInput(Path, false);
   };
-  const auto AdmitOrdinaryGrants = [&](const auto &Objects,
+  const auto AdmitCreatedRegularProvider =
+      [&](const auto &Environment) -> llvm::Error {
+    if (Environment && Environment->CreatedRegularObjects &&
+        !Options.CreationPolicy)
+      return failure(diagnostic::FileCreationPolicy);
+    return llvm::Error::success();
+  };
+  const auto AdmitOrdinaryGrants = [&](const auto &Environment,
                                        const char *Reason) -> llvm::Error {
-    for (const auto &[Path, Time] : Objects) {
+    if (auto E = AdmitCreatedRegularProvider(Environment))
+      return E;
+    if (!Environment)
+      return llvm::Error::success();
+    for (const auto &[Path, Time] : Environment->Objects) {
       if (!validTime(Time))
         return failure(Reason);
       if (auto E = AdmitOrdinaryObject(Path, Reason))
@@ -373,20 +384,18 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return llvm::Error::success();
   };
-  if (Options.ModeMutations)
-    if (auto E = AdmitOrdinaryGrants(Options.ModeMutations->Objects,
-                                     diagnostic::FileModeOption))
-      return E;
-  if (Options.OwnershipMutations)
-    if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations->Objects,
-                                     diagnostic::FileOwnershipOption))
-      return E;
+  if (auto E = AdmitOrdinaryGrants(Options.ModeMutations,
+                                   diagnostic::FileModeOption))
+    return E;
+  if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations,
+                                   diagnostic::FileOwnershipOption))
+    return E;
   const auto AdmitObjectProvider = [&](const auto &Environment,
                                        const char *Reason) -> llvm::Error {
+    if (auto E = AdmitCreatedRegularProvider(Environment))
+      return E;
     if (!Environment)
       return llvm::Error::success();
-    if (Environment->CreatedRegularObjects && !Options.CreationPolicy)
-      return failure(diagnostic::FileCreationPolicy);
     for (const auto &Path : Environment->Objects)
       if (auto E = AdmitOrdinaryObject(Path, Reason))
         return E;
@@ -2553,6 +2562,11 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     Node->CurrentMetadata = createdMetadata(
         *ParentIdentity, FileRegularMode | (Mode & 0777 & ~CurrentUmask), 1);
     Node->Policy = &Policy.Mutation;
+    if (Options->ModeMutations && Options->ModeMutations->CreatedRegularObjects)
+      Node->ModeTime = &Policy.Mutation.Time;
+    if (Options->OwnershipMutations &&
+        Options->OwnershipMutations->CreatedRegularObjects)
+      Node->OwnershipTime = &Policy.Mutation.Time;
     // These independent creation providers belong only to this newly admitted
     // ordinary regular object, never to an old name or initial grant.
     Node->AdvisoryLocks =

@@ -1157,7 +1157,8 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         llvm::StringRef(Test.Mode) == "ordinary-file-synchronization" ||
         llvm::StringRef(Test.Mode) == "ordinary-data-synchronization" ||
         llvm::StringRef(Test.Mode) == "created-regular-synchronization" ||
-        llvm::StringRef(Test.Mode) == "created-regular-advisory-locks") {
+        llvm::StringRef(Test.Mode) == "created-regular-advisory-locks" ||
+        llvm::StringRef(Test.Mode) == "created-regular-attributes") {
       const auto Catalogue = Root / Test.Mode;
       ASSERT_TRUE(std::filesystem::create_directory(Catalogue));
       CaseInput = (Catalogue / "data").string();

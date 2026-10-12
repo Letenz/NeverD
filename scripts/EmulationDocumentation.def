@@ -2060,3 +2060,45 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin,
 
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "162 additional native symbolic and pipe status controls")
+
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "mode_mutations={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "ownership_mutations={\"objects\":[],\"created_regular_objects\":true}")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "two independent timed creation providers / "
+                                   "defaultfalse / mandatory objects array")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created ModeTime and OwnershipTime use "
+            "CreationPolicy.Mutation.Time as explicit virtual ctime")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "initial fixed times remain independent / existing "
+                           "O_CREAT grants nothing / fresh replacement only")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "both UINT32_MAX IDs require provider execution and "
+                           "preserve every byte including ctime")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "explicit effective groups20/31 / real GID31 alone "
+                           "does not prove effective membership")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "attribute grants cannot restore invalidated metadata or supply "
+            "write namespace lock completion xattr authority")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "SDK-free235 service records / 137 guarded full stat observations "
+            "/ separate main return44 / stdout A")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "virtual-only nine service records / separate main "
+                           "return45 / 320 independent literal guarded bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedRegularAttributesKeepIndependentProvidersAndObjectState")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "69 current native-common cases / 84 mandatory workloads per "
+            "platform / ARM64 matching native mandatory252")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "450 original native mode observations / "
+                                   "720 original native ownership observations")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native trace not captured / virtual literal bytes "
+                           "not a native timestamp oracle")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "native Intel and physical iOS unverified / "
+                           "complete macOS iOS frameworks remain incomplete")

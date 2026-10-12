@@ -195,13 +195,18 @@ enum class DarwinFileAuthorization {
 /// grant general DAC enforcement, data writes or namespace authority.
 struct DarwinModeMutationOptions {
   /// Initial regular-object provider grants and fixed resulting ctime. Empty
-  /// declares the environment without a provider grant. Objects retain grants
-  /// through dup, rename and runtime links; created/reused names do not
-  /// inherit. Success changes only ordinary permission bits and ctime,
-  /// including when permissions were already equal. Native lease premises do
-  /// not remove VM mapping leases. Invalidated complete metadata cannot be
-  /// restored.
+  /// declares the environment without an initial provider grant. Objects retain
+  /// grants through dup, rename and runtime links; created/reused names do not
+  /// inherit initial grants. Success changes only ordinary permission bits and
+  /// ctime, including when permissions were already equal. Native lease
+  /// premises do not remove VM mapping leases. Invalidated complete metadata
+  /// cannot be restored.
   std::map<std::string, DarwinFileTime> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy and uses its fixed Mutation.Time
+  /// as resulting ctime. Existing objects and directory/link creation receive
+  /// no grant from this. False preserves the initial-only default.
+  bool CreatedRegularObjects = false;
 };
 
 /// Operation-specific ordinary ownership environment: writable nonopaque mount
@@ -213,9 +218,15 @@ struct DarwinOwnershipMutationOptions {
   /// Initial regular-object provider grants. Active UID/GID requests supply
   /// fixed resulting ctime, including equal IDs. Both UINT32_MAX IDs declare
   /// successful provider execution with no effects, including unchanged ctime.
-  /// Empty declares only the environment. Shared objects retain authority;
-  /// creation/name reuse do not inherit it or restore invalidated metadata.
+  /// Empty declares only the environment for initial objects. Shared objects
+  /// retain authority; creation/name reuse do not inherit initial grants or
+  /// restore invalidated metadata.
   std::map<std::string, DarwinFileTime> Objects;
+  /// Independent provider for newly admitted ordinary regular objects. True
+  /// requires the complete CreationPolicy and uses its fixed Mutation.Time
+  /// as resulting ctime. Existing objects and directory/link creation receive
+  /// no grant from this. False preserves the initial-only default.
+  bool CreatedRegularObjects = false;
 };
 
 /// Explicit whole-file flock provider for ordinary regular objects.
