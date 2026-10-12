@@ -1,5 +1,6 @@
 #include "ExtensionsView.h"
 
+#include "ItemViewActivation.h"
 #include "Session.h"
 #include "ShrinkableRow.h"
 #include "Theme.h"
@@ -42,6 +43,7 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
   makeRowShrinkable(*buttonRow);
   leftLayout->addWidget(buttonRow);
   list_ = new QListWidget(left);
+  activateOnReturn(*list_);
   list_->setToolTip(
       tr("Import a declarative manifest to add analysis commands and views."));
   leftLayout->addWidget(list_, 1);

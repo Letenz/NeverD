@@ -1,5 +1,5 @@
-//===- TauriSDKTests.cpp - Native projection and immutable consumers
-//-------===//
+//===- TauriSDKTests.cpp - Native projection and asset consumers
+//-----------===//
 //
 // NeverD Decompiler
 //
@@ -250,6 +250,45 @@ TEST_F(WebTauriSDK, OptionalChatGPT110GNUArchiveAndAllDecodedMembers) {
   EXPECT_EQ(field(E, "entries_container_offset"), "8421464");
   const auto ID = field(E, "extraction_id");
   const auto Rows = page(ID);
+#if NEVERD_TEST_WEB_JAVASCRIPT
+  const auto JS =
+      field((*Rows.getAsObject()->getArray("items"))[6], "selection_id");
+  const auto SReply = take(neverd_web_source_analyze_json(
+      S, Revision.data(), Revision.size(), JS.data(), JS.size(), "module", 6));
+  ASSERT_EQ(field(SReply, "parse_status"), "parsed");
+  const auto Source = field(SReply, "source_id");
+  const auto Navigation = take(neverd_web_source_navigation_analyze_json(
+      S, Revision.data(), Revision.size(), Source.data(), Source.size()));
+  const auto *Bridge = Navigation.getAsObject()->getObject("desktop_bridges");
+  ASSERT_NE(Bridge, nullptr);
+  EXPECT_EQ(Bridge->getInteger("record_count"), 1);
+  const auto Calls = take(neverd_web_source_navigation_records_json(
+      S, Revision.data(), Revision.size(), Source.data(), Source.size(),
+      "desktop_bridges", 15, 0, 128));
+  const auto *Items = Calls.getAsObject()->getArray("items");
+  ASSERT_NE(Items, nullptr);
+  ASSERT_EQ(Items->size(), 1u);
+  EXPECT_EQ(field((*Items)[0], "form"), "window_ipc_message");
+  EXPECT_EQ(field((*Items)[0], "command_status"), "unresolved_argument_shape");
+  EXPECT_EQ(field((*Items)[0], "native_target"), "not_resolved");
+  EXPECT_EQ(field((*Items)[0], "byte_offset"), "3013");
+  EXPECT_EQ(field((*Items)[0], "byte_length"), "53");
+  const auto Anchor = take(neverd_web_source_anchor_json(
+      S, Revision.data(), Revision.size(), Source.data(), Source.size(), 3013,
+      53, nullptr, 0));
+  EXPECT_EQ(field(Anchor, "status"), "ok");
+  const auto *Storage = Anchor.getAsObject()->getObject("storage");
+  ASSERT_NE(Storage, nullptr);
+  EXPECT_EQ(Storage->getString("mapping"), "containing_compressed_frame");
+  EXPECT_EQ(Storage->getString("expanded_byte_offset"), "3013");
+  EXPECT_EQ(Storage->getString("expanded_byte_length"), "53");
+  EXPECT_EQ(Storage->getString("stored_container_offset"), "5069463");
+  EXPECT_EQ(Storage->getString("stored_byte_length"), "24569");
+  const auto *NativeOrigin = Storage->getObject("container_origin");
+  ASSERT_NE(NativeOrigin, nullptr);
+  EXPECT_EQ(NativeOrigin->getString("profile"),
+            "gnu-oldtar-basic-single-gzip-v1");
+#endif
   const auto Directory = (Root / "real-export").string();
   const auto Out = take(neverd_web_tauri_export_json(
       S, Revision.data(), Revision.size(), ID.data(), ID.size(),
