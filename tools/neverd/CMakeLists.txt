@@ -114,6 +114,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdWebSEA.cpp
   cmd/NeverDCmdWebNexe.cpp
   cmd/NeverDCmdWebPkg.cpp
+  cmd/NeverDCmdWebWails.cpp
 
   LINK_LIBS
   neverd_shared
