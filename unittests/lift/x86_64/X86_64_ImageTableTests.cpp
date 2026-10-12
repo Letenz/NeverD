@@ -216,3 +216,41 @@ int loc8(int a) {
 )C",
                        "loc8", {"loc8"});
 }
+
+// `SA[i - 1]` takes one from a sum of SA's address and an index: SA is the
+// table the access reads, declared whole, not the number of its address.
+TEST_F(X86_64_ImageTable, AnIndexBiasedDownReadsTheString) {
+  expectRunsLikeSource(R"C(
+static const char SA[] = "kitten_sequence_alpha";
+static const char SB[] = "sitting_sequins_alfa";
+int editdist(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  const int LA = (int)(sizeof(SA) - 1), LB = (int)(sizeof(SB) - 1);
+  for (int it = 0; it < 8; it++) {
+    s = s * 1103515245u + 12345u;
+    unsigned off = (s >> 7) & 3u, row[24];
+    for (int j = 0; j <= LB; j++)
+      row[j] = (unsigned)j;
+    for (int i = 1; i <= LA; i++) {
+      unsigned prev = row[0];
+      row[0] = (unsigned)i;
+      for (int j = 1; j <= LB; j++) {
+        unsigned cur = row[j];
+        unsigned cost = ((SA[i - 1] + off) == (unsigned)SB[j - 1]) ? 0u : 1u;
+        unsigned m = prev + cost, d = row[j - 1] + 1u;
+        if (d < m)
+          m = d;
+        d = row[j] + 1u;
+        if (d < m)
+          m = d;
+        row[j] = m;
+        prev = cur;
+      }
+    }
+    h = h * 131u + row[LB] + off;
+  }
+  return (int)h;
+}
+)C",
+                       "editdist", {"editdist", "SA", "SB"});
+}

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
+<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
 
 [← Documentation Index](README.md)
 
@@ -12,6 +12,8 @@
 ## اختيار المترجم
 
 اختر `--compiler=clang` أو `--compiler=gcc` أو `--compiler=neverc`. يستطيع Clang وNeverC في الوضع العادي إنتاج LLVM IR؛ وتحافظ صيغة `object` على التعليمات الأصلية المنتجة. تختار CLI الكائنات افتراضياً مع GCC. يتطلب Python SDK تحديد `artifact="object"` صراحةً مع GCC. لا يحدث انتقال صامت إلى مترجم آخر.
+
+استخدم `--compiler-arg` أو `compiler_args` في SDK لتمرير مسارات التضمين وتعريفات الماكرو وخيارات المصدر المدعومة. تُرفض تغييرات الهدف أو نمط الإخراج ورموز ملفات الاستجابة (`@file`) في جميع مواضع الوسائط، بما فيها القيم المنفصلة للخيارات. تظل مسارات `-I` وتعريفات `-D` العادية مدعومة.
 
 استبدل عناوين الأمثلة بمداخل أصلية مؤكدة. يجب أن يطابق تصريح البديل ABI الأصلي بما فيه اتفاقية الاستدعاء وتخطيط البنى؛ لا يثبت العنوان ذلك. تتطلب C++ الخيار `--language=c++` ومسار Clang++/G++ الصحيح. يفضل مدخل `extern "C"` أو الاسم المزخرف الدقيق. يسمح بدوال مساعدة إضافية. يحدد `--entry` و`--func` البديل صراحةً، ويحترم `--from-c` القديم العنوان أيضاً.
 
