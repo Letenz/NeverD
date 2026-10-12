@@ -26,6 +26,21 @@ graphs. It rereads installed bytes and permissions before publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
+## Manual PDB presentation boundary
+
+`PDBDebugContext::inspect` owns manual PE/PDB validation. A missing CodeView
+identity allows machine- and section-checked inspection without changing the
+session. Present mismatched or ambiguous identities fail. After explicit user
+confirmation, `PDBDebugContext::loadUserSelected` gives the selected PDB the
+same supported analysis authority as a matching companion while retaining
+its unverified identity. The C API's `neverd_session_load_pdb_ex` and explicit
+debug-search policy carry that choice; automatic discovery remains strict.
+Imports publish through the session's transactional PDB loader, retire old
+analysis before replacing its image/debug owners, and retain user edits. File
+stamps and the analysis mode bind the PDB to saved projects, owner snapshots
+and their read-only analysis replicas. Older display-only selections remain
+presentation aliases until the user selects the PDB again for analysis.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and

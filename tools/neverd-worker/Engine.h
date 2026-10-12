@@ -47,6 +47,7 @@ public:
   static bool keepsOperandFormats();
   /// Whether the engine lists the ways it can load a file (identify).
   static bool identifiesFiles();
+  static bool loadsPdbFiles();
 
 private:
   neverd_session_t session_ = nullptr;
@@ -68,6 +69,7 @@ private:
   std::uint64_t revision_ = 0;
   std::string projectId_;
   Json openOptions_, signatureInputs_ = Json::array();
+  Json pdbInput_ = nullptr, pdbDisplayNames_ = Json::array();
   /// A read-only replica is checked against the owner's loaded input and
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();

@@ -100,6 +100,7 @@ struct RelocatedScalarOperand {
     I386ELFAmbiguousGOTOFF,
     X86ELFUnrelocatedImmediate,
     AArch64ELFUnrelocatedWideMove,
+    ARMELFUnrelocatedInstruction,
   };
 
   va_t FieldVA = InvalidVA;

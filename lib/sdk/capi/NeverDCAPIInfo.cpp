@@ -20,6 +20,7 @@
 #include "neverd/loader/ExceptionEncoding.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/loader/InputDigest.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
 #include "neverd/sbf/analysis/SBFAnalyzer.h"
 #include "neverd/support/FilePath.h"
@@ -382,6 +383,8 @@ static void writeStringRow(llvm::json::OStream &J, const ImageString &String) {
     J.attribute("chars", static_cast<int64_t>(String.Chars));
     J.attribute("encoding", strings::encodingName(String.Kind));
     J.attribute("length", static_cast<int64_t>(String.Bytes));
+    if (String.Literal)
+      J.attribute("literal", true);
     J.attribute("value", String.Text);
   });
 }
@@ -611,9 +614,13 @@ static const char *symbolRows(Session &S, bool Data) {
   std::string Buf;
   llvm::raw_string_ostream OS(Buf);
   llvm::json::OStream J(OS);
-  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size) {
+  // A user's name is a name even where the symbol's spells a literal.
+  const auto Row = [&](va_t Addr, llvm::StringRef Name, uint64_t Size,
+                       bool Literal) {
     J.object([&] {
       J.attribute("addr", vaHex(Addr));
+      if (Literal)
+        J.attribute("literal", true);
       J.attribute("name", jsonSafeText(Name));
       J.attribute("size", static_cast<int64_t>(Size));
     });
@@ -625,11 +632,11 @@ static const char *symbolRows(Session &S, bool Data) {
         continue;
       const auto Rename = S.Renames.find(Sym.Addr);
       if (Rename == S.Renames.end()) {
-        Row(Sym.Addr, Sym.Name, Sym.Size);
+        Row(Sym.Addr, Sym.Name, Sym.Size, isStringLiteralName(Sym.Name));
         continue;
       }
       Renamed.insert(Sym.Addr);
-      Row(Sym.Addr, Rename->second, Sym.Size);
+      Row(Sym.Addr, Rename->second, Sym.Size, false);
     }
     for (const auto &[Addr, Name] : S.Renames) {
       if (Renamed.count(Addr) ||
@@ -637,7 +644,7 @@ static const char *symbolRows(Session &S, bool Data) {
              return F.Entry == Addr;
            })))
         continue;
-      Row(Addr, Name, 0);
+      Row(Addr, Name, 0, false);
     }
   });
   OS.flush();

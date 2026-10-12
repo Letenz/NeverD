@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>فحص أدلة الحزم المحلية ومراجعات المحللين</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>ملف &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>تحميل الرموز من ملف PDB محدد</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2124,6 +2132,30 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>سطر المصدر هذا ليس له ربط بعنوان تعليمة؛ يُعرض مدخل الدالة</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>تحميل ملف PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>ملفات PDB (*.pdb);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>استخدام PDB غير موثق للتحليل</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>لا يحتوي ملف PE هذا على هوية مطابقة PDB ‏(GUID/age). تتطابق المعمارية وتخطيط المقاطع في ملف PDB المحدد، لكن لا يمكن التحقق من بنائه.
+
+هل تريد استخدام ملف PDB هذا للتحليل؟ ستُستخدم رموزه وأنواعه وتواقيع دواله ونطاقات عناوينه كمدخلات للتحليل. قد يؤدي اختيار PDB خاطئ إلى نتائج غير صحيحة.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2392,6 +2424,18 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>توجد تعليمة معرَّفة بالفعل عند %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>تم تحميل PDB: %1 (%2 اسم، تم التحقق من الهوية)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>تم استيراد أسماء عرض PDB: %1 (%2 اسم، غير موثقة)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>تم تحميل PDB للتحليل: %1 (%2 اسم، أكده المستخدم، الهوية غير موثقة)</translation>
     </message>
 </context>
 <context>

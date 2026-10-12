@@ -760,6 +760,7 @@ void MainWindow::connectSession() {
   });
   session_.setStateProvider([this] { return projectState(); });
   connect(&session_, &Session::unloaded, this, [this] {
+    pseudocodeAfterJump_.reset();
     updateTitle();
     updateActions();
   });
@@ -991,6 +992,7 @@ void MainWindow::connectActions() {
     packageReview_->activateWindow();
   });
   on(ActionId::FileReload, [this] { reloadInput(); });
+  on(ActionId::FileLoadPdb, [this] { loadPdb(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1324,7 +1326,13 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && disassembly_->canGoForward());
   actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
   actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
-  actions_.action(ActionId::FileSave)->setEnabled(loaded && session_.dirty());
+  actions_.action(ActionId::FileSave)
+      ->setEnabled(loaded && (session_.dirty() ||
+                              session_.metadata().value("pdb").isObject()));
+  actions_.action(ActionId::FileLoadPdb)
+      ->setEnabled(loaded && !session_.opening() &&
+                   session_.format() == QLatin1String("PE") &&
+                   session_.loadsPdbFiles());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -1496,6 +1504,53 @@ void MainWindow::reloadInput() {
         session_.reload(dialog.options());
       },
       [this](const QString &, const QString &) { session_.reload(); });
+}
+
+void MainWindow::loadPdb() {
+  if (!session_.loaded() || !session_.loadsPdbFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load PDB file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("PDB files (*.pdb);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.read(
+      QStringLiteral("pdb_inspect"), {{"path", path}}, this,
+      [this, epoch](const QJsonObject &result) {
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, epoch, result] {
+          if (!session_.loaded() || session_.epoch() != epoch)
+            return;
+          const bool verified = result.value("verified").toBool();
+          if (!verified) {
+            if (!result.value("supports_unverified_analysis").toBool()) {
+              output_->append(
+                  tr("This engine cannot use an unverified PDB for analysis"),
+                  1);
+              return;
+            }
+            const auto answer = QMessageBox::warning(
+                this, tr("Use unverified PDB for analysis"),
+                tr("This PE has no PDB matching identity (GUID/age). "
+                   "The selected PDB's machine and section layout match, "
+                   "but its build cannot be verified.\n\n"
+                   "Use this PDB for analysis? Its symbols, types, function "
+                   "signatures and address ranges will be used as analysis "
+                   "input. Choosing the wrong PDB can produce incorrect "
+                   "results."),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+            if (answer != QMessageBox::Yes || !session_.loaded() ||
+                session_.epoch() != epoch)
+              return;
+          }
+          QJsonObject selection{{"path", result.value("path")},
+                                {"mode", verified ? "verified" : "analysis"},
+                                {"stamp", result.value("stamp")}};
+          session_.loadPdb(selection);
+        });
+      });
 }
 
 void MainWindow::applyIndicator() {

@@ -159,9 +159,12 @@ mapCandidates(const std::filesystem::path &BinaryPath) {
 }
 
 DebugInfoResult loadPDB(const std::filesystem::path &P, const BinaryImage &Img,
-                        const LoadProgress &Progress) {
+                        const LoadProgress &Progress,
+                        bool AllowMissingIdentity = false) {
   DebugInfoResult R;
-  auto CtxOr = PDBDebugContext::load(P, Img, Progress);
+  auto CtxOr = AllowMissingIdentity
+                   ? PDBDebugContext::loadUserSelected(P, Img, Progress)
+                   : PDBDebugContext::load(P, Img, Progress);
   if (!CtxOr) {
     R.Error = llvm::toString(CtxOr.takeError());
     return R;
@@ -248,7 +251,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
       Result.Error = "PDB file not found: " + pathToUTF8(Req.PDBPath);
       return Result;
     }
-    Result = loadPDB(Req.PDBPath, Img, Progress);
+    Result = loadPDB(Req.PDBPath, Img, Progress, Req.AllowMissingPDBIdentity);
     if (!Result && Result.Error.empty())
       Result.Error = "no function symbols in " + pathToUTF8(Req.PDBPath);
     return Result;
@@ -368,9 +371,11 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     Img.Symbols.push_back(std::move(New));
   }
 
+  // A guessed function that a data object refutes claims no pointer to it
+  // as one to code, so the guesses go first.
   if (DbgFuncs.empty()) {
-    recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
     dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
+    recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
     return 0;
   }
 
@@ -417,8 +422,8 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     ++Applied;
   }
 
-  recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   dropDebugDataBoundaryGuesses(Img, Dbg, DataByAddr);
+  recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

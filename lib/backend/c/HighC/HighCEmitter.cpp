@@ -2249,38 +2249,94 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   // A relative table holds the offsets of its targets from its own start
   // (clang's `.rel` lookup tables), so the code reaches each target through
-  // the table's address: the table's object spans the targets.  Only offsets
-  // the assembler fixed, to sized objects after the table in its section,
-  // say where the targets are.
-  auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes) {
+  // the table's address: the table's object spans the targets.  Code that
+  // adds an entry back to the table proves it relative, and so does a loader
+  // that relocated every entry as such a displacement
+  // (BinaryImage::RelDataPtrRelocSlots); a target of a proven table may be
+  // any string, in another section (an object's strings).  Otherwise each
+  // entry is an offset the assembler fixed to a sized object or a string of
+  // text after the table in its section; a relocated slot of such a table is
+  // a pointer.
+  auto StringExtent = [&](va_t Target) -> std::optional<uint64_t> {
+    for (uint64_t Byte = 0; Byte < limits::kMaxStringScanLen; ++Byte) {
+      const uint8_t *Unit = Opts.Image->readVA(Target + Byte, 1);
+      if (!Unit || Opts.Image->hasRelocationProvenanceAt(Target + Byte))
+        return std::nullopt;
+      if (*Unit == 0)
+        return Byte + 1;
+    }
+    return std::nullopt;
+  };
+  auto TextExtent = [&](va_t Target) -> std::optional<uint64_t> {
+    if (const auto Text = imageCString(Opts.Image, Target))
+      return Text->Bytes;
+    return std::nullopt;
+  };
+  auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes,
+                                 bool AddedBack) {
     const auto Object = sizedObjectAt(Table);
     const Section *Sec = Opts.Image->getSectionFor(Table);
-    if (!Object || Object->first != Table || !Sec ||
-        (EntryBytes != 4 && EntryBytes != 8) ||
-        Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)
+    if (!Object || Object->first != Table ||
+        (EntryBytes != 4 && EntryBytes != 8))
+      return;
+    bool Relocated = Object->second >= EntryBytes;
+    for (va_t Slot = Table;
+         Relocated && Slot + EntryBytes <= Table + Object->second;
+         Slot += EntryBytes)
+      Relocated = Opts.Image->RelDataPtrRelocSlots.count(Slot) != 0;
+    const bool Proven = AddedBack || Relocated;
+    if (!Proven &&
+        (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA))
       return;
     va_t End = Table + Object->second;
     for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
          Slot += EntryBytes) {
       const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
-      if (!Bytes || Opts.Image->hasRelocationProvenanceAt(Slot))
+      if (!Bytes || (!Proven && Opts.Image->hasRelocationProvenanceAt(Slot)))
         return;
       const int64_t Offset =
           EntryBytes == 4 ? static_cast<int64_t>(
                                 static_cast<int32_t>(readLE<uint32_t>(Bytes)))
                           : static_cast<int64_t>(readLE<uint64_t>(Bytes));
-      if (Offset < static_cast<int64_t>(Object->second))
+      if (Offset < static_cast<int64_t>(Object->second) ||
+          (Proven &&
+           Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes)))
         return;
       const va_t Target = Table + static_cast<va_t>(Offset);
-      const auto TargetObject = sizedObjectAt(Target);
-      if (!TargetObject || TargetObject->first != Target ||
-          Target + TargetObject->second > Sec->VA + Sec->Size)
+      va_t TargetEnd = 0;
+      if (const auto TargetObject = sizedObjectAt(Target);
+          TargetObject && TargetObject->first == Target)
+        TargetEnd = Target + TargetObject->second;
+      else if (const auto String =
+                   Proven ? StringExtent(Target) : TextExtent(Target))
+        TargetEnd = Target + *String;
+      else
         return;
-      End = std::max<va_t>(End, Target + TargetObject->second);
+      if (Proven ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
+                 : TargetEnd > Sec->VA + Sec->Size)
+        return;
+      End = std::max<va_t>(End, TargetEnd);
     }
     ImageObject &Obj = ImageObjects[Table];
     Obj.IndexedBytes = std::max<uint64_t>(Obj.IndexedBytes, End - Table);
   };
+  // A variable holding an entry of an indexed image table: code that adds
+  // it back to the table (`e = table[i]; *(table + e)`) reads a relative
+  // table as surely as one that adds the load itself.
+  VarKeyMap<std::pair<va_t, uint16_t>> TableEntryVars;
+  for (const HighFunc &Func : Funcs)
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
+        return;
+      const HighExpr *Load = peelIntegerViewOps(S.Val.get());
+      if (!Load || Load->Kind != ExprKind::Load || !Load->Type ||
+          Load->Operands.empty() || !Load->Operands[0])
+        return;
+      if (const HighExpr *Entries = indexedImageBase(*Load->Operands[0]))
+        TableEntryVars[varKey(S.Dst->Var)] = {Entries->ConstVal,
+                                              Load->Type->Size};
+    });
   // The constant addresses the code reads or writes at, as opposed to those
   // it uses as values.
   std::set<const HighExpr *> AccessAddresses;
@@ -2351,6 +2407,20 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         // section of other objects, and a Mach-O object's metadata sections
         // point at symbols the output does not define.
         NoteWhole(E.ConstVal, nullptr, false);
+      } else if (Opts.AccessWidths && !AccessAddresses.count(&E) &&
+                 (E.ConstProvenance == ConstantAddressProvenance::Address ||
+                  E.ConstProvenance ==
+                      ConstantAddressProvenance::DataAddress)) {
+        // Unnamed data whose address the code proves and keeps as a value
+        // takes the name the listing gives it (`&qword_140C4EE80`), not a
+        // number, when the emitter knows how the listing names data.  An
+        // address inside a sized object reaches that object, declared whole
+        // above.
+        const auto Object = sizedObjectAt(E.ConstVal);
+        if (!Object || Object->first == E.ConstVal) {
+          noteImageAddress(E.ConstVal);
+          ImageObjects[E.ConstVal].AddressTaken = true;
+        }
       }
     }
     // A data import read names the import's slot; the read-only pointer it
@@ -2417,13 +2487,23 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                     Terms(*Operand, Depth + 1);
                 return;
               }
+              if (Inner->Kind == ExprKind::Var ||
+                  Inner->Kind == ExprKind::Phi) {
+                if (const auto Entry = TableEntryVars.find(varKey(Inner->Var));
+                    Entry != TableEntryVars.end() &&
+                    Entry->second.first == Base->ConstVal)
+                  NoteRelativeTargets(Base->ConstVal, Entry->second.second,
+                                      /*AddedBack=*/true);
+                return;
+              }
               if (Inner->Kind != ExprKind::Load || !Inner->Type ||
                   Inner->Operands.empty() || !Inner->Operands[0])
                 return;
               if (const HighExpr *Entries =
                       indexedImageBase(*Inner->Operands[0]);
                   Entries && Entries->ConstVal == Base->ConstVal)
-                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size);
+                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size,
+                                    /*AddedBack=*/true);
             };
         Terms(*E.Operands[0], 0);
       }
@@ -2528,7 +2608,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // object after it.
   for (auto &[Addr, Obj] : ImageObjects)
     if (Obj.AddressTaken)
-      NoteRelativeTargets(Addr, 4);
+      NoteRelativeTargets(Addr, 4, /*AddedBack=*/false);
 
   // A pointer slot the image relocates holds an address, not a number: a
   // table of functions or of data the code reaches through it.  Each target
@@ -2820,14 +2900,11 @@ void HighCWriter::writeImageObjects() {
     const bool PointerSlot = Obj.CallSlot ||
                              Opts.Image->CodePtrRelocSlots.count(Addr) ||
                              Opts.Image->DataPtrRelocSlots.count(Addr);
-    std::optional<uint64_t> AccessBytes;
-    if (Obj.MemoryWidths.size() == 1)
-      AccessBytes = *Obj.MemoryWidths.begin();
     const auto Binding = DataSymbolBindings.find(Addr);
     Obj.Name = GlobalIdentifierAllocator.allocate(
         Binding != DataSymbolBindings.end()
             ? "got_" + Binding->second.Name
-            : makeDataName(Addr, PointerSlot, AccessBytes),
+            : makeDataName(Addr, PointerSlot, dataNameWidth(Addr, Obj)),
         "g");
   }
   // A pointer slot that names another object comes after the declarations

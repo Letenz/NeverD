@@ -17,6 +17,7 @@
 #include "ImageStrings.h"
 #include "LoadOptions.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/dialect/SourceDialect.h"
@@ -148,6 +149,11 @@ struct Session {
   /// The sources of the functions shown last, the newest first.
   std::list<FunctionSource> FunctionSources;
   static constexpr size_t MaxFunctionSources = 8;
+  /// The widths of the reads and writes the code of every function states
+  /// at each address (dataAccessWidths), and a fingerprint of the functions
+  /// they were read from.
+  std::optional<DataAccessWidths> AccessWidths;
+  uint64_t AccessWidthsFunctions = 0;
   /// Whether every native function's call ABI was recovered for this
   /// pipeline's LLVM emission.
   bool NativeCallAbiRecovered = false;
@@ -403,6 +409,7 @@ struct Session {
   void resetFunctionsFromImage() {
     Functions.clear();
     OriginalNames.clear();
+    AccessWidths.reset();
     if (!Loaded)
       return;
     const auto Symbols = Img.getFunctionSymbols();
@@ -487,6 +494,14 @@ struct Session {
   /// (CEmitterOptions::UserNames), must call this, or a view keeps showing
   /// what was emitted before it.
   void forgetEmittedSources() { FunctionSources.clear(); }
+
+  /// The widths of the reads and writes the code of every function states at
+  /// each address (collectDataAccessWidths), which name unnamed image data in
+  /// the C as the listing names it (CEmitterOptions::AccessWidths).  Read
+  /// again when the functions change, which drops the C kept with the names
+  /// of the old widths.  Null for an image without native code references
+  /// (EVM, SBF) or when no decoder could be set up.
+  const DataAccessWidths *dataAccessWidths();
 
   /// The source \p Route emitted for \p Entry under this pipeline, made the
   /// newest; null if it has not emitted one.

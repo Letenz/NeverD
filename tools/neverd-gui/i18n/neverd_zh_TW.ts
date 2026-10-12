@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>檢視本機套件證據與分析師審查</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB 檔案(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>從所選 PDB 檔案載入符號</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2104,6 +2112,30 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>此原始碼行沒有到指令位址的對應；顯示函式進入點</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>載入 PDB 檔案</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 檔案 (*.pdb);;所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>使用未驗證的 PDB 進行分析</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>此 PE 缺少 PDB 比對識別碼（GUID/age）。所選 PDB 的架構與區段配置相符，但無法確認它屬於同一次建置。
+
+是否使用此 PDB 進行分析？其符號、類型、函式簽章及位址範圍將作為分析輸入。選擇錯誤的 PDB 可能導致錯誤的分析結果。</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>目前引擎不支援使用未驗證的 PDB 進行分析</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2372,6 +2404,18 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>%1 處已定義了指令</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>已載入 PDB：%1（%2 個名稱，身分已驗證）</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>已匯入 PDB 顯示名稱：%1（%2 個名稱，未驗證）</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>已載入 PDB 用於分析：%1（%2 個名稱，使用者已確認，身分未驗證）</translation>
     </message>
 </context>
 <context>

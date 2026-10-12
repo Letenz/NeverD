@@ -41,6 +41,11 @@ public:
   /// The neverd_strings_ex_json options strings are found with, as JSON
   /// text; empty for the engine's defaults.
   void setStringOptions(std::string options);
+  /// Unverified PDB names affect presentation only. No symbol, function
+  /// extent, type or instruction fact is installed in the engine.
+  void setPdbDisplayNames(const Json &names);
+  /// An imported display-only data name that the listing currently shows.
+  std::optional<std::string> pdbDataName(std::uint64_t address);
   /// `listing`: lines around an address.
   Json page(const Json &payload);
   /// `overview`: address classes in equal linear buckets.

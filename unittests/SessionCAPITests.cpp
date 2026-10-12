@@ -2296,6 +2296,127 @@ TEST_F(SessionCAPITest, StringScanReadsTheCodePagesSearched) {
       "[]");
 }
 
+// The sectionless code of makeNativeELF under one .text section, with a
+// function symbol at its entry and data symbols of \p Data, each at an
+// offset into \p Body.
+std::string
+makeSymbolsELF(std::string_view Body,
+               const std::vector<std::pair<std::string, uint64_t>> &Data) {
+  using ELF = llvm::object::ELF64LE;
+  using namespace llvm::ELF;
+  std::string Bytes = makeNativeELF(false, 0x400000, {}, Body);
+  ELF::Ehdr Header{};
+  std::memcpy(&Header, Bytes.data(), sizeof(Header));
+  std::array<ELF::Shdr, 5> Sections{};
+  Sections[1].sh_name = 1;
+  Sections[1].sh_type = SHT_PROGBITS;
+  Sections[1].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+  Sections[1].sh_addr = Header.e_entry;
+  Sections[1].sh_offset = sizeof(ELF::Ehdr) + sizeof(ELF::Phdr);
+  Sections[1].sh_size = Body.size();
+  Sections[1].sh_addralign = 1;
+
+  std::string Names(1, '\0');
+  std::vector<ELF::Sym> Symbols(2 + Data.size());
+  const auto Name = [&](const std::string &Text) {
+    const auto Offset = static_cast<uint32_t>(Names.size());
+    Names += Text + '\0';
+    return Offset;
+  };
+  Symbols[1].st_name = Name("entry");
+  Symbols[1].setBindingAndType(STB_GLOBAL, STT_FUNC);
+  Symbols[1].st_shndx = 1;
+  Symbols[1].st_value = Header.e_entry;
+  Symbols[1].st_size = 1;
+  for (size_t I = 0; I < Data.size(); ++I) {
+    ELF::Sym &Symbol = Symbols[2 + I];
+    Symbol.st_name = Name(Data[I].first);
+    Symbol.setBindingAndType(STB_GLOBAL, STT_OBJECT);
+    Symbol.st_shndx = 1;
+    Symbol.st_value = Header.e_entry + Data[I].second;
+  }
+  Bytes.resize((Bytes.size() + 7) & ~size_t(7), '\0');
+  Sections[2].sh_name = 7;
+  Sections[2].sh_type = SHT_SYMTAB;
+  Sections[2].sh_offset = Bytes.size();
+  Sections[2].sh_size = Symbols.size() * sizeof(ELF::Sym);
+  Sections[2].sh_link = 3;
+  Sections[2].sh_info = 1;
+  Sections[2].sh_addralign = 8;
+  Sections[2].sh_entsize = sizeof(ELF::Sym);
+  Bytes.append(reinterpret_cast<const char *>(Symbols.data()),
+               Symbols.size() * sizeof(ELF::Sym));
+  Sections[3].sh_name = 15;
+  Sections[3].sh_type = SHT_STRTAB;
+  Sections[3].sh_offset = Bytes.size();
+  Sections[3].sh_size = Names.size();
+  Sections[3].sh_addralign = 1;
+  Bytes += Names;
+  constexpr char SectionNames[] = "\0.text\0.symtab\0.strtab\0.shstrtab";
+  Sections[4].sh_name = 23;
+  Sections[4].sh_type = SHT_STRTAB;
+  Sections[4].sh_offset = Bytes.size();
+  Sections[4].sh_size = sizeof(SectionNames);
+  Sections[4].sh_addralign = 1;
+  Bytes.append(SectionNames, sizeof(SectionNames));
+  Bytes.resize((Bytes.size() + 7) & ~size_t(7), '\0');
+  Header.e_shoff = Bytes.size();
+  Header.e_shnum = Sections.size();
+  Header.e_shstrndx = 4;
+  Bytes.append(reinterpret_cast<const char *>(Sections.data()),
+               sizeof(Sections));
+  std::memcpy(Bytes.data(), &Header, sizeof(Header));
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, StringsTakeTheLiteralsSymbolsSpell) {
+  // A return, then L"SA" and "%d\n" among the code under the names MSVC
+  // gives them, as ntoskrnl keeps its literals in PAGE and INIT.
+  std::string Code("\xc3", 1);
+  const uint64_t Wide = Code.size();
+  Code += std::string("S\0A\0\0\0", 6);
+  const uint64_t Narrow = Code.size();
+  Code += std::string("%d\n\0", 4);
+  const std::string WideName = "??_C@_15OHIPBLFN@?$AAS?$AAA@";
+  const std::string NarrowName = "??_C@_03HMFOOINA@?$CFd?6@";
+  const auto Input =
+      write("literals.elf",
+            makeSymbolsELF(Code, {{WideName, Wide}, {NarrowName, Narrow}}));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Entry = 0x400000 + sizeof(llvm::object::ELF64LE::Ehdr) +
+                         sizeof(llvm::object::ELF64LE::Phdr);
+  const auto Hex = [](uint64_t Value) { return "0x" + llvm::utohexstr(Value); };
+  // Code holds both, and "SA" is shorter than a scan looks for; the symbols
+  // say they are text.
+  const std::string WideRow = "{\"addr\":\"" + Hex(Entry + Wide) +
+                              "\",\"chars\":2,\"encoding\":\"utf-16le\","
+                              "\"length\":4,\"literal\":true,"
+                              "\"value\":\"SA\"}";
+  const std::string NarrowRow = "{\"addr\":\"" + Hex(Entry + Narrow) +
+                                "\",\"chars\":3,\"encoding\":\"ascii\","
+                                "\"length\":3,\"literal\":true,"
+                                "\"value\":\"%d\\n\"}";
+  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)),
+            "[" + WideRow + "," + NarrowRow + "]");
+  // The symbol says they are text, whichever encodings a search reads.
+  EXPECT_EQ(
+      takeString(neverd_strings_ex_json(Session, R"({"encodings":["ascii"]})")),
+      "[" + WideRow + "," + NarrowRow + "]");
+  // The symbols spell the literals, until the user names one.
+  const std::string Spelled = "{\"addr\":\"" + Hex(Entry + Wide) +
+                              "\",\"literal\":true,\"name\":\"" + WideName +
+                              "\",\"size\":0}";
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session)).find(Spelled),
+            std::string::npos);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry + Wide, "kWide"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session))
+                .find("{\"addr\":\"" + Hex(Entry + Wide) +
+                      "\",\"name\":\"kWide\",\"size\":0}"),
+            std::string::npos);
+}
+
 TEST_F(SessionCAPITest, SwitchTablesComeFromWholeProgramAnalysis) {
   // switch (x) on 0..3 through offsets from the table, as GCC lays out
   // position-independent code: cmp edi, 3; ja default; mov edi, edi;
@@ -2616,6 +2737,62 @@ TEST_F(SessionCAPITest, UserNamesNameDataInSymbolsAndC) {
   EXPECT_EQ(
       takeString(neverd_decompile(Session, DataELFEntry)).find("table_base"),
       std::string::npos);
+}
+
+TEST_F(SessionCAPITest, DataTakesItsListingNameWhereOnlyItsAddressIsTaken) {
+  // The entry calls a reader for each access width, then returns the address
+  // of the data they read, which no symbol names.  Decompiled alone, as the
+  // workbench shows it, the entry names the data as the listing does: by the
+  // width every function's accesses share there.
+  const auto Bytes32 = [](uint64_t Value) {
+    std::string Bytes;
+    for (unsigned I = 0; I < 4; ++I)
+      Bytes += static_cast<char>(static_cast<uint32_t>(Value) >> (8 * I));
+    return Bytes;
+  };
+  const auto Program = [&](const std::vector<unsigned> &Widths) {
+    std::string Entry, Readers;
+    uint64_t Reader = DataELFEntry + 5 * Widths.size() + 8;
+    for (const unsigned Width : Widths) {
+      // call reader
+      Entry += "\xe8" + Bytes32(Reader - (DataELFEntry + Entry.size() + 5));
+      // mov rax, [rip + data] or mov eax, [rip + data]; ret
+      const std::string Load = Width == 8 ? std::string("\x48\x8b\x05", 3)
+                                          : std::string("\x8b\x05", 2);
+      const uint64_t Next = Reader + Load.size() + 4;
+      Readers += Load + Bytes32(DataELFData - Next) + "\xc3";
+      Reader = Next + 1;
+    }
+    // lea rax, [rip + data]; ret
+    Entry += std::string("\x48\x8d\x05", 3) +
+             Bytes32(DataELFData - (DataELFEntry + Entry.size() + 7)) + "\xc3";
+    return Entry + Readers;
+  };
+  const std::string Data = llvm::utohexstr(DataELFData);
+  const std::pair<std::vector<unsigned>, std::string> Cases[] = {
+      {{8}, "qword_"}, {{8, 4}, "unk_"}, {{}, "unk_"}};
+  for (const auto &[Widths, Prefix] : Cases) {
+    SCOPED_TRACE(Prefix + std::to_string(Widths.size()));
+    const auto Input =
+        write("listing-names-" + std::to_string(Widths.size()) + ".elf",
+              makeDataELF(std::string(8, '\x11'), Program(Widths)));
+    neverd_session_t Names = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Names, Input.c_str()), 1)
+        << takeString(neverd_last_error(Names));
+    ASSERT_GE(neverd_session_discover_functions(Names),
+              static_cast<int>(Widths.size()) + 1);
+    const std::string HighC = takeString(neverd_decompile(Names, DataELFEntry));
+    EXPECT_NE(HighC.find("&" + Prefix + Data), std::string::npos) << HighC;
+    // Declared as wide as the accesses the name says.
+    if (Prefix == "qword_")
+      EXPECT_NE(HighC.find("int64_t qword_" + Data + " = "), std::string::npos)
+          << HighC;
+    const std::string LLVMC =
+        takeString(neverd_decompile_llvm(Names, DataELFEntry));
+    EXPECT_NE(LLVMC.find(Prefix + Data), std::string::npos)
+        << LLVMC << takeString(neverd_last_error(Names));
+    neverd_session_destroy(Names);
+  }
 }
 
 // A universal Mach-O file of \p Slices, each at a page boundary.
