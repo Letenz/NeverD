@@ -282,6 +282,18 @@ const char *neverd_unwind_frame_json(neverd_session_t Sess,
   return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
 }
 
+const char *neverd_function_chunks_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
+  llvm::json::Array Arr;
+  for (const auto &Chunk : S->Img.ExceptionMetadata.outlyingChunks())
+    Arr.push_back(llvm::json::Object{{"begin", vaHex(Chunk.Range.Begin)},
+                                     {"end", vaHex(Chunk.Range.End)},
+                                     {"function", vaHex(Chunk.Function)}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
+}
+
 const char *neverd_exports_json(neverd_session_t Sess) {
   auto *S = toSession(Sess);
   if (!S->Loaded)
