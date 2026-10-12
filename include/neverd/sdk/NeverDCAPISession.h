@@ -126,6 +126,17 @@ NEVERD_API int neverd_session_bitness(neverd_session_t Sess);
 NEVERD_API void neverd_session_set_pdb_path(neverd_session_t Sess,
                                             const char *Path);
 
+/// neverd_session_set_pdb_path() with an explicit trust choice for the next
+/// load.  With UseWithoutIdentity == 1 the named PDB may supply analysis
+/// facts for a PE that records no CodeView identity, as
+/// neverd_session_load_pdb_ex() allows for a loaded PE; machine, section
+/// layout and any present identity are still checked, and the identity stays
+/// unverified.  0 is the strict policy of neverd_session_set_pdb_path().
+/// Returns 1, or 0 with neverd_last_error for any other UseWithoutIdentity.
+NEVERD_API int neverd_session_set_pdb_path_ex(neverd_session_t Sess,
+                                              const char *Path,
+                                              int UseWithoutIdentity);
+
 /// Inspect a manually selected PDB for the loaded PE. Returns owned JSON:
 /// {"verified":bool,"path","name_count","names":[{"address","name",
 /// "function":bool}]}. Names are returned only for an unverified import;

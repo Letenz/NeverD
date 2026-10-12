@@ -10,6 +10,22 @@ NEVERD_NATIVE_DRIVER_OWNER(NeverDKernelSnapshotTests)
 #endif
 #ifdef NEVERD_NATIVE_DRIVER_REQUIRED_TEST
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/DriverEntryCaller."
+    "NonzeroFreshCallersCannotBeReplacedByZeroSeedValues/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/DriverEntryCaller."
+    "BothHalvesOfEveryNonvolatileXmmRemainLive/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/DriverEntryCaller."
+    "VolatileRegistersAndMxcsrStatusDoNotRejectAValidReturn/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/DriverEntryCaller."
+    "FloatingControlAndDirectionFlagMustBeRestored/{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver."
+    "CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Native/"
     "KernelSnapshot.InitializationRequiresCommittedWritesNotPermissionChecks/"
     "{backend}_checked")

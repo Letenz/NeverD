@@ -223,3 +223,13 @@ neverd::symbolStringLiteralAt(const BinaryImage &Img, va_t Addr,
       return Found;
   return std::nullopt;
 }
+
+llvm::StringRef neverd::stringLiteralSymbolAt(const BinaryImage &Img,
+                                              va_t Addr) {
+  if (!Img.isCOFF())
+    return {};
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.Addr == Addr && !Sym.IsFunc && isStringLiteralName(Sym.Name))
+      return Sym.Name;
+  return {};
+}

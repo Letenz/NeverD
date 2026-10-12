@@ -1448,7 +1448,19 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (p.contains("pdb")) {
       if (!p.at("pdb").is_object())
         throw Error("invalid_request", "PDB selection must be an object");
-      execute("pdb_load", p.at("pdb"));
+      // A saved selection names a file outside the project: one that no
+      // longer loads leaves the project open without it, and says why.  A
+      // matching PDB proves itself again by its GUID and age; only a PDB the
+      // user confirmed without that identity stays bound to its file stamp.
+      auto selection = p.at("pdb");
+      if (selection.value("mode", Json("verified")) == "verified")
+        selection.erase("stamp");
+      try {
+        execute("pdb_load", selection);
+      } catch (const std::exception &failure) {
+        warnings.push_back(std::string("The project's PDB was not loaded: ") +
+                           failure.what());
+      }
     }
     auto result = metadata();
     for (const auto &diagnostic : result.at("loader_diagnostics"))

@@ -1743,7 +1743,9 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   auto *Native = static_cast<llvm::pdb::NativeSession *>(Session.get());
   Session->setLoadAddress(Image.Base);
   auto &PDB = Native->getPDBFile();
-  if (PDB.isPdb20())
+  // A present NB10 identity took the PDB 2.00 loader above, and a present
+  // RSDS identity is checked against the PDB's info stream below.
+  if (MissingIdentity && PDB.isPdb20())
     return pdbLoadError("loading without PE identity requires an RSDS PDB");
 
   auto InfoOr = PDB.getPDBInfoStream();
@@ -2070,7 +2072,8 @@ PDBDebugContext::loadImpl(const std::filesystem::path &PdbPath,
   Ctx->PImpl->Loaded =
       !Ctx->PImpl->Functions.empty() || Ctx->PImpl->hasLazyPublics();
   Ctx->PImpl->Session = std::move(Session);
-  if (Ctx->PImpl->Loaded && Ctx->PImpl->Native && !MissingIdentity)
+  // Types serve every PDB that analysis reads; an inspection only counts names.
+  if (Ctx->PImpl->Loaded && Ctx->PImpl->Native && Policy != LoadPolicy::Inspect)
     Ctx->PImpl->startTypePrefetch();
   LLVM_DEBUG(llvm::dbgs() << "pdb: loaded " << Ctx->PImpl->Functions.size()
                           << " function symbols from "
