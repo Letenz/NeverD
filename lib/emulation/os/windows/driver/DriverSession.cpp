@@ -21,6 +21,7 @@
 #include "../kernel/KernelModel.h"
 #include "../kernel/WindowsKernelLayout.h"
 #include "DriverCPUID.h"
+#include "DriverEntryABI.h"
 #include "DriverImage.h"
 #include "DriverObservation.h"
 #include "DriverScenario.h"
@@ -204,6 +205,8 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
         return CPU.readInteger(Image->SecurityCookieAddress, PointerSize);
       });
   uint64_t ExpectedReturnSP = 0;
+  std::optional<DriverEntryABI> EntryABI;
+  uint64_t EntryReturnSP = 0;
   uint64_t ActiveStackBase = 0;
   uint64_t ActiveStackSize = 0;
   WindowsX64ExecutionPolicy Policy;
@@ -316,6 +319,11 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
       } else if (*SP != ExpectedReturnSP) {
         Stop(DriverStopReason::ModelError, session_diagnostic::CallbackStack);
       } else {
+        if (EntryABI && Result.Phase == EntryPhase && *SP == EntryReturnSP)
+          if (auto E = EntryABI->validateReturn(CPU)) {
+            Stop(DriverStopReason::ModelError, llvm::toString(std::move(E)));
+            return;
+          }
         InvocationReturn = *AX;
         Stop(DriverStopReason::Returned, "");
       }
@@ -2004,6 +2012,14 @@ static llvm::Expected<DriverResult> runDriver(const std::filesystem::path &Path,
     if (!Frame) {
       ModelFailure(Frame.takeError());
       return llvm::Error::success();
+    }
+    if (Phase == EntryPhase &&
+        Options.Contract == ExecutionContract::CheckedX64) {
+      auto State = DriverEntryABI::capture(CPU);
+      if (!State)
+        return State.takeError();
+      EntryABI = std::move(*State);
+      EntryReturnSP = (*Frame)->InitialSP + PointerSize;
     }
     (*Frame)->SynchronizationObject = Invocation.SynchronizationObject;
     (*Frame)->RequestIRP = Invocation.IRP;
