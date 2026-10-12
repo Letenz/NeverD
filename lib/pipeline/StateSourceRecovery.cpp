@@ -23,6 +23,7 @@
 #include "llvm/Support/Errc.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
@@ -82,9 +83,28 @@ bool identifier(llvm::StringRef Name) {
 llvm::FunctionType *signature(llvm::LLVMContext &C,
                               const StateSourceImport &I) {
   std::vector<llvm::Type *> Parameters;
-  for (auto T : I.Parameters)
-    Parameters.push_back(type(C, T));
-  return llvm::FunctionType::get(type(C, I.Result), Parameters, false);
+  unsigned Fixed = I.VariadicFixedParameters.value_or(I.Parameters.size());
+  for (unsigned P = 0; P < Fixed; ++P)
+    Parameters.push_back(type(C, I.Parameters[P]));
+  return llvm::FunctionType::get(type(C, I.Result), Parameters,
+                                 I.VariadicFixedParameters.has_value());
+}
+llvm::StringRef sourceScalarSpelling(StateSourceType T) {
+  switch (T) {
+  case StateSourceType::I32:
+    return "int32_t";
+  case StateSourceType::U32:
+    return "uint32_t";
+  case StateSourceType::I64:
+    return "int64_t";
+  case StateSourceType::U64:
+    return "uint64_t";
+  case StateSourceType::Pointer:
+    return "void*";
+  case StateSourceType::Void:
+    llvm_unreachable("void variadic operand");
+  }
+  llvm_unreachable("invalid source type");
 }
 
 // Exact pointer-sized arithmetic only. Loading a pointer from the bank is a
@@ -478,6 +498,9 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
                                   (!G.Selector && I.Selector))) ||
           bool(G.FunctionPointer) != bool(I.PointerSource) ||
           (G.FunctionPointer && I.Selector) ||
+          (I.VariadicFixedParameters &&
+           (!*I.VariadicFixedParameters ||
+            *I.VariadicFixedParameters > I.Parameters.size())) ||
           I.Parameters.size() > G.Arguments.size() || !ValidType(I.Result) ||
           !llvm::all_of(I.Parameters, ValidType) ||
           llvm::is_contained(I.Parameters, StateSourceType::Void))
@@ -496,8 +519,11 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           return invalid("string requires an imported pointer parameter");
       auto *T = signature(M.getContext(), I);
       auto [At, Added] = Names.emplace(I.Name, &I);
-      if ((!Added && (At->second->Parameters != I.Parameters ||
-                      At->second->Result != I.Result)) ||
+      if ((!Added && (signature(M.getContext(), *At->second) != T ||
+                      At->second->Result != I.Result ||
+                      !std::equal(I.Parameters.begin(),
+                                  I.Parameters.begin() + T->getNumParams(),
+                                  At->second->Parameters.begin()))) ||
           (M.getNamedValue(I.Name) &&
            (!M.getFunction(I.Name) ||
             M.getFunction(I.Name)->getFunctionType() != T ||
@@ -872,7 +898,7 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
         auto *Declaration = llvm::cast<llvm::Function>(Target.getCallee());
         if (signedType(Import->Result))
           Declaration->addFnAttr(LLVMSourceSignedResult);
-        for (unsigned I = 0; I < Import->Parameters.size(); ++I)
+        for (unsigned I = 0; I < Declaration->arg_size(); ++I)
           if (signedType(Import->Parameters[I]))
             Declaration->addParamAttr(
                 I, llvm::Attribute::get(M.getContext(),
@@ -881,6 +907,18 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
                                     Import->Result == StateSourceType::Void
                                         ? ""
                                         : Import->Name + "_result");
+        for (unsigned I = 0; I < Import->Parameters.size(); ++I) {
+          // Fixed pointer operands already carry a pointer expression; keep
+          // by-value string literals readable. Integer casts also select the
+          // declared overload when a platform header provides alternatives.
+          if (I < Declaration->arg_size() &&
+              Import->Parameters[I] == StateSourceType::Pointer)
+            continue;
+          Native->addParamAttr(
+              I, llvm::Attribute::get(
+                     M.getContext(), LLVMSourceArgumentType,
+                     sourceScalarSpelling(Import->Parameters[I])));
+        }
         for (const auto &S : Candidates)
           Native->addParamAttr(
               S.Argument,

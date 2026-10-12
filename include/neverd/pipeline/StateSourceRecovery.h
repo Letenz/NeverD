@@ -44,6 +44,10 @@ struct StateSourceImport {
   /// never a constant-memory assertion: the captured target must also equal
   /// the imported function's address before a direct call is emitted.
   std::optional<StateSourcePointerSource> PointerSource;
+  /// When present, Parameters describes every supplied argument and this
+  /// positive prefix length describes the variadic declaration's fixed part.
+  /// Trailing scalar types include the C default argument promotions.
+  std::optional<unsigned> VariadicFixedParameters;
 };
 struct StateSourceImage {
   StateSourceSlot Base;

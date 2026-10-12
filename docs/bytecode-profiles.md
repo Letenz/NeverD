@@ -259,7 +259,7 @@ arm retains the original gateway and status. Dynamic or unlisted selectors,
 incompatible constant counts and invalid destinations keep the original state
 gateway. A signed result is extended before the exact-width
 bank write; a void result writes zero. Supported source types are `u32`, `u64`,
-`i32`, `i64`, `pointer`, and result-only `void`. Varargs, exceptional call edges,
+`i32`, `i64`, `pointer`, and result-only `void`. Exceptional call edges,
 observable state addresses and unbounded bank addressing are unsupported.
 This route currently requires integral 64-bit pointers and indices.
 
@@ -322,6 +322,19 @@ checks the argument count, and retains the original gateway for null, different
 or unresolved targets. No speculative image read is introduced. A changed cache
 after capture cannot make the pass call a different function. As with direct
 imports, the generated C requires the declared native symbols when linked.
+
+An import may set `variadic_fixed` to the positive number of fixed parameters
+in its C declaration. `parameters` still describes every supplied operand,
+including the promoted types of trailing arguments. For example, parameters
+`["i32", "u64", "pointer"]` with `variadic_fixed: 2` declare a two-parameter
+variadic function and supply one pointer vararg. The core guards the complete
+argument count; it does not infer omitted or unknown varargs. LLVM receives the
+variadic signature, and call-site scalar hints make C preserve each trailing
+operand's width, signedness and pointer type, including small 64-bit constants.
+Fixed integer arguments and imported function addresses preserve their declared
+types too, so overloads in platform C headers cannot redirect the call or make
+its address ambiguous.
+Floating-point and aggregate varargs remain unsupported by this source contract.
 These models do not recover arbitrary encryption or establish a resolver's ABI.
 
 A bounded refinement exposes narrow bank reads at the original wide-load point

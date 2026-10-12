@@ -956,6 +956,36 @@ void LLVMCWriter::collectImageDataUses(llvm::Module &Mod) {
       }
 }
 
+std::string
+LLVMCWriter::sourceFunctionDeclaration(const llvm::Function &Fn,
+                                       llvm::StringRef Declarator) const {
+  auto *FT = Fn.getFunctionType();
+  auto SourceScalar = [&](llvm::Type *T, bool Signed) {
+    if (Signed && (T->isIntegerTy(32) || T->isIntegerTy(64)))
+      return std::string(T->isIntegerTy(32) ? "int32_t" : "int64_t");
+    return typeToCLLVM(T);
+  };
+  std::string Result = SourceScalar(FT->getReturnType(),
+                                    Fn.hasFnAttribute(LLVMSourceSignedResult)) +
+                       " " + Declarator.str() + "(";
+  if (FT->getNumParams() == 0 && !FT->isVarArg()) {
+    Result += "void";
+  } else if (FT->getNumParams()) {
+    for (unsigned I = 0; I < FT->getNumParams(); ++I) {
+      if (I)
+        Result += ", ";
+      Result += SourceScalar(
+          FT->getParamType(I),
+          Fn.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
+    }
+    if (FT->isVarArg())
+      Result += ", ...";
+  }
+  // ISO C before C23 cannot spell only `...`: preserve the existing
+  // unprototyped projection rather than inventing a fixed argument.
+  return Result + ")";
+}
+
 void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
   for (auto &Fn : Mod) {
     if (OnlyFunction) {
@@ -1001,34 +1031,7 @@ void LLVMCWriter::writeForwardDecls(llvm::Module &Mod) {
       continue;
     }
 
-    auto *FT = Fn.getFunctionType();
-    auto SourceScalar = [&](llvm::Type *T, bool Signed) {
-      if (Signed && (T->isIntegerTy(32) || T->isIntegerTy(64)))
-        return std::string(T->isIntegerTy(32) ? "int32_t" : "int64_t");
-      return typeToCLLVM(T);
-    };
-    OS << SourceScalar(FT->getReturnType(),
-                       Fn.hasFnAttribute(LLVMSourceSignedResult))
-       << " " << Name << "(";
-    if (FT->getNumParams() == 0 && !FT->isVarArg()) {
-      OS << "void";
-    } else if (FT->getNumParams() == 0 && FT->isVarArg()) {
-      // ISO C before C23 cannot spell a prototype containing only `...`.
-      // An empty parameter list is deliberately non-prototyped and therefore
-      // keeps the analysis projection callable without inventing an ABI-visible
-      // fixed argument.
-    } else {
-      for (unsigned I = 0; I < FT->getNumParams(); ++I) {
-        if (I > 0)
-          OS << ", ";
-        OS << SourceScalar(
-            FT->getParamType(I),
-            Fn.getAttributes().hasParamAttr(I, LLVMSourceSignedParameter));
-      }
-      if (FT->isVarArg())
-        OS << ", ...";
-    }
-    OS << ")";
+    OS << sourceFunctionDeclaration(Fn, Name);
     // An import whose identifier is not its symbol links by the symbol, which
     // a comment spells as its language does.
     std::string Comment;

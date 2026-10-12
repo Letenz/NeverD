@@ -21,6 +21,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
@@ -4713,6 +4714,22 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
     if (ArgIdx > 0)
       Expr += ", ";
     std::string Argument = callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    if (auto Hint =
+            Call.getAttributes().getParamAttr(ArgIdx, LLVMSourceArgumentType);
+        Hint.isValid()) {
+      auto Spelling = Hint.getValueAsString();
+      auto *T = Call.getArgOperand(ArgIdx)->getType();
+      bool Valid = ((Spelling == "int32_t" || Spelling == "uint32_t") &&
+                    T->isIntegerTy(32)) ||
+                   ((Spelling == "int64_t" || Spelling == "uint64_t") &&
+                    T->isIntegerTy(64)) ||
+                   (Spelling == "void*" && T->isPointerTy() &&
+                    T->getPointerAddressSpace() == 0);
+      if (!Valid || (ArgIdx >= Call.getFunctionType()->getNumParams() &&
+                     !Call.getFunctionType()->isVarArg()))
+        throw std::runtime_error("invalid source scalar argument");
+      Argument = "(" + Spelling.str() + ")(" + Argument + ")";
+    }
     const auto *Callee = Call.getCalledFunction();
     if (!Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
         libc::headerFor(CalleeName) &&

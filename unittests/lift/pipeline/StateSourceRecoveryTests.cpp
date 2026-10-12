@@ -633,7 +633,7 @@ StateSourceContract pointerContract() {
 }
 
 TEST(StateSource, RejectsAmbiguousOrIncompletePointerContractsBeforeMutation) {
-  for (unsigned Case = 0; Case < 8; ++Case) {
+  for (unsigned Case = 0; Case < 10; ++Case) {
     llvm::LLVMContext C;
     auto M = cell_test::parse(C, pointerProgram());
     ASSERT_TRUE(M);
@@ -655,6 +655,10 @@ TEST(StateSource, RejectsAmbiguousOrIncompletePointerContractsBeforeMutation) {
       G.Imports[0].Selector = 7;
     if (Case == 7)
       G.Imports[0].Name = "_Atomic";
+    if (Case == 8)
+      G.Imports[0].VariadicFixedParameters = 0;
+    if (Case == 9)
+      G.Imports[0].VariadicFixedParameters = 2;
     auto Before = cell_test::print(*M);
     auto R = prepareStateSourceRecovery(*M, Contract);
     EXPECT_FALSE(bool(R));
@@ -736,7 +740,12 @@ TEST_F(StateSourceCompiled,
   Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
   ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
   auto After = tmpFile("pointer-after.c");
-  std::ofstream(After) << Source;
+  // Platform headers can overload a signed import with an unsigned variant.
+  // Address guards must choose the declared signature, just as calls do.
+  std::ofstream(After) << "#include <stdint.h>\n"
+                          "int32_t example_query(uint32_t) "
+                          "__attribute__((overloadable, enable_if(1, \"\")));\n"
+                       << Source;
   auto Harness = tmpFile("pointer-oracle.c");
   std::ofstream(Harness) << R"(
 #include <stdint.h>
@@ -791,6 +800,102 @@ int main(void) {
 })";
   for (const char *Level : {"-O0", "-O2"}) {
     auto Executable = tmpFile(std::string("pointer-oracle") + Level +
+                              test::executableSuffix());
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Level, "-fsanitize=undefined",
+                       "-fsanitize-trap=all", Original.string(), After.string(),
+                       Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
+}
+TEST_F(StateSourceCompiled,
+       VariadicCallsKeepPromotedWidthsSignsAndPointerTypes) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  llvm::LLVMContext C;
+  auto Text = program();
+  cell_test::replace(Text, "store i64 1, ptr %count",
+                     "store i64 6, ptr %count");
+  cell_test::replace(
+      Text, "%status = call i64 @gateway",
+      "store i64 1, ptr %r, align 1\n  %status = call i64 @gateway");
+  auto M = cell_test::parse(C, Text);
+  ASSERT_TRUE(M);
+  M->getFunction("work")->setName("before");
+  auto Original = tmpFile("variadic-before.ll");
+  std::ofstream(Original) << test::printHostCompilerFixture(*M);
+  M->getFunction("before")->setName("after");
+  auto Contract = contract();
+  auto &G = Contract.Gateways[0];
+  G.Arguments = {{8, 8}, {8, 8}, {8, 8}, {0, 8}, {16, 8}, {24, 8}};
+  auto &Import = G.Imports[0];
+  Import.Name = "example_variadic";
+  Import.Parameters = {StateSourceType::I32, StateSourceType::I32,
+                       StateSourceType::U32, StateSourceType::I64,
+                       StateSourceType::U64, StateSourceType::Pointer};
+  Import.VariadicFixedParameters = 1;
+  auto R = prepareStateSourceRecovery(*M, Contract);
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  optimize(*M);
+  auto E = finishStateSourceRecovery(*M, *R);
+  ASSERT_FALSE(E) << llvm::toString(std::move(E));
+  ASSERT_EQ(R->RewrittenCalls, 1u);
+  optimize(*M);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+  EXPECT_NE(Source.find("int32_t example_variadic(int32_t, ...)"),
+            std::string::npos);
+  EXPECT_NE(Source.find("(uint64_t)(1)"), std::string::npos) << Source;
+  auto After = tmpFile("variadic-after.c");
+  std::ofstream(After) << Source;
+  auto Harness = tmpFile("variadic-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <stdarg.h>
+#include <string.h>
+extern uint64_t before(void *,void *), after(void *,void *);
+static uint64_t get(const void *s,unsigned o) { uint64_t v;memcpy(&v,(const char*)s+o,8);return v; }
+static void put(void *s,unsigned o,uint64_t v,unsigned n) { memcpy((char*)s+o,&v,n); }
+static unsigned token,calls;
+static uint32_t *guest;
+static uint64_t trace;
+int32_t example_variadic(int32_t tag, ...) {
+ va_list ap;va_start(ap,tag);
+ int32_t s=va_arg(ap,int32_t);uint32_t u=va_arg(ap,uint32_t);
+ int64_t w=va_arg(ap,int64_t);uint64_t z=va_arg(ap,uint64_t);
+ void *p=va_arg(ap,void*);va_end(ap);
+ ++calls;trace=(uint64_t)(int64_t)s ^ ((uint64_t)u<<32) ^ (uint64_t)w ^ z;
+ *guest+=(uint32_t)trace + (p==&token ? 71 : 123);
+ return (int32_t)((uint32_t)tag ^ (uint32_t)(trace>>32));
+}
+uint64_t gateway(void *s,void *ctx) {
+ (void)ctx;uint64_t x=get(s,8),p=get(s,24),off=get(s,40),width=get(s,48);
+ put(s,56,0,8);
+ int32_t v=example_variadic((int32_t)x,(int32_t)x,(uint32_t)x,(int64_t)get(s,0),get(s,16),(void*)(uintptr_t)p);
+ put(s,(unsigned)off,(uint64_t)(int64_t)v,(unsigned)width);return 0;
+}
+uint64_t opaque(void *s,void *ctx) { (void)ctx;return get(s,0)&3; }
+int main(void) {
+ for(unsigned k=0;k<1024;k++) {
+  unsigned char a[80],b[80];for(unsigned j=0;j<80;j++) a[j]=(unsigned char)(k*7+j*13);
+  unsigned off=k&15;put(a+off,0,UINT64_MAX-(uint64_t)k*0x192ad76f,8);
+  put(a+off,24,(uintptr_t)&token,8);memcpy(b,a,sizeof(a));
+  uint32_t ga=k,gb=k;guest=&ga;trace=0;calls=0;
+  uint64_t ra=before(a+off,&ga),ta=trace;unsigned ca=calls;
+  guest=&gb;trace=0;calls=0;uint64_t rb=after(b+off,&gb);
+  if(ra!=rb || ta!=trace || ca!=calls || ca!=1 || ga!=gb || memcmp(a,b,sizeof(a))) return 1;
+ }
+ return 0;
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable = tmpFile(std::string("variadic-oracle") + Level +
                               test::executableSuffix());
     auto Built = exec(NEVERD_TEST_CLANG,
                       {"-std=c11", Level, "-fsanitize=undefined",

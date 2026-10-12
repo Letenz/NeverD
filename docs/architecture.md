@@ -926,6 +926,14 @@ against the actual imported function address and checks arity before making a
 direct call; null or changed targets keep the original gateway. Candidate bytes
 and sampled resolver addresses never establish function identity, and the
 candidate search introduces no guest-memory reads.
+Explicit variadic import contracts retain a fixed declaration prefix and a
+complete supplied-operand list. The same owner materializes the LLVM variadic
+signature and promoted scalar hints; the C emitter validates those hints and
+spells casts on trailing operands so default argument promotions cannot lose
+their width, signedness or pointer identity.
+Fixed scalar arguments retain their declared integer types as well, so platform
+header overloads cannot redirect calls. Function-address expressions and forward
+declarations share the same signature spelling, including signedness.
 
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive

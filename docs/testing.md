@@ -1534,6 +1534,13 @@ contents after capture, signed results, unaligned full banks, guest effects and
 nonzero gateway statuses. Python tests check static/callback parity, underscore
 symbols and strict pointer-contract parsing. These are synthetic ABI cases, not
 native Windows import-table or whole-program execution coverage.
+The pointer oracle also supplies an unsigned header overload for its signed
+import, so address guards and call operands must preserve the declared signature.
+The variadic compiled oracle checks 1024 complete-bank cases at O0/O2 using
+actual `va_arg` consumers, signed/unsigned 32- and 64-bit operands, a small
+64-bit constant and a pointer. It checks guest effects and return values;
+native Python parsing rejects zero, fractional and oversized fixed prefixes and preserves
+explicit promoted types at guarded pointer call sites.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed

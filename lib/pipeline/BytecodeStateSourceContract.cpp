@@ -214,7 +214,7 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
       auto *Import = I.getAsObject();
       if (!Import ||
           !keys(*Import, {"selector", "pointer_source", "name", "parameters",
-                          "result"}) ||
+                          "result", "variadic_fixed"}) ||
           (G.FunctionPointer ? bool(Import->get("selector"))
                              : !number(*Import, "selector")) ||
           !Import->getString("name") || !Import->getArray("parameters") ||
@@ -222,6 +222,12 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
         return invalid("incomplete imported signature");
       StateSourceImport Native;
       Native.Selector = number(*Import, "selector").value_or(0);
+      if (Import->get("variadic_fixed")) {
+        auto Fixed = number(*Import, "variadic_fixed");
+        if (!Fixed || !*Fixed || *Fixed > 16)
+          return invalid("invalid fixed variadic parameter count");
+        Native.VariadicFixedParameters = unsigned(*Fixed);
+      }
       if (auto *Value = Import->get("pointer_source")) {
         auto *Source = Value->getAsObject();
         if (!Source || !keys(*Source, {"image", "offset"}) ||

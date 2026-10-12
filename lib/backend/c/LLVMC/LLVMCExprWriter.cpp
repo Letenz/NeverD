@@ -662,10 +662,6 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
     }
     if (CE->getOpcode() == llvm::Instruction::PtrToInt) {
       auto *Src = CE->getOperand(0);
-      if (auto *Fn = llvm::dyn_cast<llvm::Function>(Src)) {
-        return "(" + typeToCLLVM(CE->getType()) + ")(void*)" +
-               functionIdentifier(*Fn);
-      }
       // A global denotes its address, never its initializer bytes. Arrays
       // decay to that address; imported data already carries an address.
       if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Src);
@@ -710,8 +706,14 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
-    if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV))
-      return functionIdentifier(*Fn);
+    if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV)) {
+      auto Name = functionIdentifier(*Fn);
+      // Headers may overload an imported C symbol. An address expression
+      // needs the same signed signature as its declaration to select it.
+      if (Opts.PreserveLLVMFunctionTypes && Fn->isDeclaration())
+        return "((" + sourceFunctionDeclaration(*Fn, "(*)") + ")" + Name + ")";
+      return Name;
+    }
     if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(GV))
       if (const auto It = ExternalDataIdentifiers.find(Global);
           It != ExternalDataIdentifiers.end())

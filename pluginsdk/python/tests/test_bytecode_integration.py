@@ -111,7 +111,7 @@ class BytecodeIntegrationTests(unittest.TestCase):
                                                 lambda data, pc: recipes[data[0]], **options)
         self.assertEqual(static, dynamic)
         self.assertEqual((static.reconstructed_calls, static.unresolved_contract_calls), (1, 0))
-        self.assertIn("example_query(99)", static.source)
+        self.assertIn("example_query((uint64_t)(99))", static.source)
         self.assertNotIn("__neverd_state_probe", static.source)
         for change in ({"isolated_bank": False}, {"state_bytes": 47}, {"unknown": 1}):
             with self.assertRaisesRegex(NeverDError, "source_contracts"):
@@ -166,14 +166,26 @@ class BytecodeIntegrationTests(unittest.TestCase):
         self.assertEqual(static, dynamic)
         self.assertEqual((static.reconstructed_calls, static.guarded_contract_calls,
                           static.unresolved_contract_calls), (1, 1, 0))
-        self.assertIn("_synthetic_query(999)", static.source)
+        self.assertIn("_synthetic_query((int32_t)(999))", static.source)
         self.assertIn("runtime_service(state)", static.source)
+        variadic = copy.deepcopy(contract)
+        variadic["gateways"][0]["arguments"].append(slot(64))
+        variadic_import = variadic["gateways"][0]["imports"][0]
+        variadic_import["parameters"].append("u64")
+        variadic_import["variadic_fixed"] = 1
+        variadic_result = recover_bytecode(b"A\xfe", profile, functions,
+                                          **dict(options, source_contracts=variadic))
+        self.assertIn("_synthetic_query(int32_t, ...)", variadic_result.source)
+        self.assertIn("(uint64_t)(999)", variadic_result.source)
         for path, value in [(("gateways", 0, "selector"), slot(32)),
                             (("gateways", 0, "function_pointer", "bytes"), 4),
                             (("gateways", 0, "imports", 0, "selector"), 0),
                             (("gateways", 0, "imports", 0, "pointer_source"), None),
                             (("gateways", 0, "imports", 0, "pointer_source", "offset"), 25),
-                            (("gateways", 0, "imports", 0, "pointer_source", "image"), 1)]:
+                            (("gateways", 0, "imports", 0, "pointer_source", "image"), 1),
+                            (("gateways", 0, "imports", 0, "variadic_fixed"), 0),
+                            (("gateways", 0, "imports", 0, "variadic_fixed"), 2),
+                            (("gateways", 0, "imports", 0, "variadic_fixed"), 1.5)]:
             bad = copy.deepcopy(contract)
             parent = bad
             for key in path[:-1]:

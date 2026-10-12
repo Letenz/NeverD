@@ -16,6 +16,10 @@ inline constexpr llvm::StringLiteral LLVMSourceSignedResult =
     "neverd.source.signed_result";
 inline constexpr llvm::StringLiteral LLVMSourceSignedParameter =
     "neverd.source.signed_parameter";
+// Exact scalar spelling for a call operand. Fixed integers select the declared
+// header overload; trailing operands preserve C default argument promotions.
+inline constexpr llvm::StringLiteral LLVMSourceArgumentType =
+    "neverd.source.argument_type";
 // A call-site contract: this argument is a read-only NUL string consumed by
 // content, without retaining or observing its address. It permits literal
 // spelling at that call only; it does not classify other calls to the callee.
