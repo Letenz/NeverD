@@ -3,6 +3,7 @@
 #include "SettingsKeys.h"
 #include "Theme.h"
 #include "TitleBar.h"
+#include "WindowFramePlatform.h"
 
 #include <QApplication>
 #include <QDialog>
@@ -12,23 +13,15 @@
 #include <QSurfaceFormat>
 #include <QWidget>
 #include <QWindow>
-#include <qpa/qplatformwindow_p.h>
 
 namespace neverd::gui {
 namespace {
-constexpr char WaylandPlatform[] = "wayland";
-constexpr char X11Platform[] = "xcb";
 /// How far inside the visible edge a press still resizes the window.
 constexpr int InnerEdge = 4;
 /// How far along an edge from a corner a press resizes both edges.
 constexpr int CornerReach = 16;
 /// The band outside the visible window that holds its shadow.
 constexpr int ShadowExtent = 10;
-
-bool onWayland() {
-  return QGuiApplication::platformName().startsWith(
-      QLatin1String(WaylandPlatform));
-}
 
 Qt::CursorShape shapeFor(Qt::Edges edges) {
   const bool horizontal = edges & (Qt::LeftEdge | Qt::RightEdge);
@@ -77,8 +70,7 @@ protected:
 } // namespace
 
 bool WindowFrame::enabled() {
-  if (!onWayland() &&
-      QGuiApplication::platformName() != QLatin1String(X11Platform))
+  if (platform::frameKind() == platform::FrameKind::System)
     return false;
   return !QSettings().value(settings::NativeTitleBar).toBool();
 }
@@ -86,12 +78,16 @@ bool WindowFrame::enabled() {
 WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
   if (!enabled())
     return nullptr;
-  const bool drawsShadow = onWayland();
+  const bool frameless =
+      platform::frameKind() == platform::FrameKind::Frameless;
+  const bool drawsShadow = frameless && platform::drawsShadow();
   // A native window that has not shown yet takes the flag as it is, without
   // being created again.
-  window.overrideWindowFlags(window.windowFlags() | Qt::FramelessWindowHint);
-  if (QWindow *handle = window.windowHandle())
-    handle->setFlags(handle->flags() | Qt::FramelessWindowHint);
+  if (frameless) {
+    window.overrideWindowFlags(window.windowFlags() | Qt::FramelessWindowHint);
+    if (QWindow *handle = window.windowHandle())
+      handle->setFlags(handle->flags() | Qt::FramelessWindowHint);
+  }
   // Qt then paints no background of the window's own; the frame paints it
   // inside the shadow.
   if (drawsShadow) {
@@ -111,7 +107,7 @@ WindowFrame *WindowFrame::attach(QWidget &window, QWidget *titleBar) {
   QWindow *handle = window.windowHandle();
   if (!handle)
     return nullptr;
-  return new WindowFrame(window, *handle, titleBar, drawsShadow);
+  return new WindowFrame(window, *handle, titleBar, frameless, drawsShadow);
 }
 
 void WindowFrame::frameDialogs(QApplication &app) {
@@ -120,11 +116,20 @@ void WindowFrame::frameDialogs(QApplication &app) {
 }
 
 WindowFrame::WindowFrame(QWidget &window, QWindow &handle, QWidget *titleBar,
-                         bool drawsShadow)
+                         bool frameless, bool drawsShadow)
     : QObject(&window), window_(window), handle_(handle), titleBar_(titleBar),
-      drawsShadow_(drawsShadow), content_(window.contentsMargins()) {
+      frameless_(frameless), drawsShadow_(drawsShadow),
+      content_(window.contentsMargins()) {
   window.installEventFilter(this);
   handle.installEventFilter(this);
+  if (!frameless) {
+    platform::removeCaption(handle);
+    // The system frame's size follows the screen's scale.
+    connect(&handle, &QWindow::screenChanged, this, [this] {
+      platform::removeCaption(handle_);
+      updateMargins();
+    });
+  }
   updateMargins();
 }
 
@@ -172,6 +177,9 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
   if (object == &window_) {
     if (event->type() == QEvent::WindowStateChange)
       updateMargins();
+    // Some systems make the native window's frame only as it first shows.
+    else if (event->type() == QEvent::Show && !frameless_)
+      platform::removeCaption(handle_);
     else if (event->type() == QEvent::Resize)
       placeTitleBar();
     else if (event->type() == QEvent::Paint && drawsShadow_)
@@ -188,9 +196,12 @@ bool WindowFrame::eventFilter(QObject *object, QEvent *event) {
       event->type() != QEvent::MouseButtonPress)
     return false;
   auto *mouse = static_cast<QMouseEvent *>(event);
-  const Qt::Edges edges = resizable() ? edgesAt(mouse->position().toPoint(),
-                                                window_.size(), margins_)
-                                      : Qt::Edges();
+  Qt::Edges edges = resizable() ? edgesAt(mouse->position().toPoint(),
+                                          window_.size(), margins_)
+                                : Qt::Edges();
+  // The system frame resizes the window from its other edges.
+  if (!(edges & platform::ownResizeEdges()))
+    edges = {};
   if (event->type() == QEvent::MouseMove) {
     if (mouse->buttons() == Qt::NoButton)
       showEdges(edges);
@@ -229,26 +240,23 @@ void WindowFrame::paint() {
 }
 
 void WindowFrame::updateMargins() {
-  const bool framed =
-      !(window_.windowState() & (Qt::WindowMaximized | Qt::WindowFullScreen));
+  const Qt::WindowStates states = window_.windowState();
+  const bool framed = !(states & (Qt::WindowMaximized | Qt::WindowFullScreen));
   const QMargins margins =
       drawsShadow_ && framed
           ? QMargins(ShadowExtent, ShadowExtent, ShadowExtent, ShadowExtent)
           : QMargins();
   if (margins != margins_) {
     margins_ = margins;
-#if QT_CONFIG(wayland)
-    // The compositor sizes, places and tiles the visible window, not its
-    // shadow.
-    if (auto *wayland =
-            handle_
-                .nativeInterface<QNativeInterface::Private::QWaylandWindow>())
-      wayland->setCustomMargins(margins);
-#endif
+    platform::setShadowMargins(handle_, margins);
     window_.update();
   }
+  insets_ = !frameless_ && states & Qt::WindowMaximized
+                ? platform::maximizedInsets(handle_)
+                : QMargins();
   const int titleHeight = titleBar_ ? titleBar_->sizeHint().height() : 0;
-  const QMargins contents = content_ + margins + QMargins(0, titleHeight, 0, 0);
+  const QMargins contents =
+      content_ + margins + insets_ + QMargins(0, titleHeight, 0, 0);
   if (window_.contentsMargins() != contents)
     window_.setContentsMargins(contents);
   placeTitleBar();
@@ -257,7 +265,7 @@ void WindowFrame::updateMargins() {
 void WindowFrame::placeTitleBar() {
   if (!titleBar_)
     return;
-  const QRect visible = window_.rect().marginsRemoved(margins_);
+  const QRect visible = window_.rect().marginsRemoved(margins_ + insets_);
   titleBar_->setGeometry(visible.left(), visible.top(), visible.width(),
                          titleBar_->sizeHint().height());
   titleBar_->raise();

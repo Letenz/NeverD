@@ -105,10 +105,11 @@ A file dragged over the dialog shows that a drop opens it. **Display at
 startup** decides whether the next start shows it again; **File → Quick start**
 shows it any time. Behind it is the default desktop:
 
-- on Linux, the title bar the window draws itself, as Visual Studio Code
-  does: the application icon, the menus, a command center that names the open
-  file and opens the command palette (**Ctrl+Shift+P**), and the minimize,
-  maximize and close buttons;
+- the title bar the window draws itself, as Visual Studio Code does: the
+  application icon, the menus, a command center that names the open file and
+  opens the command palette (**Ctrl+Shift+P**), and the minimize, maximize and
+  close buttons (on macOS the menus stay in the menu bar and the system's
+  traffic lights take the buttons' place);
 - the navigation band across the top: the whole address space colored by
   library functions, regular functions, instructions, data, unexplored bytes
   and external symbols, with the current position; click or drag to navigate;
@@ -416,19 +417,30 @@ screen's width and four fifths of its height. GNOME maximizes a window that
 opens at nearly the size of the screen, and a maximized window does not resize
 from its edges; IDA opens that way.
 
-On Linux the workbench draws its own frame. Drag the title bar's empty part
-to move the window, and double-click it to maximize or restore the window.
-The title bar dims while the window is inactive, and full screen hides its
-icon and window buttons. The window resizes from every edge and corner,
-starting four pixels inside its visible edge. Under Wayland GNOME draws no
-shadow for such a window, so the window draws a ten-pixel shadow of its own,
-and that band resizes the window too, as GNOME's own windows allow; under X11
-GNOME draws the shadow. Dialogs draw the same frame with a title bar of
-their own: the dialog's title in the middle, Close, and Maximize for a dialog
-that offers it, such as the quick start. A resizable dialog resizes from its
-edges and corners. To keep the window manager's frame instead, set
-`nativeTitleBar=true` in the `[ui]` group of
-`~/.config/NeverSight/NeverD.conf`; the workbench reads it at startup.
+The workbench draws its own title bar. Drag the title bar's empty part to
+move the window, and double-click it to maximize or restore the window (on
+macOS, to do what the system setting for title bar double clicks asks). The
+title bar dims while the window is inactive, and full screen hides its icon
+and window buttons. Dialogs draw a title bar of their own: the dialog's title
+in the middle, Close, and Maximize for a dialog that offers it, such as the
+quick start.
+
+How the rest of the frame is drawn depends on the system:
+
+- On Linux the window has no system frame. It resizes from every edge and
+  corner, starting four pixels inside its visible edge. Under Wayland GNOME
+  draws no shadow for such a window, so the window draws a ten-pixel shadow of
+  its own, and that band resizes the window too, as GNOME's own windows allow;
+  under X11 GNOME draws the shadow.
+- On Windows the window keeps the system frame without its caption, so
+  Windows still draws its edges and shadow, snaps and animates it and resizes
+  it from its sides and bottom; the top edge resizes it through the title bar.
+- On macOS the window keeps its frame and traffic lights, and its title bar
+  turns transparent with the workbench's own drawn under it.
+
+To keep the system's whole frame instead, set `nativeTitleBar=true` in the
+`[ui]` group of the NeverD settings (`~/.config/NeverSight/NeverD.conf` on
+Linux); the workbench reads it at startup.
 
 With the window manager's frame under Wayland, GNOME draws no frame and the
 one Qt draws resizes only from a few pixels outside the visible edge, so the
