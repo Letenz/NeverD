@@ -1302,6 +1302,11 @@ narrow-complement regression executes after semantic simplification.
 store-value dependencies live across all four architectures, including floating
 reinterpretations and additional direct uses. `SymSimplifyGuard.OpaqueLoad*`
 checks load identity/order, volatile/atomic state and poison boundaries.
+`HighCDefinitionIndex.*` in `NeverDHighCStoreForwardingTests` checks all six
+definition-identity fields, definition order, repeated and differently sized
+definitions, preceding versus conditional/later aliases, missing definitions
+and cyclic references. Address keys and private-frame eligibility must retain
+their existing behavior.
 `ELFARM32ModeTest.*` checks authenticated ARM/Thumb selection, normalized
 function addresses, mapping-only objects, mixed-image decoding, cross-mode
 calls with modular MBA arithmetic, wide Thumb branches, HighC/LLVMC
