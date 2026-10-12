@@ -331,6 +331,11 @@ Catalog::Catalog(const Json &Capabilities, std::size_t InputCount) {
            "Find supported source-inferred network interface candidates "
            "without network access.");
   Page("web_interface_records", "analysis_id", false, 128);
+  Selected(
+      "web_interface_relations_analyze", "analysis_id",
+      "Inspect bounded source-syntax request/result relationships; no "
+      "runtime response API, callback execution or wrapper argument flow.");
+  Page("web_interface_relation_records", "relations_id", false, 128);
   Add("web_interfaces_compare",
       "Correlate explicit source candidates with imported HAR observations; "
       "evidence classes remain separate.",

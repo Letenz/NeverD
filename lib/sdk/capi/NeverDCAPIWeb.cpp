@@ -425,6 +425,35 @@ const char *neverd_web_interface_records_json(neverd_web_session_t Session,
 #endif
 }
 
+const char *neverd_web_interface_relations_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.analyzeInterfaceRelations(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(AnalysisID, AnalysisIDSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_interface_relation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RelationsID, size_t RelationsIDSize,
+    uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.interfaceRelationRecords(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(RelationsID, RelationsIDSize, 64), Offset, Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_interfaces_compare_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,

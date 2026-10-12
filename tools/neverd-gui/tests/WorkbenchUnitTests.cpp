@@ -18,14 +18,18 @@
 #include <QFile>
 #include <QFontInfo>
 #include <QHash>
+#include <QHoverEvent>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMetaEnum>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -37,6 +41,7 @@
 #include <QSqlQuery>
 #include <QStyleOptionButton>
 #include <QStyleOptionComboBox>
+#include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QToolBar>
@@ -986,6 +991,87 @@ private slots:
     QVERIFY(QTest::qWaitForWindowExposed(window));
     QCOMPARE(window->grab().toImage().pixelColor(0, window->height() / 2),
              theme.chrome(QStringLiteral("FloatingWindowBorder")));
+  }
+
+  void tabsShowCloseButtonsWhenCurrentOrHovered() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    DockPair pair;
+    pair.right->addDockWidgetAsTab(
+        DockPair::dock("tabbed", DockPair::LeftColor));
+    QVERIFY(QTest::qWaitForWindowExposed(&pair.window));
+    QTabBar *bar = nullptr;
+    for (auto *candidate : pair.window.findChildren<QTabBar *>())
+      if (candidate->count() == 2)
+        bar = candidate;
+    QVERIFY(bar);
+    const auto side =
+        static_cast<QTabBar::ButtonPosition>(bar->style()->styleHint(
+            QStyle::SH_TabBar_CloseButtonPosition, nullptr, bar));
+    const int current = bar->currentIndex();
+    const int other = 1 - current;
+    const auto closable = [&](int index) {
+      return bar->tabButton(index, side)->isVisible();
+    };
+    QVERIFY(closable(current));
+    QVERIFY(!closable(other));
+
+    // A hovered tab shows its button in the room it kept.
+    const QRect room = bar->tabRect(other);
+    const QPointF center = room.center();
+    QHoverEvent hover(QEvent::HoverMove, center, bar->mapToGlobal(center),
+                      center);
+    QCoreApplication::sendEvent(bar, &hover);
+    QVERIFY(closable(other));
+    QCOMPARE(bar->tabRect(other), room);
+    QHoverEvent leave(QEvent::HoverLeave, QPointF(-1, -1), QPointF(-1, -1),
+                      center);
+    QCoreApplication::sendEvent(bar, &leave);
+    QVERIFY(!closable(other));
+
+    // The button moves with the current tab.
+    bar->setCurrentIndex(other);
+    QVERIFY(closable(other));
+    QVERIFY(!closable(current));
+  }
+
+  void mnemonicsShowWhileAltIsHeld() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    QLabel label(QStringLiteral("&Address"));
+    label.show();
+    const auto underlined = [&] {
+      return label.style()->styleHint(QStyle::SH_UnderlineShortcut, nullptr,
+                                      &label);
+    };
+    QCOMPARE(underlined(), 0);
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Alt, Qt::AltModifier);
+    QKeyEvent release(QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
+    QCoreApplication::sendEvent(&label, &press);
+    QCOMPARE(underlined(), 1);
+    QCoreApplication::sendEvent(&label, &release);
+    QCOMPARE(underlined(), 0);
+
+    // A menu that Alt opened keeps them until it closes.
+    QCoreApplication::sendEvent(&label, &press);
+    QMenu menu;
+    menu.addAction(QStringLiteral("&Open"));
+    menu.popup(label.mapToGlobal(QPoint()));
+    QVERIFY(QTest::qWaitForWindowExposed(&menu));
+    QCoreApplication::sendEvent(&label, &release);
+    QCOMPARE(underlined(), 1);
+    menu.hide();
+    QTRY_COMPARE(underlined(), 0);
+
+    // An Alt whose release went elsewhere ends with the next plain input.
+    QCoreApplication::sendEvent(&label, &press);
+    QMouseEvent move(QEvent::MouseMove, QPointF(3, 3),
+                     label.mapToGlobal(QPointF(3, 3)), Qt::NoButton,
+                     Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&label, &move);
+    QCOMPARE(underlined(), 0);
   }
 
   void themeDrawsFlatControls() {

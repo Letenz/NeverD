@@ -190,7 +190,8 @@ std::string Session::capabilities() {
 #ifdef NEVERD_ENABLE_WEB_JAVASCRIPT
   for (const auto *Name :
        {"interfaces_analyze", "interface_records", "interfaces_compare",
-        "interface_correlation_records"})
+        "interface_correlation_records", "interface_relations_analyze",
+        "interface_relation_records"})
     Operations.emplace_back(Name);
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "source_interfaces"},
@@ -211,6 +212,20 @@ std::string Session::capabilities() {
        llvm::json::Array{"fetch", "fetch_member_call", "websocket", "xhr_open",
                          "xhr_set_request_header", "xhr_send",
                          "xhr_event_handler"}}});
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "source_interface_relations"},
+      {"profile", std::string(InterfaceSourceRelationProfile)},
+      {"max_records", MaxInterfaceSourceRelations},
+      {"max_steps", MaxInterfaceRelationSteps},
+      {"max_cached", 4},
+      {"max_page_records", 128},
+      {"relationship_meaning", "source_syntax_only"},
+      {"response_api_identity", "member_spelling_unverified"},
+      {"wrapper_argument_flow", "not_analyzed"},
+      {"callback_parameter_roles", "not_assigned"},
+      {"har_correlation", false},
+      {"network_access", false},
+      {"executes_input", false}});
 #endif
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
@@ -820,6 +835,7 @@ std::string Session::commit(std::string_view Token) {
   State->PendingHAR.reset();
   State->HARPreviewToken.clear();
   State->InterfaceSources.clear();
+  State->InterfaceRelations.clear();
   State->InterfaceCorrelations.clear();
   State->CachedArchiveBytes = 0;
   State->PackageDiffs.clear();
@@ -887,6 +903,7 @@ std::string Session::metadata() const {
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},
+      {"interface_relation_analysis_count", State->InterfaceRelations.size()},
       {"interface_correlation_count", State->InterfaceCorrelations.size()},
       {"redaction_policy", "metadata-only-v1"}});
 }

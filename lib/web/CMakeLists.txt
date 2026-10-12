@@ -36,6 +36,7 @@ add_neverd_component_library(NeverDWeb
   interfaces/HAR.cpp
   interfaces/Correlation.cpp
   SessionInterfaces.cpp
+  SessionInterfaceRelations.cpp
   streams/Framing.cpp
   streams/Records.cpp
   streams/Relations.cpp
@@ -169,6 +170,10 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/SourceContext.cpp
     interfaces/SourceFetch.cpp
     interfaces/SourceXHR.cpp
+    interfaces/RelationContext.cpp
+    interfaces/RequestLinks.cpp
+    interfaces/ResultLinks.cpp
+    interfaces/SourceRelations.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
     rewrite/Rename.cpp
