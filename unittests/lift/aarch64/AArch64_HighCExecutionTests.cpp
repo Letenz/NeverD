@@ -391,3 +391,36 @@ int crc8(int a) {
                       std::istreambuf_iterator<char>());
   EXPECT_EQ(C.find("__builtin_sub_overflow"), std::string::npos) << C;
 }
+
+// `movi d0, #0` zeroes the whole D register.  Lifted as a 4-byte constant
+// copied into it, the accumulator's upper half was an unknown value, and
+// the C trapped.
+TEST_F(AArch64_HighCExecution, AScalarMoviWritesTheWholeRegister) {
+  // The C fuses as the kernel does; the host runs its fma inline.
+  HostFlags = {"-mfma"};
+  expectHighCRunsLikeSource({"-target", "aarch64-linux-gnu"},
+                            R"C(
+int dotp(int a) {
+  unsigned s = (unsigned)a;
+  double acc = 0;
+  for (int it = 0; it < 120; it++) {
+    s = s * 1103515245u + 12345u;
+    double u[6], v[6], du = 0, dv = 0, dot = 0;
+    for (int i = 0; i < 6; i++) {
+      s = s * 1103515245u + 12345u;
+      u[i] = ((double)((s >> 9) & 0xff)) - 128.0;
+      v[i] = ((double)((s >> 17) & 0xff)) - 128.0;
+      du += u[i] * u[i];
+      dv += v[i] * v[i];
+    }
+    for (int i = 0; i < 6; i++)
+      dot += u[i] * v[i];
+    double den = du * dv + 1.0;
+    acc += dot * dot / den;
+  }
+  return (int)(long long)(acc * 64.0);
+}
+)C",
+                            "dotp", {"dotp"},
+                            {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
+}
