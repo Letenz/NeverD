@@ -20,6 +20,10 @@ namespace neverd::gui {
 namespace {
 constexpr int IdRole = Qt::UserRole;
 constexpr int NamespaceRole = Qt::UserRole + 1;
+/// The narrowest each pane may get.  A scroll area asks at least for its
+/// scroll bars' room, and macOS's take enough that the two panes side by
+/// side held the dock wider than the views around it.
+constexpr int MinimumPaneWidth = 48;
 } // namespace
 
 ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
@@ -43,11 +47,13 @@ ExtensionsView::ExtensionsView(Session &session, QWidget *parent)
   makeRowShrinkable(*buttonRow);
   leftLayout->addWidget(buttonRow);
   list_ = new QListWidget(left);
+  list_->setMinimumWidth(MinimumPaneWidth);
   activateOnReturn(*list_);
   list_->setToolTip(
       tr("Import a declarative manifest to add analysis commands and views."));
   leftLayout->addWidget(list_, 1);
   result_ = new QPlainTextEdit(splitter);
+  result_->setMinimumWidth(MinimumPaneWidth);
   result_->setReadOnly(true);
   result_->setFont(Theme::instance().codeFont());
   result_->setPlaceholderText(
