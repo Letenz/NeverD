@@ -45,8 +45,7 @@ bool wailsAvailable() { return archivePathsAvailable(); }
 
 WailsExtraction extractWails(const Artifact &Input, std::string_view Profile,
                              WailsLimits Limits) {
-  if (Profile != WailsProfile)
-    throw Error("wails_unsupported_profile");
+  const auto &Producer = wails_detail::requireProfile(Profile);
   if (!wailsAvailable())
     throw Error("wails_path_policy_unavailable");
   const WailsLimits Default;
@@ -60,10 +59,21 @@ WailsExtraction extractWails(const Artifact &Input, std::string_view Profile,
   WailsExtraction E;
   E.ArtifactID = Input.ID;
   E.BlobHash = Input.BlobHash;
+  E.Profile = Producer.Name;
+  E.ContainerFormat = Producer.ContainerFormat;
+  E.Platform = Producer.Platform;
+  E.Architecture = "x64";
   E.ID = identity("wails-extraction", {Input.ID, Input.BlobHash, Profile});
   wails_detail::Reader R{Input, E, Limits, {}, {}, {}};
-  wails_detail::admitELF(R);
-  wails_detail::admitBuildInfo(R);
+  switch (Producer.Container) {
+  case wails_detail::ContainerKind::ELF:
+    wails_detail::admitELF(R);
+    break;
+  case wails_detail::ContainerKind::PE:
+    wails_detail::admitPE(R);
+    break;
+  }
+  wails_detail::admitBuildInfo(R, Producer);
   wails_detail::readTables(R);
   wails_detail::verifyContents(R);
   if (Input.Content.digest() != E.BlobHash)

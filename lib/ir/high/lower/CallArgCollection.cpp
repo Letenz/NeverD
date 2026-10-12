@@ -338,6 +338,20 @@ void collectSpilledStackArgs(const CallArgScan &Scan,
   }
 }
 
+void collectFullBankStackArgs(const CallArgScan &Scan,
+                              std::vector<ExprPtr> &Found) {
+  const BinaryFormat Format =
+      Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
+  if (Scan.FirstStackSlot !=
+      static_cast<int>(Scan.TRI->integerParamRegs(Format).size())) {
+    collectSpilledStackArgs(Scan, Found);
+    return;
+  }
+  CallArgScan FullBank = Scan;
+  FullBank.StoreScanWindow = limits::kFullBankCallArgStoreScanWindow;
+  collectSpilledStackArgs(FullBank, Found);
+}
+
 } // namespace call_args_detail
 
 unsigned MedToHighConverter::importFixedArgCount(size_t CallIdx,

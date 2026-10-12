@@ -918,16 +918,26 @@ raw operation from their capability subset. See the
 non-filesystem slice exclusion, directory order/ancestors, portable path
 collisions, content/metadata overlap, complete hash verification and exact/short
 independent budgets. Its compiler digest cases cover empty files and the
-1,024/1,025-byte algorithm boundary. `WebWailsSDK.*` checks metadata canaries,
+1,024/1,025-byte algorithm boundary. PE cases deliberately separate RVAs from
+file offsets and reject header/raw/virtual overlaps, invalid alignment,
+address overflow, PE32/DLL/foreign ISA, conflicting platform declarations,
+virtual tails, raw padding and mutable pointers. `WebWailsSDK.*` checks metadata canaries,
 pagination, failed-publication rollback, cache/revision invalidation, separate
-HTML table namespaces, compressed-parent source anchors, exclusive raw export
+HTML table namespaces, ELF/PE compressed-parent source anchors, exclusive raw export
 and overwrite/symlink refusal. CLI cases use an unusable external-tool PATH.
 Worker/MCP compare the same extraction/pages and reject extra execution fields.
-`NEVERD_WAILS_ZENTRO_030_ELF` selects the exact bare Linux x64 Zentro v0.3.0
-release named in the [Wails profile](web-wails-profile.md). Positive optional
+`NEVERD_WAILS_ZENTRO_030_ELF` and `NEVERD_WAILS_ZENTRO_030_PE` select the exact
+bare Linux and Windows x64 Zentro v0.3.0 releases named in the
+[Wails profile](web-wails-profile.md). Positive optional
 cases verify all stored assets, exact JS SHA/offset/length, an unresolved
 root-relative HTML reference without guessing the runtime mount, the existing
-whole-source byte refusal and original native handoff/lifetime.
+whole-source byte refusal and original native handoff/lifetime. The Windows
+case additionally exports all assets and verifies the complete independent
+same-tree readable output against its own hash and physical origin. Explicit
+profile selection also survives metadata pages, raw manifests and readable
+origins; cached extraction never answers a different profile. CLI tests cover
+both profiles with an unusable external-tool PATH. The pinned binaries remain
+offline corpus inputs, rather than runtime execution fixtures.
 They do not download, install or launch that application. Build every owning
 Web binary before running the complete owning Web directory without a prefix
 filter; the eight parameterized Claude platform cases must also remain enabled.

@@ -46,9 +46,10 @@ protected:
     }
     return capture(Path.string(), Limits{}).Artifacts.at(0);
   }
-  void refuse(const std::string &B, const char *Code) {
+  void refuse(const std::string &B, const char *Code,
+              std::string_view Profile = WailsProfile) {
     try {
-      (void)extractWails(input(B), WailsProfile);
+      (void)extractWails(input(B), Profile);
       FAIL() << Code;
     } catch (const Error &E) {
       EXPECT_STREQ(E.what(), Code);
@@ -92,6 +93,95 @@ TEST_F(WebWails, ExactByteEvidenceAndIndependentTableNamespaces) {
     EXPECT_EQ(S.Artifacts[2].ID, E.Members[I * 3 + 1].ID);
   }
   EXPECT_THROW(wailsNamespace(E, 2), Error);
+}
+TEST_F(WebWails, PEPreferredImageAddressesPreserveExactPhysicalRanges) {
+  const auto B = pe({entries(), entries()});
+  const auto A = input(B);
+  const auto E = extractWails(A, WailsPEProfile);
+  EXPECT_EQ(E.Profile, WailsPEProfile);
+  EXPECT_EQ(E.ContainerFormat, "pe");
+  EXPECT_EQ(E.Platform, "windows");
+  EXPECT_EQ(E.Architecture, "x64");
+  ASSERT_EQ(E.Tables.size(), 2U);
+  ASSERT_EQ(E.Members.size(), 6U);
+  EXPECT_EQ(E.BuildInfoOffset, BuildOffset);
+  EXPECT_EQ(E.Tables[0].Offset, 0x2000U);
+  EXPECT_EQ(E.Members[1].Offset, 0x1400U);
+  EXPECT_EQ(E.Members[1].NameOffset, 0x1000U + entries()[0].Path.size());
+  for (const auto &M : E.Members)
+    if (!M.Directory) {
+      EXPECT_EQ(M.Content.read(0, M.Content.size()),
+                B.substr(M.Offset, M.Content.size()));
+      EXPECT_EQ(M.BlobHash, sha256(M.Content.read(0, M.Content.size())));
+    }
+  EXPECT_NE(wailsNamespace(E, 0).ID, wailsNamespace(E, 1).ID);
+  EXPECT_EQ(E.ID, extractWails(A, WailsPEProfile).ID);
+  const auto Profiles = wailsProfiles();
+  EXPECT_EQ(Profiles,
+            (std::vector<std::string_view>{WailsProfile, WailsPEProfile}));
+}
+TEST_F(WebWails, PEPlatformAndArchitectureNeverReuseAnELFProfile) {
+  refuse(pe(), "wails_unsupported_container");
+  refuse(elf(), "wails_unsupported_container", WailsPEProfile);
+  auto B = pe();
+  buildInfo(B, "go1.25.7", moduleInfo());
+  refuse(B, "wails_conflicting_build_declaration", WailsPEProfile);
+  B = pe();
+  buildInfo(B, "go1.25.8", moduleInfo("windows"));
+  refuse(B, "wails_unsupported_go_declaration", WailsPEProfile);
+  for (const auto Machine : {0x14cU, 0xaa64U}) {
+    B = pe();
+    put(B, 0x84, Machine, 2);
+    refuse(B, "wails_unsupported_container", WailsPEProfile);
+  }
+  B = pe();
+  put(B, PEOptional, 0x10b, 2);
+  refuse(B, "wails_unsupported_container", WailsPEProfile);
+  B = pe();
+  put(B, 0x96, 0x2022, 2);
+  refuse(B, "wails_unsupported_container", WailsPEProfile);
+}
+TEST_F(WebWails, PEOverlapsHeadersAndInvalidAlignmentRefuseAtomically) {
+  auto B = pe();
+  put(B, PESections + 40 + 20, 0x1000, 4);
+  refuse(B, "wails_ambiguous_mapping", WailsPEProfile);
+  B = pe();
+  put(B, PESections + 40 + 12, 0x10000, 4);
+  refuse(B, "wails_ambiguous_mapping", WailsPEProfile);
+  B = pe();
+  put(B, PESections + 20, 0x200, 4);
+  refuse(B, "wails_invalid_load_mapping", WailsPEProfile);
+  B = pe();
+  put(B, PEOptional + 36, 0x300, 4);
+  refuse(B, "wails_invalid_load_mapping", WailsPEProfile);
+  B = pe();
+  put(B, PEOptional + 24, 0xffffffffffff0000ULL);
+  refuse(B, "wails_range_out_of_bounds", WailsPEProfile);
+  B = pe();
+  put(B, 0x86, 97, 2);
+  refuse(B, "wails_native_table_budget_exceeded", WailsPEProfile);
+  for (const auto Size : {0U, 63U, 0x90U, 0x190U, 0x3000U})
+    EXPECT_THROW(extractWails(input(pe().substr(0, Size)), WailsPEProfile),
+                 Error);
+}
+TEST_F(WebWails, PEVirtualTailsPaddingAndMutablePointersAreNotAssets) {
+  auto B = pe();
+  put(B, PESections + 8, 0x3000, 4);
+  put(B, 0x2000 + 24, peAddress(0x3000));
+  refuse(B, "wails_non_file_backed_pointer", WailsPEProfile);
+  B = pe();
+  put(B, PESections + 8, 0x1800, 4);
+  put(B, 0x2000 + 24, peAddress(0x2800));
+  refuse(B, "wails_non_file_backed_pointer", WailsPEProfile);
+  B = pe();
+  put(B, 0x2000 + 24 + 48 + 16, PEBase + 0x40000);
+  refuse(B, "wails_ambiguous_mapping", WailsPEProfile);
+  B = pe();
+  put(B, PESections + 36, 0xe0000040, 4);
+  refuse(B, "wails_invalid_load_mapping", WailsPEProfile);
+  B = pe();
+  B[0x1400] ^= 1;
+  refuse(B, "wails_embed_hash_mismatch", WailsPEProfile);
 }
 TEST_F(WebWails, VersionsAndBuildDeclarationsAreExplicit) {
   auto B = elf();
@@ -249,6 +339,31 @@ TEST_F(WebWails, Zentro030CapturedWailsAssetsWhenSupplied) {
   EXPECT_EQ(E.Members[7].Content.size(), 1552742U);
   EXPECT_EQ(E.Members[7].BlobHash,
             "550cdaae8e65f0cbd2a75132a0dc5073fc8a7883811d0d7abdd6a59f71bd0e1e");
+  for (const auto &M : E.Members)
+    if (!M.Directory)
+      EXPECT_EQ(M.Content.digest(), M.BlobHash);
+}
+TEST_F(WebWails, Zentro030CapturedPEAssetsWhenSupplied) {
+  const auto *Path = std::getenv("NEVERD_WAILS_ZENTRO_030_PE");
+  if (!Path || !*Path)
+    GTEST_SKIP() << "captured Zentro v0.3.0 Windows x64 release required";
+  const auto A = capture(Path, Limits{}).Artifacts.at(0);
+  ASSERT_EQ(A.Content.size(), 29747136U);
+  ASSERT_EQ(A.BlobHash,
+            "8c07c39c307c24d04be12019ef39210fc2360c0b40ffee8297deae9d1a0ee9e4");
+  const auto E = extractWails(A, WailsPEProfile);
+  ASSERT_EQ(E.Tables.size(), 1U);
+  ASSERT_EQ(E.Members.size(), 14U);
+  EXPECT_EQ(E.Tables[0].Offset, 19725376U);
+  EXPECT_EQ(E.BuildInfoOffset, 28108288U);
+  EXPECT_EQ(E.PayloadBytes, 4700647U);
+  EXPECT_EQ(E.Members[5].Kind, "html");
+  EXPECT_EQ(E.Members[5].Content.size(), 452U);
+  EXPECT_EQ(E.Members[7].Kind, "javascript");
+  EXPECT_EQ(E.Members[7].Offset, 16867808U);
+  EXPECT_EQ(E.Members[7].Content.size(), 1552742U);
+  EXPECT_EQ(E.Members[7].BlobHash,
+            "1b3a234dc7a96030d32d901baaf456771a0b63fc9c6f2cdfbb046980d618f79f");
   for (const auto &M : E.Members)
     if (!M.Directory)
       EXPECT_EQ(M.Content.digest(), M.BlobHash);

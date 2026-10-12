@@ -208,6 +208,11 @@ inline bool isNoopRegisterCopy(const MedOp &Op) {
 
 void collectSpilledStackArgs(const CallArgScan &Scan,
                              std::vector<ExprPtr> &Found);
+/// Collect the stack arguments of \p Scan's call, its stores searched
+/// further back when the call fills every integer argument register: only
+/// then can a stack argument follow, after the setup of each register.
+void collectFullBankStackArgs(const CallArgScan &Scan,
+                              std::vector<ExprPtr> &Found);
 void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args);
 void collectCallArgsARM(const CallArgScan &Scan, std::vector<ExprPtr> &Found,

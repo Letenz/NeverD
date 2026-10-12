@@ -9,7 +9,10 @@
 #include "ProjectDatabase.h"
 #include "StyledText.h"
 #include "Theme.h"
+#include "TitleBar.h"
+#include "WindowFrame.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -1072,6 +1075,86 @@ private slots:
                      Qt::NoButton, Qt::NoModifier);
     QCoreApplication::sendEvent(&label, &move);
     QCOMPARE(underlined(), 0);
+  }
+
+  void windowFrameResizesFromEdgesAndCorners() {
+    // The visible window spans [10, 390) x [10, 290) inside its shadow.
+    const QSize size(400, 300);
+    const QMargins shadow(10, 10, 10, 10);
+    const auto at = [&](int x, int y) {
+      return WindowFrame::edgesAt(QPoint(x, y), size, shadow);
+    };
+    QCOMPARE(at(200, 150), Qt::Edges());
+    QCOMPARE(at(2, 150), Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(at(12, 150), Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(at(14, 150), Qt::Edges());
+    QCOMPARE(at(395, 150), Qt::Edges(Qt::RightEdge));
+    QCOMPARE(at(200, 5), Qt::Edges(Qt::TopEdge));
+    QCOMPARE(at(200, 292), Qt::Edges(Qt::BottomEdge));
+    QCOMPARE(at(5, 5), Qt::TopEdge | Qt::LeftEdge);
+    // Within a corner's reach an edge resizes both ways.
+    QCOMPARE(at(12, 20), Qt::TopEdge | Qt::LeftEdge);
+    QCOMPARE(at(380, 292), Qt::BottomEdge | Qt::RightEdge);
+    // Without a shadow the edges lie just inside the window.
+    QCOMPARE(WindowFrame::edgesAt(QPoint(1, 150), size, QMargins()),
+             Qt::Edges(Qt::LeftEdge));
+    QCOMPARE(WindowFrame::edgesAt(QPoint(5, 150), size, QMargins()),
+             Qt::Edges());
+  }
+
+  void titleBarControlsTheWindow() {
+    auto &theme = Theme::instance();
+    theme.setMode(Theme::Mode::Dark);
+    theme.apply();
+    QWidget window;
+    auto *menus = new QMenuBar;
+    menus->addMenu(QStringLiteral("&File"));
+    auto *bar = new TitleBar(window, *menus);
+    QCOMPARE(menus->parentWidget(), bar);
+    QAction palette;
+    int runs = 0;
+    connect(&palette, &QAction::triggered, &window, [&runs] { ++runs; });
+    bar->setCommandCenterAction(&palette);
+    bar->setCommandCenterText(QStringLiteral("xxd"),
+                              QStringLiteral("NeverD - xxd /tmp"));
+    auto *layout = new QVBoxLayout(&window);
+    layout->setContentsMargins(QMargins());
+    layout->addWidget(bar);
+    layout->addStretch();
+    window.resize(900, 400);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    const auto button = [&](const char *name) {
+      return bar->findChild<QAbstractButton *>(QLatin1String(name));
+    };
+    QVERIFY(button("minimizeButton") && button("maximizeButton") &&
+            button("closeButton"));
+    QCOMPARE(button("maximizeButton")->accessibleName(),
+             QStringLiteral("Maximize"));
+
+    // The command center names the file and runs its command.
+    auto *center = button("commandCenter");
+    QVERIFY(center && center->isVisible());
+    QCOMPARE(center->text(), QStringLiteral("xxd"));
+    QTest::mouseClick(center, Qt::LeftButton);
+    QCOMPARE(runs, 1);
+
+    // The maximize button and a double click on the bar's empty part toggle
+    // the maximized state, and the button then offers to restore.
+    QTest::mouseClick(button("maximizeButton"), Qt::LeftButton);
+    QTRY_VERIFY(window.isMaximized());
+    QCOMPARE(button("maximizeButton")->accessibleName(),
+             QStringLiteral("Restore"));
+    const QPoint empty(center->geometry().right() + 20, bar->height() / 2);
+    QVERIFY(!bar->childAt(empty));
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier, empty);
+    QTRY_VERIFY(!window.isMaximized());
+
+    // Full screen hides the window controls.
+    window.showFullScreen();
+    QTRY_VERIFY(!button("closeButton")->isVisible());
+    window.showNormal();
+    QTRY_VERIFY(button("closeButton")->isVisible());
   }
 
   void themeDrawsFlatControls() {

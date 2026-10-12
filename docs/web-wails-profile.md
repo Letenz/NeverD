@@ -1,28 +1,51 @@
 # Offline Wails stored assets
 
-`wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1` is a C++ reader for one
-measured producer layout. It inspects captured ELF64 little-endian x64
-`ET_EXEC` bytes declaring Go `1.25.7`, Wails `2.11.0`, `GOOS=linux` and
-`GOARCH=amd64`. These declarations select a stored layout. They do not
-authenticate a compiler, framework, publisher or running application.
+Two independent C++ profiles inspect stored Go `1.25.7` / Wails `2.11.0`
+layouts. Both require `GOARCH=amd64`; the container and `GOOS` must match
+the explicit selection:
+
+| Profile | Container / required platform |
+| --- | --- |
+| `wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1` | ELF64 little-endian x64 `ET_EXEC` / `GOOS=linux` |
+| `wails-2.11.0-go-1.25.7-windows-x64-pe-embedfs-v1` | PE32+ x64 executable / `GOOS=windows` |
+
+Declarations select a stored layout; they do not authenticate a compiler,
+framework, publisher or running application. Capabilities retain `profile`
+as the original Linux selection and enumerate both in `profiles`. Cache
+identity includes the explicit profile; a Linux request cannot reuse a
+successful Windows extraction.
 
 Detection, table extraction, HTML/source analysis and native loading are
 separate results. This profile does not support every Wails executable.
-Other Go/Wails versions, PIE, ELF ARM64, PE, Mach-O and universal images
+Other Go/Wails versions, PIE, ELF/PE ARM64, PE32, DLL, Mach-O and universal images
 are refused by this reader until their producer layouts are qualified.
 Existing native loaders keep their independent format/architecture support.
 Tauri assets and native bridges remain separate work.
 
 ## Ownership and evidence
 
-`desktop/wails/ELF` owns this profile's nonoverlapping file-backed native
-mappings; `BuildInfo` owns aligned inline build-info framing and required
+`desktop/wails/Profiles` owns layout names, platforms and container selection.
+`ELF` and `PE` own their respective native headers and address translation;
+`Mappings` owns shared nonoverlapping file-backed permission/pointer checks.
+`BuildInfo` owns aligned inline build-info framing and required
 declarations. `Tables` owns structural recognition, ordered directory records
 and portable namespaces. `Contents` owns payload overlap and stored digest
 proof. `Reader` owns limits, identity and the atomic extraction transaction.
 `SessionWails` only selects immutable inputs, caches completed extractions and
 publishes bounded metadata. `ArtifactView` retains nested storage coordinates
 and one namespace per table. Consumers do not reinterpret container records.
+
+The PE profile requires an executable x64 PE32+ header with sixteen data
+directories, a 64 KiB-aligned preferred base, standard power-of-two file/section
+alignment and bounded headers/image size. Every section has a checked physical
+span, RVA, virtual size and permissions. Raw spans and virtual mappings cannot
+overlap; sections cannot substitute native headers for payloads. Only the
+intersection of stored bytes and declared virtual size backs a pointer. File
+padding, zero-filled virtual tails, writable content and writable executable
+sections never become stored assets. Pointer values refer to the captured
+preferred-image VAs; NeverD does not apply loader relocation or execute the
+image. See the [PE specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)
+and the pinned [Go build-info reader](https://github.com/golang/go/blob/go1.25.7/src/debug/buildinfo/buildinfo.go).
 
 A recognized table has an aligned self-referential slice header, nonzero
 equal length/capacity, and a first name-string length of 1..4,096 bytes.
@@ -62,7 +85,8 @@ and [toolchain hash owner](https://github.com/golang/go/blob/go1.25.7/src/cmd/in
 | Resource | Hard bound |
 | --- | ---: |
 | Captured input | 256 MiB |
-| Native program headers / admitted load mappings | 1,024 / 128 |
+| ELF program headers / admitted mappings | 1,024 / 128 |
+| PE sections / admitted mappings | 96 / 128 |
 | Tables / total rows | 32 / 4,096 |
 | Aggregate declared file payload | 64 MiB |
 | Charged private metadata per extraction | 2 MiB |
@@ -165,3 +189,38 @@ and [module framing](https://github.com/golang/go/blob/go1.25.7/src/cmd/go/inter
 The C++ reader and authored fixtures are independent implementations; no Go or
 Wails runtime/source dependency is installed or linked. The complete original
 container and its stored license asset are preserved by local export.
+
+## Independent Windows capture
+
+`NEVERD_WAILS_ZENTRO_030_PE` selects the bare Windows x64 executable from the
+same release. NeverD itself performs table extraction, raw/readable export and
+native handoff with an unusable external-tool PATH. The application, installer,
+Go runtime and Wails runtime are never launched.
+
+| Evidence | Value |
+| --- | --- |
+| Native bytes | 29,747,136 |
+| SHA-256 | `8c07c39c307c24d04be12019ef39210fc2360c0b40ffee8297deae9d1a0ee9e4` |
+| Build-info offset / bytes | 28,108,288 / 5,570 |
+| Table offset / rows | 19,725,376 / 14 |
+| Directories / files | 3 / 11 |
+| Stored payload bytes | 4,700,647 |
+| JavaScript offset / bytes | 16,867,808 / 1,552,742 |
+| JavaScript SHA-256 | `1b3a234dc7a96030d32d901baaf456771a0b63fc9c6f2cdfbb046980d618f79f` |
+| Readable nodes / bytes | 449,790 / 1,897,987 |
+| Readable SHA-256 | `d8ebf61ff86a156541432442d18cd82f5294dc104384e7887b1b7e9f3f94f013` |
+| Native handoff sections / function records | 9 / 28,136 |
+
+Windows and Linux assets are independently verified. Equal JS sizes/node
+counts do not imply identical bytes or interchangeable evidence. The Windows
+HTML's root-relative script remains unbound, as on Linux; the reader does not
+infer a filesystem mount. The complete readable bundle has a matching reparsed
+tree, not a claim of recovered erased types/names or complete runtime semantics.
+
+Raw export rereads thirteen files / 34,456,736 bytes, with manifest SHA
+`6dce4fac4a7f769ed09af43eee92ca30b6fcb18114b5c8d97afaf6630ff0f504`.
+Separate readable export rereads three files / 3,452,863 bytes, with manifest SHA
+`3e843ec978b4bf4adb7f8b4ac89100b6274ef7fa32ae0e734a7cddb849caf7d3`.
+These outputs and public-release bytes stay outside Git. Matching architectures
+on native Windows hosts, ARM64, Mach-O/universal Wails assets, additional
+toolchain versions, asset-server bindings and native bridges remain unqualified.

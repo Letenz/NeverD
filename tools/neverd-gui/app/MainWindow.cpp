@@ -22,6 +22,8 @@
 #include "Session.h"
 #include "SettingsKeys.h"
 #include "Theme.h"
+#include "TitleBar.h"
+#include "WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 #include "web/PackageReviewDialog.h"
@@ -171,6 +173,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
     : KDDockWidgets::QtWidgets::MainWindow(QStringLiteral("NeverDMainWindow")),
       session_(session), mcp_(mcp), broker_(broker), actions_(this) {
   instance_ = this;
+  frame_ = WindowFrame::attach(*this);
   setWindowIcon(icon(QStringLiteral("app")));
   setCenterWidgetMargins(dockAreaMargins());
   setAcceptDrops(true);
@@ -312,7 +315,16 @@ QString MainWindow::layoutPath() const {
 //===----------------------------------------------------------------------===//
 
 void MainWindow::buildMenusAndToolbars() {
-  actions_.buildMenus(menuBar(), [this](QMenu *menu, const QString &name) {
+  menuBar_ = new QMenuBar(this);
+  if (frame_) {
+    titleBar_ = new TitleBar(*this, *menuBar_);
+    titleBar_->setCommandCenterAction(
+        actions_.action(ActionId::OptionsPalette));
+    setMenuWidget(titleBar_);
+  } else {
+    setMenuBar(menuBar_);
+  }
+  actions_.buildMenus(menuBar_, [this](QMenu *menu, const QString &name) {
     fillPlaceholder(menu, name);
   });
   const auto toolbars = actions_.buildToolbars(this);
@@ -1337,17 +1349,21 @@ void MainWindow::updateActions() {
 }
 
 void MainWindow::updateTitle() {
+  QString shown = QStringLiteral("NeverD");
   if (!session_.loaded()) {
-    setWindowTitle(QStringLiteral("NeverD"));
-    return;
+    setWindowTitle(shown);
+  } else {
+    // Like a classic title bar: the database, then the input it describes.
+    const QString database = session_.databasePath();
+    shown = QFileInfo::exists(database) ? QFileInfo(database).fileName()
+                                        : session_.fileName();
+    setWindowTitle(
+        QStringLiteral("NeverD - %1 %2").arg(shown, session_.projectPath()));
   }
-  // Like a classic title bar: the database, then the input it describes.
-  const QString database = session_.databasePath();
-  const QString shown = QFileInfo::exists(database)
-                            ? QFileInfo(database).fileName()
-                            : session_.fileName();
-  setWindowTitle(
-      QStringLiteral("NeverD - %1 %2").arg(shown, session_.projectPath()));
+  // The command center names the file, as Visual Studio Code's names the
+  // workspace, and its tooltip carries the full title.
+  if (titleBar_)
+    titleBar_->setCommandCenterText(shown, windowTitle());
 }
 
 void MainWindow::updateStatusBar() {

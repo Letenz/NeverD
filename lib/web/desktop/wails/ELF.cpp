@@ -37,42 +37,15 @@ void admitELF(Reader &R) {
     Mapping M{{number(Headers, At + 8, 8), number(Headers, At + 32, 8)},
               {number(Headers, At + 16, 8), number(Headers, At + 40, 8)},
               uint32_t(number(Headers, At + 4, 4))};
-    within(M.File, R.Input.Content.size());
-    within(M.Virtual, UINT64_MAX);
     const auto Alignment = number(Headers, At + 48, 8);
-    if (!(M.Flags & 4) || (M.Flags & ~7U) || (M.Flags & 3) == 3 ||
-        M.File.Size > M.Virtual.Size ||
-        (Alignment > 1 &&
-         ((Alignment & (Alignment - 1)) ||
-          M.File.Offset % Alignment != M.Virtual.Offset % Alignment)))
+    if (Alignment > 1 &&
+        ((Alignment & (Alignment - 1)) ||
+         M.File.Offset % Alignment != M.Virtual.Offset % Alignment))
       throw Error("wails_invalid_load_mapping");
-    if (R.Mappings.size() == 128)
-      throw Error("wails_native_table_budget_exceeded");
-    for (const auto &Other : R.Mappings) {
-      R.step();
-      if (overlaps(M.File, Other.File) || overlaps(M.Virtual, Other.Virtual))
-        throw Error("wails_ambiguous_mapping");
-    }
-    R.Mappings.push_back(M);
+    R.admitMapping(M);
   }
   if (R.Mappings.empty())
     throw Error("wails_invalid_load_mapping");
 }
 
-Range Reader::mapped(uint64_t Address, uint64_t Size, bool ReadOnly) {
-  within({Address, Size}, UINT64_MAX);
-  std::optional<Range> Out;
-  for (const auto &M : Mappings) {
-    step();
-    const Range Backed{M.Virtual.Offset, M.File.Size};
-    if (!contains(Backed, {Address, Size}) || Address == Backed.end())
-      continue;
-    if (Out || (ReadOnly && M.Flags != 4))
-      throw Error("wails_ambiguous_mapping");
-    Out = {M.File.Offset + Address - M.Virtual.Offset, Size};
-  }
-  if (!Out)
-    throw Error("wails_non_file_backed_pointer");
-  return *Out;
-}
 } // namespace neverd::web::wails_detail

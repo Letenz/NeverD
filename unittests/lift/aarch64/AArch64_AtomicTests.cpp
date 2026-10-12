@@ -608,6 +608,30 @@ TEST_F(AArch64_Atomic, LseRmwUsesCompilerBuiltins) {
   expectPairedClangSyntax(cFile, source);
 }
 
+// A compiler without NeverD's scalar LSE builtins reads each through the
+// definition HighC gives it: the __atomic builtin of the same width and
+// order, which selects the same instruction.
+TEST_F(AArch64_Atomic, LseBuiltinsBuildToTheSameInstructionsWithAnyClang) {
+  auto R = decompileToHighC(fs::path(TEST_OBJ_DIR) / "test_lse_builtin_a64.o");
+  ASSERT_EQ(R.exitCode, 0) << R.err;
+  const auto CFile = tmpFile("decompiled_high.c");
+  const auto Assembly = tmpFile("lse-builtins.s");
+  auto Built =
+      runHighCClang(CFile,
+                    {"-target", "aarch64-linux-gnu", "-march=armv8.1-a+lse",
+                     "-ffreestanding", "-std=gnu11"},
+                    {"-O2", "-S", "-o", Assembly.string()});
+  ASSERT_EQ(Built.exitCode, 0) << Built.err;
+  std::ifstream Input(Assembly);
+  const std::string Text((std::istreambuf_iterator<char>(Input)),
+                         std::istreambuf_iterator<char>());
+  for (const char *Mnemonic : {"ldclral", "ldeorb", "ldsetah", "ldsmaxa",
+                               "ldsminl", "ldumaxalb", "lduminalh"})
+    EXPECT_NE(Text.find("\t" + std::string(Mnemonic) + "\t"), std::string::npos)
+        << Mnemonic << "\n"
+        << Text;
+}
+
 TEST_F(AArch64_Atomic, CasAndCaspUseOrderedAtomicCompareExchange) {
   auto r = liftToLLVMIR(testObj());
   ASSERT_EQ(r.exitCode, 0) << r.err;
