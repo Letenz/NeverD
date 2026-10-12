@@ -554,16 +554,18 @@ user renames, comments and other edits. Output reports the selected path and
 whether the identity was verified. A missing, malformed or mismatched PDB
 leaves the current session usable.
 
-If the PE has no CodeView identity, the dialog offers an explicitly unverified
-display-name import after machine and section-layout checks. These aliases
-name existing functions and mapped data in the workbench; they do not create
-engine symbols, function boundaries, types, ABI or other analysis evidence.
-An existing but mismatched or ambiguous identity cannot be overridden. The
-unverified route currently supports modern RSDS PDBs; a matching legacy NB10
-PDB still uses the ordinary authenticated loader. The chosen file and import
-mode accompany read-only analysis replicas and are remembered on reload and
-in saved databases. The PDB remains an external file and must be available
-when reopening that database.
+If the PE has no CodeView identity, the dialog asks whether to use the selected
+PDB for analysis after machine and section-layout checks. Confirming loads it
+through the same supported analysis path as a matching PDB, including symbols,
+types, function signatures and available debug ranges. Output distinguishes
+user confirmation from verified build identity. An existing but mismatched or
+ambiguous identity cannot be overridden. This route currently supports modern
+RSDS PDBs; a matching legacy NB10 PDB uses the ordinary authenticated loader.
+The chosen file and analysis mode accompany read-only analysis replicas and
+are remembered on reload and in saved databases. Older display-only selections
+keep that mode until the PDB is selected again and confirmed for analysis.
+The PDB remains an external file and must be available when reopening that
+database.
 
 ## Databases
 
