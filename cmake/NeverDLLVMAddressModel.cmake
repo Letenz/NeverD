@@ -22,27 +22,33 @@ function(neverd_scope_llvm_address_model)
     if(NOT EXISTS "${_overlay}" OR NOT _previous STREQUAL _inputs)
         file(MAKE_DIRECTORY "${_overlay_root}/llvm/lib/MC")
         configure_file("${_backend}" "${_overlay}" COPYONLY)
+        # A ceiling stops repository discovery, but an inherited GIT_DIR or
+        # GIT_WORK_TREE bypasses discovery. Git then silently skips paths
+        # outside that worktree even with --no-index, reporting success.
+        set(_isolated_git "${CMAKE_COMMAND}" -E env
+            --unset=GIT_DIR --unset=GIT_WORK_TREE --unset=GIT_COMMON_DIR
+            --unset=GIT_INDEX_FILE --unset=GIT_PREFIX
+            "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
+            "${GIT_EXECUTABLE}")
         execute_process(
-            COMMAND "${CMAKE_COMMAND}" -E env
-                    "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
-                    "${GIT_EXECUTABLE}" apply --no-index --check "${_patch}"
+            COMMAND ${_isolated_git} apply --no-index --check "${_patch}"
             WORKING_DIRECTORY "${_overlay_root}"
             RESULT_VARIABLE _check ERROR_VARIABLE _detail)
         if(_check EQUAL 0)
             execute_process(
-                COMMAND "${CMAKE_COMMAND}" -E env
-                        "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
-                        "${GIT_EXECUTABLE}" apply --no-index "${_patch}"
+                COMMAND ${_isolated_git} apply --no-index "${_patch}"
                 WORKING_DIRECTORY "${_overlay_root}"
                 RESULT_VARIABLE _apply ERROR_VARIABLE _detail)
             if(NOT _apply EQUAL 0)
                 message(FATAL_ERROR "Cannot scope LLVM MC specifiers: ${_detail}")
             endif()
+            file(SHA256 "${_overlay}" _corrected_sha)
+            if(_corrected_sha STREQUAL _backend_sha)
+                message(FATAL_ERROR "LLVM MC correction was skipped by Git")
+            endif()
         else()
             execute_process(
-                COMMAND "${CMAKE_COMMAND}" -E env
-                        "GIT_CEILING_DIRECTORIES=${CMAKE_BINARY_DIR}"
-                        "${GIT_EXECUTABLE}" apply --no-index --reverse --check "${_patch}"
+                COMMAND ${_isolated_git} apply --no-index --reverse --check "${_patch}"
                 WORKING_DIRECTORY "${_overlay_root}"
                 RESULT_VARIABLE _fixed ERROR_VARIABLE _fixed_detail)
             if(NOT _fixed EQUAL 0)
