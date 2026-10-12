@@ -15,6 +15,7 @@
 
 class QDialog;
 class QLabel;
+class QMenuBar;
 class McpConnectionManager;
 class GuiSessionBroker;
 
@@ -32,6 +33,8 @@ class HexView;
 class NavigationBand;
 class OutputWindow;
 class Session;
+class TitleBar;
+class WindowFrame;
 
 /// The workbench window: the classic disassembler layout (functions on the
 /// left, disassembly with hex, imports and exports in the center, output at
@@ -59,6 +62,10 @@ public:
   }
   DisassemblyView *disassembly() const { return disassembly_; }
   ActionRegistry &actions() { return actions_; }
+  /// The window's menus, which sit in its title bar when it draws its own
+  /// frame.  This hides QMainWindow::menuBar(), which would replace that
+  /// title bar with a new menu bar.
+  QMenuBar *menuBar() const { return menuBar_; }
 
   /// The window that creates on-demand docks while a layout is restored.
   static MainWindow *instance() { return instance_; }
@@ -181,6 +188,10 @@ private:
   ActionRegistry actions_;
   AddressSpace space_;
   NavigationBand *navigationBand_ = nullptr;
+  /// Null where the window keeps the window manager's frame.
+  WindowFrame *frame_ = nullptr;
+  TitleBar *titleBar_ = nullptr;
+  QMenuBar *menuBar_ = nullptr;
   DisassemblyView *disassembly_ = nullptr;
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;

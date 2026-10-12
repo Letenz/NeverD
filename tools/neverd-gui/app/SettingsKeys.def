@@ -22,5 +22,8 @@ NEVERD_SETTINGS_KEY(RecentOpened, "files/recentOpened")
 NEVERD_SETTINGS_KEY(QuickStart, "ui/quickStart")
 // The user's preferred size of the resizable quick start dialog.
 NEVERD_SETTINGS_KEY(QuickStartSize, "ui/quickStartSize")
+// Whether windows keep the window manager's frame instead of drawing their
+// own title bar; read as each window is created.
+NEVERD_SETTINGS_KEY(NativeTitleBar, "ui/nativeTitleBar")
 
 #undef NEVERD_SETTINGS_KEY
