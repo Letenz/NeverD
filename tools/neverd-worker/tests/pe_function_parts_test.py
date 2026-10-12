@@ -74,10 +74,11 @@ def image():
     u32(directories + 3 * 8, 0x3000)
     u32(directories + 3 * 8 + 4, 12 * len(records))
     # The export directory: its address table, sorted name pointers and
-    # ordinals, then the names.
+    # ordinals, then the names.  Each name has its own ordinal, as a linker
+    # that folds two functions into one exports both.
     def at(rva): return rdata + rva - 0x2000
-    functions = sorted({rva for _, rva in EXPORTED})
-    table, pointers, ordinals = EXPORTS + 0x30, EXPORTS + 0x38, EXPORTS + 0x44
+    functions = [rva for _, rva in EXPORTED]
+    table, pointers, ordinals = EXPORTS + 0x30, EXPORTS + 0x3c, EXPORTS + 0x48
     names, module = EXPORTS + 0x50, b"parts.exe\0"
     struct.pack_into("<IIHHIIIIIII", data, at(EXPORTS), 0, 0, 0, 0,
                      names + sum(len(n) + 1 for n, _ in EXPORTED), 1, len(functions),
@@ -87,7 +88,7 @@ def image():
     cursor = names
     for index, (name, rva) in enumerate(EXPORTED):
         u32(at(pointers) + 4 * index, cursor)
-        u16(at(ordinals) + 2 * index, functions.index(rva))
+        u16(at(ordinals) + 2 * index, index)
         data[at(cursor):at(cursor) + len(name) + 1] = name.encode() + b"\0"
         cursor += len(name) + 1
     data[at(cursor):at(cursor) + len(module)] = module
