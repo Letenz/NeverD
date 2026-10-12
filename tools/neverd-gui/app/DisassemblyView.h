@@ -78,6 +78,7 @@ private:
   bool restoring_ = false;
   bool graphAfterJump_ = false;
   QMetaObject::Connection graphNavigation_;
+  QMetaObject::Connection graphAfterJumpConnection_;
 };
 
 } // namespace neverd::gui
