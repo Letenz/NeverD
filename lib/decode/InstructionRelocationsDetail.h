@@ -27,6 +27,10 @@ void addX86Fields(const BinaryImage &Img, const DecodedInsn &DI,
 void addAArch64Fields(const BinaryImage &Img, const DecodedInsn &DI,
                       InstructionRelocations &Result);
 
+/// ARM fields of \p DI (InstructionRelocationsARM.cpp).
+void addARMFields(const BinaryImage &Img, const DecodedInsn &DI,
+                  InstructionRelocations &Result);
+
 } // namespace instruction_relocations_detail
 } // namespace neverd
 

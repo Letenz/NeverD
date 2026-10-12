@@ -20,6 +20,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/SaveAndRestore.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -140,10 +141,13 @@ ARMLifter::ARMLifter(Arch A, InstructionMode M)
 // Main dispatch
 // ===----------------------------------------------------------------------===//
 
-void ARMLifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops) {
+void ARMLifter::lift(const cs_insn *Insn, std::vector<LowOp> &Ops,
+                     bool UnrelocatedObjectInstruction) {
   auto *Detail = Insn->detail;
   if (!Detail)
     return;
+  const llvm::SaveAndRestore<bool> Numbers(MovesNumbers,
+                                           UnrelocatedObjectInstruction);
 
   auto &ARM = Detail->arm;
   LiftState S(Insn->address, static_cast<uint16_t>(Insn->size), Ops);
