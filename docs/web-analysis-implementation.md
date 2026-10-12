@@ -3427,3 +3427,14 @@ again succeeds with empty stderr. Format, provenance (7,510 files) and capabilit
 `/tmp/neverd-configuration-order-{restored-{configure,build,clean-discovery,
 ready-owning-web-tests},banner-build,final-{format,provenance,capabilities}}.log`;
 actual receipt: `/tmp/neverd-configuration-order-final-actual-bun-navigation.jsonl`.
+
+Normal integration with `origin/dev` at `eb295fdbc` preserves every Web source,
+SDK join and owning test unchanged. The shared native/SDK/transport rebuild
+passes all 102 steps; Qt app/worker/review builds pass. All 28 selected source,
+SDK, actual Tauri/configuration, native-projection/buffer and transport cases
+pass (25.28 seconds); Qt package review passes (12.59 seconds). Provenance scans
+7,512 files and capabilities validate all 23 declarations. Both Web/JS options
+remain ON. Integration head is `779893528b51c3ccb7d57e60f04bf8763c01829a`
+before this receipt-only commit. Logs:
+`/tmp/neverd-configuration-order-{dev-integration,integrated-{build,
+focused-tests,gui-{build,tests},provenance,capabilities}}.log`.
