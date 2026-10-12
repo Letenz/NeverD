@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>オペランドの数値をビット反転して表示します</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>コード(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>現在のアドレスから命令を定義します</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>オフラインのパッケージレビュー(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>ローカルのパッケージの証拠とアナリストのレビューを調べます</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1444,14 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>C で表示した宣言 %n 個</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2072,38 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>%1 の読み込み方法が不明です: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>このソース行へのコメント：</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>新しい名前：</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>名前の変更</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>名前を変更する宣言済みの変数またはイメージ内の名前を選択してください</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>ソース行を選択してください。折りたたまれたコードは展開してからコメントしてください</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>選択した名前にはイメージ内のアドレスがありません</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>この命令にはソース行へのアドレス対応がありません。</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>このソース行には命令アドレスへの対応がありません。関数の入口を表示します</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2242,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>開いたファイルがここに表示されます。[新規] を選ぶか、このウィンドウにファイルをドロップしてください。</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>最終オープン：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2368,10 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1 にはすでに命令が定義されています</translation>
     </message>
 </context>
 <context>
@@ -2544,6 +2608,21 @@ Signed: %4</source>
     <message>
         <source>Close</source>
         <translation>閉じる</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>解析プロセスが停止しました。</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>解析の読み取りのみが許可されています。</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>解析プロセスは解析状態を復元できません。</translation>
     </message>
 </context>
 </TS>

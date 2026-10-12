@@ -18,6 +18,7 @@
 #include "neverd/debug/MSVCMapLoader.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/support/FilePath.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -34,6 +35,20 @@
 namespace neverd {
 
 namespace {
+
+/// Record as pointers to data the relocated pointers that the image took for
+/// pointers to code but whose targets \p Dbg places in data: at a data
+/// symbol, the image's own among them (\p DataByAddr), or after one that no
+/// function follows.
+void recordDebugDataPointerTargets(BinaryImage &Img, const DebugContext &Dbg,
+                                   const std::map<va_t, size_t> &DataByAddr) {
+  recordDataPointerTargets(Img, [&](va_t Addr) {
+    if (DataByAddr.count(Addr) != 0)
+      return true;
+    return (Dbg.resolveDataObject(Addr) || Dbg.precedingDataSymbol(Addr)) &&
+           !Dbg.resolveFunction(Addr);
+  });
+}
 
 bool isReadableFile(const std::filesystem::path &P) {
   if (P.empty())
@@ -323,8 +338,10 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     Img.Symbols.push_back(std::move(New));
   }
 
-  if (DbgFuncs.empty())
+  if (DbgFuncs.empty()) {
+    recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
     return 0;
+  }
 
   // Index the function symbols once rather than scanning the table per debug
   // entry; both sides run to tens of thousands of entries on a real image.
@@ -369,6 +386,7 @@ unsigned applyDebugSymbols(BinaryImage &Img, const DebugContext &Dbg) {
     ++Applied;
   }
 
+  recordDebugDataPointerTargets(Img, Dbg, DataByAddr);
   LLVM_DEBUG(llvm::dbgs() << "debug-discovery: published " << Applied << " of "
                           << DbgFuncs.size() << " debug function symbols\n");
   return Applied;

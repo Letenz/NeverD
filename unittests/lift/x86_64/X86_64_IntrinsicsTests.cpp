@@ -896,3 +896,30 @@ cas16:
                                      "-ffreestanding", "-std=gnu11"});
   EXPECT_EQ(Compiled.exitCode, 0) << Compiled.err << "\n" << C;
 }
+
+// The magnitude mask of an fabs is a double constant that `vmovddup` loads
+// from memory and broadcasts, which HighC folds to its eight bytes: the
+// intrinsic reads only those, and they widen to its vector operand.
+TEST_F(X86_64_HighCIntrinsics, ABroadcastConstantWidensToItsVector) {
+  HostFlags = {"-mfma"};
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu", "-mfma", "-fno-math-errno"}, R"C(
+int fma_chain(int a) {
+  unsigned h = (unsigned)a, acc = 0;
+  double s = 1.0;
+  for (int i = 0; i < 64; i++) {
+    h = h * 1103515245u + 12345u;
+    double x = (double)(int)(h & 0x1FFFF) * 0.0000131 - 3.0;
+    double y = (double)(int)((h >> 8) & 0x1FFFF) * 0.0000071 + 1.0;
+    s = __builtin_fma(x, y, s);
+    if (s > 1e9 || s < -1e9)
+      s *= 0.0009765625;
+    unsigned long long bb;
+    __builtin_memcpy(&bb, &s, 8);
+    acc = acc * 131u + (unsigned)bb + (unsigned)(bb >> 32);
+  }
+  return (int)acc;
+}
+)C",
+      "fma_chain", {"fma_chain"}, {0, 1, -1, 0x4567, 77});
+}

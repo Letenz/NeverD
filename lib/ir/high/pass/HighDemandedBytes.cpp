@@ -21,6 +21,7 @@
 #include "HighDCEDetail.h"
 
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 
 #include "llvm/ADT/bit.h"
 
@@ -210,6 +211,20 @@ private:
     });
   }
 
+  /// Demand what observable \p E reads of each operand: every byte, except
+  /// where an intrinsic reads only some bytes of its vector operands.
+  void demandOperandsOf(const HighExpr &E) {
+    E.forEachChildExpr([&](const ExprPtr &C) {
+      if (C && E.Kind == ExprKind::Call && E.IntrinsicId != Intrinsic::None)
+        if (const auto Read =
+                x86VectorOperandReadBytes(E.IntrinsicId, exprBytes(*C))) {
+          demand(C.get(), *Read);
+          return;
+        }
+      demandAll(C);
+    });
+  }
+
   void seedObservableEvaluations(const ExprPtr &Root) {
     std::vector<const HighExpr *> Stack{Root.get()};
     std::unordered_set<const HighExpr *> Seen;
@@ -219,19 +234,16 @@ private:
       if (!E || !Seen.insert(E).second)
         continue;
       --Budget;
-      const bool Observable = observableEvaluation(*E);
-      E->forEachChildExpr([&](const ExprPtr &C) {
-        if (Observable)
-          demandAll(C);
-        Stack.push_back(C.get());
-      });
+      if (observableEvaluation(*E))
+        demandOperandsOf(*E);
+      E->forEachChildExpr([&](const ExprPtr &C) { Stack.push_back(C.get()); });
     }
   }
 
   void propagate(const HighExpr &E) {
     const ByteMask D = NodeDemand[&E];
     if (observableEvaluation(E)) {
-      E.forEachChildExpr([&](const ExprPtr &C) { demandAll(C); });
+      demandOperandsOf(E);
       return;
     }
     switch (E.Kind) {

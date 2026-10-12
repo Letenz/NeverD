@@ -42,7 +42,8 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent) {
     for (const auto &Op : Block.Ops) {
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
           Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+          (Op.Opcode == NdOp::INTRINSIC && !isCanonicalX87Wait(Op)) ||
+          Op.Opcode == NdOp::INDIR_BR ||
           Op.MemoryOrdering != NdMemoryOrdering::None)
         return false;
       const auto Source = Boundaries.find(Op.Addr);

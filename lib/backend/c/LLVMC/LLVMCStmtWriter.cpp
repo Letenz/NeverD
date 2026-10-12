@@ -3967,6 +3967,28 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
         OS << "(void)" << Expression << ";\n";
       return true;
     }
+    if (isX86FPMaskCompareStateIntrinsic(Id)) {
+      const bool Memory = isX86FPStateMemoryIntrinsic(Id);
+      const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));
+      const auto RawInput = [&](unsigned I) {
+        return "__builtin_bit_cast(" + RawType + ", " +
+               valueStr(Call.getArgOperand(I)) + ")";
+      };
+      std::string Expression = Helper->second + "(";
+      if (Memory)
+        Expression += "(void *)(uintptr_t)(" +
+                      integerPointerOperandStr(Call.getArgOperand(1)) + "), " +
+                      RawInput(0);
+      else
+        Expression += RawInput(0) + ", " + RawInput(1);
+      Expression += ", (void *)" + valueStr(Call.getArgOperand(2)) + ")";
+      if (!Call.use_empty())
+        OS << Name << " = __builtin_bit_cast(" << typeToCLLVM(Call.getType())
+           << ", " << Expression << ");\n";
+      else
+        OS << "(void)" << Expression << ";\n";
+      return true;
+    }
     if (isX86FPComiStateIntrinsic(Id)) {
       const bool Memory = isX86FPStateMemoryIntrinsic(Id);
       const auto RawType = x86FPStateRawCType(x86FPStateSourceBytes(Bytes));

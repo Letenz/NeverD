@@ -188,7 +188,8 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     RetVal = sourceFloatValue(CurOp.Inputs[0], 10);
   const auto &TRI = getTargetRegInfo(TargetArch);
   const bool UsesFPReturnReg = Func.ReturnType &&
-                               Func.ReturnType->Kind == NdTypeKind::Float &&
+                               (Func.ReturnType->Kind == NdTypeKind::Float ||
+                                Med.ReturnsVectorRegister) &&
                                TRI.hasFPReturnReg() && !Med.FPReturnViaX87;
   const uint64_t ReturnReg =
       UsesFPReturnReg ? TRI.FPReturnReg : TRI.IntReturnReg;
@@ -481,7 +482,7 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
   }
 
   // The FP return register holds the scalar's bits in its low lane.
-  if (UsesFPReturnReg &&
+  if (UsesFPReturnReg && Func.ReturnType->Kind == NdTypeKind::Float &&
       (!RetVal->Type || RetVal->Type->Kind != NdTypeKind::Float)) {
     const auto Bytes = ExplicitABI
                            ? Med.SourceTypeHint->ReturnLocation.ValueBytes

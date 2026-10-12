@@ -231,6 +231,14 @@ std::vector<int> highBlockLayout(const MedFunc &Med,
 /// an empty HighFunc that HighC can only trap.
 void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 
+/// Gives each variadic function whose register save area holds the vector
+/// argument registers (System V) one trailing stack parameter per slot its
+/// widest direct call stores from the call's stack pointer up, which MedToHigh
+/// seeds where its va_arg walk reads its overflow.  For a convention whose
+/// calls take their arguments from callee summaries, which recover no call
+/// arguments for finalizeVariadicCallees to count.
+void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch);
+
 class MedToHighConverter {
 public:
   /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
@@ -266,6 +274,13 @@ public:
                           std::map<va_t, std::string> &Names) const;
   void setResolvedCalleeNames(const std::map<va_t, std::string> *Names) {
     ResolvedCalleeNames = Names;
+  }
+  /// The variadic functions whose register save area holds the vector
+  /// argument registers too (MedFunc::VariadicFirstVectorRegister), each
+  /// with its overflow parameter count: a call passes each of them every
+  /// argument register, then that many stack slots.
+  void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
+    VariadicVectorCallees = Entries;
   }
   void setJumpTables(const std::vector<JumpTable> &JTs) { JumpTables = JTs; }
 
@@ -481,6 +496,7 @@ private:
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
+  const std::map<va_t, int> *VariadicVectorCallees = nullptr;
   std::vector<JumpTable> JumpTables;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;

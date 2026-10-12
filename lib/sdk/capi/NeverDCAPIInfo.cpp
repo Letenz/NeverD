@@ -269,13 +269,29 @@ const char *neverd_unwind_frame_json(neverd_session_t Sess,
   const ExceptionFunction *F = S->Img.ExceptionMetadata.findFunction(Address);
   if (!F || !F->CodeRange.isValid())
     return dupStr(std::string("null"));
+  // A primary record's frame spans the chained fragments that continue its
+  // body, which its handler governs.
+  const va_t End = F->Kind == RuntimeFunctionKind::Chained ? F->CodeRange.End
+                                                           : F->contiguousEnd();
   llvm::json::Object Obj{{"begin", vaHex(F->CodeRange.Begin)},
-                         {"end", vaHex(F->CodeRange.End)},
+                         {"end", vaHex(End)},
                          {"encoding", getExceptionEncodingName(F->Encoding)},
                          {"language_data", F->hasLanguageTable()}};
   if (!F->PersonalityName.empty())
     Obj["personality"] = jsonSafeText(F->PersonalityName);
   return dupStr(jsonToString(llvm::json::Value(std::move(Obj))));
+}
+
+const char *neverd_function_chunks_json(neverd_session_t Sess) {
+  auto *S = toSession(Sess);
+  if (!S || !S->Loaded)
+    return dupStr(std::string("[]"));
+  llvm::json::Array Arr;
+  for (const auto &Chunk : S->Img.ExceptionMetadata.outlyingChunks())
+    Arr.push_back(llvm::json::Object{{"begin", vaHex(Chunk.Range.Begin)},
+                                     {"end", vaHex(Chunk.Range.End)},
+                                     {"function", vaHex(Chunk.Function)}});
+  return dupStr(jsonToString(llvm::json::Value(std::move(Arr))));
 }
 
 const char *neverd_exports_json(neverd_session_t Sess) {

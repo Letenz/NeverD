@@ -27,6 +27,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -517,6 +518,14 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
 std::string HighCWriter::storedValueText(const HighExpr &Value,
                                          const TypeRef &To,
                                          NdMemoryOrdering Ordering) {
+  // An integer slot takes a string's address as the integer it is.
+  const bool Literal = Value.Kind == ExprKind::Const && To &&
+                       To->Kind == NdTypeKind::Int &&
+                       LiteralAddressOperands.insert(&Value).second;
+  const auto Unmark = llvm::make_scope_exit([&] {
+    if (Literal)
+      LiteralAddressOperands.erase(&Value);
+  });
   // A plain store converts the value to the memory's type like an
   // assignment does.
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
@@ -529,6 +538,16 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
 std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   if (E.Operands.empty())
     return "/* bad unary */";
+  // An integer operator, `~` or a negation, takes a string's address as the
+  // integer it is.
+  const HighExpr *Only = E.Operands[0].get();
+  const bool Literal = Only && Only->Kind == ExprKind::Const && E.Type &&
+                       E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+                       LiteralAddressOperands.insert(Only).second;
+  const auto Unmark = llvm::make_scope_exit([&] {
+    if (Literal)
+      LiteralAddressOperands.erase(Only);
+  });
 
   switch (E.Op) {
   case NdOp::INT_NOT:
@@ -1276,6 +1295,14 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       // Keep absent required operands on the same failure and type-conversion
       // path as explicit unknowns, including pointer parameters.
       Missing = HighExpr::makeUndef(8);
+      Op = Missing.get();
+    }
+    // A variadic callee saves an argument register the call never set, and
+    // va_arg reads no more arguments than a caller passes: no defined run
+    // observes it, and it passes as zero.
+    if (Defined && Defined->IsVariadic && isUnknownCallOperand(Op)) {
+      Missing = HighExpr::makeConst(
+          0, Op->Type && Op->Type->Size ? Op->Type->Size : 8);
       Op = Missing.get();
     }
     Note = stringArgumentNote(*Op);
@@ -5085,6 +5112,22 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
     const va_t Reach = SizedObjectReach[After - SizedObjects.begin() - 1];
     if (Reach > Begin)
       Begin = Reach;
+  }
+  // A data symbol begins another object even when unsized, as each PDB
+  // public does: the table runs from the nearest one at or before it to the
+  // next, as a disassembler bounds an item, not across every unsized object
+  // in the section.
+  const auto NextSymbol = llvm::upper_bound(DataSymbolStarts, Addr);
+  if (NextSymbol != DataSymbolStarts.end() && *NextSymbol < End)
+    End = *NextSymbol;
+  if (NextSymbol != DataSymbolStarts.begin() && *std::prev(NextSymbol) > Begin)
+    Begin = *std::prev(NextSymbol);
+  if (Dbg) {
+    const auto [Before, After] = Dbg->dataSymbolsAround(Addr);
+    if (After && *After > Addr && *After < End)
+      End = *After;
+    if (Before && *Before <= Addr && *Before > Begin)
+      Begin = *Before;
   }
   if (Begin > Addr || End <= Addr ||
       End - Begin > limits::kMaxSingleGlobalEmbedLen)

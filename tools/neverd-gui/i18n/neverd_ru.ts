@@ -815,6 +815,22 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Показать число операнда с инвертированными битами</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>Ма&amp;шинный код</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Определить инструкции, начиная с текущего адреса</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>&amp;Проверка пакетов офлайн...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Просмотреть локальные свидетельства о пакетах и отзывы аналитиков</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1434,6 +1450,14 @@ Double-click to go to the declaration.</source>
             <numerusform>%n объявления показаны на C</numerusform>
             <numerusform>%n объявлений показано на C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Отменено</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Сохранённые имена переменных относятся к другому представлению исходного кода</translation>
     </message>
 </context>
 <context>
@@ -2056,6 +2080,38 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>Неизвестно, как загрузить %1: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Комментарий к этой строке исходного кода:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Новое имя:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Переименовать</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Выберите объявленную переменную или имя в образе, чтобы переименовать</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Выберите строку исходного кода; перед комментированием разверните свёрнутый код</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>У выбранного имени нет адреса в образе</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Для этой инструкции нет сопоставления адреса со строкой исходного кода.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Для этой строки исходного кода нет сопоставления с адресом инструкции; показана точка входа функции</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2194,6 +2250,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Здесь появляются открытые вами файлы. Выберите «Новый» или перетащите файл в это окно.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Последнее открытие: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2316,6 +2376,10 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Платформа: %1, определена по коду: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>По адресу %1 уже определена инструкция</translation>
     </message>
 </context>
 <context>
@@ -2552,6 +2616,21 @@ Signed: %4</source>
     <message>
         <source>Close</source>
         <translation>Закрыть</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Процесс анализа остановлен.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Разрешено только чтение результатов анализа.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>Процесс анализа не может восстановить состояние анализа.</translation>
     </message>
 </context>
 </TS>
