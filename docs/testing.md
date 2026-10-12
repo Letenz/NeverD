@@ -192,6 +192,45 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
+with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Raw binary80
+values, complete output guards, control words and defined C1 cover all RC,
+defined PC and exception-mask combinations. Concrete checks execute every
+16-bit input and wide power-of-two boundaries; pure conversions preserve FP
+state and padding. Pending/unknown waiting state, exact memory extents,
+malformed metadata, and all-path empty-destination admission receive negative
+controls, including branches, balanced/unbalanced loops and unknown calls.
+An ABI entry alone does not prove an empty stack: unknown or occupied FILD
+destinations reject complete function publication. Native oracles require x64
+GCC/Clang. These checks do not certify complete x87 TOP/tags/status delivery,
+stack-overflow emulation, native exception/memory-fault priority, or native
+Linux/macOS/x86-32 execution. `NeverDLLVMCIntrinsicSemanticTests` additionally
+executes scalar `llvm.abs` projections through 64 bits at C O0/O2 with undefined
+behavior traps, including the defined signed minimum and single evaluation.
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
+`NeverDX86X87SignAccuracyTests` compares original FABS/FCHS byte sequences
+with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Full binary80
+images and guards cover precision/range beyond binary64, signed zeros,
+subnormals, infinities, NaN payloads and noncanonical encodings. FXAM seeds
+C1 before sign changes; observers retain only the subsequently defined C1.
+The concrete matrix compares every sign/exponent word against original
+instructions with zero/full significands. Contract checks cover physical
+slots/padding, malformed and unknown pure values, pending waiting boundaries,
+and all-path tag admission across branches and loops in ELF/Mach-O/COFF.
+Native checks require x64 and GCC/Clang. This does not certify complete x87
+TOP/tags/status delivery, general arithmetic precision, memory-fault priority,
+or native Linux/macOS/x86-32 execution.
+
+```sh
+cmake --build build-release --target NeverDX86X87SignAccuracyTests
+ctest --test-dir build-release -L '^NeverDX86X87SignAccuracyTests$' --output-on-failure
+```
+
 `NeverDX86MaskCompareStateTests` compares twenty legacy/VEX scalar/packed
 register/memory forms with original bytes, Codegen, HighC and LLVMC at
 default/NoOpt and C O0/O2. One original function executes all eight legacy or
@@ -5232,6 +5271,14 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 `MaterializedRuntimePreservesOwnedObjectsOnNativeWindows` checks original modeled execution, restoration, section permissions and original/restored native Windows execution. It covers private-heap reallocation/free, encoded interior pointers, FLS callback rearming, recursive locks, LastError and reserved/committed/protected virtual pages. `MaterializationRequiresKnownSupportedState` rejects absent version inputs and dynamic TLS. `RuntimeRestorationHasTheSameCAPIAndCLIContract` compares exact bytes and reports. Linux construction checks and Wine observations do not replace native Windows lifecycle evidence.
 
 `NeverDUnpackDriverTests` covers packed DriverEntry recovery, static/dynamic kernel imports, retained kernel resources, entry ABI/control state, malformed exports, scheduling, request/unload lifecycle, C API/CLI parity and PE checksums. The native driver inventory requires matching KVM/WHP cases; Windows also checks ImageHlp. This does not certify a native kernel load. See [unpacking](unpack.md).
+
+`DriverEntryCaller.*` checks nonzero incoming values for all eight nonvolatile
+GPRs, both halves of XMM6–15, volatile MXCSR status versus preserved controls,
+FPCSR and the returned direction flag. The independent machine-code control
+`UnpackDriver.CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus`
+keeps a balanced stack and STATUS_SUCCESS while corrupting R13; its companion
+restores R13. Checked execution must reject the corruption before publishing
+NTSTATUS or scheduling lifecycle work. Matching KVM/WHP cases are required.
 
 `NeverDKernelSnapshotTests` checks diagnostic object snapshots after terminal memory faults and unsupported instructions. Committed device and dispatch state remains observable without clearing the first fault or permitting further CPU access. Corrupted ownership, cyclic device lists, invalid driver extensions and partial dispatch pointers still fail. Native KVM/WHP acceptance requires the matching backend cases.
 

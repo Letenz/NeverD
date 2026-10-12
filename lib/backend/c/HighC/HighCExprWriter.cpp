@@ -26,6 +26,7 @@
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -1676,7 +1677,7 @@ std::string HighCWriter::stringArgumentNote(const HighExpr &Arg) {
     // A number is no address, and a literal shows its text itself.
     if (Inner->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Inner->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        imageStringLiteral(Opts.Image, Inner->ConstVal))
+        stringLiteralAt(Opts.Image, Dbg, Inner->ConstVal))
       return {};
     Target = Inner->ConstVal;
   } else if (Inner->Kind == ExprKind::Load && Inner->Operands.size() == 1 &&
@@ -4444,13 +4445,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")" + *Anchored;
       return PointerInteger(*Anchored);
     }
-    bool AllowEmpty = false;
-    if (Dbg) {
-      if (auto Data = Dbg->resolveDataObject(E.ConstVal);
-          Data && llvm::StringRef(Data->Name).starts_with("??_C@"))
-        AllowEmpty = true;
-    }
-    if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
+    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
@@ -5141,9 +5136,10 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
   if (!Seg || !Seg->isReadable())
     return false;
   // Instruction bytes are not data objects.  Read-only constants live in
-  // .rdata / .rodata (readable, not writable, not executable).
+  // .rdata / .rodata (readable, not writable, not executable), and where
+  // the debug information places data among the code.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return false;
+    return isCodeSectionData(Dbg, Addr);
   return true;
 }
 
@@ -5347,7 +5343,7 @@ HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
   const std::optional<va_t> Owner = anchoredOwner(Const);
   if (!Owner)
     return std::nullopt;
-  std::optional<std::string> Object = imageStringLiteral(Opts.Image, *Owner);
+  std::optional<std::string> Object = stringLiteralAt(Opts.Image, Dbg, *Owner);
   if (!Object)
     Object = imageBackingAddress(*Owner);
   if (!Object)
@@ -5362,6 +5358,37 @@ HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
          std::to_string(*Owner - Const.ConstVal) + ")";
 }
 
+HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
+  ImageSymbolName Named;
+  if (Opts.UserNames)
+    if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+      Named.Raw = It->second;
+  // A literal's symbol spells its text, not a name (MSVC's `??_C@`).
+  if (Named.Raw.empty() && Dbg) {
+    if (auto Data = Dbg->resolveDataObject(Addr);
+        Data && !Data->Name.empty() && !isStringLiteralName(Data->Name))
+      Named.Raw = Data->Name;
+  }
+  if (Named.Raw.empty() && Opts.Image) {
+    if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
+        Sym && !Sym->IsFunc && !Sym->Name.empty() &&
+        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
+      // A mangled name keeps the underscores its scheme starts with
+      // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
+      // identifier is spelled from: `vtable for QDomNode`, Go's
+      // `main.Flags`.
+      const llvm::StringRef CName =
+          cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+      Named.Raw = symbolScheme(CName) != SymbolScheme::None
+                      ? CName.str()
+                      : stripLeadingUnderscores(Sym->Name).str();
+      Named.Readable = demangledComment(CName);
+      Named.Symbol = Sym->Name;
+    }
+  }
+  return Named;
+}
+
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                                   bool MemoryAccess) {
   if (!isImageDataAddress(Addr))
@@ -5370,35 +5397,15 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
   if (MemoryAccess && Ty)
     Obj.MemoryWidths.insert(Ty->Size);
   if (Obj.Name.empty()) {
-    std::string Raw;
-    if (Opts.UserNames)
-      if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
-        Raw = It->second;
-    if (Raw.empty() && Dbg) {
-      if (auto Data = Dbg->resolveDataObject(Addr); Data && !Data->Name.empty())
-        Raw = Data->Name;
-    }
-    if (Raw.empty() && Opts.Image) {
-      if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
-          Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-          llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
-        // A mangled name keeps the underscores its scheme starts with
-        // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
-        // identifier is spelled from: `vtable for QDomNode`, Go's
-        // `main.Flags`.
-        const llvm::StringRef CName =
-            cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
-        Raw = symbolScheme(CName) != SymbolScheme::None
-                  ? CName.str()
-                  : stripLeadingUnderscores(Sym->Name).str();
-        Obj.Readable = demangledComment(CName);
-        Obj.Symbol = Sym->Name;
-      }
-    }
-    if (!Raw.empty())
-      Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");
+    const ImageSymbolName Named = imageSymbolName(Addr);
+    if (!Named.Raw.empty())
+      Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
+    if (!Named.Readable.empty())
+      Obj.Readable = Named.Readable;
+    if (!Named.Symbol.empty())
+      Obj.Symbol = Named.Symbol;
     if (Obj.Symbol.empty())
-      Obj.Symbol = Raw;
+      Obj.Symbol = Named.Raw;
   }
   auto NamedDisplayPointer = [](const TypeRef &Type) {
     return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&

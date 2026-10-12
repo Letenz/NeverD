@@ -143,3 +143,5 @@ neverd unpack packed.exe -o unpacked.exe \
 復原的 DLL 入口與原始 PE 入口不同時，寫入器產生載入器通知配接器：程序附加進入選定入口，卸載與執行緒通知進入原始的可執行入口，以保留外層包裝函式的清理。原始入口不可用時重建失敗。報告的 `entry_rva` 仍表示選定的程式入口，PE 標頭可指向配接器。獨立包裝 DLL 測試在兩種模擬架構與原生 Windows 上檢查選定函式之外的清理。
 
 `runtime_state.additional_state_inventory_known` 與 `has_additional_dependencies` 回報 OS 所有者保留的私有堆積、虛擬保留區、鎖、控制代碼、視圖及例外狀態。清單缺失或仍有資源時，即使沒有堆積指標比對，預設恢復也會拒絕。明確快照保留診斷；執行期恢復必須重建支援的所有者。
+
+checked x64 執行在 DriverEntry 返回時重新驗證本次載入器呼叫：RBX/RBP/RSI/RDI/R12–15、XMM6–15 的全部 128 位、MXCSR 控制位、FPCSR，以及方向旗標清零。易失暫存器和 MXCSR 狀態位允許變化。檢查失敗會在發布 NTSTATUS 或執行生命週期前停止。此返回檢查不重建擷取入口，不證明其他呼叫者，也不認證 Windows 原生核心載入。

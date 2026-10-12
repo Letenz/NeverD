@@ -3296,6 +3296,44 @@ TEST_F(SessionCAPITest, FailedDebugReloadPreservesLoadedImageAnalysisAndEdits) {
   }
 }
 
+TEST_F(SessionCAPITest, NamedPDBWithoutPEIdentityLoadsOnlyByChoice) {
+  const auto Fixtures = std::filesystem::path(__FILE__).parent_path() /
+                        "safety" / "fixtures" / "binaries";
+  const std::string PDB = (Fixtures / "safety_cases_pe_x64.pdb").string();
+  std::ifstream Input(Fixtures / "safety_cases_pe_x64.exe", std::ios::binary);
+  std::string Image((std::istreambuf_iterator<char>(Input)),
+                    std::istreambuf_iterator<char>());
+  ASSERT_GT(Image.size(), 0x40u);
+  // Without its debug data directory the PE records no CodeView identity.
+  const size_t Optional =
+      llvm::support::endian::read32le(Image.data() + 0x3C) + 24;
+  ASSERT_LT(Optional + 2, Image.size());
+  ASSERT_EQ(llvm::support::endian::read16le(Image.data() + Optional), 0x20B);
+  const size_t Debug = Optional + 112 + 6 * 8;
+  ASSERT_LE(Debug + 8, Image.size());
+  std::fill_n(Image.begin() + Debug, 8, '\0');
+  const std::string Stripped = write("stripped.exe", Image);
+  constexpr neverd_va_t Overflow = 0x140001000;
+
+  neverd_session_set_pdb_path(Session, PDB.c_str());
+  ASSERT_EQ(neverd_session_load(Session, Stripped.c_str()), 0);
+  EXPECT_NE(takeString(neverd_last_error(Session)).find("CodeView identity"),
+            std::string::npos);
+
+  EXPECT_EQ(neverd_session_set_pdb_path_ex(Session, PDB.c_str(), 2), 0);
+  ASSERT_EQ(neverd_session_set_pdb_path_ex(Session, PDB.c_str(), 1), 1);
+  ASSERT_EQ(neverd_session_load(Session, Stripped.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int Index = neverd_func_find_by_addr(Session, Overflow);
+  ASSERT_GE(Index, 0);
+  EXPECT_EQ(takeString(neverd_func_name(Session, Index)),
+            "tainted_stack_overflow");
+
+  // Naming the PDB without the choice makes the next load strict again.
+  neverd_session_set_pdb_path(Session, PDB.c_str());
+  EXPECT_EQ(neverd_session_load(Session, Stripped.c_str()), 0);
+}
+
 TEST_F(SessionCAPITest, CachedAnalysisFailuresRetainTheirDiagnostic) {
   const std::string Path = write("requires-shanghai.evm", "5f00");
   ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);

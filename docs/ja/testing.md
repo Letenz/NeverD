@@ -1721,3 +1721,10 @@ ctest --test-dir build-source -L \
 ```
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` は CPL0 の IF クリア／設定と CPL3 の対照、プロファイル一致とダイジェスト分離、TF/AC/IOPL の拒否、通常観測を無効化した場合の最終 IF 依存、復元、正確／一操作不足の予算を確認します。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` もユーザーモードのソース ABI が暗黙に選ばれないことを確認します。実運用の未定義命令 admission とドライバー復元 guards は変更しません。
+
+`NeverDX86X87IntegerLoadTests` は元の `FILD m16/m32/m64` を Codegen、HighC、LLVMC の default/NoOpt と C O0/O2 で比較します。binary80、保護領域、制御ワード、定義済み C1 を全 RC、有効 PC、例外マスクで検査し、全 16 ビット入力と広い整数の二の累乗境界を実行します。純粋変換の状態・パディング保持、保留/不明な例外、正確なメモリ範囲、不正メタデータ、分岐・均衡/不均衡ループ・不明な呼び出し後の空スロット証明も検査します。ABI 入口だけでは空スタックを証明できず、不明/使用中の宛先は完全な関数の公開を拒否します。ネイティブ oracle は x64 GCC/Clang が必要です。完全な x87 TOP/タグ/状態、スタックオーバーフローの模擬、ネイティブ例外とメモリ障害の優先順位、Linux/macOS/x86-32 のネイティブ実行は認証しません。`NeverDLLVMCIntrinsicSemanticTests` は最大 64 ビットのスカラー `llvm.abs` を C O0/O2 と未定義動作トラップで実行し、定義済み符号付き最小値と一度だけの評価を検査します。
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```

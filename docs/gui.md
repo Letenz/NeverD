@@ -213,9 +213,14 @@ shows its initial value (`int32_t counter = 5;`). Every initializer spells the
 image's bytes exactly: text another encoding than UTF-8 holds is escaped, with
 the decoded text in a comment beside it. Unnamed data is named as the listing
 names it, so a name in the pseudocode matches the disassembly operand and
-double-clicking it goes there: `off_3FC0` for a slot holding a pointer or one
-the code calls through, the size of its accesses otherwise (`qword_3FB8`,
-`dword_4010`), and `unk_` for data reached by its address alone. The command
+double-clicking it goes there: `off_3FC0` for a slot the loader relocates a
+pointer into or one the code only calls through, otherwise the size of every
+access the image's code makes to it (`qword_3FB8`, `dword_4010`), even where
+the function shown only takes its address, and `unk_` where those accesses
+differ or there are none. Literals and data that the debug information
+places among the code, as a kernel keeps them in PAGE, read as their text and
+their names, and a pointer slot whose target C declares no object for names
+it in a comment (`= 0x140CFCA88; /* &KiNonNumaDistance */`). The command
 line's `neverd decompile` prints the same declarations.
 
 A function's address reads as the function: `_start` passes `main`, not
@@ -575,8 +580,11 @@ RSDS PDBs; a matching legacy NB10 PDB uses the ordinary authenticated loader.
 The chosen file and analysis mode accompany read-only analysis replicas and
 are remembered on reload and in saved databases. Older display-only selections
 keep that mode until the PDB is selected again and confirmed for analysis.
-The PDB remains an external file and must be available when reopening that
-database.
+The PDB remains an external file. Reopening the database checks a matching PDB
+again by its identity, and a PDB confirmed without one must still be the file
+that was confirmed. A selection that no longer loads leaves the database open
+without it, and Output says why; select the PDB again to restore it. On the
+command line, `--pdb <file> --pdb-unverified` makes the same choice for one run.
 
 ## Databases
 

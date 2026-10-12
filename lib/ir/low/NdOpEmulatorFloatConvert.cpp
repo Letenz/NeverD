@@ -5,6 +5,8 @@
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/APSInt.h"
 
+#include <array>
+
 namespace neverd {
 
 namespace {
@@ -55,6 +57,36 @@ bool hasUnmaskedException(uint32_t MXCSR, uint32_t Raised) {
 } // namespace
 
 bool NdOpEmulator::executeFloatConvert(const LowOp &Op) {
+  if ((Op.Opcode == NdOp::FLOAT_INT2FLOAT ||
+       Op.Opcode == NdOp::FLOAT_UINT2FLOAT) &&
+      Op.Output.Size == 10) {
+    if (Op.NumInputs != 1 || (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+        (Op.Inputs[0].Size != 1 && Op.Inputs[0].Size != 2 &&
+         Op.Inputs[0].Size != 4 && Op.Inputs[0].Size != 8))
+      return false;
+    if (!Op.Inputs[0].isConst()) {
+      if (!Op.Inputs[0].isReg() && !Op.Inputs[0].isTemp())
+        return false;
+      const auto Known = getRegisterBytes(Op.Inputs[0].Offset);
+      if (!Known || Known->size() < Op.Inputs[0].Size)
+        return false;
+    }
+    // This pure conversion is exact, including INT64_MIN and UINT64_MAX.
+    // It neither consults nor changes MXCSR, x87 PC/RC, or exception flags.
+    // Machine FILD waiting, push admission and C1 belong to its instruction.
+    llvm::APFloat Result(llvm::APFloat::x87DoubleExtended());
+    const auto Status = Result.convertFromAPInt(
+        llvm::APInt(Op.Inputs[0].Size * 8, readOperand(Op.Inputs[0])),
+        Op.Opcode == NdOp::FLOAT_INT2FLOAT, llvm::APFloat::rmNearestTiesToEven);
+    if (Status != llvm::APFloat::opOK)
+      return false;
+    const auto Bits = Result.bitcastToAPInt();
+    std::array<uint8_t, 10> Bytes;
+    for (unsigned I = 0; I < Bytes.size(); ++I)
+      Bytes[I] = Bits.extractBitsAsZExtValue(8, I * 8);
+    writeOutputBytes(Op.Output, Bytes);
+    return true;
+  }
   if (Op.NumInputs != 1 || Op.Output.Size == 0 || Op.Output.Size > 8 ||
       Op.Inputs[0].Size == 0 || Op.Inputs[0].Size > 8)
     return false;
