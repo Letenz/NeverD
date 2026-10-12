@@ -1641,3 +1641,5 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 `RAMReservationTests.cpp` 驗證公開寫入記錄的同值及 ABA 寫入、保留切片、位址重用、兄弟映射、回復、取消、故障前已提交寫入和不透明執行。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` 在偏好、向下重定位和核心載入位址檢查具有獨立生命週期的載入事實：還原位元組不會恢復已失效的來源證明。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` 區分活動 CFG 指標替換與未啟用 CFG 的後援指標保留。
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` 檢查 PE 輸出、獨立 DIR64 讀取器、模型重定位及對重寫除錯記錄的排除。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` 拒絕來源、基址或順序不符，並排除格式化替換，即使位元組相同。這些檢查驗證診斷中繼資料，不代表原生復原成功。
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` 檢查九種 intrinsic 形式、finally 的父框架寫入效果、還原後的參數 ESP、registration 移除與保留的例外分派入口。僅規範 FWAIT 通過，其餘八種畸形或不同 intrinsic 形式繼續拒絕。

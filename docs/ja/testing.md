@@ -1695,3 +1695,5 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `RAMReservationTests.cpp` は公開された書き込み証明について、同値・ABA 書き込み、保持範囲、アドレス再利用、共有マッピング、ロールバック、キャンセル、障害前に確定した書き込み、不透明な実行を検証します。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` は優先・下方・カーネルのロードアドレスで所有された事実を検証し、バイトの復元では出所の証明が戻らないことを確認します。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` は有効な CFG の修正と無効時のフォールバック保持を区別します。
 
 `UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts` は PE 出力、独立 DIR64 リーダー、モデル再配置と書き換えたデバッグレコードの除外を検証します。`UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites` は入力・ベース・順序の不一致を拒否し、バイトが同じでも整形による置換を除外します。これは診断メタデータの検証であり、ネイティブ復元の認証ではありません。
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects` は九つの intrinsic 形式、finally による親フレームの書き込み、復元された引数 ESP、registration の解除、および例外ディスパッチ入口の保持を検査します。正規の FWAIT だけが成功し、他の八つの不正または異なる intrinsic 形式は拒否されます。

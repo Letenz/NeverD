@@ -7,7 +7,6 @@
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
-#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/lift/X86Regs.h"
 
@@ -51,12 +50,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     // FWAIT can dispatch a pending x87 exception without changing the normal
     // path's frame memory. Keep the operation and exceptional dispatch; only
     // its complete canonical shape can preserve these ordinary frame facts.
-    const bool CanonicalWait =
-        Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 1 &&
-        Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
-        Op.Inputs[0].Offset == uint64_t(Intrinsic::X87Wait) &&
-        Op.Output == NdVar() && Op.MemoryOrdering == NdMemoryOrdering::None &&
-        Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+    const bool CanonicalWait = isCanonicalX87Wait(Op);
     size_t MemoryWork = 0;
     if (Memory.Address && Op.Opcode == NdOp::LOAD &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
