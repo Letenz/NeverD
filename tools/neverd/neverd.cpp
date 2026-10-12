@@ -285,7 +285,8 @@ static int realMain(int Argc, char *Argv[]) {
     }
   }
 
-  if (!JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd) {
+  if (!JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd &&
+      !(PatchCmd && PatchReport)) {
     const char *ArchStr = neverd_session_arch_name(Sess);
     outs() << "=== " << ProjectName << " v" << VersionString << " (" << Command
            << ") ===\n";

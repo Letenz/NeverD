@@ -164,6 +164,7 @@ void inspectXHR(SourceContext &C, const std::vector<uint32_t> &Constructors,
     return;
   }
   const auto Receiver = C.child(Member, "object");
+  R.ReceiverNode = Receiver;
   if (constructor(C, Receiver)) {
     R.ConstructorNode = Receiver;
     R.ReceiverStatus = "direct_constructor_syntax";

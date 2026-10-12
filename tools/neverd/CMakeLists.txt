@@ -108,6 +108,7 @@ add_neverd_tool(neverd
   cmd/NeverDCmdWebIntegrity.cpp
   cmd/NeverDCmdWebAdvisories.cpp
   cmd/NeverDCmdWebAttestation.cpp
+  cmd/NeverDCmdWebAssessment.cpp
   cmd/NeverDCmdWebInterfaces.cpp
   cmd/NeverDCmdWebStreams.cpp
   cmd/NeverDCmdWebSEA.cpp

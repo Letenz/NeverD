@@ -48,7 +48,8 @@ void countExprVarUsesUpToTwo(
 /// Reads and effects belong to their original statement. Without an ordering
 /// proof, expression propagation cannot move or duplicate them at a use.
 bool containsNonMovableEffect(const ExprPtr &E);
-void inlineSingleDefs(std::vector<HighStmt> &Stmts,
+/// Return whether a use was replaced after the stability proof admitted it.
+bool inlineSingleDefs(std::vector<HighStmt> &Stmts,
                       const VarKeyMap<ExprPtr> &Defs);
 
 //===----------------------------------------------------------------------===//
@@ -95,7 +96,8 @@ bool harmlessIntegerValue(const ExprPtr &Root, size_t &Budget);
 // Expression simplification  (defined in HighExprSimplify.cpp)
 //===----------------------------------------------------------------------===//
 
-void simplifyAllExprs(std::vector<HighStmt> &Stmts);
+/// Return whether an expression or a shared node's operands were rewritten.
+bool simplifyAllExprs(std::vector<HighStmt> &Stmts);
 void removeUnreachableCode(std::vector<HighStmt> &Stmts);
 /// Normalize native entry ownership before dead edge copies lose their PHI
 /// provenance. Uses the same coalescer as final source normalization.

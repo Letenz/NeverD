@@ -206,6 +206,58 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     return Value ? forceInlineExpr(Value) : nullptr;
   };
 
+  // A struct returned across several registers is the record of the values
+  // its field registers hold at this RETURN, each found as the integer pair's
+  // high register is below.
+  if (!Med.SourceParametersBound && Func.ReturnType &&
+      Func.ReturnType->Kind == NdTypeKind::Struct &&
+      Med.MultiReturn.size() >= 2 &&
+      Func.ReturnType->Fields.size() == Med.MultiReturn.size()) {
+    auto Reaching = [&](uint64_t RegOff) -> ExprPtr {
+      auto WrittenIn = [&](const MedBlock &Block) -> ExprPtr {
+        for (auto RIt = Block.Ops.rbegin(); RIt != Block.Ops.rend(); ++RIt)
+          if (RIt->Opcode != NdOp::RETURN && RIt->Output.Kind == MedVar::Reg &&
+              RIt->Output.Size > 0 && RIt->Output.RegOff == RegOff &&
+              !isRegisterLowView(*RIt))
+            return ValueFromDefinition(*RIt);
+        for (const auto &Phi : Block.Phis)
+          if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
+            return HighExpr::makeVar(Phi.Output);
+        return nullptr;
+      };
+      if (ExprPtr Value = WrittenIn(CurBlock))
+        return Value;
+      std::set<const MedBlock *> Seen{&CurBlock};
+      for (const MedBlock *Pred = onlyPredecessor(Med, CurBlock);
+           Pred && Seen.insert(Pred).second; Pred = onlyPredecessor(Med, *Pred))
+        if (ExprPtr Value = WrittenIn(*Pred))
+          return Value;
+      MedVar Entry;
+      if (reachingRegAtBlockEntry(CurBlock, RegOff, Entry) && Entry.Size > 0 &&
+          !isEntryIdentity(Med, Entry))
+        return medvarToExpr(Entry);
+      return nullptr;
+    };
+    std::vector<ExprPtr> Leaves;
+    for (size_t I = 0; I < Med.MultiReturn.size(); ++I) {
+      const MedReturnReg &Field = Med.MultiReturn[I];
+      ExprPtr Value = Reaching(Field.RegOff);
+      if (!Value)
+        throw std::runtime_error(
+            "cannot recover a field of a multi-register struct return");
+      ExprPtr Bits = sourceBitSlice(Value, 0, Field.Size);
+      // The register holds the member's bits whatever type computed them:
+      // `fmov x0, d0` returns a double in an integer field.
+      const TypeRef &Member = Func.ReturnType->Fields[I];
+      if (!Bits->Type || !equalSourceTypes(Member, Bits->Type))
+        Bits = HighExpr::makeBitCast(std::move(Bits), Member);
+      Leaves.push_back(std::move(Bits));
+    }
+    S.RetVal = HighExpr::makeRecord(Func.ReturnType, std::move(Leaves));
+    Func.Body.push_back(std::move(S));
+    return;
+  }
+
   if (ExplicitABI && Med.SourceParametersBound &&
       !Med.SourceTypeHint->ReturnComponents.empty() && CurOp.NumInputs == 1 &&
       CurOp.Inputs[0].Size == Func.ReturnType->Size)

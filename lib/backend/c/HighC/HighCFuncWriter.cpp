@@ -1374,9 +1374,10 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
           const bool Frame = frameDisplacement(*S.Val).has_value();
           if (Frame)
             HasFrame.insert(Name);
-          if (typedMemberAccess(*S.Val) ||
-              (!Frame && S.Val->Kind == ExprKind::BinOp &&
-               (S.Val->Op == NdOp::INT_ADD || S.Val->Op == NdOp::INT_SUB)))
+          // Any other value the name takes moves it off the slot, not only
+          // address arithmetic: a copy of the pointer a loop advances
+          // (`lo = t89`) is neither a member access nor an addition.
+          if (typedMemberAccess(*S.Val) || !Frame)
             HasOtherAddr.insert(Name);
         }
       }
@@ -6320,6 +6321,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
           "uint8_t " + Slot.Name + "[" + std::to_string(Slot.RegionBytes) + "]";
     else
       Decl.Type = cDisplayType(Slot.Type);
+    // A slot's name has its declared type, as a local's has, whether it is
+    // declared here or after the body: `var_m24 < 0` is no signed test of a
+    // uint32_t slot.
+    if (Decl.Type && Decl.Type->Kind == NdTypeKind::Int && !Decl.Type->IsEnum)
+      DeclaredCTypes.emplace(Slot.Name, Decl.Type);
     const bool Printed = PrintedAddrSlots.count(Slot.Name) ||
                          PrintedSlotStores.count(Slot.Name) ||
                          PrintedSlotLoads.count(Slot.Name);

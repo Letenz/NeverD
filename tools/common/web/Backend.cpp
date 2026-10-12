@@ -80,6 +80,12 @@ struct API {
   WEB_API(neverd_web_package_attestation_records_json)
   WEB_API(neverd_web_package_attestation_digest_match_json)
   WEB_API(neverd_web_package_attestation_digest_result_json)
+  WEB_API(neverd_web_package_assessment_create_json)
+  WEB_API(neverd_web_package_assessment_findings_json)
+  WEB_API(neverd_web_package_review_append_json)
+  WEB_API(neverd_web_package_review_restore_json)
+  WEB_API(neverd_web_package_review_decisions_json)
+  WEB_API(neverd_web_package_assessment_report_json)
   WEB_API(neverd_web_har_preview_json)
   WEB_API(neverd_web_stream_preview_json)
   WEB_API(neverd_web_stream_commit_json)
@@ -88,6 +94,8 @@ struct API {
   WEB_API(neverd_web_har_records_json)
   WEB_API(neverd_web_interfaces_analyze_json)
   WEB_API(neverd_web_interface_records_json)
+  WEB_API(neverd_web_interface_relations_analyze_json)
+  WEB_API(neverd_web_interface_relation_records_json)
   WEB_API(neverd_web_interfaces_compare_json)
   WEB_API(neverd_web_interface_correlation_records_json)
   WEB_API(neverd_web_package_records_json)
@@ -357,16 +365,19 @@ Json Backend::execute(const std::string &operation, const Json &p) {
              sizeField(p, "limit", 128, 128)));
   }
   if (operation == "web_har_preview" || operation == "web_har_commit" ||
-      operation == "web_interfaces_analyze") {
-    const auto *key = operation == "web_har_preview"  ? "artifact_id"
-                      : operation == "web_har_commit" ? "preview_token"
-                                                      : "source_id";
+      operation == "web_interfaces_analyze" ||
+      operation == "web_interface_relations_analyze") {
+    const auto *key = operation == "web_har_preview"          ? "artifact_id"
+                      : operation == "web_har_commit"         ? "preview_token"
+                      : operation == "web_interfaces_analyze" ? "source_id"
+                                                              : "analysis_id";
     fields(p, {"revision", key});
-    const auto call = operation == "web_har_preview"
-                          ? api().neverd_web_har_preview_json
-                      : operation == "web_har_commit"
-                          ? api().neverd_web_har_commit_json
-                          : api().neverd_web_interfaces_analyze_json;
+    const auto call =
+        operation == "web_har_preview"  ? api().neverd_web_har_preview_json
+        : operation == "web_har_commit" ? api().neverd_web_har_commit_json
+        : operation == "web_interfaces_analyze"
+            ? api().neverd_web_interfaces_analyze_json
+            : api().neverd_web_interface_relations_analyze_json;
     if (!call)
       throw Error("capability_unavailable",
                   "Passive interfaces are unavailable");
@@ -379,15 +390,20 @@ Json Backend::execute(const std::string &operation, const Json &p) {
     return value;
   }
   if (operation == "web_har_records" || operation == "web_interface_records" ||
-      operation == "web_interface_correlation_records") {
+      operation == "web_interface_correlation_records" ||
+      operation == "web_interface_relation_records") {
     const auto *key = operation == "web_har_records"         ? "capture_id"
                       : operation == "web_interface_records" ? "analysis_id"
-                                                             : "correlation_id";
+                      : operation == "web_interface_relation_records"
+                          ? "relations_id"
+                          : "correlation_id";
     fields(p, {"revision", key, "offset", "limit"});
     const auto call = operation == "web_har_records"
                           ? api().neverd_web_har_records_json
                       : operation == "web_interface_records"
                           ? api().neverd_web_interface_records_json
+                      : operation == "web_interface_relation_records"
+                          ? api().neverd_web_interface_relation_records_json
                           : api().neverd_web_interface_correlation_records_json;
     if (!call)
       throw Error("capability_unavailable",
@@ -424,6 +440,100 @@ Json Backend::execute(const std::string &operation, const Json &p) {
         artifact.size(), format.data(), format.size()));
     analysisState_ = "partial";
     return value;
+  }
+  if (operation == "web_package_assessment_create") {
+    fields(p, {"revision", "package_analysis_id", "integrity_ids",
+               "advisory_ids", "advisory_matches_id", "attestation_ids",
+               "attestation_digest_match_ids", "package_behavior_id",
+               "package_install_id", "package_diff_id",
+               "package_behavior_diff_id"});
+    const auto call = api().neverd_web_package_assessment_create_json;
+    if (!call)
+      throw Error("capability_unavailable",
+                  "Package assessments are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_analysis_id", 64);
+    Json options{{"schema_version", 1}};
+    for (const auto *key : {"integrity_ids", "advisory_ids", "attestation_ids",
+                            "attestation_digest_match_ids"}) {
+      const auto selected = p.find(key);
+      if (selected == p.end())
+        continue;
+      const auto maximum = std::string_view(key) == "integrity_ids" ||
+                                   std::string_view(key) == "advisory_ids"
+                               ? 16U
+                               : 4U;
+      if (!selected->is_array() || selected->size() > maximum)
+        throw Error("invalid_request", "Invalid assessment selection");
+      for (const auto &item : *selected)
+        if (!item.is_string() ||
+            item.get_ref<const std::string &>().size() != 64)
+          throw Error("invalid_request", "Invalid assessment selection");
+      options[key] = *selected;
+    }
+    for (const auto *key :
+         {"advisory_matches_id", "package_behavior_id", "package_install_id",
+          "package_diff_id", "package_behavior_diff_id"})
+      if (p.contains(key))
+        options[key] = required(p, key, 64);
+    const auto encoded = options.dump();
+    auto value =
+        result(call(session_, revision.data(), revision.size(), id.data(),
+                    id.size(), encoded.data(), encoded.size()));
+    analysisState_ = "partial";
+    return value;
+  }
+  if (operation == "web_package_review_restore") {
+    fields(p, {"revision", "package_assessment_id", "expected_review_head",
+               "journal_json"});
+    const auto call = api().neverd_web_package_review_restore_json;
+    if (!call)
+      throw Error("capability_unavailable",
+                  "Package review restoration is unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_assessment_id", 64);
+    const auto head = required(p, "expected_review_head", 64);
+    const auto journal = required(p, "journal_json", 256 * 1024);
+    return result(call(session_, revision.data(), revision.size(), id.data(),
+                       id.size(), head.data(), head.size(), journal.data(),
+                       journal.size()));
+  }
+  if (operation == "web_package_review_append") {
+    fields(p, {"revision", "package_assessment_id", "expected_review_head",
+               "finding_id", "disposition"});
+    const auto call = api().neverd_web_package_review_append_json;
+    if (!call)
+      throw Error("capability_unavailable", "Package reviews are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_assessment_id", 64);
+    const auto head = required(p, "expected_review_head", 64);
+    const auto finding = required(p, "finding_id", 64);
+    const auto disposition = required(p, "disposition", 16);
+    return result(call(session_, revision.data(), revision.size(), id.data(),
+                       id.size(), head.data(), head.size(), finding.data(),
+                       finding.size(), disposition.data(), disposition.size()));
+  }
+  if (operation == "web_package_assessment_findings" ||
+      operation == "web_package_review_decisions" ||
+      operation == "web_package_assessment_report") {
+    fields(p, {"revision", "package_assessment_id", "review_head", "offset",
+               "limit"});
+    const auto call = operation == "web_package_assessment_findings"
+                          ? api().neverd_web_package_assessment_findings_json
+                      : operation == "web_package_review_decisions"
+                          ? api().neverd_web_package_review_decisions_json
+                          : api().neverd_web_package_assessment_report_json;
+    if (!call)
+      throw Error("capability_unavailable",
+                  "Package assessments are unavailable");
+    const auto revision = required(p, "revision", 20);
+    const auto id = required(p, "package_assessment_id", 64);
+    const auto head = required(p, "review_head", 64);
+    return result(
+        call(session_, revision.data(), revision.size(), id.data(), id.size(),
+             head.data(), head.size(),
+             sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
+             sizeField(p, "limit", 128, 512)));
   }
   if (operation == "web_package_attestation_import") {
     fields(p,

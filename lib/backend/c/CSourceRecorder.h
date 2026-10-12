@@ -31,8 +31,16 @@ struct HighStmt;
 /// are discarded and the ordinary render remains the output.
 class CSourceRecorder {
 public:
+  enum class Recording : uint8_t {
+    LibraryRegions,
+    Instructions,
+    /// With no library evidence, one private render can prove both kinds of
+    /// navigation location. It must not publish library coverage.
+    DefinitionsAndInstructions
+  };
+
   CSourceRecorder(CSourceMap &Map, llvm::StringRef Ordinary,
-                  bool InstructionsOnly = false);
+                  Recording Mode = Recording::LibraryRegions);
   void prepareHighSources();
   void prepareLLVMSources(const LLVMSourceMap &Sources);
   std::string expression(va_t Function, const HighExpr &Expr, std::string Text);
@@ -43,6 +51,11 @@ public:
   std::optional<size_t> function(const llvm::Function &Function);
   std::string begin(size_t Event) const;
   std::string end(size_t Event) const;
+  /// \p Text without this recorder's delimiters, held in \p Storage when it
+  /// has any: what the ordinary render prints. An emitter that chooses a
+  /// spelling from operand text must read this, or the delimiters change the
+  /// source it reproduces.
+  llvm::StringRef plain(llvm::StringRef Text, std::string &Storage) const;
   /// A delimiter where a top-level function definition begins.
   std::string definition(std::optional<va_t> Entry);
   std::string definition(const llvm::Function &Function);
@@ -53,7 +66,8 @@ private:
                std::vector<sigs::LibraryOccurrence> Coverage,
                std::optional<va_t> Function = std::nullopt);
   CSourceMap &Map;
-  bool InstructionsOnly;
+  Recording Mode;
+  bool recordsInstructions() const { return Mode != Recording::LibraryRegions; }
   std::string Prefix;
   struct Event {
     std::optional<size_t> Region;

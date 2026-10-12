@@ -318,6 +318,7 @@ int main(int argc, char **argv) {
                   "source_navigation_analyze") != caps["operations"].end();
     Json navigationSummary, navigationRecords, navigationRequest, anchorResult,
         anchorRequest;
+    Json navigationFeatures, navigationFeatureRequest;
     Json viewPreview, viewCommit, viewRecords, viewChunk, viewQuery,
         viewCommitRequest;
     Json bundleSourceRequest, bundleRequest, bundleRecordsRequest,
@@ -430,6 +431,17 @@ int main(int argc, char **argv) {
         navigationRequest["record_kind"] = "calls";
         navigationRecords =
             web.execute("web_source_navigation_records", navigationRequest);
+        navigationFeatureRequest = bindingRequest;
+        navigationFeatureRequest["record_kind"] = "features";
+        navigationFeatures = web.execute("web_source_navigation_records",
+                                         navigationFeatureRequest);
+        check(navigationFeatures.at("client_features").at("status") ==
+                      "partial" &&
+                  navigationFeatures.at("client_features")
+                          .at("feature_inventory_complete") == false &&
+                  navigationFeatures.dump().find("SECRET_WEB") ==
+                      std::string::npos,
+              "Client source patterns lost coverage or exposed private values");
         check(navigationRecords.at("runtime_call_graph") == "not_analyzed" &&
                   navigationRecords.dump().find("SECRET_WEB") ==
                       std::string::npos,
@@ -586,6 +598,10 @@ int main(int argc, char **argv) {
                              "1", project);
         check(reply.at("payload") == navigationRecords,
               "Worker navigation records differ");
+        reply = process.call("web_source_navigation_records",
+                             navigationFeatureRequest, "1", project);
+        check(reply.at("payload") == navigationFeatures,
+              "Worker client source features differ");
         reply = process.call("web_source_anchor", anchorRequest, "1", project);
         check(reply.at("payload") == anchorResult,
               "Worker source/storage/view anchor differs");
@@ -1678,6 +1694,102 @@ int main(int argc, char **argv) {
                          packageRevision, packageProject);
     check(reply["error"]["code"] == "invalid_request",
           "Worker accepted a key path");
+    auto assessmentCall = [&](const char *operation, const Json &args) {
+      const auto direct = web.execute(operation, args);
+      const auto transported =
+          process.call(operation, args, packageRevision, packageProject);
+      if (transported["payload"] != direct) {
+        // These responses contain only public metadata. Report differing
+        // fields to identify the owner boundary without dumping input text.
+        for (const auto &[key, value] : direct.items())
+          if (!transported["payload"].contains(key) ||
+              transported["payload"][key] != value)
+            std::cerr << "Assessment field " << key << ": " << value
+                      << " != " << transported["payload"].value(key, Json())
+                      << '\n';
+        throw std::runtime_error(
+            std::string(operation) + ": assessment response differs (" +
+            transported.value("status", "missing") + "; " +
+            transported.value("error", Json::object()).value("code", "none") +
+            ")");
+      }
+      check(transported.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker disclosed private assessment text");
+      return direct;
+    };
+    const auto selectedMatches =
+        web.execute("web_package_advisories_match", advisoryMatchArgs);
+    Json assessmentSelection{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_analysis_id", advisoryPackage["package_analysis_id"]},
+        {"integrity_ids", Json::array({verified["integrity_id"]})},
+        {"advisory_matches_id", selectedMatches["package_advisory_matches_id"]},
+        {"attestation_ids",
+         Json::array({attestation["package_attestation_id"]})},
+        {"attestation_digest_match_ids",
+         Json::array({digestResult["package_attestation_digest_match_id"]})}};
+    const auto assessment =
+        assessmentCall("web_package_assessment_create", assessmentSelection);
+    check(assessment["safety_verdict"] == "not_assessed" &&
+              assessment["installed_tree_verified"] == false &&
+              assessment["publisher_authenticated"] == false,
+          "Worker upgraded selected assessment evidence into trust");
+    Json assessmentPage{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_assessment_id", assessment["package_assessment_id"]},
+        {"review_head", assessment["review_head_id"]}};
+    const auto findings =
+        assessmentCall("web_package_assessment_findings", assessmentPage);
+    Json decision{
+        {"schema_version", 1},
+        {"revision", packageRevision},
+        {"package_assessment_id", assessment["package_assessment_id"]},
+        {"expected_review_head", assessment["review_head_id"]},
+        {"finding_id", findings["items"][0]["finding_id"]},
+        {"disposition", "needs_review"}};
+    const auto reviewed = assessmentCall("web_package_review_append", decision);
+    check(assessmentCall("web_package_review_append", decision)["replayed"] ==
+              true,
+          "Worker charged a last-request replay twice");
+    reply = process.call("web_package_assessment_report", assessmentPage,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "stale_package_review_head",
+          "Worker read a report at an obsolete review head");
+    assessmentPage["review_head"] = reviewed["review_head_id"];
+    assessmentCall("web_package_assessment_findings", assessmentPage);
+    const auto history =
+        assessmentCall("web_package_review_decisions", assessmentPage);
+    check(history["items"].size() == 1 &&
+              history["items"][0]["assertion_source"] == "caller",
+          "Worker changed immutable analyst history");
+    const Json journal{
+        {"schema_version", 1},
+        {"profile", "offline-package-review-journal-v1"},
+        {"package_assessment_id", reviewed["package_assessment_id"]},
+        {"review_root_id", reviewed["review_root_id"]},
+        {"review_head_id", reviewed["review_head_id"]},
+        {"decisions", history["items"]}};
+    Json restore{{"schema_version", 1},
+                 {"revision", packageRevision},
+                 {"package_assessment_id", reviewed["package_assessment_id"]},
+                 {"expected_review_head", reviewed["review_head_id"]},
+                 {"journal_json", journal.dump()}};
+    const auto restored = assessmentCall("web_package_review_restore", restore);
+    check(restored["replayed"] == true && restored["restored_events"] == 0,
+          "Worker charged an identical review journal twice");
+    restore["notes"] = "SECRET_WEB";
+    reply = process.call("web_package_review_restore", restore, packageRevision,
+                         packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted an arbitrary review note");
+    assessmentCall("web_package_assessment_report", assessmentPage);
+    assessmentSelection["raw"] = true;
+    reply = process.call("web_package_assessment_create", assessmentSelection,
+                         packageRevision, packageProject);
+    check(reply["error"]["code"] == "invalid_request",
+          "Worker accepted a report raw-export flag");
     for (const auto &a : caps["analysis"])
       if (a["kind"] == "package_archive") {
         hasArchive = a["available"];
@@ -1805,12 +1917,16 @@ int main(int argc, char **argv) {
         "postData":{"text":"SECRET_WEB"}},
         "response":{"status":200,"content":{"text":"SECRET_WEB"}}}]}})";
       std::ofstream(interfaceRoot / "b.js")
-          << "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+          << "const SECRET_WEB_RESULT=await "
+             "fetch('https://SECRET_WEB/a?token=SECRET_WEB');"
+             "SECRET_WEB_RESULT.json();"
              "const SECRET_WEB_XHR = new XMLHttpRequest();"
              "SECRET_WEB_XHR.open('GET','https://SECRET_WEB/a');"
              "SECRET_WEB_XHR.setRequestHeader('Authorization','SECRET_WEB');"
              "SECRET_WEB_XHR.send('SECRET_WEB');"
              "SECRET_WEB_XHR.onload = SECRET_WEB_CALLBACK;"
+             "this.fetch('https://SECRET_WEB/a', {method:'POST'});"
+             "fetch(...SECRET_WEB_ARGUMENTS);"
              "const recovered='SECRET_'+'WEB_RECOVERED';const n=1+2;";
       const auto beforeInterfaces = web.revision(),
                  beforeProject = web.projectId();
@@ -1886,8 +2002,9 @@ int main(int argc, char **argv) {
         reply = process.call("web_interfaces_analyze", infer, interfaceRevision,
                              interfaceProject);
         check(reply["payload"] == analysis &&
-                  analysis["interface_count"] == 5 &&
-                  analysis["profile"] == "fetch-websocket-xhr-syntax-v2" &&
+                  analysis["interface_count"] == 7 &&
+                  analysis["fetch_member_correlation"] == false &&
+                  analysis["profile"] == "fetch-websocket-xhr-syntax-v3" &&
                   analysis["xhr_correlation"] == false,
               "Static interfaces differ");
         const Json sourcePage{
@@ -1904,8 +2021,49 @@ int main(int argc, char **argv) {
                   sites["items"][4]["handler_status"] == "value_syntax" &&
                   sites["items"][1]["receiver_binding_id"] ==
                       sites["items"][4]["receiver_binding_id"] &&
+                  sites["items"][5]["kind"] == "fetch_member_call" &&
+                  sites["items"][5]["receiver_node_id"].is_string() &&
+                  sites["items"][5]["method"] == "unknown" &&
+                  sites["items"][6]["arguments_status"] ==
+                      "spread_unresolved" &&
+                  sites["items"][6]["url_node_id"].is_null() &&
+                  sites["items"][6]["method"] == "unknown" &&
                   reply.dump().find("SECRET_WEB") == std::string::npos,
               "XHR syntax evidence differs or exposes values");
+        const auto relations =
+            web.execute("web_interface_relations_analyze", sourcePage);
+        reply = process.call("web_interface_relations_analyze", sourcePage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relations &&
+                  relations["relation_count"] == 2 &&
+                  relations["profile"] == "request-source-relations-v1" &&
+                  relations["response_api_identity"] ==
+                      "member_spelling_unverified" &&
+                  relations["har_correlation"] == false,
+              "Request relations differ or promote response identity");
+        const Json relationPage{{"schema_version", 1},
+                                {"revision", interfaceRevision},
+                                {"relations_id", relations["relations_id"]}};
+        const auto relationRecords =
+            web.execute("web_interface_relation_records", relationPage);
+        reply = process.call("web_interface_relation_records", relationPage,
+                             interfaceRevision, interfaceProject);
+        check(reply["payload"] == relationRecords &&
+                  relationRecords["items"][0]["kind"] ==
+                      "await_result_const_binding" &&
+                  relationRecords["items"][1]["kind"] ==
+                      "bound_result_member_call" &&
+                  relationRecords["items"][1]["member_spelling"] == "json" &&
+                  relationRecords["items"][0]["binding_id"] ==
+                      relationRecords["items"][1]["binding_id"] &&
+                  reply.dump().find("SECRET_WEB") == std::string::npos,
+              "Request relation pages differ or expose private values");
+        auto invalidRelations = relationPage;
+        invalidRelations["execute"] = true;
+        reply = process.call("web_interface_relation_records", invalidRelations,
+                             interfaceRevision, interfaceProject);
+        check(reply["error"]["code"] == "invalid_request",
+              "Request relation pages accepted an execution field");
         for (const auto *Pass : {"string_recovery", "constant_folding"}) {
           auto RewriteArgs = infer;
           RewriteArgs["pass"] = Pass;

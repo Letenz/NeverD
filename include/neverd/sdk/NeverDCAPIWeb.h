@@ -69,14 +69,26 @@ neverd_web_har_records_json(neverd_web_session_t Session,
                             const char *ExpectedRevision, size_t RevisionSize,
                             const char *CaptureID, size_t CaptureIDSize,
                             uint64_t Offset, uint64_t Limit);
-/// Direct external fetch/WebSocket syntax is inferred evidence, not proof of
-/// intrinsic identity, reachability or execution. No source text is returned.
+/// Direct fetch/WebSocket, unverified member-fetch and bounded XHR syntax are
+/// inferred evidence, not intrinsic identity, reachability or execution.
+/// Spread argument roles remain unresolved. No source text is returned.
 NEVERD_API const char *neverd_web_interfaces_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
 NEVERD_API const char *neverd_web_interface_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,
+    uint64_t Offset, uint64_t Limit);
+/// Explicit source-syntax relationships from one existing request analysis.
+/// No runtime response identity, wrapper argument flow or HAR join is inferred.
+NEVERD_API const char *neverd_web_interface_relations_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize);
+/// Metadata-only relation pages. Limit is 1..128; source, names and values
+/// remain private behind exact source-node and lexical-binding anchors.
+NEVERD_API const char *neverd_web_interface_relation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RelationsID, size_t RelationsIDSize,
     uint64_t Offset, uint64_t Limit);
 /// Explicit source and committed capture selections only. Matching method,
 /// origin and path produces candidate pairs, never an execution claim.
@@ -152,6 +164,51 @@ NEVERD_API const char *neverd_web_package_attestation_digest_match_json(
 NEVERD_API const char *neverd_web_package_attestation_digest_result_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *MatchID, size_t MatchIDSize);
+
+/// Compose retained results. Options are omitted or schema_version:1 with
+/// bounded integrity_ids, advisory_ids, advisory_matches_id, attestation_ids,
+/// attestation_digest_match_ids, package_behavior_id, package_install_id,
+/// package_diff_id and package_behavior_diff_id. No paths, notes or raw data.
+NEVERD_API const char *neverd_web_package_assessment_create_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *PackageAnalysisID,
+    size_t PackageAnalysisIDSize, const char *OptionsJSON, size_t OptionsSize);
+/// Reads pin the current review head; a changed head requires a fresh query.
+/// Pages contain 1..512 metadata rows, with no package names or source text.
+NEVERD_API const char *neverd_web_package_assessment_findings_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+/// Append one caller assertion, not proof or authorization. Disposition is
+/// unreviewed, needs_review, accepted_risk or false_positive. Only an exact
+/// replay of the last accepted request can use its old parent head again.
+NEVERD_API const char *neverd_web_package_review_append_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *FindingID,
+    size_t FindingIDSize, const char *Disposition, size_t DispositionSize);
+NEVERD_API const char *neverd_web_package_review_decisions_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
+/// Restore a bounded offline-package-review-journal-v1 chain atomically.
+/// The current history must be an exact prefix; unchanged replay is free.
+/// Every identity, finding, parent, ordinal and disposition is checked by the
+/// backend. Journals are caller assertions, never authenticated analyst proof.
+NEVERD_API const char *neverd_web_package_review_restore_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ExpectedHead, size_t ExpectedHeadSize, const char *JournalJSON,
+    size_t JournalSize);
+/// Return a bounded metadata-only Markdown report page in JSON. No file is
+/// written and no source disclosure or execution permission is granted.
+NEVERD_API const char *neverd_web_package_assessment_report_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AssessmentID, size_t AssessmentIDSize,
+    const char *ReviewHead, size_t ReviewHeadSize, uint64_t Offset,
+    uint64_t Limit);
 
 /// Explicit tar/tgz/zip profile; captured originals only, no recursive
 /// extraction.

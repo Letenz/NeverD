@@ -6,6 +6,8 @@ add_neverd_unittest(NeverDWebArtifactTests
   PackageIntegrityTests.cpp
   PackageAdvisoryTests.cpp
   PackageAttestationTests.cpp
+  PackageAssessmentTests.cpp
+  PackageReviewTests.cpp
   InterfaceTests.cpp
   StreamTests.cpp
   AsarTests.cpp
@@ -15,6 +17,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   ImportMapTests.cpp
   BlobStoreTests.cpp
   BunTests.cpp
+  ClaudeDistributionTests.cpp
   SEATests.cpp
   NexeTests.cpp
   PkgTests.cpp
@@ -48,6 +51,7 @@ target_link_libraries(neverd-web-html-reference-record PRIVATE LLVMSupport)
 add_neverd_unittest(NeverDWebSourceMapTests
   SourceMapTests.cpp
   BunSourceMapTests.cpp
+  BunSourceMapCorpusTests.cpp
   LINK_COMPONENTS Web
 )
 target_include_directories(NeverDWebSourceMapTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
@@ -60,6 +64,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     PackageBehaviorDiffTests.cpp
     PackageInstallTests.cpp
     SourceInterfaceTests.cpp
+    InterfaceRelationTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp
@@ -79,6 +84,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceBundleTests.cpp
     SourceViewTests.cpp
     SourceNavigationTests.cpp
+    SourceFeatureTests.cpp
+    ClientFeatureCorpusTests.cpp
     LINK_COMPONENTS Web
   )
   target_compile_definitions(NeverDWebSourceTests PRIVATE
@@ -106,6 +113,7 @@ if(TARGET neverd_shared)
     PackageIntegritySDKTests.cpp
     PackageAdvisorySDKTests.cpp
     PackageAttestationSDKTests.cpp
+    PackageAssessmentSDKTests.cpp
     InterfaceSDKTests.cpp
     StreamSDKTests.cpp
     SEASDKTests.cpp

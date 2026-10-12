@@ -287,15 +287,18 @@ int neverd_prepare_function(neverd_session_t Sess, neverd_va_t FuncEntry) {
       S->setError(*Reason);
       return 0;
     }
-    if (S->Img.Format == BinaryFormat::COFF)
+    if (S->Img.Format == BinaryFormat::COFF) {
+      // Handler discovery can grow metadata. Until it exposes an immutable
+      // generation, do not carry borrowed CFG facts across this operation.
+      S->AnalysisCache.reset();
       coff_loader::ensureExceptionHandlers(S->Img, {FuncEntry});
+    }
 
     if (!S->PipeRan)
       S->OnlyFunctionEntries.insert(FuncEntry);
     else if (!S->OnlyFunctionEntries.empty() &&
              !S->OnlyFunctionEntries.count(FuncEntry)) {
-      S->invalidatePipeline();
-      S->OnlyFunctionEntries = {FuncEntry};
+      S->selectFunction(FuncEntry);
     }
     return S->ensurePipeline() ? 1 : 0;
   } catch (const std::exception &Error) {

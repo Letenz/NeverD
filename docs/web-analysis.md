@@ -34,6 +34,7 @@ neverd web capabilities
 neverd web packages ./package-lock.json npm-lock
 neverd web packages ./package.json package-json
 neverd web archive ./package.tgz tgz
+neverd web archive-bun-export ./platform-package.tgz tgz 0 0 ./new-recovery-directory
 neverd web archive ./extension.vsix zip
 neverd web package-install ./package.json 0 package-json
 neverd web package-advisories ./metadata-capture 3 package-json 1:2
@@ -133,7 +134,11 @@ metadata. It retains source/time/severity uncertainty and original anchors,
 works without the JavaScript parser, and makes no freshness, publisher,
 reachability or safety claim. See the
 [actual public metadata qualification](web-package-advisory-qualification.md).
-Composed review reports and analyst dispositions remain separate work.
+The [assessment and review profile](web-package-assessment-profile.md) composes
+explicitly selected retained evidence, preserves coverage and binding limits,
+and supports fixed analyst assertions with a checked review head. Its bounded
+Markdown report contains metadata and opaque anchors. GUI presentation and
+persistent review storage remain separate work.
 
 The [attestation metadata profile](web-package-attestation-profile.md) reads
 captured npm signature declarations, in-toto statements, DSSE envelopes and
@@ -289,8 +294,12 @@ These are per-session retained-data limits, not whole-process RSS guarantees.
 
 `source_navigation_analyze(revision, source_id)` builds the bounded
 `javascript-source-navigation-v1` index, admitting lexical bindings if needed.
-`source_navigation_records` pages three record kinds: `functions`, `calls` and
-`references`. Each row retains its AST identity and original UTF-8 byte range.
+`source_navigation_records` pages four record kinds: `functions`, `calls`,
+`references` and `features`. Each row retains its AST identity and original
+UTF-8 byte range. Feature candidates have their own
+[`javascript-client-syntax-features-v1` profile](web-client-feature-profile.md),
+closed vocabulary, work/record limits and partial coverage. Their spelling or
+shape evidence does not authenticate APIs or establish effective policy.
 Functions expose source containment, body/name nodes, parameter count and
 declaration/initializer binding links. Calls expose the syntactic callee and
 its lexical reference/binding when available. Direct function expressions have
@@ -302,7 +311,9 @@ Containment describes source syntax, including parameter defaults and deferred
 class fields; it does not describe runtime activation. Initializer links remain
 source evidence after reassignment. `runtime_target: not_proven` and
 `runtime_call_graph: not_analyzed` are explicit. There is no property-call,
-tool-registration or API attribution based only on a name. If binding analysis
+tool-registration or API attribution based only on a name. Feature annotations
+remain explicitly syntactic, with separate coverage and failure status.
+If binding analysis
 is unavailable, syntax records remain available with partial status and absent
 lexical links. A navigation failure publishes no partial index. Queries are
 cached once per source/revision and share the source/node limits.

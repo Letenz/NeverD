@@ -1,6 +1,6 @@
 **언어**: [English](../../README.md) | [简体中文](../zh-CN/project.md) | [繁體中文](../zh-TW/project.md) | [日本語](../ja/project.md) | [한국어](project.md) | [Français](../fr/project.md) | [Deutsch](../de/project.md) | [Español](../es/project.md) | [Italiano](../it/project.md) | [Русский](../ru/project.md) | [العربية](../ar/project.md)
 
-<!-- i18n-source: c2384f22e6d167b6294f2cbed8eea7aaedcbc86523ba5b73f2e1471cf41434a9 -->
+<!-- i18n-source: a8eff56b06f3078eafd48075ca74a3de8751f14892f389fe874abf3ca4295038 -->
 
 <div align="center">
 
@@ -295,10 +295,12 @@ neverd decompile program --func vm_entry --devirtualize --vm-control=r10 \
   --recovery-report recovery.json -o recovered.c
 neverd patch -hello -o patched binary
 neverd patch --from-ir repl.ll -o patched binary
-neverd patch --from-c repl.c --func 0x401000 -o patched binary
+neverd patch --from-source repl.c --entry replacement --func 0x401000 -o patched binary
 neverd patch --mode inplace -o patched binary
 neverd patch --subst --flatten --mba -o patched binary
 ```
+
+소스 패치는 Clang, NeverC 일반 모드 또는 GCC를 선택할 수 있습니다. [검증된 소스/object 프로필](../source-patching.md)을 참고하세요. native object는 생성 도구의 기계어를 보존하며, 컴파일러와 런타임의 호환성 및 예외 전파는 프로필별로 검증합니다.
 
 32비트 ARM 바이너리에 함수의 ARM/Thumb 모드 메타데이터가 없다면 디컴파일 전에 진입 모드를 지정합니다.
 
