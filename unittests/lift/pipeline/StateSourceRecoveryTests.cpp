@@ -336,4 +336,238 @@ int main(void) {
     EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
   }
 }
+
+std::string stringProgram() {
+  return R"(
+declare i64 @gateway(ptr, ptr)
+define i64 @work(ptr %state, ptr %context) {
+  %base = load i64, ptr %state, align 1
+  %name = add i64 %base, 3
+  %arg = getelementptr i8, ptr %state, i64 8
+  %p = getelementptr i8, ptr %state, i64 16
+  %sel = getelementptr i8, ptr %state, i64 32
+  %off = getelementptr i8, ptr %state, i64 40
+  %width = getelementptr i8, ptr %state, i64 48
+  %key = getelementptr i8, ptr %state, i64 64
+  store i64 16, ptr %arg, align 1
+  store i64 %name, ptr %p, align 1
+  store i64 7, ptr %sel, align 1
+  store i64 24, ptr %off, align 1
+  store i64 8, ptr %width, align 1
+  store i64 90, ptr %key, align 1
+  %status = call i64 @gateway(ptr %state, ptr %context)
+  ret i64 %status
+})";
+}
+StateSourceContract stringContract() {
+  auto C = contract();
+  C.StateBytes = 80;
+  auto &G = C.Gateways[0];
+  G.ArgumentCount.reset();
+  G.Arguments = {{8, 8}, {24, 8}};
+  G.IndirectArguments = {0};
+  G.Writes.push_back({{16, 8}, 0});
+  G.Imports = {{7,
+                "lookup_item",
+                {StateSourceType::Pointer, StateSourceType::U64},
+                StateSourceType::Pointer}};
+  G.Strings = {{0, 0, true, StateSourceSlot{56, 8}, StateSourceSlot{64, 8}, 1}};
+  G.ExcludedArguments = {{1, UINT64_MAX}};
+  StateSourceImage I;
+  I.Base = {0, 8};
+  I.Readable = true;
+  I.Bytes = {1, 2, 3};
+  for (unsigned char B : std::string("example.dll"))
+    I.Bytes.push_back(B ^ 90);
+  I.Bytes.push_back(90);
+  C.Images = {I};
+  return C;
+}
+
+TEST(StateSource, RejectsIncompleteStringAndIndirectContractsBeforeMutation) {
+  llvm::LLVMContext C;
+  auto M = cell_test::parse(C, stringProgram());
+  ASSERT_TRUE(M);
+  const auto Before = cell_test::print(*M);
+  for (unsigned Case = 0; Case < 9; ++Case) {
+    auto Contract = stringContract();
+    auto &G = Contract.Gateways[0];
+    if (Case == 0)
+      Contract.Images[0].Readable = false;
+    if (Case == 1)
+      Contract.Images[0].Base.Bytes = 4;
+    if (Case == 2)
+      Contract.Images[0].Bytes.clear();
+    if (Case == 3)
+      G.Strings[0].ByValue = false;
+    if (Case == 4)
+      G.Strings[0].Mode.reset();
+    if (Case == 5)
+      G.Strings[0].Image = 1;
+    if (Case == 6)
+      G.IndirectArguments = {0, 0};
+    if (Case == 7)
+      G.ExcludedArguments[0].Argument = 2;
+    if (Case == 8)
+      G.Imports[0].Parameters[0] = StateSourceType::U64;
+    auto R = prepareStateSourceRecovery(*M, Contract);
+    ASSERT_FALSE(bool(R)) << Case;
+    llvm::consumeError(R.takeError());
+    EXPECT_EQ(cell_test::print(*M), Before) << Case;
+  }
+}
+
+TEST(StateSource, StringCandidatesRequireProvenOffsetsKeysAndTerminators) {
+  for (bool Big : {false, true})
+    for (unsigned Case = 0; Case < 8; ++Case) {
+      llvm::LLVMContext C;
+      auto Text = stringProgram();
+      auto Contract = stringContract();
+      if (Big)
+        Contract.Gateways[0].Selector = {36, 4};
+      if (Case == 1)
+        cell_test::replace(Text, "store i64 16, ptr %arg",
+                           "store i64 %base, ptr %arg");
+      if (Case == 2)
+        cell_test::replace(Text, "store i64 16, ptr %arg",
+                           "store i64 79, ptr %arg");
+      if (Case == 3)
+        cell_test::replace(Text, "store i64 90, ptr %key",
+                           "store i64 %base, ptr %key");
+      if (Case == 4)
+        Contract.Images[0].Bytes.back() = 91;
+      if (Case == 5)
+        cell_test::replace(Text, "%name = add i64 %base, 3",
+                           "%name = add i64 %base, 99");
+      if (Case >= 6) {
+        for (size_t I = 3; I < Contract.Images[0].Bytes.size(); ++I)
+          Contract.Images[0].Bytes[I] ^= 90;
+        if (Case == 6)
+          cell_test::replace(Text, "store i64 90, ptr %key",
+                             "store i64 0, ptr %key");
+        else
+          cell_test::replace(Text, "store i64 90, ptr %key",
+                             "%mode = getelementptr i8, ptr %state, i64 56\n"
+                             "  store i64 0, ptr %mode, align 1\n"
+                             "  store i64 90, ptr %key");
+      }
+      auto M = cell_test::parse(C, Text, Big ? "E-p:64:64" : "e-p:64:64");
+      ASSERT_TRUE(M);
+      M->setTargetTriple(llvm::Triple(Big ? "aarch64_be-unknown-linux-gnu"
+                                          : "x86_64-pc-windows-msvc"));
+      auto R = prepareStateSourceRecovery(*M, Contract);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      optimize(*M);
+      auto E = finishStateSourceRecovery(*M, *R);
+      ASSERT_FALSE(E) << llvm::toString(std::move(E));
+      EXPECT_EQ(R->RewrittenCalls, unsigned(Case == 0 || Case >= 6))
+          << cell_test::print(*M);
+      EXPECT_EQ(R->GuardedCalls, unsigned(Case == 0 || Case >= 6));
+      optimize(*M);
+      const auto IR = cell_test::print(*M);
+      EXPECT_NE(IR.find("call i64 @gateway"), std::string::npos);
+      EXPECT_EQ(IR.find("__neverd_state_probe_"), std::string::npos);
+      if (Case == 0 || Case >= 6) {
+        EXPECT_NE(IR.find("example.dll"), std::string::npos);
+        EXPECT_NE(IR.find("call ptr @lookup_item"), std::string::npos);
+      }
+    }
+}
+
+TEST_F(StateSourceCompiled,
+       StringGuardsKeepChangedBytesModesHandlesAndFullState) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "Configured Clang is unavailable";
+  llvm::LLVMContext C;
+  auto M = cell_test::parse(C, stringProgram());
+  ASSERT_TRUE(M);
+  M->getFunction("work")->setName("before");
+  auto Original = tmpFile("string-before.ll");
+  std::ofstream(Original) << test::printHostCompilerFixture(*M);
+  M->getFunction("before")->setName("after");
+  auto R = prepareStateSourceRecovery(*M, stringContract());
+  ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+  optimize(*M);
+  auto E = finishStateSourceRecovery(*M, *R);
+  ASSERT_FALSE(E) << llvm::toString(std::move(E));
+  ASSERT_EQ(R->RewrittenCalls, 1u) << cell_test::print(*M);
+  ASSERT_EQ(R->GuardedCalls, 1u);
+  optimize(*M);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = true;
+  Options.ScalarPointers = CEmitterOptions::ScalarPointerSpelling::AliasTypes;
+  ASSERT_TRUE(LLVMCEmitter().emit(*M, OS, Options));
+  EXPECT_NE(Source.find("lookup_item(\"example.dll\""), std::string::npos)
+      << Source;
+  auto After = tmpFile("string-after.c");
+  std::ofstream(After) << Source;
+  auto Harness = tmpFile("string-oracle.c");
+  std::ofstream(Harness) << R"(
+#include <stdint.h>
+#include <string.h>
+extern uint64_t before(void *, void *), after(void *, void *);
+static uint64_t get(const void *s,unsigned o) { uint64_t v;memcpy(&v,(const char*)s+o,8);return v; }
+static void put(void *s,unsigned o,uint64_t v) { memcpy((char*)s+o,&v,8); }
+static unsigned calls, gateways;
+static uint64_t trace;
+static unsigned char result, *guest;
+void *lookup_item(const char *s, uint64_t handle) {
+  ++calls;trace=handle;
+  while (*s) trace=trace*131+(unsigned char)*s++;
+  guest[0]^=(unsigned char)trace;
+  return handle & 1 ? &result : 0;
+}
+uint64_t gateway(void *s,void *context) {
+  (void)context;++gateways;
+  uint64_t handle=get(s,24);
+  if (handle==UINT64_MAX) { put(s,72,12345);return UINT64_C(0xfedcba9876543210); }
+  const char *p=(const char*)(uintptr_t)get(s,(unsigned)get(s,8));
+  char text[64];unsigned i=0;
+  unsigned char key=get(s,56)==1 && get(s,64) ? (unsigned char)get(s,64) : 0;
+  do { text[i]=(unsigned char)p[i]^key; } while (text[i++] && i<sizeof(text));
+  uint64_t offset=get(s,40);
+  put(s,56,0);put(s,16,0);
+  put(s,(unsigned)offset,(uintptr_t)lookup_item(text,handle));
+  return 0;
+}
+int main(void) {
+ unsigned fast=0,slow=0;
+ for (unsigned k=0;k<1536;++k) {
+  unsigned mode=k%3, encoding=(k/3)%2, changed=(k/6)%16, off=(k/96)%16;
+  unsigned char image[40]={1,2,3}, a[96],b[96], ga[8],gb[8];
+  memset(image+3,'X',36);image[39]=0;
+  memcpy(image+3,"example.dll",12);
+  if (changed<12) image[3+changed]^=1;
+  if (encoding) for(unsigned j=3;j<40;++j) image[j]^=90;
+  /* Always supply a terminator for the gateway's selected normalization. */
+  image[39]=mode==1 ? 90 : 0;
+  for(unsigned j=0;j<96;++j) a[j]=(unsigned char)(j*13+k);
+  memset(ga,17,8);memcpy(gb,ga,8);
+  put(a+off,0,(uintptr_t)image);put(a+off,56,mode);
+  put(a+off,24,k%5==0 ? UINT64_MAX : (uint64_t)k*913);
+  memcpy(b,a,96);
+  guest=ga;calls=gateways=0;trace=0;
+  uint64_t ra=before(a+off,0), ta=trace;unsigned ca=calls;
+  guest=gb;calls=gateways=0;trace=0;
+  uint64_t rb=after(b+off,0);
+  if(ra!=rb || ta!=trace || ca!=calls || memcmp(a,b,96) || memcmp(ga,gb,8)) return 1;
+  if(gateways) ++slow;else ++fast;
+ }
+ return !(fast && slow);
+})";
+  for (const char *Level : {"-O0", "-O2"}) {
+    auto Executable = tmpFile(std::string("string-oracle") + Level +
+                              test::executableSuffix());
+    auto Built = exec(NEVERD_TEST_CLANG,
+                      {"-std=c11", Level, "-fsanitize=undefined",
+                       "-fsanitize-trap=all", Original.string(), After.string(),
+                       Harness.string(), "-o", Executable.string()});
+    ASSERT_TRUE(Built.ok()) << Built.err;
+    auto Ran = exec(Executable.string(), {});
+    EXPECT_TRUE(Ran.ok()) << Ran.exitCode << " " << Ran.err;
+  }
+}
 } // namespace

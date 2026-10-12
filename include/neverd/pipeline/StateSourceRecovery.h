@@ -37,6 +37,31 @@ struct StateSourceImport {
   std::vector<StateSourceType> Parameters;
   StateSourceType Result = StateSourceType::U64;
 };
+struct StateSourceImage {
+  StateSourceSlot Base;
+  /// A readable guest extent, disjoint from the bank. Bytes are only a
+  /// specialization candidate: their current contents are checked at runtime.
+  bool Readable = false;
+  std::vector<uint8_t> Bytes;
+};
+struct StateSourceString {
+  unsigned Argument = 0;
+  unsigned Image = 0;
+  /// The gateway passes a NUL-terminated string by value. The imported API
+  /// only reads its content, neither retaining its address nor observing its
+  /// identity. Scratch allocation
+  /// and normalization have no other observable effects under this contract.
+  bool ByValue = false;
+  /// When both slots are present, a nonzero key and matching mode select
+  /// bytewise XOR normalization, including the encoded NUL terminator.
+  std::optional<StateSourceSlot> Mode;
+  std::optional<StateSourceSlot> XorKey;
+  uint64_t EncodedMode = 1;
+};
+struct StateSourceArgumentExclusion {
+  unsigned Argument = 0;
+  uint64_t Value = 0;
+};
 struct StateSourceGateway {
   std::string Name;
   std::optional<StateSourceSlot> Selector;
@@ -46,6 +71,12 @@ struct StateSourceGateway {
   StateSourceSlot ResultBytes;
   std::vector<StateSourceWrite> Writes;
   std::vector<StateSourceImport> Imports;
+  /// These argument slots contain offsets of eight-byte values in the bank.
+  /// Only statically bounded offsets are dereferenced, before fixed writes.
+  std::vector<unsigned> IndirectArguments;
+  std::vector<StateSourceString> Strings;
+  /// Values with additional gateway behavior retain the original call.
+  std::vector<StateSourceArgumentExclusion> ExcludedArguments;
 };
 struct StateSourceContract {
   unsigned StateBytes = 0;
@@ -59,6 +90,7 @@ struct StateSourceContract {
   bool IsolatedBank = false;
   bool ZeroStatusGateways = false;
   std::vector<StateSourceGateway> Gateways;
+  std::vector<StateSourceImage> Images;
 };
 struct StateSourceRecovery {
   StateSourceContract Contract;
@@ -77,7 +109,8 @@ prepareStateSourceRecovery(llvm::Module &Module,
                            const StateSourceContract &Contract);
 
 /// Consume constants proven by the shared LLVM optimizer at each probe.
-/// An unknown argument count gets a runtime guard and the original fallback.
+/// Argument counts and candidate strings get runtime guards and the original
+/// fallback. Indirect arguments require statically bounded bank offsets.
 /// Restore unresolved gateways. No observation name or sampled value is used.
 llvm::Error finishStateSourceRecovery(llvm::Module &Module,
                                       StateSourceRecovery &Recovery);

@@ -821,6 +821,12 @@ Bounded low-byte load slices preserve the original read point and byte order;
 the shared optimizer forwards their exact writers. `LLVMSourceTypeHints.h` owns
 the spelling attributes that carry explicit signed import declarations across
 signless LLVM integers without asserting native extension attributes.
+Indirect argument slots resolve only from statically bounded bank offsets.
+By-value string candidates use explicit readable image extents and normalization
+contracts; the owner proves pointer offsets and checks current bytes, modes and
+argument exclusions before emitting a literal native call. Candidate images do
+not establish immutable memory or import identity. No platform resolver names
+or sample decoding policies live in the JSON adapter or source emitter.
 
 Native jump-table selector domains are proved in the shared LowIR resolver.
 A loader-normalized absolute table may use the same exact, point-sensitive

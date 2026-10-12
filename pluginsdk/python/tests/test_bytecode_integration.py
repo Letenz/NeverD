@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import copy
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
@@ -123,6 +124,63 @@ class BytecodeIntegrationTests(unittest.TestCase):
         unknown = recover_bytecode(b"A\xfe", profile, functions, **options)
         self.assertEqual((unknown.reconstructed_calls, unknown.unresolved_contract_calls), (0, 1))
         self.assertIn("runtime_service(state)", unknown.source)
+
+    def test_source_string_candidates_use_shared_native_contracts(self):
+        api = self.load_api()
+        layout = {"version": 1, "register_bytes": 80, "byte_order": "little"}
+        def operand(space, value):
+            return {"space": space, "size": 8, "value": {"addend": value}}
+        operations = [{"op": "INT_ADD", "output": operand("reg", 16),
+                       "inputs": [operand("reg", 0), operand("const", 3)]}]
+        operations += [{"op": "COPY", "output": operand("reg", offset),
+                        "inputs": [operand("const", value)]}
+                       for offset, value in ((8, 16), (32, 7), (40, 24), (48, 8), (64, 90))]
+        operations.append({"op": "CALL", "inputs": [operand("const", 8192)]})
+        recipes = {65: {"size": 1, "operations": operations},
+                   254: {"size": 1, "operations": [{"op": "RETURN", "inputs": []}]}}
+        profile = dict(layout, encodings=[dict(recipe, match=[{"offset": 0, "value": op}])
+                                         for op, recipe in recipes.items()])
+        slot = lambda offset: {"offset": offset, "bytes": 8}
+        image = b"abc" + bytes(c ^ 90 for c in b"example.dll\0")
+        contract = {"schemaVersion": 1, "state_bytes": 80, "isolated_bank": True,
+                    "zero_status_gateways": True,
+                    "images": [{"base": slot(0), "readable": True, "bytes": image.hex()}],
+                    "gateways": [{"name": "runtime_service", "selector": slot(32),
+                                  "arguments": [slot(8), slot(24)], "indirect_arguments": [0],
+                                  "result_offset": slot(40), "result_bytes": slot(48),
+                                  "writes": [{"slot": slot(56), "value": 0}],
+                                  "strings": [{"argument": 0, "image": 0, "by_value": True,
+                                               "mode": slot(56), "xor_key": slot(64)}],
+                                  "excluded_arguments": [{"argument": 1, "value": 2**64 - 1}],
+                                  "imports": [{"selector": 7, "name": "lookup_item",
+                                               "parameters": ["pointer", "u64"], "result": "pointer"}]}]}
+        options = dict(bindings=[{"address": 8192, "name": "runtime_service"}],
+                       output="llvmc", optimize=True, source_contracts=contract, api=api)
+        functions = [{"entry": 0, "end": 2, "name": "source_lookup"}]
+        static = recover_bytecode(b"A\xfe", profile, functions, **options)
+        dynamic = recover_bytecode_with_decoder(b"A\xfe", layout, functions,
+                                                lambda data, pc: recipes[data[0]], **options)
+        self.assertEqual(static, dynamic)
+        self.assertEqual((static.reconstructed_calls, static.guarded_contract_calls,
+                          static.unresolved_contract_calls), (1, 1, 0))
+        self.assertIn('"example.dll"', static.source)
+        self.assertIn("lookup_item(", static.source)
+        self.assertIn("runtime_service(state)", static.source)
+        for path, value in [(("images",), {}), (("images", 0, "bytes"), "not-hex"),
+                            (("images", 0, "readable"), False),
+                            (("gateways", 0, "strings"), {}),
+                            (("gateways", 0, "strings", 0, "by_value"), False),
+                            (("gateways", 0, "strings", 0, "image"), 1),
+                            (("gateways", 0, "indirect_arguments"), [2]),
+                            (("gateways", 0, "excluded_arguments"), [{"argument": 0}])]:
+            bad = copy.deepcopy(contract)
+            parent = bad
+            for key in path[:-1]:
+                parent = parent[key]
+            parent[path[-1]] = value
+            with self.assertRaises(NeverDError):
+                recover_bytecode(b"A\xfe", profile, functions,
+                                 **dict(options, source_contracts=bad))
 
     def test_callback_pc_context_reentrancy_and_concurrent_recovery(self):
         api = self.load_api()

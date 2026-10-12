@@ -263,6 +263,50 @@ bank write; a void result writes zero. Supported source types are `u32`, `u64`,
 observable state addresses and unbounded bank addressing are unsupported.
 This route currently requires integral 64-bit pointers and indices.
 
+Gateway `indirect_arguments` lists argument indices whose slots contain byte
+offsets into the bank. Each points to an eight-byte value captured before fixed
+writes. Unknown or out-of-bounds offsets preserve the original gateway; the
+pass never introduces a speculative bank dereference. `excluded_arguments`
+accepts `{ "argument": 0, "value": 18446744073709551615 }` entries for sentinel
+values with additional gateway behavior. Matching exclusions take the original
+call, including its full status and effects.
+
+Optional `images` on the root supplies up to 16 candidate guest images:
+
+```json
+"images": [{"base": {"offset": 0, "bytes": 8},
+            "readable": true, "bytes": "616263392b29325a"}]
+```
+
+`bytes` is hexadecimal, at most 65536 bytes per image. `readable: true` asserts
+that the current base denotes a live, initialized, readable extent of that
+size, disjoint from the bank. It does **not** assert that its contents are
+immutable. A gateway may declare strings using argument and image indices:
+
+```json
+"strings": [{"argument": 0, "image": 0, "by_value": true,
+             "mode": {"offset": 56, "bytes": 8},
+             "xor_key": {"offset": 64, "bytes": 8}, "encoded_mode": 1}]
+```
+
+The string pointer can itself be an indirect argument. The optimizer must prove
+its offset within the current image and the key. With both `mode` and `xor_key`
+present, a nonzero full-width key and matching mode select bytewise XOR with
+the low key byte, including the encoded NUL terminator. Omit both slots for
+ordinary NUL strings. Decoding is bounded to 512 bytes including the terminator.
+`by_value: true` asserts that the imported operation only reads the string's
+content, does not retain or observe its address, and that gateway normalization
+and scratch allocation have no other observable effects. These are explicit
+producer obligations, not facts inferred from a successful observation.
+
+NeverD decodes candidate bytes internally and emits a literal in the actual
+imported call. Runtime checks compare the current bytes **including the
+terminator** and the applicable mode before using it. Changed bytes, mode or
+excluded arguments take the original gateway; the candidate never replaces
+unverified memory. Memory comparisons occur only after scalar guards succeed.
+No platform API name, sample string or image address is built into this pass.
+These models do not recover arbitrary encryption or establish a resolver's ABI.
+
 A bounded refinement exposes narrow bank reads at the original wide-load point
 when only low bytes feed a selector. Both byte orders keep the same snapshot,
 including intervening writes. Unknown upper bytes are retained for wider uses.
@@ -277,7 +321,7 @@ traffic and reduce flag tests to comparisons. Internal state functions retain
 their boundaries; this does not infer their original parameters or object types.
 The output header and C/Python reports count `reconstructed_calls` and
 `unresolved_contract_calls`, with `guarded_contract_calls` identifying the
-subset of reconstructed calls that need an arity guard. The unresolved count covers only unresolved calls to
+subset of reconstructed calls that need a count, argument or string guard. The unresolved count covers only unresolved calls to
 **declared** gateways, not every remaining opaque call in the program.
 
 The format-independent `StateSourceRecovery` owner accepts the same layout and

@@ -8,6 +8,7 @@
 
 #include "BytecodeStateSourceContract.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Errc.h"
 
 #include <map>
@@ -57,7 +58,7 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
   auto *Root = V.getAsObject();
   if (!Root ||
       !keys(*Root, {"schemaVersion", "state_bytes", "isolated_bank",
-                    "zero_status_gateways", "gateways"}) ||
+                    "zero_status_gateways", "gateways", "images"}) ||
       Root->getInteger("schemaVersion") != 1 ||
       Root->getInteger("state_bytes") != StateBytes ||
       Root->getBoolean("isolated_bank") != true ||
@@ -71,11 +72,38 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
   Result.StateBytes = StateBytes;
   Result.IsolatedBank = true;
   Result.ZeroStatusGateways = true;
+  if (auto *ImagesValue = Root->get("images")) {
+    auto *Images = ImagesValue->getAsArray();
+    if (!Images || Images->size() > 16)
+      return invalid("invalid image candidates");
+    for (const auto &Value : *Images) {
+      auto *Image = Value.getAsObject();
+      if (!Image || !keys(*Image, {"base", "readable", "bytes"}) ||
+          !Image->get("base") || Image->getBoolean("readable") != true ||
+          !Image->getString("bytes"))
+        return invalid("image requires a base, readable extent and hex bytes");
+      auto Base = slot(*Image->get("base"));
+      if (!Base)
+        return Base.takeError();
+      auto Hex = *Image->getString("bytes");
+      if (Hex.empty() || Hex.size() > 131072 || Hex.size() % 2 ||
+          !llvm::all_of(Hex, [](char C) { return llvm::isHexDigit(C); }))
+        return invalid("invalid image hex bytes");
+      StateSourceImage I;
+      I.Base = *Base;
+      I.Readable = true;
+      for (size_t P = 0; P < Hex.size(); P += 2)
+        I.Bytes.push_back((llvm::hexDigitValue(Hex[P]) << 4) |
+                          llvm::hexDigitValue(Hex[P + 1]));
+      Result.Images.push_back(std::move(I));
+    }
+  }
   for (const auto &Item : *Gateways) {
     auto *O = Item.getAsObject();
     if (!O ||
         !keys(*O, {"name", "selector", "argument_count", "arguments",
-                   "result_offset", "result_bytes", "writes", "imports"}) ||
+                   "result_offset", "result_bytes", "writes", "imports",
+                   "indirect_arguments", "strings", "excluded_arguments"}) ||
         !O->getString("name") || !O->getArray("arguments") ||
         !O->getArray("writes") || !O->getArray("imports") ||
         !O->get("result_offset") || !O->get("result_bytes"))
@@ -108,6 +136,67 @@ readBytecodeStateSourceContract(const llvm::json::Value &V,
       if (!S)
         return S.takeError();
       G.Arguments.push_back(*S);
+    }
+    if (auto *Value = O->get("indirect_arguments")) {
+      auto *Indices = Value->getAsArray();
+      if (!Indices || Indices->size() > 16)
+        return invalid("invalid indirect arguments");
+      for (const auto &Index : *Indices) {
+        auto I = Index.getAsUINT64();
+        if (!I || *I >= G.Arguments.size())
+          return invalid("invalid indirect argument index");
+        G.IndirectArguments.push_back(unsigned(*I));
+      }
+    }
+    if (auto *Value = O->get("strings")) {
+      auto *Strings = Value->getAsArray();
+      if (!Strings || Strings->size() > 16)
+        return invalid("invalid string arguments");
+      for (const auto &Value : *Strings) {
+        auto *String = Value.getAsObject();
+        if (!String ||
+            !keys(*String, {"argument", "image", "by_value", "mode", "xor_key",
+                            "encoded_mode"}) ||
+            !number(*String, "argument") || !number(*String, "image") ||
+            *number(*String, "argument") >= G.Arguments.size() ||
+            *number(*String, "image") >= Result.Images.size() ||
+            String->getBoolean("by_value") != true)
+          return invalid("invalid by-value string declaration");
+        StateSourceString S;
+        S.Argument = unsigned(*number(*String, "argument"));
+        S.Image = unsigned(*number(*String, "image"));
+        S.ByValue = true;
+        for (auto [Name, Destination] :
+             {std::pair{"mode", &S.Mode}, std::pair{"xor_key", &S.XorKey}})
+          if (auto *Field = String->get(Name)) {
+            auto Slot = slot(*Field);
+            if (!Slot)
+              return Slot.takeError();
+            *Destination = *Slot;
+          }
+        if (String->get("encoded_mode")) {
+          auto Mode = number(*String, "encoded_mode");
+          if (!Mode || !S.Mode)
+            return invalid("invalid encoded string mode");
+          S.EncodedMode = *Mode;
+        }
+        G.Strings.push_back(S);
+      }
+    }
+    if (auto *Value = O->get("excluded_arguments")) {
+      auto *Exclusions = Value->getAsArray();
+      if (!Exclusions || Exclusions->size() > 64)
+        return invalid("invalid argument exclusions");
+      for (const auto &Value : *Exclusions) {
+        auto *Exclusion = Value.getAsObject();
+        if (!Exclusion || !keys(*Exclusion, {"argument", "value"}) ||
+            !number(*Exclusion, "argument") || !number(*Exclusion, "value") ||
+            *number(*Exclusion, "argument") >= G.Arguments.size())
+          return invalid("invalid argument exclusion");
+        G.ExcludedArguments.push_back(
+            {unsigned(*number(*Exclusion, "argument")),
+             *number(*Exclusion, "value")});
+      }
     }
     for (const auto &W : *O->getArray("writes")) {
       auto *Write = W.getAsObject();

@@ -1380,6 +1380,13 @@ they do not authenticate a producer's isolation or host-service assertions.
 The Python native integration suite checks static/callback producer parity,
 strict schema admission and reconstruction counts; the CLI retains existing
 output after a rejected source contract.
+String cases cover indirect bank capture, both byte orders, missing assertions,
+unknown/out-of-range offsets, unknown keys and missing terminators. The compiled
+string oracle varies bytes (including the terminator), normalization modes,
+module sentinels and bank alignment at O0/O2 with undefined-behavior traps,
+comparing complete bank bytes, guest effects, native-call traces and failure
+statuses. Native Python tests exercise static/callback parity and reject
+malformed images, string declarations and exclusions through the shared C ABI.
 
 `NeverDBytecodeAnalysisTests` uses independently constructed instruction
 languages. It checks malformed encodings, overlapping CFGs, budgets, typed

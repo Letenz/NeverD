@@ -332,6 +332,12 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     return (S.Bytes == 1 || S.Bytes == 2 || S.Bytes == 4 || S.Bytes == 8) &&
            S.Offset <= C.StateBytes && S.Bytes <= C.StateBytes - S.Offset;
   };
+  if (C.Images.size() > 16)
+    return invalid("too many image candidates");
+  for (const auto &Image : C.Images)
+    if (!Image.Readable || !ValidSlot(Image.Base) || Image.Base.Bytes != 8 ||
+        Image.Bytes.empty() || Image.Bytes.size() > 65536)
+      return invalid("invalid readable image candidate");
   std::map<std::string, const StateSourceImport *> Names;
   std::map<std::string, size_t> Gateways;
   for (size_t Index = 0; Index < C.Gateways.size(); ++Index) {
@@ -345,6 +351,21 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
     for (auto A : G.Arguments)
       if (!ValidSlot(A))
         return invalid("argument outside bank");
+    std::set<unsigned> Indirect, Strings;
+    for (unsigned A : G.IndirectArguments)
+      if (A >= G.Arguments.size() || !Indirect.insert(A).second)
+        return invalid("invalid indirect argument");
+    if (G.Strings.size() > 16 || G.ExcludedArguments.size() > 64)
+      return invalid("too many string arguments or exclusions");
+    for (const auto &S : G.Strings)
+      if (!S.ByValue || S.Argument >= G.Arguments.size() ||
+          !Strings.insert(S.Argument).second || S.Image >= C.Images.size() ||
+          bool(S.Mode) != bool(S.XorKey) ||
+          (S.Mode && (!ValidSlot(*S.Mode) || !ValidSlot(*S.XorKey))))
+        return invalid("invalid string normalization contract");
+    for (auto E : G.ExcludedArguments)
+      if (E.Argument >= G.Arguments.size())
+        return invalid("invalid argument exclusion");
     if (G.Writes.size() > 128)
       return invalid("too many fixed writes");
     for (auto W : G.Writes)
@@ -361,6 +382,10 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           !llvm::all_of(I.Parameters, ValidType) ||
           llvm::is_contained(I.Parameters, StateSourceType::Void))
         return invalid("invalid import identity or parameters");
+      for (const auto &S : G.Strings)
+        if (S.Argument >= I.Parameters.size() ||
+            I.Parameters[S.Argument] != StateSourceType::Pointer)
+          return invalid("string requires an imported pointer parameter");
       auto *T = signature(M.getContext(), I);
       auto [At, Added] = Names.emplace(I.Name, &I);
       if ((!Added && (At->second->Parameters != I.Parameters ||
@@ -466,6 +491,13 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
           Args[Call->arg_size() + 1] = B.getInt64(G.Arguments.size());
         for (auto S : G.Arguments)
           Args.push_back(read(B, Bank, S, Scope));
+        for (const auto &S : G.Strings) {
+          Args.push_back(read(B, Bank, C.Images[S.Image].Base, Scope));
+          Args.push_back(S.Mode ? read(B, Bank, *S.Mode, Scope)
+                                : B.getInt64(0));
+          Args.push_back(S.XorKey ? read(B, Bank, *S.XorKey, Scope)
+                                  : B.getInt64(0));
+        }
         std::vector<llvm::Type *> Types;
         for (auto *V : Args)
           Types.push_back(V->getType());
@@ -498,6 +530,65 @@ prepareStateSourceRecovery(llvm::Module &M, const StateSourceContract &C) {
 }
 
 llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
+  // Resolve indirect bank slots only after ordinary propagation has proved
+  // their complete offsets. No unchecked pointer arithmetic or speculative
+  // bank load is introduced for an unresolved layout.
+  bool ResolvedSources = false;
+  for (size_t Index = 0; Index < R.Probes.size(); ++Index) {
+    auto *Probe = M.getFunction(R.Probes[Index]);
+    if (!Probe)
+      continue;
+    const auto &G = R.Contract.Gateways[Index];
+    for (auto *U : Probe->users()) {
+      auto *Call = llvm::dyn_cast<llvm::CallInst>(U);
+      if (!Call || Call->getCalledFunction() != Probe)
+        return invalid("probe escaped");
+      auto *MD = Call->getMetadata("neverd.state.original_argc");
+      auto *Count =
+          MD && MD->getNumOperands() == 1
+              ? llvm::mdconst::dyn_extract<llvm::ConstantInt>(MD->getOperand(0))
+              : nullptr;
+      if (!Count)
+        return invalid("lost call ABI metadata");
+      unsigned N = Count->getZExtValue();
+      unsigned Extra = N + 4 + G.Arguments.size();
+      if (Call->arg_size() != Extra + 3 * G.Strings.size())
+        return invalid("changed probe arity");
+      std::vector<std::pair<unsigned, unsigned>> Offsets;
+      for (unsigned A : G.IndirectArguments) {
+        auto *Offset =
+            llvm::dyn_cast<llvm::ConstantInt>(Call->getArgOperand(N + 4 + A));
+        if (!Offset || Offset->getZExtValue() > R.Contract.StateBytes ||
+            8 > R.Contract.StateBytes - Offset->getZExtValue())
+          break;
+        Offsets.emplace_back(A, unsigned(Offset->getZExtValue()));
+      }
+      if (Offsets.size() != G.IndirectArguments.size())
+        continue;
+      llvm::IRBuilder<> B(Call);
+      for (auto [A, Offset] : Offsets)
+        Call->setArgOperand(N + 4 + A,
+                            read(B, Call->getArgOperand(0), {Offset, 8},
+                                 Call->getMetadata("neverd.state.scope")));
+      for (unsigned S = 0; S < G.Strings.size(); ++S)
+        Call->setArgOperand(
+            Extra + 3 * S,
+            B.CreateSub(Call->getArgOperand(N + 4 + G.Strings[S].Argument),
+                        Call->getArgOperand(Extra + 3 * S), "string_offset"));
+      Call->setMetadata("neverd.state.sources_ready",
+                        llvm::MDNode::get(M.getContext(), {}));
+      ResolvedSources |= !Offsets.empty() || !G.Strings.empty();
+    }
+  }
+  if (ResolvedSources) {
+    Pipeline::OptimizationOptions Policy;
+    Policy.Strength = Pipeline::OptStrength::Deep;
+    Policy.LLVMLevel = llvm::OptimizationLevel::O2;
+    auto Result = Pipeline::optimizeModule(M, Policy);
+    if (Result.Stop == OptimizationStopReason::InputInvalid ||
+        Result.Stop == OptimizationStopReason::VerificationFailed)
+      return invalid("argument source optimization failed");
+  }
   for (unsigned Round = 0; Round < 3 && exposeBankLoadSlices(M); ++Round) {
     Pipeline::OptimizationOptions Policy;
     Policy.Strength = Pipeline::OptStrength::Deep;
@@ -530,7 +621,7 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       if (!Count)
         return invalid("lost call ABI metadata");
       unsigned N = Count->getZExtValue();
-      if (Call->arg_size() != N + 4 + G.Arguments.size())
+      if (Call->arg_size() != N + 4 + G.Arguments.size() + 3 * G.Strings.size())
         return invalid("changed probe arity");
       auto Constant = [&](unsigned Arg) -> std::optional<uint64_t> {
         if (auto *V =
@@ -541,7 +632,8 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       auto Selector = Constant(0), Arity = Constant(1), Offset = Constant(2),
            Bytes = Constant(3);
       const StateSourceImport *Import = nullptr;
-      if (Selector && Offset && Bytes &&
+      if (Call->getMetadata("neverd.state.sources_ready") && Selector &&
+          Offset && Bytes &&
           (*Bytes == 1 || *Bytes == 2 || *Bytes == 4 || *Bytes == 8) &&
           *Offset <= R.Contract.StateBytes &&
           *Bytes <= R.Contract.StateBytes - *Offset)
@@ -550,6 +642,64 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
               (!Arity || I.Parameters.size() == *Arity))
             Import = &I;
       llvm::IRBuilder<> B(Call);
+      llvm::Value *ScalarMatches = B.getTrue();
+      if (Import && !Arity)
+        ScalarMatches = B.CreateICmpEQ(Call->getArgOperand(N + 1),
+                                       B.getInt64(Import->Parameters.size()),
+                                       "argument_count_matches");
+      for (auto E : G.ExcludedArguments)
+        ScalarMatches =
+            B.CreateAnd(ScalarMatches,
+                        B.CreateICmpNE(Call->getArgOperand(N + 4 + E.Argument),
+                                       B.getInt64(E.Value)),
+                        "argument_allowed");
+      struct StringCandidate {
+        unsigned Argument;
+        std::string Encoded;
+        std::string Decoded;
+      };
+      std::vector<StringCandidate> Candidates;
+      if (Import)
+        for (unsigned I = 0; I < G.Strings.size(); ++I) {
+          const auto &S = G.Strings[I];
+          unsigned Extra = 4 + G.Arguments.size() + 3 * I;
+          auto Start = Constant(Extra), Mode = Constant(Extra + 1),
+               Key = Constant(Extra + 2);
+          const auto &Image = R.Contract.Images[S.Image];
+          if (!Start || *Start >= Image.Bytes.size() || !Key) {
+            Import = nullptr;
+            break;
+          }
+          uint8_t Xor = 0;
+          if (S.Mode && *Key && (!Mode || *Mode == S.EncodedMode)) {
+            Xor = uint8_t(*Key);
+            ScalarMatches =
+                B.CreateAnd(ScalarMatches,
+                            B.CreateICmpEQ(Call->getArgOperand(N + Extra + 1),
+                                           B.getInt64(S.EncodedMode)),
+                            "string_mode_matches");
+          }
+          StringCandidate Candidate{S.Argument, {}, {}};
+          bool Terminated = false;
+          for (size_t P = *Start;
+               P < Image.Bytes.size() && Candidate.Encoded.size() < 512; ++P) {
+            uint8_t Byte = Image.Bytes[P];
+            Candidate.Encoded.push_back(char(Byte));
+            if (uint8_t(Byte ^ Xor) == 0) {
+              Terminated = true;
+              break;
+            }
+            Candidate.Decoded.push_back(char(Byte ^ Xor));
+          }
+          if (!Terminated) {
+            Import = nullptr;
+            break;
+          }
+          Candidates.push_back(std::move(Candidate));
+        }
+      if (auto *Known = llvm::dyn_cast<llvm::ConstantInt>(ScalarMatches);
+          Known && Known->isZero())
+        Import = nullptr;
       auto OriginalCall = [&](llvm::IRBuilder<> &B) {
         std::vector<llvm::Value *> Args;
         std::vector<llvm::Type *> Types;
@@ -571,6 +721,8 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
           Args.push_back(T->isPointerTy() ? B.CreateIntToPtr(V, T)
                                           : B.CreateZExtOrTrunc(V, T));
         }
+        for (const auto &S : Candidates)
+          Args[S.Argument] = B.CreateGlobalString(S.Decoded, "source_string");
         auto *Scope = Call->getMetadata("neverd.state.scope");
         // Fixed bank writes occur before the imported operation, matching the
         // declared gateway contract. Guest effects cannot observe this bank.
@@ -603,24 +755,72 @@ llvm::Error finishStateSourceRecovery(llvm::Module &M, StateSourceRecovery &R) {
       if (!Import) {
         Call->replaceAllUsesWith(OriginalCall(B));
         ++R.UnresolvedCalls;
-      } else if (Arity) {
+      } else if (llvm::isa<llvm::ConstantInt>(ScalarMatches) &&
+                 Candidates.empty()) {
         NativeCall(B);
         Call->replaceAllUsesWith(B.getInt64(0));
         ++R.RewrittenCalls;
       } else {
-        auto *Matches = B.CreateICmpEQ(Call->getArgOperand(N + 1),
-                                       B.getInt64(Import->Parameters.size()),
-                                       "argument_count_matches");
-        llvm::Instruction *Then, *Else;
-        llvm::SplitBlockAndInsertIfThenElse(Matches, Call->getIterator(), &Then,
-                                            &Else);
+        auto *Entry = Call->getParent();
+        auto *F = Entry->getParent();
+        auto *Tail =
+            Entry->splitBasicBlock(Call->getIterator(), "call_continue");
+        auto *Then =
+            llvm::BasicBlock::Create(M.getContext(), "source_call", F, Tail);
+        auto *Else =
+            llvm::BasicBlock::Create(M.getContext(), "original_call", F, Tail);
+        auto *Check = Candidates.empty()
+                          ? Then
+                          : llvm::BasicBlock::Create(M.getContext(),
+                                                     "string_check", F, Then);
+        Entry->getTerminator()->eraseFromParent();
+        llvm::IRBuilder<> Branch(Entry);
+        Branch.CreateCondBr(ScalarMatches, Check, Else);
+        if (!Candidates.empty()) {
+          llvm::IRBuilder<> CheckBuilder(Check);
+          llvm::Value *Matches = CheckBuilder.getTrue();
+          for (const auto &S : Candidates) {
+            auto *Pointer = CheckBuilder.CreateIntToPtr(
+                Call->getArgOperand(N + 4 + S.Argument),
+                CheckBuilder.getPtrTy());
+            // The contract supplies a readable extent. Compare every candidate
+            // byte including its terminator; snapshots never establish current
+            // memory contents. Unaligned integer loads are endian-aware.
+            for (size_t P = 0; P < S.Encoded.size();) {
+              unsigned Width = 8;
+              while (Width > S.Encoded.size() - P)
+                Width /= 2;
+              uint64_t Expected = 0;
+              for (unsigned J = 0; J < Width; ++J) {
+                unsigned Shift =
+                    M.getDataLayout().isLittleEndian() ? J : Width - 1 - J;
+                Expected |= uint64_t(uint8_t(S.Encoded[P + J])) << (Shift * 8);
+              }
+              auto *T = CheckBuilder.getIntNTy(Width * 8);
+              auto *Load = CheckBuilder.CreateAlignedLoad(
+                  T, slot(CheckBuilder, Pointer, P), llvm::Align(1),
+                  "string_bytes");
+              Load->setMetadata(llvm::LLVMContext::MD_noalias,
+                                Call->getMetadata("neverd.state.scope"));
+              Matches = CheckBuilder.CreateAnd(
+                  Matches,
+                  CheckBuilder.CreateICmpEQ(
+                      Load, llvm::ConstantInt::get(T, Expected)),
+                  "string_matches");
+              P += Width;
+            }
+          }
+          CheckBuilder.CreateCondBr(Matches, Then, Else);
+        }
         llvm::IRBuilder<> Known(Then), Unknown(Else);
         NativeCall(Known);
+        Known.CreateBr(Tail);
         auto *Status = OriginalCall(Unknown);
+        Unknown.CreateBr(Tail);
         auto *Merged = llvm::PHINode::Create(B.getInt64Ty(), 2, "call_status",
                                              Call->getIterator());
-        Merged->addIncoming(B.getInt64(0), Then->getParent());
-        Merged->addIncoming(Status, Else->getParent());
+        Merged->addIncoming(B.getInt64(0), Then);
+        Merged->addIncoming(Status, Else);
         Call->replaceAllUsesWith(Merged);
         ++R.RewrittenCalls;
         ++R.GuardedCalls;
