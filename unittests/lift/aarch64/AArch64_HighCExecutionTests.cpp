@@ -145,3 +145,19 @@ static double d10(double a, double b, double c, double d, double e, double f,
 )C",
       "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
 }
+
+// FCVTZS from a half register converts the half's value, which a float
+// holds exactly: the C converts it through float with the same saturation.
+TEST_F(AArch64_HighCExecution, AHalfConvertsToAnIntegerThroughFloat) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-march=armv8.2-a+fp16"}, R"C(
+int halfint(int a) {
+  unsigned short u = (unsigned short)a;
+  _Float16 h;
+  __builtin_memcpy(&h, &u, sizeof h);
+  return (int)h;
+}
+)C",
+      "halfint", {"halfint"},
+      {0, 0x0001, 0x3C00, 0x4300, 0xC100, 0x5640, 0x7BFF});
+}
