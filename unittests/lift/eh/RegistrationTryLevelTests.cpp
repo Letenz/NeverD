@@ -129,17 +129,31 @@ struct ImageBuilder {
     TextSeg.Name = ".text";
     TextSeg.VA = kText;
     TextSeg.Size = Text.size();
+    TextSeg.FileSz = TextSeg.Size;
     TextSeg.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
     TextSeg.Data = Text;
+    Section TextSection;
+    TextSection.Name = TextSeg.Name;
+    TextSection.VA = TextSeg.VA;
+    TextSection.Size = TextSection.FileSz = TextSeg.Size;
+    TextSection.Flags = TextSeg.Flags;
+    Img.Sections.push_back(std::move(TextSection));
     Img.Segments.push_back(std::move(TextSeg));
 
     Segment RDataSeg;
     RDataSeg.Name = ".rdata";
     RDataSeg.VA = kRData;
     RDataSeg.Size = std::max<size_t>(RData.size(), 16);
+    RDataSeg.FileSz = RDataSeg.Size;
     RDataSeg.Flags = SegmentFlags::Readable;
     RDataSeg.Data = RData;
     RDataSeg.Data.resize(RDataSeg.Size, 0);
+    Section RDataSection;
+    RDataSection.Name = RDataSeg.Name;
+    RDataSection.VA = RDataSeg.VA;
+    RDataSection.Size = RDataSection.FileSz = RDataSeg.Size;
+    RDataSection.Flags = RDataSeg.Flags;
+    Img.Sections.push_back(std::move(RDataSection));
     Img.Segments.push_back(std::move(RDataSeg));
 
     for (const auto &[Name, Addr] : Funcs) {

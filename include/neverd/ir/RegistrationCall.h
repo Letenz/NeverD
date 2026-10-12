@@ -58,6 +58,21 @@ struct RegistrationLocalUnwindContract {
   bool Indirect = false;
 };
 
+/// Source-byte evidence for the physical near CALL/RET protocol used by an
+/// ordinary invocation of an owned SEH finally. A stack-pop summary does not
+/// establish these instruction identities or their return-PC behavior.
+struct RegistrationSEHControlContract {
+  enum class Kind : uint8_t {
+    NearCall,
+    NearReturn,
+    NearJump
+  } Control = Kind::NearCall;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  va_t Target = InvalidVA;
+  bool operator==(const RegistrationSEHControlContract &) const = default;
+};
+
 /// A checked original callee's contract. A returning leaf may borrow ECX;
 /// a private throw/rethrow helper terminates without borrowing the parent.
 /// This is source evidence, not a compiler or native installation receipt.

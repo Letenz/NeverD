@@ -27,6 +27,8 @@ bool RegistrationStateSolver::transferOrdinaryFinally(
   // permission to emit a native call to a source-frame-sharing helper.
   if (CheckCalls)
     CompleteCalls = false;
+  if (SEHControls && !StackPops.count({Op.Inputs[0].Offset, false}))
+    return enterOrdinaryFinally(I, After, Op, Facts);
   const auto Refuse = [&] {
     Facts.Invalid = After.Unknown = true;
     After.Levels.clear();

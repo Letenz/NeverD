@@ -1,0 +1,127 @@
+//===- RegistrationSEHControl.cpp - Physical PE32 finally control ---------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "RegistrationABIPrivate.h"
+
+#include "neverd/ir/low/LowIR.h"
+#include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/support/BinaryEncoding.h"
+
+#include <map>
+#include <set>
+
+namespace neverd {
+namespace {
+std::optional<RegistrationSEHControlContract> nearJump(const BinaryImage &Image,
+                                                       va_t Address) {
+  const auto First = readImmutablePE32CodeBytes(Image, Address, 1, {});
+  if (!First || ((*First)[0] != 0xeb && (*First)[0] != 0xe9))
+    return std::nullopt;
+  const uint32_t Size = (*First)[0] == 0xeb ? 2 : 5;
+  const auto Bytes = readImmutablePE32CodeBytes(Image, Address, Size, {});
+  if (!Bytes)
+    return std::nullopt;
+  const int64_t Offset =
+      Size == 2 ? int8_t((*Bytes)[1]) : readLE<int32_t>(Bytes->data() + 1);
+  return RegistrationSEHControlContract{
+      RegistrationSEHControlContract::Kind::NearJump, Address, Address + Size,
+      uint32_t(Address + Size + Offset)};
+}
+} // namespace
+
+std::optional<std::vector<RegistrationSEHControlContract>>
+RegistrationCallCalleeIndex::sehControlContracts(const LowFunc &Function) {
+  std::vector<RegistrationSEHControlContract> Result;
+  if (Image.Arch != Arch::X86 || Image.Bits != Bitness::Bits32 ||
+      Image.Format != BinaryFormat::COFF || !Function.ExceptionMetadata ||
+      !Function.ExceptionMetadata->Registration ||
+      Function.ExceptionMetadata->Cxx)
+    return Result;
+  std::set<va_t> FinallyTargets;
+  std::map<int, const LowBlock *> Blocks;
+  std::map<va_t, RegistrationSEHControlContract> FoldedJumps;
+  for (const auto &Block : Function.Blocks)
+    if (!registration_abi::chargeCalleeWork(Work, 1) ||
+        !Blocks.emplace(Block.Id, &Block).second)
+      return std::nullopt;
+  for (const auto &Scope : Function.ExceptionMetadata->Registration->Scopes)
+    if (Scope.IsFinally)
+      FinallyTargets.insert(Scope.HandlerVA);
+  for (const auto &Block : Function.Blocks)
+    for (const auto &Insn : Block.InstructionBoundaries) {
+      if (!registration_abi::chargeCalleeWork(Work, 1 + Insn.Size))
+        return std::nullopt;
+      if (Insn.Address > UINT32_MAX || !Insn.Size ||
+          Insn.Size > uint64_t(UINT32_MAX) + 1 - Insn.Address ||
+          Insn.Mode != InstructionMode::Default ||
+          Insn.TargetMode != LowInstructionTargetMode::Preserve ||
+          hasLowInstructionControlFlag(
+              Insn.ControlFlags, LowInstructionControlFlag::Conditional) ||
+          hasLowInstructionControlFlag(
+              Insn.ControlFlags, LowInstructionControlFlag::InstructionGuard))
+        continue;
+      if (Insn.Control != LowInstructionControl::Return &&
+          (Insn.Control != LowInstructionControl::Call || !Insn.Immediate ||
+           !FinallyTargets.count(*Insn.Immediate)))
+        continue;
+      const auto Bytes =
+          readImmutablePE32CodeBytes(Image, Insn.Address, Insn.Size, {});
+      if (!Bytes)
+        continue;
+      RegistrationSEHControlContract C;
+      C.Address = Insn.Address;
+      C.EndAddress = Insn.Address + Insn.Size;
+      if (Insn.Control == LowInstructionControl::Call) {
+        if (Bytes->size() != 5 || (*Bytes)[0] != 0xe8)
+          continue;
+        C.Target = uint32_t(C.EndAddress +
+                            int64_t(readLE<int32_t>(Bytes->data() + 1)));
+        if (C.Target != *Insn.Immediate)
+          continue;
+      } else {
+        if (!((Bytes->size() == 1 && (*Bytes)[0] == 0xc3 && !Insn.Immediate) ||
+              (Bytes->size() == 3 && (*Bytes)[0] == 0xc2 &&
+               readLE<uint16_t>(Bytes->data() + 1) == 0 &&
+               Insn.Immediate == 0)))
+          continue;
+        C.Control = RegistrationSEHControlContract::Kind::NearReturn;
+      }
+      Result.push_back(C);
+      if (C.Control == RegistrationSEHControlContract::Kind::NearCall &&
+          Block.Succs.size() == 1 && Blocks.count(Block.Succs.front())) {
+        const va_t Resume = Blocks.at(Block.Succs.front())->StartAddr;
+        va_t Next = C.EndAddress;
+        std::set<va_t> Seen;
+        std::vector<RegistrationSEHControlContract> Path;
+        while (Next != Resume && Seen.size() < 64 && Seen.insert(Next).second) {
+          if (!registration_abi::chargeCalleeWork(Work, 6))
+            return std::nullopt;
+          if (!Function.ExceptionMetadata->CodeRange.contains(Next))
+            break;
+          const auto Jump = nearJump(Image, Next);
+          if (!Jump ||
+              Jump->EndAddress > Function.ExceptionMetadata->CodeRange.End)
+            break;
+          Path.push_back(*Jump);
+          Next = Jump->Target;
+        }
+        // A folded successor needs the entire original jump path. A checked
+        // prefix alone does not authenticate the physical return continuation.
+        if (Next == Resume)
+          for (const auto &Jump : Path) {
+            const auto [It, New] = FoldedJumps.emplace(Jump.Address, Jump);
+            if (!New && It->second != Jump)
+              return std::nullopt;
+          }
+      }
+    }
+  for (const auto &[Address, Jump] : FoldedJumps)
+    Result.push_back(Jump);
+  return Result;
+}
+
+} // namespace neverd

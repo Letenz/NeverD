@@ -53,6 +53,15 @@ void RegistrationStateSolver::merge(size_t Target, const Domain &Source) {
     Changed |= Before != Dest.Levels.size();
     Changed |= Dest.Frame.merge(Source.Frame);
     Changed |= Dest.RuntimeObject.merge(Source.RuntimeObject);
+    if (Dest.OrdinaryCallStack &&
+        Dest.OrdinaryCallStack != Source.OrdinaryCallStack) {
+      Dest.OrdinaryCallStack.reset();
+      Changed = true;
+    }
+    if (Dest.StackRestore && Dest.StackRestore != Source.StackRestore) {
+      Dest.StackRestore.reset();
+      Changed = true;
+    }
     for (auto It = Dest.InitializedFrameBytes.begin();
          It != Dest.InitializedFrameBytes.end();)
       if (!Source.InitializedFrameBytes.count(*It)) {

@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationFrameEffects.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/lift/X86Regs.h"
@@ -43,51 +44,14 @@ bool RegistrationStateSolver::runLocalFinally(va_t Target, FrameState &Parent,
     FrameState State = Incoming.at(I);
     FrameTransfer Transfer(State, *Chain.RegistrationOffset);
     const auto &Block = Function.Blocks[I];
-    if (OrdinaryInvocation) {
-      if (!charge(Block.Ops.size() + Block.InstructionBoundaries.size() +
-                  Block.Succs.size() + 1))
-        return false;
-      if (auto Error = validateLowInstructionBoundaries(
-              Block, LowInstructionBoundaryRequirement::Required)) {
-        llvm::consumeError(std::move(Error));
-        return false;
-      }
-      for (const auto &Insn : Block.InstructionBoundaries)
-        if (Insn.Mode != InstructionMode::Default ||
-            Insn.TargetMode != LowInstructionTargetMode::Preserve ||
-            (&Insn != &Block.InstructionBoundaries.back() &&
-             Insn.Control != LowInstructionControl::None))
-          return false;
-      std::set<va_t> Actual, Expected;
-      for (int Next : Block.Succs) {
-        const auto Successor = Index.find(Next);
-        if (Successor == Index.end() ||
-            !Actual.insert(Function.Blocks[Successor->second].StartAddr).second)
-          return false;
-      }
-      const auto Control = Block.InstructionBoundaries.back().Control;
-      if (Control == LowInstructionControl::Branch && !Block.Ops.empty()) {
-        const auto &Branch = Block.Ops.back();
-        const bool Conditional = Branch.Opcode == NdOp::COND_BR;
-        if ((!Conditional && Branch.Opcode != NdOp::BRANCH) ||
-            Branch.NumInputs != (Conditional ? 2 : 1) ||
-            !Branch.Inputs[0].isConst() || Branch.Inputs[0].Size != 4)
-          return false;
-        Expected.insert(Branch.Inputs[0].Offset);
-        if (Conditional)
-          Expected.insert(Block.EndAddr);
-      } else if (Control == LowInstructionControl::None)
-        Expected.insert(Block.EndAddr);
-      else if (Control != LowInstructionControl::Return)
-        return false;
-      if (Actual != Expected)
-        return false;
-    }
+    if (OrdinaryInvocation && !validateSEHInvocationBlock(I))
+      return false;
     bool HasReturn = false;
     for (const auto &Op : Block.Ops) {
       if (!charge(1 + State.cellCount() + Op.Output.Size) ||
           Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
-          Op.Opcode == NdOp::INTRINSIC || Op.Opcode == NdOp::INDIR_BR ||
+          (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
+          Op.Opcode == NdOp::INDIR_BR ||
           Op.MemoryOrdering != NdMemoryOrdering::None)
         return false;
       const auto Source = Boundaries.find(Op.Addr);

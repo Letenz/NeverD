@@ -6,6 +6,7 @@
 
 #include "RegistrationABIPrivate.h"
 #include "RegistrationFrame.h"
+#include "RegistrationFrameEffects.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
@@ -112,7 +113,9 @@ bool hasPrivateCallerFrame(const LowFunc &Function, const BinaryImage &Image,
       size_t RegisterBytes = Op.Output.Size;
       for (unsigned Index = 0; Index != Op.NumInputs; ++Index)
         RegisterBytes += Op.Inputs[Index].Size;
-      if (!Charge(1 + RegisterBytes) || Op.Opcode == NdOp::INTRINSIC ||
+      if (!Charge(1 + RegisterBytes) ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !registration_state::isFramePreservingIntrinsic(Op)) ||
           Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return false;
       Transfer.beginInstruction(Op.Addr);

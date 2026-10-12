@@ -119,7 +119,7 @@ TEST(RegistrationState, OrdinaryFinallyReturnsItsCheckedFrameEffects) {
     if (Mutation >= 17 && Mutation <= 21) {
       auto &Branch = Finally.Ops.back();
       Branch.Opcode = NdOp::COND_BR;
-      Branch.addInput(NdVar::cst(Address + 16, 4));
+      Branch.addInput(NdVar::cst(Address + 16, 8));
       Branch.addInput(NdVar::reg(x86reg::ZF, 1));
       auto &Insn = Finally.InstructionBoundaries.back();
       Insn.Control = LowInstructionControl::Branch;

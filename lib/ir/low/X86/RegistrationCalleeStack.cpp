@@ -6,6 +6,7 @@
 
 #include "RegistrationABIPrivate.h"
 #include "RegistrationFrame.h"
+#include "RegistrationFrameEffects.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/lift/X86Regs.h"
@@ -159,7 +160,9 @@ stackPopForBody(StackBody &Body, va_t Entry,
       size_t Width = Op.Output.Size;
       for (unsigned I = 0; I != Op.NumInputs; ++I)
         Width += Op.Inputs[I].Size;
-      if (!chargeCalleeWork(Work, 1 + Width) || Op.Opcode == NdOp::INTRINSIC)
+      if (!chargeCalleeWork(Work, 1 + Width) ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !registration_state::isFramePreservingIntrinsic(Op)))
         return std::nullopt;
       Transfer.beginInstruction(Op.Addr);
       if (Op.Opcode == NdOp::RETURN) {
@@ -224,11 +227,63 @@ bool isPE32(const BinaryImage &Image) {
          Image.Format == BinaryFormat::COFF;
 }
 
+bool preservesFinallyFrame(StackBody &Body, va_t Entry) {
+  if (!Body.Valid || !Body.Entries.count(Entry))
+    return false;
+  std::vector<int> Pending{Body.Entries.at(Entry)};
+  std::set<int> Seen;
+  while (!Pending.empty()) {
+    const int Id = Pending.back();
+    Pending.pop_back();
+    if (!chargeCalleeWork(Body.Work, 1) || !Body.Blocks.count(Id))
+      return false;
+    if (!Seen.insert(Id).second)
+      continue;
+    const auto &Block = *Body.Blocks.at(Id);
+    for (const auto &Op : Block.Ops) {
+      if (!chargeCalleeWork(Body.Work, 1) || Op.Opcode == NdOp::CALL ||
+          Op.Opcode == NdOp::INDIR_CALL ||
+          (Op.Opcode == NdOp::INTRINSIC &&
+           !registration_state::isFramePreservingIntrinsic(Op)) ||
+          Op.Opcode == NdOp::INDIR_BR ||
+          (Op.Output.isReg() && Op.Output.Size &&
+           Op.Output.Offset < x86reg::RBP + 4 &&
+           x86reg::RBP < Op.Output.Offset + Op.Output.Size))
+        return false;
+    }
+    if (!chargeCalleeWork(Body.Work, Block.Succs.size()))
+      return false;
+    Pending.insert(Pending.end(), Block.Succs.begin(), Block.Succs.end());
+  }
+  return true;
+}
+
 std::optional<uint32_t> stackPopForRegistration(
     StackBody &Body, const LowFunc &Function,
     const std::function<std::optional<uint32_t>(va_t)> &NestedPop) {
   const auto &EH = Function.ExceptionMetadata;
   const auto &States = Function.RegistrationStates;
+  // A termination-only frame has no dispatcher-entered parent body. Its
+  // ordinary entry and near returns can therefore use the register-only
+  // proof directly, even when an incoming object prevents a memory proof.
+  // Each separately called finally still needs its own checked returning
+  // stack proof. A nonlocal finally cannot obtain one by this route.
+  if (Body.Valid && EH && EH->Registration && !EH->Cxx &&
+      EH->ParseStatus == ExceptionParseStatus::Complete &&
+      !EH->Registration->RealignedFrame && !EH->Registration->Scopes.empty() &&
+      llvm::all_of(EH->Registration->Scopes,
+                   [](const auto &Scope) { return Scope.IsFinally; })) {
+    for (const auto &Scope : EH->Registration->Scopes) {
+      if (!chargeCalleeWork(Body.Work, 1) || Scope.FilterVA ||
+          !EH->CodeRange.contains(Scope.HandlerVA) ||
+          !preservesFinallyFrame(Body, Scope.HandlerVA))
+        return std::nullopt;
+      const auto Pop = NestedPop(Scope.HandlerVA);
+      if (!Pop || *Pop != 0)
+        return std::nullopt;
+    }
+    return stackPopForBody(Body, Function.Entry, NestedPop);
+  }
   if (!Body.Valid || !EH || !EH->Registration || EH->Cxx ||
       EH->Registration->RealignedFrame || !States || !States->Complete ||
       !States->CallbackStatesComplete ||

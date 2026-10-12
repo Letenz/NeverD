@@ -41,6 +41,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
     std::optional<std::vector<RegistrationCleanupFrameContract>> Cleanups;
     std::optional<std::vector<RegistrationCalleeStackContract>> Stacks;
     std::optional<std::vector<RegistrationLocalUnwindContract>> LocalUnwinds;
+    std::optional<std::vector<RegistrationSEHControlContract>> SEHControls;
     const bool CheckCalls = CurrentImg && Metadata.Cxx.has_value();
     RegistrationCallCalleeIndex *CalleeIndex = nullptr;
     if (CurrentImg) {
@@ -55,6 +56,7 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
       }
       Stacks = CalleeIndex->stackContracts(Func);
       LocalUnwinds = CalleeIndex->localUnwindContracts(Func);
+      SEHControls = CalleeIndex->sehControlContracts(Func);
     }
     if (CheckCalls) {
       Callees = CalleeIndex->contracts(Func);
@@ -76,7 +78,14 @@ void CFGBuilder::linkExceptionalSuccessors(LowFunc &Func) {
             : 0,
         CookieCheckVA, CheckCalls && Callees ? &*Callees : nullptr,
         CheckCalls && Cleanups ? &*Cleanups : nullptr,
-        Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr);
+        Stacks ? &*Stacks : nullptr, LocalUnwinds ? &*LocalUnwinds : nullptr,
+        SEHControls ? &*SEHControls : nullptr);
+    if (CurrentImg && !SEHControls) {
+      Func.RegistrationStates->Complete = false;
+      Func.RegistrationStates->SEHInvocationExitsComplete = false;
+      Func.RegistrationStates->Diagnostics.push_back(
+          "SEH physical-control proof budget exhausted");
+    }
     if (CurrentImg && !LocalUnwinds) {
       Func.RegistrationStates->Complete = false;
       Func.RegistrationStates->Diagnostics.push_back(

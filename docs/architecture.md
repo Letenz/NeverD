@@ -5091,4 +5091,39 @@ native ABI. Nonlocal restoration, calls inside a finally and jump-buffer
 resumption still require a separate invocation-exit contract; the PE32 xcpt4
 case remains incomplete.
 
+`RegistrationSEHControl` authenticates the actual PE32 near CALL and RET bytes.
+When LowIR has folded the return continuation, it retains the complete immutable
+near-jump path from the physical return PC to the normalized successor. A prefix,
+cycle, far jump or unavailable source bytes supply no continuation authority.
+A CALL and its tail jump may occupy the same LowIR block; that tail must contain
+only the matching authenticated branch, without additional register or memory
+effects. The physical return PC remains before the jump.
+`RegistrationStateSEHExit` distinguishes each ordinary call from runtime
+activations. An inspected near return restores its caller's stack; an inspected
+parent jump must restore the actual SavedESP and reach ordinary parent code or a
+checked except body. A load into a temporary followed by a copy into ESP binds
+the exact adjacent producer in the same instruction, including the source slot,
+width and micro-operation identity. Budget exhaustion withdraws invocation-exit
+completeness and any previously published exits. These are source-analysis
+receipts. CFG/SSA continuation
+consumers and native replacement receipts remain required; the native emitter
+refuses the new physical invocation exits until those obligations are complete.
+The PE32 xcpt4 issue remains open, including jump-buffer and incoming-object
+effects.
+
+`RegistrationFrameEffects` owns the integer-frame effect of the exact void
+`X87Wait` intrinsic. WAIT retains its x87 side effect and possible exception
+dispatch while preserving GPRs and frame memory. State propagation, finally
+inspection and callee frame/stack checks use the same predicate. An altered
+intrinsic identity, operand shape, output, address space or ordering grants no
+such effect.
+
+A termination-only SEH function has no dispatcher-entered except body. Its
+returning-stack proof follows its ordinary entry and checks every finally's
+actual near return independently. A finally that writes the established frame
+register, makes an unchecked nested call or abandons its invocation stack cannot
+use this route. An incoming object can still prevent a memory-effect proof:
+the returning-stack contract grants no initialized object borrow or saved-memory
+preservation.
+
 `RegistrationScopeGraph` shares the EH3/EH4 index and frame-sentinel rules between COFF parsing and LowIR. State analysis revalidates initial levels, backward enclosing links, handler presence and filter/finally roles before publishing facts. An initially active scope retains its frame sentinel; an empty table admits only that sentinel. Instruction bytes, executable ownership and frame installation retain their separate proofs. Scope handler and filter addresses must also fit the PE32 pointer width.

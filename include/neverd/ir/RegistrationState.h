@@ -156,6 +156,24 @@ struct RegistrationRuntimeObjectAccess {
   bool operator==(const RegistrationRuntimeObjectAccess &) const = default;
 };
 
+/// A physical SEH finally invocation ends either by consuming its own near
+/// return PC or by restoring the checked parent SavedESP and branching to an
+/// exact parent instruction. CallVA is zero for a runtime invocation. These
+/// facts authorize state/CFG flow, not native replacement of the invocation.
+struct RegistrationSEHInvocationExit {
+  enum class Kind : uint8_t { NearReturn, ParentJump } Exit = Kind::NearReturn;
+  va_t EntryVA = InvalidVA;
+  va_t CallVA = 0;
+  va_t Address = InvalidVA;
+  va_t EndAddress = InvalidVA;
+  int OpSeq = -1;
+  va_t TargetVA = InvalidVA;
+  va_t StackRestoreVA = InvalidVA;
+  int StackRestoreSeq = -1;
+  int32_t StackOffset = 0;
+  bool operator==(const RegistrationSEHInvocationExit &) const = default;
+};
+
 struct RegistrationStateAnalysis {
   std::vector<RegistrationBlockState> Blocks;
   bool Complete = false;
@@ -163,6 +181,9 @@ struct RegistrationStateAnalysis {
   bool RegistrationLifetimeComplete = false;
   bool CxxContinuationsComplete = true;
   std::vector<RegistrationCxxContinuation> CxxContinuations;
+  bool SEHInvocationExitsComplete = true;
+  std::vector<RegistrationSEHControlContract> SEHControls;
+  std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
   /// Complete chain access ownership, including decoded boundaries and
   /// operation identities, available only with a complete registration
   /// lifetime and callback state proof. This is not a native output receipt.
@@ -261,7 +282,8 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeFrameContract> *Callees = nullptr,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups = nullptr,
     const std::vector<RegistrationCalleeStackContract> *Stacks = nullptr,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr);
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds = nullptr,
+    const std::vector<RegistrationSEHControlContract> *SEHControls = nullptr);
 
 /// Return exact address intervals only if every reaching state agrees about
 /// membership. An ambiguous join cannot be flattened into a lexical try range.

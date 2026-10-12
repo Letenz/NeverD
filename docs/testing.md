@@ -5051,6 +5051,30 @@ The committed-write observer regressions verify visibility before the next instr
 
 `RegistrationTryLevel.EH4Publication*` and `EH4CookieStoresMustOwnDistinctPrivateBytes` check direct PE32 EH4 frames with ADD/SUB allocation, saved registers, pushed cookies and disp8/disp32 cookie stores. Changed sources, offsets, overlapping cookies and writes into saved registers or runtime administration must be rejected; shared LowIR independently verifies values and lifetime.
 
+`RegistrationSEHControl` checks actual immutable PE32 near-call/return bytes and
+complete folded return-jump paths, including short and near jumps. Far controls,
+writable or partial code, changed targets, cycles and incomplete jump prefixes
+must not provide physical continuation evidence. `RegistrationState` exercises
+ordinary finally returns and SavedESP parent jumps independently, including
+unowned callback interiors, CALL blocks that include a tail jump, and folded
+continuation receipts. The SavedESP-copy cases require the exact adjacent load
+producer, source slot, width and micro-operation sequence. Changed temporaries,
+sources or address spaces cannot supply a restore. The WAIT cases retain the
+original intrinsic and dispatch eligibility in both invocation analysis and
+returning-body inspection; altered identities or operand shapes refuse. Budget
+exhaustion must withdraw exit completeness and any published exit records.
+PE32 LowIR branch
+targets use 64-bit code-address constants; they must still fit the 32-bit address
+space. Data-pointer width is not the branch-address representation.
+
+`RegistrationCallABI.TerminationOnlyStackProofDoesNotGrantAnObjectBorrow` checks
+an incoming-object conditional finally separately from its returning-stack
+contract. Far returns, unknown stack restoration, malformed metadata, writable
+code, changed frame registers and nested calls that only have a pop summary
+refuse. This regression does not certify the helper's object-memory effects.
+The public xcpt4 PE32 and PE64 issue tests remain separate required acceptance
+checks; passing these focused tests does not close either issue.
+
 `PipelineOutcome.SourceEHRefusalsAgreeAcrossSingleAndShardedEmission` checks optimized and unoptimized source projection across PE32, ELF and Mach-O on x86, x64 and AArch64. Single-function and sharded LLVM emission retain the same explicit incomplete native EH contract; binary rewriting still rejects it.
 
 `RegistrationCallNoReturn` rejects changed instruction extents, targets, operation ranges, conditional calls and foreign architecture/format use. The realigned PE32 probe checks both an independently terminal decoded call and a retained fallthrough requiring a current receipt; invalid memory evidence cannot recreate an already absent ordinary edge.

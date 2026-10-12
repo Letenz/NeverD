@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "RegistrationFrameEffects.h"
 #include "RegistrationStateSolver.h"
 
 #include "neverd/Limits.h"
@@ -43,6 +44,12 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     After.Unknown = true;
     After.Levels.clear();
   };
+  if (SEHControls && !KnownCxx && Before.Callback && Before.Activation.Entry &&
+      FinallyTargets.count(*Before.Activation.Entry) &&
+      !validateSEHInvocationBlock(I)) {
+    Invalidate();
+    Result.SEHInvocationExitsComplete = false;
+  }
   for (const LowOp &Op : Block.Ops) {
     Transfer.beginInstruction(Op.Addr);
     RuntimeTransfer.beginInstruction(Op.Addr);
@@ -81,9 +88,15 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         if (RuntimeTransfer.read(Op.Inputs[Input]).MayBeFrame)
           CompleteRuntimeObjects = false;
     recordCatchReturn(I, After, Op, Transfer, Facts, CatchReturn);
-    if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN &&
-        (!callbackCanReturn(After) || !callbackReturnInstruction(I, Op)))
-      Invalidate();
+    if (!KnownCxx && After.Callback && Op.Opcode == NdOp::RETURN) {
+      if (!callbackCanReturn(After) || !callbackReturnInstruction(I, Op)) {
+        Invalidate();
+        if (SEHControls)
+          Result.SEHInvocationExitsComplete = false;
+      } else
+        Facts.CallbackReturnAtExit = true;
+    }
+    transferSEHExit(I, After, Op, Facts);
     // Different activations can execute the same source occurrence. Remember
     // scalar/unknown observations too: a frame value in only one invocation
     // cannot authorize an exact frame projection for the shared instruction.
@@ -116,7 +129,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     if (Exhausted)
       break;
 
-    if (EH4 && Op.Opcode == NdOp::INTRINSIC)
+    if (EH4 && Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op))
       CompleteCookies = false;
     if (EH4 && Memory.Address &&
         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
@@ -168,7 +181,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
             RegistrationCookieCheck{
                 Op.Addr, Op.Addr + Boundary->second.second.Size, Op.Seq});
     }
-    if (Op.Opcode == NdOp::INTRINSIC) {
+    if (Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) {
       CompleteImageReads = false;
       if (CheckCalls) {
         CompleteCalls = false;
@@ -406,6 +419,21 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
       }
     if (auto SP = transferLocalUnwind(I, After, Op, Facts))
       CallSP = *SP;
+    if (SEHControls && !KnownCxx && Before.Callback &&
+        Before.Activation.Entry &&
+        FinallyTargets.count(*Before.Activation.Entry) &&
+        ((Op.Opcode == NdOp::INTRINSIC && !isFramePreservingIntrinsic(Op)) ||
+         ((Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) &&
+          !LocalUnwindTargets.count({Op.NumInputs && Op.Inputs[0].isConst()
+                                         ? Op.Inputs[0].Offset
+                                         : InvalidVA,
+                                     Op.Opcode == NdOp::INDIR_CALL})))) {
+      // A returning stack declaration does not bound effects on the parent
+      // or on the suspended invocation. Other runtime calls need their own
+      // argument and callback contracts before they can enter this domain.
+      Invalidate();
+      Result.SEHInvocationExitsComplete = false;
+    }
     // The CFG's exact instruction already owns the no-return decision.
     // A missing memory-borrow contract cannot create an ordinary return from
     // it. Keep transferCall's refusal and the exceptional dispatch below.
@@ -445,6 +473,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
         CallSP = Transfer.evaluate(Adjust, After.Installed);
       }
     }
+    recordSEHStackRestore(Op, After, Transfer, Value);
     Transfer.write(Op, Value, CookieCheckVA);
     if (CheckRuntimeObjects) {
       RuntimeTransfer.write(Op, RuntimeValue);
@@ -497,7 +526,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
   Facts.InstalledAtExit = After.Installed;
   Facts.CxxContinuationAtExit = CatchReturn.has_value();
   Facts.NoReturnAtExit = NoReturnAtExit;
-  if (!NoReturnAtExit) {
+  if (!NoReturnAtExit && !Facts.InvocationAtExit) {
     for (int Successor : Block.Succs) {
       auto It = Index.find(Successor);
       if (It == Index.end()) {

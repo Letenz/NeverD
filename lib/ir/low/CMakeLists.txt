@@ -25,6 +25,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateCookies.cpp
   X86/RegistrationStateDispatch.cpp
   X86/RegistrationStateFinallyCall.cpp
+  X86/RegistrationStateSEHExit.cpp
   X86/RegistrationStateLocalUnwind.cpp
   X86/RegistrationStateOccurrences.cpp
   X86/RegistrationStateOrder.cpp
@@ -69,6 +70,7 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCalleeFrame.cpp
   X86/RegistrationCalleeIndex.cpp
   X86/RegistrationCalleeStack.cpp
+  X86/RegistrationSEHControl.cpp
   X86/RegistrationCallerABI.cpp
   X86/RegistrationEntryABI.cpp
   NdOpEmulator.cpp

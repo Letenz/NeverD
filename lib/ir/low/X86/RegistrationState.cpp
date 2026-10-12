@@ -20,11 +20,12 @@ RegistrationStateSolver::RegistrationStateSolver(
     const std::vector<RegistrationCalleeFrameContract> *Callees,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds)
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *SEHControls)
     : Function(Function), EH(*Function.ExceptionMetadata),
       Chain(*EH.Registration), SecurityCookieVA(SecurityCookieVA),
       CookieCheckVA(CookieCheckVA), Callees(Callees), Cleanups(Cleanups),
-      Stacks(Stacks), LocalUnwinds(LocalUnwinds),
+      Stacks(Stacks), LocalUnwinds(LocalUnwinds), SEHControls(SEHControls),
       KnownCxx(EH.Encoding == ExceptionEncoding::X86CxxFuncInfo &&
                (EH.Personality == ExceptionPersonality::CxxFrameHandlerX86 ||
                 EH.Personality == ExceptionPersonality::CxxFrameHandler3)),
@@ -47,6 +48,17 @@ RegistrationStateAnalysis RegistrationStateSolver::run() {
   }
   if (!initializeContracts())
     return std::move(Result);
+  if (SEHControls) {
+    for (const auto &Control : *SEHControls)
+      if (!charge(1) || Control.Address >= Control.EndAddress ||
+          !SEHControlIndex.emplace(Control.Address, Control).second) {
+        Result.SEHInvocationExitsComplete = false;
+        Result.Diagnostics.push_back(
+            "SEH physical control evidence is invalid");
+        return std::move(Result);
+      }
+    Result.SEHControls = *SEHControls;
+  }
   initializeCookies();
   collectOccurrences();
   seedEntries();
@@ -199,6 +211,8 @@ bool RegistrationStateSolver::initialize() {
 bool RegistrationStateSolver::charge(size_t Amount) {
   if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
     Exhausted = true;
+    Result.SEHInvocationExitsComplete = false;
+    Result.SEHInvocationExits.clear();
     return false;
   }
   WorkUsed += Amount;
@@ -213,12 +227,13 @@ RegistrationStateAnalysis analyzeRegistrationStates(
     const std::vector<RegistrationCalleeFrameContract> *Callees,
     const std::vector<RegistrationCleanupFrameContract> *Cleanups,
     const std::vector<RegistrationCalleeStackContract> *Stacks,
-    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds) {
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *SEHControls) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->Registration)
     return {};
   return registration_state::RegistrationStateSolver(
              Function, SecurityCookieVA, CookieCheckVA, Callees, Cleanups,
-             Stacks, LocalUnwinds)
+             Stacks, LocalUnwinds, SEHControls)
       .run();
 }
 } // namespace neverd

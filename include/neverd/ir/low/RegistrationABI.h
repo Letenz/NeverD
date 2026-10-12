@@ -25,7 +25,9 @@ struct LowFunc;
 /// retain no memory values. SEH bodies also require complete current
 /// registration state/lifetime evidence to separate dispatcher returns and
 /// seed established EBP at except entries. Neither route infers saved-stack
-/// memory values or grants memory-effect authority.
+/// memory values or grants memory-effect authority. A termination-only SEH
+/// frame has no exceptional parent entry and uses the ordinary register-only
+/// proof, including a separate proof for every called finally.
 std::optional<uint32_t>
 getCheckedX86CalleeStackPop(const BinaryImage &Image, va_t Target,
                             size_t *CumulativeWork = nullptr);
@@ -151,6 +153,8 @@ public:
   stackContracts(const LowFunc &Function);
   std::optional<std::vector<RegistrationLocalUnwindContract>>
   localUnwindContracts(const LowFunc &Function);
+  std::optional<std::vector<RegistrationSEHControlContract>>
+  sehControlContracts(const LowFunc &Function);
 
 private:
   const BinaryImage &Image;

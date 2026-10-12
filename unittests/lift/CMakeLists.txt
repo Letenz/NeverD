@@ -1,5 +1,6 @@
 add_neverd_unittest(NeverDSEHRuntimeMemoryTests
   eh/SEHRuntimeMemoryTests.cpp
+  eh/RegistrationSEHControlTests.cpp
   LINK_COMPONENTS Pipeline)
 target_include_directories(NeverDSEHRuntimeMemoryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/pipeline)
@@ -1316,6 +1317,7 @@ add_neverd_unittest(NeverDNoReturnTests
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
   eh/RegistrationOrdinaryFinallyTests.cpp
+  eh/RegistrationSEHInvocationTests.cpp
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationCxxSearchTests.cpp

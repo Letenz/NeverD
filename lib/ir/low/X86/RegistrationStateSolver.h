@@ -50,6 +50,7 @@ struct CxxCatchContext {
 struct SEHActivation {
   std::optional<va_t> Entry;
   bool SearchFilter = false;
+  va_t OrdinaryCall = 0;
   auto operator<=>(const SEHActivation &) const = default;
 };
 
@@ -69,6 +70,14 @@ struct Domain {
   bool Uninstalled = false;
   bool Installed = false;
   bool CanDispatch = false;
+  std::optional<int32_t> OrdinaryCallStack;
+  struct ParentStackRestore {
+    va_t Address = InvalidVA;
+    int Seq = -1;
+    int32_t StackOffset = 0;
+    bool operator==(const ParentStackRestore &) const = default;
+  };
+  std::optional<ParentStackRestore> StackRestore;
   size_t catchCellCount() const {
     size_t Count = 0;
     for (const auto &Stack : CxxCatchStacks)
@@ -83,6 +92,8 @@ struct BlockFacts {
   bool InstalledAtExit = false;
   bool CxxContinuationAtExit = false;
   bool NoReturnAtExit = false;
+  bool InvocationAtExit = false;
+  bool CallbackReturnAtExit = false;
 };
 
 struct ActivationState {
@@ -103,7 +114,8 @@ public:
       const std::vector<RegistrationCalleeFrameContract> *Callees,
       const std::vector<RegistrationCleanupFrameContract> *Cleanups,
       const std::vector<RegistrationCalleeStackContract> *Stacks,
-      const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds);
+      const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+      const std::vector<RegistrationSEHControlContract> *SEHControls);
   RegistrationStateAnalysis run();
 
 private:
@@ -139,6 +151,15 @@ private:
   bool transferOrdinaryFinally(size_t I, Domain &After, const LowOp &Op,
                                BlockFacts &Facts,
                                std::optional<FrameValue> &ReturnedSP);
+  bool enterOrdinaryFinally(size_t I, const Domain &Before, const LowOp &Op,
+                            BlockFacts &Facts);
+  std::optional<va_t> sehCallContinuation(va_t Call);
+  bool validateSEHInvocationBlock(size_t I);
+  bool transferSEHExit(size_t I, Domain &After, const LowOp &Op,
+                       BlockFacts &Facts);
+  void recordSEHStackRestore(const LowOp &Op, Domain &After,
+                             const FrameTransfer &Transfer,
+                             const FrameValue &Value);
   bool runLocalFinally(va_t Target, FrameState &Parent,
                        bool OrdinaryInvocation = false);
   void
@@ -193,6 +214,7 @@ private:
   const std::vector<RegistrationCleanupFrameContract> *Cleanups;
   const std::vector<RegistrationCalleeStackContract> *Stacks;
   const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds;
+  const std::vector<RegistrationSEHControlContract> *SEHControls;
   const bool KnownCxx;
   const bool EH4;
   const bool CheckCalls;
@@ -206,6 +228,7 @@ private:
   std::map<va_t, RegistrationTryLevelStore> Stores;
   std::set<int32_t> AllLevels;
   std::set<va_t> FinallyTargets;
+  std::set<va_t> SEHParentEntries;
   std::vector<std::map<SEHActivation, ActivationState>> States;
   std::vector<size_t> Order;
   std::set<std::tuple<size_t, size_t, SEHActivation>> Work;
@@ -222,6 +245,10 @@ private:
   std::map<std::pair<va_t, bool>, uint32_t> StackPops;
   std::set<std::pair<va_t, bool>> LocalUnwindTargets;
   bool FailedLocalUnwind = false;
+  std::map<va_t, RegistrationSEHControlContract> SEHControlIndex;
+  using SEHExitKey = std::tuple<va_t, va_t, va_t, int>;
+  std::map<SEHExitKey, RegistrationSEHInvocationExit> SEHExits;
+  std::set<SEHExitKey> InvalidSEHExits;
   std::map<uint32_t, uint32_t> CleanupIndices;
   bool CompleteCalls;
   bool CompleteCleanups;

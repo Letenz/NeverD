@@ -62,6 +62,14 @@ bool RegistrationStateSolver::callbackReturnInstruction(size_t I,
       Boundary == Boundaries.end() || Boundary->second.first != Block.Id)
     return false;
   const auto &Insn = Boundary->second.second;
+  if (SEHControls && !KnownCxx) {
+    const auto Control = SEHControlIndex.find(Op.Addr);
+    if (Control == SEHControlIndex.end() ||
+        Control->second.Control !=
+            RegistrationSEHControlContract::Kind::NearReturn ||
+        Control->second.EndAddress != Block.EndAddr)
+      return false;
+  }
   return Insn.Control == LowInstructionControl::Return &&
          !hasLowInstructionControlFlag(
              Insn.ControlFlags, LowInstructionControlFlag::Conditional) &&

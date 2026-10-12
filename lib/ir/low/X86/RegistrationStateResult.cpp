@@ -35,6 +35,9 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     CompleteCxxContinuations &= Entries.count(Continuation.TargetVA) != 0;
   }
   Result.CxxContinuationsComplete = CompleteCxxContinuations;
+  if (Result.SEHInvocationExitsComplete)
+    for (const auto &[Identity, Exit] : SEHExits)
+      Result.SEHInvocationExits.push_back(Exit);
   for (size_t I = 0; I < Function.Blocks.size(); ++I) {
     const LowBlock &Block = Function.Blocks[I];
     std::set<int32_t> Levels;
@@ -79,9 +82,13 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
           std::min(Minimum, EH.Cxx ? cxxMinimumTryLevel(State, *EH.Cxx) : 0);
       if (State.Callback && !State.Parent && Unproven)
         Result.CallbackStatesComplete = false;
+      if (SEHControls && !KnownCxx && State.Callback && State.Reached &&
+          Block.Succs.empty() && !Facts.CallbackReturnAtExit &&
+          !Facts.InvocationAtExit && !Facts.NoReturnAtExit)
+        Result.SEHInvocationExitsComplete = false;
       if (State.Parent && State.Reached &&
           (Unproven || (Block.Succs.empty() && Facts.InstalledAtExit &&
-                        !Facts.NoReturnAtExit)))
+                        !Facts.NoReturnAtExit && !Facts.InvocationAtExit)))
         Result.RegistrationLifetimeComplete = false;
       if (!State.CxxCatchStacks.empty() && State.Reached &&
           Block.Succs.empty() && !Facts.CxxContinuationAtExit &&
@@ -120,6 +127,13 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
                              {CatchStacks.begin(), CatchStacks.end()}});
   }
   Result.RegistrationLifetimeComplete &= Result.CxxContinuationsComplete;
+  if (!Result.SEHInvocationExitsComplete) {
+    Result.SEHInvocationExits.clear();
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
+    Result.Diagnostics.push_back(
+        "SEH invocation exit or parent stack is not proven");
+  }
   if (!Result.CxxContinuationsComplete) {
     Result.Complete = Result.CallbackStatesComplete = false;
     Result.Diagnostics.push_back(
