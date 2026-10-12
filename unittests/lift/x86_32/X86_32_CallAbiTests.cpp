@@ -299,3 +299,35 @@ double d3(double a, double b, double c) { return a + 2 * b + 3 * c; }
 )C",
                        "fp3", {"fp3", "d3"});
 }
+
+// Sign-extending bytes in place, `punpcklwd %xmm1, %xmm4` takes its low
+// half from XMM4 before the function wrote it, and `psrad $24` shifts that
+// half out.  i386 passes no argument in XMM4 (System V uses XMM0-XMM2), so
+// it is no parameter that would move the stack argument.
+TEST_F(X86_32_CallAbi, AnXmmRegisterPastTheArgumentOnesIsNoParameter) {
+  HostFlags = {"-m32", "-msse2"};
+  expectRunsLikeSource(R"C(
+int narrowarr(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int it = 0; it < 120; it++) {
+    s = s * 1103515245u + 12345u;
+    unsigned char b[24];
+    signed char sb[24];
+    unsigned short w[24];
+    for (int i = 0; i < 24; i++) {
+      s = s * 1103515245u + 12345u;
+      b[i] = (unsigned char)(s >> 9);
+      sb[i] = (signed char)(s >> 17);
+      w[i] = (unsigned short)(s >> 3);
+    }
+    unsigned acc = 0;
+    for (int i = 0; i < 24; i++)
+      acc += (unsigned)b[i] + (unsigned)(int)sb[i] + (unsigned)w[i];
+    h = h * 131u + acc;
+    h ^= h >> 12;
+  }
+  return (int)h;
+}
+)C",
+                       "narrowarr", {"narrowarr"});
+}

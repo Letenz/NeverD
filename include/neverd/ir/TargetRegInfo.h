@@ -353,8 +353,8 @@ struct TargetRegInfo {
     return isFPArgReg(RegOff, BinaryFormat::Unknown);
   }
 
-  /// Floating argument bank of the selected ABI. Win64 uses XMM0-XMM3 in
-  /// positional slots; the ordinary x86-64 bank also includes XMM4-XMM7.
+  /// Floating argument bank of the selected ABI: the first
+  /// FloatingParamRegCount(Format) of FPParamRegs.
   llvm::ArrayRef<uint64_t> floatingParamRegs(BinaryFormat Format) const;
 
   /// Format-aware membership, including ARM's high-half single registers.
@@ -431,6 +431,11 @@ struct TargetRegInfo {
   /// registers: AArch64 x8; 0 (none) on targets that return such aggregates
   /// through an ordinary argument register (x86-64 RDI, ARM r0).
   uint64_t indirectResultReg() const;
+
+  /// How many of FPParamRegs carry floating arguments under the ABI of a
+  /// binary format, or null where every one does (floatingParamRegs).  Set
+  /// by getTargetRegInfo().
+  size_t (*FloatingParamRegCount)(BinaryFormat Format) = nullptr;
 };
 
 /// Return the register info table for the given architecture.
