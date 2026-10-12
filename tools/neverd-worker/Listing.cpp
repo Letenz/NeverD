@@ -5,6 +5,7 @@
 #include "StringReferences.h"
 #include "TextFold.h"
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
 #include "neverd/sdk/NeverDCAPIQuery.h"
@@ -57,8 +58,6 @@ constexpr std::size_t CommentColumn = 40;
 constexpr std::size_t MaxXrefLines = 2;
 /// The strings one neverd_strings_page_json call reads.
 constexpr int StringPageRows = 65536;
-/// The widest access a reference may name: a zmmword.
-constexpr std::uint64_t MaxAccessWidth = 64;
 constexpr std::size_t MaxPageLines = 2000;
 constexpr std::size_t MaxOpcodeBytes = 12;
 constexpr std::size_t MaxDecodeChunk = 2048;
@@ -582,16 +581,21 @@ struct Listing::Impl {
   /// thunk where it has one, else its slot.  Kept apart from listingNames,
   /// whose names display names must not take.
   std::map<std::string, std::uint64_t, std::less<>> importTargets;
+  /// The other names the image exports a function under.
+  std::map<std::string, std::uint64_t, std::less<>> exportAliases;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
+  std::unordered_map<std::uint64_t, std::string> pdbDisplayNames;
+  std::unordered_set<std::uint64_t> pdbFunctionNames;
   Json functionRowsCache;
   std::uint64_t functionRowsGeneration = 0;
   std::vector<std::uint64_t> namedData;
   /// The size each named object's symbol gives, where it gives one.
   std::unordered_map<std::uint64_t, std::uint64_t> dataSizes;
   /// The width of every read and write of each address the code reads or
-  /// writes, by address; 0 where those widths differ.  Built with the index.
-  std::vector<std::pair<std::uint64_t, unsigned>> accessWidths;
+  /// writes, by address; 0 where those widths differ.  Built with the index,
+  /// as the engine builds the widths that name data in the C.
+  DataAccessWidths accessWidths;
   /// The automatic data items by start; none overlaps another item.
   std::map<std::uint64_t, AutoData> autoData;
   /// Where a run of unwritten bytes stops: named data and the automatic
@@ -719,6 +723,12 @@ struct Listing::Impl {
   /// after their import, the image entry point, and main as passed to the C
   /// runtime's start routine.  Engine, symbol and user names always win.
   void applyDisplayNames() {
+    for (auto &function : functions)
+      if (const auto name = pdbDisplayNames.find(function.entry);
+          name != pdbDisplayNames.end() &&
+          pdbFunctionNames.contains(function.entry) &&
+          parseDummyName(function.name) && !listingNames.contains(name->second))
+        function.name = name->second;
     const auto rename = [&](Function &function, std::string name) {
       if (!parseDummyName(function.name) || listingNames.contains(name))
         return false;
@@ -1142,6 +1152,7 @@ struct Listing::Impl {
     slots.clear();
     stubImports.clear();
     importTargets.clear();
+    exportAliases.clear();
     strings.clear();
     listingNames.clear();
     namedData.clear();
@@ -1158,8 +1169,15 @@ struct Listing::Impl {
         // The largest symbol at an address sizes its object.
         if (const auto size = jsonCount(row.value("size", Json())))
           dataSizes[address] = std::max(dataSizes[address], size);
-        dataNames.emplace(address, std::move(name));
+        // A name that spells a string literal (MSVC's `??_C@`) gives way
+        // to the string's own, as IDA names it.
+        if (!row.value("literal", false))
+          dataNames.emplace(address, std::move(name));
       }
+    for (const auto &[address, name] : pdbDisplayNames)
+      if (!pdbFunctionNames.contains(address) && !functionAtEntry(address) &&
+          regionIndex(address) >= 0 && !dataNames.contains(address))
+        dataNames.emplace(address, name);
     if (Rescan) {
       importRows = takeJson(neverd_imports_json(session));
       importSlotRows = importSlots ? takeJson(importSlots(session)) : Json();
@@ -1204,10 +1222,16 @@ struct Listing::Impl {
         const auto address = jsonAddress(row.value("addr", Json()));
         if (!address)
           continue;
-        if (auto *function = functionAtEntry(address))
+        auto name = row.value("name", std::string());
+        if (auto *function = functionAtEntry(address)) {
           function->exported = true;
-        else if (auto name = row.value("name", std::string()); !name.empty())
+          // Each name the image exports a function under finds it, as a
+          // linker that folds identical functions exports several for one.
+          if (!name.empty() && name != function->name)
+            exportAliases.emplace(std::move(name), address);
+        } else if (!name.empty()) {
           dataNames.emplace(address, std::move(name));
+        }
       }
     const auto addString = [&](const Json &row) {
       StringItem item;
@@ -1304,29 +1328,15 @@ struct Listing::Impl {
   /// The widths of the code's reads and writes, from the index.
   void noteAccessWidths() {
     accessWidths.clear();
-    for (const auto &reference : references) {
-      if ((reference.kind != RefKind::Read &&
-           reference.kind != RefKind::Write) ||
-          !reference.width)
-        continue;
-      if (accessWidths.empty() || accessWidths.back().first != reference.to)
-        accessWidths.emplace_back(reference.to, reference.width);
-      else if (accessWidths.back().second != reference.width)
-        accessWidths.back().second = 0;
-    }
+    for (const auto &reference : references)
+      if (reference.kind == RefKind::Read || reference.kind == RefKind::Write)
+        accessWidths.add(reference.to, reference.width);
   }
 
   /// The width of every access to \p address, 0 where they differ, or none
   /// when the code reads and writes no data there.
   std::optional<unsigned> accessWidthAt(std::uint64_t address) const {
-    const auto it =
-        std::lower_bound(accessWidths.begin(), accessWidths.end(), address,
-                         [](const auto &entry, std::uint64_t value) {
-                           return entry.first < value;
-                         });
-    if (it == accessWidths.end() || it->first != address)
-      return std::nullopt;
-    return it->second;
+    return accessWidths.at(address);
   }
 
   /// Lays out the automatic data items. A named object is as large as its
@@ -2161,9 +2171,33 @@ struct Listing::Impl {
       // A table between functions, as MSVC places one after its function.
       if (asSwitchEntry(item, region, address))
         return item;
-      const std::uint64_t gapStart = previousCodeEnd(address, region);
-      const std::uint64_t gapEnd =
+      std::uint64_t gapStart = previousCodeEnd(address, region);
+      std::uint64_t gapEnd =
           std::min(nextFunctionStart(address, region), region.initializedEnd);
+      // A string between functions, as MSVC's literals sit among the code
+      // of a kernel's sections; the padding around it aligns it.
+      if (gapStart <= address && address < gapEnd) {
+        if (const auto *string = stringAt(address);
+            string && string->address >= gapStart &&
+            string->address + string->length + string->unit <= gapEnd) {
+          item.kind = ItemKind::String;
+          item.start = string->address;
+          item.size = string->length + string->unit;
+          item.index = static_cast<std::size_t>(string - strings.data());
+          return item;
+        }
+        const auto next =
+            std::upper_bound(strings.begin(), strings.end(), address,
+                             [](std::uint64_t value, const StringItem &s) {
+                               return value < s.address;
+                             });
+        if (next != strings.end() && next->address < gapEnd)
+          gapEnd = next->address;
+        if (next != strings.begin())
+          if (const auto &before = *std::prev(next);
+              before.address + before.length + before.unit > gapStart)
+            gapStart = before.address + before.length + before.unit;
+      }
       if (gapStart <= address && address < gapEnd)
         if (const auto alignment = paddingAlignment(gapStart, gapEnd)) {
           item.kind = ItemKind::Align;
@@ -3184,9 +3218,9 @@ struct Listing::Impl {
         if (!kind)
           continue;
         const auto width = row.size() == 4 ? jsonCount(row[3]) : 0;
-        references.push_back(
-            {jsonAddress(row[1]), jsonAddress(row[0]), *kind,
-             static_cast<std::uint8_t>(width <= MaxAccessWidth ? width : 0)});
+        references.push_back({jsonAddress(row[1]), jsonAddress(row[0]), *kind,
+                              static_cast<std::uint8_t>(
+                                  width <= MaxDataAccessWidth ? width : 0)});
       }
     const auto next = page.value("next_entry", Json());
     const auto previous = *indexCursor;
@@ -3548,7 +3582,40 @@ void Listing::setStringOptions(std::string options) {
   invalidate();
 }
 
+void Listing::setPdbDisplayNames(const Json &names) {
+  std::unordered_map<std::uint64_t, std::string> selected;
+  std::unordered_set<std::uint64_t> functions;
+  for (const auto &row : names) {
+    const auto name = row.value("name", std::string());
+    if (name.empty() || name.size() > 4096 ||
+        std::any_of(name.begin(), name.end(),
+                    [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
+      continue;
+    const auto address = jsonAddress(row.at("address"));
+    selected.emplace(address, name);
+    if (row.value("function", false))
+      functions.insert(address);
+  }
+  if (impl_->pdbDisplayNames == selected &&
+      impl_->pdbFunctionNames == functions)
+    return;
+  impl_->pdbDisplayNames = std::move(selected);
+  impl_->pdbFunctionNames = std::move(functions);
+  namesChanged();
+}
+
 std::uint64_t Listing::generation() const { return impl_->generation; }
+
+std::optional<std::string> Listing::pdbDataName(std::uint64_t address) {
+  impl_->build();
+  const auto imported = impl_->pdbDisplayNames.find(address);
+  const auto shown = impl_->dataNames.find(address);
+  if (imported != impl_->pdbDisplayNames.end() &&
+      !impl_->pdbFunctionNames.contains(address) &&
+      shown != impl_->dataNames.end() && shown->second == imported->second)
+    return imported->second;
+  return std::nullopt;
+}
 
 bool Listing::hasIdleWork() const {
   return (impl_->discoverFunctions && !impl_->discovered) ||
@@ -3927,12 +3994,23 @@ std::string Listing::nameAt(std::uint64_t address) {
       .text;
 }
 
+std::optional<std::uint64_t> Listing::chunkOwner(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const int f = d.functionIndexCoarse(address);
+  if (f < 0 || !d.functions[f].chunkOf)
+    return std::nullopt;
+  return d.ownerOf(f).entry;
+}
+
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   auto &d = *impl_;
   d.build();
   if (auto it = d.listingNames.find(name); it != d.listingNames.end())
     return it->second;
   if (auto it = d.importTargets.find(name); it != d.importTargets.end())
+    return it->second;
+  if (auto it = d.exportAliases.find(name); it != d.exportAliases.end())
     return it->second;
   if (auto address = parseDummyName(name);
       address && d.regionIndex(*address) >= 0)

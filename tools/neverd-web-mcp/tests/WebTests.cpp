@@ -153,6 +153,48 @@ void clientSourceFeatures(Harness &H) {
   redacted(N);
   redacted(First);
   redacted(Rest);
+  const auto &B = N.at("desktop_bridges");
+  require(B.at("profile") == "tauri-1-wails-2-direct-bridge-syntax-v1" &&
+              B.at("record_count") == 2 &&
+              B.at("bridge_inventory_complete") == false &&
+              B.at("native_target") == "not_resolved",
+          "MCP promoted desktop bridge syntax or lost its profile");
+  auto BridgePage = Args;
+  BridgePage["record_kind"] = "desktop_bridges";
+  BridgePage["limit"] = 1;
+  const auto BridgeFirst = H.same("web_source_navigation_records", BridgePage);
+  const auto &Row = BridgeFirst.at("items").at(0);
+  require(Row.at("form") == "window_ipc_message" &&
+              Row.at("root_resolution") == "external" &&
+              Row.at("command_status") == "literal_string_redacted" &&
+              BridgeFirst.at("next_offset") == 1,
+          "MCP changed desktop bridge syntax or continuation");
+  auto Anchor = Args;
+  Anchor["byte_offset"] = Row.at("byte_offset");
+  Anchor["byte_length"] = Row.at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  BridgePage["offset"] = 1;
+  const auto BridgeRest = H.same("web_source_navigation_records", BridgePage);
+  require(BridgeRest.at("items").size() == 1 &&
+              BridgeRest.at("page_complete") == true &&
+              BridgeRest.at("items").at(0).at("target_name_node_ids").size() ==
+                  3,
+          "MCP lost Wails target anchors");
+  redacted(BridgeFirst);
+  redacted(BridgeRest);
+  const auto &Order = N.at("configuration_order");
+  require(Order.at("object_count") == 1 && Order.at("term_count") == 4 &&
+              Order.at("effective_configuration") == "not_analyzed",
+          "MCP promoted or lost configuration source order");
+  auto ConfigPage = Args;
+  ConfigPage["record_kind"] = "config_merges";
+  const auto Config = H.same("web_source_navigation_records", ConfigPage);
+  require(Config.at("items").size() == 1 &&
+              Config.at("items")[0].at("terms")[0].at("unknown_keys") == true,
+          "MCP lost the configuration overwrite barrier");
+  redacted(Config);
+  BridgePage["execute"] = true;
+  invalid([&] { H.get("web_source_navigation_records", BridgePage); });
   Page["execute"] = true;
   invalid([&] { H.get("web_source_navigation_records", Page); });
 }
@@ -889,12 +931,15 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
       booleanBranches(H);
-      F.write("source",
-              "function CANARY_CALLBACK(v){return v;}"
-              "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
-              "if(checkPermissions('CANARY'))server.callTool('CANARY');"
-              "const settings={permissions:{deny:['CANARY']},"
-              "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};");
+      F.write(
+          "source",
+          "function CANARY_CALLBACK(v){return v;}"
+          "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
+          "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+          "const settings={...CANARY_DEFAULTS,permissions:{deny:['CANARY']},"
+          "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
+          "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
       clientSourceFeatures(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });

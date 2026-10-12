@@ -1097,6 +1097,141 @@ TEST(PDBIdentityIntegration, ImageWithoutUniqueRSDSCannotUsePDBNames) {
       << Error;
 }
 
+TEST(PDBDisplayInspection, MissingIdentityNamesWithoutAuthenticatingFacts) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  const auto OriginalSymbols = ImageOr->Symbols.size();
+  auto Context = PDBDebugContext::inspect(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_TRUE(static_cast<bool>(Context))
+      << llvm::toString(Context.takeError());
+  EXPECT_FALSE((*Context)->hasAuthenticatedImageIdentity());
+  EXPECT_FALSE((*Context)->hasAnalysisAuthority());
+  EXPECT_FALSE((*Context)->hasAuthenticatedFunctionSignatures());
+  EXPECT_FALSE((*Context)->hasAuthenticatedObjectExtents());
+  const auto Functions = (*Context)->allFunctions();
+  EXPECT_TRUE(std::any_of(Functions.begin(), Functions.end(),
+                          [](const FunctionSym &Function) {
+                            return Function.Name == "tainted_stack_overflow";
+                          }));
+  EXPECT_EQ(ImageOr->Symbols.size(), OriginalSymbols);
+  EXPECT_FALSE(ImageOr->DynInfo.CodeViewPDBIdentity.has_value());
+}
+
+TEST(PDBDisplayInspection, PresentWrongIdentityCannotBeBypassed) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentity->Guid[0] ^= 1;
+  auto Context = PDBDebugContext::inspect(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_FALSE(static_cast<bool>(Context));
+  EXPECT_NE(llvm::toString(Context.takeError()).find("GUID/age does not match"),
+            std::string::npos);
+}
+
+TEST(PDBDisplayInspection, MissingIdentityStillRequiresSectionAgreement) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  ++ImageOr->Sections.front().Size;
+  auto Context = PDBDebugContext::inspect(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_FALSE(static_cast<bool>(Context));
+  EXPECT_NE(
+      llvm::toString(Context.takeError()).find("section table does not match"),
+      std::string::npos);
+}
+
+TEST(PDBUserSelection, MissingIdentityLoadsFunctionAndLocalTypesForAnalysis) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  auto Context = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_TRUE(static_cast<bool>(Context))
+      << llvm::toString(Context.takeError());
+  EXPECT_FALSE((*Context)->hasAuthenticatedImageIdentity());
+  EXPECT_TRUE((*Context)->hasAnalysisAuthority());
+  // The same facts LaterFuncLoadStillNamesEarlierLocals reads through a
+  // matching identity: Overflow's procedure names no parameters, Outer's does.
+  constexpr va_t Overflow = 0x140001000;
+  constexpr va_t Outer = 0x1400012a0;
+  auto Function = (*Context)->resolveFunction(Overflow);
+  ASSERT_TRUE(Function);
+  EXPECT_EQ(Function->Name, "tainted_stack_overflow");
+  ASSERT_TRUE(Function->ReturnType);
+  auto OuterFunction = (*Context)->resolveFunction(Outer);
+  ASSERT_TRUE(OuterFunction);
+  ASSERT_EQ(OuterFunction->Params.size(), 1u);
+  EXPECT_EQ(OuterFunction->Params[0].first, "s");
+  EXPECT_TRUE(isCharPointer(OuterFunction->Params[0].second));
+  auto Buffer = (*Context)->resolveVariable(Overflow, -0x18);
+  ASSERT_TRUE(Buffer);
+  EXPECT_EQ(Buffer->Name, "buf");
+  ASSERT_TRUE(Buffer->Type);
+  EXPECT_TRUE(isCharArray16(Buffer->Type));
+  EXPECT_FALSE(ImageOr->DynInfo.CodeViewPDBIdentity);
+}
+
+TEST(PDBUserSelection, DiscoveryRequiresAnExplicitNamedPDBChoice) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  DebugInfoRequest Request;
+  Request.PDBPath = safetyFixture("safety_cases_pe_x64.pdb");
+  auto Strict = loadDebugInfo(safetyFixture("safety_cases_pe_x64.exe"),
+                              *ImageOr, Request);
+  EXPECT_FALSE(static_cast<bool>(Strict));
+  Request.AllowMissingPDBIdentity = true;
+  auto Selected = loadDebugInfo(safetyFixture("safety_cases_pe_x64.exe"),
+                                *ImageOr, Request);
+  ASSERT_TRUE(static_cast<bool>(Selected)) << Selected.Error;
+  EXPECT_EQ(Selected.Kind, DebugInfoKind::PDB);
+  auto Function = Selected.Context->resolveFunction(0x1400012a0);
+  ASSERT_TRUE(Function);
+  ASSERT_TRUE(Function->ReturnType);
+  EXPECT_EQ(Function->Params.size(), 1u);
+}
+
+TEST(PDBUserSelection, WrongIdentityMachineAndSectionsStillFail) {
+  auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
+  ASSERT_TRUE(static_cast<bool>(ImageOr))
+      << llvm::toString(ImageOr.takeError());
+  BinaryImage WrongIdentity = *ImageOr;
+  WrongIdentity.DynInfo.CodeViewPDBIdentity->Guid[0] ^= 1;
+  auto Wrong = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), WrongIdentity);
+  ASSERT_FALSE(static_cast<bool>(Wrong));
+  EXPECT_NE(llvm::toString(Wrong.takeError()).find("GUID/age does not match"),
+            std::string::npos);
+  ImageOr->DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Absent;
+  ImageOr->DynInfo.CodeViewPDBIdentity.reset();
+  BinaryImage WrongMachine = *ImageOr;
+  WrongMachine.Arch = Arch::AArch64;
+  auto Machine = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), WrongMachine);
+  ASSERT_FALSE(static_cast<bool>(Machine));
+  EXPECT_NE(llvm::toString(Machine.takeError()).find("machine does not match"),
+            std::string::npos);
+  ++ImageOr->Sections.front().Size;
+  auto Sections = PDBDebugContext::loadUserSelected(
+      safetyFixture("safety_cases_pe_x64.pdb"), *ImageOr);
+  ASSERT_FALSE(static_cast<bool>(Sections));
+  EXPECT_NE(
+      llvm::toString(Sections.takeError()).find("section table does not match"),
+      std::string::npos);
+}
+
 TEST(PDBIdentityIntegration, MatchingIdentityStillRequiresMachineAgreement) {
   auto ImageOr = loadPEFixture("safety_cases_pe_x64.exe");
   ASSERT_TRUE(static_cast<bool>(ImageOr))

@@ -98,6 +98,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceViewTests.cpp
     SourceNavigationTests.cpp
     SourceFeatureTests.cpp
+    DesktopBridgeTests.cpp
+    ConfigurationOrderTests.cpp
     ClientFeatureCorpusTests.cpp
     LINK_COMPONENTS Web
   )

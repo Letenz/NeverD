@@ -1076,7 +1076,15 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       }
       return false;
     };
-    (void)(ApplyEnum(A, B, true) || ApplyEnum(B, A, false));
+    const bool Enumerator = ApplyEnum(A, B, true) || ApplyEnum(B, A, false);
+    // Below int, C promotes each operand by its own signedness: a signed
+    // char holding 0xC8 is -56, an unsigned one 200.  The machine compares
+    // the bits, so both compare in the unsigned type of their width.
+    // The width is the left operand's, as the casts below take it.
+    const TypeRef &Width = E.Operands[0]->Type;
+    if (!Enumerator && Width && Width->Kind == NdTypeKind::Int &&
+        Width->Size < sizeof(int))
+      NeedsUnsignedCast = true;
   }
 
   if (NeedsUnsignedCast || NeedsSignedCast) {
@@ -1189,6 +1197,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                ")" + exprStr(*Op, 99);
       if (Op->Kind == ExprKind::Const && Op->ConstVal == 0)
         return std::string("0");
+      // A constant of the narrow width an equality compares in reads as the
+      // int it is promoted to.
+      if (Op->Kind == ExprKind::Const &&
+          (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL) &&
+          CmpSize < sizeof(int))
+        return constStr(Op->ConstVal & ((uint64_t{1} << (8 * CmpSize)) - 1),
+                        NdType::makeInt(CmpSize, false));
       // What the text certainly prints as decides over the IR's type: a
       // declared local or parameter can read in the other signedness, and
       // arithmetic printed in a variable's place reads as C converts it.

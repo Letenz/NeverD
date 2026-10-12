@@ -27,6 +27,8 @@ Other hosts require separate evidence.
 | Reviewed source display | `javascript-source-view-v1` | Structural default masking, explicit local-review ranges, preview/commit/revocation, UTF-8 chunks and original/projected range mapping; no semantic rewrite or network permission claim |
 | Source navigation | `javascript-source-navigation-v1` | Functions, calls, references, source containment and lexical/initializer links; runtime call targets and feature-specific attribution remain unproven |
 | Client syntax navigation | `javascript-client-syntax-features-v1` | Fixed tool/configuration/permission/MCP/hook spelling and object-shape candidates, callback source links and conditional-test containment; API identity, policy, precedence and runtime targets remain unproven. [Profile](web-client-feature-profile.md) |
+| Desktop bridge syntax | `tauri-1-wails-2-direct-bridge-syntax-v1` | Direct Tauri 1 IPC/global invoke and Wails 2 three-member target shapes, exact source/call/binding anchors and explicit spread/shadowing limitations. Commands/arguments stay private; native targets, API identity and runtime activation remain unproven. [Profile](web-desktop-bridge-profile.md) |
+| Configuration source order | `javascript-configuration-object-order-v1` | Ordered direct settings-object terms, lexical initializer/loading syntax links and explicit later unknown-key barriers. Effective values, loader identity, separate file layers and runtime mutation remain unproven. [Profile](web-configuration-order-profile.md) |
 | Storage/view anchors | `source-storage-anchor-v1` | UTF-8/UTF-16 positions, exact original/ASAR/Bun encoding boundaries, whole compressed-frame locators and committed display coverage; JSON encoded-member offsets remain unavailable |
 | Primitive source transforms | `javascript-primitive-rewrite-v1` | Explicit string recovery and other primitive folding; complete lexer, value/effect admission, outer-tree comparison, SameValue and exact inverse; raw local export requires a pass/source/revision-bound receipt. [Profile](web-source-rewrite-profile.md) |
 | Lexical source renaming | `javascript-scope-rename-v1` | Admitted local identifier occurrences, whole-tree/binding-graph comparison and exact inverse; no original-name or reflection guarantee. [Profile](web-scope-rename-profile.md) |
@@ -146,6 +148,8 @@ closure remain outstanding.
 | Private decoded JS string units per source | 2,097,152 UTF-16 code units |
 | Binding-analysis steps per source | 2,000,000 |
 | Source-navigation steps per source | 2,000,000 |
+| Desktop bridge records / steps per source | 1,024 / 2,000,000 |
+| Configuration objects / terms / steps per source | 256 / 4,096 / 2,000,000 |
 | Module-inventory steps / admitted-file comparison steps | 2,000,000 / 2,000,000 |
 | Private module-name units / relative specifier units | 1,048,576 / 4,096 UTF-16 units |
 | Bundle analysis steps / private module-key units | 4,000,000 / 1,048,576 UTF-16 units |

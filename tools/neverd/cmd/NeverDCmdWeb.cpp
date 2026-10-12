@@ -850,7 +850,8 @@ int runWeb() {
       if (Status != "ok" && Status != "partial")
         return 1;
       for (llvm::StringRef Kind :
-           {"functions", "calls", "references", "features"}) {
+           {"functions", "calls", "references", "features", "desktop_bridges",
+            "config_merges"}) {
         uint64_t Offset = 0;
         do {
           auto Page = result(neverd_web_source_navigation_records_json(

@@ -5,6 +5,7 @@
 #include "Docking.h"
 #include "Expression.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "LoadFileDialog.h"
 #include "ProjectDatabase.h"
 #include "StyledText.h"
@@ -252,7 +253,10 @@ private slots:
   }
 
   void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
-    const QFont font(QStringLiteral("Consolas"), 10);
+    // The code views' font: Consolas where it exists, else the system's
+    // fixed font.
+    QFont font = Theme::defaultCodeFont();
+    font.setPointSize(10);
     const auto color = [](int role) {
       return QColor::fromHsv((role * 30) % 360, 160, 230);
     };
@@ -1195,6 +1199,24 @@ private slots:
     QTRY_VERIFY(resizable.isMaximized());
   }
 
+  void returnOpensTheCurrentItemOnce() {
+    // macOS item views would edit the item on Return instead of opening it;
+    // elsewhere the filter must not open it twice.
+    QListWidget list;
+    list.addItems({QStringLiteral("first"), QStringLiteral("second")});
+    activateOnReturn(list);
+    list.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&list));
+    list.setCurrentRow(1);
+    QStringList opened;
+    connect(&list, &QListWidget::itemActivated, &list,
+            [&opened](QListWidgetItem *item) { opened << item->text(); });
+    QTest::keyClick(&list, Qt::Key_Return);
+    QCOMPARE(opened, QStringList{QStringLiteral("second")});
+    QTest::keyClick(&list, Qt::Key_Enter, Qt::KeypadModifier);
+    QCOMPARE(opened.size(), 2);
+  }
+
   void themeDrawsFlatControls() {
     auto &theme = Theme::instance();
     for (const auto mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
@@ -1248,8 +1270,10 @@ private slots:
       QVERIFY(glyph > 4);
 
       // Text fields type in the code font; read-only text reads as content.
-      QVERIFY(QFontInfo(edit->font()).fixedPitch());
-      QVERIFY(!QFontInfo(box->font()).fixedPitch());
+      // The families are what the theme asks for: a platform without the
+      // code font (Windows offscreen) resolves it to another face.
+      QCOMPARE(edit->font().family(), theme.codeFont().family());
+      QVERIFY(box->font().family() != theme.codeFont().family());
       QCOMPARE(pixel(log, log->rect().center()),
                theme.chrome(QStringLiteral("Base")));
       // Dialog buttons carry no icons.

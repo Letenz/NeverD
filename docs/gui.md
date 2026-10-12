@@ -90,20 +90,22 @@ explicit restoration verifies the whole chain against the same assessment.
 Analysis uses the shared C++ backend and never launches the input. See the
 [workflow and limits](web-package-review-journal.md).
 
-A start without a file shows the quick start over the default desktop, as IDA
-does. Drag its window edges or lower-right grip to resize it; the next opening
-remembers that size. The action pane stays the same width while the recent
-files use the available space. Its side pane holds the ways to start: **New**
-(N) disassembles a new file, **Go** (G) works on your own and **Previous** (P)
-loads the selected recent file; the one Enter takes has a subtle row background,
-and keyboard focus has a thin neutral outline. The actions use matching line
-icons without individual tiles. Each recent file shows its format in an outlined
-file icon (ELF, PE, Mach-O, a NeverD database or a plain binary file),
-its name above the folder and last-opened time. Long names retain both ends;
-hovering shows the full path and time. Delete or its context menu forgets it.
-A file dragged over the dialog shows that a drop opens it. **Display at
-startup** decides whether the next start shows it again; **File → Quick start**
-shows it any time. Behind it is the default desktop:
+A start without a file shows the quick start alone, as IDA does: the workbench
+appears once you choose how to start, and closing the quick start quits. Drag
+its window edges or lower-right grip to resize it; the next opening remembers
+that size. The action pane stays the same width while the recent files use the
+available space. Its side pane holds the ways to start: **New** (N) asks for a
+file to disassemble over the quick start, which stays if you cancel, **Go** (G)
+or Escape works on your own and **Previous** (P) loads the selected recent
+file; the one Enter takes has a subtle row background, and keyboard focus has a
+thin neutral outline. The actions use matching line icons without individual
+tiles. Each recent file shows its format in an outlined file icon (ELF, PE,
+Mach-O, a NeverD database or a plain binary file), its name above the folder
+and last-opened time. Long names retain both ends; hovering shows the full path
+and time. Delete or its context menu forgets it. A file dragged over the dialog
+shows that a drop opens it. **Display at startup** decides whether the next
+start shows it again; **File → Quick start** shows it any time, over the
+workbench. The workbench opens with the default desktop:
 
 - the title bar the window draws itself, as Visual Studio Code does: the
   application icon, the menus, a command center that names the open file and
@@ -211,9 +213,14 @@ shows its initial value (`int32_t counter = 5;`). Every initializer spells the
 image's bytes exactly: text another encoding than UTF-8 holds is escaped, with
 the decoded text in a comment beside it. Unnamed data is named as the listing
 names it, so a name in the pseudocode matches the disassembly operand and
-double-clicking it goes there: `off_3FC0` for a slot holding a pointer or one
-the code calls through, the size of its accesses otherwise (`qword_3FB8`,
-`dword_4010`), and `unk_` for data reached by its address alone. The command
+double-clicking it goes there: `off_3FC0` for a slot the loader relocates a
+pointer into or one the code only calls through, otherwise the size of every
+access the image's code makes to it (`qword_3FB8`, `dword_4010`), even where
+the function shown only takes its address, and `unk_` where those accesses
+differ or there are none. Literals and data that the debug information
+places among the code, as a kernel keeps them in PAGE, read as their text and
+their names, and a pointer slot whose target C declares no object for names
+it in a comment (`= 0x140CFCA88; /* &KiNonNumaDistance */`). The command
 line's `neverd decompile` prints the same declarations.
 
 A function's address reads as the function: `_start` passes `main`, not
@@ -321,6 +328,15 @@ each string's encoding in its Type column. Code pages decode by the WHATWG
 Encoding Standard, and a string reads as text only when its characters keep to
 one script. Settings from versions that searched one code page keep it as the
 preferred one.
+
+A string literal that a symbol names is a string wherever it lies and however
+short it is. MSVC names each literal it pools by its type, its size and its
+first bytes (`??_C@_15OHIPBLFN@?$AAS?$AAA@` is L"SA"), and a kernel such as
+ntoskrnl keeps them among its code in PAGE and INIT. The string takes its
+automatic name, `aSa` as IDA names it, instead of the symbol's, unless you
+name it yourself, and shows whichever encodings are searched; `neverd strings`
+lists it too. The image's bytes must start as the name spells them, so a
+stale symbol file adds no strings.
 
 **Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
 command line) lists every instruction that refers to a string: directly, into
@@ -546,6 +562,29 @@ indicator, and **Options → Load debug information** reads the PDB, DWARF or
 linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
+
+**File → Load file → PDB file...** selects a PDB anywhere on disk for the
+currently loaded PE. A matching CodeView identity applies its debug symbols and
+refreshes function names, the listing and open code views while preserving
+user renames, comments and other edits. Output reports the selected path and
+whether the identity was verified. A missing, malformed or mismatched PDB
+leaves the current session usable.
+
+If the PE has no CodeView identity, the dialog asks whether to use the selected
+PDB for analysis after machine and section-layout checks. Confirming loads it
+through the same supported analysis path as a matching PDB, including symbols,
+types, function signatures and available debug ranges. Output distinguishes
+user confirmation from verified build identity. An existing but mismatched or
+ambiguous identity cannot be overridden. This route currently supports modern
+RSDS PDBs; a matching legacy NB10 PDB uses the ordinary authenticated loader.
+The chosen file and analysis mode accompany read-only analysis replicas and
+are remembered on reload and in saved databases. Older display-only selections
+keep that mode until the PDB is selected again and confirmed for analysis.
+The PDB remains an external file. Reopening the database checks a matching PDB
+again by its identity, and a PDB confirmed without one must still be the file
+that was confirmed. A selection that no longer loads leaves the database open
+without it, and Output says why; select the PDB again to restore it. On the
+command line, `--pdb <file> --pdb-unverified` makes the same choice for one run.
 
 ## Databases
 

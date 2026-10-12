@@ -13,6 +13,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/web/Bun.h"
+#include "neverd/web/ConfigurationOrder.h"
 #include "neverd/web/Error.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/SourceFeatures.h"
@@ -58,6 +59,10 @@ TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
            ParserTimeRefusals = 0;
   uint64_t FeatureUnits = 0, FeatureUnavailable = 0, Conditions = 0,
            Callbacks = 0;
+  uint64_t OrderUnits = 0, OrderUnavailable = 0, OrderObjects = 0,
+           OrderTerms = 0, OrderOverwrites = 0, OrderLoadingLinks = 0;
+  uint64_t FirstUnknownOrderModule = UINT64_MAX;
+  std::string FirstUnknownOrderHash;
   std::array<uint64_t, 5> Counts{}, Unresolved{};
   std::map<std::string, uint64_t> ParserReasons;
   for (const auto &M : E.Modules) {
@@ -106,12 +111,34 @@ TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
       Conditions += R.Condition != NoSourceIndex;
       Callbacks += R.CallbackFunction != NoSourceIndex;
     }
+    const auto Order = analyzeConfigurationSourceOrder(Source, B, N, A);
+    if (Order.Status != "partial") {
+      ++OrderUnavailable;
+      continue;
+    }
+    ++OrderUnits;
+    OrderObjects += Order.Objects.size();
+    OrderTerms += Order.Terms;
+    for (const auto &O : Order.Objects) {
+      for (const auto &T : O.Terms)
+        OrderLoadingLinks += T.Feature != NoSourceIndex;
+      for (const auto &Field : O.Fields) {
+        if (!Field.Seen || !Field.LaterUnknown)
+          continue;
+        ++OrderOverwrites;
+        if (FirstUnknownOrderModule == UINT64_MAX) {
+          FirstUnknownOrderModule = &M - E.Modules.data();
+          FirstUnknownOrderHash = Source.BlobHash;
+        }
+      }
+    }
   }
   EXPECT_EQ(Sources, 2364);
   EXPECT_EQ(Bytes, 45035899);
   EXPECT_EQ(Parsed + ParserUnavailable, Sources);
   EXPECT_EQ(FeatureUnits + FeatureUnavailable, Parsed);
   EXPECT_GT(FeatureUnits, 0);
+  EXPECT_EQ(OrderUnits + OrderUnavailable, FeatureUnits);
   RecordProperty("source_count", std::to_string(Sources));
   RecordProperty("source_bytes", std::to_string(Bytes));
   RecordProperty("parsed_units", std::to_string(Parsed));
@@ -135,6 +162,21 @@ TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
   }
   RecordProperty("permission_test_containments", std::to_string(Conditions));
   RecordProperty("callback_source_links", std::to_string(Callbacks));
+  RecordProperty("configuration_order_units", std::to_string(OrderUnits));
+  RecordProperty("configuration_order_unavailable_units",
+                 std::to_string(OrderUnavailable));
+  RecordProperty("configuration_order_objects", std::to_string(OrderObjects));
+  RecordProperty("configuration_order_terms", std::to_string(OrderTerms));
+  RecordProperty("configuration_order_later_unknown_fields",
+                 std::to_string(OrderOverwrites));
+  RecordProperty("configuration_order_loading_syntax_links",
+                 std::to_string(OrderLoadingLinks));
+  if (FirstUnknownOrderModule != UINT64_MAX) {
+    RecordProperty("configuration_first_unknown_module",
+                   std::to_string(FirstUnknownOrderModule));
+    RecordProperty("configuration_first_unknown_source_sha256",
+                   FirstUnknownOrderHash);
+  }
   for (const auto &[Reason, Count] : ParserReasons)
     RecordProperty("parser_reason_" + Reason, std::to_string(Count));
 }

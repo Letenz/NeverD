@@ -268,3 +268,34 @@ static int mx(int n, ...) {
 )C",
                        "vmax_i", {"vmax_i", "mx"});
 }
+
+// `pcmpeqd x, x` sets every bit of x whatever x held, so the function reads
+// no vector register and takes only its stack argument.
+TEST_F(X86_32_CallAbi, AVectorOfOnesReadsNoRegister) {
+  expectRunsLikeSource(R"C(
+unsigned ones_plus(unsigned a) {
+  unsigned r;
+  __asm__("pcmpeqd %%xmm0, %%xmm0\n\tmovd %%xmm0, %0" : "=r"(r) : : "xmm0");
+  return r + a * 3u;
+}
+)C",
+                       "ones_plus", {"ones_plus"});
+}
+
+// Code built for SSE2 computes a double in an XMM register and returns it
+// on the x87 stack, as cdecl does (`movsd %xmm0, (%esp); fldl (%esp)`): the
+// callee returns that value.
+TEST_F(X86_32_CallAbi, AnSSEDoubleReturnsOnTheX87Stack) {
+  // The C reads the constant through a 32-bit address, and its SSE
+  // operations take XMM registers.
+  HostFlags = {"-m32", "-msse2"};
+  expectRunsLikeSource(R"C(
+double d3(double a, double b, double c) __attribute__((noinline));
+int fp3(int x) {
+  double v = (double)x;
+  return (int)d3(v, v + 1, v + 2);
+}
+double d3(double a, double b, double c) { return a + 2 * b + 3 * c; }
+)C",
+                       "fp3", {"fp3", "d3"});
+}

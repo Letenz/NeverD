@@ -63,6 +63,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_LogicTests.cpp
   arm32/ARM32_MemTests.cpp
   arm32/ARM32_MulDivTests.cpp
+  arm32/ARM32_ObjectImmediateTests.cpp
   arm32/ARM32_PipelineE2ETests.cpp
   arm32/ARM32_PredicatedStackTests.cpp
   arm32/ARM32_ShiftTests.cpp
@@ -117,6 +118,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_IntrinsicsTests.cpp
   x86_64/X86_64_LodsMiscTests.cpp
   x86_64/X86_64_LoopBitTests.cpp
+  x86_64/X86_64_LoopConditionTests.cpp
   x86_64/X86_64_MemAtomicTests.cpp
   x86_64/X86_64_MiscTests.cpp
   x86_64/X86_64_MulDivTests.cpp
@@ -1907,6 +1909,7 @@ add_neverd_unittest(NeverDLanguageEHTests
   language/ObjCEHRuntimeCallTests.cpp
   language/ObjCEHRuntimeStateTests.cpp
   language/ScratchRealBinary.cpp
+  language/StringLiteralSymbolsTests.cpp
   language/SymbolSpellingTests.cpp
 )
 target_include_directories(NeverDLanguageEHTests PRIVATE
@@ -3810,6 +3813,18 @@ add_neverd_unittest(NeverDX86X87ConstantTests
   x86_64/X86_64_X87ConstantTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConstantTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86X87SignAccuracyTests
+  x86_64/X86_64_X87SignAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87SignAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86X87IntegerLoadTests
+  x86_64/X86_64_X87IntegerLoadTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87IntegerLoadTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86ComiStateTests

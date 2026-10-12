@@ -6,9 +6,11 @@
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "ExtensionsView.h"
+#include "GnomeWindowEdges.h"
 #include "GraphView.h"
 #include "HexView.h"
 #include "Icons.h"
+#include "ItemViewActivation.h"
 #include "JumpDialog.h"
 #include "Language.h"
 #include "ListingView.h"
@@ -240,11 +242,15 @@ bool MainWindow::eventFilter(QObject *object, QEvent *event) {
         startupQuickStartPending_ = false;
         // Leave the native drop callback before opening or asking about
         // unsaved changes. The window owns the queued callback's lifetime.
-        const QPointer<QDialog> start = quickStart ? quickStart_ : nullptr;
+        // A file dropped on the quick start starts as New does.
+        const QPointer<QuickStartDialog> start =
+            quickStart ? qobject_cast<QuickStartDialog *>(quickStart_.data())
+                       : nullptr;
         QTimer::singleShot(0, this, [this, path, start] {
           if (start)
-            start->reject();
-          chooseLoader(path);
+            start->startNew(path);
+          else
+            chooseLoader(path);
         });
       }
       return true;
@@ -638,6 +644,8 @@ void MainWindow::retitleCodeDocks() {
 }
 
 void MainWindow::initializeLayout() {
+  if (std::exchange(layoutInitialized_, true))
+    return;
   if (!QFile::exists(layoutPath()) ||
       !KDDockWidgets::LayoutSaver().restoreFromFile(layoutPath()))
     applyDefaultLayout();
@@ -752,6 +760,7 @@ void MainWindow::connectSession() {
   });
   session_.setStateProvider([this] { return projectState(); });
   connect(&session_, &Session::unloaded, this, [this] {
+    pseudocodeAfterJump_.reset();
     updateTitle();
     updateActions();
   });
@@ -879,7 +888,8 @@ void MainWindow::jump(Address address) {
   hex_->setFocus();
 }
 
-void MainWindow::activateCodeName(CodeView *view, const QString &name) {
+void MainWindow::activateCodeName(CodeView *view, const QString &name,
+                                  bool selectSourceAddress) {
   const auto serial = ++codeNavigationSerial_;
   const auto epoch = session_.epoch();
   const auto source = view->text()->function();
@@ -888,8 +898,8 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name) {
   const auto representation = view->representation();
   session_.read(
       QStringLiteral("resolve"), {{"query", name}}, view,
-      [this, view, serial, epoch, source, from, representation,
-       name](const QJsonObject &payload) {
+      [this, view, serial, epoch, source, from, representation, name,
+       selectSourceAddress](const QJsonObject &payload) {
         if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
             view->text()->function() != source ||
             view->representation() != representation || !view->isVisible())
@@ -899,6 +909,8 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name) {
         if (function && !payload.value("import").toBool()) {
           navigateCodeFunction(view, address.value_or(*function), *function,
                                from);
+          if (selectSourceAddress)
+            view->text()->selectAddress(address.value_or(*function));
         } else if (address) {
           // Data and import slots retain ordinary address navigation.
           jump(*address);
@@ -980,6 +992,7 @@ void MainWindow::connectActions() {
     packageReview_->activateWindow();
   });
   on(ActionId::FileReload, [this] { reloadInput(); });
+  on(ActionId::FileLoadPdb, [this] { loadPdb(); });
   on(ActionId::FileLoadSignatures, [this] {
     const auto path = QFileDialog::getOpenFileName(
         this, tr("Load signature pack"), {},
@@ -1313,7 +1326,13 @@ void MainWindow::updateActions() {
       ->setEnabled(loaded && disassembly_->canGoForward());
   actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
   actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
-  actions_.action(ActionId::FileSave)->setEnabled(loaded && session_.dirty());
+  actions_.action(ActionId::FileSave)
+      ->setEnabled(loaded && (session_.dirty() ||
+                              session_.metadata().value("pdb").isObject()));
+  actions_.action(ActionId::FileLoadPdb)
+      ->setEnabled(loaded && !session_.opening() &&
+                   session_.format() == QLatin1String("PE") &&
+                   session_.loadsPdbFiles());
   actions_.action(ActionId::EditRename)
       ->setEnabled(location && !session_.readOnly());
   // A function starts where none starts yet; the one the cursor is in can
@@ -1411,14 +1430,17 @@ void MainWindow::openFile(const QString &path) {
 
 void MainWindow::openDialog() {
   startupQuickStartPending_ = false;
+  if (const QString path = askForFile(this); !path.isEmpty())
+    chooseLoader(path);
+}
+
+QString MainWindow::askForFile(QWidget *parent) const {
   // The folder of the file the user opened, not of a working copy of it.
   const QString start = QFileInfo(session_.projectPath()).absolutePath();
-  const auto path = QFileDialog::getOpenFileName(
-      this, tr("Open binary or database"),
+  return QFileDialog::getOpenFileName(
+      parent, tr("Open binary or database"),
       start.isEmpty() ? QDir::homePath() : start,
       tr("All files (*);;NeverD databases (*.nddb)"));
-  if (!path.isEmpty())
-    chooseLoader(path);
 }
 
 void MainWindow::chooseLoader(const QString &path) {
@@ -1482,6 +1504,53 @@ void MainWindow::reloadInput() {
         session_.reload(dialog.options());
       },
       [this](const QString &, const QString &) { session_.reload(); });
+}
+
+void MainWindow::loadPdb() {
+  if (!session_.loaded() || !session_.loadsPdbFiles())
+    return;
+  const auto epoch = session_.epoch();
+  const auto path = QFileDialog::getOpenFileName(
+      this, tr("Load PDB file"),
+      QFileInfo(session_.projectPath()).absolutePath(),
+      tr("PDB files (*.pdb);;All files (*)"));
+  if (path.isEmpty() || !session_.loaded() || session_.epoch() != epoch)
+    return;
+  session_.read(
+      QStringLiteral("pdb_inspect"), {{"path", path}}, this,
+      [this, epoch](const QJsonObject &result) {
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, epoch, result] {
+          if (!session_.loaded() || session_.epoch() != epoch)
+            return;
+          const bool verified = result.value("verified").toBool();
+          if (!verified) {
+            if (!result.value("supports_unverified_analysis").toBool()) {
+              output_->append(
+                  tr("This engine cannot use an unverified PDB for analysis"),
+                  1);
+              return;
+            }
+            const auto answer = QMessageBox::warning(
+                this, tr("Use unverified PDB for analysis"),
+                tr("This PE has no PDB matching identity (GUID/age). "
+                   "The selected PDB's machine and section layout match, "
+                   "but its build cannot be verified.\n\n"
+                   "Use this PDB for analysis? Its symbols, types, function "
+                   "signatures and address ranges will be used as analysis "
+                   "input. Choosing the wrong PDB can produce incorrect "
+                   "results."),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+            if (answer != QMessageBox::Yes || !session_.loaded() ||
+                session_.epoch() != epoch)
+              return;
+          }
+          QJsonObject selection{{"path", result.value("path")},
+                                {"mode", verified ? "verified" : "analysis"},
+                                {"stamp", result.value("stamp")}};
+          session_.loadPdb(selection);
+        });
+      });
 }
 
 void MainWindow::applyIndicator() {
@@ -1657,8 +1726,71 @@ void MainWindow::jumpAnywhere() {
 }
 
 void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
+  if (!session_.loaded())
+    return;
+  const auto serial = ++codeNavigationSerial_;
+  auto *view = focusedCodeView();
+  if (!view) {
+    showReferencesDialog(address, to, nullptr);
+    return;
+  }
+  if (!to) {
+    const auto position = view->text()->currentAddress();
+    showReferencesDialog(position ? position : view->text()->function(), false,
+                         view);
+    return;
+  }
+  // A source name can denote a different function from both its source row
+  // and the independent assembly cursor. Prefer its published image identity.
+  const auto target = view->text()->renameTarget();
+  if (target)
+    if (const auto at = addressValue(target->value("address"))) {
+      showReferencesDialog(at, to, view);
+      return;
+    }
+  const auto query = target && !target->value("query").toString().isEmpty()
+                         ? target->value("query").toString()
+                         : view->text()->currentToken();
+  if (query.isEmpty()) {
+    const auto position = view->text()->currentAddress();
+    showReferencesDialog(position ? position : view->text()->function(), to,
+                         view);
+    return;
+  }
+  const auto epoch = session_.epoch();
+  const auto function = view->text()->function();
+  const auto representation = view->representation();
+  const auto valid = [this, view, serial, epoch, function, representation] {
+    return serial == codeNavigationSerial_ && epoch == session_.epoch() &&
+           view->text()->function() == function &&
+           view->representation() == representation && view->isVisible();
+  };
+  session_.read(
+      QStringLiteral("resolve"), {{"query", query}}, view,
+      [this, view, to, valid](const QJsonObject &payload) {
+        const auto address = addressValue(payload.value("address"));
+        // Release the query delivery barrier before the modal chooser asks
+        // the same dispatcher to read its reference pages.
+        QTimer::singleShot(0, view, [this, view, to, valid, address] {
+          if (valid())
+            showReferencesDialog(address, to, view);
+        });
+      },
+      [this, query, valid](const QString &, const QString &error) {
+        if (valid())
+          output_->append(tr("Cannot jump to %1: %2").arg(query, error), 2);
+      });
+}
+
+void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
+                                      CodeView *origin) {
   if (!address || !session_.loaded())
     return;
+  const QPointer<CodeView> view = origin;
+  const auto epoch = session_.epoch();
+  const auto serial = codeNavigationSerial_;
+  const auto function = view ? view->text()->function() : std::nullopt;
+  const auto representation = view ? view->representation() : QString();
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const QString title = (to ? tr("xrefs to %1") : tr("xrefs from %1"))
                             .arg(displayAddress(*address, digits));
@@ -1666,9 +1798,20 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
       session_, space_, title,
       {{"address", hexAddress(*address)}, {"direction", to ? "to" : "from"}},
       this);
-  if (dialog.exec() == QDialog::Accepted)
-    if (const auto chosen = dialog.chosen())
+  if (dialog.exec() != QDialog::Accepted || epoch != session_.epoch() ||
+      serial != codeNavigationSerial_)
+    return;
+  if (const auto chosen = dialog.chosen()) {
+    if (origin) {
+      if (view && view->isVisible() && view->text()->function() == function &&
+          view->representation() == representation)
+        activateCodeName(view, hexAddress(*chosen), true);
+    } else {
       navigate(*chosen);
+      disassembly_->window()->activateWindow();
+      disassembly_->focusContent();
+    }
+  }
 }
 
 void MainWindow::showPseudocode(const QString &representation,
@@ -2083,6 +2226,7 @@ void MainWindow::showCommandPalette() {
   auto *filter = new QLineEdit(&dialog);
   filter->setPlaceholderText(tr("Type a command"));
   auto *list = new QListWidget(&dialog);
+  activateOnReturn(*list);
   // Shortcuts line up at the right of their commands.
   list->setItemDelegate(new SecondaryTextDelegate(std::nullopt, list));
   layout->addWidget(filter);
@@ -2336,14 +2480,38 @@ void MainWindow::scheduleQuickStart() {
 
 void MainWindow::showQuickStart() {
   startupQuickStartPending_ = false;
-  QuickStartDialog dialog(this);
+  // Before the workbench shows, the quick start greets alone, as IDA's
+  // does: a window of its own until the user chooses how to start, when the
+  // workbench takes its place.  Closing it then quits.
+  const bool greeting = !isVisible();
+  QuickStartDialog dialog(
+      [this](QWidget *parent) { return askForFile(parent); },
+      greeting ? nullptr : this);
+  // Qt would quit when the greeting closes as the last window, even once
+  // the user chose how to start; closing it quits below instead.
+  dialog.setAttribute(Qt::WA_QuitOnClose, false);
   quickStart_ = &dialog;
-  if (dialog.exec() != QDialog::Accepted)
+  dialog.exec();
+  const auto start = dialog.start();
+  if (start == QuickStartDialog::Start::None) {
+    if (greeting)
+      QCoreApplication::quit();
     return;
-  if (dialog.start() == QuickStartDialog::Start::New)
-    openDialog();
-  else if (dialog.start() == QuickStartDialog::Start::Previous)
+  }
+  showWorkbench();
+  if (start == QuickStartDialog::Start::New)
+    chooseLoader(dialog.file());
+  else if (start == QuickStartDialog::Start::Previous)
     openFile(dialog.file());
+}
+
+void MainWindow::showWorkbench() {
+  if (isVisible())
+    return;
+  initializeLayout();
+  gnome::boundMaximumSize(*this);
+  show();
+  gnome::widenResizeEdges(*this);
 }
 
 QHash<QString, QByteArray> MainWindow::projectState() const {

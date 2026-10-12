@@ -49,9 +49,14 @@ public:
   void openFile(const QString &path);
   /// Use a disposable layout file (tests and benchmarks).
   void setLayoutPath(const QString &path) { layoutPath_ = path; }
-  /// Restore the saved desktop, or lay out the default one.  Call once the
-  /// window has its size so preferred dock sizes apply.
+  /// Restore the saved desktop, or lay out the default one; later calls do
+  /// nothing.  Call once the window has its size so preferred dock sizes
+  /// apply.
   void initializeLayout();
+  /// Show the workbench, laying out its desktop first if nothing did yet.
+  void showWorkbench();
+  /// Before the workbench shows, the quick start greets alone and the
+  /// workbench follows the user's choice; closing it quits.
   void showQuickStart();
   /// Greet an empty startup on the next event-loop turn, unless opening a
   /// file takes precedence. No window-exposure or engine-ready event is needed.
@@ -120,8 +125,9 @@ private:
   /// analysis view used, otherwise the disassembly.
   void jump(Address address);
   void navigateExpression(const QString &text);
-  /// Follow a name double-clicked in the code view \p view.
-  void activateCodeName(CodeView *view, const QString &name);
+  /// Follow a code name in \p view, optionally selecting its instruction.
+  void activateCodeName(CodeView *view, const QString &name,
+                        bool selectSourceAddress = false);
   void navigateCodeFunction(CodeView *view, Address address, Address function,
                             std::optional<Address> from);
   void navigateHistory(bool forward);
@@ -132,6 +138,9 @@ private:
 
   // Commands.
   void openDialog();
+  /// The binary or database to open, asked in a dialog over \p parent;
+  /// empty when the user cancels.
+  QString askForFile(QWidget *parent) const;
   /// Open \p path, first asking how to load it when NeverD keeps no project
   /// for it, as IDA's "Load a new file" dialog does.
   void chooseLoader(const QString &path);
@@ -145,6 +154,8 @@ private:
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
+  void showReferencesDialog(std::optional<Address> address, bool to,
+                            CodeView *origin);
   void showPseudocode(const QString &representation,
                       bool selectAssemblyAddress = false);
   void toggleGraph();
@@ -166,6 +177,7 @@ private:
   void copySelection();
   void showCommandPalette();
   void exportCurrent(bool pseudocode);
+  void loadPdb();
   void runCommand(const QString &command, const QString &argument);
   void saveDesktop();
   void restoreDesktop();
@@ -221,6 +233,7 @@ private:
   bool codeHistoryNavigation_ = false;
   bool hexActive_ = false;
   bool quitting_ = false;
+  bool layoutInitialized_ = false;
   bool defaultSizesPending_ = false;
   QTimer statusTimer_;
   QStringList pendingCommands_;

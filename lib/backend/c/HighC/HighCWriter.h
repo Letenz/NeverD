@@ -136,11 +136,31 @@ public:
   /// even where the next section's first object starts.
   std::optional<std::string>
   ownedImageBackingAddress(const HighExpr &Const) const;
+  /// The section \p Const is anchored to when its relocation names an object
+  /// there and subtracts from it, leaving an address before the section
+  /// (i386 `table@GOTOFF - 1`; BinaryImage::RodataAnchorSeg).
+  std::optional<va_t> anchoredOwner(const HighExpr &Const) const;
+  /// \p Const as the address of its anchored section's first object less
+  /// the distance to it, as an integer.
+  std::optional<std::string> anchoredOwnerAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
   /// Notes an object the code reaches only by its address so far.
   void noteImageAddress(va_t Addr);
+  /// The name the user, the debug information or a data symbol gives the
+  /// object at an address; with a symbol's, the symbol and the comment that
+  /// reads it as its language spells it.
+  struct ImageSymbolName {
+    std::string Raw;
+    std::string Symbol;
+    std::string Readable;
+  };
+  ImageSymbolName imageSymbolName(va_t Addr) const;
+  /// The listing's name for the data a relocated pointer slot at \p Slot
+  /// holds the address of, as `&name`, where the slot's initializer is a
+  /// number (no symbol sizes the target, so C declares no object for it).
+  std::string relocatedTargetNote(va_t Slot) const;
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
@@ -1015,6 +1035,12 @@ public:
     uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  /// The access width that names the unnamed object \p Obj at \p Addr, as
+  /// the listing names it: the width every access the image's code states
+  /// there shares (CEmitterOptions::AccessWidths), else, without those, the
+  /// one width the emitted code accesses it with.  None names it unknown.
+  std::optional<uint64_t> dataNameWidth(va_t Addr,
+                                        const ImageObject &Obj) const;
   std::map<va_t, DataSymbolBinding> DataSymbolBindings;
   std::set<va_t> UsedDataBindings;
   std::map<std::string, std::string> ExternalDataNames;

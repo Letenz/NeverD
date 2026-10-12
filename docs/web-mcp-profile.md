@@ -62,6 +62,19 @@ derives the descriptor; tools cannot accept caller-supplied tables or pointer
 proofs. Complete PHF/Brotli validation precedes metadata-only member pages.
 Raw Tauri export is omitted from MCP. See the [Tauri profile](web-tauri-profile.md).
 
+Existing source navigation also publishes the independently versioned
+`desktop_bridges` record kind. Direct Tauri/Wails candidates retain shared
+source/call/binding IDs, redacted argument roles and incomplete API/native-target
+claims. No additional tool is added; parser omission removes navigation as
+before. The same source-anchor operation resolves each row through its original
+or decoded storage. See the [bridge profile](web-desktop-bridge-profile.md).
+
+The same records tool also admits `config_merges`, under its independent
+configuration-object-order profile. Ordered terms and lexical loading syntax
+links retain source spans and unknown-key barriers while configuration values
+stay private. Loader identity and effective configuration remain unverified.
+See the [configuration profile](web-configuration-order-profile.md).
+
 `neverd_web_package_install_analyze` requires revision and package analysis ID;
 the matching package behavior ID is optional. No source selection is needed to
 report manifest-only or lock-only coverage gaps. Its records tool pages

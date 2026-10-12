@@ -57,6 +57,14 @@ NdVar snapshotCarryAtWidth(X86Lifter::LiftState &S, uint16_t Size);
 /// True when \p Operand is an AVX-512 opmask register operand.
 bool isX86OpmaskOperand(const cs_x86_op &Operand);
 
+/// True when \p A and \p B are the same register.  Defined in
+/// X86LiftCore.cpp.
+bool isSameRegisterOperand(const cs_x86_op &A, const cs_x86_op &B);
+
+/// \p Bytes bytes that each hold \p Byte: a constant up to eight bytes, a
+/// concatenation of eight-byte constants above.  Defined in X86LiftCore.cpp.
+NdVar emitByteSplat(X86Lifter::LiftState &S, uint16_t Bytes, uint8_t Byte);
+
 /// Reject EVEX modifiers whose value or memory semantics require dedicated
 /// handling. Ordinary vector writemasks are intentionally not rejected here.
 bool hasUnsupportedEvexValueModifier(const cs_x86 &X86);

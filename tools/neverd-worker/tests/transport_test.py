@@ -474,7 +474,34 @@ def run(executable):
                              for line in chunk), chunk
         listed = parts.call("functions", {"filter": "function_6", "limit": 50})["payload"]["items"]
         assert listed and not any(item["address"] == "0xffff800012340060" for item in listed), listed
+        # An address in the chunk resolves to its function, so a reference
+        # there opens that function's code.
+        owner = parts.call("resolve", {"query": "0xffff800012340064"})["payload"]
+        assert owner["function_address"] == BASE and owner["address"] == "0xffff800012340064", owner
         parts.close()
+        # A symbol whose name spells its string literal (MSVC's ??_C@) leaves
+        # the string its own name; a name the user gives it is a name again.
+        literals = Path(directory) / "literal-names.bin"
+        literals.write_bytes(b"mock input")
+        spelled = clients.enter_context(Client(executable))
+        assert spelled.call("open", {"path": str(literals)})["status"] == "ok"
+
+        def wide_lines():
+            return [" ".join(line["text"].split()) for line in spelled.call(
+                "listing", {"address": "0xffff800012343100", "before": 0, "after": 12})["payload"]["lines"]]
+        rodata = wide_lines()
+        assert any(line.startswith("aWide:") for line in rodata), rodata
+        assert not any("??_C@" in line for line in rodata), rodata
+        # A literal among the code lists as a string there too.
+        code = [" ".join(line["text"].split()) for line in spelled.call(
+            "listing", {"address": "0xffff800012340200", "before": 0, "after": 4})["payload"]["lines"]]
+        assert any(line.startswith("aInline db 'Inline',0") for line in code), code
+        assert not any("??_C@" in line for line in code), code
+        assert spelled.call("rename", {"address": "0xffff800012343108", "name": "kWide"})["status"] == "ok"
+        rodata = wide_lines()
+        assert any(line.startswith("kWide:") for line in rodata), rodata
+        assert "text \"UTF-16LE\", 'Wide',0" in rodata, rodata
+        spelled.close()
 
     malformed = Client(executable)
     malformed.process.stdin.write(struct.pack(">I", 1) + b"{")

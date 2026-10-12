@@ -25,11 +25,30 @@ namespace call_args_detail {
 
 void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args) {
-  collectSpilledStackArgs(Scan, Found);
   const BinaryFormat Format =
       Scan.Image ? Scan.Image->abiFormat() : BinaryFormat::Unknown;
   const size_t RegisterPositions =
       Scan.TRI->integerArgumentLayout(Format).Registers.size();
+  // Where no outgoing area is reserved, the stack arguments are pushed, or
+  // stored at the stack pointer the call is made with, one slot each past
+  // the register positions.  Each push is at offset 0 from the stack pointer
+  // it is made with, so the spilled-store scan sees only the last; place
+  // every store by its offset from the call's stack pointer instead, as far
+  // as the callee's summary says it reads.  The spilled-store scan numbers
+  // the slots from the last register argument found, though a callee that
+  // reads fewer registers (a record passed in memory) still takes its stack
+  // arguments past every register position, and it takes a store to the
+  // caller's own frame for one; its placements then give way to these.
+  const bool ReservedArea =
+      Scan.Convention && Scan.Convention->ReservedOutgoingArea;
+  const bool SlotsByCallOffset =
+      Scan.TheArch == Arch::X64 && !ReservedArea && Scan.CallStackEntryOffset &&
+      Scan.EntryOffsetOf &&
+      Scan.CalleeStackArgs > static_cast<int>(RegisterPositions);
+  const std::vector<ExprPtr> RegisterArgs = Found;
+  collectSpilledStackArgs(Scan, Found);
+  if (SlotsByCallOffset && !Scan.TailJump && Scan.CalleeRegisterArgs >= 0)
+    Found = RegisterArgs;
   // The stores before the call, latest first, until an earlier call: a
   // callee-saved register's entry value stored there is a prologue save,
   // and a value computed into one is an argument (clang -O0 keeps them in
@@ -57,17 +76,8 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
       if (W.Ops && !walk(*W.Ops, W.Before))
         return;
   };
-  // Where no outgoing area is reserved, the stack arguments are pushed, or
-  // stored at the stack pointer the call is made with, one slot each past
-  // the register positions.  Each push is at offset 0 from the stack pointer
-  // it is made with, so the spilled-store scan above sees only the last;
-  // place every store by its offset from the call's stack pointer instead,
-  // as far as the callee's summary says it reads.
-  const bool ReservedArea =
-      Scan.Convention && Scan.Convention->ReservedOutgoingArea;
-  if (Scan.TheArch == Arch::X64 && !ReservedArea && Scan.CallStackEntryOffset &&
-      Scan.EntryOffsetOf &&
-      Scan.CalleeStackArgs > static_cast<int>(RegisterPositions)) {
+  bool PlacedByCallOffset = false;
+  if (SlotsByCallOffset) {
     const int64_t SlotBytes = static_cast<int64_t>(Scan.TRI->PointerSize);
     const int64_t StackSlots =
         Scan.CalleeStackArgs - static_cast<int64_t>(RegisterPositions);
@@ -98,6 +108,7 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
               NdType::makeInt(static_cast<uint16_t>(SlotBytes), false);
         }
         Found[K] = std::move(Value);
+        PlacedByCallOffset = true;
       }
       return true;
     });
@@ -128,8 +139,11 @@ void collectCallArgsX86(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
         Found[K] = Scan.OwnStackParam(K);
   // With positional slots a stack argument means every register argument is
   // passed, even the ones this block did not write (a pass-through of the
-  // caller's own).
-  if (Scan.Convention && Scan.Convention->PositionalArgumentSlots &&
+  // caller's own).  So does one placed past every register position: the
+  // callee's parameters keep a place for each register it does not read
+  // (detectStackParams).
+  if (Scan.Convention &&
+      (Scan.Convention->PositionalArgumentSlots || PlacedByCallOffset) &&
       Scan.ReachingRegArg &&
       std::any_of(Found.begin() + std::min(RegisterPositions, Found.size()),
                   Found.end(), [](const ExprPtr &E) { return E != nullptr; }))

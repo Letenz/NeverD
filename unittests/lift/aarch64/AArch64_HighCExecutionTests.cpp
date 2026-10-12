@@ -186,3 +186,57 @@ int halfint(int a) {
       "halfint", {"halfint"},
       {0, 0x0001, 0x3C00, 0x4300, 0xC100, 0x5640, 0x7BFF});
 }
+
+// A call through a table of functions passes the running value the loop
+// keeps in w0: no write in the call's block sets it, but the loop's join
+// does, so it is the argument the call recovery found.
+TEST_F(AArch64_HighCExecution, AnIndirectCallPassesTheValueItsLoopKeeps) {
+  KernelOptimization = "-O1";
+  expectRunsLikeSource(R"C(
+typedef unsigned (*vf_t)(unsigned);
+static unsigned h0(unsigned);
+static unsigned h1(unsigned);
+static unsigned h2(unsigned);
+struct obj {
+  vf_t f;
+  unsigned k;
+};
+int vt(int a) {
+  struct obj v[3] = {{h0, 3u}, {h1, 5u}, {h2, 7u}};
+  unsigned acc = (unsigned)a;
+  for (int i = 0; i < 66; i++) {
+    struct obj *o = &v[(acc >> 2) % 3u];
+    acc = o->f(acc) + o->k * (unsigned)i;
+  }
+  return (int)acc;
+}
+static unsigned h0(unsigned x) { return (x * 2654435761u) ^ (x >> 15); }
+static unsigned h1(unsigned x) { return x + 0x85EBCA6Bu; }
+static unsigned h2(unsigned x) { return (x << 13) | (x >> 19); }
+)C",
+                       "vt", {"vt", "h0", "h1", "h2", "obj", "vf_t"});
+}
+
+// A table of string pointers becomes a relative table whose address the
+// code keeps in a register: no add-back names the table, but the loader
+// relocates every entry as a displacement to its string, so the table's
+// object reaches the strings.
+TEST_F(AArch64_HighCExecution,
+       ARelativeTableKnownByItsAddressReachesItsStrings) {
+  expectRunsLikeSource(R"C(
+static const char *const W[6] = {"alphaA", "bravoB", "charlC",
+                                 "deltaD", "echoEe", "foxtrF"};
+int offptr(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    unsigned j = (s >> 5) % 6u;
+    const char *p = W[j] + ((s >> 9) % 6u);
+    h = h * 131u + (unsigned)(unsigned char)*p;
+    h ^= h >> 11;
+  }
+  return (int)h;
+}
+)C",
+                       "offptr", {"offptr", "W"});
+}

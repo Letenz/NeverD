@@ -31,6 +31,7 @@ class StructType;
 namespace neverd {
 
 struct BinaryImage;
+class DebugContext;
 
 /// \p Ty as C.  Throws std::invalid_argument for a type C cannot spell, such
 /// as a record with neither a source name nor a supported layout.
@@ -54,6 +55,20 @@ bool hasCValueLayout(const TypeRef &Ty);
 /// than zeros holds more than the text.
 std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
                                               bool AllowEmpty = false);
+
+/// A string literal at \p Addr as C: the image's read-only printable text
+/// (imageStringLiteral), or the literal a symbol's name spells there (MSVC's
+/// `??_C@`, among the image's symbols or \p Dbg's), wherever the image keeps
+/// it: a kernel keeps its literals among its code.  The literal a symbol
+/// spells may be empty (`L""`).
+std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
+                                           const DebugContext *Dbg, va_t Addr,
+                                           bool AllowEmpty = false);
+
+/// Whether \p Addr, in an executable section, begins data that \p Dbg names
+/// and no function: a kernel keeps tables and literals among its code
+/// (`RtlpIntegerChars` in PAGE).
+bool isCodeSectionData(const DebugContext *Dbg, va_t Addr);
 
 /// Whether C text starts with a string literal (`"..."`, `L"..."`, `u8"..."`,
 /// `u"..."`, `U"..."`), which C takes as an array, not as an integer.

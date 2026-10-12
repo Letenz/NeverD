@@ -1667,3 +1667,12 @@ ctest --test-dir build-source -L \
   '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
   --output-on-failure --parallel 4
 ```
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*` 檢查 CPL0 IF 清除／設定與 CPL3 反向控制、profile 匹配及摘要區分、TF/AC/IOPL 拒絕、關閉一般觀察後仍須檢查最終 IF 相依、還原與精確／少一操作預算。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` 也確認此原生核心 profile 不能默默選用使用者態原始碼 ABI。正式未定義指令 admission 與驅動還原 guards 未變更。
+
+`NeverDX86X87IntegerLoadTests` 比較原始 `FILD m16/m32/m64` 與 Codegen、HighC、LLVMC 的預設/NoOpt 和 C O0/O2 路徑，觀察完整 binary80、保護位元組、控制字及已定義的 C1，涵蓋全部 RC、有效 PC 和異常遮罩。具體執行遍歷所有 16 位輸入與寬整數的二次冪邊界，檢查純轉換保留浮點狀態與填充位元組。反例涵蓋待處理/未知異常、精確記憶體範圍、畸形中繼資料，以及分支、平衡/不平衡迴圈和未知呼叫後的全路徑空槽證明。ABI 入口不能證明空堆疊；未知或已佔用的目標槽拒絕完整函式發布。原生 oracle 要求 x64 GCC/Clang；不認證完整 x87 TOP/標籤/狀態交付、堆疊溢位模擬、原生異常與記憶體故障優先級或 Linux/macOS/x86-32 原生執行。`NeverDLLVMCIntrinsicSemanticTests` 亦以 C O0/O2 和未定義行為陷阱執行至 64 位的純量 `llvm.abs`，檢查已定義的最小有號值與單次求值。
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```

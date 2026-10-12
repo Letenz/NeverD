@@ -107,6 +107,12 @@ MockSession *session(neverd_session_t s) {
 bool chunkedFixture(neverd_session_t s) {
   return session(s)->path.ends_with("function-chunks.bin");
 }
+/// In literal-names.bin, MSVC's names spell L"Wide" and the literal "Inline",
+/// which lies among the code where function_32 would be.
+constexpr std::uint64_t CodeLiteral = Base + 0x200;
+bool literalFixture(neverd_session_t s) {
+  return session(s)->path.ends_with("literal-names.bin");
+}
 std::uint64_t codeSize(neverd_session_t s) {
   return session(s)->path.ends_with("make-code.bin")
              ? CodeBase + sizeof(CodeBytes) - Base
@@ -158,9 +164,10 @@ int neverd_session_load(neverd_session_t s, const char *path) {
   // A large table for GUI paging tests; its functions are never executed.
   session(s)->imageFunctions =
       session(s)->path.ends_with("many-functions.bin") ? 20000 : ImageFunctions;
-  session(s)->absentFunctions = chunkedFixture(s)
-                                    ? std::set<std::uint64_t>{ChunkBegin}
-                                    : std::set<std::uint64_t>{};
+  session(s)->absentFunctions =
+      chunkedFixture(s)   ? std::set<std::uint64_t>{ChunkBegin}
+      : literalFixture(s) ? std::set<std::uint64_t>{CodeLiteral}
+                          : std::set<std::uint64_t>{};
   session(s)->functions = listedFunctions({}, session(s)->imageFunctions,
                                           session(s)->absentFunctions);
   notify("ready", 1);
@@ -568,6 +575,8 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
   for (; index < 600 && index < first + maxFunctions; ++index) {
     const auto entry = Base + 16 * static_cast<std::uint64_t>(index);
     refs.push_back({hexAddress(entry + JumpOffset), hexAddress(entry), "jump"});
+    if (session(s)->path.find("xrefs-") != std::string::npos && index == 22)
+      refs.push_back({hexAddress(entry + 3), hexAddress(Base + 0x140), "call"});
     // function_3 calls function_2 through data slot 1.
     if (index == 3)
       refs.push_back({hexAddress(entry + 4), hexAddress(Base + 0x20), "icall"});
@@ -843,6 +852,64 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  if (session(s)->path.find("xrefs-") != std::string::npos) {
+    const bool delayed = session(s)->path.ends_with("xrefs-delayed.bin");
+    const bool unmapped = session(s)->path.ends_with("xrefs-unmapped.bin");
+    const bool published = session(s)->path.ends_with("xrefs-address.bin");
+    const bool caller = address == Base + 0x160;
+    std::vector<std::string> lines{
+        "int function_" + std::to_string((address - Base) / 16) + "() {\n",
+        delayed  ? "  return delayed_function();\n"
+        : caller ? "  return function_20();\n"
+                 : "  return 42;\n",
+        "}\n"};
+    if (published)
+      for (auto &line : lines)
+        if (const auto at = line.find("function_20"); at != std::string::npos)
+          line.replace(at, std::string("function_20").size(),
+                       "display_function");
+    const auto first = std::min(offset, lines.size());
+    const auto end = first + std::min(limit, lines.size() - first);
+    std::string text;
+    std::size_t begin = 0;
+    Json rows = Json::array();
+    for (std::size_t i = 0; i < first; ++i)
+      begin += lines[i].size();
+    for (auto i = first; i < end; ++i) {
+      text += lines[i];
+      rows.push_back({{"line", i},
+                      {"kind", "source"},
+                      {"mapping_status",
+                       i == 1 && !unmapped ? "instruction_anchor" : "unmapped"},
+                      {"addresses", i == 1 && !unmapped
+                                        ? Json::array({hexAddress(address + 3)})
+                                        : Json::array()}});
+    }
+    Json names = Json::array();
+    if (published)
+      if (const auto at = text.find("display_function");
+          at != std::string::npos)
+        names.push_back(
+            {{"begin_byte", begin + at},
+             {"end_byte", begin + at + std::string("display_function").size()},
+             {"identifier", "display_function"},
+             {"address", hexAddress(Base + 0x140)}});
+    return copy(Json{
+        {"schema_version", 1},
+        {"address", hexAddress(address)},
+        {"representation", representation},
+        {"dialect", "c"},
+        {"text", text},
+        {"rows", rows},
+        {"offset", first},
+        {"byte_offset", begin},
+        {"total_lines", lines.size()},
+        {"complete", end == lines.size()},
+        {"next_offset", end == lines.size() ? Json(nullptr) : Json(end)},
+        {"library_regions", Json::array()},
+        {"source_names",
+         names}}.dump());
+  }
   if (session(s)->sourceCacheFixture()) {
     auto &state = *session(s);
     if (!state.wholeProgramPrepared && state.preparedEntry != address) {
@@ -1128,7 +1195,7 @@ const char *neverd_string_encodings_json(void) {
                             {"legacy", true}}})
                   .dump());
 }
-const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
+const char *neverd_strings_ex_json(neverd_session_t s, const char *options) {
   const Json parsed =
       options ? Json::parse(options, nullptr, false) : Json::object();
   const auto wanted = [&](const char *encoding) {
@@ -1140,18 +1207,32 @@ const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
     return false;
   };
   Json items = Json::array();
+  // Symbols spell the literals of literal-names.bin, which are listed
+  // whichever encodings are searched.
+  const bool literals = literalFixture(s);
+  if (literals)
+    items.push_back({{"addr", hexAddress(CodeLiteral)},
+                     {"length", 6},
+                     {"chars", 6},
+                     {"encoding", "ascii"},
+                     {"literal", true},
+                     {"value", "Inline"}});
   if (wanted("utf-8"))
     items.push_back({{"addr", hexAddress(RodataBase)},
                      {"length", 6},
                      {"chars", 2},
                      {"encoding", "utf-8"},
                      {"value", "\xe4\xb8\xad\xe6\x96\x87"}});
-  if (wanted("utf-16le"))
-    items.push_back({{"addr", hexAddress(RodataBase + 8)},
-                     {"length", 8},
-                     {"chars", 4},
-                     {"encoding", "utf-16le"},
-                     {"value", "Wide"}});
+  if (literals || wanted("utf-16le")) {
+    Json wide = {{"addr", hexAddress(RodataBase + 8)},
+                 {"length", 8},
+                 {"chars", 4},
+                 {"encoding", "utf-16le"},
+                 {"value", "Wide"}};
+    if (literals)
+      wide["literal"] = true;
+    items.push_back(std::move(wide));
+  }
   return copy(items.dump());
 }
 // The rows neverd_strings_ex_json lists, a page at a time.
@@ -1268,6 +1349,17 @@ const char *neverd_symbols_json(neverd_session_t s) {
         {"name", "function_0"},
         {"type", "function"}},
        {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}});
+  // MSVC's names of literals spell them rather than naming objects.
+  if (literalFixture(s)) {
+    rows.push_back({{"addr", hexAddress(CodeLiteral)},
+                    {"literal", true},
+                    {"name", "??_C@_06MOCKMOCK@Inline@"},
+                    {"size", 0}});
+    rows.push_back({{"addr", hexAddress(RodataBase + 8)},
+                    {"literal", true},
+                    {"name", "??_C@_19LKAMOCKA@?$AAW?$AAi?$AAd?$AAe@"},
+                    {"size", 0}});
+  }
   // The user's names of data replace the symbols' or add rows of their own.
   for (const auto &[address, name] : session(s)->names) {
     if (neverd_func_find_by_addr(s, address) >= 0)
@@ -1276,6 +1368,7 @@ const char *neverd_symbols_json(neverd_session_t s) {
     for (auto &row : rows)
       if (parseAddress(row.at("addr").get<std::string>()) == address) {
         row["name"] = name;
+        row.erase("literal");
         replaced = true;
       }
     if (!replaced)

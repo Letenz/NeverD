@@ -41,6 +41,11 @@ public:
   /// The neverd_strings_ex_json options strings are found with, as JSON
   /// text; empty for the engine's defaults.
   void setStringOptions(std::string options);
+  /// Unverified PDB names affect presentation only. No symbol, function
+  /// extent, type or instruction fact is installed in the engine.
+  void setPdbDisplayNames(const Json &names);
+  /// An imported display-only data name that the listing currently shows.
+  std::optional<std::string> pdbDataName(std::uint64_t address);
   /// `listing`: lines around an address.
   Json page(const Json &payload);
   /// `overview`: address classes in equal linear buckets.
@@ -58,6 +63,9 @@ public:
   std::string nameAt(std::uint64_t address);
   /// Resolve an automatic or listing-local name to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
+  /// The entry of the function whose chunk, a part apart from its body,
+  /// holds \p address.
+  std::optional<std::uint64_t> chunkOwner(std::uint64_t address);
   /// Whether \p address is an import's slot or the entry of its thunk.
   bool isImport(std::uint64_t address);
   /// Build the reference index again, as for a changed function list.
