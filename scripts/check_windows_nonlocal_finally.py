@@ -21,9 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "unittests/lift/eh/fixtures/nonlocal_finally_runtime.c"
 OBSERVATION = re.compile(
     r"NONLOCAL_FINALLY (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) "
-    r"guards=(\d+) chain=(\d+) consistent=(\d+) iterations=(\d+)\s*")
+    r"guards=(\d+) chain=(\d+) consistent=(\d+) iterations=(\d+) "
+    r"reenter=(\d+),(\d+),(\d+),(\d+) counters=(\d+),(\d+) "
+    r"immediate_guards=(\d+) immediate_chain=(\d+) reentries=(\d+)\s*")
 EXPECTED = (123457, 12357, 13567, 1357, 123, 13)
 CONTROL = (128457, 12857, 18567, 1857, 128, 18)
+RUNTIME_CHECKS = (1, 1, 1, 192, 12356, 1256, 12456, 1256, 10, 11, 1, 1, 192)
 
 
 def observe(result: dict, control: bool = False) -> tuple[int, ...]:
@@ -31,7 +34,7 @@ def observe(result: dict, control: bool = False) -> tuple[int, ...]:
     if result.get("exit_code") != 0 or not match:
         raise ValueError("nonlocal finally execution did not complete")
     values = tuple(map(int, match.groups()))
-    if values != (CONTROL if control else EXPECTED) + (1, 1, 1, 192):
+    if values != (CONTROL if control else EXPECTED) + RUNTIME_CHECKS:
         raise ValueError("finally order, resumption, guards or chain differs")
     return values
 
@@ -57,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("this baseline requires native Windows MSVC")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    report = {"schema": 1, "evidence": "original-msvc-nonlocal-finally",
+    report = {"schema": 2, "evidence": "original-msvc-nonlocal-finally",
               "platform": platform.platform(), "architecture": args.arch,
               "toolset": os.environ.get("VCToolsVersion", ""),
               "source_sha256": hashlib.sha256(SOURCE.read_bytes()).hexdigest(),

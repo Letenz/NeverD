@@ -1684,7 +1684,9 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `X86PreservedState.*` は新しいスカラー形式、正確な別名、厳密リセット、古いバイト/操作列/バージョンの拒否を検査する。`OriginalBinaryUndefinedIndependence.*Opaque*` は分岐、内部呼び出し、完全な間接宛先、正確なプロファイル、独立デコードから算出したメタデータ予算の一致/1 不足を扱う。`BinaryLowIR*.*Opaque*` は証人と任意の未定義選択、複数の帰納ソース、後半の順位/予算失敗、真の入口スカラー保存、同一 LowIR の後続ソースバイト変更による実行ダイジェスト変更を検査する。`NativeUndefinedIndependence.*Opaque*` と `NativeStackControl.*FreshMemoryCall*` はグループ内部、切点前境界、古い記録、スタック変更前の宛先評価を扱う。`NeverDInterpreterLLVMRefinementTests` を含むメタデータ利用側を再ビルドし、sanitizer とコンパイル済み故障注入の結果は通常テストと分けて報告する。
 
-`scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。
+`scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。 追加の4ケースは親関数の復帰直後に2回目の例外を発生させ、2ケースはガード付きの呼び出し元カウンターを検証します。x86 の登録チェーンは各呼び出し後と復帰先で確認します。スキーマ2が必須で、従来の最終チェーンだけの記録では不十分です。
+
+`scripts/check_windows_native_seh_resume.py` は実験的な Windows x64 LLVM/CRT プロトコルを O0/O2 で別途検証します。`_local_unwind` の物理 SP と親の復帰先はソースフレームと分離します。MASM は8個の保存 GPR、XMM6–XMM15、SP、ガード、通常経路の呼び出し後処理、非局所経路での処理スキップと2回目の例外を確認します。ツール情報とハッシュを保存します。成功は NeverD 再構築の許可ではなく、PE32、エスケープしたメモリ、任意の入れ子、両 C 経路は未解決です。ネイティブ x64 MSVC で `--output` を指定します。 ワークフロー入力 `windows_eh_protocol_only` は NeverD を再ビルドせずにこれらのネイティブ実験を実行します。エンジンの回帰検証とは別です。
 
 `RegistrationTryLevel.EH4Publication*` と `EH4CookieStoresMustOwnDistinctPrivateBytes` は、ADD/SUB による確保、レジスタ保存、cookie の PUSH、disp8/disp32 の cookie 格納を含む PE32 EH4 の直接フレームを検証します。変更された参照元やオフセット、cookie の重複、保存レジスタやランタイム管理領域への上書きは拒否し、共有 LowIR が値と寿命を独立して検証します。
 

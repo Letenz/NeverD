@@ -1630,7 +1630,9 @@ bulk-attributes 檢查完整組、名稱/型別集合、未使用位元組保護
 
 `X86PreservedState.*` 檢查重新解碼的純量形式、精確暫存器別名、嚴格重設及位元組/操作段/版本過期拒絕。`OriginalBinaryUndefinedIndependence.*Opaque*` 涵蓋分支、內部呼叫、完整間接目標、精確設定及獨立解碼的中繼資料預算恰好足夠/少一單位邊界。`BinaryLowIR*.*Opaque*` 涵蓋選擇見證與任意未定義選擇、多歸納來源、後期秩/預算拒絕、真實入口純量保持，以及 LowIR 不變但後續來源段位元組改變時執行摘要必須改變。`NativeUndefinedIndependence.*Opaque*` 和 `NativeStackControl.*FreshMemoryCall*` 檢查群組內部、切點前邊界、過期記錄及堆疊修改前的目標求值。重建受影響的中繼資料使用端，包括 `NeverDInterpreterLLVMRefinementTests`；分別報告 sanitizer、編譯故障注入與一般測試結果。
 
-`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。
+`scripts/check_windows_nonlocal_finally.py` 使用 MSVC 編譯並原生執行 x86/x64 程式，涵蓋 O0/O2 與 GS 開關。六種情況區分普通呼叫和異常展開中的 finally、條件跳回父函式，以及中止展開的 return。重複執行檢查區域保護區和 x86 註冊鏈；刻意改變清理軌跡的負對照必須被原始預期拒絕。Windows EH fixture 作業保留原始碼及映像雜湊、編譯器輸出、連結映射和執行觀察。請在對應 MSVC 環境中指定 `--arch x86` 或 `--arch x64` 與 `--output`。這些結果僅提供原生執行基準，不代表 NeverD 已支援這些非區域轉移。 新增四種情況在父函式恢復後立即再次拋出例外，另有兩種檢查純量輸入與呼叫端擁有、帶相鄰 guard 的計數器。x86 註冊鏈在每次呼叫之後與恢復標籤處檢查。必須使用 schema 2 觀測；只比較最終註冊鏈的舊報告不能證明這些涵蓋範圍。
+
+`scripts/check_windows_native_seh_resume.py` 單獨測試 Windows x64 LLVM/CRT 的實驗性續接協定，涵蓋 O0/O2。`_local_unwind` 接收捕獲的實體 SP 與取址的父函式續接點，與逸出的來源框架單元分開。MASM 呼叫端檢查八個保留 GPR、XMM6–XMM15、返回 SP 和 guard。普通路徑執行呼叫後的操作，非局部路徑跳過這些操作，所有路徑隨後再次拋出例外。報告保留工具鏈與雜湊。原生成功不授予 NeverD 重建憑據，也未解決 PE32 出口、逸出記憶體的存取權限、任意巢狀或兩條 C 路線。請在原生 x64 MSVC 環境中指定 `--output`。 工作流程參數 `windows_eh_protocol_only` 直接執行這些原生實驗，不重新建置 NeverD；它與引擎迴歸涵蓋範圍分開。
 
 `RegistrationTryLevel.EH4Publication*` 與 `EH4CookieStoresMustOwnDistinctPrivateBytes` 檢查 PE32 EH4 直接堆疊框架，涵蓋 ADD/SUB 配置、保存暫存器、壓入 cookie 及 disp8/disp32 cookie 儲存。變更來源或位移、cookie 重疊，以及覆寫保存暫存器或執行階段管理欄位的寫入必須被拒絕；共用 LowIR 獨立驗證值與生命週期。
 

@@ -14,10 +14,25 @@ analysis and comparison output belong outside the repository.
 | Toolset coverage varies by hosted runner | Verify each compiler's actual version and path before publishing corpus artifacts. Treat unavailable versions as explicit skips. |
 | MinGW x86 call arguments can remain unknown after function boundaries are repaired | Inspect the recovered callee ABI and each caller's actual register/stack evidence. Do not treat residual unknown arguments as evidence that an internal label is still a function. |
 | The public x64 `xcpt4` SEH analysis matrix still rejects an independent ordinary entry in a protected scope | Complete decoded callee chains and certified runtime-only continuations retain their frame evidence. This case still needs authenticated effects across opaque imports and cross-funclet runtime activation identities. ABI declarations alone do not preserve saved memory. |
-| The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Runtime callback entries now retain separate invocation stacks across shared tails. Ordinary finally calls and nonlocal exits still need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. Neither a zero-pop summary nor an unconditional no-return annotation is valid. |
+| The public PE32 `xcpt4` mixes ordinary calls into finally bodies with runtime activations and nonlocal stack restoration | Ordinary finally calls and nonlocal exits need exact return-PC and resumption evidence consumed by CFG, SSA and emitters. A nested SEH helper also needs checked incoming-object and exception-field accesses before its independent returning-stack proof can close. Neither a guessed zero-pop summary nor an unconditional no-return annotation is valid. |
+
+The original MSVC nonlocal-finally fixture now includes a second exception
+immediately after parent resumption and a guarded caller-owned counter helper.
+Its schema 2 oracle checks the x86 chain at each return and at the resume label.
+`check_windows_native_seh_resume.py` is a separate x64 LLVM/CRT protocol
+experiment with a physical-stack capture and a parent continuation address.
+Compiler or native-runtime success alone grants no reconstruction receipt;
+conditional memory, invocation lifetime and both C routes remain open.
 
 ## CRT and catch-continuation repairs
 
+- COFF parsing and LowIR share EH3/EH4 scope-index and frame-sentinel rules.
+  Registration analysis rechecks normalized initial levels, backward enclosing
+  links, handler/filter roles and PE32 code-address width before publishing
+  facts, even when parser status is complete. Twenty-four malformed-record
+  mutations reject without frame facts; initial-active and empty-table controls
+  retain valid sentinels. Byte, executable-ownership and frame-installation
+  proofs remain separate.
 - Single-function source LLVM emission uses the same verified promotion fallback
   as the SDK and sharded source route. Incomplete native EH contracts remain
   explicit and still prevent binary rewriting. Cross-format and architecture
