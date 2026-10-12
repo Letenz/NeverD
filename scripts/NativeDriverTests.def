@@ -46,6 +46,8 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.RetainsModernFlagsAndInitializationSemantics")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.OwnsCurrentBytesAcrossMutationAndRelease")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.ReleasedPoolsLeaveNoReconstructionRecord")

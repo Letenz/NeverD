@@ -1356,7 +1356,6 @@ TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
     EXPECT_TRUE(Driver.hasAdditionalDependencies());
     EXPECT_EQ(Driver.additionalDependencyReasons(),
               (std::vector<std::string>{"live kernel pool allocations",
-                                        "retained kernel object allocations",
                                         "DriverEntry continuation requires "
                                         "fresh-caller reconstruction"}));
     if (State == Observer.Metadata)
