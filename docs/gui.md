@@ -413,7 +413,11 @@ opens at nearly the size of the screen, and a maximized window does not resize
 from its edges; IDA opens that way. Under Wayland GNOME draws no frame and the
 one Qt draws resizes only from a few pixels outside the visible edge, so the
 last four pixels inside the left, right and bottom edges resize the window
-too, under the matching cursor.
+too, under the matching cursor. When Qt updates the size limits of a maximized
+window, as on leaving full screen, it tells GNOME the window has no maximum
+width but a maximum height, which GNOME reads as a maximum width of zero: the
+restored window stopped resizing sideways, and a vertical resize narrowed it.
+The window therefore keeps a finite maximum size larger than any screen.
 
 ## Loading a new file
 

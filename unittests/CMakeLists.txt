@@ -247,6 +247,17 @@ add_subdirectory(lift)
 add_subdirectory(translate)
 if(NEVERD_ENABLE_SEMANTIC_TESTS)
   add_subdirectory(semantic)
+  if(TARGET neverd_shared)
+    add_neverd_unittest(NeverDSourcePatchMatrixTests
+      SourcePatchMatrixTests.cpp
+      LINK_COMPONENTS Loader
+      LINK_LIBS neverd_shared unicorn LLVMSupport
+    )
+    target_include_directories(NeverDSourcePatchMatrixTests PRIVATE
+      ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+    target_compile_definitions(NeverDSourcePatchMatrixTests PRIVATE
+      NEVERD_TEST_CLANG="${NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE}")
+  endif()
 endif()
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(emulation)

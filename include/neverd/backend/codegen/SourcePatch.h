@@ -20,6 +20,10 @@
 
 namespace neverd {
 
+/// Shared admission for compiler-produced or externally supplied source IR.
+/// A codegen triple alone does not establish a loader/unwind installation ABI.
+llvm::Error validateSourcePatchTarget(Arch Architecture, BinaryFormat Format);
+
 struct BinaryImage;
 
 struct SourcePatchMapping {

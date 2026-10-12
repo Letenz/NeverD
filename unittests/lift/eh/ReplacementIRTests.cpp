@@ -163,4 +163,86 @@ TEST(ReplacementNativeCode, ExternalPLTReferenceMustBeExactBeforePublication) {
   EXPECT_EQ(Calls, 1u);
 }
 
+TEST(ReplacementNativeCode, MachOGOTDataReferenceMustUseTheEndOfItsWord) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("macho-type-info", Context);
+  auto *Type = llvm::FunctionType::get(llvm::Type::getInt32Ty(Context), false);
+  auto *Function = llvm::Function::Create(
+      Type, llvm::GlobalValue::ExternalLinkage, "replacement", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt32Ty(Context), 0));
+  // This is Clang's LSDA type-table spelling. In a Mach-O object the GOT
+  // relocation is PC-relative to the end of the four-byte word; the +4 makes
+  // the final type table relative to the field's beginning, as DWARF requires.
+  Module.appendModuleInlineAsm(".section __TEXT,__gcc_except_tab\n"
+                               ".p2align 2\n.long external_type@GOTPCREL+4\n");
+  constexpr uint64_t TargetVA = 0x104018, TextVA = 0x105320;
+  auto Resolve = [TargetVA](llvm::StringRef Name,
+                            uint32_t) -> std::optional<uint64_t> {
+    return Name == "external_type" ? std::optional<uint64_t>(TargetVA)
+                                   : std::nullopt;
+  };
+  llvm::mc_rewrite::RewriteOptions Probe;
+  Probe.Model.TextVA = TextVA;
+  Probe.Model.resolve = Resolve;
+  uint64_t FieldVA = 0, FieldOffset = 0;
+  int64_t Addend = 0;
+  std::string SectionName;
+  unsigned Fields = 0;
+  Probe.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Fixup, uint64_t Value) {
+    if (Fixup.Sym == "external_type") {
+      ++Fields;
+      FieldVA = Fixup.FixupVA;
+      FieldOffset = Fixup.SectionOffset;
+      Addend = Fixup.Addend;
+      SectionName = Fixup.SectionName.str();
+    }
+    return Value;
+  };
+  auto Copy = llvm::CloneModule(Module);
+  neverd::Codegen Generator;
+  auto Raw = Generator.compileForRewrite(
+      *Copy, neverd::Arch::X64, Probe, neverd::BinaryFormat::MachO, {},
+      neverd::RewriteInputKind::ReplacementIR);
+  ASSERT_TRUE(Raw.ImageValid);
+  ASSERT_TRUE(Raw.Unresolved.empty());
+  ASSERT_EQ(Fields, 1u);
+  const auto Section = llvm::find_if(
+      Raw.Sections, [&](const auto &S) { return S.Name == SectionName; });
+  ASSERT_NE(Section, Raw.Sections.end());
+  ASSERT_LE(FieldOffset + 4, Section->Bytes.size());
+  const auto Delta =
+      neverd::readLE<int32_t>(Section->Bytes.data() + FieldOffset);
+  const bool ExactProducer = FieldVA + 4 + Delta == TargetVA + Addend;
+  if (std::getenv("NEVERD_TEST_REQUIRE_FIXED_LLVM"))
+    EXPECT_TRUE(ExactProducer)
+        << "LLVM still misanchors Mach-O GOT data by four bytes";
+  // Check both appended RO metadata and metadata fixed in an original range.
+  for (bool External : {false, true}) {
+    auto Compiled = neverd::compileImageForPatchWithFixedSectionVAs(
+        Module, neverd::Arch::X64, neverd::BinaryFormat::MachO, TextVA, Resolve,
+        [External](llvm::StringRef Name) -> std::optional<uint64_t> {
+          return External && Name == "__gcc_except_tab"
+                     ? std::optional<uint64_t>(0x108000)
+                     : std::nullopt;
+        },
+        0, {}, neverd::RewriteInputKind::ReplacementIR);
+    ASSERT_EQ(Compiled.Success, ExactProducer);
+    if (!Compiled.Success)
+      continue;
+    Fields = 0;
+    for (const auto &S : Compiled.Sections)
+      for (const auto &Fixup : S.FixupReferences)
+        if (Fixup.Symbol == "external_type") {
+          ++Fields;
+          const auto *Bytes = S.IsInImage ? Compiled.Bytes.data() + S.Offset
+                                          : S.ExternalBytes.data();
+          const auto Delta = neverd::readLE<int32_t>(Bytes + Fixup.Offset);
+          EXPECT_EQ(S.VA + Fixup.Offset + 4 + Delta, TargetVA + Fixup.Addend);
+        }
+    EXPECT_EQ(Fields, 1u);
+  }
+}
+
 } // namespace

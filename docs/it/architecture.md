@@ -9,6 +9,10 @@ per modificare NeverD in sicurezza. Copre intenzionalmente solo il codice di
 NeverD; i sottomoduli LLVM, Capstone e Unicorn mantengono la propria
 architettura interna.
 
+## Confine della sostituzione di sorgenti e oggetti
+
+`SourcePatchCompiler` gestisce identità del compilatore e scelta dell’artefatto. `validateSourcePatchTarget` ammette i target comuni a sorgenti e IR fornito; la sola tripla non prova il supporto. `bindSourcePatch` autentica gli ingressi IR; `PatchObject` gestisce sezioni native, rilocazioni e prove degli intervalli FDE. `publishSourcePatch` prepara, verifica e pubblica la transazione esatta. `COFFSourceImage` gestisce nuovo spazio e tabelle di unwinding PE x64; le riscritture del codice sollevato mantengono prove EH originali separate. Vedere [le patch da sorgente](source-patching.md).
+
 ## Confine del sistema
 
 ```mermaid

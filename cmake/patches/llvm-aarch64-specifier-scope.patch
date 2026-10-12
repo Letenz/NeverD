@@ -1,5 +1,5 @@
 diff --git a/llvm/lib/MC/AddressModelBackend.cpp b/llvm/lib/MC/AddressModelBackend.cpp
-index 092cb29411d5..50a17a8076dc 100644
+index 33347cfbd..c23da013e 100644
 --- a/llvm/lib/MC/AddressModelBackend.cpp
 +++ b/llvm/lib/MC/AddressModelBackend.cpp
 @@ -367,16 +367,21 @@ std::optional<bool> AddressModelBackend::evaluateFixup(const MCFragment &F,
@@ -33,3 +33,17 @@ index 092cb29411d5..50a17a8076dc 100644
 
    // ARM EHABI spells R_ARM_PREL31 as an FK_Data_4 carrying the `prel31`
    // specifier.  The generic fixup therefore does not advertise itself as
+@@ -408,6 +413,13 @@ std::optional<bool> AddressModelBackend::evaluateFixup(const MCFragment &F,
+   } else if (Fixup.isPCRel() || IsX86GOTPCRel) {
+     uint64_t SecVA = getSectionImageVA(*F.getParent());
+     uint64_t FixupPC = SecVA + Asm->getFragmentOffset(F) + Fixup.getOffset();
++    // Mach-O's non-PCrel FK_Data_4 GOTPCREL form acquires a PCrel
++    // relocation at object writing time, whose base is the end of the word.
++    // Clang's LSDA emits +4 to compensate. Instruction fixups already carry
++    // their own PC bias and must not receive this data-only adjustment.
++    if (IsX86GOTPCRel && TT.isOSBinFormatMachO() && FK == FK_Data_4 &&
++        !Fixup.isPCRel())
++      FixupPC += 4;
+     if (IsPage) {
+       uint64_t PageDelta =
+           (Value & ~uint64_t(0xFFF)) - (FixupPC & ~uint64_t(0xFFF));
