@@ -386,18 +386,32 @@ bool NdOpEmulator::executeFloatArith(const LowOp &Op) {
     return true;
   }
 
+  if (Op.Opcode == NdOp::FLOAT_NEG || Op.Opcode == NdOp::FLOAT_ABS) {
+    if (Op.NumInputs != 1 || Op.Output.Size != Op.Inputs[0].Size ||
+        (!Op.Output.isReg() && !Op.Output.isTemp()) ||
+        (Op.Output.Size != 4 && Op.Output.Size != 8 && Op.Output.Size != 10))
+      return false;
+    if (!Op.Inputs[0].isConst()) {
+      if (!Op.Inputs[0].isReg() && !Op.Inputs[0].isTemp())
+        return false;
+      const auto Known = getRegisterBytes(Op.Inputs[0].Offset);
+      if (!Known || Known->size() < Op.Inputs[0].Size)
+        return false;
+    }
+    auto Bits = readOperandBytes(Op.Inputs[0]);
+    if (Op.Opcode == NdOp::FLOAT_NEG)
+      Bits.back() ^= 0x80;
+    else
+      Bits.back() &= 0x7f;
+    writeOutputBytes(Op.Output, Bits);
+    return true;
+  }
+
   if (Op.NumInputs < 1 || Op.Output.Size != Op.Inputs[0].Size ||
       (Op.Output.Size != sizeof(float) && Op.Output.Size != sizeof(double)))
     return false;
 
   const uint64_t A = readOperand(Op.Inputs[0]);
-  if (Op.Opcode == NdOp::FLOAT_NEG) {
-    writeOutput(Op.Output, A ^ (Op.Output.Size == sizeof(float)
-                                    ? UINT64_C(0x0000000080000000)
-                                    : UINT64_C(0x8000000000000000)));
-    return true;
-  }
-
   if (Op.Opcode == NdOp::FLOAT_SQRT) {
     if (Op.Output.Size == sizeof(float)) {
       const uint32_t Bits = static_cast<uint32_t>(A);

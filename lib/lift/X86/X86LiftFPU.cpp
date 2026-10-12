@@ -345,11 +345,19 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   }
 
   case X86_INS_FABS:
-    S.emit(NdOp::FLOAT_ABS, ST(0), {ST(0)});
+  case X86_INS_FCHS: {
+    // The sign operation is numerically exact, but still checks pending
+    // unmasked x87 exceptions before changing the value or C1.
+    S.emitVoidIntrinsic(Intrinsic::X87Wait);
+    // CFG construction certifies the source tag before lowering this exact
+    // binary80 sign operation to bits for all output routes.
+    S.emit(InsnId == X86_INS_FABS ? NdOp::FLOAT_ABS : NdOp::FLOAT_NEG, ST(0),
+           {ST(0)});
+    const NdVar Status = NdVar::reg(x86reg::FPU_SW, 2);
+    S.emit(NdOp::INT_AND, Status,
+           {Status, NdVar::cst(0xffff & ~(1 << x86reg::FPU_SW_C1_BIT), 2)});
     break;
-  case X86_INS_FCHS:
-    S.emit(NdOp::FLOAT_NEG, ST(0), {ST(0)});
-    break;
+  }
   case X86_INS_FSQRT:
     S.emit(NdOp::FLOAT_SQRT, ST(0), {ST(0)});
     break;
@@ -521,6 +529,9 @@ bool X86Lifter::liftFPU(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
 
   case X86_INS_FNINIT:
     S.emitVoidIntrinsic(Intrinsic::X87Fninit);
+    // The native reset defines the status word, including all condition
+    // codes. Its SSA consumers must see that same definition.
+    S.emit(NdOp::COPY, NdVar::reg(x86reg::FPU_SW, 2), {NdVar::cst(0, 2)});
     FPUTop = 0;
     FpuReset = true;
     break;

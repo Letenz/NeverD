@@ -61,6 +61,43 @@ bool isStReg(const NdVar &V) {
          ((V.Offset - x86reg::ST0) % x86reg::FPURegStride == 0);
 }
 
+bool isX87SignOperation(const LowOp &Op) {
+  return (Op.Opcode == NdOp::FLOAT_NEG || Op.Opcode == NdOp::FLOAT_ABS) &&
+         Op.NumInputs == 1 && isStReg(Op.Output) && isStReg(Op.Inputs[0]) &&
+         Op.Output.Size == 10 && Op.Inputs[0].Size == 10 &&
+         Op.Output.Offset == Op.Inputs[0].Offset;
+}
+
+// The tag prover admits this operation before any numeric projection can
+// replace it. Sign changes preserve all other raw binary80 bits, including
+// NaN payloads and encodings a host long double cannot represent.
+std::vector<LowOp> lowerX87Sign(const LowOp &Sign, uint64_t &NextTemp) {
+  std::vector<LowOp> Ops;
+  auto emit = [&](NdOp Code, unsigned Width,
+                  std::initializer_list<NdVar> Inputs) {
+    LowOp Op;
+    Op.Opcode = Code;
+    Op.Addr = Sign.Addr;
+    Op.Seq = Ops.size();
+    Op.Output = NdVar::tmp(NextTemp++, Width);
+    for (const auto &V : Inputs)
+      Op.addInput(V);
+    Ops.push_back(Op);
+    return Op.Output;
+  };
+  const NdVar Significand =
+      emit(NdOp::SUBBYTES, 8, {Sign.Inputs[0], NdVar::cst(0, 4)});
+  const NdVar SignExponent =
+      emit(NdOp::SUBBYTES, 2, {Sign.Inputs[0], NdVar::cst(8, 4)});
+  const bool Absolute = Sign.Opcode == NdOp::FLOAT_ABS;
+  const NdVar Changed =
+      emit(Absolute ? NdOp::INT_AND : NdOp::INT_XOR, 2,
+           {SignExponent, NdVar::cst(Absolute ? 0x7fff : 0x8000, 2)});
+  emit(NdOp::CONCAT, 10, {Changed, Significand});
+  Ops.back().Output = Sign.Output;
+  return Ops;
+}
+
 void rebaseStReg(NdVar &V, int Offset) {
   if (!isStReg(V))
     return;
@@ -1435,7 +1472,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
   std::vector<int> LiftedIn(N, 0), LiftedOut(N, 0), BlockDelta(N, 0);
   std::vector<bool> HasReset(N, false), HasFpu(N, false);
   std::vector<std::map<va_t, uint8_t>> PoppedSlots(N);
-  bool HasExamine = false;
+  bool HasTagOperations = false;
 
   for (size_t I = 0; I < N; ++I) {
     auto &Blk = Func.Blocks[I];
@@ -1461,10 +1498,14 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       for (size_t O = Boundary.FirstOp;
            O < Boundary.FirstOp + Boundary.OpCount && O < Blk.Ops.size(); ++O) {
         LowOp &Op = Blk.Ops[O];
+        if (isX87SignOperation(Op)) {
+          HasTagOperations = true;
+          UnsupportedInstructionAddresses.insert(Op.Addr);
+        }
         if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
             Op.Inputs[0].isConst()) {
           const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
-          HasExamine |= Id == Intrinsic::X87Fxam;
+          HasTagOperations |= Id == Intrinsic::X87Fxam;
           if (Id == Intrinsic::X87Fxam)
             UnsupportedInstructionAddresses.insert(Op.Addr);
           RotateOnly |= Id == Intrinsic::X87Fincstp;
@@ -1583,7 +1624,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
 
   auto lowerExaminations = [&](const std::vector<std::pair<int, int>>
                                    &Origins) {
-    if (!HasExamine)
+    if (!HasTagOperations)
       return;
     struct Tags {
       uint8_t Full = 0, Empty = 0, Payload = 0;
@@ -1629,6 +1670,12 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
         for (size_t O = Boundary.FirstOp;
              O < Boundary.FirstOp + Boundary.OpCount; ++O) {
           const LowOp &Op = Block.Ops[O];
+          const bool SignOperation = isX87SignOperation(Op);
+          if (SignOperation && Publish) {
+            const unsigned Bit = 1u << x86reg::stRegIndex(Op.Inputs[0].Offset);
+            if ((State.Full & State.Payload) & Bit)
+              ProvenTags[{Id, O}] = false;
+          }
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
             State = {}; // The return definition below can establish one slot.
           if (Op.Opcode == NdOp::INTRINSIC) {
@@ -1665,7 +1712,7 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
               }
             }
           }
-          if (isStReg(Op.Output)) {
+          if (isStReg(Op.Output) && !SignOperation) {
             if (Op.Output.Size == x86reg::FPURegSize)
               makeFull(x86reg::stRegIndex(Op.Output.Offset));
             else
@@ -1746,11 +1793,15 @@ void CFGBuilder::fixupFpuStack(LowFunc &Func) {
       for (size_t O = 0; O < B.Ops.size(); ++O) {
         NewOffsets[O] = Rewritten.size();
         const LowOp &Op = B.Ops[O];
-        if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
-            Op.Inputs[0].isConst() &&
-            Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam)) {
+        const bool SignOperation = isX87SignOperation(Op);
+        if (SignOperation || (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                              Op.Inputs[0].isConst() &&
+                              Op.Inputs[0].Offset ==
+                                  static_cast<uint64_t>(Intrinsic::X87Fxam))) {
           if (auto It = ProvenTags.find({B.Id, O}); It != ProvenTags.end()) {
-            auto Lowered = lowerX87Examine(Op, It->second, NextTemp);
+            auto Lowered = SignOperation
+                               ? lowerX87Sign(Op, NextTemp)
+                               : lowerX87Examine(Op, It->second, NextTemp);
             Rewritten.insert(Rewritten.end(), Lowered.begin(), Lowered.end());
             Expanded.insert(Op.Addr);
             continue;
