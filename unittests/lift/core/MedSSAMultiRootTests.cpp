@@ -562,6 +562,55 @@ TEST(HighCxxContinuation, AttachesOnlyCertifiedReturnsToTheirParentEntries) {
     }
 }
 
+// A catch funclet numbers its names from v0 as its parent does.  Attached to
+// the parent's clause, its names move past the parent's, so the two v0 are
+// not one C variable, and the funclet's own function keeps its names.
+TEST(HighCxxContinuation, AnAttachedFuncletKeepsNamesOfItsOwn) {
+  constexpr va_t ParentEntry = 0x140001000;
+  constexpr va_t CatchEntry = ParentEntry + 0x100;
+  auto Named = [](int Tag) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = 7;
+    V.Size = 8;
+    V.RenameTag = static_cast<int16_t>(Tag);
+    return HighExpr::makeVar(V);
+  };
+  auto Assign = [](ExprPtr Dst, ExprPtr Val) {
+    HighStmt S;
+    S.Kind = StmtKind::Assign;
+    S.Dst = std::move(Dst);
+    S.Val = std::move(Val);
+    return S;
+  };
+  HighFunc Parent, Catch;
+  Parent.Entry = ParentEntry;
+  Catch.Entry = CatchEntry;
+  Parent.Body.push_back(Assign(Named(0), HighExpr::makeConst(1, 8)));
+  HighStmt Try;
+  Try.Kind = StmtKind::CxxTry;
+  HighEHClause Clause;
+  Clause.Kind = HighEHClauseKind::CxxCatch;
+  Clause.HandlerVA = CatchEntry;
+  Try.EHClauses.push_back(Clause);
+  Try.EHClauseBodies.resize(1);
+  Parent.Body.push_back(Try);
+  const ExprPtr CatchV0 = Named(0);
+  Catch.Body.push_back(Assign(CatchV0, HighExpr::makeConst(2, 8)));
+  Catch.Body.push_back(Assign(Named(1), CatchV0));
+  std::vector<HighFunc> Funcs{Parent, Catch};
+  attachCxxFuncletBodies(Funcs);
+  const auto &Attached = Funcs[0].Body[1].EHClauseBodies[0];
+  ASSERT_EQ(Attached.size(), 2u);
+  EXPECT_EQ(Funcs[0].Body[0].Dst->Var.RenameTag, 0);
+  EXPECT_EQ(Attached[0].Dst->Var.RenameTag, 1);
+  EXPECT_EQ(Attached[1].Dst->Var.RenameTag, 2);
+  EXPECT_EQ(Attached[1].Val->Var.RenameTag, 1);
+  // A node the body shares stays one node.
+  EXPECT_EQ(Attached[0].Dst, Attached[1].Val);
+  EXPECT_EQ(Funcs[1].Body[0].Dst->Var.RenameTag, 0);
+}
+
 TEST(MedCxxContinuationFrame,
      PublicNestedCatchKeepsOneParameterAndResumeEdges) {
 #ifndef NEVERD_BINARY_CORPUS_ROOT

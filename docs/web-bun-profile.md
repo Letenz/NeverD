@@ -21,11 +21,13 @@ Existing Linux x64 profiles and extraction identities are unchanged.
 | Windows ARM64 | PE32+ | `bun-1.4.2-windows-arm64-pe-v1` |
 
 All six support inventory, JS/assets extraction and raw map/cache preservation.
-Map decoding requires the separate LLVM Zstd capability; bytecode decoding is
+Map decoding requires the separate native Zstd capability; bytecode decoding is
 unsupported. The shared graph reader also recognizes the prelinked/runtime
 extensions under corresponding `bun-71d0d439-prelinked-<target>-v1` profiles.
-Real extension qualification remains the Linux x64 Claude artifact; cross-target
-extension cases are synthetic. Metadata reports container format, target OS and
+The [eight captured Claude npm platform packages](web-claude-code-cross-platform-qualification.md)
+qualify real extension graphs, original-byte integrity and all shipped JS on
+the six targets, including both supplied Linux libc variants. The hostile
+extension cases remain synthetic. Metadata reports container format, target OS and
 architecture separately from the analyzer's host. Universal Mach-O, 32-bit and
 big-endian containers, ARM64e, FreeBSD/Android-specific contracts and stripped
 ELF section tables are not qualified by this matrix. These are compatible
@@ -133,6 +135,17 @@ captured original and validated extraction; CLI code does not extract bytes.
 This is explicit local raw disclosure, including names and any embedded secrets,
 and grants no network-upload permission. The worker has no export operation.
 
+`neverd web archive-bun-export ROOT FORMAT ARTIFACT_INDEX MEMBER_INDEX NEW_DIRECTORY`
+selects one available member of an explicitly admitted `tar`, `tgz` or `zip`
+archive and uses the same extraction/export APIs. Obtain both indices from the
+current inventories. It preserves the selected executable as `original.bin`
+and retains its archive/member identities, enclosing archive hash and original
+or expanded locators in `original_origin`. The enclosing archive remains in the
+capture; this command does not copy it into the output directory. Compressed
+byte offsets remain unavailable rather than being interpolated. Unsupported or
+unavailable members cannot create an export directory. No archive path becomes
+an output filename and no package entry or installer is invoked.
+
 The C++ POSIX writer creates a private directory and uses generated ordinal
 filenames with exclusive no-follow writes. Existing destinations, including
 symlinks, are refused. Virtual member names occur only as manifest data and
@@ -229,15 +242,24 @@ generated-position ordering, including duplicate anchors. It never casts
 input bytes to native structs or uses Bun's trusted-memory lookup routines.
 
 Zstd decompression uses LLVM Support's linked native library in the same
-process. The C++ preflight follows the
+process. If LLVM was built without Zstd, CMake optionally selects the exact
+Zstandard 1.5.7 static SDK (`zstd::libzstd_static`). The header and library
+versions are checked, no decoder is downloaded, and no command-line utility
+is invoked. `compression/Zstd` owns this selection; the format reader retains
+the C++ preflight against the
 [Zstandard frame specification](https://github.com/facebook/zstd/blob/v1.5.7/doc/zstd_compression_format.md):
 one ordinary frame, known content size, bounded window, no dictionary field,
 reserved bits, skippable/concatenated frames or trailing bytes. Every frame is
 preflighted against the cumulative output budget before decompression begins.
 The native decoder checks compressed blocks/checksums; failures are fixed
-diagnostics, never empty-source substitutions. This requires LLVM Zstd support.
+diagnostics, never empty-source substitutions.
 Capabilities report `available_on_request` or `zstd_unavailable`; a missing
 native decoder produces `bun_source_map_zstd_unavailable`, never a subprocess.
+To check that omission with a Zstd-free LLVM build, configure
+`-DCMAKE_DISABLE_FIND_PACKAGE_zstd=ON`. To select an installed SDK, set
+`zstd_DIR` to its CMake package directory. Static linking avoids a new runtime
+library lookup; the [BSD notice](../LICENSES/zstd/README.md) is distributed
+beside the binaries and in the SDK/install tree, including parser-disabled builds.
 
 Limits are 8 MiB stored map bytes, 10,000 sources, 100,000 anchors, 4 MiB decoded
 bytes per source, 8 MiB decoded bytes total, 8 MiB window and 100,000 blocks per
@@ -308,3 +330,37 @@ match the independently recorded input hashes, and returned anchors stay within
 the original/generated texts. C++ synthetic fixtures exercise Unicode, empty
 maps/sources, rare deltas, multiple windows, duplicate anchors, malformed lanes,
 truncation at every byte, frame checksums and exact/over-budget decompression.
+
+### Native static SDK qualification — 2026-10-12
+
+The prebuilt LLVM 23.0.0 r4 package omits Zstd. The optional native static
+Zstandard 1.5.7 SDK decoded twelve complete pinned Bun 1.4.2 images on the
+macOS arm64 Release host: asset-map and cache-map for each baseline target.
+The C++ corpus test verifies the independently recorded full-container hashes,
+original source hashes, every original/generated coordinate and stored frame
+anchors. The asset input SHA-256 is
+`ada8ba82b03b7bd85876cc812e0108150d30465e0945ac4b0798ecdb7db31433`;
+the cache input SHA-256 is
+`dae4f14862158ace4ba0cfb51115157698a5286192f7883ff89123a17b4ad687`.
+Container hashes remain in the existing Linux and cross-target manifests.
+
+The actual `neverd web bun-map <image> 0` command succeeded for all twelve
+images with `PATH=/neverd-no-external-tools`. Each metadata-only JSONL report
+retains the raw container/map/source anchors and recovered source hash:
+
+| Target | Asset report SHA-256 | Cache report SHA-256 |
+|---|---|---|
+| Linux x64 ELF | `7365cce8c5ebba6587b9e26659bcfde7c95784760c0d1492034307b115ab43be` | `cd26f142b25c8d1f3b1155ab4cdb79ae50b6ed0014b3cfbd59b2a56d0daf6fde` |
+| Linux ARM64 ELF | `e304668e81ded92bac7d9befd4dcfc6a3494e4264a0b833bb093fcf461ddaa2e` | `7feab79d84f4675ff0bcdcdd88b041156584700e9271796138d0fb1543da707d` |
+| macOS x64 thin Mach-O | `2f1355a7e96410336bdb0133a53b8b8a1c17c9f48be88949a5644efa457616a9` | `eeb2fe048c590897563a2e186d3398bbce93a9ec28ddc44da19c0e0f8e242d2f` |
+| macOS ARM64 thin Mach-O | `04118f65dab7a336032248cc6fdb75fbb02f2f614eaeafb7d5acb2cf3681f200` | `216affa3b1b44bc83b9d4c745a33672d55cf911b50b49fdbeb48f659d56822da` |
+| Windows x64 PE | `ef6af698fee8b7c6171fc7d2b32ccc504d100ffced4506816e120bb2693a315b` | `1366f6b52973246bf0722413de8747d201c842ba61cefe41114c81574ad2c54b` |
+| Windows ARM64 PE | `c1e7e1857c5526d98bb0d42a31270e43e9db312b79ddf4a8e9d961b920c82b35` | `b042bd4005b83828e31c1124ac22627fdbfdc1ff0fa3c5d0ea609cc03dcfde88` |
+
+Reports are preserved with the local recovery evidence. The Linux x64 module,
+decoded map and decoded source pages are byte-identical to the earlier LLVM
+decoder reports; the extraction summary additionally has the already published
+container/platform/architecture fields. These tests execute NeverD only.
+They do not execute the extracted target or recover opaque caches. The official
+Claude Code 2.1.296 container has zero source-map regions; these producer
+fixtures do not imply original TypeScript recovery for that separate artifact.

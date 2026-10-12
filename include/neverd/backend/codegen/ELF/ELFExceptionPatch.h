@@ -86,6 +86,13 @@ llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
     llvm::ArrayRef<uint8_t> Binary, const ELFEHFrameRegion &Region,
     const CompiledImage &Compiled, const llvm::Module &Mod, uint64_t HdrVA);
 
+/// Object path: the caller authenticates required function addresses through
+/// object symbols and relocations, independently of LLVM MC provenance.
+llvm::Expected<std::vector<uint8_t>> buildRelocatedELFEHFrameHdr(
+    llvm::ArrayRef<uint8_t> Binary, const ELFEHFrameRegion &Region,
+    const CompiledImage &Compiled, llvm::ArrayRef<uint64_t> RequiredFunctions,
+    uint64_t HdrVA);
+
 /// Point `PT_GNU_EH_FRAME` and the `.eh_frame_hdr` section at the \p HdrSize
 /// header bytes a loadable segment of \p Binary maps at \p HdrVA.
 llvm::Error retargetELFEHFrameHdr(std::vector<uint8_t> &Binary, uint64_t HdrVA,

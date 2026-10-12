@@ -134,19 +134,16 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     return std::nullopt;
   const uint8_t *Base = Seg->Data.data() + Off;
   const size_t Remain = Seg->Data.size() - static_cast<size_t>(Off);
-  // A sized data object that holds the bytes must be the string itself,
-  // padded with zeros at most.  Bytes past the segment's data are zeros.
+  // A sized data object that holds the bytes must be the string itself.  A
+  // literal shorter than its object would leave the bytes past it unread: a
+  // struct of a short number and a null pointer reads as a one-character
+  // wide string.
   auto IsOwnObject = [&](size_t Extent) {
     for (const Symbol &Sym : Img->Symbols) {
       if (Sym.IsFunc || !Sym.Size || Addr < Sym.Addr ||
           Addr - Sym.Addr >= Sym.Size)
         continue;
-      if (Sym.Addr != Addr || Sym.Size < Extent)
-        return false;
-      const size_t End =
-          static_cast<size_t>(std::min<uint64_t>(Sym.Size, Remain));
-      if (End > Extent && !std::all_of(Base + Extent, Base + End,
-                                       [](uint8_t Byte) { return !Byte; }))
+      if (Sym.Addr != Addr || Sym.Size != Extent)
         return false;
     }
     return true;
@@ -158,7 +155,13 @@ std::optional<std::string> imageStringLiteral(const BinaryImage *Img, va_t Addr,
     // address. A fixup, including one beginning before this candidate, makes
     // those bytes unsuitable for replacement by a string literal. Use the
     // loader's shared storage-provenance query for every supported format.
-    const va_t First = Addr >= 7 ? Addr - 7 : 0;
+    // The query names where a slot begins, and no data slot is wider than a
+    // pointer: one that begins a pointer's width before the candidate ends
+    // where it starts (the last entry of a table of 32-bit pointers to the
+    // strings right after it).
+    const uint32_t PointerBytes = Img->getPointerSize();
+    const va_t Reach = PointerBytes ? PointerBytes - 1 : 7;
+    const va_t First = Addr >= Reach ? Addr - Reach : 0;
     const va_t End = Addr + Extent;
     for (va_t Byte = First; Byte < End; ++Byte)
       if (Img->hasRelocationProvenanceAt(Byte))

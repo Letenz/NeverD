@@ -24,7 +24,7 @@
 #define NEVERD_IR_LOW_CALLREGISTEREFFECTS_H
 
 #include "neverd/Common.h"
-#include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/low/CallRegisterBody.h"
 
 #include <array>
 #include <cstdint>
@@ -76,6 +76,14 @@ std::optional<unsigned> gprFamilyOf(Arch A, uint64_t RegOff);
 /// the slice's byte offset in its register.
 std::optional<std::pair<unsigned, unsigned>> registerFamilyOf(Arch A,
                                                               uint64_t RegOff);
+
+/// Whether a call keeps the \p Size bytes at \p RegOff when its direct
+/// callee provably never writes the families in \p Preserved (a may-write
+/// mask's complement, MedOp::CallPreservedGPRs).  A general register's family
+/// covers the whole register; a vector family covers its low sixteen bytes,
+/// all a summary tracks.
+bool callPreservesRegisterBytes(Arch A, uint32_t Preserved, uint64_t RegOff,
+                                uint16_t Size);
 
 /// One straight-line step of a function, for register liveness.
 struct RegisterStep {
@@ -169,6 +177,11 @@ struct LocalRegisterEffect {
 /// those bytes (RegisterStep::FixedArguments).
 LocalRegisterEffect localRegisterEffect(
     const BinaryImage &Img, const LowFunc &F,
+    const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
+    const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
+
+LocalRegisterEffect localRegisterEffect(
+    const BinaryImage &Img, CallRegisterBodyView F,
     const libc::NoReturnTargetIndex *NoReturnTargets = nullptr,
     const std::map<va_t, GPRReadWidths> *FixedCallReads = nullptr);
 

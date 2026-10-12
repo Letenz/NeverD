@@ -41,6 +41,7 @@ const CallArgumentConvention AAPCS32CallArguments = {
     .TheArch = Arch::ARM,
     .PairAlignedWideArguments = true,
     .ExternalFloatsInCoreRegisters = externalFloatsInCoreRegisters,
+    .ArgumentsFromCallSetup = true,
 };
 
 } // namespace neverd

@@ -74,6 +74,8 @@ void MedToHighConverter::lowerGenericAssign(HighFunc &Func, const MedOp &CurOp,
       CurOp.Opcode == NdOp::LOAD ||
       CurOp.RegistrationRoot ==
           MedOp::RegistrationRootKind::CallbackStackPointer ||
+      CurOp.RegistrationRoot ==
+          MedOp::RegistrationRootKind::RestoredCallbackStackPointer ||
       CurOp.MemoryOrdering != NdMemoryOrdering::None ||
       CurOp.MemoryAddressSpace != NdMemoryAddressSpace::Default;
   if (!MultiUse && !IsCallResult && !FeedsPhi && !HasMemoryEffect)
@@ -164,6 +166,10 @@ void MedToHighConverter::lowerCall(HighFunc &Func, const MedBlock &CurBlock,
       getTargetRegInfo(TargetArch).isX87StackReg(CurOp.Output.RegOff);
   if (CurOp.SourceCallHint || X87Result)
     CallExpr->Type = sourceCallResultType(CurOp);
+  // A call remodeled to return a struct across several registers writes
+  // every field into one packed temporary.
+  else if (CurOp.Output.Kind == MedVar::Temp && CurOp.Output.Size > 8)
+    CallExpr->Type = NdType::makeInt(CurOp.Output.Size, false);
   if (ExpressionObserver && CurOp.Addr != InvalidVA && CurOp.OriginSeq >= 0)
     ExpressionObserver(CurOp, CallExpr);
 

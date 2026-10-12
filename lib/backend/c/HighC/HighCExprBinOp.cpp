@@ -91,6 +91,29 @@ std::pair<uint16_t, bool> commonArithmeticType(std::pair<uint16_t, bool> A,
   return Unsigned.first >= Signed.first ? Unsigned : Signed;
 }
 
+/// The type C gives an unsuffixed integer literal (C17 6.4.4.1), as its byte
+/// width and signedness: the first of int, long and long long that holds a
+/// decimal value, and for a hexadecimal one also each unsigned type after its
+/// signed one.  A negated literal has the literal's type.  int is 4 bytes on
+/// every target and long long 8, so a value beyond 32 bits is 8 bytes
+/// whatever long is.
+std::optional<std::pair<uint16_t, bool>> literalType(llvm::StringRef Text) {
+  Text.consume_front("-");
+  const bool Hex = Text.starts_with("0x") || Text.starts_with("0X");
+  uint64_t Value = 0;
+  if (Text.getAsInteger(0, Value))
+    return std::nullopt;
+  if (Value <= uint64_t(std::numeric_limits<int32_t>::max()))
+    return std::pair<uint16_t, bool>{4, true};
+  if (Hex && Value <= std::numeric_limits<uint32_t>::max())
+    return std::pair<uint16_t, bool>{4, false};
+  if (Value <= uint64_t(std::numeric_limits<int64_t>::max()))
+    return std::pair<uint16_t, bool>{8, true};
+  if (Hex)
+    return std::pair<uint16_t, bool>{8, false};
+  return std::nullopt;
+}
+
 /// Whether the integer \p Count is certainly below \p Limit, so a shift by it
 /// needs no guard against C's undefined overshift: a constant, a mask by a
 /// small constant (x86 masks a variable count to the operand width), or such
@@ -204,6 +227,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
   if (E.Op == NdOp::INT_SUB && E.Operands.size() == 2 &&
       IsZeroLike(E.Operands[1]) && E.Operands[0])
     return exprStr(*E.Operands[0], ParentPrec);
+  // IEEE 754-2019 minimum and maximum propagate a NaN and order -0 below +0:
+  // the type-generic Clang builtins are LLVM's llvm.minimum/llvm.maximum.
+  if ((E.Op == NdOp::FLOAT_MIN || E.Op == NdOp::FLOAT_MAX) &&
+      E.Operands.size() == 2 && E.Operands[0] && E.Operands[1])
+    return std::string(E.Op == NdOp::FLOAT_MIN
+                           ? "__builtin_elementwise_minimum("
+                           : "__builtin_elementwise_maximum(") +
+           exprStr(*E.Operands[0]) + ", " + exprStr(*E.Operands[1]) + ")";
   if ((E.Op == NdOp::FLOAT_MINNUM || E.Op == NdOp::FLOAT_MAXNUM) &&
       E.Operands.size() == 2 && E.Operands[0] && E.Operands[1]) {
     const bool IsFloat = E.Type && E.Type->Size == 4;
@@ -787,6 +818,14 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                        E.Type->Size, E.Type->IsSigned);
     if (ByteOff == 0)
       return "(" + Ty + ")" + Src;
+    // A slice at or past the operand's last byte reads the zeros it extends
+    // with: a literal keeps its C width, as `(uint32_t)0` stands for a
+    // 16-byte vector of zeros, and shifting by that width or more is
+    // undefined in C.
+    if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int &&
+        E.Operands[0]->Type->Size && ByteOff >= E.Operands[0]->Type->Size &&
+        E.Type && E.Type->Kind == NdTypeKind::Int)
+      return "(" + Ty + ")0";
     // Literals retain their C spelling width, which can be much narrower than
     // their IR carrier. Shift the unsigned source bits at their declared width.
     if (E.Operands[0]->Type && E.Operands[0]->Type->Kind == NdTypeKind::Int)
@@ -1037,7 +1076,15 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
       }
       return false;
     };
-    (void)(ApplyEnum(A, B, true) || ApplyEnum(B, A, false));
+    const bool Enumerator = ApplyEnum(A, B, true) || ApplyEnum(B, A, false);
+    // Below int, C promotes each operand by its own signedness: a signed
+    // char holding 0xC8 is -56, an unsigned one 200.  The machine compares
+    // the bits, so both compare in the unsigned type of their width.
+    // The width is the left operand's, as the casts below take it.
+    const TypeRef &Width = E.Operands[0]->Type;
+    if (!Enumerator && Width && Width->Kind == NdTypeKind::Int &&
+        Width->Size < sizeof(int))
+      NeedsUnsignedCast = true;
   }
 
   if (NeedsUnsignedCast || NeedsSignedCast) {
@@ -1150,6 +1197,13 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
                ")" + exprStr(*Op, 99);
       if (Op->Kind == ExprKind::Const && Op->ConstVal == 0)
         return std::string("0");
+      // A constant of the narrow width an equality compares in reads as the
+      // int it is promoted to.
+      if (Op->Kind == ExprKind::Const &&
+          (E.Op == NdOp::INT_EQUAL || E.Op == NdOp::INT_NOTEQUAL) &&
+          CmpSize < sizeof(int))
+        return constStr(Op->ConstVal & ((uint64_t{1} << (8 * CmpSize)) - 1),
+                        NdType::makeInt(CmpSize, false));
       // What the text certainly prints as decides over the IR's type: a
       // declared local or parameter can read in the other signedness, and
       // arithmetic printed in a variable's place reads as C converts it.
@@ -1170,6 +1224,10 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
           return Printed->first == CmpSize && Printed->second == NeedsSignedCast
                      ? Text
                      : "(" + UTy + ")" + Text;
+        // Arithmetic of no known printed type compares as C converts its
+        // operands, not as its IR type says, like a forwarded variable's.
+        if (printsIntegerArithmetic(*Op))
+          return "(" + UTy + ")" + Text;
       }
       if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
           Op->Type->Size == CmpSize && Op->Type->IsSigned == NeedsSignedCast)
@@ -1218,7 +1276,7 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
     Result = "(" + Result + ")";
   // C converts the operands of arithmetic to a common type, so when both
   // operands' printed types are known, so is this text's.  An unsuffixed
-  // literal that fits an int is one.
+  // literal has the type C gives it: `0xC0000000` is an unsigned int.
   if (E.Op == NdOp::INT_ADD || E.Op == NdOp::INT_SUB ||
       E.Op == NdOp::INT_MULT || E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
       E.Op == NdOp::INT_XOR) {
@@ -1227,10 +1285,8 @@ std::string HighCWriter::renderBinOpOperands(const HighExpr &E,
             llvm::StringRef Text) -> std::optional<std::pair<uint16_t, bool>> {
       if (const auto Printed = printedIntegerType(Operand))
         return Printed;
-      uint64_t Value = 0;
-      if (Operand.Kind == ExprKind::Const && !Text.getAsInteger(0, Value) &&
-          Value <= INT32_MAX)
-        return std::pair<uint16_t, bool>{4, true};
+      if (Operand.Kind == ExprKind::Const)
+        return literalType(Text);
       return std::nullopt;
     };
     const auto Left = OperandType(*E.Operands[0], LHS);

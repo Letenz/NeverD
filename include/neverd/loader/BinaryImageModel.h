@@ -914,6 +914,17 @@ struct BinaryImage {
     return false;
   }
 
+  /// True when this relocatable ELF object's complete relocation write
+  /// footprint is known and no relocation writes a byte of [VA, VA + Width):
+  /// those bytes hold the assembler's final value.
+  bool isUnrelocatedObjectField(va_t VA, unsigned Width) const {
+    if (!isELF() || !IsRelocatable || !ObjectRelocationWriteBytes ||
+        Width == 0 || VA > InvalidVA - Width)
+      return false;
+    const auto Writer = ObjectRelocationWriteBytes->lower_bound(VA);
+    return Writer == ObjectRelocationWriteBytes->end() || *Writer >= VA + Width;
+  }
+
   /// Verify the symbol owner retained for an i386 ELF R_386_GOTOFF field.
   /// Most GOTOFF addends resolve inside (or one-past) their symbol's ordinary
   /// section owner and use relocatedTargetBelongsToOwner directly.  Clang may
@@ -1063,15 +1074,22 @@ struct BinaryImage {
     const uint8_t *Bytes = readVA(Addr, Size);
     if (!Bytes || Addr > InvalidVA - (Size - 1))
       return std::nullopt;
-    // A fixup can begin before this access and overlap it. Conservatively
-    // exclude every possible eight-byte slot touching the scalar.
-    const va_t First = Addr >= 7 ? Addr - 7 : 0;
-    const va_t Last = Addr + Size - 1;
-    for (va_t Byte = First;; ++Byte) {
-      if (hasRelocationProvenanceAt(Byte))
+    if (isELF() && IsRelocatable && ObjectRelocationWriteBytes) {
+      // An object's certified write footprint names every byte a relocation
+      // writes, so a scalar outside it keeps its bytes even beside a fixup.
+      if (!isUnrelocatedObjectField(Addr, Size))
         return std::nullopt;
-      if (Byte == Last)
-        break;
+    } else {
+      // A fixup can begin before this access and overlap it. Conservatively
+      // exclude every possible eight-byte slot touching the scalar.
+      const va_t First = Addr >= 7 ? Addr - 7 : 0;
+      const va_t Last = Addr + Size - 1;
+      for (va_t Byte = First;; ++Byte) {
+        if (hasRelocationProvenanceAt(Byte))
+          return std::nullopt;
+        if (Byte == Last)
+          break;
+      }
     }
     uint64_t Value = 0;
     for (uint16_t I = 0; I < Size; ++I)

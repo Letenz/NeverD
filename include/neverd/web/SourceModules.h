@@ -22,6 +22,8 @@ inline constexpr std::string_view JavaScriptModuleProfile =
     "javascript-module-evidence-v1";
 inline constexpr std::string_view JavaScriptModuleLinkProfile =
     "admitted-relative-file-v1";
+inline constexpr std::string_view NodeModuleLinkProfile =
+    "admitted-node-relative-file-v1";
 inline constexpr uint64_t MaxJavaScriptModuleSteps = 2000000;
 inline constexpr uint64_t MaxJavaScriptModuleNameUnits = 1048576;
 inline constexpr uint64_t MaxJavaScriptModulePathUnits = 4096;
@@ -92,6 +94,7 @@ struct SourceModuleLink {
   // An exact admitted-file candidate is NOT a resolved runtime module.
   std::string Status;
   std::string ArtifactID;
+  std::string OriginEvidence;
   std::string URLCandidateID, ImportMapID, ImportMapEntryID, ImportMapScopeID;
   std::string ImportMapMatch;
   std::optional<bool> Query, Fragment;
@@ -125,6 +128,15 @@ analyzeSourceModules(const SourceAnalysis &Source,
 SourceModuleLinks linkSourceModules(const SourceAnalysis &Source,
                                     const SourceModuleAnalysis &Modules,
                                     const Snapshot &Input);
+
+struct SourceOrigins;
+/// Separately selected Node file candidates. Literal require calls need the
+/// shared origin owner's exact, unprojected request evidence. No extension,
+/// package lookup, runtime callee identity or execution is inferred.
+SourceModuleLinks linkNodeSourceModules(const SourceAnalysis &Source,
+                                        const SourceModuleAnalysis &Modules,
+                                        const SourceOrigins &Origins,
+                                        const Snapshot &Input);
 
 struct HTMLDocument;
 struct HTMLLinks;

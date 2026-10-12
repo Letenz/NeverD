@@ -86,6 +86,13 @@ add_neverd_unittest(NeverDPipelineOutcomeTests
 target_include_directories(NeverDPipelineOutcomeTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/pipeline")
 
+# These fixtures require externally supplied, natively verified MSVC images.
+# Keep their optional input separate from the mandatory portable pipeline owner.
+add_neverd_unittest(NeverDNativeFinallyInputTests
+  NativeFinallyInputTests.cpp
+  LINK_COMPONENTS Pipeline
+)
+
 add_neverd_unittest(NeverDSourceDialectTests
   backend/SourceDialectTests.cpp
   LINK_COMPONENTS BackendC
@@ -109,6 +116,23 @@ target_include_directories(NeverDSessionLLVMTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
 
 if(TARGET neverd_shared)
+  set(NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE
+    "${NEVERD_TEST_CLANG_EXECUTABLE}" CACHE FILEPATH
+    "Clang executable for the source-patch LLVM IR compatibility profile")
+  add_neverd_unittest(NeverDSourcePatchTests
+    SourcePatchCAPITests.cpp
+    SourcePatchObjectTests.cpp
+    SourcePatchExceptionTests.cpp
+    SourcePatchPETests.cpp
+    LINK_LIBS neverd_shared LLVMSupport LLVMObject
+  )
+  target_include_directories(NeverDSourcePatchTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+  target_compile_definitions(NeverDSourcePatchTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE}"
+    NEVERD_TEST_PREBUILT_LLVM=$<BOOL:${NEVERD_LLVM_PREBUILT}>
+    NEVERD_TEST_CLI="$<TARGET_FILE:neverd>")
+  add_dependencies(NeverDSourcePatchTests neverd)
   add_neverd_unittest(NeverDObjCRuntimeSourceTests
     ObjCRuntimeSourceTests.cpp
     LINK_LIBS neverd_shared LLVMSupport
@@ -230,6 +254,17 @@ add_subdirectory(lift)
 add_subdirectory(translate)
 if(NEVERD_ENABLE_SEMANTIC_TESTS)
   add_subdirectory(semantic)
+  if(TARGET neverd_shared)
+    add_neverd_unittest(NeverDSourcePatchMatrixTests
+      SourcePatchMatrixTests.cpp
+      LINK_COMPONENTS Loader
+      LINK_LIBS neverd_shared unicorn LLVMSupport
+    )
+    target_include_directories(NeverDSourcePatchMatrixTests PRIVATE
+      ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+    target_compile_definitions(NeverDSourcePatchMatrixTests PRIVATE
+      NEVERD_TEST_CLANG="${NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE}")
+  endif()
 endif()
 if(NEVERD_ENABLE_CPU_EMULATION OR NEVERD_ENABLE_DRIVER_EMULATION)
   add_subdirectory(emulation)

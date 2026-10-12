@@ -98,6 +98,11 @@ struct NdType {
   std::vector<std::shared_ptr<NdType>> FieldDisplayTypes;
   /// LF_ENUM records share the named-record encoding; they return in RAX.
   bool IsEnum = false;
+  /// A record of the registers a multi-register return fills, one scalar
+  /// member per register in the order the call site packs them.  It is no
+  /// source layout: C spells and builds it, and no source calling convention
+  /// classifies it, so its members may mix integer and floating registers.
+  bool RegisterReturnRecord = false;
   /// For a record: how a call passes it (NdRecordPassing).
   NdRecordPassing Passing = NdRecordPassing::Unknown;
   /// For a record the debug information lays out: its scalars in offset

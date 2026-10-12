@@ -4,6 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 #include "../../arch/X64Imports.h"
+#include "PEDriverRelocations.h"
 #include "PEImage.h"
 
 #include "neverd/emulation/GuestMemory.h"
@@ -366,7 +367,8 @@ void retainDebugStorage(const Image &In,
     const uint64_t Begin = std::max(RVA, Region.RVA);
     End = std::min(RVA + Size, Region.RVA + Region.MemorySize);
     if (Begin < End)
-      Required[&Region - Regions.data()] = End - Region.RVA;
+      Required[&Region - Regions.data()] =
+          std::max(Required[&Region - Regions.data()], End - Region.RVA);
   }
   for (uint64_t I = 0; I < Records; ++I) {
     const auto Record =
@@ -477,12 +479,6 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   auto Entry = rebuildEntry(In, C, MetadataRVA, Metadata);
   if (!Entry)
     return Entry.takeError();
-  const uint64_t NewImageSize =
-      MetadataRVA +
-      llvm::alignTo(Metadata.size(), uint64_t(H.SectionAlignment));
-  if (NewImageSize > UINT32_MAX)
-    return failure(text::ImageSize);
-
   for (size_t I = 0; I < Slots->size(); ++I) {
     const uint64_t RVA = (*Slots)[I].RVA;
     if (RVA < Extent)
@@ -490,6 +486,31 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     else
       endian::write64le(Metadata.data() + RVA - MetadataRVA, Thunks[I]);
   }
+  std::vector<std::pair<uint64_t, uint64_t>> ReplacedRanges;
+  for (const auto &Slot : *Slots)
+    ReplacedRanges.emplace_back(Slot.RVA, Slot.RVA + value::PointerSize);
+  for (const auto &Site : Repairs->Sites)
+    ReplacedRanges.emplace_back(Site.Patch.RVA,
+                                Site.Patch.RVA + Site.Patch.Size);
+  for (const auto &Range : Delay->Metadata)
+    ReplacedRanges.emplace_back(Range.Begin, Range.End);
+  // Debug records are subsequently rewritten with output file offsets. Their
+  // original loader-field role cannot survive that formatting operation, even
+  // when the output bytes happen to equal the captured bytes.
+  const auto Debug = In.directory(llvm::COFF::DEBUG_DIRECTORY);
+  if (Debug.Size)
+    ReplacedRanges.emplace_back(uint64_t(Debug.RelativeVirtualAddress),
+                                uint64_t(Debug.RelativeVirtualAddress) +
+                                    Debug.Size);
+  auto DriverRelocations = retainDriverRelocations(
+      In, C, Memory, ReplacedRanges, MetadataRVA, Metadata);
+  if (!DriverRelocations)
+    return DriverRelocations.takeError();
+  const uint64_t NewImageSize =
+      MetadataRVA +
+      llvm::alignTo(Metadata.size(), uint64_t(H.SectionAlignment));
+  if (NewImageSize > UINT32_MAX)
+    return failure(text::ImageSize);
 
   const bool AddSection = !Metadata.empty();
   const uint64_t Count = Regions.size() + AddSection;
@@ -501,6 +522,12 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
 
   auto Directories = H.Directories;
   std::vector<uint64_t> Required(Regions.size());
+  for (uint32_t Field : DriverRelocations->Fields)
+    for (size_t I = 0; I < Regions.size(); ++I)
+      if (Field >= Regions[I].RVA &&
+          Field - Regions[I].RVA < Regions[I].MemorySize)
+        Required[I] =
+            std::max(Required[I], uint64_t(Field) + 8 - Regions[I].RVA);
   for (const auto &Range : Delay->Metadata)
     for (size_t I = 0; I < Regions.size(); ++I) {
       const auto &R = Regions[I];
@@ -572,6 +599,12 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
     Directories[llvm::COFF::Name] = data_directory{};
 #include "PE.def"
 #undef NEVERD_UNPACK_PE_STALE_DIRECTORY
+  if (DriverRelocations->Directory.Size) {
+    if (Directories.size() <= llvm::COFF::BASE_RELOCATION_TABLE)
+      return failure(text::HeaderRoom);
+    Directories[llvm::COFF::BASE_RELOCATION_TABLE] =
+        DriverRelocations->Directory;
+  }
   if (llvm::COFF::IMPORT_TABLE < Directories.size())
     Directories[llvm::COFF::IMPORT_TABLE] = data_directory{};
   if (!Slots->empty()) {
@@ -599,6 +632,9 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
   COFF.NumberOfSections = Count;
   COFF.Characteristics =
       COFF.Characteristics | llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED;
+  if (DriverRelocations->Directory.Size)
+    COFF.Characteristics =
+        COFF.Characteristics & ~llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED;
   store(Out.File, H.FileHeaderOffset, COFF);
   auto PE = fetch<pe32plus_header>(Out.File, H.OptionalHeaderOffset);
   PE.AddressOfEntryPoint = *Entry;
@@ -676,6 +712,11 @@ llvm::Expected<RebuiltImage> rebuild(const Image &In, const Capture &C,
          S.Origin});
   // The emitted headers must satisfy the same contract as an input.
   if (In.domain() == ExecutionDomain::Kernel) {
+    // A kernel loader chooses the runtime address. Keeping the observed base
+    // while stripping generated-content relocations cannot bind a fresh load.
+    // Original relocation entries alone do not cover generated pointers.
+    Out.RuntimeDependency =
+        "kernel image relocation state requires reconstruction";
     const uint64_t Offset =
         H.OptionalHeaderOffset + offsetof(pe32plus_header, CheckSum);
     auto Checksum = computePEChecksum(Out.File, Offset);

@@ -1,5 +1,7 @@
 #include "Theme.h"
 
+#include "WorkbenchStyle.h"
+
 #include <QApplication>
 #include <QFile>
 #include <QFontDatabase>
@@ -7,7 +9,6 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QStyle>
-#include <QStyleFactory>
 #include <algorithm>
 
 namespace neverd::gui {
@@ -180,9 +181,12 @@ void Theme::apply() {
     emit changed();
     return;
   }
-  // Fusion renders the palette faithfully on every platform.
-  if (application->style()->name().compare("fusion", Qt::CaseInsensitive))
-    application->setStyle(QStyleFactory::create("Fusion"));
+  // Under the application style sheet, the workbench style is the base of the
+  // style sheet's style.
+  if (QStyle *style = application->style();
+      !qobject_cast<WorkbenchStyle *>(style) &&
+      !style->findChild<WorkbenchStyle *>(Qt::FindDirectChildrenOnly))
+    application->setStyle(new WorkbenchStyle);
   QPalette palette;
   for (const auto &entry : PaletteRoles)
     palette.setColor(entry.role,

@@ -19,6 +19,8 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedReturnArguments.h"
+#include "neverd/ir/med/X86RegistrationCall.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/ObjC/ObjCCallHints.h"
 #include "neverd/object/SectionNames.h"
@@ -422,18 +424,19 @@ IntegerArgumentLayout integerArgumentLayoutOf(const MedFunc &Func,
   return Layout;
 }
 
-void recoverCallAbi(
-    MedFunc &Func, Arch TheArch, const std::map<va_t, std::string> &FuncNames,
-    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
-    std::map<va_t, int> *CalleeTotalArity,
-    const std::map<va_t, int> *CalleeFPArity,
-    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
-    const std::map<va_t, bool> *CalleeHasSret,
-    std::map<va_t, bool> *CalleeIsVariadic,
-    const std::map<va_t, bool> *CalleeConsumesVaList,
-    const std::set<va_t> *FrameLocalLeafCallees,
-    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs) {
+void recoverCallAbi(MedFunc &Func, Arch TheArch,
+                    const std::map<va_t, std::string> &FuncNames,
+                    const BinaryImage *Img, std::map<va_t, int> *CalleeRegArity,
+                    std::map<va_t, int> *CalleeTotalArity,
+                    const std::map<va_t, int> *CalleeFPArity,
+                    const std::map<va_t, uint16_t> *CalleeFPReturnSize,
+                    const std::map<va_t, std::vector<uint64_t>> *CalleeFPRegs,
+                    const std::map<va_t, bool> *CalleeHasSret,
+                    std::map<va_t, bool> *CalleeIsVariadic,
+                    const std::map<va_t, bool> *CalleeConsumesVaList,
+                    const std::set<va_t> *FrameLocalLeafCallees,
+                    const std::map<va_t, std::vector<uint64_t>> *CalleeIntRegs,
+                    const std::set<va_t> *VectorArgumentCallees) {
   Func.CallInfos.clear();
 
   const auto &TRI = getTargetRegInfo(TheArch);
@@ -748,6 +751,18 @@ void recoverCallAbi(
             std::min(CalleeArgs, static_cast<int>(IntParamRegs.size()));
       }
 
+      // A checked direct PE32 rethrow takes exactly two stack words. Its
+      // source call receipt owns that ABI even without a symbol-name map;
+      // current SSA stores still own the values recovered below.
+      const auto Registration = TheArch == Arch::X86
+                                    ? registrationCallABI(Func, Blk, Op)
+                                    : std::nullopt;
+      const bool RuntimeThrow = Registration && Registration->RuntimeThrow;
+      if (RuntimeThrow) {
+        CalleeRegArgs = 0;
+        CalleeArgs = 2;
+      }
+
       // Apple/Darwin AArch64 passes EVERY variadic argument on the stack
       // (unlike AAPCS64/Linux, which fills x0-x7 first).  For a known-variadic
       // libc callee (the printf/scanf family, ...) the outgoing stores at
@@ -836,10 +851,12 @@ void recoverCallAbi(
           IsDirectImport && Img && Convention &&
           !(Convention->ImportsMayTakeRegisterArguments &&
             Convention->ImportsMayTakeRegisterArguments(*Img));
-      const bool StackOnlyCall = RegparmOnly && !CI.IsIndirect &&
-                                 ((CalleeRegArgs == 0 && CalleeArgs > 0) ||
-                                  IsRelocExtern || StackOnlyImport);
-      const bool RegArgsApply = !(RegparmOnly && CI.IsIndirect);
+      const bool StackOnlyCall =
+          RuntimeThrow || (RegparmOnly && !CI.IsIndirect &&
+                           ((CalleeRegArgs == 0 && CalleeArgs > 0) ||
+                            IsRelocExtern || StackOnlyImport));
+      const bool RegArgsApply =
+          !RuntimeThrow && !(RegparmOnly && CI.IsIndirect);
       // A stack-only call takes no integer register argument; its floating
       // arguments are another question (an internal function taking only
       // XMM arguments has no integer register argument).
@@ -1377,13 +1394,12 @@ void recoverCallAbi(
         // clang parked there) must NOT be filtered out as a register save:
         // every SP-relative store in the call's own block is an outgoing
         // argument.
-        if (!CI.IsIndirect && Prev.Inputs[1].Kind == MedVar::Reg &&
-            TRI.isCalleeSaveReg(Prev.Inputs[1].RegOff) &&
-            Prev.Inputs[1].SSAVer == 0) {
+        if (!CI.IsIndirect && isIncomingRegisterSave(TRI, Prev.Inputs[1])) {
           // A prologue register save spills the callee-save register's
-          // *incoming* (live-in, SSA version 0) value.  A non-zero version is a
-          // computed or loop-carried value that merely lives in a callee-save
-          // register, so it is a real outgoing argument — never filter those.
+          // *incoming* (live-in, SSA version 0) value, as `push {r11, lr}`
+          // spills the return address.  A non-zero version is a computed or
+          // loop-carried value that merely lives in a callee-save register, so
+          // it is a real outgoing argument — never filter those.
           uint64_t StoredReg = Prev.Inputs[1].RegOff;
           bool WasRedefined = false;
           for (int R = J - 1; R >= 0; --R) {
@@ -2011,8 +2027,8 @@ void recoverCallAbi(
       // only exactly that shape fills gaps there, so ordinary calls keep the
       // strict first-gap cutoff and their register/stack lane classification.
       bool LeadingGap = false;
-      if (Policy && Policy->LeadingStackGapIsUnusedArgument && !CI.IsIndirect &&
-          CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
+      if (!RuntimeThrow && Policy && Policy->LeadingStackGapIsUnusedArgument &&
+          !CI.IsIndirect && CalleeArgs >= 0 && MaxArgs > 0 && !FoundMask[0])
         for (int K = 1; K < MaxArgs; ++K)
           if (FoundMask[K]) {
             LeadingGap = true;
@@ -2026,7 +2042,7 @@ void recoverCallAbi(
       // but no trailing argument is invented.  A reliable callee arity (>0; a
       // not-yet-promoted forwarder still reports 0 at this point) additionally
       // drops a stray lane recovered above the real argument list.
-      int AssembleEnd = MaxArgs;
+      int AssembleEnd = RuntimeThrow ? 2 : MaxArgs;
       if (FillGaps) {
         int LastFound = -1;
         for (int K = 0; K < MaxArgs; ++K)
@@ -2105,6 +2121,23 @@ void recoverCallAbi(
           if (Span > 1)
             K += Span - 1;
         }
+      }
+      // A variadic callee that takes its vector argument registers as
+      // parameters (System V) takes every integer and vector argument
+      // register, which a call passes in that order before its stack
+      // arguments.  One the caller never set passes zero: the callee only
+      // saves it, and va_arg reads no more arguments than a caller passes.
+      if (!CI.IsIndirect && CalleeHasFP && VectorArgumentCallees &&
+          VectorArgumentCallees->count(CI.TargetAddr)) {
+        while (static_cast<int>(IntPart.size()) < IntCap)
+          IntPart.push_back(
+              MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize)));
+        const int Vectors = CalleeFPArity->at(CI.TargetAddr);
+        const uint16_t VectorBytes =
+            TRI.FPABIRegWidth ? TRI.FPABIRegWidth
+                              : static_cast<uint16_t>(TRI.VecRegStride);
+        while (static_cast<int>(FoundFP.size()) < Vectors)
+          FoundFP.push_back(MedVar::makeConst(0, VectorBytes));
       }
       for (auto &A : IntPart)
         CI.Args.push_back(A);
@@ -2309,6 +2342,35 @@ void recoverCallAbi(
     IntegerLayout.Registers = PromoteOrder;
   IntParamRegs = IntegerLayout.Registers;
 
+  // A struct return field this function passes through unchanged holds the
+  // argument its caller passed in that register: `struct dd f(double a,
+  // double b){return (struct dd){a, b};}` is a lone `ret`.  Surface it as a
+  // forwarder's parameter, with each FP argument register before it (the
+  // integer promotion below fills its own gaps), so the return reads the
+  // argument and its callers pass it rather than an uninitialised register.
+  for (const MedReturnReg &Field : Func.MultiReturn) {
+    if (!returnsArgumentUnchanged(Func, Field, TRI, Fmt))
+      continue;
+    MedVar LiveIn;
+    LiveIn.Kind = MedVar::Reg;
+    LiveIn.SSAVer = 0;
+    LiveIn.TheArch = TheArch;
+    if (!Field.IsFP) {
+      if (regToIntArgIdx(Field.RegOff) < 0)
+        continue;
+      LiveIn.RegOff = Field.RegOff;
+      LiveIn.Size = static_cast<uint16_t>(TRI.PointerSize);
+      PromoteParams.emplace(Field.RegOff, LiveIn);
+      continue;
+    }
+    const unsigned Index = *argumentRegisterIndex(TRI, Fmt, Field.RegOff, true);
+    for (unsigned K = 0; K <= Index && K < FPParamRegs.size(); ++K) {
+      LiveIn.RegOff = FPParamRegs[K];
+      LiveIn.Size = Field.Size;
+      PromoteFPParams.emplace(static_cast<int>(K), LiveIn);
+    }
+  }
+
   // Surface forwarded incoming registers as parameters.  A pure forwarder
   // `f(a){return g(a);}` never reads its argument register (it flows straight
   // into the call), so detectCc's live-in scan misses it and Func.Params lacks
@@ -2505,10 +2567,14 @@ void finalizeVariadicCallees(std::vector<MedFunc> &Funcs, Arch TheArch,
     int RegParamCount = 0;
     int MaxId = 0;
     const auto CalleeIntParamRegs = TRI.integerArgumentLayout(Fmt).Registers;
+    // A System V variadic function also takes its vector argument
+    // registers as parameters, which a call passes after the integer ones.
     for (const auto &P : Callee.Params) {
       if (P.RegOff != kNoParamReg &&
-          std::find(CalleeIntParamRegs.begin(), CalleeIntParamRegs.end(),
-                    P.RegOff) != CalleeIntParamRegs.end())
+          (std::find(CalleeIntParamRegs.begin(), CalleeIntParamRegs.end(),
+                     P.RegOff) != CalleeIntParamRegs.end() ||
+           (Callee.takesVectorArgumentRegisters() &&
+            TRI.isFPArgReg(P.RegOff, Fmt))))
         ++RegParamCount;
       if (P.Id > MaxId)
         MaxId = P.Id;

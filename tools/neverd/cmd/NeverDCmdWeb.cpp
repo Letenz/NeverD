@@ -42,24 +42,61 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "tauri" || WebArguments[0] == "tauri-export" ||
+       WebArguments[0] == "tauri-source" || WebArguments[0] == "tauri-html" ||
+       WebArguments[0] == "tauri-readable-export"))
+    return runWebTauri();
+  if (!WebArguments.empty() && (WebArguments[0] == "package-assessment" ||
+                                WebArguments[0] == "archive-assessment"))
+    return runWebAssessment();
+  if (!WebArguments.empty() && WebArguments[0] == "package-attestation")
+    return runWebAttestation();
+  if (!WebArguments.empty() && WebArguments[0] == "package-advisories")
+    return runWebAdvisories();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "package-behavior-diff" ||
+       WebArguments[0] == "archive-package-behavior-diff"))
+    return runWebBehaviorDiff();
   if (!WebArguments.empty() && (WebArguments[0] == "node-behavior" ||
                                 WebArguments[0] == "bun-node-behavior" ||
                                 WebArguments[0] == "package-behavior" ||
-                                WebArguments[0] == "archive-package-behavior"))
+                                WebArguments[0] == "archive-package-behavior" ||
+                                WebArguments[0] == "package-install" ||
+                                WebArguments[0] == "archive-package-install"))
     return runWebBehavior();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "rewrite" || WebArguments[0] == "rewrite-export" ||
        WebArguments[0] == "bun-rewrite" ||
        WebArguments[0] == "bun-rewrite-export"))
     return runWebRewrite();
+  if (!WebArguments.empty() && WebArguments[0] == "readable-export")
+    return runWebReadableExport();
   if (!WebArguments.empty() && WebArguments[0] == "desktop-manifest")
     return runWebDesktop();
   if (!WebArguments.empty() &&
       (WebArguments[0] == "sea" || WebArguments[0] == "sea-source"))
     return runWebSEA();
   if (!WebArguments.empty() &&
+      (WebArguments[0] == "nexe" || WebArguments[0] == "nexe-source" ||
+       WebArguments[0] == "archive-nexe" ||
+       WebArguments[0] == "archive-nexe-source"))
+    return runWebNexe();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "pkg" || WebArguments[0] == "pkg-source" ||
+       WebArguments[0] == "archive-pkg" ||
+       WebArguments[0] == "archive-pkg-source"))
+    return runWebPkg();
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "wails" || WebArguments[0] == "wails-source" ||
+       WebArguments[0] == "wails-html" || WebArguments[0] == "wails-native" ||
+       WebArguments[0] == "wails-export" ||
+       WebArguments[0] == "wails-readable-export"))
+    return runWebWails();
+  if (!WebArguments.empty() &&
       (WebArguments[0] == "har-preview" || WebArguments[0] == "har-import" ||
        WebArguments[0] == "interfaces" ||
+       WebArguments[0] == "interface-relations" ||
        WebArguments[0] == "interface-correlate"))
     return runWebInterfaces();
   if (!WebArguments.empty() && (WebArguments[0] == "stream-preview" ||
@@ -70,6 +107,7 @@ int runWeb() {
   if (!WebArguments.empty() &&
       (WebArguments[0] == "archive" || WebArguments[0] == "archive-packages" ||
        WebArguments[0] == "archive-bun" ||
+       WebArguments[0] == "archive-bun-export" ||
        WebArguments[0] == "archive-desktop"))
     return runWebArchive();
   if (!WebArguments.empty() &&
@@ -272,7 +310,26 @@ int runWeb() {
            "<source-member-index:source-type>... | "
            "source|bindings|semantics|modules|bundles|view|navigate <file> "
            "<script|module|commonjs> "
+           "| readable-export <root> <source-type> <new-output-directory> "
+           "[artifact-index] "
            "| sea|sea-source <file-or-root> <profile> [artifact-index] "
+           "| nexe <root> <profile> [artifact-index] "
+           "| nexe-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | archive-nexe[-source] <root> <profile> "
+           "<tar|tgz|zip> <archive-index> <archive-member-index> "
+           "[<member-index> <source-type>] "
+           "| wails|wails-native <root> <profile> [artifact-index] "
+           "| wails-export <root> <profile> <new-output-directory> "
+           "[artifact-index] "
+           "| wails-html <root> <profile> <artifact-index> <member-index> "
+           "| wails-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | wails-readable-export <root> <profile> "
+           "<artifact-index> <member-index> <source-type> "
+           "<new-output-directory> | pkg <root> <profile> [artifact-index] "
+           "| pkg-source <root> <profile> <artifact-index> <member-index> "
+           "<source-type> | archive-pkg[-source] <root> <profile> "
+           "<tar|tgz|zip> <archive-index> <archive-member-index> "
+           "[<member-index> <source-type>] "
            "| map|bun "
            "<file> | bun-export <file> <new-output-directory> | "
            "bun-map <file> <module-index> | "
@@ -792,7 +849,9 @@ int runWeb() {
           Analysis->getAsObject()->getString("navigation_status");
       if (Status != "ok" && Status != "partial")
         return 1;
-      for (llvm::StringRef Kind : {"functions", "calls", "references"}) {
+      for (llvm::StringRef Kind :
+           {"functions", "calls", "references", "features", "desktop_bridges",
+            "config_merges"}) {
         uint64_t Offset = 0;
         do {
           auto Page = result(neverd_web_source_navigation_records_json(

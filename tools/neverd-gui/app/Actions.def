@@ -28,6 +28,11 @@
 // File.
 NEVERD_ACTION(FileOpen, QT_TRANSLATE_NOOP("Actions", "&Open..."), "", "open",
               QT_TRANSLATE_NOOP("Actions", "Open a binary for analysis"))
+NEVERD_ACTION(
+    FilePackageReview,
+    QT_TRANSLATE_NOOP("Actions", "Offline package &review..."), "", "open",
+    QT_TRANSLATE_NOOP("Actions",
+                      "Inspect local package evidence and analyst reviews"))
 NEVERD_ACTION(FileReload,
               QT_TRANSLATE_NOOP("Actions", "&Reload the input file"), "",
               "refresh",
@@ -92,7 +97,7 @@ NEVERD_VIEW_ACTION(
     "function_delete",
     QT_TRANSLATE_NOOP("Actions", "Stop treating the current function as one"))
 NEVERD_VIEW_ACTION(
-    EditDefineCode, QT_TRANSLATE_NOOP("Actions", "&Code"), "C", "code_item",
+    EditDefineCode, QT_TRANSLATE_NOOP("Actions", "C&ode"), "C", "code_item",
     QT_TRANSLATE_NOOP("Actions",
                       "Define instructions from the current address"))
 NEVERD_VIEW_ACTION(EditDefineData, QT_TRANSLATE_NOOP("Actions", "&Data"), "D",

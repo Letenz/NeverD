@@ -56,6 +56,8 @@ public:
   }
 
   bool connected() const { return connected_; }
+  /// The configured NeverD worker, also used by separate offline workbenches.
+  QString workerPath() const { return workerPath_; }
   bool loaded() const { return loaded_; }
   bool opening() const { return opening_; }
   bool dirty() const { return dirty_ || pendingWrites_ > 0; }

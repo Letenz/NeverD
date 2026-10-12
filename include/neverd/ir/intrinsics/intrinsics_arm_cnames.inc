@@ -1,4 +1,6 @@
 // ARM32 standard C intrinsic names — included by intrinsics.cpp.
+// The names are aligned in a column, which clang-format would undo.
+// clang-format off
 
 // NEON crypto
 C(Intrinsic::ArmAesd,          "vaesdq_u8");
@@ -63,3 +65,4 @@ C(Intrinsic::ArmCrc32cb,       "__crc32cb");
 C(Intrinsic::ArmCrc32ch,       "__crc32ch");
 C(Intrinsic::ArmCrc32cw,       "__crc32cw");
 C(Intrinsic::ArmRbit,          "__rbit");
+C(Intrinsic::ArmLinuxSyscall,  "neverd_arm_linux_syscall");

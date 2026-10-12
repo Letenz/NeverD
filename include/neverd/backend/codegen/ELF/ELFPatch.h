@@ -40,6 +40,11 @@ public:
                              llvm::ArrayRef<uint8_t> Code,
                              llvm::StringRef SegName, Arch TargetArch) override;
 
+  /// Install an already validated RX/RW placement image.
+  uint64_t appendPatchSegments(std::vector<uint8_t> &Binary,
+                               llvm::ArrayRef<uint8_t> Code, Arch TargetArch,
+                               std::optional<uint64_t> WritableVA);
+
 private:
   struct PatchLayout : PatchLayoutBase {
     uint64_t EntryPoint = 0;

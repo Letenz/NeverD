@@ -20,6 +20,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -353,72 +354,10 @@ std::pair<int, int> MedLLVMEmitter::sizeRootKey(const MedVar &V,
 std::optional<std::pair<std::pair<int, int>, int64_t>>
 MedLLVMEmitter::addrSlotKey(const MedVar &V, int Depth,
                             bool ThroughRegs) const {
-  if (V.isConst() || Depth > limits::kMaxStackPtrTraceDepth)
-    return std::nullopt;
-  // A register anchors the key (frame/stack pointer base); never trace past it,
-  // so a load and store of the same slot share an identical base.  ThroughRegs
-  // threads only the TOP-LEVEL register's definition (escape detection): a slot
-  // address copied into a parameter register before a call keys to the same
-  // slot while the inner stack/frame-pointer register still anchors (threading
-  // it would diverge from the load/store form via prologue self-copies).
-  if (V.Kind == MedVar::Reg && !(ThroughRegs && Depth == 0))
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  if (!CurMedFunc)
-    return std::nullopt;
-  const MedOp *Def = lookupDef(V);
-  if (!Def || Def->NumInputs < 1 ||
-      Def->RegistrationRoot != MedOp::RegistrationRootKind::None)
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  // Slot identity follows the guest operation's modular width.  Accumulate as
-  // raw bits so 64-bit wrap is defined and narrow guests do not become i64.
-  auto applyConstantOffset = [&](const auto &Base, uint64_t Constant,
-                                 bool Subtract) -> decltype(addrSlotKey(V)) {
-    const unsigned Bytes = Def->Output.Size;
-    if (Bytes == 0 || Bytes > sizeof(uint64_t))
-      return std::nullopt;
-    uint64_t Bits = std::bit_cast<uint64_t>(Base.second);
-    Bits = Subtract ? Bits - Constant : Bits + Constant;
-    if (Bytes < sizeof(uint64_t)) {
-      const unsigned Width = Bytes * 8;
-      const uint64_t Mask = (uint64_t{1} << Width) - 1;
-      Bits &= Mask;
-      if (Bits & (uint64_t{1} << (Width - 1)))
-        Bits |= ~Mask;
-    }
-    return std::make_pair(Base.first, std::bit_cast<int64_t>(Bits));
-  };
-  switch (Def->Opcode) {
-  case NdOp::COPY:
-  case NdOp::INT_ZEXT:
-  case NdOp::INT_SEXT:
-    return addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs);
-  case NdOp::SUBBYTES:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst() &&
-        Def->Inputs[1].ConstVal == 0)
-      return addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs);
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  case NdOp::INT_ADD:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst()) {
-      if (auto B = addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs))
-        return applyConstantOffset(*B, Def->Inputs[1].ConstVal,
-                                   /*Subtract=*/false);
-    }
-    if (Def->NumInputs >= 2 && Def->Inputs[0].isConst()) {
-      if (auto B = addrSlotKey(Def->Inputs[1], Depth + 1, ThroughRegs))
-        return applyConstantOffset(*B, Def->Inputs[0].ConstVal,
-                                   /*Subtract=*/false);
-    }
-    return std::nullopt;
-  case NdOp::INT_SUB:
-    if (Def->NumInputs >= 2 && Def->Inputs[1].isConst()) {
-      if (auto B = addrSlotKey(Def->Inputs[0], Depth + 1, ThroughRegs))
-        return applyConstantOffset(*B, Def->Inputs[1].ConstVal,
-                                   /*Subtract=*/true);
-    }
-    return std::nullopt;
-  default:
-    return std::make_pair(std::make_pair(V.Id, V.SSAVer), int64_t{0});
-  }
+  MedDefLookup DefOf;
+  if (CurMedFunc)
+    DefOf = [this](const MedVar &Value) { return lookupDef(Value); };
+  return medAddressSlotKey(V, DefOf, Depth, ThroughRegs);
 }
 
 std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(

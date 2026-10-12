@@ -105,6 +105,8 @@ std::string Session::analyzePackages(std::string_view Revision,
   auto A = web::analyzePackages(Namespace ? *Namespace : State->Published,
                                 ArtifactID, InputKind);
   auto Reply = json(summary(A, State->Revision));
+  State->PackageNamespaces.emplace(A.ID, Namespace ? std::move(*Namespace)
+                                                   : State->Published);
   State->PackageAnalyses.emplace(A.ID, std::move(A));
   return Reply;
 }

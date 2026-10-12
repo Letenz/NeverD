@@ -26,6 +26,40 @@ STYLE_EXPECTATIONS = ROOT / "scripts" / "tests" / "CIStyleExpectations.def"
 
 
 class CiConfigurationTests(unittest.TestCase):
+    def test_msvc_test_targets_select_extended_coff_objects(self):
+        for msvc_style in (False, True):
+            with self.subTest(msvc_style=msvc_style), tempfile.TemporaryDirectory(
+                    prefix="neverd-test-object-format-") as directory:
+                root = Path(directory)
+                (root / "probe.cpp").write_text("int main() { return 0; }\n")
+                # Exercise the real test helper and generated compile command.
+                # The MSVC branch is configuration-only on non-Windows hosts;
+                # the native CI compiler is still required to certify it.
+                source = textwrap.dedent(f"""\
+                    cmake_minimum_required(VERSION 3.20)
+                    project(TestObjectFormat LANGUAGES CXX)
+                    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+                    add_library(GTest::gtest INTERFACE IMPORTED)
+                    add_library(GTest::gtest_main INTERFACE IMPORTED)
+                    include("{CMAKE_HELPERS.as_posix()}")
+                    set(MSVC {"TRUE" if msvc_style else "FALSE"})
+                    add_neverd_unittest(OwnedFixture probe.cpp)
+                    """)
+                (root / "CMakeLists.txt").write_text(source)
+                build = root / "build"
+                result = subprocess.run(
+                    ["cmake", "-S", str(root), "-B", str(build), "-G", "Ninja"],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                commands = json.loads((build / "compile_commands.json").read_text())
+                self.assertEqual(len(commands), 1)
+                command = commands[0]
+                tokens = command.get("arguments") or re.findall(
+                    r'"[^\"]*"|\S+', command["command"])
+                flags = {token.strip('"').casefold() for token in tokens}
+                self.assertEqual("/bigobj" in flags, msvc_style)
+
     def test_windows_serial_policy_runs_in_ctest_without_project_policies(self):
         execution = ROOT / "unittests" / "emulation" / "WindowsTestExecution.cmake"
         inventory = execution.with_suffix(".def").read_text(encoding="utf-8")

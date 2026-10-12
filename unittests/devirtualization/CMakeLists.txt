@@ -169,6 +169,7 @@ add_neverd_unittest(NeverDInterpreterSpecializationTests
   FiniteValuesTests.cpp
   FiniteQueryCacheTests.cpp
   CompletedQueryCacheTests.cpp
+  FreshChoiceProjectionTests.cpp
   OrderedQueryTests.cpp
   FrameOffsetsTests.cpp
   StringTransferTests.cpp

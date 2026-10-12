@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/BinaryRewrite.h"
+#include "llvm/Support/Error.h"
 
 #include <algorithm>
 #include <string>
@@ -27,6 +28,14 @@ namespace neverd {
 
 struct BinaryImage;
 
+/// An installed entry and the compiler-owned function it actually targets.
+struct PatchedFunctionEntry {
+  std::string OwnerSymbol;
+  va_t OriginalVA = 0;
+  va_t OwnerVA = 0;
+  std::string SourceFunction;
+};
+
 struct PatchResult {
   bool Success = false;
   size_t CodeSize = 0;
@@ -35,6 +44,7 @@ struct PatchResult {
   /// Sorted, unique original function entries whose replacement bytes or
   /// entry trampolines were committed to the output artifact.
   std::vector<va_t> PatchedOriginalEntries;
+  std::vector<PatchedFunctionEntry> PatchedFunctions;
 };
 
 namespace patch_receipt_detail {
@@ -85,6 +95,14 @@ struct CodegenResult {
   bool Success = false;
 };
 
+/// Explicit replacement input preserves frontend runtime requirements. The
+/// lifted route retains its existing original-image fallback behavior.
+enum class RewriteInputKind { LiftedIR, ReplacementIR, ReplacementObject };
+
+/// Validate frontend requirements before explicit replacement IR enters MC
+/// code generation. This never removes a runtime or protection requirement.
+llvm::Error validateReplacementIR(const llvm::Module &Module, Arch TargetArch);
+
 /// LLVM IR -> relocatable object for all four ISAs (see ArchSupport.h).
 class Codegen {
 public:
@@ -106,7 +124,8 @@ public:
   llvm::mc_rewrite::RewriteResult
   compileForRewrite(llvm::Module &Mod, Arch TargetArch,
                     const llvm::mc_rewrite::RewriteOptions &Opts,
-                    BinaryFormat ObjectFormat, llvm::StringRef TargetTriple);
+                    BinaryFormat ObjectFormat, llvm::StringRef TargetTriple,
+                    RewriteInputKind InputKind = RewriteInputKind::LiftedIR);
 };
 
 /// Patch pre-pass (PIE/ASLR safety). Rewrites absolute pointer constants

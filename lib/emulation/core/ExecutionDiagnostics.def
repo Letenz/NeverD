@@ -29,6 +29,10 @@ NEVERD_EXECUTION_DIAGNOSTIC(BranchModel,
                             "unknown x64 relative-branch decoding model")
 NEVERD_EXECUTION_DIAGNOSTIC(
     Instruction, "instruction is outside the checked execution contract")
+NEVERD_EXECUTION_DIAGNOSTIC(
+    UndefinedDoubleShift,
+    "double-shift count {0} exceeds the {1}-bit operand width; destination "
+    "and flags are undefined")
 NEVERD_EXECUTION_DIAGNOSTIC(Callback, "exception in execution observer")
 NEVERD_EXECUTION_DIAGNOSTIC(
     ExecutionTimeout,

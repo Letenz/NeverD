@@ -14,6 +14,7 @@
 #include "LibraryPresentation.h"
 #include "SessionImpl.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/CSourceMap.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -287,15 +288,18 @@ int neverd_prepare_function(neverd_session_t Sess, neverd_va_t FuncEntry) {
       S->setError(*Reason);
       return 0;
     }
-    if (S->Img.Format == BinaryFormat::COFF)
+    if (S->Img.Format == BinaryFormat::COFF) {
+      // Handler discovery can grow metadata. Until it exposes an immutable
+      // generation, do not carry borrowed CFG facts across this operation.
+      S->AnalysisCache.reset();
       coff_loader::ensureExceptionHandlers(S->Img, {FuncEntry});
+    }
 
     if (!S->PipeRan)
       S->OnlyFunctionEntries.insert(FuncEntry);
     else if (!S->OnlyFunctionEntries.empty() &&
              !S->OnlyFunctionEntries.count(FuncEntry)) {
-      S->invalidatePipeline();
-      S->OnlyFunctionEntries = {FuncEntry};
+      S->selectFunction(FuncEntry);
     }
     return S->ensurePipeline() ? 1 : 0;
   } catch (const std::exception &Error) {
@@ -654,6 +658,7 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
   std::string Text;
   llvm::json::Array Rows;
   size_t Total = 0, Start = 0, ByteOffset = Full.size();
+  bool PageFull = false;
   while (Start < Full.size()) {
     const size_t Newline = Full.find('\n', Start);
     const size_t End =
@@ -665,12 +670,17 @@ llvm::json::Object sourcePage(neverd_session_t Sess, va_t Entry,
     std::erase_if(ActiveAnchors, [Start](const auto *Anchor) {
       return Anchor->Span.End <= Start;
     });
-    if (Total >= Offset && Total - Offset < Limit) {
+    // A page ends before the line that would pass its byte budget; the
+    // next page starts there.
+    if (!PageFull && Total >= Offset && Total - Offset < Limit &&
+        End - Start > limits::kMaxViewPageBytes - Text.size()) {
+      if (Text.empty())
+        throw std::length_error("a source line exceeds the 2 MiB page budget");
+      PageFull = true;
+    }
+    if (!PageFull && Total >= Offset && Total - Offset < Limit) {
       if (Text.empty())
         ByteOffset = Start;
-      if (End - Start > 2 * 1024 * 1024 - Text.size())
-        throw std::length_error(
-            "source page exceeds 2 MiB; request fewer lines");
       Text.append(Full.data() + Start, End - Start);
       std::set<va_t> Origins;
       std::optional<va_t> Primary;
@@ -899,6 +909,7 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
     size_t Total = 0;
     std::string Text;
     llvm::json::Array Rows;
+    bool PageFull = false;
     const IRRowSink Sink = [&](llvm::StringRef Chunk,
                                const IRRowOrigin &Origin) {
       size_t Start = 0;
@@ -906,10 +917,15 @@ const char *neverd_ir_view_json(neverd_session_t Sess, neverd_va_t FuncEntry,
         const auto Newline = Chunk.find('\n', Start);
         const auto End =
             Newline == llvm::StringRef::npos ? Chunk.size() : Newline + 1;
-        if (Total >= Offset && Total - Offset < Limit) {
-          if (End - Start > 2 * 1024 * 1024 - Text.size())
-            throw std::length_error(
-                "IR view page exceeds the 2 MiB budget; request fewer lines");
+        // A page ends before the line that would pass its byte budget; the
+        // next page starts there.
+        if (!PageFull && Total >= Offset && Total - Offset < Limit &&
+            End - Start > limits::kMaxViewPageBytes - Text.size()) {
+          if (Text.empty())
+            throw std::length_error("an IR line exceeds the 2 MiB page budget");
+          PageFull = true;
+        }
+        if (!PageFull && Total >= Offset && Total - Offset < Limit) {
           Text.append(Chunk.data() + Start, End - Start);
           llvm::json::Object Row;
           Row["line"] = static_cast<int64_t>(Total);

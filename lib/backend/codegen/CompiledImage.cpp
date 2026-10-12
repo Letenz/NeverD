@@ -12,11 +12,13 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/codegen/BinaryRewriter.h"
+#include "neverd/backend/codegen/PatchStorage.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/MC/MCFixup.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
@@ -44,26 +46,116 @@ struct CapturedFixupReference {
   bool IsCompactFunctionField = false;
 };
 
+struct SourceDisplacements {
+  bool IsMachO = false;
+  std::map<std::pair<uint64_t, std::string>, uint64_t> Targets;
+  std::map<std::pair<uint64_t, std::string>, uint64_t> MachOGOTData;
+
+  void record(const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request,
+              uint64_t Address) {
+    if (Request.IsSubtrahend)
+      return;
+    if (Request.SpecifierName == "PLT")
+      Targets[{Request.FixupVA, Request.Symbol.str()}] = Address;
+    if (IsMachO && Request.SpecifierName == "GOTPCREL" &&
+        Request.FixupKindName == "FK_Data_4" && !Request.IsPCRel)
+      MachOGOTData[{Request.FixupVA, Request.Symbol.str()}] = Address;
+  }
+
+  bool validate(const CompiledImage &Image) const {
+    for (const auto &Section : Image.Sections) {
+      if (!Section.IsAllocated || !Section.IsInImage)
+        continue;
+      for (const auto &Fixup : Section.FixupReferences) {
+        auto Target = Targets.find({Section.VA + Fixup.Offset, Fixup.Symbol});
+        if (Target == Targets.end())
+          continue;
+        if (!Fixup.IsPCRel || Fixup.BitWidth != 32 ||
+            !Fixup.SubtractSymbol.empty() ||
+            !rangeInBounds(Fixup.Offset, 4, Section.Size))
+          return false;
+        const auto Displacement =
+            readLE<int32_t>(Image.Bytes.data() + Section.Offset + Fixup.Offset);
+        if (Section.VA + Fixup.Offset + 4 + Displacement !=
+            Target->second + static_cast<uint64_t>(Fixup.Addend)) {
+          llvm::WithColor::error()
+              << "compileImageForPatch: LLVM encoded an invalid x64 PLT "
+                 "displacement; rebuild the corrected LLVM fork (the r3 "
+                 "prebuilt has an AArch64 specifier collision)\n";
+          return false;
+        }
+      }
+    }
+    for (const auto &Section : Image.Sections) {
+      if (!Section.IsAllocated)
+        continue;
+      llvm::ArrayRef<uint8_t> Bytes;
+      if (Section.IsInImage) {
+        if (!rangeInBounds(Section.Offset, Section.Size, Image.Bytes.size()))
+          return false;
+        Bytes = llvm::ArrayRef<uint8_t>(Image.Bytes)
+                    .slice(Section.Offset, Section.Size);
+      } else {
+        if (Section.ExternalBytes.size() != Section.Size)
+          return false;
+        Bytes = Section.ExternalBytes;
+      }
+      for (const auto &Fixup : Section.FixupReferences) {
+        auto Target =
+            MachOGOTData.find({Section.VA + Fixup.Offset, Fixup.Symbol});
+        if (Target == MachOGOTData.end())
+          continue;
+        if (Fixup.IsPCRel || Fixup.Kind != llvm::FK_Data_4 ||
+            Fixup.BitWidth != 32 || !Fixup.SubtractSymbol.empty() ||
+            !rangeInBounds(Fixup.Offset, 4, Section.Size))
+          return false;
+        const auto Displacement = readLE<int32_t>(Bytes.data() + Fixup.Offset);
+        if (Section.VA + Fixup.Offset + 4 + Displacement !=
+            Target->second + static_cast<uint64_t>(Fixup.Addend)) {
+          llvm::WithColor::error()
+              << "compileImageForPatch: LLVM encoded an invalid Mach-O x64 "
+                 "GOT data displacement; rebuild the corrected LLVM fork\n";
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+};
+
 struct PatchSymbolResolvers {
   PatchSymbolResolver Legacy;
   ContextualPatchSymbolResolver Contextual;
 
-  void install(llvm::mc_rewrite::RewriteAddressModel &Model) const {
+  void install(llvm::mc_rewrite::RewriteAddressModel &Model,
+               SourceDisplacements *PLT = nullptr) const {
     if (Contextual) {
       ContextualPatchSymbolResolver Resolver = Contextual;
       Model.resolveWithContext =
-          [Resolver](
-              const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
-            return Resolver(Request);
+          [Resolver,
+           PLT](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
+            auto Address = Resolver(Request);
+            if (PLT && Address)
+              PLT->record(Request, *Address);
+            return Address;
           };
       return;
     }
 
     if (Legacy) {
       PatchSymbolResolver Resolver = Legacy;
-      Model.resolve = [Resolver](llvm::StringRef Symbol, uint32_t Specifier) {
-        return Resolver(Symbol, Specifier);
-      };
+      if (!PLT) {
+        Model.resolve = std::move(Resolver);
+        return;
+      }
+      Model.resolveWithContext =
+          [Resolver,
+           PLT](const llvm::mc_rewrite::RewriteSymbolResolveRequest &Request) {
+            auto Address = Resolver(Request.Symbol, Request.Specifier);
+            if (PLT && Address)
+              PLT->record(Request, *Address);
+            return Address;
+          };
     }
   }
 };
@@ -335,8 +427,18 @@ static CompiledImage compileImageForPatchImpl(
     PatchSymbolResolvers Resolvers,
     llvm::function_ref<std::optional<uint64_t>(llvm::StringRef)>
         FixedSectionVAFn,
-    uint64_t ImageBaseVA, llvm::StringRef TargetTriple) {
+    uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+    RewriteInputKind InputKind) {
+  SourceDisplacements PLT;
+  PLT.IsMachO = Fmt == BinaryFormat::MachO;
+  SourceDisplacements *PLTCheck =
+      TargetArch == Arch::X64 &&
+              (Fmt == BinaryFormat::ELF || Fmt == BinaryFormat::MachO) &&
+              InputKind == RewriteInputKind::ReplacementIR
+          ? &PLT
+          : nullptr;
   CompiledImage Out;
+  Out.InputKind = InputKind;
   Out.BaseVA = BaseVA;
   Out.TargetArch = TargetArch;
   Out.Format = Fmt;
@@ -411,7 +513,7 @@ static CompiledImage compileImageForPatchImpl(
       return *FixedVA;
     return IsText(Name) ? BaseVA : *ProbeSectionVA;
   };
-  Resolvers.install(Pass1.Model);
+  Resolvers.install(Pass1.Model, PLTCheck);
   std::vector<CapturedFixupReference> Pass1Fixups;
   Pass1.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Context,
                       uint64_t Value) {
@@ -420,11 +522,18 @@ static CompiledImage compileImageForPatchImpl(
   };
   Codegen CG1;
   auto Pass1Mod = llvm::CloneModule(Mod);
-  auto Res1 =
-      CG1.compileForRewrite(*Pass1Mod, TargetArch, Pass1, Fmt, TargetTriple);
+  auto Res1 = CG1.compileForRewrite(*Pass1Mod, TargetArch, Pass1, Fmt,
+                                    TargetTriple, InputKind);
   if (!Res1.ImageValid) {
     llvm::WithColor::error()
         << "compileImageForPatch: sizing compile produced an invalid image\n";
+    return Out;
+  }
+  if (InputKind == RewriteInputKind::ReplacementIR &&
+      !Res1.Unresolved.empty()) {
+    llvm::WithColor::error()
+        << "compileImageForPatch: unresolved replacement symbol: "
+        << Res1.Unresolved.front() << "\n";
     return Out;
   }
   if (!Res1.FunctionRangesValid) {
@@ -507,7 +616,7 @@ static CompiledImage compileImageForPatchImpl(
       return Out;
     }
     Out.Unresolved = std::move(Res1.Unresolved);
-    Out.Success = true;
+    Out.Success = !PLTCheck || PLTCheck->validate(Out);
     LLVM_DEBUG(llvm::dbgs()
                << "compileImageForPatch: 1 section, " << Out.Bytes.size()
                << " bytes from VA 0x" << llvm::utohexstr(BaseVA) << "\n");
@@ -522,6 +631,12 @@ static CompiledImage compileImageForPatchImpl(
   // rather than this compile's size, so a section never moves backward and the
   // layout cannot oscillate (see the iteration note below).
   const uint64_t Align = 16;
+  const bool SplitWritable = InputKind == RewriteInputKind::ReplacementIR;
+  auto IsWritable = [](const llvm::mc_rewrite::RewriteSection &Section) {
+    return Section.Kind == llvm::mc_rewrite::RewriteSectionKind::WritableData ||
+           Section.Kind ==
+               llvm::mc_rewrite::RewriteSectionKind::UninitializedData;
+  };
   std::map<std::string, uint64_t> MaxSize;
   auto planLayout =
       [&](const std::vector<llvm::mc_rewrite::RewriteSection> &Secs,
@@ -529,6 +644,7 @@ static CompiledImage compileImageForPatchImpl(
     VA.clear();
     uint64_t Cur = BaseVA;
     bool Valid = true;
+    bool PlacedWritable = false;
     auto add = [&](const llvm::mc_rewrite::RewriteSection &S) {
       if (!S.IsAllocated)
         return;
@@ -543,6 +659,18 @@ static CompiledImage compileImageForPatchImpl(
       }
       uint64_t SectionAlign =
           IsText(S.Name) ? S.Alignment : std::max<uint64_t>(Align, S.Alignment);
+      if (SplitWritable && IsWritable(S) && !PlacedWritable) {
+        const uint64_t Page = sourcePatchStorageAlignment(TargetArch, Fmt);
+        // Keep space at the end of RX storage for a format-owned unwind
+        // search table, then start persistent state on a separate page.
+        if (Cur > std::numeric_limits<uint64_t>::max() - Page) {
+          Valid = false;
+          return;
+        }
+        Cur += Page;
+        SectionAlign = std::max(SectionAlign, Page);
+        PlacedWritable = true;
+      }
       if (S.Alignment == 0 || (S.Alignment & (S.Alignment - 1)) != 0 ||
           SectionAlign == 0 || (SectionAlign & (SectionAlign - 1)) != 0 ||
           Cur > std::numeric_limits<uint64_t>::max() - (SectionAlign - 1)) {
@@ -561,8 +689,12 @@ static CompiledImage compileImageForPatchImpl(
       if (IsText(S.Name))
         add(S);
     for (auto &S : Secs)
-      if (!IsText(S.Name))
+      if (!IsText(S.Name) && (!SplitWritable || !IsWritable(S)))
         add(S);
+    if (SplitWritable)
+      for (auto &S : Secs)
+        if (!IsText(S.Name) && IsWritable(S))
+          add(S);
     if (!Valid || Cur < BaseVA ||
         Cur - BaseVA > std::numeric_limits<size_t>::max())
       return false;
@@ -619,7 +751,7 @@ static CompiledImage compileImageForPatchImpl(
       auto It = SectionVA.find(N.str());
       return It != SectionVA.end() ? It->second : BaseVA;
     };
-    Resolvers.install(PassN.Model);
+    Resolvers.install(PassN.Model, PLTCheck);
     std::vector<CapturedFixupReference> IterationFixups;
     PassN.onFixup = [&](const llvm::mc_rewrite::FixupCtx &Context,
                         uint64_t Value) {
@@ -628,8 +760,8 @@ static CompiledImage compileImageForPatchImpl(
     };
     Codegen CGn;
     auto IterMod = llvm::CloneModule(Mod);
-    auto ResN =
-        CGn.compileForRewrite(*IterMod, TargetArch, PassN, Fmt, TargetTriple);
+    auto ResN = CGn.compileForRewrite(*IterMod, TargetArch, PassN, Fmt,
+                                      TargetTriple, InputKind);
     if (!ResN.ImageValid) {
       llvm::WithColor::error()
           << "compileImageForPatch: layout compile produced an invalid image\n";
@@ -758,7 +890,13 @@ static CompiledImage compileImageForPatchImpl(
     return Out;
   }
   Out.Unresolved = std::move(Final.Unresolved);
-  Out.Success = true;
+  if (InputKind == RewriteInputKind::ReplacementIR && !Out.Unresolved.empty()) {
+    llvm::WithColor::error()
+        << "compileImageForPatch: unresolved replacement symbol: "
+        << Out.Unresolved.front() << "\n";
+    return Out;
+  }
+  Out.Success = !PLTCheck || PLTCheck->validate(Out);
   LLVM_DEBUG(llvm::dbgs() << "compileImageForPatch: " << SectionVA.size()
                           << " sections, " << TotalSize << " bytes from VA 0x"
                           << llvm::utohexstr(BaseVA) << "\n");
@@ -777,13 +915,14 @@ CompiledImage compileImageForPatch(llvm::Module &Mod, Arch TargetArch,
                                    BinaryFormat Fmt, uint64_t BaseVA,
                                    PatchSymbolResolver ResolveFn,
                                    uint64_t ImageBaseVA,
-                                   llvm::StringRef TargetTriple) {
+                                   llvm::StringRef TargetTriple,
+                                   RewriteInputKind InputKind) {
   auto NoFixedSection = [](llvm::StringRef) -> std::optional<uint64_t> {
     return std::nullopt;
   };
-  return compileImageForPatchImpl(Mod, TargetArch, Fmt, BaseVA,
-                                  PatchSymbolResolvers{ResolveFn, nullptr},
-                                  NoFixedSection, ImageBaseVA, TargetTriple);
+  return compileImageForPatchImpl(
+      Mod, TargetArch, Fmt, BaseVA, PatchSymbolResolvers{ResolveFn, nullptr},
+      NoFixedSection, ImageBaseVA, TargetTriple, InputKind);
 }
 
 CompiledImage compileImageForPatch(llvm::Module &Mod, Arch TargetArch,
@@ -798,13 +937,14 @@ CompiledImage compileImageForPatch(llvm::Module &Mod, Arch TargetArch,
                                    BinaryFormat Fmt, uint64_t BaseVA,
                                    ContextualPatchSymbolResolver ResolveFn,
                                    uint64_t ImageBaseVA,
-                                   llvm::StringRef TargetTriple) {
+                                   llvm::StringRef TargetTriple,
+                                   RewriteInputKind InputKind) {
   auto NoFixedSection = [](llvm::StringRef) -> std::optional<uint64_t> {
     return std::nullopt;
   };
-  return compileImageForPatchImpl(Mod, TargetArch, Fmt, BaseVA,
-                                  PatchSymbolResolvers{nullptr, ResolveFn},
-                                  NoFixedSection, ImageBaseVA, TargetTriple);
+  return compileImageForPatchImpl(
+      Mod, TargetArch, Fmt, BaseVA, PatchSymbolResolvers{nullptr, ResolveFn},
+      NoFixedSection, ImageBaseVA, TargetTriple, InputKind);
 }
 
 CompiledImage compileImageForPatchWithFixedSectionVAs(
@@ -823,10 +963,11 @@ CompiledImage compileImageForPatchWithFixedSectionVAs(
     PatchSymbolResolver ResolveFn,
     llvm::function_ref<std::optional<uint64_t>(llvm::StringRef)>
         FixedSectionVAFn,
-    uint64_t ImageBaseVA, llvm::StringRef TargetTriple) {
-  return compileImageForPatchImpl(Mod, TargetArch, Fmt, BaseVA,
-                                  PatchSymbolResolvers{ResolveFn, nullptr},
-                                  FixedSectionVAFn, ImageBaseVA, TargetTriple);
+    uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+    RewriteInputKind InputKind) {
+  return compileImageForPatchImpl(
+      Mod, TargetArch, Fmt, BaseVA, PatchSymbolResolvers{ResolveFn, nullptr},
+      FixedSectionVAFn, ImageBaseVA, TargetTriple, InputKind);
 }
 
 CompiledImage compileImageForPatchWithFixedSectionVAs(
@@ -845,10 +986,11 @@ CompiledImage compileImageForPatchWithFixedSectionVAs(
     ContextualPatchSymbolResolver ResolveFn,
     llvm::function_ref<std::optional<uint64_t>(llvm::StringRef)>
         FixedSectionVAFn,
-    uint64_t ImageBaseVA, llvm::StringRef TargetTriple) {
-  return compileImageForPatchImpl(Mod, TargetArch, Fmt, BaseVA,
-                                  PatchSymbolResolvers{nullptr, ResolveFn},
-                                  FixedSectionVAFn, ImageBaseVA, TargetTriple);
+    uint64_t ImageBaseVA, llvm::StringRef TargetTriple,
+    RewriteInputKind InputKind) {
+  return compileImageForPatchImpl(
+      Mod, TargetArch, Fmt, BaseVA, PatchSymbolResolvers{nullptr, ResolveFn},
+      FixedSectionVAFn, ImageBaseVA, TargetTriple, InputKind);
 }
 
 } // namespace neverd

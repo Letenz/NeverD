@@ -11,6 +11,7 @@ add_neverd_component_library(NeverDEmulationCore
   core/MMIOAtomicTransaction.cpp
   core/RAMTransaction.cpp
   core/RAMReservation.cpp
+  core/RAMInitializationWatch.cpp
   core/MemoryView.cpp
   LLVM_COMPONENTS Support)
 

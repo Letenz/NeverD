@@ -58,6 +58,9 @@ public:
   std::string nameAt(std::uint64_t address);
   /// Resolve an automatic or listing-local name to its address.
   std::optional<std::uint64_t> resolveName(const std::string &name);
+  /// The entry of the function whose chunk, a part apart from its body,
+  /// holds \p address.
+  std::optional<std::uint64_t> chunkOwner(std::uint64_t address);
   /// Whether \p address is an import's slot or the entry of its thunk.
   bool isImport(std::uint64_t address);
   /// Build the reference index again, as for a changed function list.

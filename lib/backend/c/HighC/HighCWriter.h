@@ -131,6 +131,18 @@ public:
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> imageObjectName(va_t Addr) const;
   std::optional<std::string> imageBackingAddress(va_t Addr) const;
+  /// \p Const as an address in an image backing.  One past the end of the
+  /// section its relocation names, it stays in that section's last backing
+  /// even where the next section's first object starts.
+  std::optional<std::string>
+  ownedImageBackingAddress(const HighExpr &Const) const;
+  /// The section \p Const is anchored to when its relocation names an object
+  /// there and subtracts from it, leaving an address before the section
+  /// (i386 `table@GOTOFF - 1`; BinaryImage::RodataAnchorSeg).
+  std::optional<va_t> anchoredOwner(const HighExpr &Const) const;
+  /// \p Const as the address of its anchored section's first object less
+  /// the distance to it, as an integer.
+  std::optional<std::string> anchoredOwnerAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
@@ -141,13 +153,16 @@ public:
   void writeMemoryHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
+  void writeLinuxSyscallHelpers();
   // X86/HighCRegistration.cpp: explicit runtime ABI inputs in the EH view.
   void writeRegistrationEntryDeclarations(const std::vector<HighFunc> &Funcs);
   std::string registrationEntryExpression(const HighExpr &E) const;
   static bool preservesRegistrationMemory(const HighFunc &Func);
   bool isEmbeddedRegistrationCallback(const HighStmt &Stmt, size_t I) const;
-  void writeEmbeddedRegistrationCallbacks(const HighStmt &Stmt, int Indent);
-  unsigned RegistrationRegionNumber = 0;
+  bool isEmbeddedWindowsCallback(const HighStmt &Stmt, size_t I) const;
+  void writeEmbeddedNativeCallbacks(const HighStmt &Stmt, int Indent);
+  bool writeRegistrationCleanup(const HighStmt &Stmt, size_t I, int Indent);
+  unsigned NativeExceptionRegionNumber = 0;
   struct MemoryLoadDestination {
     std::string Name;
     bool Written = false;
@@ -207,6 +222,7 @@ public:
   void writeStmt(const HighStmt &Stmt, int Indent);
   void writeStmtImpl(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
+  TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
@@ -280,6 +296,12 @@ public:
   /// The function this file defines that call \p E runs, or null: one named
   /// like it at another address is a different function.
   const HighFunc *calledDefinition(const HighExpr &E) const;
+  /// The operands call \p E passes, by index, where it passes one for each
+  /// HighIR parameter of a definition in this file: those of the parameters
+  /// the definition prints.  Empty where the operands pass in order, as an
+  /// AArch64 callee with stack parameters, which has every integer argument
+  /// register as one, read or not, does not.
+  std::vector<size_t> printedCallOperands(const HighExpr &E) const;
   /// Whether \p Func is the stub of a variadic C library import, which a
   /// call runs as a call through the import's slot.
   bool isVariadicImportStub(const HighFunc &Func) const;
@@ -294,6 +316,10 @@ public:
   /// The type \p Func's definition declares its HighIR parameter \p Index
   /// with, which its prototype and every use of the parameter share.
   TypeRef emittedParamType(const HighFunc &Func, size_t Index) const;
+  /// The type of the parameter \p Func's definition prints at \p Position,
+  /// counted among the parameters it prints (emittedParamIndices), as a
+  /// prototype and a call's arguments count them, or null past the last.
+  TypeRef emittedParamTypeAt(const HighFunc &Func, size_t Position) const;
   /// What a parameter holds of its function's debug signature, matched by
   /// where the convention passes each (SourceParameterPlacement), never by
   /// position: System V passes `f(double x, int n)` with n in the first
@@ -481,6 +507,9 @@ public:
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
+  /// Whether \p E combines a certified frame address with a run-time value,
+  /// so it reaches whichever frame bytes that value selects.
+  bool reachesFrameThroughIndex(const HighExpr &E) const;
   /// The C lvalue for the frame slot at \p E.  When \p Access is narrower
   /// than the slot, the access goes through the slot's address so it
   /// changes only those bytes.
@@ -488,6 +517,12 @@ public:
                                             const TypeRef &Access = {}) const;
   bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val, TypeRef Type = nullptr);
+  /// \p Text as the ordinary render prints it, held in \p Storage when that
+  /// differs. A spelling chosen from printed text must read this, so the
+  /// source map's delimiters cannot change the source they annotate.
+  llvm::StringRef plainText(llvm::StringRef Text, std::string &Storage) const;
+  /// c_memory::castOperand of \p Text, decided on its ordinary text.
+  std::string castOperandText(std::string Text) const;
   /// \p E prints as a local declared as a \p Width-byte integer of the given
   /// signedness.
   bool declaredLocalInteger(const HighExpr &E, uint16_t Width, bool Signed);
@@ -744,6 +779,8 @@ public:
   std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
+  /// The modeled supervisor calls the output makes, whose helpers it defines.
+  std::set<Intrinsic> LinuxSyscallHelpers;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
@@ -789,6 +826,9 @@ public:
   /// The helper of each x86 saturating lane operation and lane width
   /// (X86SaturatingLanes.def).
   std::map<std::pair<Intrinsic, unsigned>, std::string> SaturatingLaneHelpers;
+  /// The scalar LSE builtins of NeverD's Clang the output calls, each given
+  /// a definition for other compilers (ScalarLSEFallbacks.def).
+  std::set<Intrinsic> ScalarLSEBuiltins;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
@@ -830,6 +870,9 @@ public:
   /// emittedParamIndices' answers, which walk the function's body.
   mutable std::map<std::pair<const HighFunc *, va_t>, std::vector<size_t>>
       EmittedParamIndices;
+  /// The functions whose emittedParamIndices are being computed, whose calls
+  /// another's walk takes as passing every operand.
+  mutable std::set<const HighFunc *> ParamIndicesInProgress;
   CSourceRecorder *SourceRecorder = nullptr;
   /// Win64 hidden sret parameter name (`result`) when TPI returns a class.
   std::string IndirectReturnName;
@@ -848,6 +891,10 @@ public:
     TypeRef CallType;
     bool AddressTaken = false;
     bool UsedAsMemory = false;
+    /// A run-time choice (`(p & m) | (&slot & ~m)`, `csel` between slots)
+    /// picks this slot's address for accesses of the slot's width: it stays a
+    /// named local whose address the choice takes, and its writes are kept.
+    bool Chosen = false;
     /// For a slot that shares bytes with others: the name of the storage that
     /// holds them all, this slot's byte offset in it, and its access through
     /// it, `(*(T *)((char *)&outer + k))`.
@@ -988,17 +1035,25 @@ public:
   /// The exact C constant for the float with bits \p Value.
   std::optional<std::string> floatConstantText(uint64_t Value,
                                                const TypeRef &Type) const;
-  /// The address constant of a sized image object that \p Address indexes
-  /// by a variable byte offset (`i + &table`), or null.  The constant may
-  /// point into the object (`i + &table[2]`).
+  /// The address constant of an image object (indexedObjectAt) that
+  /// \p Address indexes by a variable byte offset (`i + &table`), or null.
+  /// The constant may point into the object (`i + &table[2]`).
   const HighExpr *indexedImageBase(const HighExpr &Address) const;
   /// The address and size of the outermost data object, sized by its
   /// symbol, that holds \p Addr.
   std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
+  /// The object code indexes at \p Addr: one a symbol sizes, else the
+  /// stretch of its data section between the sized objects around it (a
+  /// table a compiler emits under an assembler-local label), cut at the data
+  /// symbols around \p Addr, which begin objects even when unsized.
+  std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
   /// The image's sized data objects by address, each as large as the
   /// largest symbol there, and the furthest end of any object up to each.
   std::vector<std::pair<va_t, uint64_t>> SizedObjects;
   std::vector<va_t> SizedObjectReach;
+  /// Where the image's data symbols begin, sized or not, in order: a PDB
+  /// public names an object without sizing it.
+  std::vector<va_t> DataSymbolStarts;
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.
@@ -1053,6 +1108,9 @@ public:
   }
   /// The constant a call argument prints as when it is a function's address.
   const HighExpr *functionAddressArgument(const HighExpr &Arg);
+  /// The entry FunctionAddressNames keys address constant \p Const by: its
+  /// value, less the Thumb interworking bit of a certified code address.
+  va_t functionAddressKey(const HighExpr &Const) const;
   struct ImageBacking {
     va_t Base;
     va_t End;

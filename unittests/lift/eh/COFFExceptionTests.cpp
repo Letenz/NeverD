@@ -220,6 +220,37 @@ TEST(COFFExceptionParser, RecordsChainedFragmentsOnTheirPrimary) {
   }
 }
 
+TEST(COFFExceptionParser, ListsThePartsAFunctionKeepsApartFromItsBody) {
+  // As in MmAccessFault: chained records continue the body back to back, and
+  // two more cover a cold part far below it.
+  ExceptionInfo Info;
+  auto Add = [&](va_t Begin, va_t End, uint32_t UnwindRVA,
+                 RuntimeFunctionKind Kind) {
+    ExceptionFunction Function;
+    Function.CodeRange = {Begin, End};
+    Function.UnwindInfoRVA = UnwindRVA;
+    Function.Kind = Kind;
+    Info.Functions.push_back(std::move(Function));
+  };
+  Add(0x140001000, 0x140001040, 0x3000, RuntimeFunctionKind::Primary);
+  Add(0x140001040, 0x140001080, 0x3010, RuntimeFunctionKind::Chained);
+  Add(0x140008000, 0x140008020, 0x3020, RuntimeFunctionKind::Chained);
+  Add(0x140008020, 0x140008050, 0x3030, RuntimeFunctionKind::Chained);
+  Add(0x140002000, 0x140002010, 0x3040, RuntimeFunctionKind::Primary);
+  for (size_t I = 1; I != 4; ++I) {
+    Info.Functions[I].ChainedPrimaryRange = Info.Functions[0].CodeRange;
+    Info.Functions[I].ChainedUnwindInfoRVA = 0x3000;
+  }
+
+  coff_loader::unwind_detail::resolveX64UnwindChains(Info);
+  EXPECT_EQ(Info.Functions[0].contiguousEnd(), 0x140001080u);
+  const auto Chunks = Info.outlyingChunks();
+  ASSERT_EQ(Chunks.size(), 1u);
+  EXPECT_EQ(Chunks[0].Range.Begin, 0x140008000u);
+  EXPECT_EQ(Chunks[0].Range.End, 0x140008050u);
+  EXPECT_EQ(Chunks[0].Function, 0x140001000u);
+}
+
 TEST(COFFExceptionParser, RestrictedLoadSelectsTheRequestedFunctionsFragments) {
   constexpr va_t Base = 0x140000000;
   BinaryImage Img;
@@ -308,8 +339,7 @@ TEST(COFFExceptionParser, RejectsCyclicX64UnwindChainExplicitly) {
   }
 }
 
-TEST(COFFExceptionParser,
-     RejectsX64UnwindChainWithDifferentFrameRegister) {
+TEST(COFFExceptionParser, RejectsX64UnwindChainWithDifferentFrameRegister) {
   ExceptionInfo Info;
 
   ExceptionFunction Chained;
@@ -318,8 +348,7 @@ TEST(COFFExceptionParser,
   Chained.Kind = RuntimeFunctionKind::Chained;
   Chained.FrameRegister = 5;
   Chained.FrameOffset = 32;
-  Chained.ChainedPrimaryRange =
-      ExceptionAddressRange{0x140001020, 0x140001030};
+  Chained.ChainedPrimaryRange = ExceptionAddressRange{0x140001020, 0x140001030};
   Chained.ChainedUnwindInfoRVA = 0x3020;
   Info.Functions.push_back(std::move(Chained));
 
@@ -334,8 +363,7 @@ TEST(COFFExceptionParser,
   coff_loader::unwind_detail::resolveX64UnwindChains(Info);
 
   EXPECT_EQ(Info.ParseStatus, ExceptionParseStatus::Malformed);
-  EXPECT_EQ(Info.Functions[0].ParseStatus,
-            ExceptionParseStatus::Malformed);
+  EXPECT_EQ(Info.Functions[0].ParseStatus, ExceptionParseStatus::Malformed);
   ASSERT_TRUE(Info.Functions[0].PrimaryFunctionIndex.has_value());
   EXPECT_EQ(*Info.Functions[0].PrimaryFunctionIndex, 1u);
   EXPECT_TRUE(std::any_of(
@@ -355,8 +383,7 @@ TEST(COFFExceptionParser, RejectsX64UnwindChainWithDifferentFrameOffset) {
   Chained.Kind = RuntimeFunctionKind::Chained;
   Chained.FrameRegister = 5;
   Chained.FrameOffset = 32;
-  Chained.ChainedPrimaryRange =
-      ExceptionAddressRange{0x140001020, 0x140001030};
+  Chained.ChainedPrimaryRange = ExceptionAddressRange{0x140001020, 0x140001030};
   Chained.ChainedUnwindInfoRVA = 0x3020;
   Info.Functions.push_back(std::move(Chained));
 
@@ -371,8 +398,7 @@ TEST(COFFExceptionParser, RejectsX64UnwindChainWithDifferentFrameOffset) {
   coff_loader::unwind_detail::resolveX64UnwindChains(Info);
 
   EXPECT_EQ(Info.ParseStatus, ExceptionParseStatus::Malformed);
-  EXPECT_EQ(Info.Functions[0].ParseStatus,
-            ExceptionParseStatus::Malformed);
+  EXPECT_EQ(Info.Functions[0].ParseStatus, ExceptionParseStatus::Malformed);
   ASSERT_TRUE(Info.Functions[0].PrimaryFunctionIndex.has_value());
   EXPECT_EQ(*Info.Functions[0].PrimaryFunctionIndex, 1u);
   EXPECT_TRUE(std::any_of(
@@ -388,11 +414,10 @@ TEST(COFFExceptionParser,
   ExceptionInfo Info;
   for (size_t I = 0; I < 3; ++I) {
     ExceptionFunction Function;
-    Function.CodeRange = {0x140001000 + I * 0x20,
-                          0x140001010 + I * 0x20};
+    Function.CodeRange = {0x140001000 + I * 0x20, 0x140001010 + I * 0x20};
     Function.UnwindInfoRVA = static_cast<uint32_t>(0x3000 + I * 0x20);
-    Function.Kind = I == 2 ? RuntimeFunctionKind::Primary
-                           : RuntimeFunctionKind::Chained;
+    Function.Kind =
+        I == 2 ? RuntimeFunctionKind::Primary : RuntimeFunctionKind::Chained;
     Function.FrameRegister = I == 2 ? 13 : 5;
     Function.FrameOffset = I == 2 ? 48 : 32;
     Info.Functions.push_back(std::move(Function));
@@ -408,8 +433,7 @@ TEST(COFFExceptionParser,
   EXPECT_EQ(Info.ParseStatus, ExceptionParseStatus::Malformed);
   for (size_t I = 0; I < 2; ++I) {
     SCOPED_TRACE(I);
-    EXPECT_EQ(Info.Functions[I].ParseStatus,
-              ExceptionParseStatus::Malformed);
+    EXPECT_EQ(Info.Functions[I].ParseStatus, ExceptionParseStatus::Malformed);
     EXPECT_TRUE(std::any_of(
         Info.Functions[I].Diagnostics.begin(),
         Info.Functions[I].Diagnostics.end(), [](const std::string &Message) {

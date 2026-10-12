@@ -54,6 +54,16 @@
 #define NEVERD_RUNTIME_FIXTURE_COMPILER ""
 #endif
 
+namespace neverd {
+class PipelineTestPeer {
+public:
+  static std::shared_ptr<const void>
+  analysisFacts(const PipelineAnalysisCache &Cache) {
+    return Cache.Facts;
+  }
+};
+} // namespace neverd
+
 namespace {
 
 TEST(SessionInterpreterRecovery, RejectsTruncatedOptionsBeforeReadingFields) {
@@ -2286,6 +2296,127 @@ TEST_F(SessionCAPITest, StringScanReadsTheCodePagesSearched) {
       "[]");
 }
 
+// The sectionless code of makeNativeELF under one .text section, with a
+// function symbol at its entry and data symbols of \p Data, each at an
+// offset into \p Body.
+std::string
+makeSymbolsELF(std::string_view Body,
+               const std::vector<std::pair<std::string, uint64_t>> &Data) {
+  using ELF = llvm::object::ELF64LE;
+  using namespace llvm::ELF;
+  std::string Bytes = makeNativeELF(false, 0x400000, {}, Body);
+  ELF::Ehdr Header{};
+  std::memcpy(&Header, Bytes.data(), sizeof(Header));
+  std::array<ELF::Shdr, 5> Sections{};
+  Sections[1].sh_name = 1;
+  Sections[1].sh_type = SHT_PROGBITS;
+  Sections[1].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+  Sections[1].sh_addr = Header.e_entry;
+  Sections[1].sh_offset = sizeof(ELF::Ehdr) + sizeof(ELF::Phdr);
+  Sections[1].sh_size = Body.size();
+  Sections[1].sh_addralign = 1;
+
+  std::string Names(1, '\0');
+  std::vector<ELF::Sym> Symbols(2 + Data.size());
+  const auto Name = [&](const std::string &Text) {
+    const auto Offset = static_cast<uint32_t>(Names.size());
+    Names += Text + '\0';
+    return Offset;
+  };
+  Symbols[1].st_name = Name("entry");
+  Symbols[1].setBindingAndType(STB_GLOBAL, STT_FUNC);
+  Symbols[1].st_shndx = 1;
+  Symbols[1].st_value = Header.e_entry;
+  Symbols[1].st_size = 1;
+  for (size_t I = 0; I < Data.size(); ++I) {
+    ELF::Sym &Symbol = Symbols[2 + I];
+    Symbol.st_name = Name(Data[I].first);
+    Symbol.setBindingAndType(STB_GLOBAL, STT_OBJECT);
+    Symbol.st_shndx = 1;
+    Symbol.st_value = Header.e_entry + Data[I].second;
+  }
+  Bytes.resize((Bytes.size() + 7) & ~size_t(7), '\0');
+  Sections[2].sh_name = 7;
+  Sections[2].sh_type = SHT_SYMTAB;
+  Sections[2].sh_offset = Bytes.size();
+  Sections[2].sh_size = Symbols.size() * sizeof(ELF::Sym);
+  Sections[2].sh_link = 3;
+  Sections[2].sh_info = 1;
+  Sections[2].sh_addralign = 8;
+  Sections[2].sh_entsize = sizeof(ELF::Sym);
+  Bytes.append(reinterpret_cast<const char *>(Symbols.data()),
+               Symbols.size() * sizeof(ELF::Sym));
+  Sections[3].sh_name = 15;
+  Sections[3].sh_type = SHT_STRTAB;
+  Sections[3].sh_offset = Bytes.size();
+  Sections[3].sh_size = Names.size();
+  Sections[3].sh_addralign = 1;
+  Bytes += Names;
+  constexpr char SectionNames[] = "\0.text\0.symtab\0.strtab\0.shstrtab";
+  Sections[4].sh_name = 23;
+  Sections[4].sh_type = SHT_STRTAB;
+  Sections[4].sh_offset = Bytes.size();
+  Sections[4].sh_size = sizeof(SectionNames);
+  Sections[4].sh_addralign = 1;
+  Bytes.append(SectionNames, sizeof(SectionNames));
+  Bytes.resize((Bytes.size() + 7) & ~size_t(7), '\0');
+  Header.e_shoff = Bytes.size();
+  Header.e_shnum = Sections.size();
+  Header.e_shstrndx = 4;
+  Bytes.append(reinterpret_cast<const char *>(Sections.data()),
+               sizeof(Sections));
+  std::memcpy(Bytes.data(), &Header, sizeof(Header));
+  return Bytes;
+}
+
+TEST_F(SessionCAPITest, StringsTakeTheLiteralsSymbolsSpell) {
+  // A return, then L"SA" and "%d\n" among the code under the names MSVC
+  // gives them, as ntoskrnl keeps its literals in PAGE and INIT.
+  std::string Code("\xc3", 1);
+  const uint64_t Wide = Code.size();
+  Code += std::string("S\0A\0\0\0", 6);
+  const uint64_t Narrow = Code.size();
+  Code += std::string("%d\n\0", 4);
+  const std::string WideName = "??_C@_15OHIPBLFN@?$AAS?$AAA@";
+  const std::string NarrowName = "??_C@_03HMFOOINA@?$CFd?6@";
+  const auto Input =
+      write("literals.elf",
+            makeSymbolsELF(Code, {{WideName, Wide}, {NarrowName, Narrow}}));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const uint64_t Entry = 0x400000 + sizeof(llvm::object::ELF64LE::Ehdr) +
+                         sizeof(llvm::object::ELF64LE::Phdr);
+  const auto Hex = [](uint64_t Value) { return "0x" + llvm::utohexstr(Value); };
+  // Code holds both, and "SA" is shorter than a scan looks for; the symbols
+  // say they are text.
+  const std::string WideRow = "{\"addr\":\"" + Hex(Entry + Wide) +
+                              "\",\"chars\":2,\"encoding\":\"utf-16le\","
+                              "\"length\":4,\"literal\":true,"
+                              "\"value\":\"SA\"}";
+  const std::string NarrowRow = "{\"addr\":\"" + Hex(Entry + Narrow) +
+                                "\",\"chars\":3,\"encoding\":\"ascii\","
+                                "\"length\":3,\"literal\":true,"
+                                "\"value\":\"%d\\n\"}";
+  EXPECT_EQ(takeString(neverd_strings_ex_json(Session, nullptr)),
+            "[" + WideRow + "," + NarrowRow + "]");
+  // The symbol says they are text, whichever encodings a search reads.
+  EXPECT_EQ(
+      takeString(neverd_strings_ex_json(Session, R"({"encodings":["ascii"]})")),
+      "[" + WideRow + "," + NarrowRow + "]");
+  // The symbols spell the literals, until the user names one.
+  const std::string Spelled = "{\"addr\":\"" + Hex(Entry + Wide) +
+                              "\",\"literal\":true,\"name\":\"" + WideName +
+                              "\",\"size\":0}";
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session)).find(Spelled),
+            std::string::npos);
+  ASSERT_EQ(neverd_rename_addr(Session, Entry + Wide, "kWide"), 0)
+      << takeString(neverd_last_error(Session));
+  EXPECT_NE(takeString(neverd_data_symbols_json(Session))
+                .find("{\"addr\":\"" + Hex(Entry + Wide) +
+                      "\",\"name\":\"kWide\",\"size\":0}"),
+            std::string::npos);
+}
+
 TEST_F(SessionCAPITest, SwitchTablesComeFromWholeProgramAnalysis) {
   // switch (x) on 0..3 through offsets from the table, as GCC lays out
   // position-independent code: cmp edi, 3; ja default; mov edi, edi;
@@ -3912,6 +4043,133 @@ TEST_F(SessionCAPITest, LibrarySourcePagesPreserveTextAndReloadEvidence) {
   EXPECT_EQ(Withdrawn.getString("text"), Before.getString("text"));
 }
 
+std::string makeAnalysisCacheELF(bool Floating) {
+  std::string Code(0x50, '\xcc');
+  for (unsigned From : {0u, 0x10u}) {
+    Code[From] = '\xe8';
+    Code[From + 1] = 0x40 - From - 5;
+    Code[From + 2] = Code[From + 3] = Code[From + 4] = 0;
+    Code[From + 5] = '\xc3';
+  }
+  if (Floating)
+    Code.replace(0x40, 3, "\xd9\xe8\xc3", 3);
+  else
+    Code.replace(0x40, 6, "\xb8\x07\x00\x00\x00\xc3", 6);
+  return makeNativeELF(false, 0x400000, {}, Code);
+}
+
+neverd_va_t seedAnalysisCacheSymbols(neverd_session_t Session) {
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto Entry = neverd_session_entry_addr(Session);
+  for (unsigned Offset : {0u, 0x10u, 0x40u})
+    State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry + Offset, 6));
+  State.resetFunctionsFromImage();
+  return Entry;
+}
+
+TEST_F(SessionCAPITest, AnalysisCacheSurvivesOnlyFunctionNavigation) {
+  const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  const auto Source = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x10), 1);
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  EXPECT_EQ(State.findLowFunc(Entry), nullptr);
+  EXPECT_TRUE(State.FunctionSources.empty());
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+
+  // A failed reload does not replace the image or destroy usable analysis.
+  const auto Missing = (Directory / "does-not-exist.elf").string();
+  EXPECT_EQ(neverd_session_load(Session, Missing.c_str()), 0);
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+}
+
+TEST_F(SessionCAPITest, AnalysisCacheRetiresOnSameAddressImageReload) {
+  const auto First = write("floating.elf", makeAnalysisCacheELF(true));
+  const auto Second = write("integer.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, First.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  const auto Floating = takeString(neverd_ir_low(Session, Entry));
+  ASSERT_EQ(neverd_session_load(Session, Second.c_str()), 1);
+  EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            nullptr);
+  EXPECT_EQ(seedAnalysisCacheSymbols(Session), Entry);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x10), 1);
+  EXPECT_NE(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  const auto Integer = takeString(neverd_ir_low(Session, Entry));
+  EXPECT_NE(Integer, Floating);
+  State.clearPipeline();
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  EXPECT_EQ(takeString(neverd_ir_low(Session, Entry)), Integer);
+}
+
+TEST_F(SessionCAPITest, AnalysisCacheRetiresOnEditsPolicyAndSignatureMatching) {
+  const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  const auto Source = takeString(neverd_decompile(Session, Entry));
+  const auto Rebuild = [&] {
+    EXPECT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+              nullptr);
+    EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Source);
+    EXPECT_NE(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+              nullptr);
+  };
+  ASSERT_EQ(neverd_func_create(Session, Entry + 0x20), 0);
+  Rebuild();
+  ASSERT_EQ(neverd_func_delete(Session, Entry + 0x20), 0);
+  Rebuild();
+  neverd_evm_set_strict(Session, 0);
+  Rebuild();
+  const auto Empty = Directory / "empty-signatures";
+  std::filesystem::create_directory(Empty);
+  ASSERT_GE(neverd_auto_apply_signatures(Session, Empty.string().c_str()), 0);
+  Rebuild();
+}
+
+TEST_F(SessionCAPITest, AnalysisCacheChecksFeaturesAfterSelectionClearsResult) {
+  const auto Path = write("cache.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+  const auto Facts =
+      neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
+  ASSERT_NE(Facts, nullptr);
+  State.selectFunction(Entry + 0x10);
+  ASSERT_FALSE(State.PipeRan);
+  ASSERT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  State.SigDB.clear(); // A feature-generation change while no result is held.
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x10), 1);
+  EXPECT_NE(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
+            Facts);
+  const auto Source = takeString(neverd_decompile(Session, Entry + 0x10));
+  ASSERT_FALSE(Source.empty());
+  State.clearPipeline();
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry + 0x10)), Source);
+}
+
 TEST_F(SessionCAPITest, PrepareFunctionKeepsAnalysisWithoutEmittingSource) {
   const auto Path = write(
       "prepare.elf", makeNativeELF(false, 0x400000,
@@ -4371,14 +4629,29 @@ counter:
                                       std::nullopt, {}, 60, 0, &Message),
             0)
       << Message;
-  ASSERT_EQ(neverd_session_load(Session, Library.c_str()), 1)
-      << takeString(neverd_last_error(Session));
-  const int Bump = neverd_func_find_by_name(Session, "bump");
-  ASSERT_GE(Bump, 0);
-  const std::string LLVMC = takeString(
-      neverd_decompile_llvm(Session, neverd_func_entry(Session, Bump)));
-  ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
-  EXPECT_NE(LLVMC.find("(*)("), std::string::npos) << LLVMC;
+  // Linkers place TLS descriptors in different relocation tables. Renaming
+  // the section leaves every relocation and instruction unchanged, and must
+  // not turn a descriptor resolver into a direct call to the TLS variable.
+  std::ifstream Linked(Library, std::ios::binary);
+  ASSERT_TRUE(Linked.good());
+  std::string Renamed((std::istreambuf_iterator<char>(Linked)),
+                      std::istreambuf_iterator<char>());
+  const auto RelocationName = Renamed.find(".rela.dyn");
+  ASSERT_NE(RelocationName, std::string::npos);
+  Renamed.replace(RelocationName, 9, ".rela.plt");
+  const auto PLTLibrary = write("tls-plt.so", Renamed);
+  for (const auto &Input : {Library, PLTLibrary}) {
+    SCOPED_TRACE(Input);
+    ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    const int Bump = neverd_func_find_by_name(Session, "bump");
+    ASSERT_GE(Bump, 0);
+    const std::string LLVMC = takeString(
+        neverd_decompile_llvm(Session, neverd_func_entry(Session, Bump)));
+    ASSERT_FALSE(LLVMC.empty()) << takeString(neverd_last_error(Session));
+    EXPECT_NE(LLVMC.find("(*)("), std::string::npos) << LLVMC;
+    EXPECT_EQ(LLVMC.find("counter("), std::string::npos) << LLVMC;
+  }
 #endif
 }
 
@@ -4453,6 +4726,10 @@ TEST_F(SessionCAPITest, StubsOfVariadicImportsPassTheirArgumentsOn) {
       {"printf", "vprintf(format, arguments)"},
       {"open", "va_arg(arguments, int)"},
       {"execl", "execv(arg0, (char *const *)vector)"}};
+  // PLT veneers have no function symbols. Discover their called entries
+  // before enumerating the inventory exposed by the session.
+  ASSERT_EQ(neverd_session_analyze(Session), 1)
+      << takeString(neverd_last_error(Session));
   std::set<std::string> Shown;
   for (int I = 0; I < neverd_func_count(Session); ++I) {
     const neverd_va_t Entry = neverd_func_entry(Session, I);
