@@ -7,6 +7,7 @@
 #include "InstructionFlow.h"
 #include "NativeMobileSession.h"
 #include "SessionImpl.h"
+#include "SessionTestAccess.h"
 #include "gtest/gtest.h"
 
 #include "neverd/loader/BinaryImage.h"
@@ -2817,7 +2818,7 @@ void seedAccessWidthFunctions(neverd_session_t Session) {
   auto &State = *neverd::sdk::toSession(Session);
   State.Img.Symbols = {neverd::Symbol::makeFunc(DataELFEntry, 8),
                        neverd::Symbol::makeFunc(DataELFEntry + 0x20, 8)};
-  State.resetFunctionsFromImage();
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
 }
 
 TEST_F(SessionCAPITest, DataAccessWidthsSurviveNavigationWithFreshSource) {
@@ -2835,11 +2836,12 @@ TEST_F(SessionCAPITest, DataAccessWidthsSurviveNavigationWithFreshSource) {
     EXPECT_TRUE(State.FunctionSources.empty());
     ASSERT_TRUE(State.AccessWidths);
     EXPECT_EQ(&*State.AccessWidths->begin(), Storage);
-    const auto *Widths = State.dataAccessWidths();
+    const auto *Widths =
+        neverd::sdk::SessionTestAccess::dataAccessWidths(State);
     ASSERT_NE(Widths, nullptr);
     EXPECT_EQ(&*Widths->begin(), Storage);
     const auto Fresh =
-        neverd::sdk::collectDataAccessWidths(State.Img, State.Functions);
+        neverd::sdk::SessionTestAccess::collectDataAccessWidths(State);
     ASSERT_TRUE(Fresh);
     EXPECT_TRUE(std::equal(Widths->begin(), Widths->end(), Fresh->begin(),
                            Fresh->end()));
@@ -2861,12 +2863,13 @@ TEST_F(SessionCAPITest, DataAccessWidthsCheckEveryExtentAndDiscardOldSource) {
     State.rememberFunctionSource(DataELFEntry,
                                  neverd::sdk::Session::SourceRoute::PlainC,
                                  "old width names", nullptr);
-    const auto *Widths = State.dataAccessWidths();
+    const auto *Widths =
+        neverd::sdk::SessionTestAccess::dataAccessWidths(State);
     ASSERT_NE(Widths, nullptr);
     EXPECT_EQ(Widths->at(DataELFData), Expected);
     EXPECT_TRUE(State.FunctionSources.empty());
   };
-  const auto *First = State.dataAccessWidths();
+  const auto *First = neverd::sdk::SessionTestAccess::dataAccessWidths(State);
   ASSERT_NE(First, nullptr);
   ASSERT_EQ(First->at(DataELFData), 8u);
   // Same entry count and address, different decode extent.
@@ -2886,11 +2889,11 @@ TEST_F(SessionCAPITest, DataAccessWidthsRetireOnEditsPolicyAndSignatures) {
   ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
   seedAccessWidthFunctions(Session);
   auto &State = *neverd::sdk::toSession(Session);
-  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  ASSERT_NE(neverd::sdk::SessionTestAccess::dataAccessWidths(State), nullptr);
   auto Rebuild = [&] {
     EXPECT_FALSE(State.AccessWidths);
     EXPECT_TRUE(State.AccessWidthsFunctions.empty());
-    ASSERT_NE(State.dataAccessWidths(), nullptr);
+    ASSERT_NE(neverd::sdk::SessionTestAccess::dataAccessWidths(State), nullptr);
     EXPECT_EQ(State.AccessWidths->at(DataELFData), 8u);
   };
   ASSERT_EQ(neverd_func_create(Session, DataELFEntry + 0x10), 0);
@@ -2904,10 +2907,10 @@ TEST_F(SessionCAPITest, DataAccessWidthsRetireOnEditsPolicyAndSignatures) {
   ASSERT_GE(neverd_auto_apply_signatures(Session, Empty.string().c_str()), 0);
   Rebuild();
   ASSERT_EQ(neverd_prepare_function(Session, DataELFEntry), 1);
-  ASSERT_NE(State.dataAccessWidths(), nullptr);
-  State.selectFunction(DataELFEntry + 0x20);
+  ASSERT_NE(neverd::sdk::SessionTestAccess::dataAccessWidths(State), nullptr);
+  neverd::sdk::SessionTestAccess::selectFunction(State, DataELFEntry + 0x20);
   ASSERT_TRUE(State.AccessWidths);
-  State.SigDB.clear();
+  neverd::sdk::SessionTestAccess::clearFeatures(State);
   ASSERT_EQ(neverd_prepare_function(Session, DataELFEntry + 0x20), 1);
   Rebuild();
 }
@@ -2918,16 +2921,16 @@ TEST_F(SessionCAPITest, DataAccessWidthsRetireOnSameAddressImageReplacement) {
   ASSERT_EQ(neverd_session_load(Session, Wide.c_str()), 1);
   seedAccessWidthFunctions(Session);
   auto &State = *neverd::sdk::toSession(Session);
-  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  ASSERT_NE(neverd::sdk::SessionTestAccess::dataAccessWidths(State), nullptr);
   ASSERT_EQ(State.AccessWidths->at(DataELFData), 8u);
   const auto Missing = (Directory / "missing.elf").string();
   ASSERT_EQ(neverd_session_load(Session, Missing.c_str()), 0);
-  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  ASSERT_NE(neverd::sdk::SessionTestAccess::dataAccessWidths(State), nullptr);
   EXPECT_EQ(State.AccessWidths->at(DataELFData), 8u);
   ASSERT_EQ(neverd_session_load(Session, Narrow.c_str()), 1);
   EXPECT_FALSE(State.AccessWidths);
   seedAccessWidthFunctions(Session);
-  ASSERT_NE(State.dataAccessWidths(), nullptr);
+  ASSERT_NE(neverd::sdk::SessionTestAccess::dataAccessWidths(State), nullptr);
   EXPECT_EQ(State.AccessWidths->at(DataELFData), 4u);
 }
 
@@ -4293,7 +4296,7 @@ neverd_va_t seedAnalysisCacheSymbols(neverd_session_t Session) {
   const auto Entry = neverd_session_entry_addr(Session);
   for (unsigned Offset : {0u, 0x10u, 0x40u})
     State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry + Offset, 6));
-  State.resetFunctionsFromImage();
+  neverd::sdk::SessionTestAccess::resetFunctions(State);
   return Entry;
 }
 
@@ -4346,7 +4349,7 @@ TEST_F(SessionCAPITest, AnalysisCacheRetiresOnSameAddressImageReload) {
   ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
   const auto Integer = takeString(neverd_ir_low(Session, Entry));
   EXPECT_NE(Integer, Floating);
-  State.clearPipeline();
+  neverd::sdk::SessionTestAccess::clearPipeline(State);
   ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
   EXPECT_EQ(takeString(neverd_ir_low(Session, Entry)), Integer);
 }
@@ -4386,17 +4389,18 @@ TEST_F(SessionCAPITest, AnalysisCacheChecksFeaturesAfterSelectionClearsResult) {
   const auto Facts =
       neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache);
   ASSERT_NE(Facts, nullptr);
-  State.selectFunction(Entry + 0x10);
+  neverd::sdk::SessionTestAccess::selectFunction(State, Entry + 0x10);
   ASSERT_FALSE(State.PipeRan);
   ASSERT_EQ(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
             Facts);
-  State.SigDB.clear(); // A feature-generation change while no result is held.
+  neverd::sdk::SessionTestAccess::clearFeatures(
+      State); // A feature-generation change while no result is held.
   ASSERT_EQ(neverd_prepare_function(Session, Entry + 0x10), 1);
   EXPECT_NE(neverd::PipelineTestPeer::analysisFacts(State.AnalysisCache),
             Facts);
   const auto Source = takeString(neverd_decompile(Session, Entry + 0x10));
   ASSERT_FALSE(Source.empty());
-  State.clearPipeline();
+  neverd::sdk::SessionTestAccess::clearPipeline(State);
   EXPECT_EQ(takeString(neverd_decompile(Session, Entry + 0x10)), Source);
 }
 
