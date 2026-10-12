@@ -75,3 +75,33 @@ int seld(int a) {
 )C",
                             "seld", {"seld"}, {0, 1, -1, 7, 0x12345678});
 }
+
+// `vzip.8 d23, d27` interleaves bytes of d27, which nothing wrote, but each
+// 32-bit lane is masked with q9 = 0xff before it is added and clamped.  The
+// mask is two 8-byte constants concatenated, and no byte it clears is one any
+// result reads: the unknown register is no value of the C.
+TEST_F(ARM32_ObjectImmediate, AConcatenatedMaskClearsAnUnknownLane) {
+  expectHighCRunsLikeSource({"-target", "armv7-linux-gnueabi",
+                             "-mcpu=cortex-a15", "-mfloat-abi=softfp"},
+                            R"C(
+int satb2(int a, int b) __attribute__((noinline));
+int satb(int a) { return satb2(a, a * 7 + 3); }
+int satb2(int a, int b) {
+  unsigned char x[32], y[32];
+  int s = 0;
+  for (int i = 0; i < 32; i++) {
+    x[i] = (unsigned char)((a * (i + 3)) ^ (i * 11));
+    y[i] = (unsigned char)((b * (i + 5)) ^ (i * 13));
+  }
+  for (int i = 0; i < 32; i++) {
+    int v = (int)x[i] + (int)y[i];
+    if (v > 255)
+      v = 255;
+    s += v;
+  }
+  return s;
+}
+)C",
+                            "satb", {"satb", "satb2"},
+                            {0, 1, -1, 7, 0x12345678});
+}
