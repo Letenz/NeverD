@@ -683,6 +683,13 @@ origins for shared consumers. Local export uses the existing exclusive writer.
 No native semantics are duplicated in Web, CLI, worker or MCP. The selected
 initializer does not establish runtime activation, type identity, mount or
 bridge relationships. See the [Tauri profile](web-tauri-profile.md).
+`desktop/bridge/Source` separately consumes authoritative source, bindings and
+navigation for fixed direct Tauri/Wails syntax. `Publication` owns redacted
+metadata; `SessionNavigation` composes it under an independent profile and
+identity without changing generic call/function IDs. Native projection and
+asset readers do not infer bridge targets, activation or callback behavior.
+All clients use existing navigation/pages and source anchors. See the
+[desktop bridge profile](web-desktop-bridge-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and

@@ -986,6 +986,19 @@ compare direct and framed results, reject caller-supplied table descriptors
 and check canaries. The archive consumer/CLI fixtures also cover both uniform
 old-GNU tar and old-GNU tar/gzip, including Bun/source/native consumers.
 
+`WebDesktopBridge.*` checks exact direct Tauri/Wails shapes, optional syntax,
+shadowed/dynamic roots, spread/getter/duplicate/computed/arity limitations,
+record-budget atomic refusal and call/child agreement. Its optional captured
+case uses `NEVERD_TAURI_CHATGPT_110_X64_JS` for the fixed decoded member 6.
+`WebSDK.*DesktopBridge*` checks private values, paging, anchors, import revocation
+and the actual CLI with an unusable PATH. `WebTauriSDK` additionally joins the
+real decoded IPC call range to its exact compressed frame and old-GNU parent.
+Worker/MCP compare the same bridge pages and reject extra execution fields.
+Run the complete owning Web directory and affected transports, then parser
+omission and restore both Web/JS options ON. These checks qualify source syntax,
+not native command registration or runtime activation. See the
+[desktop bridge profile](web-desktop-bridge-profile.md).
+
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
 surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
 directive preservation, tagged-template refusal, ASI outer-tree mismatches,
