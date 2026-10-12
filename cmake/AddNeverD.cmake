@@ -156,6 +156,12 @@ function(add_neverd_unittest name)
 
   target_compile_features(${name} PRIVATE cxx_std_20)
 
+  # GoogleTest and LLVM template instantiations can exceed the standard COFF
+  # section count even in a small fixture translation unit.
+  if(MSVC)
+    target_compile_options(${name} PRIVATE /bigobj)
+  endif()
+
   set(_resolved_components "")
   foreach(_comp ${ARG_LINK_COMPONENTS})
     list(APPEND _resolved_components "NeverD${_comp}")

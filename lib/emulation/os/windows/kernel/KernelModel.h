@@ -38,6 +38,7 @@
 #include <set>
 #include <variant>
 namespace neverd::emulation {
+class RAMInitializationWatch;
 struct DriverImage;
 class KernelExportRegistry;
 enum class KernelAPIKind;
@@ -312,6 +313,15 @@ private:
                                       llvm::ArrayRef<uint64_t> A);
 
   GuestMemory &Memory;
+  llvm::Expected<std::shared_ptr<RAMInitializationWatch>>
+  watchInitialization(uint64_t Address, uint64_t Size);
+  static bool initialized(llvm::ArrayRef<bool> Flags,
+                          const std::shared_ptr<RAMInitializationWatch> &Watch,
+                          uint64_t Offset, uint64_t Size = 1);
+  static bool
+  anyInitialized(llvm::ArrayRef<bool> Flags,
+                 const std::shared_ptr<RAMInitializationWatch> &Watch,
+                 uint64_t Offset, uint64_t Size);
   DriverResult &Result;
   KernelExportRegistry *Exports;
   std::unique_ptr<KernelFramework> Framework;
@@ -893,7 +903,8 @@ private:
   llvm::Error retirePnpProvider(uint64_t PDO);
   llvm::Error snapshotPnpDevices();
   std::map<uint64_t, uint64_t> FreedRanges;
-  mutable std::array<bool, 28 * 8> DispatchBytesWritten{};
+  std::array<bool, 28 * 8> DispatchBytesWritten{};
+  std::shared_ptr<RAMInitializationWatch> DispatchInitialization;
   std::map<std::string, std::string> SymbolicLinks;
   enum class FileState { Closed, Opening, Open, Cleaned };
   struct OpenFile {
@@ -947,7 +958,8 @@ private:
     std::optional<uint64_t> InitialDispatchToken;
     std::optional<uint32_t> ProviderDispatchReturn;
     std::optional<uint64_t> FreeCompletionToken;
-    mutable std::array<bool, 16> IOStatusWritten{};
+    std::array<bool, 16> IOStatusWritten{};
+    std::shared_ptr<RAMInitializationWatch> IOStatusInitialization;
   };
   std::map<uint64_t, DriverIRPAllocation> DriverIRPs;
   llvm::Expected<uint64_t>
@@ -1014,7 +1026,8 @@ private:
     bool Neither = false;
     uint64_t Mdl = 0;
     uint64_t SystemMdl = 0;
-    mutable std::array<bool, 16> IOStatusWritten{};
+    std::array<bool, 16> IOStatusWritten{};
+    std::shared_ptr<RAMInitializationWatch> IOStatusInitialization;
   };
   std::map<uint64_t, ActiveRequest> Requests;
   bool canDeliverCancellation(const ActiveRequest &Request) const;

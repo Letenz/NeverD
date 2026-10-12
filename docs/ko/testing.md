@@ -1252,7 +1252,7 @@ KVM 검증은 스스로 종료하지 않는 실제 vCPU의 취소와 `KvmStateTr
 
 `native_cpu_only=true`와 `native_driver_tests=true`를 지정하면 Unicorn 없이 `NeverDNativeDriverTests`를 활성화합니다. 구성 전에 `build_wdk_driver_fixtures.py`가 공식 Microsoft WDK/SDK 10.0.26100.6584 패키지 전체의 SHA-256을 검증하고 원본 소스에서 일반/CFG/DBG 드라이버 이미지 48개를 다시 빌드합니다. `WDKDriverFixtures.def`는 패키지 식별자, 컴파일러·링커 인수와 픽스처 연결을 선언합니다. 수정하지 않은 Microsoft 파일과 라이선스는 로컬 빌드/캐시 디렉터리에 보관하며 CI는 빌드 메타데이터와 로그만 업로드합니다. 매니페스트에는 도구 버전, 명령, 소스·헤더 해시와 출력 이미지 해시를 기록합니다.
 
-`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 18 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 6 kernel snapshots + 9 pool captures = 5493`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
+`NativeDriverTests.def`는 `DriverBuiltinImages.def`와 `DriverBackendParityCases.def`의 115개 작업 전체에서 WHP 결과 230개를 요구합니다. 기본 이미지 27개, WDK 이미지 48개와 요청 시나리오 40개를 원본 및 재배치 주소에서 실행합니다. 전체 필수 목록은 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`입니다. 대기 집합 검사 30개는 이식 가능한 모델 사례 16개와 독자적인 네이티브 드라이버 사례 14개입니다. `run_native_cpu_ci.py --with-drivers`는 Unicorn을 끄고 정확한 목록과 JUnit 증거를 보존합니다. 필수 픽스처 누락이나 건너뛰기는 선택형 게이트를 실패시키며, 일반 빌드에서는 외부 픽스처가 선택 사항입니다. 고정 이미지의 예상 재배치 거부는 유지됩니다. ARM64 네이티브 게스트 실행은 아직 검증되지 않았습니다.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease`는 서로 다른 시작 명령 두 개 앞에서 기한 만료, 중지, 두 원인의 동시 중단을 주입합니다. 정확한 단계 진단, 메시지 소유 수명, 오류 타입과 원인 비트, 단계 간 동일한 기한, 메모리 소유권 해제를 검사합니다. 실제 전송 실패와 상태 불일치는 계속 구분합니다. 네이티브 x64 시작 검증 예산은 `5 s`이며 일반 게스트 기한과 단일 단계 유예는 유지됩니다.
 
@@ -1681,6 +1681,18 @@ bulk-attributes는 완전한 그룹, 이름/종류 집합, 미사용 바이트 �
 `RegistrationCallNoReturn`은 변경된 명령 범위, 대상, 연산 범위, 조건부 호출 및 다른 아키텍처나 형식에서의 사용을 거부합니다. 정렬된 스택의 PE32 검사는 독립적으로 종료가 증명된 호출과 현재 증거로 제거해야 하는 일반 후속 간선을 모두 확인합니다. 메모리 효과 증거가 무효여도 이미 없는 일반 간선이 복원되지는 않습니다.
 
 `SafeSEHReference.*`는 불변 SafeSEH 테이블 소속, 잘못되거나 모호한 저장 영역, 재배치, 다른 아키텍처와 형식, 분할 간 선언 순서를 검사합니다. `PipelineOutcome.NativeFinallyInputsRetainSourceLLVM`는 `NEVERD_NONLOCAL_FINALLY_INPUTS`로 네이티브 MSVC x86/x64, O0/O2, GS 및 소스 최적화 설정의 LLVM 조합 32개를 검사합니다. LLVM과 해석된 호출 시그니처를 검증하며 지원하지 않는 x86 네이티브 EH 재구성이 계속 거부되어야 합니다. Windows EH 전용 작업은 네이티브 fixture artifact를 내려받아 실행하며 입력 디렉터리가 없으면 테스트를 명시적으로 건너뜁니다.
+
+`RAMReservationTests.cpp`는 동일 값과 ABA 쓰기, 유지된 범위, 주소 재사용, 공유 매핑, 롤백, 취소, 오류 전에 커밋된 쓰기와 불투명 실행에서 공개 쓰기 증명을 검증합니다. `UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites`는 선호 주소, 낮은 주소와 커널 주소에서 소유된 로드 사실을 검사합니다. 바이트를 복원해도 출처 증명은 복원되지 않습니다. `DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts`는 활성 CFG 수정과 비활성 대체 포인터 유지를 구분합니다.
+
+`UnpackDriver.SnapshotPreservesOnlyUnmodifiedLoaderRelocationFacts`는 PE 출력, 독립 DIR64 판독기, 모델 재배치와 다시 쓴 디버그 레코드 제외를 검사합니다. `UnpackDriver.SnapshotRelocationFactsBindSourceAndFormatWrites`는 입력·기준 주소·순서 불일치를 거부하고 바이트가 같아도 형식화 대체를 제외합니다. 이 검사는 진단 메타데이터를 검증하며 네이티브 복구를 인증하지 않습니다.
+
+`OnlyCanonicalWaitPreservesLocalFinallyFrameEffects`는 아홉 intrinsic 형식, finally의 부모 프레임 쓰기 효과, 복원된 인자 ESP, registration 해제 및 예외 디스패치 진입점 보존을 검사합니다. 정규 FWAIT만 통과하며 나머지 여덟 잘못된 또는 다른 intrinsic 형식은 계속 거부됩니다.
+
+`NeverDNativeFinallyInputTests`가 MSVC 입력 행렬을 별도로 담당합니다. 일반 `NeverDPipelineOutcomeTests`는 모든 CI 플랫폼에서 필수이며 선택적 네이티브 입력에 의존하지 않습니다. Windows EH 전용 작업은 검증된 이미지로 입력 대상을 빌드하고 실행합니다. macOS CI는 소스 교체용으로 Homebrew Clang 22를 명시적으로 선택하며 NeverD 빌드 컴파일러와 분리합니다. 지원하지 않는 스택 프로브 방식은 계속 거부합니다.
+
+MSVC 단위 테스트 대상은 `/bigobj`를 사용하여 GoogleTest와 LLVM 템플릿 인스턴스의 많은 COFF 섹션을 지원합니다. 다른 컴파일러 설정은 변경되지 않습니다. 구성 검사는 생성된 컴파일 명령을 확인하고 네이티브 Windows CI가 컴파일과 실행을 검증합니다.
+
+검사 모드의 이중 시프트 거부는 결과와 플래그가 정의되지 않을 때 마스크 적용 후 개수와 피연산자 너비를 보고합니다. `X64DoubleShift`는 형식화된 종료와 기존 오류 API가 이유를 유지하고 레지스터와 RAM을 변경하거나 메모리 관찰을 발생시키지 않는지 확인합니다. 드라이버 픽스처는 시나리오 전달 전에도 같은 이유가 유지되는지 확인합니다.
 
 ## 소스 및 네이티브 오브젝트 패치
 

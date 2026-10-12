@@ -137,3 +137,32 @@ static int t8(int a, int b, int c, int d, int e, int f, int g, int h) {
                             "ind8", {"ind8", "t8"},
                             {0, 1, -1, 0x7F00, 0x55AA, 0x12345678});
 }
+
+// Twelve variadic ints: r1-r3 and nine on the stack, which the callee's
+// va_arg walk reads in place above its frame.  The callee takes them as
+// trailing parameters, seeded where the walk reads them.
+TEST_F(ARM32_CallAbi, AVariadicCalleeReadsItsStackArgumentsInPlace) {
+  HostFlags = {"-m32"};
+  expectHighCRunsLikeSource({"-target", "arm-linux-gnueabi", "-mcpu=cortex-a15",
+                             "-mfloat-abi=softfp"},
+                            R"C(
+int vmany(int n, ...) __attribute__((noinline));
+int vmany_e(int x) {
+  unsigned u = (unsigned)x;
+  return vmany(12, (int)u, (int)(u + 1u), (int)(u * 2u), (int)(u ^ 3u),
+               (int)(u - 4u), (int)(u * 5u), (int)(u + 6u), (int)(u ^ 7u),
+               (int)(u - 8u), (int)(u * 9u), (int)(u + 10u), (int)(u ^ 11u));
+}
+int vmany(int n, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, n);
+  int s = 0;
+  for (int i = 0; i < n; i++)
+    s = s * 131 + __builtin_va_arg(ap, int);
+  __builtin_va_end(ap);
+  return s;
+}
+)C",
+                            "vmany_e", {"vmany_e", "vmany"},
+                            {0, 1, -1, 0x23456, 77});
+}

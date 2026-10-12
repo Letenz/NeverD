@@ -15,6 +15,9 @@ on:
       - 'lib/backend/codegen/COFF/COFFSource*'
       - 'unittests/SourcePatch*'
       - 'unittests/CMakeLists.txt'
+      - 'include/neverd/ir/med/MedSyscallConvention.h'
+      - 'lib/ir/med/abi/MedSyscallConvention*'
+      - 'lib/ir/med/CMakeLists.txt'
   pull_request:
     paths:
       - '.github/workflows/source-patch-windows.yml'
@@ -27,6 +30,9 @@ on:
       - 'lib/backend/codegen/COFF/COFFSource*'
       - 'unittests/SourcePatch*'
       - 'unittests/CMakeLists.txt'
+      - 'include/neverd/ir/med/MedSyscallConvention.h'
+      - 'lib/ir/med/abi/MedSyscallConvention*'
+      - 'lib/ir/med/CMakeLists.txt'
 
 permissions:
   contents: read
@@ -106,11 +112,12 @@ jobs:
       - name: Execute PE under Windows and the four-architecture matrix
         shell: pwsh
         run: |
-          & build-source-windows/bin/NeverDSourcePatchTests.exe '--gtest_filter=SourcePatchPE.*:SourcePatchObject.*:SourcePatchTrampoline.*' '--gtest_output=xml:build-source-windows/native-pe.xml'
+          # This Clang qualification does not install the optional NeverC producer.
+          & build-source-windows/bin/NeverDSourcePatchTests.exe '--gtest_filter=SourcePatchPE.*:SourcePatchObject.*:SourcePatchTrampoline.*-SourcePatchObject.NeverCEntryTableCannotLoseItsLoadTimeRelocations' '--gtest_output=xml:build-source-windows/native-pe.xml'
           if ($LASTEXITCODE -ne 0) { throw 'PE source patch tests failed' }
           & build-source-windows/bin/NeverDSourcePatchMatrixTests.exe '--gtest_output=xml:build-source-windows/target-matrix.xml'
           if ($LASTEXITCODE -ne 0) { throw 'Source target matrix failed' }
-          python -c "import pathlib,xml.etree.ElementTree as E; paths=list(pathlib.Path('build-source-windows').glob('*.xml')); assert len(paths)==2; suites=[E.parse(p).getroot() for p in paths]; assert all(int(s.attrib.get('tests','0'))>0 and all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
+          python -c "import pathlib,xml.etree.ElementTree as E; paths=[pathlib.Path('build-source-windows')/n for n in ('native-pe.xml','target-matrix.xml')]; suites=[E.parse(p).getroot() for p in paths]; assert [int(s.attrib.get('tests','0')) for s in suites]==[15,48], 'Qualification inventory changed'; assert all(all(int(s.attrib.get(k,'0'))==0 for k in ('failures','errors','disabled')) for s in suites); assert all(c.find('skipped') is None for s in suites for c in s.iter('testcase')), 'Qualification cannot pass with skipped cases'"
           if ($LASTEXITCODE -ne 0) { throw 'Incomplete native qualification' }
 
       - name: Preserve native runtime evidence
