@@ -220,8 +220,16 @@ TEST(MedCallingConvValueFlow, VectorParameterBanksRespectTheImageABI) {
                    MedVar::makeConst(0x4000 + 16 * I, TRI.PointerSize), V));
       }
       detectXMMParams(F, B, TRI, Vars, A, Format);
-      const unsigned Expected =
-          A == Arch::X64 && Format == BinaryFormat::COFF ? 4 : 8;
+      // Win64 passes floating arguments in its four positional slots; i386
+      // in XMM0-XMM2 under System V, XMM0-XMM3 on Darwin and XMM0-XMM5 with
+      // __vectorcall.
+      unsigned Expected = 8;
+      if (A == Arch::X64 && Format == BinaryFormat::COFF)
+        Expected = 4;
+      else if (A == Arch::X86)
+        Expected = Format == BinaryFormat::ELF     ? 3
+                   : Format == BinaryFormat::MachO ? 4
+                                                   : 6;
       ASSERT_EQ(F.Params.size(), Expected);
       for (unsigned I = 0; I != Expected; ++I)
         EXPECT_EQ(F.Params[I].RegOff, TRI.VecRegBase + I * TRI.VecRegStride);

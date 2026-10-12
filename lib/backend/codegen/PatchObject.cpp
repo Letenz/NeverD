@@ -177,7 +177,8 @@ llvm::Expected<ObjectImage> readELFObject(llvm::StringRef Bytes,
       auto Note = File->getSectionContents(Section);
       if (!Note)
         return Note.takeError();
-      auto Features = readELFX64PatchPropertyNote(*Note);
+      auto Features =
+          readELFPatchPropertyNote(*Note, Original.getPointerSize());
       if (!Features)
         return Features.takeError();
     }

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ La matrice CPU exige une installation réussie du source, de l’IR fourni et de
 `CPU` signifie installation source／IR／objet, rechargement et résultat exact. ARM ELF déduit EABI5, l’état ARM/Thumb et l’ABI flottante de l’image et enregistre un index `EHABI` complet et trié. PE conserve les lignes x64/ARM et les relocations `HIGHLOW`/`DIR64`/`MOV32T` ; x86 utilise le code d’enregistrement du compilateur. Mach-O distingue watchOS DWARF et iOS `SjLj` selon le sous-type CPU. Les branches d’entrée ARM/Thumb sont relatives et restent valides après rebasage.
 
 Les objets natifs utilisent leurs symboles de fonction bornés, définitions auxiliaires／de section et tables de déroulement, sans inventer d’ID propriétaire MC ni recompiler l’IR. COFF exige des tailles auxiliaires exactes ou des sections à fonction unique (`-ffunction-sections`). L’adaptateur watchOS conserve les cadres des fonctions feuilles pour obtenir de vrais enregistrements. Les gestionnaires de langage COFF/Mach-O natifs ne font pas partie du profil objet vérifié ; utiliser l’IR vérifié pour les exceptions C++. Les dérouleurs ARM statiques avec registre exidx figé, pointeurs absolus Mach-O non enregistrés et stockage RELRO non pris en charge sont refusés.
+
+Les objets C de GCC ont aussi été installés et exécutés sur ELF x86, ARM32 et ARM64 via Linux QEMU user mode. L’adaptateur sélectionne ARM/Thumb depuis l’image ; les propriétés GNU suivent l’alignement de la largeur des pointeurs ELF.
 
 <!-- i18n-section: references -->
 ## Références originales et stockage

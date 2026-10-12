@@ -102,6 +102,8 @@ struct API {
   WEB_API(neverd_web_interface_relation_records_json)
   WEB_API(neverd_web_interfaces_compare_json)
   WEB_API(neverd_web_interface_correlation_records_json)
+  WEB_API(neverd_web_passive_report_create_json)
+  WEB_API(neverd_web_passive_report_records_json)
   WEB_API(neverd_web_package_records_json)
   WEB_API(neverd_web_packages_compare_json)
   WEB_API(neverd_web_package_diff_records_json)
@@ -368,6 +370,22 @@ Json Backend::execute(const std::string &operation, const Json &p) {
              sizeField(p, "offset", 0, std::numeric_limits<size_t>::max()),
              sizeField(p, "limit", 128, 128)));
   }
+  if (operation == "web_passive_report_create") {
+    fields(p, {"revision", "interface_analysis_id", "har_capture_id",
+               "stream_capture_id"});
+    const auto Call = api().neverd_web_passive_report_create_json;
+    if (!Call)
+      throw Error("capability_unavailable", "Passive reports are unavailable");
+    const auto Revision = required(p, "revision", 20);
+    Json Selection{{"schema_version", 1}};
+    for (const auto *Key :
+         {"interface_analysis_id", "har_capture_id", "stream_capture_id"})
+      if (p.contains(Key))
+        Selection[Key] = required(p, Key, 64);
+    const auto Text = Selection.dump();
+    return result(Call(session_, Revision.data(), Revision.size(), Text.data(),
+                       Text.size()));
+  }
   if (operation == "web_har_preview" || operation == "web_har_commit" ||
       operation == "web_interfaces_analyze" ||
       operation == "web_interface_relations_analyze") {
@@ -395,12 +413,14 @@ Json Backend::execute(const std::string &operation, const Json &p) {
   }
   if (operation == "web_har_records" || operation == "web_interface_records" ||
       operation == "web_interface_correlation_records" ||
-      operation == "web_interface_relation_records") {
-    const auto *key = operation == "web_har_records"         ? "capture_id"
-                      : operation == "web_interface_records" ? "analysis_id"
-                      : operation == "web_interface_relation_records"
-                          ? "relations_id"
-                          : "correlation_id";
+      operation == "web_interface_relation_records" ||
+      operation == "web_passive_report_records") {
+    const auto *key =
+        operation == "web_har_records"                  ? "capture_id"
+        : operation == "web_interface_records"          ? "analysis_id"
+        : operation == "web_interface_relation_records" ? "relations_id"
+        : operation == "web_passive_report_records"     ? "passive_report_id"
+                                                        : "correlation_id";
     fields(p, {"revision", key, "offset", "limit"});
     const auto call = operation == "web_har_records"
                           ? api().neverd_web_har_records_json
@@ -408,6 +428,8 @@ Json Backend::execute(const std::string &operation, const Json &p) {
                           ? api().neverd_web_interface_records_json
                       : operation == "web_interface_relation_records"
                           ? api().neverd_web_interface_relation_records_json
+                      : operation == "web_passive_report_records"
+                          ? api().neverd_web_passive_report_records_json
                           : api().neverd_web_interface_correlation_records_json;
     if (!call)
       throw Error("capability_unavailable",

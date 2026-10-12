@@ -98,6 +98,7 @@ translated wording for every shipped locale and native accessibility/host
 qualification remain pending.
 
 This increment presents manifest and selected registry evidence. GUI advisory,
-source/installation/comparison selection, raw-source views, complete dependency
-resolution, publisher authentication, installed-tree/runtime verification and
-the remaining #714–#718 acceptance gaps are not claimed as completed.
+source/installation/comparison selection and raw-source GUI workflows remain
+extensions to this workbench profile. Complete dependency resolution, publisher
+authentication and installed-tree/runtime verification are not claimed. The
+current [epic acceptance audit](web-epic-acceptance.md) covers the five issues.

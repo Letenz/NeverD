@@ -1056,6 +1056,9 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   FrameAliases.clear();
   AmbiguousFrameAliases.clear();
   const bool SavedHandler = InEHClauseBody;
+  // Names this walk assigns a value that is no frame address: one derived
+  // from an alias a later assignment proved ambiguous no longer is one.
+  std::set<std::string> NotFrameAddresses;
   std::function<void(const std::vector<HighStmt> &, bool, bool)> WalkAliases;
   WalkAliases = [&](const std::vector<HighStmt> &Stmts, bool InHandler,
                     bool InCleanup) {
@@ -1081,6 +1084,9 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
           } else if (typedMemberAccess(*S.Val)) {
             FrameAliases.erase(Name);
             AmbiguousFrameAliases.insert(Name);
+          } else {
+            FrameAliases.erase(Name);
+            NotFrameAddresses.insert(Name);
           }
         }
       }
@@ -1105,7 +1111,10 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     unsigned Guard = 0;
     while (Grew && Guard++ < limits::kMaxFrameAliasFixedPoint) {
       const auto Before = FrameAliases;
+      NotFrameAddresses.clear();
       WalkAliases(Func.Body, false, false);
+      for (const std::string &Name : NotFrameAddresses)
+        FrameAliases.erase(Name);
       Grew = FrameAliases != Before;
     }
   };

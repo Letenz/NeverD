@@ -762,6 +762,19 @@ explicit unavailable window; journals/models still work. Run the existing GUI
 unit/controller/language and smoke suites when modifying workbench commands.
 See the [journal/desktop profile](web-package-review-journal.md).
 
+`WebPassiveReport.*` verifies independently counted observed JSON types,
+malformed/encoded/missing bodies, aggregate node work, explicit selections and
+record refusal. `WebPassiveSource.*` verifies exact transformation/message
+syntax, deferred/computed/alias exclusions, all five client domains and selected
+MCP method candidates without protocol inference. SDK cases qualify commit
+gates, paging, revocation, reports and resource directory/ZIP/native consumers.
+CLI cases run with an unusable external-tool PATH; worker/MCP compare the same
+backend. `WebDesktopManifest.*` qualifies supplied CEF/WebView descriptor
+versions, exact scope, opaque/missing files and list budgets. Run owning Web,
+worker/MCP and parser/backend omission when changing these boundaries, then
+restore the enabled build. See the [report](web-passive-report-profile.md) and
+[resource](web-desktop-resource-profile.md) profiles.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
@@ -1576,6 +1589,16 @@ absolute-table HighC, optimized LLVMC and unoptimized LLVMC execute zero,
 all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
 The existing deep-arithmetic narrow guards must retain their exact-definition
 proof before the batched extension-range fallback is considered.
+
+`ResolverGuardPredicates.*` checks compound entry/backedge predicates on x86,
+x64, ARM32 and AArch64, including changed lanes, independent roots, unrelated
+flags, wide indices and exhausted evidence. Query-mode changes must retain
+separate caches, and a logical union cannot claim CFG predecessor ownership.
+`JumpTableJoinedGuard.*` checks separate inclusive/exclusive loop guards in
+ELF, COFF and Mach-O. Its ELF source
+roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
+selection oracle. Small joined domains reuse the finite-coordinate proof;
+unchecked paths and sparse or incomplete domains cannot grant a dense table.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new

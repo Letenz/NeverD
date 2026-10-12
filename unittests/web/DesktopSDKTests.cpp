@@ -11,10 +11,12 @@
 
 #include "AsarFixture.h"
 #include "BunFixture.h"
+#include "NativeFixture.h"
 #include "SEAFixture.h"
 #include "ZipFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/sdk/NeverDCAPI.h"
 #include "neverd/sdk/NeverDCAPIWeb.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -126,6 +128,101 @@ protected:
         128));
   }
 };
+
+TEST_F(WebDesktopSDK, SuppliedResourcesReachSourceHTMLNativeAndVerifiedExport) {
+  const std::string Descriptor =
+      R"({"schema_version":1,"profile":"cef-webview-local-resource-descriptor-v1",
+    "runtime":{"file":"libcef.dll","version":"CANARY_VERSION"},
+    "assets":["index.html","app.js","data.pak","missing.js"],
+    "native_helpers":["helper.exe"]})";
+  const std::string Source = "export const CANARY = 42;";
+  const std::string HTML = "<script src='app.js'></script>";
+  const auto Native = nativePE();
+  write("neverd-resources.json", Descriptor);
+  write("app.js", Source);
+  write("index.html", HTML);
+  write("data.pak", "CANARY_OPAQUE");
+  write("libcef.dll", Native);
+  write("helper.exe", Native);
+  capture();
+  const auto A = manifest(artifact(Descriptor), "cef-assets");
+  ASSERT_EQ(field(A, "status"), "ok");
+  ASSERT_EQ(A.getAsObject()->getArray("entries")->size(), 6u);
+  EXPECT_EQ(field(entry(A, 3), "content_kind"),
+            "opaque_resource_filename_candidate");
+  EXPECT_EQ(field(entry(A, 4), "link_status"), "no_exact_admitted_file");
+  const auto JS = field(entry(A, 2), "artifact_id");
+  const auto Parsed = take(neverd_web_source_analyze_json(
+      S, Revision.data(), Revision.size(), JS.data(), JS.size(), "module", 6));
+#if NEVERD_TEST_WEB_JAVASCRIPT
+  EXPECT_EQ(field(Parsed, "parse_status"), "parsed");
+#else
+  EXPECT_EQ(code(Parsed), "capability_unavailable");
+#endif
+  const auto Document = field(entry(A, 1), "artifact_id");
+  const auto H = take(neverd_web_html_analyze_json(
+      S, Revision.data(), Revision.size(), Document.data(), Document.size()));
+  EXPECT_EQ(field(H, "status"), "ok");
+  neverd_session_t Handle = nullptr;
+  const auto NativeID = field(entry(A), "artifact_id");
+  const auto N = take(
+      neverd_web_native_open_json(S, Revision.data(), Revision.size(),
+                                  NativeID.data(), NativeID.size(), &Handle));
+  EXPECT_EQ(field(N, "status"), "ok");
+  ASSERT_NE(Handle, nullptr);
+  neverd_session_destroy(Handle);
+  const auto MID = field(A, "manifest_id");
+  const auto Destination = (Root / "exported").string();
+  const auto E = take(neverd_web_desktop_resources_export_json(
+      S, Revision.data(), Revision.size(), MID.data(), MID.size(),
+      Destination.data(), Destination.size()));
+  EXPECT_EQ(field(E, "verification"),
+            "all_exported_files_reread_sha256_matches");
+  EXPECT_EQ(E.getAsObject()->getInteger("exported_entries"), 5);
+  EXPECT_EQ(E.getAsObject()->getInteger("unavailable_entries"), 1);
+  std::ifstream F(Root / "exported" / "resource2.js", std::ios::binary);
+  const std::string Exported(std::istreambuf_iterator<char>(F), {});
+  EXPECT_EQ(Exported, Source);
+  EXPECT_EQ(code(take(neverd_web_desktop_resources_export_json(
+                S, Revision.data(), Revision.size(), MID.data(), MID.size(),
+                Destination.data(), Destination.size()))),
+            "export_destination_exists");
+}
+
+TEST_F(WebDesktopSDK,
+       ResourceZIPMembersKeepCompressedParentAndStableSelections) {
+  if (!zipAvailable(true))
+    GTEST_SKIP() << "Named ZIP deflate profile unavailable";
+  const std::string Descriptor =
+      R"({"schema_version":1,"profile":"cef-webview-local-resource-descriptor-v1",
+    "runtime":{"file":"runtime.dll"},"assets":["app.js","../escape.js"]})";
+  const std::string Source = "const CANARY = 1;";
+  const ZipFixture ZIP({{"web/neverd-resources.json", Descriptor, 8},
+                        {"web/runtime.dll", nativePE()},
+                        {"web/app.js", Source, 8}});
+  write("capture.zip", ZIP.Bytes);
+  capture(Input / "capture.zip");
+  const auto Members = archive(artifact(ZIP.Bytes));
+  const auto &Rows = *Members.getAsObject()->getArray("items");
+  const auto DescriptorID = field(Rows[0], "member_id");
+  const auto A = manifest(DescriptorID, "webview-assets");
+  ASSERT_EQ(field(A, "status"), "ok");
+  EXPECT_EQ(field(entry(A, 1), "artifact_id"), field(Rows[2], "member_id"));
+  EXPECT_EQ(field(entry(A, 1), "blob_sha256"), asarHash(Source));
+  EXPECT_EQ(field(entry(A, 2), "link_status"), "unsafe_entry_path");
+  EXPECT_EQ(field(manifest(DescriptorID, "webview-assets"), "manifest_id"),
+            field(A, "manifest_id"));
+  EXPECT_NE(field(manifest(DescriptorID, "cef-assets"), "manifest_id"),
+            field(A, "manifest_id"));
+  const auto MID = field(A, "manifest_id"),
+             Destination = (Root / "zip-export").string();
+  const auto E = take(neverd_web_desktop_resources_export_json(
+      S, Revision.data(), Revision.size(), MID.data(), MID.size(),
+      Destination.data(), Destination.size()));
+  EXPECT_EQ(E.getAsObject()->getInteger("exported_entries"), 2);
+  EXPECT_NE(field(E, "descriptor_sha256"), "");
+  EXPECT_NE(E.getAsObject()->getObject("descriptor_origin"), nullptr);
+}
 
 TEST_F(WebDesktopSDK, ProfilesRetainExactNamespaceAndRedactDeclarations) {
   const std::string JSON = R"({"main":"./out/main.js","name":"CANARY_NAME",

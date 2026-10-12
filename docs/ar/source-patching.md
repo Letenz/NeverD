@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 تعني `CPU` تثبيت المصدر／IR／الكائن وإعادة التحميل والتنفيذ الدقيق للدالة. يستنتج ARM ELF حالة EABI5 وARM/Thumb وABI الفاصلة العائمة من الصورة ويسجل فهرس `EHABI` كاملًا ومرتبًا. يحافظ PE على سجلات x64/ARM وعمليات `HIGHLOW`/`DIR64`/`MOV32T`، ويستخدم x86 شيفرة تسجيل المترجم. يميز Mach-O بين watchOS DWARF وiOS `SjLj` حسب النوع الفرعي CPU. تستخدم مداخل ARM/Thumb فروعًا نسبية تتحمل تغيير قاعدة التحميل.
 
 تعتمد الكائنات الأصلية على رموز الدوال محددة الحدود والتعريفات المساعدة／تعريفات الأقسام وسجلات فك المكدس الخاصة بها، دون اختلاق معرفات ملكية MC أو إعادة ترجمة IR. يتطلب COFF أحجامًا مساعدة دقيقة أو أقسامًا لدالة واحدة (`-ffunction-sections`). يحتفظ محول watchOS بإطارات الدوال الورقية للحصول على سجلات حقيقية. لا تشمل ملفات الكائنات المتحقق منها معالجات اللغة COFF/Mach-O الأصلية؛ استخدم مسار IR المتحقق منه لاستثناءات C++. يُرفض فك مكدس ARM الثابت ذو سجل exidx مدمج، ومؤشرات Mach-O المطلقة غير المسجلة، وتخزين RELRO غير المدعوم.
+
+ثُبتت كائنات GCC C ونُفذت أيضًا على ELF x86 وARM32 وARM64 عبر Linux QEMU user mode. يختار المحول ARM/Thumb من الصورة، وتُحاذى سجلات GNU property حسب عرض مؤشر ELF.
 
 <!-- i18n-section: references -->
 ## مراجع البرنامج الأصلي والتخزين
