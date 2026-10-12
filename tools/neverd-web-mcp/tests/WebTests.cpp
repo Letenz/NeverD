@@ -182,6 +182,17 @@ void clientSourceFeatures(Harness &H) {
           "MCP lost Wails target anchors");
   redacted(BridgeFirst);
   redacted(BridgeRest);
+  const auto &Order = N.at("configuration_order");
+  require(Order.at("object_count") == 1 && Order.at("term_count") == 4 &&
+              Order.at("effective_configuration") == "not_analyzed",
+          "MCP promoted or lost configuration source order");
+  auto ConfigPage = Args;
+  ConfigPage["record_kind"] = "config_merges";
+  const auto Config = H.same("web_source_navigation_records", ConfigPage);
+  require(Config.at("items").size() == 1 &&
+              Config.at("items")[0].at("terms")[0].at("unknown_keys") == true,
+          "MCP lost the configuration overwrite barrier");
+  redacted(Config);
   BridgePage["execute"] = true;
   invalid([&] { H.get("web_source_navigation_records", BridgePage); });
   Page["execute"] = true;
@@ -920,14 +931,15 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
       booleanBranches(H);
-      F.write("source",
-              "function CANARY_CALLBACK(v){return v;}"
-              "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
-              "if(checkPermissions('CANARY'))server.callTool('CANARY');"
-              "const settings={permissions:{deny:['CANARY']},"
-              "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
-              "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
-              "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
+      F.write(
+          "source",
+          "function CANARY_CALLBACK(v){return v;}"
+          "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
+          "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+          "const settings={...CANARY_DEFAULTS,permissions:{deny:['CANARY']},"
+          "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
+          "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
       clientSourceFeatures(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });

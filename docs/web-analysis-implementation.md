@@ -3365,3 +3365,85 @@ remain ON. Integration head is `6fd1505fa4e082a742ab35e1e1f98916f7ba2f81` before
 this receipt-only documentation commit. Logs:
 `/tmp/neverd-desktop-bridge-integrated-{build,native-build,owning-web-tests,
 native-transports-tests,gui-{build,tests},provenance,capabilities}.log`.
+
+### Configuration object order and lexical loading-source links
+
+On the published `a4c6144f6` baseline, the independent
+`javascript-configuration-object-order-v1` owner adds `config_merges` pages to
+existing navigation. It consumes shared source, bindings, navigation and client
+feature identities; shared declaration indexing owns unique binding admission.
+Ordered property/spread terms keep exact spans and lexical initializer/loading
+syntax links. Later unknown-key terms retain possible overwrite barriers;
+runtime values, loader authentication and separate file-layer policy remain
+unknown. Multiple declarations, including function/variable combinations,
+do not gain a unique initializer. Object/term/work failures clear only this
+owner's complete candidate list. All authored code and fixtures use C++ with
+LLVM formatting and project/file banners; no external target tool is invoked.
+
+The C++ archive/Bun/source corpus visits all 2,364 JS units and 45,035,899 bytes
+of the pinned Claude Code 2.1.296 macOS ARM64 package. The interactive frontend
+admits 2,354 and retains its ten explicit byte/work/node refusals. Order
+analysis finishes for every admitted feature inventory: 273 candidate objects,
+2,279 terms and 19 observed fields with later unknown terms. Named loading
+links are zero; no actual internal loader identity or policy is invented.
+Module 1676 has one object/four terms. Module 6 independently retains an
+unknown later term at object offset 2,451/length 96. Their source hashes and
+original release/channel/platform chain are pinned in the
+[configuration profile](web-configuration-order-profile.md). A real offline
+`bun-navigate` run selects module 6 directly from the retained original
+executable, with an unusable external-tool PATH and empty stderr. The original
+source is not redistributed or uploaded. Receipt:
+`/tmp/neverd-configuration-order-actual-bun-navigation.jsonl`.
+
+The first 51-step build passes all five initial core cases. The fourteen-step
+SDK/transport build passes six core/corpus cases (48.748 seconds), seven selected
+SDK cases and all four transports (5.31 seconds). After profile metadata and
+identity admission are finalized, the 58-step boundary rebuild and complete
+owning Web run pass **762 cases / 28 explicit skips out of 790 distinct cases**
+(85.30 seconds), with all eight retained Claude platform captures and both
+real desktop/Claude source selections enabled. The unchanged absent optional
+corpora and ASAR-policy omission-only case account for the skips.
+The final declaration-ambiguity guard passes its eleven-step rebuild and all
+thirteen affected core/SDK/transport cases (4.40 seconds). Qt package review
+passes (2.51 seconds). LLVM formatting and whitespace checks pass; provenance
+scans 7,510 files and the native capability manifest validates 23 declarations.
+Parser omission passes its 156-step build, all six selected SDK cases with the
+real Tauri archive enabled, and all four transports (2.60 seconds). Logs:
+`/tmp/neverd-configuration-order-{first-build,first-tests,parity-build,
+source-corpus-tests,sdk-tests,transports-tests,final-build,owning-build,
+boundary-build,owning-web-tests,declarations-{build,tests},gui-tests,
+nojs-{configure,build,sdk-tests,transports-tests},format,provenance,capabilities}.log`.
+
+Restoration completes all 160 build steps, followed by a two-step banner-only
+test rebuild. A mistakenly early CTest run used a parser-off SDK binary during
+parser-on relinking (its 744-case inventory and capability expectations were
+stale); it is interrupted, preserved and **not counted as acceptance evidence**.
+After completed linking, one explicit discovery produces exactly 790 cases.
+The authoritative restored run passes **762 / 28 skips out of 790 distinct
+cases** (118.84 seconds), including the final mixed-declaration refusal and
+both pinned actual configuration units. The final original-Bun CLI receipt
+again succeeds with empty stderr. Format, provenance (7,510 files) and capability
+(23 declarations) checks pass. Both Web/JS options are ON. Logs:
+`/tmp/neverd-configuration-order-{restored-{configure,build,clean-discovery,
+ready-owning-web-tests},banner-build,final-{format,provenance,capabilities}}.log`;
+actual receipt: `/tmp/neverd-configuration-order-final-actual-bun-navigation.jsonl`.
+
+Normal integration with `origin/dev` at `eb295fdbc` preserves every Web source,
+SDK join and owning test unchanged. The shared native/SDK/transport rebuild
+passes all 102 steps; Qt app/worker/review builds pass. All 28 selected source,
+SDK, actual Tauri/configuration, native-projection/buffer and transport cases
+pass (25.28 seconds); Qt package review passes (12.59 seconds). Provenance scans
+7,512 files and capabilities validate all 23 declarations. Both Web/JS options
+remain ON. Integration head is `779893528b51c3ccb7d57e60f04bf8763c01829a`
+before this receipt-only commit. Logs:
+`/tmp/neverd-configuration-order-{dev-integration,integrated-{build,
+focused-tests,gui-{build,tests},provenance,capabilities}}.log`.
+
+The first normal push is rejected because `dev` advanced. A second normal
+merge includes `5e08ef0eb` (two native HighIR-lowering owners and their tests),
+with the Web/SDK/fixture surfaces still unchanged. The twelve-step rebuild
+passes, followed by all nineteen affected core/SDK/native/transport cases
+(5.65 seconds). Integration head is
+`2537571a18225047ec1a484e9b7048575ad77ec9` before this receipt-only commit.
+Logs: `/tmp/neverd-configuration-order-{second-integration,
+second-integrated-build,second-focused-tests}.log`.

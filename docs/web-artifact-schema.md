@@ -253,6 +253,16 @@ node anchors. Fixed confidence, root resolution, unresolved shapes and
 registrations. A failed bridge analysis clears only bridge records, preserving
 independent navigation. See the [profile](web-desktop-bridge-profile.md).
 
+Configuration-order identity binds source, bindings, navigation, client-feature analysis
+and `javascript-configuration-object-order-v1`. Object IDs add the containing
+object node; term IDs add their syntax node and ordinal. `configuration_order`
+summary and `config_merges` pages preserve independent budgets, source-only
+confidence, fixed field roles and possible later unknown-key barriers. Lexical
+initializer/feature links do not prove current values, loader identity, file
+precedence or effective policy. Failed order analysis clears only its records;
+generic navigation IDs remain unchanged. See the
+[profile](web-configuration-order-profile.md).
+
 `source-storage-anchor-v1` identities bind the source and requested UTF-8 span.
 `start/end` use zero-based line/UTF-16 coordinates; `source_parse_status` does not
 affect the separate claim of coordinate validity. `storage` identifies original

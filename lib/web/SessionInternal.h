@@ -17,6 +17,7 @@
 
 #include "neverd/web/Asar.h"
 #include "neverd/web/Bun.h"
+#include "neverd/web/ConfigurationOrder.h"
 #include "neverd/web/DesktopBridge.h"
 #include "neverd/web/DesktopManifest.h"
 #include "neverd/web/Electron.h"
@@ -70,6 +71,7 @@ struct Session::Impl {
     SourceNavigation Evidence;
     SourceFeatures Features;
     DesktopBridgeSource Bridges;
+    ConfigurationSourceOrder Configuration;
   };
   std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {

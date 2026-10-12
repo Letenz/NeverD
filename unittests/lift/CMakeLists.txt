@@ -1908,6 +1908,7 @@ add_neverd_unittest(NeverDLanguageEHTests
   language/ObjCEHRuntimeCallTests.cpp
   language/ObjCEHRuntimeStateTests.cpp
   language/ScratchRealBinary.cpp
+  language/StringLiteralSymbolsTests.cpp
   language/SymbolSpellingTests.cpp
 )
 target_include_directories(NeverDLanguageEHTests PRIVATE
