@@ -23,6 +23,7 @@
 #include "neverd/ir/intrinsics/X86Interrupts.h"
 #include "neverd/ir/intrinsics/X86SegmentRegisters.h"
 #include "neverd/ir/intrinsics/X86StringCompare.h"
+#include "neverd/ir/intrinsics/X86VectorLaneReads.h"
 #include "neverd/lift/X86Regs.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1541,8 +1542,15 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
       S += "0";
       continue;
     }
+    // An operand narrower than the vector carries every byte the intrinsic
+    // reads of it, as the low double of movddup's memory operand does: it
+    // widens to the vector, whatever bytes past it hold.
+    const auto Read = x86VectorOperandReadBytes(Call.IntrinsicId, Width);
+    const bool Widens = Op->Type && Op->Type->Kind == NdTypeKind::Int &&
+                        Op->Type->Size < Width && Read &&
+                        (*Read >> Op->Type->Size) == 0;
     if (Op->Type && Op->Type->Kind == NdTypeKind::Int &&
-        Op->Type->Size == Width)
+        (Op->Type->Size == Width || Widens))
       S += "__builtin_bit_cast(" + Vector + ", (" + Raw + ")(" + ExprFn(*Op) +
            "))";
     else

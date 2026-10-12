@@ -68,6 +68,35 @@ struct ParsedPublicSym32 {
 llvm::Error parsePublicSym32At(llvm::ArrayRef<uint8_t> Stream, uint32_t Offset,
                                ParsedPublicSym32 &Out);
 
+/// One S_PROCREF or S_LPROCREF decoded from a contiguous symbol stream: where
+/// a module's symbols hold a procedure's record.  Name borrows from that
+/// stream; callers that keep the name must copy it.
+struct ParsedProcRef {
+  /// The module, counted from one as the record counts it.
+  uint16_t Module = 0;
+  /// The procedure record's offset in the module's symbol stream.
+  uint32_t Offset = 0;
+  llvm::StringRef Name;
+};
+
+/// Decode the procedure reference whose record starts at \p Offset, or say
+/// that the global there is of another kind.  A globals GSI offset that is
+/// not an exact record boundary is an error.
+llvm::Expected<bool> parseProcRefAt(llvm::ArrayRef<uint8_t> Stream,
+                                    uint32_t Offset, ParsedProcRef &Out);
+
+/// Where a procedure's code begins, as a section and an offset in it.
+struct ProcedureStart {
+  uint16_t Segment = 0;
+  uint32_t Offset = 0;
+};
+
+/// Where the procedure \p Record holds begins, when it is a procedure record
+/// (S_GPROC32, S_LPROC32 and their ID forms) named \p Name: what a
+/// procedure reference of that name points at.
+std::optional<ProcedureStart>
+parseReferencedProcedure(llvm::ArrayRef<uint8_t> Record, llvm::StringRef Name);
+
 /// Sticky, order-independent policy for names supplied by independent PDB
 /// symbol streams.  A conflicting name at the same address is not a semantic
 /// identity source, regardless of which stream LLVM happens to visit first.

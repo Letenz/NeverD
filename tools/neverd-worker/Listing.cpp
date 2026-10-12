@@ -1583,7 +1583,13 @@ struct Listing::Impl {
     const int index = static_cast<int>(it - functions.begin());
     if (address >= it->end)
       return -1;
-    if (!it->size && address != it->entry && address >= decode(index).end)
+    // Decoding sets where an unsized body ends, and moves a sized one's end
+    // before its padding.
+    if (it->size) {
+      decode(index);
+      return address < it->end ? index : -1;
+    }
+    if (address != it->entry && address >= decode(index).end)
       return -1;
     return index;
   }
@@ -1895,6 +1901,8 @@ struct Listing::Impl {
     if (!function.size)
       function.end =
           std::max(function.entry + 1, std::min(function.end, body.end));
+    else if (trimPadding(body))
+      function.end = body.end;
     for (const auto &instruction : body.instructions)
       if (instruction.target && isBranch(instruction.flow) &&
           *instruction.target > function.entry &&
@@ -1932,6 +1940,28 @@ struct Listing::Impl {
       decodedOrder.pop_back();
     }
     return decoded.emplace(function.entry, std::move(body)).first->second;
+  }
+
+  /// End a sized body after its last instruction that a return or a jump
+  /// leaves: the int3 traps and no-ops a compiler pads it with, which pdata
+  /// ranges cover, read as padding outside the function, as in IDA.  Padding
+  /// a branch of the body reaches stays in it.  Returns whether it trimmed.
+  bool trimPadding(DecodedFunction &body) const {
+    auto &instructions = body.instructions;
+    auto padding = instructions.end();
+    while (padding != instructions.begin() &&
+           isPaddingMnemonic(std::prev(padding)->mnemonic))
+      --padding;
+    if (padding == instructions.begin() || padding == instructions.end() ||
+        fallsThrough(std::prev(padding)->flow))
+      return false;
+    const std::uint64_t end = padding->address;
+    for (auto it = instructions.begin(); it != padding; ++it)
+      if (it->target && *it->target >= end && *it->target < body.end)
+        return false;
+    instructions.erase(padding, instructions.end());
+    body.end = end;
+    return true;
   }
 
   /// End of the function preceding \p address, or the region start.

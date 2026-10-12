@@ -80,3 +80,20 @@ di mkdi(int x) {
 )C",
                        "retdi", {"retdi", "mkdi", "di"});
 }
+
+// A vector returns whole in v0, not as an aggregate of its lanes.
+TEST_F(AArch64_StructReturn, AVectorReturnsAllItsLanes) {
+  expectRunsLikeSource(R"C(
+typedef unsigned v4su __attribute__((vector_size(16)));
+v4su mk4(unsigned x) __attribute__((noinline));
+int use4(int x) {
+  v4su v = mk4((unsigned)x);
+  return (int)(v[0] ^ v[3] * 3u ^ v[1] << 2);
+}
+v4su mk4(unsigned x) {
+  v4su v = {x, x + 1u, x, x * 7u};
+  return v + v;
+}
+)C",
+                       "use4", {"use4", "mk4", "v4su"});
+}

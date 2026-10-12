@@ -16,6 +16,8 @@
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/STLExtras.h"
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -144,6 +146,140 @@ void propagateStructReturnForwarderShapes(const BinaryImage &Img,
       }
     }
   }
+}
+
+/// Whether \p MF returns a whole vector in its FP return register: a RETURN
+/// whose closest write to the register since the last call is a genuine
+/// 16-byte value.  With \p NoIntegerResult, that RETURN's block also neither
+/// writes an integer return register nor leaves a call's integer result there
+/// (see the body-only use below).
+static bool returnsWholeVector(const MedFunc &MF, const TargetRegInfo &TRI,
+                               bool NoIntegerResult) {
+  if (TRI.FPReturnRegs.empty())
+    return false;
+  const uint64_t V0 = TRI.FPReturnRegs.front();
+  std::map<std::pair<int, int>, const MedOp *> Defs;
+  for (const auto &Blk : MF.Blocks)
+    for (const auto &O : Blk.Ops)
+      if (O.Output.Id >= 0)
+        Defs[{O.Output.Id, O.Output.SSAVer}] = &O;
+  // True iff \p V (traced through COPY chains) is a genuine >=16-byte
+  // value -- a real vector -- rather than a zero-extended <=8-byte
+  // scalar (an `INT_ZEXT Qn <- Dn` HFA element / scalar FP).
+  auto isWideVec = [&](MedVar V) -> bool {
+    for (int Depth = 0; Depth < 8; ++Depth) {
+      if (V.Kind == MedVar::Const)
+        return false;
+      auto It = Defs.find({V.Id, V.SSAVer});
+      if (It == Defs.end())
+        return V.Size >= 16;
+      const MedOp *D = It->second;
+      if (D->Opcode == NdOp::INT_ZEXT)
+        return false; // zero-extended scalar/HFA element, high 64 = 0
+      if (D->Opcode == NdOp::COPY && D->NumInputs >= 1) {
+        V = D->Inputs[0];
+        continue;
+      }
+      return D->Output.Size >= 16; // CONCAT / LOAD / NEON real 16 bytes
+    }
+    return false;
+  };
+  bool WideVecRet = false;
+  for (const auto &Blk : MF.Blocks) {
+    int RetIdx = -1;
+    for (size_t I = 0; I < Blk.Ops.size(); ++I)
+      if (Blk.Ops[I].Opcode == NdOp::RETURN) {
+        RetIdx = static_cast<int>(I);
+        break;
+      }
+    if (RetIdx < 0)
+      continue;
+    const MedOp *V0Write = nullptr;
+    bool GPWritten = false;
+    bool GPLiveFromCall = false;
+    for (int J = RetIdx - 1; J >= 0; --J) {
+      const auto &O = Blk.Ops[J];
+      if (O.Opcode == NdOp::CALL || O.Opcode == NdOp::INDIR_CALL) {
+        // The function's live return may be THIS call's own GP result,
+        // left in the GP return register and not overwritten before the
+        // RETURN -- a `p = malloc(n); /* fill *p with NEON q-register
+        // stores */ return p;` tail.  The V0 writes after the call are
+        // then dead memcpy scratch (the loaded init data on its way to
+        // memory), not a vector return; without this the pointer return
+        // is mistyped <2 x i64> and the caller dereferences garbage.
+        if (!GPWritten && O.Output.Kind == MedVar::Reg)
+          for (uint64_t IR : TRI.IntReturnRegs)
+            if (O.Output.RegOff == IR)
+              GPLiveFromCall = true;
+        break;
+      }
+      if (O.Output.Kind != MedVar::Reg || O.Output.Size == 0)
+        continue;
+      bool SelfCopy = O.Opcode == NdOp::COPY && O.NumInputs >= 1 &&
+                      O.Inputs[0].Kind == MedVar::Reg &&
+                      O.Inputs[0].RegOff == O.Output.RegOff;
+      if (SelfCopy)
+        continue;
+      if (O.Output.RegOff == V0 && !V0Write)
+        V0Write = &O;
+      for (uint64_t IR : TRI.IntReturnRegs)
+        if (O.Output.RegOff == IR)
+          GPWritten = true;
+    }
+    if (V0Write && (!NoIntegerResult || (!GPWritten && !GPLiveFromCall)) &&
+        isWideVec(V0Write->Output)) {
+      WideVecRet = true;
+      break;
+    }
+  }
+  return WideVecRet;
+}
+
+// A whole vector returned in the FP return register: an x86-64 `__m128` or
+// `{float, float}` packed in xmm0, a NEON vector in V0.  The type pass types
+// only a scalar float's return, and a body alone cannot tell a returned
+// vector from a vector operation's leftover, so a direct caller must read the
+// register after the call (modelCallFPReturn bound the call's result to it)
+// while none reads an integer result from it.  An integer register the
+// callee writes before such a RETURN is then its scratch.
+void recoverVectorReturnFromCallers(const BinaryImage &Img,
+                                    PipelineResult &Result) {
+  const auto &TRI = getTargetRegInfo(Img.Arch);
+  if (!TRI.hasFPReturnReg() || !TRI.isVectorReg(TRI.FPReturnReg) ||
+      TRI.ReturnsFPInX87)
+    return;
+  std::set<va_t> ReadAsVector, ReadAsInteger;
+  for (const auto &Caller : Result.MedFuncs) {
+    std::set<std::pair<int, int>> Read;
+    for (const auto &Blk : Caller.Blocks) {
+      for (const auto &Op : Blk.Ops)
+        for (uint8_t I = 0; I < Op.NumInputs; ++I)
+          Read.insert({Op.Inputs[I].Id, Op.Inputs[I].SSAVer});
+      for (const auto &Phi : Blk.Phis)
+        for (const auto &Arg : Phi.Args)
+          Read.insert({Arg.second.Id, Arg.second.SSAVer});
+    }
+    for (const auto &Blk : Caller.Blocks)
+      for (const auto &Op : Blk.Ops) {
+        if (Op.SourceCallHint || Op.Opcode != NdOp::CALL || Op.NumInputs < 1 ||
+            !Op.Inputs[0].isConst() || Op.Output.Kind != MedVar::Reg ||
+            !Read.count({Op.Output.Id, Op.Output.SSAVer}))
+          continue;
+        if (Op.Output.RegOff == TRI.FPReturnReg)
+          ReadAsVector.insert(Op.Inputs[0].ConstVal);
+        else if (llvm::is_contained(TRI.IntReturnRegs, Op.Output.RegOff))
+          ReadAsInteger.insert(Op.Inputs[0].ConstVal);
+      }
+  }
+  for (auto &MF : Result.MedFuncs)
+    if (!MF.SourceTypeHint && !MF.SourceParametersBound &&
+        MF.MultiReturn.empty() && !MF.FPReturnViaX87 &&
+        !(MF.ReturnType && MF.ReturnType->Kind == NdTypeKind::Float) &&
+        ReadAsVector.count(MF.Entry) && !ReadAsInteger.count(MF.Entry) &&
+        returnsWholeVector(MF, TRI, /*NoIntegerResult=*/false)) {
+      MF.ReturnType = NdType::makeFloat(16);
+      MF.ReturnsVectorRegister = true;
+    }
 }
 
 // A function reached ONLY through a function pointer is never the target of a
@@ -313,86 +449,10 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
       // through V0 at the call site) and type the function as a 16-byte
       // vector return; the emitter's fpAbiType lowers it to a <2 x i64>
       // return carrying all 16 bytes (V0 read whole).
-      if (!TRI.FPReturnRegs.empty()) {
-        const uint64_t V0 = TRI.FPReturnRegs.front();
-        std::map<std::pair<int, int>, const MedOp *> Defs;
-        for (const auto &Blk : MF.Blocks)
-          for (const auto &O : Blk.Ops)
-            if (O.Output.Id >= 0)
-              Defs[{O.Output.Id, O.Output.SSAVer}] = &O;
-        // True iff \p V (traced through COPY chains) is a genuine >=16-byte
-        // value -- a real vector -- rather than a zero-extended <=8-byte
-        // scalar (an `INT_ZEXT Qn <- Dn` HFA element / scalar FP).
-        auto isWideVec = [&](MedVar V) -> bool {
-          for (int Depth = 0; Depth < 8; ++Depth) {
-            if (V.Kind == MedVar::Const)
-              return false;
-            auto It = Defs.find({V.Id, V.SSAVer});
-            if (It == Defs.end())
-              return V.Size >= 16;
-            const MedOp *D = It->second;
-            if (D->Opcode == NdOp::INT_ZEXT)
-              return false; // zero-extended scalar/HFA element, high 64 = 0
-            if (D->Opcode == NdOp::COPY && D->NumInputs >= 1) {
-              V = D->Inputs[0];
-              continue;
-            }
-            return D->Output.Size >= 16; // CONCAT / LOAD / NEON real 16 bytes
-          }
-          return false;
-        };
-        bool WideVecRet = false;
-        for (const auto &Blk : MF.Blocks) {
-          int RetIdx = -1;
-          for (size_t I = 0; I < Blk.Ops.size(); ++I)
-            if (Blk.Ops[I].Opcode == NdOp::RETURN) {
-              RetIdx = static_cast<int>(I);
-              break;
-            }
-          if (RetIdx < 0)
-            continue;
-          const MedOp *V0Write = nullptr;
-          bool GPWritten = false;
-          bool GPLiveFromCall = false;
-          for (int J = RetIdx - 1; J >= 0; --J) {
-            const auto &O = Blk.Ops[J];
-            if (O.Opcode == NdOp::CALL || O.Opcode == NdOp::INDIR_CALL) {
-              // The function's live return may be THIS call's own GP result,
-              // left in the GP return register and not overwritten before the
-              // RETURN -- a `p = malloc(n); /* fill *p with NEON q-register
-              // stores */ return p;` tail.  The V0 writes after the call are
-              // then dead memcpy scratch (the loaded init data on its way to
-              // memory), not a vector return; without this the pointer return
-              // is mistyped <2 x i64> and the caller dereferences garbage.
-              if (!GPWritten && O.Output.Kind == MedVar::Reg)
-                for (uint64_t IR : TRI.IntReturnRegs)
-                  if (O.Output.RegOff == IR)
-                    GPLiveFromCall = true;
-              break;
-            }
-            if (O.Output.Kind != MedVar::Reg || O.Output.Size == 0)
-              continue;
-            bool SelfCopy = O.Opcode == NdOp::COPY && O.NumInputs >= 1 &&
-                            O.Inputs[0].Kind == MedVar::Reg &&
-                            O.Inputs[0].RegOff == O.Output.RegOff;
-            if (SelfCopy)
-              continue;
-            if (O.Output.RegOff == V0 && !V0Write)
-              V0Write = &O;
-            for (uint64_t IR : TRI.IntReturnRegs)
-              if (O.Output.RegOff == IR)
-                GPWritten = true;
-          }
-          if (V0Write && !GPWritten && !GPLiveFromCall &&
-              isWideVec(V0Write->Output)) {
-            WideVecRet = true;
-            break;
-          }
-        }
-        if (WideVecRet) {
-          MF.ReturnType = NdType::makeFloat(16);
-          continue; // single vector return, not a multi-register HFA
-        }
+      if (returnsWholeVector(MF, TRI, /*NoIntegerResult=*/true)) {
+        MF.ReturnType = NdType::makeFloat(16);
+        MF.ReturnsVectorRegister = true;
+        continue; // single vector return, not a multi-register HFA
       }
 
       std::vector<MedReturnReg> Fields;

@@ -27,6 +27,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -517,6 +518,14 @@ HighCWriter::implicitIntegerConversion(const HighExpr &E, const TypeRef &To) {
 std::string HighCWriter::storedValueText(const HighExpr &Value,
                                          const TypeRef &To,
                                          NdMemoryOrdering Ordering) {
+  // An integer slot takes a string's address as the integer it is.
+  const bool Literal = Value.Kind == ExprKind::Const && To &&
+                       To->Kind == NdTypeKind::Int &&
+                       LiteralAddressOperands.insert(&Value).second;
+  const auto Unmark = llvm::make_scope_exit([&] {
+    if (Literal)
+      LiteralAddressOperands.erase(&Value);
+  });
   // A plain store converts the value to the memory's type like an
   // assignment does.
   if (Ordering == NdMemoryOrdering::None && Value.Type &&
@@ -529,6 +538,16 @@ std::string HighCWriter::storedValueText(const HighExpr &Value,
 std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   if (E.Operands.empty())
     return "/* bad unary */";
+  // An integer operator, `~` or a negation, takes a string's address as the
+  // integer it is.
+  const HighExpr *Only = E.Operands[0].get();
+  const bool Literal = Only && Only->Kind == ExprKind::Const && E.Type &&
+                       E.Type->Kind == NdTypeKind::Int && !E.Type->IsEnum &&
+                       LiteralAddressOperands.insert(Only).second;
+  const auto Unmark = llvm::make_scope_exit([&] {
+    if (Literal)
+      LiteralAddressOperands.erase(Only);
+  });
 
   switch (E.Op) {
   case NdOp::INT_NOT:

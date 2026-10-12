@@ -178,6 +178,85 @@ static double d10(double a, double b, double c, double d, double e, double f,
       "sumd10", {"sumd10", "d10"}, {0, 1, 0x41, 0x1234});
 }
 
+// A 32-byte record passes on the stack, and the caller copies it there with
+// two 16-byte stores; the callee reads each field with a floating-point
+// memory operand.  The call passes one argument per eight-byte slot.
+TEST_F(X86_64_CallAbi, ARecordCopiedToTheStackPassesEverySlot) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  double a, b, c, d;
+} H4;
+static double sh4(H4 s, double e) __attribute__((noinline));
+int hfa4d(int x) {
+  H4 s;
+  s.a = (double)(x & 0xff);
+  s.b = (double)((x >> 8) & 0xff);
+  s.c = (double)(x * 3);
+  s.d = (double)(x - 7);
+  return (int)sh4(s, (double)(x ^ 5));
+}
+static double sh4(H4 s, double e) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * e;
+}
+)C",
+                            "hfa4d", {"hfa4d", "sh4", "H4"},
+                            {0, 1, -1, 0x10, 0x1234, 1000});
+}
+
+// `cvtsi2sd` writes xmm0's low double and keeps its incoming upper lane,
+// and `unpcklpd xmm1, xmm0` reads only the low double of each operand: the
+// function takes no vector argument, only its int.
+TEST_F(X86_64_CallAbi, ABroadcastOfAConvertedIntTakesNoVectorArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef struct {
+  double a, b, c, d;
+} B4;
+static double sb4(B4 s, double e) __attribute__((noinline));
+int bcast(int x) {
+  double v = (double)x;
+  B4 s;
+  s.a = v;
+  s.b = v + 1;
+  s.c = v + 2;
+  s.d = v + 3;
+  return (int)sb4(s, v + 4);
+}
+static double sb4(B4 s, double e) {
+  return s.a + 2 * s.b + 3 * s.c + 4 * s.d + 5 * e;
+}
+)C",
+                            "bcast", {"bcast", "sb4", "B4"},
+                            {0, 1, -1, 0x10, 77, 1000});
+}
+
+// A pointer walking a string is compared against its end through `~W`, the
+// bitwise complement of the string's address: the operator takes the address
+// as the integer it is, never the array.
+TEST_F(X86_64_CallAbi, AComplementOfAStringAddressIsAnInteger) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static const char W[] = "the_quick_brown_fox_jumps_over_the_lazy_dog_0123";
+int strroll(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  const int N = (int)(sizeof(W) - 1);
+  for (int it = 0; it < 16; it++) {
+    s = s * 1103515245u + 12345u;
+    const char *p = W + ((s >> 6) % (unsigned)N);
+    unsigned r = 0;
+    for (int k = 0; k < 12; k++) {
+      r = r * 31u + (unsigned)(unsigned char)*p;
+      p++;
+      if (!*p)
+        p = W;
+    }
+    h = h * 131u + r;
+    h ^= h >> 10;
+  }
+  return (int)h;
+}
+)C",
+                            "strroll", {"strroll", "W"}, {0, 1, -1, 0x44, 77});
+}
+
 // A System V variadic function tests AL and saves the argument registers to
 // its register save area, which va_arg reads.  It takes every one of them as
 // a parameter: the integer registers and the vector registers' doubles.

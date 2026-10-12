@@ -14,6 +14,7 @@
 #ifdef NEVERD_ENABLE_WEB_ANALYSIS
 #include "NativeSnapshotSession.h"
 #include "SessionImpl.h"
+#include "TauriInitializer.h"
 
 #include "neverd/loader/ObjectFileUtils.h"
 #include "neverd/support/BinaryLoading.h"
@@ -1079,6 +1080,57 @@ neverd_web_pkg_records_json(neverd_web_session_t Session,
 #endif
 }
 
+const char *neverd_web_tauri_extract_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    uint64_t InitializerAddress, const char *Profile, size_t ProfileSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    const auto Revision = buffer(ExpectedRevision, RevisionSize, 20);
+    const auto ID = buffer(ArtifactID, ArtifactIDSize, 64);
+    const auto P = buffer(Profile, ProfileSize, 64);
+    if (P != neverd::web::TauriProfile)
+      throw neverd::web::Error("tauri_unsupported_profile");
+    if (!neverd::web::tauriAvailable())
+      throw neverd::web::Error("tauri_capability_unavailable");
+    const auto Input = S.nativeInput(Revision, ID);
+    const auto Init = neverd::sdk::tauriInitializer(Input, InitializerAddress);
+    return S.extractTauri(Revision, ID, Init, P);
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_tauri_records_json(neverd_web_session_t Session,
+                                          const char *ExpectedRevision,
+                                          size_t RevisionSize,
+                                          const char *ExtractionID,
+                                          size_t ExtractionIDSize,
+                                          uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.tauriRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                          buffer(ExtractionID, ExtractionIDSize, 64), Offset,
+                          Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *neverd_web_tauri_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ExtractionID, size_t ExtractionIDSize,
+    const char *OutputDirectory, size_t DirectorySize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.exportTauri(buffer(ExpectedRevision, RevisionSize, 20),
+                         buffer(ExtractionID, ExtractionIDSize, 64),
+                         buffer(OutputDirectory, DirectorySize, 32768));
+  });
+#else
+  return unavailable();
+#endif
+}
 const char *
 neverd_web_wails_extract_json(neverd_web_session_t Session,
                               const char *ExpectedRevision, size_t RevisionSize,

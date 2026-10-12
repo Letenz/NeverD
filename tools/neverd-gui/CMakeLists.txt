@@ -177,7 +177,7 @@ if(BUILD_TESTING)
     add_dependencies(neverd-gui-tests neverd-worker-test-server)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
-    # About a minute on a Linux runner and twice that on macOS and Windows.
+    # Over a minute on a Linux runner, about twice that on macOS and Windows.
     set_tests_properties(NeverDGuiController PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 300)
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test

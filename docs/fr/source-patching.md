@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: b504f377f29d587519311580a92c9cdaed9118057832a8afd81551fbd34802df -->
+<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
 
 [← Documentation Index](README.md)
 
@@ -12,6 +12,8 @@ NeverD compile une fonction de remplacement avec le compilateur choisi, puis l�
 ## Choix du compilateur
 
 Choisissez `--compiler=clang`, `--compiler=gcc` ou `--compiler=neverc`. Clang et le mode ordinaire de NeverC peuvent produire de l’IR LLVM ; `object` conserve les instructions natives. La CLI choisit les objets par défaut pour GCC. Le SDK Python exige `artifact="object"` pour GCC. Aucun autre compilateur n’est utilisé implicitement.
+
+Utilisez `--compiler-arg` ou `compiler_args` du SDK pour les chemins d’inclusion, les définitions de macros et les options source prises en charge. Les changements de cible ou de mode de sortie et les jetons de fichier de réponse (`@file`) sont refusés à toute position, y compris comme valeur séparée d’une option. Les chemins `-I` et les définitions `-D` ordinaires restent pris en charge.
 
 Remplacez les adresses des exemples par des entrées originales vérifiées. La déclaration doit respecter l’ABI machine originale, notamment la convention d’appel et la disposition des structures ; une adresse ne le prouve pas. Pour C++, utilisez `--language=c++` et le bon exécutable Clang++/G++. Préférez une entrée `extern "C"` ou indiquez son nom décoré exact. Les fonctions auxiliaires sont autorisées. `--entry` et `--func` sélectionnent explicitement le remplacement ; l’ancien `--from-c` respecte aussi l’adresse.
 

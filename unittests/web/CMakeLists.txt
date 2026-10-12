@@ -22,6 +22,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   NexeTests.cpp
   PkgTests.cpp
   WailsTests.cpp
+  TauriTests.cpp
   JsonReaderTests.cpp
   LINK_COMPONENTS Web
 )
@@ -36,8 +37,18 @@ add_neverd_unittest(NeverDWebZipWithoutDeflateTests
   LINK_COMPONENTS Web
 )
 target_include_directories(NeverDWebZipWithoutDeflateTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
+add_neverd_unittest(NeverDWebBrotliWithoutDecoderTests
+  BrotliNoDecoderTests.cpp
+  ../../lib/web/compression/Brotli.cpp
+  LINK_COMPONENTS Web)
+target_include_directories(NeverDWebBrotliWithoutDecoderTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/web")
 # Manual, development-only recorder; no production or test dependency on it.
 add_executable(neverd-web-bun-fixture-record EXCLUDE_FROM_ALL fixtures/bun/Record.cpp)
+add_executable(neverd-web-tauri-fixture-record EXCLUDE_FROM_ALL fixtures/tauri/Record.cpp)
+target_include_directories(neverd-web-tauri-fixture-record PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/web")
+target_link_libraries(neverd-web-tauri-fixture-record PRIVATE NeverDWeb)
 add_executable(neverd-web-sea-fixture-record EXCLUDE_FROM_ALL fixtures/sea/Record.cpp)
 add_executable(neverd-web-nexe-fixture-inputs EXCLUDE_FROM_ALL fixtures/nexe/WriteInputs.cpp)
 target_include_directories(neverd-web-nexe-fixture-inputs PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -123,6 +134,7 @@ if(TARGET neverd_shared)
     NexeSDKTests.cpp
     PkgSDKTests.cpp
     WailsSDKTests.cpp
+    TauriSDKTests.cpp
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     DesktopSDKTests.cpp

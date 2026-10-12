@@ -1246,6 +1246,10 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
        Med.ExceptionMetadata->Registration->hasCxxCallbackStack());
   Func.ReturnType = Med.ReturnType ? Med.ReturnType : inferReturnType(Med);
   const auto &ReturnTRI = getTargetRegInfo(TargetArch);
+  // A whole vector returned in the FP return register is its bits, which C
+  // carries as the unsigned 128-bit integer HighC holds vector registers in.
+  if (Med.ReturnsVectorRegister && Func.ReturnType)
+    Func.ReturnType = NdType::makeInt(Func.ReturnType->Size, false);
   if (!Med.SourceParametersBound && Med.MultiReturn.size() == 2 &&
       !Med.MultiReturn[0].IsFP && !Med.MultiReturn[1].IsFP &&
       Med.MultiReturn[0].RegOff == ReturnTRI.IntReturnReg &&

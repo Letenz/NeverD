@@ -444,6 +444,39 @@ TEST_F(SourcePatch, CompilerCannotOverrideTheTarget) {
   EXPECT_FALSE(std::filesystem::exists(Output));
 }
 
+TEST_F(SourcePatch, CompilerResponseFilesCannotBypassOptionValidation) {
+  const auto Response = Directory / "extra arguments.rsp";
+  std::ofstream(Response) << "unused-directory -DBASE=37\n";
+  const std::string ResponseArgument = "@" + Response.string();
+  // Drivers expand response tokens before parsing an option's value. With -I,
+  // this file would inject BASE and turn an otherwise invalid source into a
+  // successfully published patch.
+  for (const char *Option :
+       {"-I", "-isystem", "-iquote", "-include", "-D", "-U", "-isysroot", ""}) {
+    SCOPED_TRACE(Option);
+    const char *Arguments[] = {Option, ResponseArgument.c_str()};
+    Options.compiler_args = *Option ? Arguments : Arguments + 1;
+    Options.compiler_arg_count = *Option ? 2 : 1;
+    ASSERT_EQ(patch("int replacement(int x){return x+BASE;}"), 0) << error();
+    EXPECT_NE(error().find("response files"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(Output));
+  }
+
+  // The same supported options keep their ordinary values, including spaces.
+  const auto Include = Directory / "include path";
+  ASSERT_TRUE(std::filesystem::create_directory(Include));
+  std::ofstream(Include / "shared.h") << "#define TOTAL (BASE + 3)\n";
+  const std::string IncludeArgument = Include.string();
+  const char *Arguments[] = {"-I", IncludeArgument.c_str(), "-D", "BASE=37"};
+  Options.compiler_args = Arguments;
+  Options.compiler_arg_count = 4;
+  ASSERT_EQ(patch("#include \"shared.h\"\n"
+                  "int replacement(int x){return x+TOTAL;}"),
+            1)
+      << error();
+  EXPECT_EQ(execute({Output.string()}), 84);
+}
+
 TEST_F(SourcePatch, IncludesMacrosAndSourcePathsArePreserved) {
   const auto SourcePath = Directory / "replacement file.c";
   const std::string SourceName = SourcePath.string();

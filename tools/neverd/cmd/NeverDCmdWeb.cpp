@@ -42,6 +42,11 @@ std::optional<llvm::json::Value> result(const char *Owned) {
 } // namespace
 
 int runWeb() {
+  if (!WebArguments.empty() &&
+      (WebArguments[0] == "tauri" || WebArguments[0] == "tauri-export" ||
+       WebArguments[0] == "tauri-source" || WebArguments[0] == "tauri-html" ||
+       WebArguments[0] == "tauri-readable-export"))
+    return runWebTauri();
   if (!WebArguments.empty() && (WebArguments[0] == "package-assessment" ||
                                 WebArguments[0] == "archive-assessment"))
     return runWebAssessment();

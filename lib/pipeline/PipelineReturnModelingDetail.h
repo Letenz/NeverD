@@ -31,6 +31,12 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result);
 void recoverStructReturnFromCallers(const BinaryImage &Img,
                                     PipelineResult &Result);
 
+/// Type a callee that returns a whole vector in its FP return register, as
+/// its direct callers read it, Float(16) (MedFunc::ReturnsVectorRegister).
+/// Targets whose FP return register is a vector register.
+void recoverVectorReturnFromCallers(const BinaryImage &Img,
+                                    PipelineResult &Result);
+
 /// Propagate a proven multi-register return shape forward through tail-call
 /// forwarders (`struct S f(a){return g(a);}`) to callees reached only that way.
 void propagateStructReturnForwarderShapes(const BinaryImage &Img,
