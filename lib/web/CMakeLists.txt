@@ -74,6 +74,11 @@ add_neverd_component_library(NeverDWeb
   desktop/wails/Reader.cpp
   SessionWails.cpp
   SessionWailsExport.cpp
+  desktop/tauri/PHF.cpp
+  desktop/tauri/Reader.cpp
+  SessionTauri.cpp
+  SessionTauriExport.cpp
+  compression/Brotli.cpp
   SessionDesktop.cpp
   SessionElectron.cpp
   SessionElectronIPC.cpp
@@ -119,6 +124,8 @@ add_neverd_component_library(NeverDWeb
   LLVM_COMPONENTS Support
 )
 include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebURL.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/NeverDWebBrotli.cmake")
+neverd_add_web_brotli()
 find_package(ZLIB QUIET)
 if(ZLIB_FOUND)
   target_link_libraries(NeverDWeb PRIVATE ZLIB::ZLIB)

@@ -48,13 +48,19 @@ Tools use `neverd_web_` names and schema version 1; `schema_version` defaults to
 1 when omitted. The catalog covers import, metadata, artifacts, source/maps,
 bindings, primitive semantics and primitive/lexical rewrite receipts,
 modules/bundles/navigation, structural views,
-anchors, Bun/SEA/nexe/pkg/ASAR extraction, package/archive/integrity/diff evidence,
+anchors, Bun/SEA/nexe/pkg/ASAR/Wails/Tauri extraction, package/archive/integrity/diff evidence,
 selected Node source/package behavior metadata and installation traces,
 Electron/HTML, passive HAR/streams/interfaces and native loader metadata.
 Published IDs, decimal-string revisions/coordinates, evidence classes and
 backend pagination fields remain unchanged. Tool responses contain the same
 evidence object in `structuredContent` and equivalent JSON in one text block.
 Clients should discover schemas rather than assume disabled capabilities.
+
+Tauri selection adds a canonical decimal-string `initializer_address` to the
+explicit artifact/profile/revision selection. The shared native pipeline
+derives the descriptor; tools cannot accept caller-supplied tables or pointer
+proofs. Complete PHF/Brotli validation precedes metadata-only member pages.
+Raw Tauri export is omitted from MCP. See the [Tauri profile](web-tauri-profile.md).
 
 `neverd_web_package_install_analyze` requires revision and package analysis ID;
 the matching package behavior ID is optional. No source selection is needed to

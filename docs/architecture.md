@@ -668,6 +668,19 @@ exclusive writer for explicit local disclosure. None of these owners chooses
 an asset-server binding or implements a Go/JS bridge. Shared source/HTML/native
 consumers retain independent capabilities and limits. See the
 [Wails profile](web-wails-profile.md).
+`pipeline/evidence/ConstantStores` owns bounded local native instruction effects,
+using the authoritative decoder, relocation roles and LowIR. The SDK's
+`capi/TauriInitializer` joins those effects and loader mappings with the exact
+captured native hash; this descriptor is never accepted from transport JSON.
+`desktop/tauri/PHF` owns complete string lookup validation and `Reader` owns
+mapping/range/path/codec admission. `compression/Brotli` only supplies a pinned
+in-process stream decoder with accounted allocation/output/call/deadline bounds.
+`SessionTauri` atomically publishes sealed decoded storage, while `ArtifactView`
+and `memberNamespace` retain per-table namespaces, compressed frames and nested
+origins for shared consumers. Local export uses the existing exclusive writer.
+No native semantics are duplicated in Web, CLI, worker or MCP. The selected
+initializer does not establish runtime activation, type identity, mount or
+bridge relationships. See the [Tauri profile](web-tauri-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and

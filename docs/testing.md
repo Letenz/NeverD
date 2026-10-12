@@ -946,6 +946,25 @@ offline corpus inputs, rather than runtime execution fixtures.
 They do not download, install or launch that application. Build every owning
 Web binary before running the complete owning Web directory without a prefix
 filter; the eight parameterized Claude platform cases must also remain enabled.
+
+`NativeConstantStores.*` independently checks x64 full-width LowIR value/address
+roles, instruction/recorded-function boundaries and atomic unknown-effect
+refusal. The optional actual native case uses
+`NEVERD_TAURI_CHATGPT_110_X64_NATIVE`. `WebTauri.*` checks the upstream
+SipHash13-128 known vector, complete PHF row agreement, mapping/range/path/hash
+guards and bounded exact Brotli streams. `WebBrotliNoDecoder.*` compiles the
+owning codec without its private SDK macro and checks truthful capability
+omission and fixed refusal, without an external fallback.
+`WebTauriSDK.*` checks native initializer projection, private pages, nested
+archive coordinates, import revocation, exclusive raw/readable exports and
+original native handoff. `NEVERD_TAURI_CHATGPT_110_X64_TGZ` enables the pinned
+real lencx/ChatGPT v1.1.0 old-GNU tar/gzip case, all 15 decoded assets and all
+nine same-parser-tree JS members. These optional tests use local captured
+bytes only; see the [Tauri profile](web-tauri-profile.md). Worker/MCP tests
+compare direct and framed results, reject caller-supplied table descriptors
+and check canaries. The archive consumer/CLI fixtures also cover both uniform
+old-GNU tar and old-GNU tar/gzip, including Bun/source/native consumers.
+
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
 surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
 directive preservation, tagged-template refusal, ASI outer-tree mismatches,

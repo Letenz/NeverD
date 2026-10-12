@@ -86,7 +86,9 @@ void closedArguments() {
                           "interface_relations_analyze",
                           "interface_relation_records",
                           "wails_extract",
-                          "wails_records"}),
+                          "wails_records",
+                          "tauri_extract",
+                          "tauri_records"}),
             0);
   const auto &Wails = C.find("neverd_web_wails_extract");
   Json WailsArgs{{"revision", "1"}, {"artifact_id", "a"}, {"profile", "p"}};
@@ -101,6 +103,27 @@ void closedArguments() {
   WailsPage.payload(WailsPageArgs);
   WailsPageArgs["limit"] = 129;
   refuses([&] { WailsPage.payload(WailsPageArgs); });
+  const auto &Tauri = C.find("neverd_web_tauri_extract");
+  Json TauriArgs{{"revision", "1"},
+                 {"artifact_id", "a"},
+                 {"profile", "p"},
+                 {"initializer_address", "4294967552"}};
+  Tauri.payload(TauriArgs);
+  TauriArgs["table"] = Json::object();
+  refuses([&] { Tauri.payload(TauriArgs); });
+  refuses([&] {
+    Tauri.payload({{"revision", "1"},
+                   {"artifact_id", "a"},
+                   {"profile", "p"},
+                   {"initializer_address", "0x100000100"}});
+  });
+  const auto &TauriPage = C.find("neverd_web_tauri_records");
+  TauriPage.payload(
+      {{"revision", "1"}, {"extraction_id", "e"}, {"limit", 128}});
+  refuses([&] {
+    TauriPage.payload(
+        {{"revision", "1"}, {"extraction_id", "e"}, {"limit", 129}});
+  });
   const auto &Relations = C.find("neverd_web_interface_relations_analyze");
   Relations.payload({{"revision", "1"}, {"analysis_id", "a"}});
   refuses([&] { Relations.payload({{"revision", "1"}, {"source_id", "a"}}); });

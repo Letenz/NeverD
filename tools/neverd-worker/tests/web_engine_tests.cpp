@@ -17,6 +17,7 @@
 #include "../../../unittests/web/PackageArchiveFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/TauriFixture.h"
 #include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "WebEngine.h"
@@ -2491,6 +2492,52 @@ int main(int argc, char **argv) {
       reply = process.call("web_wails_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "Wails accepted execution option");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "tauri_extract") != caps["operations"].end()) {
+      const auto path = fixture.root / "tauri";
+      std::ofstream(path, std::ios::binary) << neverd::web::tauri_test::image();
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", path.string()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "Tauri capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto items = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json args{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"artifact_id", items["items"][0]["artifact_id"]},
+          {"profile", "tauri-phf-0.10-macho-x64-five-store-brotli-v1"},
+          {"initializer_address", "4294967552"}};
+      const auto extracted = web.execute("web_tauri_extract", args);
+      reply = process.call("web_tauri_extract", args, revision, project);
+      check(reply["payload"] == extracted && extracted["member_count"] == 2,
+            "Tauri native projection differs");
+      const Json page{{"schema_version", 1},
+                      {"revision", revision},
+                      {"extraction_id", extracted["extraction_id"]},
+                      {"offset", 0},
+                      {"limit", 1}};
+      const auto records = web.execute("web_tauri_records", page);
+      reply = process.call("web_tauri_records", page, revision, project);
+      check(reply["payload"] == records &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Tauri pages differ or reveal bytes");
+      auto invalid = args;
+      invalid["table"] = Json::object();
+      reply = process.call("web_tauri_extract", invalid, revision, project);
+      check(reply["error"]["code"] == "invalid_request",
+            "Tauri accepted caller-supplied table");
     }
     process.stop();
     std::ifstream errors(fixture.root / "stderr");
