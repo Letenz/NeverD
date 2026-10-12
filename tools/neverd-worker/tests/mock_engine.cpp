@@ -568,6 +568,8 @@ const char *neverd_code_refs_json(neverd_session_t s, neverd_va_t firstEntry,
   for (; index < 600 && index < first + maxFunctions; ++index) {
     const auto entry = Base + 16 * static_cast<std::uint64_t>(index);
     refs.push_back({hexAddress(entry + JumpOffset), hexAddress(entry), "jump"});
+    if (session(s)->path.find("xrefs-") != std::string::npos && index == 22)
+      refs.push_back({hexAddress(entry + 3), hexAddress(Base + 0x140), "call"});
     // function_3 calls function_2 through data slot 1.
     if (index == 3)
       refs.push_back({hexAddress(entry + 4), hexAddress(Base + 0x20), "icall"});
@@ -843,6 +845,64 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
   session(s)->error.clear();
+  if (session(s)->path.find("xrefs-") != std::string::npos) {
+    const bool delayed = session(s)->path.ends_with("xrefs-delayed.bin");
+    const bool unmapped = session(s)->path.ends_with("xrefs-unmapped.bin");
+    const bool published = session(s)->path.ends_with("xrefs-address.bin");
+    const bool caller = address == Base + 0x160;
+    std::vector<std::string> lines{
+        "int function_" + std::to_string((address - Base) / 16) + "() {\n",
+        delayed  ? "  return delayed_function();\n"
+        : caller ? "  return function_20();\n"
+                 : "  return 42;\n",
+        "}\n"};
+    if (published)
+      for (auto &line : lines)
+        if (const auto at = line.find("function_20"); at != std::string::npos)
+          line.replace(at, std::string("function_20").size(),
+                       "display_function");
+    const auto first = std::min(offset, lines.size());
+    const auto end = first + std::min(limit, lines.size() - first);
+    std::string text;
+    std::size_t begin = 0;
+    Json rows = Json::array();
+    for (std::size_t i = 0; i < first; ++i)
+      begin += lines[i].size();
+    for (auto i = first; i < end; ++i) {
+      text += lines[i];
+      rows.push_back({{"line", i},
+                      {"kind", "source"},
+                      {"mapping_status",
+                       i == 1 && !unmapped ? "instruction_anchor" : "unmapped"},
+                      {"addresses", i == 1 && !unmapped
+                                        ? Json::array({hexAddress(address + 3)})
+                                        : Json::array()}});
+    }
+    Json names = Json::array();
+    if (published)
+      if (const auto at = text.find("display_function");
+          at != std::string::npos)
+        names.push_back(
+            {{"begin_byte", begin + at},
+             {"end_byte", begin + at + std::string("display_function").size()},
+             {"identifier", "display_function"},
+             {"address", hexAddress(Base + 0x140)}});
+    return copy(Json{
+        {"schema_version", 1},
+        {"address", hexAddress(address)},
+        {"representation", representation},
+        {"dialect", "c"},
+        {"text", text},
+        {"rows", rows},
+        {"offset", first},
+        {"byte_offset", begin},
+        {"total_lines", lines.size()},
+        {"complete", end == lines.size()},
+        {"next_offset", end == lines.size() ? Json(nullptr) : Json(end)},
+        {"library_regions", Json::array()},
+        {"source_names",
+         names}}.dump());
+  }
   if (session(s)->sourceCacheFixture()) {
     auto &state = *session(s);
     if (!state.wholeProgramPrepared && state.preparedEntry != address) {

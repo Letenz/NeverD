@@ -233,6 +233,9 @@ are refused. Signed PE input is not silently stripped.
 transforms apply to IR artifacts; they cannot be requested for native objects.
 Compiler options are argument arrays, with target/output modes owned by each
 adapter. Selected compilers never silently fall back to another executable.
+Response-file tokens (`@file`) are refused in every compiler argument, including
+values following separate options such as `-I`, `-include` or `-D`; drivers would
+otherwise expand those tokens before the adapter-approved options are parsed.
 
 ## Validation record (2026-10-12)
 

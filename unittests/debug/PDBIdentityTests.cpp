@@ -17,6 +17,8 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/DebugInfo/CodeView/CodeView.h"
+#include "llvm/DebugInfo/CodeView/SymbolRecord.h"
+#include "llvm/DebugInfo/CodeView/SymbolSerializer.h"
 #include "llvm/DebugInfo/MSF/MSFCommon.h"
 #include "llvm/DebugInfo/PDB/Native/RawConstants.h"
 #include "llvm/Object/CVDebugRecord.h"
@@ -404,6 +406,80 @@ TEST(PDBPublicSym32Parse, DataRecordIsNotFunction) {
   ASSERT_FALSE(static_cast<bool>(Err)) << llvm::toString(std::move(Err));
   EXPECT_FALSE(Pub.IsFunction);
   EXPECT_EQ(Pub.Name, "g_image_object");
+}
+
+/// An S_PROCREF or S_LPROCREF record naming \p Name at \p Offset in module
+/// \p Module's symbols.
+static std::vector<uint8_t> makeProcRef(llvm::codeview::SymbolKind Kind,
+                                        uint16_t Module, uint32_t Offset,
+                                        llvm::StringRef Name) {
+  const uint32_t AfterLen = 2u + 10u + static_cast<uint32_t>(Name.size()) + 1u;
+  const uint32_t Padded = (AfterLen + 3u) & ~3u;
+  std::vector<uint8_t> Bytes(2u + Padded, 0);
+  llvm::support::endian::write16le(Bytes.data(), static_cast<uint16_t>(Padded));
+  llvm::support::endian::write16le(Bytes.data() + 2,
+                                   static_cast<uint16_t>(Kind));
+  llvm::support::endian::write32le(Bytes.data() + 8, Offset);
+  llvm::support::endian::write16le(Bytes.data() + 12, Module);
+  std::memcpy(Bytes.data() + 14, Name.data(), Name.size());
+  return Bytes;
+}
+
+TEST(PDBProcRefParse, ReadsGlobalAndStaticReferences) {
+  using llvm::codeview::SymbolKind;
+  for (const SymbolKind Kind :
+       {SymbolKind::S_PROCREF, SymbolKind::S_LPROCREF}) {
+    const std::vector<uint8_t> Bytes =
+        makeProcRef(Kind, 652, 6212, "IopTimerDispatch$fin$0");
+    pdb_loader_detail::ParsedProcRef Ref;
+    llvm::Expected<bool> IsRef =
+        pdb_loader_detail::parseProcRefAt(Bytes, 0, Ref);
+    ASSERT_TRUE(static_cast<bool>(IsRef)) << llvm::toString(IsRef.takeError());
+    EXPECT_TRUE(*IsRef);
+    EXPECT_EQ(Ref.Module, 652u);
+    EXPECT_EQ(Ref.Offset, 6212u);
+    EXPECT_EQ(Ref.Name, "IopTimerDispatch$fin$0");
+  }
+  // Other globals are no references; a cut record is an error.
+  const std::vector<uint8_t> Public = makePub32(0, 0x2000, 2, "g_object");
+  pdb_loader_detail::ParsedProcRef Ref;
+  llvm::Expected<bool> Other =
+      pdb_loader_detail::parseProcRefAt(Public, 0, Ref);
+  ASSERT_TRUE(static_cast<bool>(Other)) << llvm::toString(Other.takeError());
+  EXPECT_FALSE(*Other);
+  const std::vector<uint8_t> Truncated{0x20, 0x00, 0x27, 0x11};
+  llvm::Expected<bool> Short =
+      pdb_loader_detail::parseProcRefAt(Truncated, 0, Ref);
+  EXPECT_FALSE(static_cast<bool>(Short));
+  llvm::consumeError(Short.takeError());
+}
+
+TEST(PDBProcRefParse, PointsAtAProcedureOfItsName) {
+  llvm::BumpPtrAllocator Allocator;
+  // An S_LPROC32, as a static procedure's record is.
+  llvm::codeview::ProcSym Proc(llvm::codeview::SymbolRecordKind::ProcSym);
+  Proc.Segment = 8;
+  Proc.CodeOffset = 0x300FF2;
+  Proc.CodeSize = 96;
+  Proc.Name = "IopTimerDispatch$fin$0";
+  const llvm::codeview::CVSymbol Record =
+      llvm::codeview::SymbolSerializer::writeOneSymbol(
+          Proc, Allocator, llvm::codeview::CodeViewContainer::Pdb);
+  const auto Start = pdb_loader_detail::parseReferencedProcedure(
+      Record.data(), "IopTimerDispatch$fin$0");
+  ASSERT_TRUE(Start.has_value());
+  EXPECT_EQ(Start->Segment, 8u);
+  EXPECT_EQ(Start->Offset, 0x300FF2u);
+  // A reference of another name, or to a record of another kind, points at
+  // no procedure.
+  EXPECT_FALSE(pdb_loader_detail::parseReferencedProcedure(Record.data(),
+                                                           "IopTimerDispatch")
+                   .has_value());
+  const std::vector<uint8_t> Public =
+      makePub32(0, 0x300FF2, 8, "IopTimerDispatch$fin$0");
+  EXPECT_FALSE(pdb_loader_detail::parseReferencedProcedure(
+                   Public, "IopTimerDispatch$fin$0")
+                   .has_value());
 }
 
 TEST(PDBPublicSym32Parse, RejectsWrongKindAndTruncation) {

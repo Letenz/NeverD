@@ -1633,6 +1633,11 @@ Json Engine::execute(const std::string &operation, const Json &p) {
           }
         }
       }
+      // Code a function keeps apart from its body, such as a cold path,
+      // belongs to that function.
+      if (index < 0)
+        if (const auto owner = listing().chunkOwner(address))
+          index = neverd_func_find_by_addr(session_, *owner);
     } else {
       index = neverd_func_find_by_name(session_, query.c_str());
       if (index >= 0) {

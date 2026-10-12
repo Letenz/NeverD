@@ -474,6 +474,10 @@ def run(executable):
                              for line in chunk), chunk
         listed = parts.call("functions", {"filter": "function_6", "limit": 50})["payload"]["items"]
         assert listed and not any(item["address"] == "0xffff800012340060" for item in listed), listed
+        # An address in the chunk resolves to its function, so a reference
+        # there opens that function's code.
+        owner = parts.call("resolve", {"query": "0xffff800012340064"})["payload"]
+        assert owner["function_address"] == BASE and owner["address"] == "0xffff800012340064", owner
         parts.close()
 
     malformed = Client(executable)

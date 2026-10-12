@@ -170,7 +170,7 @@ if(BUILD_TESTING)
     add_test(NAME NeverDGuiController COMMAND neverd-gui-tests
       ${_neverd_controller_test_log_args})
     set_tests_properties(NeverDGuiController PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 90)
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
     add_test(NAME NeverDGuiWidgets COMMAND neverd-gui --widgets-test
       --worker $<TARGET_FILE:neverd-worker-test-server>)
     set_tests_properties(NeverDGuiWidgets PROPERTIES

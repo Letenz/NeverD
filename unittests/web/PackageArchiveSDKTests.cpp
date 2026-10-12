@@ -112,15 +112,18 @@ protected:
         S, Revision.data(), Revision.size(), ID.data(), ID.size(), Offset,
         Limit));
   }
-  static std::string fixture() {
+  static std::string fixture(bool GNU = false) {
+    const auto Member = GNU ? oldGNUTarMember : tarMember;
     return finishTar(
-        tarMember(
+        Member(
             "package/package.json",
-            R"({"name":"CANARY_NAME","main":"a.js","scripts":{"install":"CANARY_DO_NOT_RUN"}})") +
-        tarMember("package/a.js", "export const CANARY_VALUE = 7;") +
-        tarMember("package/bun", BunFixture(true, {}, nativeELF()).Bytes) +
-        tarMember("package/native.node", nativeELF()) +
-        tarMember("package/link", "", '2', "../../CANARY_OUTSIDE"));
+            R"({"name":"CANARY_NAME","main":"a.js","scripts":{"install":"CANARY_DO_NOT_RUN"}})",
+            '0', {}) +
+        Member("package/a.js", "export const CANARY_VALUE = 7;", '0', {}) +
+        Member("package/bun", BunFixture(true, {}, nativeELF()).Bytes, '0',
+               {}) +
+        Member("package/native.node", nativeELF(), '0', {}) +
+        Member("package/link", "", '2', "../../CANARY_OUTSIDE"));
   }
   static std::string zipFixture(bool Deflate) {
     const uint16_t Method = Deflate ? 8 : 0;
@@ -140,15 +143,19 @@ protected:
 TEST_F(WebPackageArchiveSDK,
        ConsumersShareMembersAndKeepCompressedCoordinates) {
   for (const std::string_view Case :
-       {"tar", "tgz", "zip-stored", "zip-deflate"}) {
+       {"tar", "tgz", "gnu-tar", "gnu-tgz", "zip-stored", "zip-deflate"}) {
     const bool Zip = Case.starts_with("zip");
-    const bool Compressed = Case == "tgz" || Case == "zip-deflate";
-    const auto Format = Zip ? std::string_view("zip") : Case;
+    const bool GNU = Case.starts_with("gnu");
+    const bool Compressed =
+        Case == "tgz" || Case == "gnu-tgz" || Case == "zip-deflate";
+    const auto Format = Zip          ? std::string_view("zip")
+                        : Compressed ? std::string_view("tgz")
+                                     : std::string_view("tar");
     if (Compressed && !Gzip)
       continue;
     capture(Zip          ? zipFixture(Compressed)
-            : Compressed ? storedGzip(fixture())
-                         : fixture());
+            : Compressed ? storedGzip(fixture(GNU))
+                         : fixture(GNU));
     const auto A = extract(Format);
     ASSERT_EQ(field(A, "status"), "ok");
     const auto ID = field(A, "archive_id");
@@ -563,15 +570,19 @@ TEST_F(WebPackageArchiveSDK, CLIExportPreservesOriginAndExistingDestinations) {
     return std::string(std::istreambuf_iterator<char>(F), {});
   };
   for (const std::string_view Case :
-       {"tar", "tgz", "zip-stored", "zip-deflate"}) {
+       {"tar", "tgz", "gnu-tar", "gnu-tgz", "zip-stored", "zip-deflate"}) {
     const bool Zip = Case.starts_with("zip");
-    const bool Compressed = Case == "tgz" || Case == "zip-deflate";
+    const bool GNU = Case.starts_with("gnu");
+    const bool Compressed =
+        Case == "tgz" || Case == "gnu-tgz" || Case == "zip-deflate";
     if (Compressed && !Gzip)
       continue;
-    const auto Format = Zip ? std::string_view("zip") : Case;
+    const auto Format = Zip          ? std::string_view("zip")
+                        : Compressed ? std::string_view("tgz")
+                                     : std::string_view("tar");
     capture(Zip          ? zipFixture(Compressed)
-            : Compressed ? storedGzip(fixture())
-                         : fixture());
+            : Compressed ? storedGzip(fixture(GNU))
+                         : fixture(GNU));
     const auto A = extract(Format);
     ASSERT_EQ(field(A, "status"), "ok");
     const auto ArchiveID = field(A, "archive_id");

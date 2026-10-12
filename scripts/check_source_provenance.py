@@ -295,6 +295,16 @@ class Allowance:
 
 ALLOWED: tuple[Allowance, ...] = (
     Allowance(
+        path="lib/web/desktop/tauri/PHF.cpp",
+        rule="provenance-phrase",
+        reason=(
+            "The adaptation notice identifies rust-siphash 0.3.10 and rust-phf "
+            "0.10.1; LICENSES/phf/SOURCE.md links the exact source releases, "
+            "and COPYING, LICENSE-MIT, LICENSE-APACHE and PHF-LICENSE preserve "
+            "the original authors and licenses."
+        ),
+    ),
+    Allowance(
         path="LICENSES/node/LICENSE",
         rule="provenance-phrase",
         reason=(

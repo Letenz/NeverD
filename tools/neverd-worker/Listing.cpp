@@ -3927,6 +3927,15 @@ std::string Listing::nameAt(std::uint64_t address) {
       .text;
 }
 
+std::optional<std::uint64_t> Listing::chunkOwner(std::uint64_t address) {
+  auto &d = *impl_;
+  d.build();
+  const int f = d.functionIndexCoarse(address);
+  if (f < 0 || !d.functions[f].chunkOf)
+    return std::nullopt;
+  return d.ownerOf(f).entry;
+}
+
 std::optional<std::uint64_t> Listing::resolveName(const std::string &name) {
   auto &d = *impl_;
   d.build();

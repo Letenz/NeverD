@@ -3,6 +3,10 @@ add_neverd_unittest(NeverDPEProgramExportsTests
   LINK_COMPONENTS Loader
 )
 
+add_neverd_unittest(NeverDNativeConstantStoresTests
+  core/ConstantStoresTests.cpp
+  LINK_COMPONENTS Pipeline)
+
 add_neverd_unittest(NeverDMedEntryFrameTests
   core/MedSSAMultiRootTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)

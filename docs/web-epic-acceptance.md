@@ -13,7 +13,7 @@ executed, and the analyzer uses no external scripts, runtimes or network tools.
 | --- | --- | --- |
 | [#714](https://github.com/NeverSight/NeverD/issues/714) | Immutable source/map origins, embedded bounded parser, lexical/value/effect/module/bundle/navigation models, separate reversible primitive/rename/Boolean-expression profiles, reviewed source views and verified same-parser-tree readable export. Client syntax candidates cover tool/config/permission/hook/MCP spellings with fixed confidence and unresolved fields. | Configuration precedence and broader dispatch/dataflow need explicit grammars and known-answer fixtures. Local transformations and formatting do not restore erased TypeScript, types, names or establish whole-program equivalence. |
 | [#715](https://github.com/NeverSight/NeverD/issues/715) | npm graphs/diffs, tar/gzip inventory, original-byte SRI, bounded Node behavior/install associations and diffs, captured advisory/registry/provenance metadata, composed assessments, persistent dispositions and selected-evidence Qt review. All eight Claude platform packages have independent archive/payload integrity evidence. | Broader GUI evidence selectors, lifecycle/loader/host qualification and remaining delivery relationships. Signature declarations and matching hashes do not authenticate a publisher or establish benign behavior. |
-| [#716](https://github.com/NeverSight/NeverD/issues/716) | ASAR/ZIP safety, Electron unpacked/member/manifest/entry/IPC boundaries, NW.js/VSIX/HTML/import-map candidates and native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 Linux ELF and Windows PE x64 releases provide exact assets, raw/readable export and retained native binaries. | A measured, versioned Tauri asset layout with extraction/native-handoff fixtures is still missing. Wails bridges and other containers/ISAs, broader Electron/NW.js distributions and runtime mount/window associations remain unqualified. This blocks the explicit Tauri-and-Wails acceptance criterion. |
+| [#716](https://github.com/NeverSight/NeverD/issues/716) | ASAR/ZIP safety, Electron unpacked/member/manifest/entry/IPC boundaries, NW.js/VSIX/HTML/import-map candidates and native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 Linux ELF and Windows PE x64 releases provide exact assets, raw/readable export and retained native binaries. The measured Tauri PHF/Mach-O x64 initializer profile now extracts all 15 assets of a preserved public release, verifies 9 readable JS members and retains original native handoff through nested old-GNU archive evidence. | Broader Tauri Rust layouts/containers/ISAs and encoding selection, Wails/Tauri bridges, broader Electron/NW.js distributions, desktop GUI selectors and runtime mount/window associations remain unqualified. The bounded Tauri-and-Wails asset/native-handoff criterion has concrete evidence; the complete desktop epic remains open. |
 | [#717](https://github.com/NeverSight/NeverD/issues/717) | Redacted HAR preview/commit, direct fetch/WebSocket/XHR/member spellings, single-layer lexical fetch parameter forwarding, separate request/result syntax links and direct-fetch-only HAR joins. Versioned SSE/JSONL/JSON-RPC/MCP-shape/log imports preserve recorded directions/IDs and partial framing. | General request/config dataflow, nearby transformation chains, source/stream joins, remaining inventory/review/schema presentation. Real complex Claude dispatch remains unknown; no real transcript was supplied for qualification and none is invented. |
 | [#718](https://github.com/NeverSight/NeverD/issues/718) | Independent pinned Bun ELF/thin Mach-O/PE x64/ARM64 profiles and Node SEA 22.15.0, nexe 4.0.0-rc.7 and pkg 5.8.1 profiles; producer fixtures, original/member/range/hash links, bounds, opaque-cache preservation and native/shared-source consumers. All eight Claude 2.1.296 platform deliveries have complete shipped-JS preservation/readable exports. | Additional runtime/layout/host profiles need their own measured qualification. Opaque JSC/V8 caches stay unsupported; all-platform extraction is separate from native lifting and complete cross-track analysis. |
 
@@ -66,10 +66,11 @@ was supplied for these selections, so source/capture correlation is not attempte
 
 ## Next concrete acceptance work
 
-1. Measure Tauri asset storage from a preserved public release, pin the producer,
-   platform, Rust layout and encoding contract, and implement one bounded C++
-   reader with exact extraction and native-handoff fixtures. Refuse unsupported
-   layouts instead of carving strings or guessing compression.
+1. Extend desktop extraction only through independently measured profiles and
+   finish remaining desktop review/bridge relationships. The first
+   [Tauri asset profile](web-tauri-profile.md) now qualifies a complete selected
+   table from explicit native LowIR initializer evidence; it does not establish
+   a generic Rust ABI, compiler identity, runtime binding or other architectures.
 2. Extend request and configuration flow only through separately versioned,
    evidence-linked grammars. Use actual Claude refusals to select useful cases;
    keep computed dispatch, unknown effects and absent observations explicit.
@@ -77,7 +78,8 @@ was supplied for these selections, so source/capture correlation is not attempte
    IDs and redaction, then rerun an issue-by-issue acceptance audit. Do not close
    the five epics based solely on extraction or parser success.
 
-The Tauri measurement boundary is concrete. At the pinned
+The earlier Tauri source research remains relevant but separate from the
+new binary qualification. At the pinned
 `tauri-cli-v2.12.2` source tag, the framework crate is `2.12.3` and enables
 compression by default. [Pinned crate manifest](https://raw.githubusercontent.com/tauri-apps/tauri/tauri-cli-v2.12.2/crates/tauri/Cargo.toml).
 The generator emits included output bytes;
@@ -87,7 +89,8 @@ per-entry codec field. [Generator](https://raw.githubusercontent.com/tauri-apps/
 [asset implementation](https://raw.githubusercontent.com/tauri-apps/tauri/tauri-cli-v2.12.2/crates/tauri-utils/src/assets.rs).
 Rust's default representation also does not guarantee declaration-order field
 offsets. [Rust layout reference](https://doc.rust-lang.org/reference/type-layout.html#the-rust-representation).
-Therefore a future binary profile must measure layout, stored pointer anchors,
+Therefore each additional binary profile must measure layout, stored pointer anchors,
 relocations and encoding against a real preserved build. These source observations
-are research evidence, not a qualified Tauri reader, a binary-version detector
-or permission to guess codecs and carve source strings.
+are research evidence; the qualified reader above uses its own measured native
+initializer, complete PHF relation and explicit Brotli profile. Neither is a
+binary-version detector or permission to guess codecs and carve source strings.
