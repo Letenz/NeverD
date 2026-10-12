@@ -159,9 +159,12 @@ mapCandidates(const std::filesystem::path &BinaryPath) {
 }
 
 DebugInfoResult loadPDB(const std::filesystem::path &P, const BinaryImage &Img,
-                        const LoadProgress &Progress) {
+                        const LoadProgress &Progress,
+                        bool AllowMissingIdentity = false) {
   DebugInfoResult R;
-  auto CtxOr = PDBDebugContext::load(P, Img, Progress);
+  auto CtxOr = AllowMissingIdentity
+                   ? PDBDebugContext::loadUserSelected(P, Img, Progress)
+                   : PDBDebugContext::load(P, Img, Progress);
   if (!CtxOr) {
     R.Error = llvm::toString(CtxOr.takeError());
     return R;
@@ -248,7 +251,7 @@ DebugInfoResult loadDebugInfo(const std::filesystem::path &BinaryPath,
       Result.Error = "PDB file not found: " + pathToUTF8(Req.PDBPath);
       return Result;
     }
-    Result = loadPDB(Req.PDBPath, Img, Progress);
+    Result = loadPDB(Req.PDBPath, Img, Progress, Req.AllowMissingPDBIdentity);
     if (!Result && Result.Error.empty())
       Result.Error = "no function symbols in " + pathToUTF8(Req.PDBPath);
     return Result;

@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Esamina le prove locali dei pacchetti e le revisioni degli analisti</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>File &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Carica simboli da un file PDB selezionato</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2108,6 +2116,30 @@ Con segno: %4</translation>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>Questa riga del sorgente non ha una corrispondenza con l'indirizzo di un'istruzione; viene mostrato l'ingresso della funzione</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Carica file PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>File PDB (*.pdb);;Tutti i file (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Usa PDB non verificato per l’analisi</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>Questo PE non contiene un’identità PDB (GUID/age). L’architettura e la disposizione delle sezioni del PDB selezionato corrispondono, ma la sua compilazione non può essere verificata.
+
+Usare questo PDB per l’analisi? Simboli, tipi, firme delle funzioni e intervalli di indirizzi saranno usati come dati di analisi. Un PDB errato può produrre risultati errati.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Questo motore non può usare un PDB non verificato per l’analisi</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2376,6 +2408,18 @@ Con segno: %4</translation>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>Un'istruzione è già definita a %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB caricato: %1 (%2 nomi, identità verificata)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Nomi di visualizzazione PDB importati: %1 (%2 nomi, non verificati)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB caricato per l’analisi: %1 (%2 nomi, confermato dall’utente, identità non verificata)</translation>
     </message>
 </context>
 <context>

@@ -583,6 +583,8 @@ struct Listing::Impl {
   std::map<std::string, std::uint64_t, std::less<>> importTargets;
   /// Engine function name -> display name, where they differ.
   std::unordered_map<std::string, std::string> aliases;
+  std::unordered_map<std::uint64_t, std::string> pdbDisplayNames;
+  std::unordered_set<std::uint64_t> pdbFunctionNames;
   Json functionRowsCache;
   std::uint64_t functionRowsGeneration = 0;
   std::vector<std::uint64_t> namedData;
@@ -719,6 +721,12 @@ struct Listing::Impl {
   /// after their import, the image entry point, and main as passed to the C
   /// runtime's start routine.  Engine, symbol and user names always win.
   void applyDisplayNames() {
+    for (auto &function : functions)
+      if (const auto name = pdbDisplayNames.find(function.entry);
+          name != pdbDisplayNames.end() &&
+          pdbFunctionNames.contains(function.entry) &&
+          parseDummyName(function.name) && !listingNames.contains(name->second))
+        function.name = name->second;
     const auto rename = [&](Function &function, std::string name) {
       if (!parseDummyName(function.name) || listingNames.contains(name))
         return false;
@@ -1163,6 +1171,10 @@ struct Listing::Impl {
         if (!row.value("literal", false))
           dataNames.emplace(address, std::move(name));
       }
+    for (const auto &[address, name] : pdbDisplayNames)
+      if (!pdbFunctionNames.contains(address) && !functionAtEntry(address) &&
+          regionIndex(address) >= 0 && !dataNames.contains(address))
+        dataNames.emplace(address, name);
     if (Rescan) {
       importRows = takeJson(neverd_imports_json(session));
       importSlotRows = importSlots ? takeJson(importSlots(session)) : Json();
@@ -3561,7 +3573,40 @@ void Listing::setStringOptions(std::string options) {
   invalidate();
 }
 
+void Listing::setPdbDisplayNames(const Json &names) {
+  std::unordered_map<std::uint64_t, std::string> selected;
+  std::unordered_set<std::uint64_t> functions;
+  for (const auto &row : names) {
+    const auto name = row.value("name", std::string());
+    if (name.empty() || name.size() > 4096 ||
+        std::any_of(name.begin(), name.end(),
+                    [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
+      continue;
+    const auto address = jsonAddress(row.at("address"));
+    selected.emplace(address, name);
+    if (row.value("function", false))
+      functions.insert(address);
+  }
+  if (impl_->pdbDisplayNames == selected &&
+      impl_->pdbFunctionNames == functions)
+    return;
+  impl_->pdbDisplayNames = std::move(selected);
+  impl_->pdbFunctionNames = std::move(functions);
+  namesChanged();
+}
+
 std::uint64_t Listing::generation() const { return impl_->generation; }
+
+std::optional<std::string> Listing::pdbDataName(std::uint64_t address) {
+  impl_->build();
+  const auto imported = impl_->pdbDisplayNames.find(address);
+  const auto shown = impl_->dataNames.find(address);
+  if (imported != impl_->pdbDisplayNames.end() &&
+      !impl_->pdbFunctionNames.contains(address) &&
+      shown != impl_->dataNames.end() && shown->second == imported->second)
+    return imported->second;
+  return std::nullopt;
+}
 
 bool Listing::hasIdleWork() const {
   return (impl_->discoverFunctions && !impl_->discovered) ||

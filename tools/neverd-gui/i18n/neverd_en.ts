@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Inspect local package evidence and analyst reviews</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>&amp;PDB file...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Load symbols from a selected PDB file</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2108,6 +2116,30 @@ Signed: %4</translation>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>This source line has no instruction address mapping; showing the function entry</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Load PDB file</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB files (*.pdb);;All files (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Use unverified PDB for analysis</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>This engine cannot use an unverified PDB for analysis</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2376,6 +2408,18 @@ Signed: %4</translation>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>An instruction is already defined at %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB loaded: %1 (%2 names, identity verified)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB display names imported: %1 (%2 names, unverified)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</translation>
     </message>
 </context>
 <context>
