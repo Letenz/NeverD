@@ -3934,6 +3934,123 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
   return E;
 }
 
+/// The width of the integer or pointer \p E holds, or 0 for another value
+/// or an untyped one.
+static uint16_t integerViewWidth(const HighExpr &E) {
+  if (E.Type)
+    return E.Type->Kind == NdTypeKind::Int || E.Type->Kind == NdTypeKind::Ptr
+               ? E.Type->Size
+               : 0;
+  return E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi ? E.Var.Size : 0;
+}
+
+bool HighCWriter::valueFitsInBytes(const HighExpr &E, uint16_t Bytes,
+                                   unsigned Depth) const {
+  if (Bytes >= 8)
+    return true;
+  if (Depth > limits::kMaxIntegerViewUnwrapDepth)
+    return false;
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+    const auto It = ValueForward.find(varName(E.Var));
+    if (It != ValueForward.end() && It->second && It->second != &E)
+      return valueFitsInBytes(*It->second, Bytes, Depth + 1);
+  }
+  const uint16_t Width = integerViewWidth(E);
+  if (Width && Width <= Bytes)
+    return true;
+  auto Fits = [&](size_t I) {
+    return I < E.Operands.size() && E.Operands[I] &&
+           valueFitsInBytes(*E.Operands[I], Bytes, Depth + 1);
+  };
+  // A sign extension keeps a fitting value's high bytes zero only where its
+  // own top byte is.
+  auto ExtensionFits = [&](bool Signed) {
+    if (E.Operands.empty() || !E.Operands[0])
+      return false;
+    const uint16_t In = integerViewWidth(*E.Operands[0]);
+    if (!In)
+      return false;
+    if (Width <= In || !Signed)
+      return Fits(0);
+    return Bytes < In && Fits(0);
+  };
+  switch (E.Kind) {
+  case ExprKind::Const:
+    return (E.ConstVal >> (8 * Bytes)) == 0;
+  case ExprKind::Cast:
+  case ExprKind::BitCast:
+    return ExtensionFits(E.Operands.empty() || !E.Operands[0] ||
+                         !E.Operands[0]->Type || E.Operands[0]->Type->IsSigned);
+  case ExprKind::UnaryOp:
+    if (E.Op == NdOp::BOOL_NOT)
+      return true;
+    if (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT)
+      return ExtensionFits(E.Op == NdOp::INT_SEXT);
+    return false;
+  case ExprKind::BinOp:
+    switch (E.Op) {
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+      return true;
+    case NdOp::INT_AND:
+      return Fits(0) || Fits(1);
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+      return Fits(0) && Fits(1);
+    case NdOp::SUBBYTES:
+      return E.Operands.size() == 2 && E.Operands[1] &&
+             E.Operands[1]->Kind == ExprKind::Const &&
+             E.Operands[1]->ConstVal == 0 && Fits(0);
+    default:
+      return false;
+    }
+  default:
+    return false;
+  }
+}
+
+const HighExpr *HighCWriter::truthTestedValue(const HighExpr *E) const {
+  for (unsigned Depth = 0; E && Depth < limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      const auto It = ValueForward.find(varName(E->Var));
+      if (It == ValueForward.end() || !It->second || It->second == E)
+        return E;
+      E = It->second;
+      continue;
+    }
+    const bool View =
+        !E->Operands.empty() && E->Operands[0] &&
+        (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+         (E->Kind == ExprKind::UnaryOp &&
+          (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) ||
+         (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+          E->Operands.size() == 2 && E->Operands[1] &&
+          E->Operands[1]->Kind == ExprKind::Const &&
+          E->Operands[1]->ConstVal == 0));
+    if (!View)
+      return E;
+    // An extension, or a reinterpretation of the same bits, is zero just
+    // where its operand is; a conversion or a byte view may narrow it.
+    const HighExpr &Inner = *E->Operands[0];
+    if (E->Kind != ExprKind::BitCast && E->Kind != ExprKind::UnaryOp) {
+      const uint16_t Outer = integerViewWidth(*E);
+      const uint16_t In = integerViewWidth(Inner);
+      if (!Outer || !In || (Outer < In && !valueFitsInBytes(Inner, Outer)))
+        return E;
+    }
+    E = &Inner;
+  }
+  return E;
+}
+
 std::optional<int64_t> HighCWriter::frameDisplacement(const HighExpr &E) const {
   if (!CurrentFunc ||
       FrameDisplacementDepth >= limits::kMaxFrameDisplacementDepth)
@@ -5492,8 +5609,7 @@ std::string HighCWriter::condStr(const HighExpr &E) {
 }
 
 std::string HighCWriter::condStrImpl(const HighExpr &E) {
-  const HighExpr *Cur = forwardedExpr(&E);
-  Cur = unwrapIntegerView(Cur);
+  const HighExpr *Cur = truthTestedValue(&E);
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
       return false;
@@ -5511,22 +5627,16 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
       Cur->Operands[0] && Cur->Operands[1] && Cur->Op == NdOp::INT_EQUAL) {
     const HighExpr *X = nullptr;
     if (IsZeroLike(Cur->Operands[1]))
-      X = forwardedExpr(Cur->Operands[0].get());
+      X = truthTestedValue(Cur->Operands[0].get());
     else if (IsZeroLike(Cur->Operands[0]))
-      X = forwardedExpr(Cur->Operands[1].get());
+      X = truthTestedValue(Cur->Operands[1].get());
     if (X) {
       if (const HighExpr *Call = typedCallResult(X))
         return "!" + exprStr(*Call, 99);
-      X = unwrapIntegerView(X);
-      if (X && X->Kind == ExprKind::Call)
+      if (X->Kind == ExprKind::Call)
         return "!" + exprStr(*X, 99);
     }
   }
-  if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES &&
-      Cur->Operands.size() == 2 && Cur->Operands[0] && Cur->Operands[1] &&
-      Cur->Operands[1]->Kind == ExprKind::Const &&
-      Cur->Operands[1]->ConstVal == 0)
-    return condStr(*Cur->Operands[0]);
   if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Operands.size() == 2 &&
       Cur->Operands[0] && Cur->Operands[1] &&
       (Cur->Op == NdOp::BOOL_AND || Cur->Op == NdOp::BOOL_OR)) {
@@ -5609,8 +5719,8 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
     }
     return L + " || " + R;
   }
-  // Boolean context: a leftover narrowing cast of a scalar / call is
-  // `test eax`, not a sanitizer wrap. Keep wraps on add/sub/mul.
+  // Boolean context: a view the test keeps whether it reads zero through is
+  // no sanitizer wrap. Keep wraps on add/sub/mul.
   if (Cur && Cur != &E &&
       (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi ||
        Cur->Kind == ExprKind::Call))

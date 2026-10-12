@@ -405,6 +405,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// Whether every byte of \p E from \p Bytes up is zero, as far as its
+  /// form and forwarded values show: a comparison, a constant, a zero
+  /// extension or a mask that fits.
+  bool valueFitsInBytes(const HighExpr &E, uint16_t Bytes,
+                        unsigned Depth = 0) const;
+  /// \p E as a truth test reads it: forwarded values followed, and integer
+  /// views dropped while they keep whether it is zero (a widening one, or a
+  /// narrowing one of a value that fits).  A narrowing view that may drop a
+  /// nonzero byte stays: `test %al, %al` reads one byte of EAX.
+  const HighExpr *truthTestedValue(const HighExpr *E) const;
   /// The variable \p E converts between integer or pointer types of one
   /// width, or null when a step changes the width or converts a float: a
   /// narrowed or extended view is another value than the variable it reads
