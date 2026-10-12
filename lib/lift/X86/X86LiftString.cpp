@@ -13,6 +13,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86FPMaskCompareState.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -219,102 +220,10 @@ bool X86Lifter::liftString(LiftState &S, const cs_insn *Insn,
         break;
       }
     }
-    if (HasXmm) {
-      if (X86.op_count < 2)
-        break;
-      NdVar Dst = operandWrite(X86.operands[0]);
-      NdVar Src = operandRead(S, X86.operands[1]);
-      uint8_t Pred = 0;
-      bool FoundImm = false;
-      for (uint8_t N = 0; N < X86.op_count; ++N)
-        if (X86.operands[N].type == X86_OP_IMM) {
-          Pred = static_cast<uint8_t>(X86.operands[N].imm) & 7;
-          FoundImm = true;
-        }
-      if (!FoundImm && Insn->size >= 1)
-        Pred = Insn->bytes[Insn->size - 1] & 7;
-      // CMPSS/CMPSD are scalar: compare only lane 0, preserve the dst high
-      // half. (Packed CMPPS/CMPPD route to the SIMD lifter, never reach here.)
-      bool IsPacked = false;
-      bool IsDouble = (InsnId == X86_INS_CMPSD);
-      unsigned LaneSz = IsDouble ? 8 : 4;
-      unsigned NLanes = IsPacked ? (Dst.Size / LaneSz) : 1;
-      NdVar Acc = S.makeTemp(0);
-      for (unsigned I = 0; I < NLanes; ++I) {
-        // Always extract the operand lane: the scalar form must compare only
-        // the low LaneSz bytes, not the full XMM register.
-        NdVar La = S.makeTemp(LaneSz);
-        NdVar Lb = S.makeTemp(LaneSz);
-        S.emit(NdOp::SUBBYTES, La, {Dst, NdVar::scalar(I * LaneSz, 4)});
-        S.emit(NdOp::SUBBYTES, Lb, {Src, NdVar::scalar(I * LaneSz, 4)});
-        NdVar CmpRes = S.makeTemp(1);
-        bool Neg = false;
-        switch (Pred) {
-        default:
-        case 0:
-          S.emit(NdOp::FLOAT_EQUAL, CmpRes, {La, Lb});
-          break;
-        case 1:
-          S.emit(NdOp::FLOAT_LESS, CmpRes, {La, Lb});
-          break;
-        case 2:
-          S.emit(NdOp::FLOAT_LESSEQUAL, CmpRes, {La, Lb});
-          break;
-        case 3: { // UNORD: isNaN(a) || isNaN(b) — must inspect BOTH operands
-          NdVar NanA = S.makeTemp(1), NanB = S.makeTemp(1);
-          S.emit(NdOp::FLOAT_ISNAN, NanA, {La});
-          S.emit(NdOp::FLOAT_ISNAN, NanB, {Lb});
-          S.emit(NdOp::BOOL_OR, CmpRes, {NanA, NanB});
-          break;
-        }
-        case 4:
-          S.emit(NdOp::FLOAT_NOTEQUAL, CmpRes, {La, Lb});
-          break;
-        case 5:
-          S.emit(NdOp::FLOAT_LESS, CmpRes, {La, Lb});
-          Neg = true;
-          break;
-        case 6:
-          S.emit(NdOp::FLOAT_LESSEQUAL, CmpRes, {La, Lb});
-          Neg = true;
-          break;
-        case 7: { // ORD: !(isNaN(a) || isNaN(b)) — must inspect BOTH operands
-          NdVar NanA = S.makeTemp(1), NanB = S.makeTemp(1);
-          S.emit(NdOp::FLOAT_ISNAN, NanA, {La});
-          S.emit(NdOp::FLOAT_ISNAN, NanB, {Lb});
-          S.emit(NdOp::BOOL_OR, CmpRes, {NanA, NanB});
-          Neg = true;
-          break;
-        }
-        }
-        if (Neg) {
-          NdVar NotCmp = S.makeTemp(1);
-          S.emit(NdOp::BOOL_NOT, NotCmp, {CmpRes});
-          CmpRes = NotCmp;
-        }
-        NdVar Mask = S.makeTemp(LaneSz);
-        S.emit(NdOp::INT_ZEXT, Mask, {CmpRes});
-        NdVar AllOnes = S.makeTemp(LaneSz);
-        S.emit(NdOp::INT_NEG2, AllOnes, {Mask});
-        if (I == 0)
-          Acc = AllOnes;
-        else {
-          NdVar Next = S.makeTemp(Acc.Size + LaneSz);
-          S.emit(NdOp::CONCAT, Next, {AllOnes, Acc});
-          Acc = Next;
-        }
-      }
-      if (!IsPacked && Dst.Size > LaneSz) {
-        NdVar Hi = S.makeTemp(Dst.Size - LaneSz);
-        S.emit(NdOp::SUBBYTES, Hi, {Dst, NdVar::scalar(LaneSz, 4)});
-        S.emit(NdOp::CONCAT, Dst, {Hi, Acc});
-      } else if (Acc.Size < Dst.Size) {
-        NdVar Wide = S.makeTemp(Dst.Size);
-        S.emit(NdOp::INT_ZEXT, Wide, {Acc});
-        S.emit(NdOp::COPY, Dst, {Wide});
-      } else {
-        S.emit(NdOp::COPY, Dst, {Acc});
-      }
+    if (HasXmm || InsnId == X86_INS_CMPSS ||
+        hasLegacyFPMaskCompareOpcode(Insn)) {
+      return liftFPMaskCompareState(*this, S, Insn, X86,
+                                    InsnId == X86_INS_CMPSD, true, false);
     } else if (!hasRepOrRepnePrefix(X86)) {
       // String CMPSD (AT&T `cmpsl`, no XMM operand): compare DS:[RSI] with
       // ES:[RDI] as a 4-byte CMP and step both pointers per DF.

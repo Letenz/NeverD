@@ -2135,6 +2135,22 @@ both C routes share the guarded conversion renderer. The cast executes only
 after range and NaN checks. Architecture-specific floating control/status
 effects remain in their existing intrinsic contracts.
 
+`ir/X86FPMaskCompareState.h` owns legacy/VEX CMPSS/CMPSD/CMPPS/CMPPD
+completion. Scalar or packed raw mask bits precede outgoing MXCSR in one
+aggregate; they never acquire floating-point result provenance. Full imm8 is
+retained, with only the architectural three legacy or five VEX predicate bits
+selecting semantics. `ir/X86FPComparison.h` owns the shared predicate truth and
+signaling tables plus active-lane NaN/denormal/DAZ classification, including the
+existing EVEX comparison path. Three legacy/scalar/VEX entry points share one
+authenticated lifter. Scalar upper lanes and legacy/VEX destination transport
+retain their source rules. Exact memory reads and legacy packed alignment stay
+inside completion; malformed or unknown state refuses, and unmasked exceptions
+publish MXCSR but no mask. LLVM assembly retains an authenticated full-layout
+metadata record; both C routes retain the original instruction and state scope.
+Codegen detects VEX comparison requirements before legalizing YMM results.
+Immutable scalar home recovery retains the predicate, both values and CSR.
+Swift refuses this completion surface until equivalent lowering is available.
+
 `ir/X86FPComiState.h` owns legacy/VEX COMI and UCOMI flag/MXCSR completion.
 One raw aggregate carries LAHF's defined status byte below outgoing MXCSR;
 it never acquires scalar floating provenance. Source reads and actual compare

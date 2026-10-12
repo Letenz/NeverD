@@ -185,6 +185,27 @@ thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
 
+`NeverDX86MaskCompareStateTests` compares twenty legacy/VEX scalar/packed
+register/memory forms with original bytes, Codegen, HighC and LLVMC at
+default/NoOpt and C O0/O2. One original function executes all eight legacy or
+32 VEX predicates, retaining each raw mask and MXCSR separately. Full YMM
+destination/source observations distinguish scalar preservation, VEX clearing
+and inactive lanes; all six defined arithmetic flags and complete output guards
+are retained. Signed zeros, subnormals, infinities and quiet/signaling NaNs
+exercise RC/DAZ/FTZ/sticky environments. Discarded masks, mixed memory/register
+helpers and ignored immediate bits receive separate execution probes.
+The concrete matrix imports actual completing states; faulting combinations
+use masked native exception classification and separate native fault children.
+Children cover invalid, denormal, combined cross-lane status, source-page faults
+and legacy packed alignment faults before output. Page-end and actual Windows
+GS sources verify exact extents. Decoder checks retain every imm8 and physical
+register role, reject metadata mutations and distinguish scalar CMP from string
+CMPSD. Low/Med/High shapes, raw provenance, owned assembly and immutable scalar
+homes in ELF/Mach-O/COFF are checked. Native observers require x64/Clang/AVX;
+fault contexts require Windows/Linux and native GS requires Windows x64.
+These checks do not certify native x86-32, AVX-512 hardware, enabled #AC or
+unavailable-feature faults. Existing EVEX comparison checks remain software/IR.
+
 `NeverDX86ComiStateTests` compares the sixteen legacy/VEX COMISS/UCOMISS and
 COMISD/UCOMISD register/memory forms with Codegen, HighC and LLVMC at
 default/NoOpt and C O0/O2. Observers retain all defined arithmetic flags,
