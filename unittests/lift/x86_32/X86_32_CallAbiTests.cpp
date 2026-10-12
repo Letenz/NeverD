@@ -268,3 +268,16 @@ static int mx(int n, ...) {
 )C",
                        "vmax_i", {"vmax_i", "mx"});
 }
+
+// `pcmpeqd x, x` sets every bit of x whatever x held, so the function reads
+// no vector register and takes only its stack argument.
+TEST_F(X86_32_CallAbi, AVectorOfOnesReadsNoRegister) {
+  expectRunsLikeSource(R"C(
+unsigned ones_plus(unsigned a) {
+  unsigned r;
+  __asm__("pcmpeqd %%xmm0, %%xmm0\n\tmovd %%xmm0, %0" : "=r"(r) : : "xmm0");
+  return r + a * 3u;
+}
+)C",
+                       "ones_plus", {"ones_plus"});
+}
