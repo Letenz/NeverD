@@ -2249,10 +2249,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   };
   // A relative table holds the offsets of its targets from its own start
   // (clang's `.rel` lookup tables), so the code reaches each target through
-  // the table's address: the table's object spans the targets.  A target is
-  // a sized object or a string after the table.  The assembler fixes an
-  // offset into the table's own section and relocates one into another (an
-  // object's strings), which the loader applies as the same offset.
+  // the table's address: the table's object spans the targets.  Code that
+  // adds an entry back to the table proves it relative, so a target may also
+  // be a string, in another section, the entry a relocation the loader
+  // applies as the same offset (an object's strings).  A table the code only
+  // keeps the address of is one where each entry is an offset the assembler
+  // fixed to a sized object after the table in its section; a relocated slot
+  // of it is a pointer.
   auto StringExtent = [&](va_t Target) -> std::optional<uint64_t> {
     for (uint64_t Byte = 0; Byte < limits::kMaxStringScanLen; ++Byte) {
       const uint8_t *Unit = Opts.Image->readVA(Target + Byte, 1);
@@ -2263,40 +2266,64 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
     return std::nullopt;
   };
-  auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes) {
+  auto NoteRelativeTargets = [&](va_t Table, uint16_t EntryBytes,
+                                 bool AddedBack) {
     const auto Object = sizedObjectAt(Table);
+    const Section *Sec = Opts.Image->getSectionFor(Table);
     if (!Object || Object->first != Table ||
-        (EntryBytes != 4 && EntryBytes != 8))
+        (EntryBytes != 4 && EntryBytes != 8) ||
+        (!AddedBack &&
+         (!Sec || Sec->Size > std::numeric_limits<va_t>::max() - Sec->VA)))
       return;
     va_t End = Table + Object->second;
     for (va_t Slot = Table; Slot + EntryBytes <= Table + Object->second;
          Slot += EntryBytes) {
       const uint8_t *Bytes = Opts.Image->readVA(Slot, EntryBytes);
-      if (!Bytes)
+      if (!Bytes || (!AddedBack && Opts.Image->hasRelocationProvenanceAt(Slot)))
         return;
       const int64_t Offset =
           EntryBytes == 4 ? static_cast<int64_t>(
                                 static_cast<int32_t>(readLE<uint32_t>(Bytes)))
                           : static_cast<int64_t>(readLE<uint64_t>(Bytes));
       if (Offset < static_cast<int64_t>(Object->second) ||
-          Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes))
+          (AddedBack &&
+           Offset >= static_cast<int64_t>(limits::kMaxRelativeTableSpanBytes)))
         return;
       const va_t Target = Table + static_cast<va_t>(Offset);
       va_t TargetEnd = 0;
       if (const auto TargetObject = sizedObjectAt(Target);
           TargetObject && TargetObject->first == Target)
         TargetEnd = Target + TargetObject->second;
-      else if (const auto String = StringExtent(Target))
+      else if (const auto String =
+                   AddedBack ? StringExtent(Target) : std::nullopt)
         TargetEnd = Target + *String;
       else
         return;
-      if (TargetEnd - Table > limits::kMaxRelativeTableSpanBytes)
+      if (AddedBack ? TargetEnd - Table > limits::kMaxRelativeTableSpanBytes
+                    : TargetEnd > Sec->VA + Sec->Size)
         return;
       End = std::max<va_t>(End, TargetEnd);
     }
     ImageObject &Obj = ImageObjects[Table];
     Obj.IndexedBytes = std::max<uint64_t>(Obj.IndexedBytes, End - Table);
   };
+  // A variable holding an entry of an indexed image table: code that adds
+  // it back to the table (`e = table[i]; *(table + e)`) reads a relative
+  // table as surely as one that adds the load itself.
+  VarKeyMap<std::pair<va_t, uint16_t>> TableEntryVars;
+  for (const HighFunc &Func : Funcs)
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::Assign || !S.Dst || !S.Val ||
+          (S.Dst->Kind != ExprKind::Var && S.Dst->Kind != ExprKind::Phi))
+        return;
+      const HighExpr *Load = peelIntegerViewOps(S.Val.get());
+      if (!Load || Load->Kind != ExprKind::Load || !Load->Type ||
+          Load->Operands.empty() || !Load->Operands[0])
+        return;
+      if (const HighExpr *Entries = indexedImageBase(*Load->Operands[0]))
+        TableEntryVars[varKey(S.Dst->Var)] = {Entries->ConstVal,
+                                              Load->Type->Size};
+    });
   // The constant addresses the code reads or writes at, as opposed to those
   // it uses as values.
   std::set<const HighExpr *> AccessAddresses;
@@ -2433,13 +2460,23 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
                     Terms(*Operand, Depth + 1);
                 return;
               }
+              if (Inner->Kind == ExprKind::Var ||
+                  Inner->Kind == ExprKind::Phi) {
+                if (const auto Entry = TableEntryVars.find(varKey(Inner->Var));
+                    Entry != TableEntryVars.end() &&
+                    Entry->second.first == Base->ConstVal)
+                  NoteRelativeTargets(Base->ConstVal, Entry->second.second,
+                                      /*AddedBack=*/true);
+                return;
+              }
               if (Inner->Kind != ExprKind::Load || !Inner->Type ||
                   Inner->Operands.empty() || !Inner->Operands[0])
                 return;
               if (const HighExpr *Entries =
                       indexedImageBase(*Inner->Operands[0]);
                   Entries && Entries->ConstVal == Base->ConstVal)
-                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size);
+                NoteRelativeTargets(Base->ConstVal, Inner->Type->Size,
+                                    /*AddedBack=*/true);
             };
         Terms(*E.Operands[0], 0);
       }
@@ -2544,7 +2581,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   // object after it.
   for (auto &[Addr, Obj] : ImageObjects)
     if (Obj.AddressTaken)
-      NoteRelativeTargets(Addr, 4);
+      NoteRelativeTargets(Addr, 4, /*AddedBack=*/false);
 
   // A pointer slot the image relocates holds an address, not a number: a
   // table of functions or of data the code reaches through it.  Each target
