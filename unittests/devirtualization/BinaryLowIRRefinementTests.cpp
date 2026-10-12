@@ -2689,6 +2689,40 @@ TEST(BinaryLowIRRefinement, MandatorySystemFlagsRejectCandidateMutation) {
   refused(P.check(Recovery.Residual), Status::Different);
 }
 
+TEST(BinaryLowIRRefinement, KernelFinalInterruptFlagRejectsCandidateMutation) {
+  // mov ecx,IF; push rcx; popfq; ret. Change only the candidate's IF image.
+  for (auto Profile : {InterpreterMachineStateProfile::UserX64NoFaultV1,
+                       InterpreterMachineStateProfile::KernelX64NoFaultV1}) {
+    SCOPED_TRACE(static_cast<unsigned>(Profile));
+    Program P({0xb9, 0, 2, 0, 0, 0x51, 0x9d, 0xc3});
+    P.Options.X64FlagsProfile = P.Contract.X64FlagsProfile = Profile;
+    auto Recovery = P.recover();
+    ASSERT_TRUE(Recovery.complete()) << Recovery.Diagnostic;
+    const auto Identity = P.check(Recovery.Residual);
+    ASSERT_TRUE(Identity.proved()) << Identity.Proof.Diagnostic;
+    EXPECT_EQ(Identity.Certificate->Relation.Contract.X64FlagsProfile, Profile);
+    P.Contract.ReturnRegisters.clear();
+    P.Contract.ObserveWrittenFrameBytes = false;
+    unsigned Changed = 0;
+    for (auto &B : Recovery.Residual.Blocks)
+      for (auto &O : B.Ops)
+        if (O.Opcode == NdOp::INTRINSIC && O.NumInputs == 2) {
+          O.Inputs[1] = NdVar::scalar(0, 8);
+          ++Changed;
+        }
+    ASSERT_EQ(Changed, 1U);
+    const auto Mutated = P.check(Recovery.Residual);
+    if (Profile == InterpreterMachineStateProfile::KernelX64NoFaultV1) {
+      refused(Mutated, Status::Different);
+      EXPECT_NE(Mutated.Proof.Diagnostic.find("final system flags"),
+                std::string::npos);
+    } else {
+      // CPL=3 ignores IF, so this is a deliberate profile-sensitive control.
+      ASSERT_TRUE(Mutated.proved()) << Mutated.Proof.Diagnostic;
+    }
+  }
+}
+
 TEST(BinaryLowIRRefinement, NativeEntryAndImageContractsRemainMandatory) {
   Program P({0xc3});
   const auto Recovery = P.recover();
