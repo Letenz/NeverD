@@ -70,3 +70,28 @@ int agg(int a) {
 )C",
                             "agg", {"agg"}, {-3, 4, 32, 39, 53, 60, 74});
 }
+
+// The double MULSD multiplies by is a constant-pool entry the code reaches
+// through the GOT register, `mulsd .LCPI0_0@GOTOFF(%ebx)`: the C reads all
+// eight of its bytes, not a two-byte placeholder for an unsized label.
+TEST_F(X86_32_HighCData, AConstantMulsdReadsThroughTheGotIsWhole) {
+  // The C computes 32-bit frame addresses and keeps SSE operands in xmm.
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectHighCRunsLikeSource({"-target", "i386-linux-gnu", "-march=pentium4"},
+                            R"C(
+static int fi(int) __attribute__((noinline));
+int intacc_fp(int x) {
+  unsigned h = (unsigned)x, acc = 0;
+  for (int i = 0; i < 120; i++) {
+    h = h * 1103515245u + 12345u;
+    double scratch = (double)((h >> 6) & 0xff) * 1.25;
+    int r = fi((int)scratch);
+    acc = acc * 131u + (unsigned)r + (unsigned)(int)scratch + (unsigned)i;
+  }
+  return (int)acc;
+}
+static int fi(int v) { return v * 11 + 5; }
+)C",
+                            "intacc_fp", {"intacc_fp", "fi"},
+                            {-3, 0, 4, 11, 77});
+}

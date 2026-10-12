@@ -2426,6 +2426,11 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         NoteAccessAddress(E.Operands[0].get());
         if (auto VA = constAddress(*E.Operands[0]))
           noteImageObject(*VA, NdType::makeInt(Bytes, false), false, true);
+        // Through a base the code adds (i386 PIC code adds the GOT register
+        // to the constant's offset), the read is of the object there, as a
+        // load at a variable offset is.
+        else if (const HighExpr *Base = indexedImageBase(*E.Operands[0]))
+          NoteWhole(Base->ConstVal, NdType::makeInt(Bytes, false), false);
       }
     // A read-modify-write reads and writes the object it addresses.
     if (E.Kind == ExprKind::BinOp &&
