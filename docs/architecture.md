@@ -810,6 +810,14 @@ and declaration uniqueness from `indexSourceDeclarations`. Exhaustion clears
 relations without invalidating request evidence. `SessionInterfaceRelations`
 owns explicit selection, revision/cache lifetime and metadata-only pages.
 See the [relationship profile](web-interface-relations-profile.md).
+`interfaces/TransformationLinks` adds fixed call spellings only through direct
+request-body and result-argument containment; no value propagation or API
+authentication is duplicated. `interfaces/report/Source` projects existing
+frontend evidence, `Shapes` inspects admitted observed JSON types, `Compose`
+reuses the HTTP join and shared MCP spelling vocabulary, and `Publication`
+emits closed metadata. `SessionPassiveReport` owns explicit committed selections,
+atomic bounded caches and revision-bound pages. See the
+[passive report profile](web-passive-report-profile.md).
 `streams/Framing` owns bounded line/SSE framing, `streams/Records` owns
 selected JSON/protocol shapes and `streams/Relations` owns recorded-context
 joins. Shared `JsonReader` reports consumed nodes even on failure so a stream
@@ -878,6 +886,11 @@ exact captured file comparison for NW.js and VS Code extensions;
 Individual opaque-key Bun/SEA assets never acquire a directory namespace.
 The C API, CLI, worker and MCP only select and publish this common evidence.
 See the [desktop manifest profile](web-desktop-manifest-profile.md).
+`desktop/ResourceManifest` reads the separately versioned supplied CEF/WebView
+resource descriptor through the same captured namespace/path owner.
+`SessionDesktopExport` reuses the exclusive local writer and exact artifact
+origins; transport adapters neither infer a framework nor export raw resources.
+See the [resource descriptor profile](web-desktop-resource-profile.md).
 `SourcePaths` owns finite captured-root path candidates; `ElectronEntries`
 compares them with exact available namespace members. `SessionElectronEntries`
 selects evidence, caches results and publishes redacted pages; CLI and worker

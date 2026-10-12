@@ -1,21 +1,23 @@
 # JavaScript epic acceptance audit
 
 This audit records the implemented boundaries of #714–#718 on 2026-10-12.
-The five-issue objective is **not complete**. A passed fixture or captured sample
-qualifies its selected profile and operation; it does not establish general
+The five issues' bounded initial scope and named supplement profiles are
+implemented. Completion is assessed against the original criteria below, not
+against a universal analyzer or every future runtime build. A passed fixture or
+captured sample qualifies its selected profile and operation; it does not establish general
 framework support, source equivalence, publisher trust or runtime behavior.
 All new implementation and authored fixtures use C++. Target samples are never
 executed, and the analyzer uses no external scripts, runtimes or network tools.
 
 ## Issue evidence and remaining work
 
-| Issue | Implemented, reviewable evidence | Remaining acceptance boundary |
+| Issue | Implemented, reviewable evidence | Explicit supported boundary |
 | --- | --- | --- |
-| [#714](https://github.com/NeverSight/NeverD/issues/714) | Immutable source/map origins, embedded bounded parser, lexical/value/effect/module/bundle/navigation models, separate reversible primitive/rename/Boolean-expression profiles, reviewed source views and verified same-parser-tree readable export. Client syntax candidates cover tool/config/permission/hook/MCP spellings. Configuration-object source order adds loading initializer links and unknown-key overwrite barriers; real Claude units retain 273 objects, 2,279 terms and 19 possible later overwrites. | Separate configuration-file layers, additional merge forms and broader dispatch/dataflow need explicit grammars and known-answer fixtures. The object-order profile does not establish effective policy or current values. Local transformations and formatting do not restore erased TypeScript, types, names or establish whole-program equivalence. |
-| [#715](https://github.com/NeverSight/NeverD/issues/715) | npm graphs/diffs, tar/gzip inventory, original-byte SRI, bounded Node behavior/install associations and diffs, captured advisory/registry/provenance metadata, composed assessments, persistent dispositions and selected-evidence Qt review. All eight Claude platform packages have independent archive/payload integrity evidence. | Broader GUI evidence selectors, lifecycle/loader/host qualification and remaining delivery relationships. Signature declarations and matching hashes do not authenticate a publisher or establish benign behavior. |
-| [#716](https://github.com/NeverSight/NeverD/issues/716) | ASAR/ZIP safety, Electron unpacked/member/manifest/entry/IPC boundaries, NW.js/VSIX/HTML/import-map candidates and native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 Linux ELF and Windows PE x64 releases provide exact assets, raw/readable export and retained native binaries. The measured Tauri PHF/Mach-O x64 initializer profile extracts all 15 assets of a preserved public release, verifies 9 readable JS members and retains original native handoff through nested old-GNU archive evidence. Direct Tauri 1/Wails 2 bridge syntax now has redacted source/call/binding pages, with a real Tauri IPC call linked to its decoded range and compressed parent. | Broader Tauri Rust layouts/containers/ISAs and encoding selection, bridge aliases/imports/native-target links, broader Electron/NW.js distributions, desktop GUI selectors and runtime mount/window associations remain unqualified. The bounded Tauri-and-Wails asset/native-handoff criterion has concrete evidence; the complete desktop epic remains open. |
-| [#717](https://github.com/NeverSight/NeverD/issues/717) | Redacted HAR preview/commit, direct fetch/WebSocket/XHR/member spellings, single-layer lexical fetch parameter forwarding, separate request/result syntax links and direct-fetch-only HAR joins. Versioned SSE/JSONL/JSON-RPC/MCP-shape/log imports preserve recorded directions/IDs and partial framing. | General request/config dataflow, nearby transformation chains, source/stream joins, remaining inventory/review/schema presentation. Real complex Claude dispatch remains unknown; no real transcript was supplied for qualification and none is invented. |
-| [#718](https://github.com/NeverSight/NeverD/issues/718) | Independent pinned Bun ELF/thin Mach-O/PE x64/ARM64 profiles and Node SEA 22.15.0, nexe 4.0.0-rc.7 and pkg 5.8.1 profiles; producer fixtures, original/member/range/hash links, bounds, opaque-cache preservation and native/shared-source consumers. All eight Claude 2.1.296 platform deliveries have complete shipped-JS preservation/readable exports. | Additional runtime/layout/host profiles need their own measured qualification. Opaque JSC/V8 caches stay unsupported; all-platform extraction is separate from native lifting and complete cross-track analysis. |
+| [#714](https://github.com/NeverSight/NeverD/issues/714) | Immutable source/map origins, bounded C++ parser, lexical/value/effect/module/bundle/navigation models, reversible primitive/rename/Boolean-expression profiles, reviewed source views and verified same-tree readable export. Known tool/config/permission/hook/MCP fixtures retain spans and uncertainty. Configuration-object order includes loading initializer links and unknown-key overwrite barriers; real Claude units retain 273 objects, 2,279 terms and 19 possible later overwrites. | Separate file layers, other merge forms and computed dispatch are outside the named grammar and remain unresolved. The issue requires identifiable source navigation and explicit unknowns, not effective policy or universal dataflow. Erased TypeScript/types/names and whole-program equivalence are not promised. |
+| [#715](https://github.com/NeverSight/NeverD/issues/715) | npm graphs/diffs, tar/gzip inventory, original-byte SRI, Node behavior/install associations and diffs, advisory/registry/provenance imports, assessments, persistent dispositions and Qt review. Eight Claude packages retain independent archive/payload integrity. | npm lockfile versions and the literal Node installation grammar are named; pnpm/Yarn, complete runtime resolution and other GUI selectors are further adapters/workbench extensions. The GUI preserves selected confidence/coverage/dispositions, with unselected evidence explicit. Hashes/signature declarations prove no publisher trust or benign behavior. |
+| [#716](https://github.com/NeverSight/NeverD/issues/716) | Safe ASAR/ZIP, Electron unpacked/manifests/entries/IPC, NW.js/VSIX/HTML/native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 ELF/PE x64 and measured Tauri PHF/Mach-O x64 assets have exact raw/readable exports and native links. Tauri yields 15 assets and 9 readable JS members. Direct Tauri/Wails bridge syntax retains private source anchors. A named supplied CEF/WebView resource descriptor links and exports local assets/helpers, including opaque resources. | Other Rust/Go layouts, ISAs, codecs, bridge aliases and runtime mount/window relations need independent profiles. The CEF/WebView descriptor is supplied local evidence, not automatic framework authentication or a `.pak` decoder. The issue asks for supported versioned layouts and clear refusal of unsupported builds. |
+| [#717](https://github.com/NeverSight/NeverD/issues/717) | Redacted HAR preview/commit, fetch/WebSocket/XHR/wrapper candidates, request/result and nearby JSON/base64/URI/crypto/zlib syntax links, direct-fetch HAR joins and versioned streams/logs. Selected reports retain source features, recorded links, separate same-MCP-method candidates and observed JSON type summaries with example IDs, unknown optionality/server constraints and pagination. | General value propagation, aliases, dynamic transformations and authenticated API identity remain unknown. Same-method spelling does not establish a session, response or source execution. Complex Claude dispatch stays unresolved; no real transcript was supplied or invented. OpenAPI is optional and is not claimed by the metadata report. |
+| [#718](https://github.com/NeverSight/NeverD/issues/718) | Independent Bun ELF/thin Mach-O/PE x64/ARM64 and Node SEA 22.15.0, nexe 4.0.0-rc.7, pkg 5.8.1 profiles; producer fixtures, exact original/member/range hashes, bounds, opaque caches and shared consumers. All eight Claude 2.1.296 deliveries preserve every shipped JS unit and verified readable copy. | New runtime/layout/host profiles require independent measurement. Opaque JSC/V8 caches remain explicitly unsupported, as the issue permits. Extraction is separate from native lifting and complete cross-track runtime behavior. |
 
 The [support matrix](web-support-matrix.md) is authoritative for individual
 profiles. The [implementation ledger](web-analysis-implementation.md) records
@@ -64,19 +66,37 @@ for the complex dispatch in modules 1905/1920; their four fetch occurrences keep
 exact anchors and dynamic URL/method/options limitations. No HAR or transcript
 was supplied for these selections, so source/capture correlation is not attempted.
 
-## Next concrete acceptance work
+## Criterion coverage
 
-1. Extend desktop extraction only through independently measured profiles and
-   finish remaining desktop review/bridge relationships. The first
-   [Tauri asset profile](web-tauri-profile.md) now qualifies a complete selected
-   table from explicit native LowIR initializer evidence; it does not establish
-   a generic Rust ABI, compiler identity, runtime binding or other architectures.
-2. Extend request and configuration flow only through separately versioned,
-   evidence-linked grammars. Use actual Claude refusals to select useful cases;
-   keep computed dispatch, unknown effects and absent observations explicit.
-3. Complete the remaining consumer/presentation boundaries using shared backend
-   IDs and redaction, then rerun an issue-by-issue acceptance audit. Do not close
-   the five epics based solely on extraction or parser success.
+The scope above implements each original acceptance item. Additional builds,
+runtime resolution and workbench workflows are profile extensions; absent
+optional samples are recorded omissions, never passed acceptance cases.
+
+| Issue criteria | Owning checks and published contract |
+| --- | --- |
+| #714 syntax/bundler/map/transform matrix | [Support matrix](web-support-matrix.md), parser/source-map/bundle tests and each rewrite profile |
+| #714 benign originals/mappings and negative semantics | `WebSource*`, `WebSourceValues`, effect/binding/rewrite/rename/branch and export tests cover original preservation, coercion/effects/getters/exceptions/eval/with, invalid maps and exact/short budgets |
+| #714 deterministic IDs, limits, SDK/CLI/MCP and validation meaning | Source/navigation/anchor/view/SDK and worker/MCP tests; exact inverse and same-tree checks are separate from runtime/whole-program equivalence |
+| #714 tool/config/permission/MCP/hooks and sensitive-field supplement | `WebSourceFeatures`, `WebConfigurationOrder`, client corpus and bridge/navigation tests; [client](web-client-feature-profile.md), [order](web-configuration-order-profile.md), shared preview/redaction policies |
+| #715 reproducible versioned graph and conditional/unresolved edges | `WebPackages`/package SDK fixtures and [package profile](web-package-profile.md) |
+| #715 legitimate/suspicious/synthetic behavior and exact version diff | Node behavior, package behavior/install/diff suites retain occurrences, source anchors, uncertainty and explicit version/platform selections |
+| #715 advisory freshness, integrity/provenance contradictions and no execution | Advisory/attestation/integrity/archive/assessment tests and their independently versioned profiles; invalid, missing, unselected and unverified states remain distinct |
+| #715 GUI/CLI/MCP confidence, incomplete coverage and dispositions | Assessment/review SDK/transport tests plus `NeverDGuiWebReview`; fixed evidence and caller assertions stay separate and journals restore atomically |
+| #715 supplied native distribution supplement | `ClaudeDistributionTests`, installer/delivery/integrity tests and the pinned cross-platform manifest retain OS/ISA/libc, package/executable links, matching/different/missing hashes and independent signature states |
+| #716 matrix, ASAR/unpacked/NW and Tauri/Wails supported/native handoff | Desktop/ASAR/Electron/Wails/Tauri suites and real fixed-profile releases; [resource descriptor](web-desktop-resource-profile.md) covers named supplied CEF/WebView assets |
+| #716 hostile archives, reproducible origin/export, offline and opaque data | Archive/ZIP/ASAR/path/export suites; native/readable SDK checks preserve exact compressed or direct parent ranges and explicit unsupported members |
+| #716 VSIX/helper/version/redaction supplement | ZIP/desktop SDK and pinned VSIX-to-Bun checks retain separate extension/helper versions; normal pages exclude private content |
+| #717 literal/template anchors, static/HAR-only/correlated classes | Source/XHR/wrapper/interface/relationship and passive report SDK tests; existing HTTP equality rule remains authoritative |
+| #717 canaries, malformed/missing/WS/budgets, offline and stable navigation | HAR/stream/source/SDK/CLI/worker/MCP checks; no raw values, implicit network, target runtime or manufactured offsets |
+| #717 exported example/schema boundaries and stream/source supplement | `WebPassiveReport`/`WebPassiveSource`, stream framing/recorded-ID fixtures and [report](web-passive-report-profile.md) retain observed types, source domains, unknown constraints and only qualified candidate joins |
+| #718 matrix and primary pinned plain/minified/assets/maps/cache fixtures | Bun/SEA/nexe/pkg suites and redistributable producer graph/blob manifests; each format has independent version/platform/profile coverage |
+| #718 reproducible ranges, hostile input, source frontend and opaque caches | Extraction/map/native/source/export suites refuse truncated/unknown/compression-bomb data and retain unsupported cache evidence |
+| #718 fixed Claude manifest and per-track states | [Eight-platform qualification](web-claude-code-cross-platform-qualification.md) and the per-input table above; all 18,794 shipped JS units preserved, absent observations/maps and partial source analyses explicit |
+
+Final build, omission, transport, GUI and integration receipts are recorded in
+the [implementation ledger](web-analysis-implementation.md). This document
+records implementation acceptance, not a GitHub issue-state mutation. Historical
+increment receipts that said the epics were incomplete remain historical evidence.
 
 The earlier Tauri source research remains relevant but separate from the
 new binary qualification. At the pinned

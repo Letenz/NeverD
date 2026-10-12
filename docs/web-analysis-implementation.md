@@ -3447,3 +3447,62 @@ passes, followed by all nineteen affected core/SDK/native/transport cases
 `2537571a18225047ec1a484e9b7048575ad77ec9` before this receipt-only commit.
 Logs: `/tmp/neverd-configuration-order-{second-integration,
 second-integrated-build,second-focused-tests}.log`.
+
+## Five-issue bounded acceptance completion — 2026-10-12
+
+Base: `7e2309f7c249d69802cd4f13eec620edffd0bd68`. All authored implementation and
+fixtures remain C++; no target or external analysis runtime/tool executes.
+
+`request-source-relations-v2` adds independently bounded nearby JSON/base64/URI,
+crypto.subtle and zlib call-spelling containment. Deferred body functions,
+computed names and aliases do not gain value-flow or API-authentication claims.
+`passive-evidence-shape-report-v1` composes selected source/committed HAR/stream
+IDs, existing HTTP joins and a shared MCP method vocabulary. Recorded response
+links stay owned by streams. Examples are observation IDs; JSON type summaries
+withhold keys/values, and optionality/server constraints remain unknown.
+Two additive report C APIs, CLI forms and closed worker/MCP operations share
+this owner. Aggregate body work and report/cache/page bounds fail atomically.
+
+`cef-webview-local-resource-descriptor-v1` supplies an explicit named local
+resource index through existing namespace/path ownership. Directory and ZIP
+fixtures preserve exact hashes/origins, missing/opaque resources and independent
+CEF/WebView selection IDs. JS/HTML/native consumers and verified raw local export
+are qualified separately. The additive local export C API is excluded from
+worker/MCP; supplied declarations authenticate no framework or native version.
+
+Verification on macOS ARM64 Release/prebuilt LLVM 23.0.0 r4:
+
+- Enabled build completed. Focused checks passed 13 artifact cases, 10 source
+  cases (one absent optional source initially skipped), and six SDK/CLI cases.
+- Initial owning Web CTest: 805 distinct cases, 777 passed, 28 explicit skips,
+  27.73 s. Restored enabled build: the same 805/777/28, 63.55 s. Real supplied
+  Claude/Tauri inputs were selected; absent optional producer/npm/advisory/
+  Wails/VSIX captures remain skips, not passed evidence.
+- Native constant-store/buffer owners: six passed, including the pinned actual
+  Tauri initializer. Worker and three MCP gates passed. An initial MCP discovery
+  failure correctly found that the newly advertised local export needed the
+  test's explicit exclusion; adding that exclusion restored the required closed
+  surface. No raw MCP export was enabled.
+- Qt `NeverDGuiWebReview` passed with the preserved Claude corpus, 6.30 s.
+- Parser omission: 13 artifact, six SDK/CLI and four transport gates passed.
+  Observed reports/resources remain available; selected source explicitly refuses.
+- Whole-backend omission: three MCP gates passed, worker's unavailable-backend
+  gate skipped its positive integration; a C++ probe verified all three new ABI
+  functions return `capability_unavailable`. Both flags were restored to ON.
+- Formatting, source provenance (7,528 files) and canonical capability ownership
+  (23 capabilities) passed. The three new declarations were added to both C/JSON
+  ownership lists in lexical order.
+- Real Claude 2.1.296 macOS ARM64 module 928, SHA-256
+  `a5e52526ae954aa74deb80cf1bb2372d1f4b77e1886bba69d55e30c51efa2cd2`,
+  passed `report-source` with an unusable external-tool PATH and zero stderr.
+  Its three static records retain the interface/function/return anchors.
+  No real observation or transcript was supplied or manufactured.
+
+Local diagnostic receipts use `/tmp/neverd-epic-completion-*`; no raw samples,
+recovered source, build output or local screenshots are committed. The final
+criterion mapping is [the acceptance audit](web-epic-acceptance.md), with the
+[report](web-passive-report-profile.md) and
+[resource](web-desktop-resource-profile.md) contracts. Historical incomplete
+increment receipts remain historical; new runtime profiles, general dataflow,
+erased TypeScript/names, opaque bytecode decoding and other host qualification
+are explicit extensions/unsupported boundaries rather than universal promises.

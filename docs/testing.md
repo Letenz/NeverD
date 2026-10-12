@@ -716,6 +716,19 @@ explicit unavailable window; journals/models still work. Run the existing GUI
 unit/controller/language and smoke suites when modifying workbench commands.
 See the [journal/desktop profile](web-package-review-journal.md).
 
+`WebPassiveReport.*` verifies independently counted observed JSON types,
+malformed/encoded/missing bodies, aggregate node work, explicit selections and
+record refusal. `WebPassiveSource.*` verifies exact transformation/message
+syntax, deferred/computed/alias exclusions, all five client domains and selected
+MCP method candidates without protocol inference. SDK cases qualify commit
+gates, paging, revocation, reports and resource directory/ZIP/native consumers.
+CLI cases run with an unusable external-tool PATH; worker/MCP compare the same
+backend. `WebDesktopManifest.*` qualifies supplied CEF/WebView descriptor
+versions, exact scope, opaque/missing files and list budgets. Run owning Web,
+worker/MCP and parser/backend omission when changing these boundaries, then
+restore the enabled build. See the [report](web-passive-report-profile.md) and
+[resource](web-desktop-resource-profile.md) profiles.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded

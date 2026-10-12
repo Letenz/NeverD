@@ -20,11 +20,13 @@ namespace neverd::web::desktop {
 class ManifestContext {
   std::map<std::string_view, const Artifact *, std::less<>> Files;
   std::string ParentPath;
+  bool ResourceTypes = false;
 
 public:
   const Artifact *Manifest = nullptr;
   bool DirectoryNamespace = false;
-  explicit ManifestContext(const Snapshot &Input, std::string_view ArtifactID);
+  explicit ManifestContext(const Snapshot &Input, std::string_view ArtifactID,
+                           std::string_view RequiredName = "package.json");
   DesktopEntry entry(std::string_view Field, const llvm::json::Value *Value,
                      bool CommandLine = false) const;
 };
@@ -35,6 +37,9 @@ void readNWManifest(DesktopManifest &Result, const ManifestContext &Context,
                     const llvm::json::Object &Object);
 void readVSIXManifest(DesktopManifest &Result, const ManifestContext &Context,
                       const llvm::json::Object &Object);
+void readResourceManifest(DesktopManifest &Result,
+                          const ManifestContext &Context,
+                          const llvm::json::Object &Object);
 } // namespace neverd::web::desktop
 
 #endif // NEVERD_WEB_DESKTOP_MANIFESTINTERNAL_H

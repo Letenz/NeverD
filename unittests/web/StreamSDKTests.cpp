@@ -1,5 +1,4 @@
-//===- StreamSDKTests.cpp - Transcript publication and adapter checks
-//------===//
+//===- StreamSDKTests.cpp - Transcript publication checks ---------------===//
 //
 // NeverD Decompiler
 //
@@ -211,6 +210,8 @@ TEST_F(WebStreamSDK, CLIReceiptBindsBytesProfileAndPolicyWithoutExternalTools) {
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Out, Err};
   std::string Output, Errors;
   auto Run = [&](std::vector<std::string> Arguments) {
+    std::ofstream(Out, std::ios::trunc).close();
+    std::ofstream(Err, std::ios::trunc).close();
     llvm::SmallVector<llvm::StringRef> Args{NEVERD_WEB_TEST_CLI, "web"};
     for (const auto &A : Arguments)
       Args.push_back(A);
@@ -236,6 +237,9 @@ TEST_F(WebStreamSDK, CLIReceiptBindsBytesProfileAndPolicyWithoutExternalTools) {
       Run({"stream-import", Path, Profile, "1", "CANARY_POLICY", Receipt}), 1);
   ASSERT_EQ(Run({"stream-import", Path, Profile, "1", Policy, Receipt}), 0);
   EXPECT_NE(Output.find("peer_record_id"), std::string::npos);
+  ASSERT_EQ(Run({"report-stream", Path, Profile, "1", Policy, Receipt}), 0);
+  EXPECT_NE(Output.find("passive-evidence-shape-report-v1"), std::string::npos);
+  EXPECT_NE(Output.find("related_id"), std::string::npos);
   std::ofstream(Root / "a0.jsonl", std::ios::app) << " ";
   EXPECT_EQ(Run({"stream-import", Path, Profile, "1", Policy, Receipt}), 1);
   EXPECT_NE(Errors.find("stream_preview_receipt_mismatch"), std::string::npos);

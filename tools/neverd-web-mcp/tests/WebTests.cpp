@@ -113,6 +113,7 @@ void discovery(Harness &H, const Json &Caps) {
     const auto Name = Operation.get<std::string>();
     const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
                          Name == "tauri_export" || Name == "native_analyze" ||
+                         Name == "desktop_resources_export" ||
                          Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
@@ -272,7 +273,7 @@ void sourceAndMaps(Harness &H) {
       H.same("web_interface_relations_analyze",
              {{"revision", H.Revision},
               {"analysis_id", Interfaces.at("interface_analysis_id")}});
-  require(Relations.at("profile") == "request-source-relations-v1" &&
+  require(Relations.at("profile") == "request-source-relations-v2" &&
               Relations.at("relation_count") == 4 &&
               Relations.at("response_api_identity") ==
                   "member_spelling_unverified" &&
@@ -704,9 +705,22 @@ void passiveInputs(Harness &H) {
   const Json Page{{"revision", H.Revision},
                   {"capture_id", Preview.at("capture_id")}};
   H.fail("web_har_records", Page, "har_capture_not_committed");
+  const Json ReportArgs{{"revision", H.Revision},
+                        {"har_capture_id", Preview.at("capture_id")}};
+  H.fail("web_passive_report_create", ReportArgs, "har_capture_not_committed");
   H.same("web_har_commit", {{"revision", H.Revision},
                             {"preview_token", Preview.at("preview_token")}});
   H.same("web_har_records", Page);
+  const auto HARReport = H.same("web_passive_report_create", ReportArgs);
+  require(HARReport.at("static_records") == 0 &&
+              HARReport.at("server_constraints") == "unknown" &&
+              HARReport.at("inferred_optionality") == "unknown",
+          "MCP promoted observed examples to server constraints");
+  const auto HARReportPage =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", HARReport.at("passive_report_id")}});
+  redacted(HARReportPage);
 
   Artifact = H.import(5);
   const auto Stream = H.same("web_stream_preview",
@@ -722,6 +736,19 @@ void passiveInputs(Harness &H) {
   require(Records.at("items").size() == 2 &&
               Records.at("protocol_negotiation_verified") == false,
           "Stream facts or evidence class changed");
+  const auto StreamReport =
+      H.same("web_passive_report_create",
+             {{"revision", H.Revision},
+              {"stream_capture_id", Stream.at("stream_capture_id")}});
+  const auto StreamReportPage =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", StreamReport.at("passive_report_id")}});
+  require(StreamReportPage.at("items").size() == 2 &&
+              StreamReportPage.at("items")[0].at("related_id") ==
+                  Records.at("items")[1].at("record_id"),
+          "MCP changed recorded stream relationships");
+  redacted(StreamReportPage);
 }
 
 void zipArchive(Harness &H, bool HasParser) {
