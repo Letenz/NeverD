@@ -196,6 +196,11 @@ const char *hiloCollapseExpr(Intrinsic Id);
 std::string renderX86AsmStatement(const char *Mnemonic,
                                   const std::vector<std::string> &Ops);
 
+/// The C intrinsic for the \p ResultBytes form of an x86 operation that \p Id
+/// covers at more than one width (X86SizedIntrinsicNames.def); null when the
+/// name intrinsicCName gives is the one.
+const char *x86SizedIntrinsicCName(Intrinsic Id, uint16_t ResultBytes);
+
 /// The register form of a descriptor-table or machine-status register
 /// instruction (SLDT, STR, SMSW and LLDT, LTR, LMSW) as GNU inline asm that
 /// runs the instruction on a C value of its operand's width: a store's

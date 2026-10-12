@@ -1286,6 +1286,14 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 
 } // anonymous namespace
 
+const char *x86SizedIntrinsicCName(Intrinsic Id, uint16_t ResultBytes) {
+#define NEVERD_X86_SIZED_C_NAME(ID, Bytes, Name)                               \
+  if (Id == Intrinsic::ID && ResultBytes == (Bytes))                           \
+    return Name;
+#include "neverd/backend/c/render/HighC/X86SizedIntrinsicNames.def"
+  return nullptr;
+}
+
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
          Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||

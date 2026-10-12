@@ -47,6 +47,9 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
   }
 
   const char *CName = intrinsicCName(Id);
+  if (TheArch == Arch::X86 || TheArch == Arch::X64)
+    if (const char *Sized = x86SizedIntrinsicCName(Id, ResultBytes))
+      CName = Sized;
   if (CName) {
     std::string CallStr = std::string(CName) + "(";
     for (size_t I = 0; I < Ops.size(); ++I) {

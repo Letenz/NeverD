@@ -796,6 +796,21 @@ __attribute__((target("sse4.2"))) int checksum(int a) {
                             {0, 1, -1, 0x7F, 0x12345678, -0x7FFFFFFF});
 }
 
+// The 32-bit PEXT and PDEP print as the _u32 intrinsics.  The _u64 ones would
+// sign-extend int operands, and PEXT would pack the extra mask bits of a
+// negative value into the result.
+TEST_F(X86_64_HighCIntrinsics, ThirtyTwoBitPextAndPdepRunLikeTheSource) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+__attribute__((target("bmi2"))) int bits(int a) {
+  unsigned m = (unsigned)a * 2654435761u | 0x80000001u;
+  return (int)(__builtin_ia32_pext_si((unsigned)a, m) +
+               __builtin_ia32_pdep_si((unsigned)a, m));
+}
+)C",
+                            "bits", {"bits"},
+                            {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
+}
+
 // MULSD and ADDSS read their constant-pool operand through the address they
 // take, so each constant is the double or float the instruction reads.
 TEST_F(X86_64_HighCIntrinsics, ConstantPoolOperandsKeepTheirWidth) {
