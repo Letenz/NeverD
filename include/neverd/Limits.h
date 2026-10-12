@@ -472,11 +472,12 @@ constexpr int kCallArgStoreAddressDepth = 32;
 /// followed back to the slot it was loaded from.
 constexpr int kCallTargetSlotDepth = 16;
 
-/// AArch64 calls with the complete x0-x7 prefix can have an integer argument
-/// at [sp]. Materializing eight constants may expand into several MedIR ops per
-/// register, so keep a larger but finite window once the full bank itself
-/// proves that stack overflow is ABI-plausible.
-constexpr int kAArch64FullBankCallArgStoreScanWindow = 64;
+/// A call that fills every integer argument register (AArch64 x0-x7, ARM
+/// r0-r3) can have an integer argument at [sp]. Materializing each value may
+/// expand into several MedIR ops per register, so keep a larger but finite
+/// window once the full bank itself proves that stack overflow is
+/// ABI-plausible.
+constexpr int kFullBankCallArgStoreScanWindow = 64;
 
 //===----------------------------------------------------------------------===//
 // Backend / code generation

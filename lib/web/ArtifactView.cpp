@@ -180,7 +180,7 @@ Session::Impl::artifactView(std::string_view SelectionID) const {
         auto View =
             storedSelection(std::move(*Parent), E, M, "wails_embed_member");
         View.Origin["table_id"] = M.TableID;
-        View.Origin["profile"] = std::string(WailsProfile);
+        View.Origin["profile"] = E.Profile;
         View.Origin["stored_digest_status"] = "go_toolchain_hash128_match";
         View.Origin["runtime_filesystem_binding"] = "not_checked";
         return View;

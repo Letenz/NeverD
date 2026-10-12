@@ -37,6 +37,12 @@ struct Mapping {
   Range File, Virtual;
   uint32_t Flags = 0;
 };
+enum class ContainerKind { ELF, PE };
+struct ProfileSpec {
+  std::string_view Name, ContainerFormat, Platform;
+  ContainerKind Container;
+};
+const ProfileSpec &requireProfile(std::string_view Name);
 struct Reader {
   const Artifact &Input;
   WailsExtraction &Evidence;
@@ -48,11 +54,13 @@ struct Reader {
   void step(uint64_t Count = 1);
   void metadata(uint64_t Count);
   std::string read(Range R);
+  void admitMapping(Mapping M);
   Range mapped(uint64_t Address, uint64_t Size, bool ReadOnly);
 };
 
 void admitELF(Reader &R);
-void admitBuildInfo(Reader &R);
+void admitPE(Reader &R);
+void admitBuildInfo(Reader &R, const ProfileSpec &Profile);
 void readTables(Reader &R);
 void verifyContents(Reader &R);
 } // namespace neverd::web::wails_detail

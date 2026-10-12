@@ -86,10 +86,10 @@ protected:
       "int replacement(int x) { return x + 40; }";
 
   void SetUp() override {
-#if !((defined(__APPLE__) && defined(__aarch64__)) ||                          \
+#if !((defined(__APPLE__) && (defined(__aarch64__) || defined(__x86_64__))) || \
       (defined(__linux__) && defined(__x86_64__)))
-    GTEST_SKIP()
-        << "native source runtime profile requires Darwin ARM64 or Linux x64";
+    GTEST_SKIP() << "native source runtime profile requires Darwin ARM64/x64 "
+                    "or Linux x64";
 #endif
     if (std::string(NEVERD_TEST_CLANG).empty())
       GTEST_SKIP() << "Clang is required for native replacement fixtures";
@@ -124,6 +124,17 @@ int main(int argc, char **argv) {
     std::vector<std::string> Compile{NEVERD_TEST_CLANG, "-O0", Source.string(),
                                      "-o", Original.string()};
 #if defined(__APPLE__)
+    bool IntelFixture = false;
+#if defined(__x86_64__)
+    IntelFixture = true;
+#endif
+    if (const char *Architecture = std::getenv("NEVERD_TEST_DARWIN_ARCH")) {
+      ASSERT_EQ(std::string(Architecture), "x86_64");
+      Compile.insert(Compile.end(), {"-arch", Architecture});
+      IntelFixture = true;
+    }
+    if (IntelFixture)
+      Compile.push_back("-Wl,-segalign,0x4000");
     if (ReserveStorageHeader)
       Compile.push_back("-Wl,-headerpad,0x400");
 #endif

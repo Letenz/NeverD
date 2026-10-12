@@ -19,7 +19,7 @@ namespace call_args_detail {
 
 void collectCallArgsARM(const CallArgScan &Scan, std::vector<ExprPtr> &Found,
                         std::vector<ExprPtr> &Args) {
-  collectSpilledStackArgs(Scan, Found);
+  collectFullBankStackArgs(Scan, Found);
   (void)Args;
 }
 

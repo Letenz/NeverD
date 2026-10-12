@@ -43,7 +43,7 @@ std::string inlineString(Reader &R, uint64_t &At, Range Owner) {
   At += Size;
   return S;
 }
-void declarations(std::string_view Mod) {
+void declarations(std::string_view Mod, std::string_view Platform) {
   constexpr std::string_view Start =
       "\x30\x77\xaf\x0c\x92\x74\x08\x02\x41\xe1\xc1\x07\xe6\xd6\x18\xe6";
   constexpr std::string_view End{
@@ -77,7 +77,7 @@ void declarations(std::string_view Mod) {
         throw Error("wails_conflicting_build_declaration");
     }
     if (Line.starts_with("build\tGOOS=")) {
-      if (Line != "build\tGOOS=linux" || ++OS != 1)
+      if (Line != "build\tGOOS=" + std::string(Platform) || ++OS != 1)
         throw Error("wails_conflicting_build_declaration");
     }
   }
@@ -86,7 +86,7 @@ void declarations(std::string_view Mod) {
 }
 } // namespace
 
-void admitBuildInfo(Reader &R) {
+void admitBuildInfo(Reader &R, const ProfileSpec &Profile) {
   constexpr std::string_view Magic = "\xff Go buildinf:";
   std::optional<Range> Found;
   for (const auto &M : R.Mappings) {
@@ -113,7 +113,7 @@ void admitBuildInfo(Reader &R) {
         auto At = Header.end();
         if (inlineString(R, At, M.File) != "go1.25.7")
           throw Error("wails_unsupported_go_declaration");
-        declarations(inlineString(R, At, M.File));
+        declarations(inlineString(R, At, M.File), Profile.Platform);
         Found = {Header.Offset, At - Header.Offset};
       }
       Base += Count;

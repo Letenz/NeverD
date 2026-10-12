@@ -266,9 +266,12 @@ TEST_F(SourcePatchPE, FH3RuntimePreservesCatchesCleanupRethrowAndNoexcept) {
   const char *UCRT = std::getenv("NEVERD_TEST_WINDOWS_UCRT_LIB");
   const char *SDK = std::getenv("NEVERD_TEST_WINDOWS_SDK_LIB");
   const char *Runner = std::getenv("NEVERD_TEST_WINDOWS_RUNNER");
-  if (!CRT || !UCRT || !SDK)
+  if (!CRT || !UCRT || !SDK) {
+    if (std::getenv("NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME"))
+      FAIL() << "required Windows runtime inputs are not configured";
     GTEST_SKIP()
         << "Windows x64 CRT, UCRT and SDK library directories required";
+  }
 #if !defined(_WIN32) || !(defined(_M_X64) || defined(__x86_64__))
   if (!Runner || !*Runner)
     GTEST_SKIP() << "matching Windows runtime runner required";

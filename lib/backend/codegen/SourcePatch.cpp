@@ -64,6 +64,8 @@ llvm::Error writeBytes(const std::filesystem::path &Path,
 
 llvm::Error validateTarget(const llvm::Module &Module,
                            const BinaryImage &Image) {
+  if (auto Error = validateSourcePatchTarget(Image.Arch, Image.Format))
+    return Error;
   const char *Target = llvmCodegenTriple(Image.Arch, Image.Format);
   if (!Target)
     return patchError("unsupported native target");
@@ -107,6 +109,22 @@ llvm::Expected<va_t> legacyTarget(llvm::StringRef Name,
 }
 
 } // namespace
+
+llvm::Error validateSourcePatchTarget(Arch Architecture, BinaryFormat Format) {
+  if (!llvmCodegenTriple(Architecture, Format))
+    return patchError("unsupported native target");
+  if (Format == BinaryFormat::ELF && Architecture == Arch::ARM)
+    return patchError("ARM32 ELF source installation requires an EHABI "
+                      "registration contract");
+  if (Format == BinaryFormat::COFF && Architecture != Arch::X64)
+    return patchError("replacement source unwind currently requires PE x64");
+  if (Format == BinaryFormat::MachO && Architecture == Arch::ARM)
+    return patchError("ARM Mach-O requires a verified watchOS frontend ABI");
+  if (Format == BinaryFormat::MachO && Architecture == Arch::X86)
+    return patchError("32-bit Mach-O source installation requires a verified "
+                      "loader/unwind contract");
+  return llvm::Error::success();
+}
 
 llvm::Expected<std::vector<SourcePatchMapping>>
 bindSourcePatch(llvm::Module &Module, const BinaryImage &Image,

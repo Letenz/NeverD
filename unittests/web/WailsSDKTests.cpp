@@ -144,6 +144,83 @@ TEST_F(WebWailsSDK, PrivatePagesCacheAndRevisionRevocation) {
             "unknown_artifact");
 #endif
 }
+TEST_F(WebWailsSDK, PEProfileCacheAndLocalDisclosureKeepPlatformEvidence) {
+  const auto Windows = neverd::web::WailsPEProfile;
+  const auto Caps = take(neverd_web_capabilities_json());
+  bool FoundProfiles = false;
+  for (const auto &A : *Caps.getAsObject()->getArray("analysis")) {
+    if (field(A, "kind") != "wails_extraction")
+      continue;
+    const auto *Profiles = A.getAsObject()->getArray("profiles");
+    ASSERT_NE(Profiles, nullptr);
+    ASSERT_EQ(Profiles->size(), 2U);
+    EXPECT_EQ((*Profiles)[0].getAsString().value_or("").str(), Profile);
+    EXPECT_EQ((*Profiles)[1].getAsString().value_or("").str(), Windows);
+    FoundProfiles = true;
+  }
+  ASSERT_TRUE(FoundProfiles);
+  const auto Bytes = pe();
+  capture(Bytes);
+  const auto E = extract({}, Windows);
+  ASSERT_EQ(field(E, "status"), "ok");
+  EXPECT_EQ(field(E, "profile"), Windows);
+  EXPECT_EQ(field(E, "container_format"), "pe");
+  EXPECT_EQ(field(E, "platform"), "windows");
+  const auto ID = field(E, "extraction_id");
+  EXPECT_EQ(field(extract({}, Windows), "extraction_id"), ID);
+  // A cached successful extraction cannot answer an incompatible profile.
+  EXPECT_EQ(code(extract()), "wails_unsupported_container");
+  EXPECT_EQ(code(extract({}, "wails-latest")), "wails_unsupported_profile");
+  EXPECT_EQ(take(neverd_web_metadata_json(S))
+                .getAsObject()
+                ->getInteger("wails_extraction_count"),
+            1);
+  const auto Members = page(ID);
+  EXPECT_EQ(field(Members, "profile"), Windows);
+  ASSERT_EQ(Members.getAsObject()->getArray("items")->size(), 3U);
+  const auto Destination = (Root / "windows-export").string();
+  const auto Export = take(neverd_web_wails_export_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(),
+      Destination.data(), Destination.size()));
+  ASSERT_EQ(field(Export, "status"), "ok");
+  EXPECT_EQ(field(Export, "layout_profile"), Windows);
+  EXPECT_EQ(field(Export, "container_format"), "pe");
+  EXPECT_EQ(field(Export, "platform"), "windows");
+  EXPECT_EQ(Export.getAsObject()->getInteger("file_count"), 4);
+  auto Read = [&](const std::string &D, const char *Name) {
+    std::ifstream F(std::filesystem::path(D) / Name, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(F), {});
+  };
+  EXPECT_EQ(Read(Destination, "original.bin"), Bytes);
+  EXPECT_EQ(Read(Destination, "m00001.js"), entries()[1].Contents);
+  auto Manifest = llvm::json::parse(Read(Destination, "manifest.json"));
+  ASSERT_TRUE(bool(Manifest));
+  EXPECT_EQ(field(*Manifest, "layout_profile"), Windows);
+  EXPECT_EQ(field(*Manifest, "container_format"), "pe");
+  const auto Source =
+      field((*Members.getAsObject()->getArray("items"))[1], "selection_id");
+  const auto ReadableDirectory = (Root / "windows-readable").string();
+  const auto Readable = take(neverd_web_source_readable_export_json(
+      S, Revision.data(), Revision.size(), Source.data(), Source.size(),
+      "module", 6, ReadableDirectory.data(), ReadableDirectory.size()));
+#if NEVERD_TEST_WEB_JAVASCRIPT
+  ASSERT_EQ(field(Readable, "readable_status"), "verified_same_parser_tree");
+  const auto *Origin = Readable.getAsObject()->getObject("original_origin");
+  ASSERT_NE(Origin, nullptr);
+  EXPECT_EQ(Origin->getString("profile").value_or("").str(), Windows);
+  EXPECT_EQ(Origin->getString("kind"), "wails_embed_member");
+  EXPECT_EQ(Readable.getAsObject()
+                ->getObject("original_range")
+                ->getString("byte_offset"),
+            "5120");
+  EXPECT_EQ(Read(ReadableDirectory, "original.bin"), entries()[1].Contents);
+  EXPECT_EQ(Readable.getAsObject()->getBoolean("interactive_cache_modified"),
+            false);
+#else
+  EXPECT_EQ(code(Readable), "capability_unavailable");
+  EXPECT_FALSE(std::filesystem::exists(ReadableDirectory));
+#endif
+}
 TEST_F(WebWailsSDK, HTMLReferencesCannotCrossFilesystemTables) {
   auto Second = entries();
   Second.erase(Second.begin() + 1);
@@ -183,34 +260,38 @@ TEST_F(WebWailsSDK, BadHashPublicationLeavesOriginalArtifactAvailable) {
 #if NEVERD_TEST_WEB_JAVASCRIPT
 TEST_F(WebWailsSDK, CompressedParentAndSourceAnchorsKeepTheirStorageBasis) {
   using namespace neverd::web::test;
-  capture(storedGzip(finishTar(tarMember("package/wails", elf()))));
-  const auto Archive = take(neverd_web_package_archive_extract_json(
-      S, Revision.data(), Revision.size(), Artifact.data(), Artifact.size(),
-      "tgz", 3));
-  const auto AID = field(Archive, "archive_id");
-  const auto Members = take(neverd_web_package_archive_records_json(
-      S, Revision.data(), Revision.size(), AID.data(), AID.size(), 0, 1));
-  const auto MID =
-      field((*Members.getAsObject()->getArray("items"))[0], "member_id");
-  const auto E = extract(MID);
-  const auto P = page(field(E, "extraction_id"));
-  const auto Source =
-      field((*P.getAsObject()->getArray("items"))[1], "selection_id");
-  const auto Parsed = take(neverd_web_source_analyze_json(
-      S, Revision.data(), Revision.size(), Source.data(), Source.size(),
-      "module", 6));
-  ASSERT_EQ(field(Parsed, "parse_status"), "parsed");
-  const auto SID = field(Parsed, "source_id");
-  const auto Anchor = take(
-      neverd_web_source_anchor_json(S, Revision.data(), Revision.size(),
-                                    SID.data(), SID.size(), 0, 6, nullptr, 0));
-  const auto *Storage = Anchor.getAsObject()->getObject("storage");
-  ASSERT_NE(Storage, nullptr);
-  EXPECT_EQ(Storage->getString("mapping"), "containing_compressed_frame");
-  EXPECT_EQ(Storage->getString("storage_artifact_id"), Artifact);
-  EXPECT_EQ(Storage->getString("expanded_byte_offset"),
-            std::to_string(512 + 0x1400));
-  EXPECT_TRUE(Storage->get("byte_offset")->getAsNull().has_value());
+  for (const auto SelectedProfile : {Profile, neverd::web::WailsPEProfile}) {
+    capture(storedGzip(finishTar(tarMember(
+        "package/wails", SelectedProfile == Profile ? elf() : pe()))));
+    const auto Archive = take(neverd_web_package_archive_extract_json(
+        S, Revision.data(), Revision.size(), Artifact.data(), Artifact.size(),
+        "tgz", 3));
+    const auto AID = field(Archive, "archive_id");
+    const auto Members = take(neverd_web_package_archive_records_json(
+        S, Revision.data(), Revision.size(), AID.data(), AID.size(), 0, 1));
+    const auto MID =
+        field((*Members.getAsObject()->getArray("items"))[0], "member_id");
+    const auto E = extract(MID, SelectedProfile);
+    EXPECT_EQ(field(E, "profile"), SelectedProfile);
+    const auto P = page(field(E, "extraction_id"));
+    const auto Source =
+        field((*P.getAsObject()->getArray("items"))[1], "selection_id");
+    const auto Parsed = take(neverd_web_source_analyze_json(
+        S, Revision.data(), Revision.size(), Source.data(), Source.size(),
+        "module", 6));
+    ASSERT_EQ(field(Parsed, "parse_status"), "parsed");
+    const auto SID = field(Parsed, "source_id");
+    const auto Anchor = take(neverd_web_source_anchor_json(
+        S, Revision.data(), Revision.size(), SID.data(), SID.size(), 0, 6,
+        nullptr, 0));
+    const auto *Storage = Anchor.getAsObject()->getObject("storage");
+    ASSERT_NE(Storage, nullptr);
+    EXPECT_EQ(Storage->getString("mapping"), "containing_compressed_frame");
+    EXPECT_EQ(Storage->getString("storage_artifact_id"), Artifact);
+    EXPECT_EQ(Storage->getString("expanded_byte_offset"),
+              std::to_string(512 + 0x1400));
+    EXPECT_TRUE(Storage->get("byte_offset")->getAsNull().has_value());
+  }
 }
 #endif
 TEST_F(WebWailsSDK, RawLocalExportUsesFixedNamesAndRefusesOverwriteOrLinks) {
@@ -312,44 +393,125 @@ TEST_F(WebWailsSDK,
   EXPECT_EQ(Metadata.getAsObject()->getInteger("source_inventory_count"), 0);
 }
 #endif
+TEST_F(WebWailsSDK, Zentro030PEConsumersAndWholeBundleWhenSupplied) {
+  const auto *Selected = std::getenv("NEVERD_WAILS_ZENTRO_030_PE");
+  if (!Selected || !*Selected)
+    GTEST_SKIP() << "captured Zentro v0.3.0 Windows x64 release required";
+  open(Selected);
+  const auto Windows = neverd::web::WailsPEProfile;
+  const auto E = extract({}, Windows);
+  ASSERT_EQ(field(E, "status"), "ok");
+  EXPECT_EQ(field(E, "container_sha256"),
+            "8c07c39c307c24d04be12019ef39210fc2360c0b40ffee8297deae9d1a0ee9e4");
+  const auto ID = field(E, "extraction_id");
+  const auto Members = page(ID);
+  const auto &Items = *Members.getAsObject()->getArray("items");
+  ASSERT_EQ(Items.size(), 14U);
+  EXPECT_EQ(field(Items[7], "blob_sha256"),
+            "1b3a234dc7a96030d32d901baaf456771a0b63fc9c6f2cdfbb046980d618f79f");
+  EXPECT_EQ(field(Items[7], "container_byte_offset"), "16867808");
+  const auto Destination = (Root / "pe-captured-export").string();
+  const auto Raw = take(neverd_web_wails_export_json(
+      S, Revision.data(), Revision.size(), ID.data(), ID.size(),
+      Destination.data(), Destination.size()));
+  ASSERT_EQ(field(Raw, "status"), "ok");
+  EXPECT_EQ(field(Raw, "layout_profile"), Windows);
+  EXPECT_EQ(Raw.getAsObject()->getInteger("file_count"), 13);
+  const auto Source = field(Items[7], "selection_id");
+  const auto ReadableDirectory = (Root / "pe-captured-readable").string();
+  const auto R = take(neverd_web_source_readable_export_json(
+      S, Revision.data(), Revision.size(), Source.data(), Source.size(),
+      "module", 6, ReadableDirectory.data(), ReadableDirectory.size()));
+#if NEVERD_TEST_WEB_JAVASCRIPT
+  ASSERT_EQ(field(R, "readable_status"), "verified_same_parser_tree");
+  EXPECT_EQ(R.getAsObject()->getInteger("syntax_nodes"), 449790);
+  EXPECT_EQ(field(R, "original_bytes"), "1552742");
+  EXPECT_EQ(field(R, "readable_bytes"), "1897987");
+  EXPECT_EQ(field(R, "readable_sha256"),
+            "d8ebf61ff86a156541432442d18cd82f5294dc104384e7887b1b7e9f3f94f013");
+  EXPECT_EQ(
+      R.getAsObject()->getObject("original_range")->getString("byte_offset"),
+      "16867808");
+  const auto HTML = field(Items[5], "selection_id");
+  const auto H = take(neverd_web_html_analyze_json(
+      S, Revision.data(), Revision.size(), HTML.data(), HTML.size()));
+  ASSERT_EQ(field(H, "status"), "ok");
+  const auto HID = field(H, "html_id");
+  const auto Scripts = take(neverd_web_html_records_json(
+      S, Revision.data(), Revision.size(), HID.data(), HID.size(), "scripts", 7,
+      0, 128));
+  ASSERT_EQ(Scripts.getAsObject()->getArray("items")->size(), 1U);
+  const auto &Script = (*Scripts.getAsObject()->getArray("items"))[0];
+  EXPECT_EQ(field(Script, "link_status"), "unsupported_local_url");
+  EXPECT_TRUE(Script.getAsObject()
+                  ->get("candidate_artifact_id")
+                  ->getAsNull()
+                  .has_value());
+#else
+  EXPECT_EQ(code(R), "capability_unavailable");
+  EXPECT_FALSE(std::filesystem::exists(ReadableDirectory));
+#endif
+  neverd_session_t Native = nullptr;
+  const auto N = take(
+      neverd_web_native_open_json(S, Revision.data(), Revision.size(),
+                                  Artifact.data(), Artifact.size(), &Native));
+  EXPECT_EQ(field(N, "status"), "ok");
+  ASSERT_NE(Native, nullptr);
+  EXPECT_EQ(field(N, "blob_sha256"), field(E, "container_sha256"));
+  EXPECT_EQ(field(N, "format"), "PE");
+  EXPECT_EQ(N.getAsObject()->getInteger("section_count"), 9);
+  EXPECT_EQ(N.getAsObject()->getInteger("function_count"), 28136);
+  neverd_web_session_destroy(S);
+  S = nullptr;
+  EXPECT_EQ(field(take(neverd_web_native_metadata_json(Native)), "status"),
+            "ok");
+  neverd_session_destroy(Native);
+}
 #ifdef NEVERD_WEB_TEST_CLI
 TEST_F(WebWailsSDK, CLIExtractsAndAnalyzesWithoutExternalTools) {
-  capture(elf());
   const auto Out = (Root / "out").string(), Err = (Root / "err").string();
   const llvm::StringRef Env[]{"PATH=/neverd-no-external-tools", "LC_ALL=C"};
   const std::optional<llvm::StringRef> Redirects[]{std::nullopt, Out, Err};
-  const auto Destination = (Root / "readable").string();
-  for (const auto *Command :
-       {"wails", "wails-html", "wails-source", "wails-readable-export"}) {
-    const bool Readable = std::string_view(Command) == "wails-readable-export";
-    std::vector<llvm::StringRef> Args{NEVERD_WEB_TEST_CLI, "web", Command, Path,
-                                      Profile};
-    if (std::string_view(Command) != "wails") {
-      Args.emplace_back("0");
-      Args.emplace_back(std::string_view(Command) == "wails-html" ? "2" : "1");
+  for (const auto SelectedProfile : {Profile, neverd::web::WailsPEProfile}) {
+    capture(SelectedProfile == Profile ? elf() : pe());
+    const auto Destination =
+        (Root /
+         (SelectedProfile == Profile ? "readable-linux" : "readable-windows"))
+            .string();
+    for (const auto *Command :
+         {"wails", "wails-html", "wails-source", "wails-readable-export"}) {
+      const bool Readable =
+          std::string_view(Command) == "wails-readable-export";
+      std::vector<llvm::StringRef> Args{NEVERD_WEB_TEST_CLI, "web", Command,
+                                        Path, SelectedProfile};
+      if (std::string_view(Command) != "wails") {
+        Args.emplace_back("0");
+        Args.emplace_back(std::string_view(Command) == "wails-html" ? "2"
+                                                                    : "1");
+      }
+      if (std::string_view(Command) == "wails-source" || Readable)
+        Args.emplace_back("module");
+      if (Readable)
+        Args.emplace_back(Destination);
+      const auto Expected =
+          !NEVERD_TEST_WEB_JAVASCRIPT &&
+                  (std::string_view(Command) == "wails-source" || Readable)
+              ? 1
+              : 0;
+      ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Env,
+                                          Redirects, 30),
+                Expected);
+      std::ifstream F(Out), E(Err);
+      const std::string Text{std::istreambuf_iterator<char>(F), {}},
+          Errors{std::istreambuf_iterator<char>(E), {}};
+      EXPECT_EQ(Text.find("CANARY"), std::string::npos);
+      EXPECT_EQ(Errors.find("CANARY"), std::string::npos);
+      EXPECT_NE(Text.find("extraction_id"), std::string::npos);
+      if (Readable)
+        EXPECT_EQ(std::filesystem::exists(std::filesystem::path(Destination) /
+                                          "readable.js"),
+                  bool(NEVERD_TEST_WEB_JAVASCRIPT));
     }
-    if (std::string_view(Command) == "wails-source" || Readable)
-      Args.emplace_back("module");
-    if (Readable)
-      Args.emplace_back(Destination);
-    const auto Expected =
-        !NEVERD_TEST_WEB_JAVASCRIPT &&
-                (std::string_view(Command) == "wails-source" || Readable)
-            ? 1
-            : 0;
-    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Env,
-                                        Redirects, 30),
-              Expected);
-    std::ifstream F(Out), E(Err);
-    const std::string Text{std::istreambuf_iterator<char>(F), {}},
-        Errors{std::istreambuf_iterator<char>(E), {}};
-    EXPECT_EQ(Text.find("CANARY"), std::string::npos);
-    EXPECT_EQ(Errors.find("CANARY"), std::string::npos);
-    EXPECT_NE(Text.find("extraction_id"), std::string::npos);
-    if (Readable)
-      EXPECT_EQ(std::filesystem::exists(std::filesystem::path(Destination) /
-                                        "readable.js"),
-                bool(NEVERD_TEST_WEB_JAVASCRIPT));
   }
 }
 #endif
