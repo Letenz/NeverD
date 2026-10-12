@@ -3351,3 +3351,17 @@ Logs: `/tmp/neverd-desktop-bridge-{parity-build,final-{source,sdk}-tests,
 transports-tests,owning-web-tests,nojs-{configure,build,sdk-tests,
 transports-tests},restored-{configure,build,focused-tests},format,
 provenance,capabilities}.log`.
+
+Normal integration with `origin/dev` at `be72c8ee4` preserves every Web bridge
+reader and test unchanged. The 64-step shared rebuild and integrated native
+targets pass. The complete owning Web run remains **755 passes / 28 skips out
+of 783 distinct cases** (90.24 seconds). Five native-projection cases, the
+immutable native-buffer boundary and four transports all pass (4.05 seconds).
+The correct `neverd-gui-web-tests` owner and Qt app rebuild successfully; the
+offline package review test passes (4.27 seconds). The earlier GUI build request
+used a nonexistent target name and is not evidence. Provenance again scans
+7,504 files, capabilities validate all 23 declarations, and both Web/JS options
+remain ON. Integration head is `6fd1505fa4e082a742ab35e1e1f98916f7ba2f81` before
+this receipt-only documentation commit. Logs:
+`/tmp/neverd-desktop-bridge-integrated-{build,native-build,owning-web-tests,
+native-transports-tests,gui-{build,tests},provenance,capabilities}.log`.
