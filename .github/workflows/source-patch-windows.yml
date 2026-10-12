@@ -15,6 +15,9 @@ on:
       - 'lib/backend/codegen/COFF/COFFSource*'
       - 'unittests/SourcePatch*'
       - 'unittests/CMakeLists.txt'
+      - 'include/neverd/ir/med/MedSyscallConvention.h'
+      - 'lib/ir/med/abi/MedSyscallConvention*'
+      - 'lib/ir/med/CMakeLists.txt'
   pull_request:
     paths:
       - '.github/workflows/source-patch-windows.yml'
@@ -27,6 +30,9 @@ on:
       - 'lib/backend/codegen/COFF/COFFSource*'
       - 'unittests/SourcePatch*'
       - 'unittests/CMakeLists.txt'
+      - 'include/neverd/ir/med/MedSyscallConvention.h'
+      - 'lib/ir/med/abi/MedSyscallConvention*'
+      - 'lib/ir/med/CMakeLists.txt'
 
 permissions:
   contents: read
