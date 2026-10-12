@@ -455,6 +455,26 @@ def run(executable):
             "listing", {"address": "0xffff800012340051", "before": 0, "after": 1})["payload"]["lines"]]
         assert any("sub rsp, 100000b" in line for line in code), code
         reopened.close()
+        # function_6's bytes are a part of function_0 apart from its body: the
+        # chunk opens and closes with its function's name, reads by a label,
+        # and its lines belong to that function.
+        chunked = Path(directory) / "function-chunks.bin"
+        chunked.write_bytes(b"mock input")
+        parts = clients.enter_context(Client(executable))
+        assert parts.call("open", {"path": str(chunked)})["status"] == "ok"
+        lines = parts.call("listing", {"address": "0xffff800012340060", "before": 4, "after": 30})["payload"]["lines"]
+        texts = [" ".join(line["text"].split()) for line in lines]
+        assert "; START OF FUNCTION CHUNK FOR function_0" in texts, texts
+        assert any(text.startswith("loc_FFFF800012340060:") for text in texts), texts
+        assert "; END OF FUNCTION CHUNK FOR function_0" in texts, texts
+        assert not any("function_6" in text for text in texts), texts
+        chunk = [line for line in lines
+                 if line["kind"] == "insn" and 0xffff800012340060 <= int(line["address"], 16) < 0xffff800012340070]
+        assert chunk and all(line["function"] == "function_0" and line["function_address"] == BASE
+                             for line in chunk), chunk
+        listed = parts.call("functions", {"filter": "function_6", "limit": 50})["payload"]["items"]
+        assert listed and not any(item["address"] == "0xffff800012340060" for item in listed), listed
+        parts.close()
 
     malformed = Client(executable)
     malformed.process.stdin.write(struct.pack(">I", 1) + b"{")
