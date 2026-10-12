@@ -26,6 +26,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationStateDispatch.cpp
   X86/RegistrationStateFinallyCall.cpp
   X86/RegistrationStateSEHExit.cpp
+  X86/RegistrationStateSEHException.cpp
   X86/RegistrationStateLocalUnwind.cpp
   X86/RegistrationStateOccurrences.cpp
   X86/RegistrationStateOrder.cpp
@@ -40,6 +41,7 @@ add_neverd_component_library(NeverDIRRegistrationState
   X86/RegistrationFrame.cpp
   X86/RegistrationFrameMemory.cpp
   X86/RegistrationFrameCallback.cpp
+  X86/RegistrationFrameSEHException.cpp
   X86/RegistrationFrameRealignment.cpp
 
   LINK_COMPONENTS

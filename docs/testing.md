@@ -5063,6 +5063,20 @@ sources or address spaces cannot supply a restore. The WAIT cases retain the
 original intrinsic and dispatch eligibility in both invocation analysis and
 returning-body inspection; altered identities or operand shapes refuse. Budget
 exhaustion must withdraw exit completeness and any published exit records.
+
+`RegistrationState.SEHRuntimeFieldsBelongToTheSearchFilterInvocation` checks
+the EH3 runtime slot, record link, exception code/flags and a private pointer
+spill. Wrong fields, partial pointers, altered widths, FS accesses, writes,
+ordinary roots, opaque calls, changed instruction slices, guards and ordering
+refuse. The source micro-operation sequence may restart at each instruction;
+it must not be confused with the operation's block index. The lifetime test
+checks callback exit and reentry across registers and all retained frame spaces.
+An exception code reused as an unbounded store address must still refuse.
+Partial temporary aliases must not preserve a full runtime pointer, including
+when the truncated value feeds address arithmetic in the same instruction.
+`WindowsRegistrationNative.RuntimeExceptionFieldsRequireAReplacementObjectReceipt`
+checks atomic refusal of incomplete or unconsumed runtime access evidence.
+
 PE32 LowIR branch
 targets use 64-bit code-address constants; they must still fit the 32-bit address
 space. Data-pointer width is not the branch-address representation.

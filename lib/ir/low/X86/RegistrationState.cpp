@@ -211,8 +211,12 @@ bool RegistrationStateSolver::initialize() {
 bool RegistrationStateSolver::charge(size_t Amount) {
   if (Amount > limits::kMaxRegistrationEHStateWork - WorkUsed) {
     Exhausted = true;
+    Result.Complete = Result.CallbackStatesComplete =
+        Result.RegistrationLifetimeComplete = false;
     Result.SEHInvocationExitsComplete = false;
     Result.SEHInvocationExits.clear();
+    Result.SEHExceptionAccessesComplete = false;
+    Result.SEHExceptionAccesses.clear();
     return false;
   }
   WorkUsed += Amount;

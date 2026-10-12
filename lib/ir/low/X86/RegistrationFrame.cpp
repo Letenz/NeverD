@@ -100,6 +100,10 @@ bool FrameState::merge(const FrameState &Other) {
     CallbackEntry.reset();
     Changed = true;
   }
+  if (SEHFilterEntry != Other.SEHFilterEntry && SEHFilterEntry) {
+    SEHFilterEntry.reset();
+    Changed = true;
+  }
   return Changed;
 }
 
@@ -145,8 +149,11 @@ FrameValue FrameTransfer::read(const NdVar &Value) const {
   }
   if (Value.isTemp()) {
     auto It = Temps.find(Value.Offset);
-    if (It != Temps.end())
+    if (It != Temps.end()) {
+      if (It->second.SEHException && Value.Size < 4)
+        return {{}, {}, false, true};
       return It->second;
+    }
   }
   return {};
 }
@@ -174,6 +181,13 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
     return read(Op.Inputs[0]);
   if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1) {
     const FrameValue Address = read(Op.Inputs[0]);
+    if (Address.SEHException) {
+      if (Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+        if (const auto Value =
+                State.sehExceptionLoad(*Address.SEHException, Op.Output.Size))
+          return *Value;
+      return {{}, {}, false, true};
+    }
     if (Op.MemoryAddressSpace == NdMemoryAddressSpace::X86FS &&
         Address.Constant == uint32_t{0} && Op.Output.Size == 4)
       return Installed ? FrameValue::frame(RegistrationOffset)
@@ -231,6 +245,26 @@ FrameValue FrameTransfer::evaluate(const LowOp &Op, bool Installed) const {
       Op.NumInputs == 2) {
     const FrameValue Left = read(Op.Inputs[0]);
     const FrameValue Right = read(Op.Inputs[1]);
+    auto AddExceptionOffset = [&](const FrameValue &Base,
+                                  int64_t Delta) -> std::optional<FrameValue> {
+      if (!Base.SEHException || Op.Output.Size < 4)
+        return std::nullopt;
+      auto Address = *Base.SEHException;
+      const int64_t Offset = int64_t(Address.Offset) + Delta;
+      if (Offset < 0 || Offset > 4)
+        return FrameValue{{}, {}, false, true};
+      Address.Offset = int32_t(Offset);
+      return FrameValue::sehException(Address);
+    };
+    if (Left.SEHException && Right.Constant)
+      if (auto Value = AddExceptionOffset(
+              Left, Op.Opcode == NdOp::INT_ADD
+                        ? int64_t(int32_t(*Right.Constant))
+                        : -int64_t(int32_t(*Right.Constant))))
+        return *Value;
+    if (Op.Opcode == NdOp::INT_ADD && Left.Constant && Right.SEHException)
+      if (auto Value = AddExceptionOffset(Right, int32_t(*Left.Constant)))
+        return *Value;
     if (Left.CallbackAddress && Right.Constant)
       return FrameValue::callbackFrame(
           Left.CallbackAddress->Entry,

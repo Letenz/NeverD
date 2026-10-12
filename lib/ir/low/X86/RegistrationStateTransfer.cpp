@@ -126,6 +126,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
     bool RuntimeMemory = false;
     RuntimeMemory =
         recordRuntimeMemory(I, After, Op, Transfer, RuntimeTransfer, Facts);
+    RuntimeMemory |= recordSEHExceptionMemory(I, After, Op, Transfer, Facts);
     if (Exhausted)
       break;
 
@@ -215,7 +216,7 @@ bool RegistrationStateSolver::transferBlock(size_t I, const Domain &Before,
           Op.Opcode == NdOp::LOAD ? Op.Output.Size : Memory.StoredValue->Size;
       std::optional<RegistrationIncomingFrameAccess> Access;
       if (Address.MayBeFrame && !Address.Offset && !Address.EntryOffset &&
-          !Address.CallbackAddress)
+          !Address.CallbackAddress && !RuntimeMemory)
         ConsistentIncomingAccesses = false;
       const auto IncomingOffset =
           Chain.RealignedFrame ? Address.EntryOffset : Address.Offset;

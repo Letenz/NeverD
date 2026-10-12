@@ -124,7 +124,11 @@ void RegistrationStateSolver::dispatch(
   if ((Chain.hasCxxCallbackStack() && CxxCatch) || (!KnownCxx && Callback)) {
     if (!charge(Root.Frame.cellCount() + 8))
       return;
-    Root.Frame.enterCallback(Address);
+    if (!KnownCxx && SearchFilter && !EH4 && !Chain.RealignedFrame &&
+        Chain.RegistrationOffset == -16 && Chain.TryLevelOffset == -4)
+      Root.Frame.enterSEHFilter(Address, *Chain.RegistrationOffset - 4);
+    else
+      Root.Frame.enterCallback(Address);
   }
   Root.Unknown = Unknown || Source.Unknown;
   Root.Parent = !Callback;

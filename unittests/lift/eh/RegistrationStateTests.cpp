@@ -1782,6 +1782,8 @@ TEST(RegistrationState, SEHActivationsShareTheCumulativeWorkBudget) {
       EXPECT_TRUE(A.FrameValues.empty());
       EXPECT_FALSE(A.SEHInvocationExitsComplete);
       EXPECT_TRUE(A.SEHInvocationExits.empty());
+      EXPECT_FALSE(A.SEHExceptionAccessesComplete);
+      EXPECT_TRUE(A.SEHExceptionAccesses.empty());
       EXPECT_TRUE(llvm::any_of(A.Diagnostics, [](const auto &D) {
         return D.find("budget exhausted") != std::string::npos;
       }));

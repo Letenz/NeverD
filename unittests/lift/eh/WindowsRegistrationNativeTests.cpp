@@ -3142,6 +3142,24 @@ TEST(WindowsRegistrationNative, RejectsUnprovedStackCleanupAtomically) {
   }
 }
 
+TEST(WindowsRegistrationNative,
+     RuntimeExceptionFieldsRequireAReplacementObjectReceipt) {
+  for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+    SCOPED_TRACE(Mutation);
+    RegistrationNativeFixture F;
+    auto &States = *F.Source.RegistrationStates;
+    if (Mutation == 0)
+      States.SEHExceptionAccessesComplete = false;
+    else
+      States.SEHExceptionAccesses.push_back(
+          {static_cast<RegistrationSEHExceptionAccess::Kind>(Mutation - 1),
+           0x1020, 0, 0x1020});
+    const auto Before = F.print();
+    EXPECT_FALSE(F.lower());
+    EXPECT_EQ(F.print(), Before);
+  }
+}
+
 TEST(WindowsRegistrationNative, ReplaysPreservedCalleeReturnCleanup) {
   for (bool CalleePop : {false, true}) {
     BinaryImage Image;

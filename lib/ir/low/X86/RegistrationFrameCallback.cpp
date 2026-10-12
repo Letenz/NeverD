@@ -20,7 +20,7 @@ void FrameState::enterCallback(va_t Entry) {
 
 void FrameState::leaveCallback() {
   auto Forget = [](FrameValue &Value) {
-    if (Value.CallbackAddress)
+    if (Value.CallbackAddress || Value.SEHException)
       Value = join(Value, {});
   };
   for (auto &Value : Registers)
@@ -33,6 +33,7 @@ void FrameState::leaveCallback() {
   CallbackCells.clear();
   InitializedCallbackBytes.clear();
   CallbackEntry.reset();
+  SEHFilterEntry.reset();
 }
 
 bool FrameState::callbackMemoryIsPrivate(const CallbackFrameAddress &Address,

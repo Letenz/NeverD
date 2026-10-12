@@ -139,6 +139,17 @@ RegistrationStateAnalysis RegistrationStateSolver::finish() {
     Result.Diagnostics.push_back(
         "C++ catch continuation or restored stack is not proven");
   }
+  Result.SEHExceptionAccessesComplete &=
+      Result.Complete && Result.CallbackStatesComplete && !Exhausted;
+  if (Result.SEHExceptionAccessesComplete)
+    for (const auto &[Identity, Access] : SEHExceptionAccesses) {
+      if (!charge(1))
+        break;
+      if (Access)
+        Result.SEHExceptionAccesses.push_back(*Access);
+    }
+  if (!Result.SEHExceptionAccessesComplete)
+    Result.SEHExceptionAccesses.clear();
   if (!Result.Complete)
     Result.Diagnostics.push_back(
         "registration state has an unproven transition");

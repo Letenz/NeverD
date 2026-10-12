@@ -5118,6 +5118,22 @@ inspection and callee frame/stack checks use the same predicate. An altered
 intrinsic identity, operand shape, output, address space or ordering grants no
 such effect.
 
+`RegistrationFrameSEHException` owns the EH3 search filter's runtime exception
+coordinates. A checked direct frame seeds the current EXCEPTION_POINTERS slot
+only for a runtime search invocation. The record link and four-byte exception
+code/flags are read-only; other fields, widths and invocation roles have no
+authority. Callback exit or reentry strips exact runtime pointer identities from
+registers and every retained frame space while preserving possible pointer taint.
+Scalar fields retain possible address provenance until the current exception's
+origin has been bound; their DWORD representation cannot prove an unknown memory
+sink disjoint from the frame.
+`RegistrationStateSEHException` binds each access to its actual instruction slice
+and micro-operation. Conflicting observations and work exhaustion withdraw the
+access receipts. Native SEH lowering rejects these source receipts until it can
+prove the replacement runtime objects. This supplies the exception-field part
+of the PE32 helper analysis; incoming object arguments and their caller bounds
+still require separate proof.
+
 A termination-only SEH function has no dispatcher-entered except body. Its
 returning-stack proof follows its ordinary entry and checks every finally's
 actual near return independently. A finally that writes the established frame

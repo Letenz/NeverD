@@ -33,6 +33,15 @@ struct CallbackFrameAddress {
   auto operator<=>(const CallbackFrameAddress &) const = default;
 };
 
+/// Read-only runtime storage belonging to one SEH search-filter invocation.
+/// These coordinates are independent of the establisher and callback stacks.
+struct SEHExceptionAddress {
+  enum class Kind : uint8_t { Pointers, Record } Storage = Kind::Pointers;
+  va_t Filter = InvalidVA;
+  int32_t Offset = 0;
+  auto operator<=>(const SEHExceptionAddress &) const = default;
+};
+
 /// Values in the PE32 address domain. Offset names the runtime establisher;
 /// EntryOffset names the pre-alignment EBP; CallbackAddress names the active
 /// callback's private stack. Unknown values retain possible frame provenance
@@ -61,6 +70,7 @@ struct FrameValue {
   /// Runtime exception pointers keep the catch invocation that owns them.
   /// Two live reference catches can have the same object-relative offset.
   std::optional<std::pair<uint32_t, uint32_t>> ExceptionObject;
+  std::optional<SEHExceptionAddress> SEHException;
 
   static FrameValue frame(int32_t Offset) { return {Offset, {}, false, true}; }
   static FrameValue entryFrame(int32_t Offset) {
@@ -84,6 +94,12 @@ struct FrameValue {
     Result.ExceptionObject = {Try, Catch};
     return Result;
   }
+  static FrameValue sehException(SEHExceptionAddress Address) {
+    FrameValue Result;
+    Result.MayBeFrame = true;
+    Result.SEHException = Address;
+    return Result;
+  }
   auto operator<=>(const FrameValue &) const = default;
 };
 
@@ -102,6 +118,7 @@ struct FrameState {
   std::map<int32_t, FrameValue> CallbackCells;
   std::set<int32_t> InitializedCallbackBytes;
   std::optional<va_t> CallbackEntry;
+  std::optional<va_t> SEHFilterEntry;
   size_t cellCount() const {
     return Cells.size() + EntryCells.size() + CallbackCells.size() +
            InitializedCallbackBytes.size();
@@ -125,6 +142,11 @@ struct FrameState {
   /// pointer retained from an earlier callback. Old pointers keep only taint.
   void enterCallback(va_t Entry);
   void leaveCallback();
+  void enterSEHFilter(va_t Entry, int32_t ExceptionPointersOffset);
+  /// Only the record link and the scalar code/flags are modeled. An absent
+  /// value means this invocation, field, or access width has no authority.
+  std::optional<FrameValue> sehExceptionLoad(const SEHExceptionAddress &Address,
+                                             uint16_t Width) const;
   bool callbackMemoryIsPrivate(const CallbackFrameAddress &Address,
                                uint16_t Width, bool Read = false) const;
   /// Returning to the runtime requires this invocation's untouched return

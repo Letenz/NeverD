@@ -156,6 +156,23 @@ struct RegistrationRuntimeObjectAccess {
   bool operator==(const RegistrationRuntimeObjectAccess &) const = default;
 };
 
+/// One source LOAD whose runtime storage belongs to an EH3 search filter.
+/// The slot names its current EXCEPTION_POINTERS; the remaining fields are
+/// the record link and read-only scalar exception code/flags. This evidence
+/// does not authorize a replacement runtime object in native code.
+struct RegistrationSEHExceptionAccess {
+  enum class Kind : uint8_t {
+    PointersSlot,
+    RecordPointer,
+    ExceptionCode,
+    ExceptionFlags
+  } Field = Kind::PointersSlot;
+  va_t Address = InvalidVA;
+  int OpSeq = -1;
+  va_t FilterVA = InvalidVA;
+  bool operator==(const RegistrationSEHExceptionAccess &) const = default;
+};
+
 /// A physical SEH finally invocation ends either by consuming its own near
 /// return PC or by restoring the checked parent SavedESP and branching to an
 /// exact parent instruction. CallVA is zero for a runtime invocation. These
@@ -184,6 +201,8 @@ struct RegistrationStateAnalysis {
   bool SEHInvocationExitsComplete = true;
   std::vector<RegistrationSEHControlContract> SEHControls;
   std::vector<RegistrationSEHInvocationExit> SEHInvocationExits;
+  bool SEHExceptionAccessesComplete = true;
+  std::vector<RegistrationSEHExceptionAccess> SEHExceptionAccesses;
   /// Complete chain access ownership, including decoded boundaries and
   /// operation identities, available only with a complete registration
   /// lifetime and callback state proof. This is not a native output receipt.

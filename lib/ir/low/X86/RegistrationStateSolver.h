@@ -172,6 +172,9 @@ private:
                            const FrameTransfer &Transfer,
                            const FrameTransfer &RuntimeTransfer,
                            const BlockFacts &Facts);
+  bool recordSEHExceptionMemory(size_t I, Domain &After, const LowOp &Op,
+                                const FrameTransfer &Transfer,
+                                BlockFacts &Facts);
   bool runtimeObjectIsLive(const Domain &State,
                            std::pair<uint32_t, uint32_t> Identity);
   bool transferBlock(size_t I, const Domain &Before, BlockFacts &Facts);
@@ -273,6 +276,8 @@ private:
   std::map<std::pair<va_t, int>, std::optional<RegistrationIncomingFrameAccess>>
       IncomingAccesses;
   std::set<std::pair<va_t, va_t>> ImageReads;
+  std::map<std::pair<va_t, int>, std::optional<RegistrationSEHExceptionAccess>>
+      SEHExceptionAccesses;
 
   bool CompleteCookies = false;
   std::optional<int32_t> EHCookieSlot;

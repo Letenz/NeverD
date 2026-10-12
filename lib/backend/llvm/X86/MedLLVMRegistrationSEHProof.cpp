@@ -156,8 +156,12 @@ std::optional<SEHSourceOperations> getCheckedSEHSourceOperations(
     const std::map<const llvm::CallInst *, va_t> &CallSiteAddrs) {
   const auto &States = *Func.RegistrationStates;
   // Physical finally invocation exits carry source state-flow evidence. The
-  // current native SEH plan has no replacement return-PC/resumption receipt.
-  if (!States.SEHInvocationExitsComplete || !States.SEHInvocationExits.empty())
+  // current native SEH plan has no replacement return-PC/resumption receipt
+  // or physical object receipt for runtime exception-field accesses.
+  if (!States.SEHInvocationExitsComplete ||
+      !States.SEHInvocationExits.empty() ||
+      !States.SEHExceptionAccessesComplete ||
+      !States.SEHExceptionAccesses.empty())
     return std::nullopt;
 
   std::vector<SourceOperation> SourceOperations;
