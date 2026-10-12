@@ -89,10 +89,13 @@ HighIR statement observations retain function, address, sequence and statement
 kind; synthetic, ambiguous and changed-kind statements supply no anchor. LLVM
 observations retain weak handles through optimization and the private C clone.
 The source recorder publishes statement spans only when its private rendering
-reproduces ordinary source byte for byte. Instruction and library recordings use
-independent renders so navigation cannot weaken library folding evidence. The
-C API checks every occurrence against the same canonical LowIR boundaries and
-sequences used by Low/Med pages. C++, Rust and Go record individual statement
+reproduces ordinary source byte for byte. When library evidence is present,
+instruction and library recordings use independent renders so navigation cannot
+weaken library folding evidence. With no library evidence, HighC verifies
+definition and instruction locations in one private render; a failed combined
+proof falls back to the independent recordings. The C API checks every occurrence
+against the same canonical LowIR boundaries and sequences used by Low/Med pages.
+C++, Rust and Go record individual statement
 spans. Navigation projects only a complete, unambiguous recorded piece, ignoring
 surrounding whitespace; it never expands to an enclosing function or joins
 partial pieces. A function shown as C after a dialect refusal loses its
