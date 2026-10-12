@@ -1638,3 +1638,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。

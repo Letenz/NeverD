@@ -1846,3 +1846,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+Die geprüfte KVM-x64-Ausführung übergibt die vollständige Befehlsschleife mit `withExecutionOwner` an den privaten vCPU-Thread. Zulassung, RAM-Transaktionen, Hooks und Budgets bleiben in dieser Schleife; jeder native Eintritt behält seine Kontrolle und Ausnahmepriorität. Der Aufrufer überwacht aktive Eintritte und wartet auf die bestätigte Abbruchbeendigung. CPU-Hooks dürfen nicht vom lokalen Zustand des aufrufenden Threads abhängen. Die Fertigstellung eines eigenständigen nativen Eintritts bleibt beim Aufrufer. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` und `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` prüfen Zuständigkeit und echten Abbruch; diese Änderung zertifiziert keinen wiederhergestellten Treiber.

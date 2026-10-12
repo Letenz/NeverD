@@ -1730,3 +1730,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。

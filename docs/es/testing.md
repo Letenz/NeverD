@@ -1831,3 +1831,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+La ejecución KVM x64 verificada delega el bucle completo de instrucciones al hilo vCPU privado mediante `withExecutionOwner`. El bucle conserva la admisión, las transacciones RAM, los hooks y los presupuestos; cada entrada nativa mantiene sus controles y la prioridad de excepciones. El llamador supervisa las entradas activas y confirma la cancelación antes de regresar. Los hooks CPU no deben depender del estado local del hilo llamador. Una entrada nativa independiente conserva su finalización en el llamador. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` y `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verifican la propiedad y la cancelación real; este cambio no certifica un controlador recuperado.

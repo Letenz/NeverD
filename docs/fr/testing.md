@@ -1845,3 +1845,5 @@ ctest --test-dir build-source -L \
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+L’exécution KVM x64 vérifiée confie toute la boucle d’instructions au thread vCPU privé via `withExecutionOwner`. La boucle conserve l’admission, les transactions RAM, les hooks et les budgets ; chaque entrée native garde ses contrôles et la priorité des exceptions. L’appelant surveille les entrées actives et attend l’acquittement de l’annulation. Les hooks CPU exécutés sur ce thread ne doivent pas dépendre de l’état local du thread appelant. Une entrée native autonome conserve sa finalisation sur son appelant. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` et `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` vérifient la propriété et l’annulation réelle ; ce changement ne certifie pas un pilote récupéré.

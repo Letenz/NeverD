@@ -1526,3 +1526,5 @@ DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマス�
 ドライバーローダーは検証済みファイルの SHA-256 に再配置の事実を結び付けます。PE 再構築は所有された事実を使用し、診断用 DIR64 レコードを出力する前にインポート修復やメタデータ整形で置換したフィールドを除外します。この層は生成ポインターの再配置を推測せず、カーネル実行時の拒否を解除しません。
 
 `isCanonicalX87Wait` は通常の registration 転送と検証済み local-finally の戻りで、正常経路のフレーム保持規則を共有します。FWAIT 操作と例外ディスパッチは保持されます。他の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
+
+検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。
