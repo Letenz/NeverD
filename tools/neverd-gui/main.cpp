@@ -10,6 +10,7 @@
 #include "app/SettingsKeys.h"
 #include "app/StartupMetrics.h"
 #include "app/Theme.h"
+#include "app/WindowFrame.h"
 #include "mcp/GuiSessionBroker.h"
 #include "mcp/McpConnectionManager.h"
 
@@ -68,6 +69,7 @@ int main(int argc, char **argv) {
   QApplication app(argc, argv);
   const auto applicationCreatedMs = startupClock.nsecsElapsed() / 1.0e6;
   gnome::detachModalDialogs(app);
+  WindowFrame::frameDialogs(app);
   configureDocking();
   const auto dockingFrontendMs = startupClock.nsecsElapsed() / 1.0e6;
 
