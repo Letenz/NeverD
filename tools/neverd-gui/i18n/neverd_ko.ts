@@ -2527,4 +2527,23 @@ Signed: %4</source>
         <translation>Windows</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>최소화</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>최대화</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>이전 크기로 복원</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>닫기</translation>
+    </message>
+</context>
 </TS>

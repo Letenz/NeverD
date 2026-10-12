@@ -53,6 +53,28 @@ void coalesceBranchEntryStatements(HighFunc &Func);
 
 namespace {
 
+/// The C record a struct returned across several registers is: one member
+/// per field register, in the order the call site packs them (an AArch64
+/// HFA, x86-64 SSE or mixed eightbytes).  The target ABI returns such a
+/// record in those same registers.  Nothing for a field C has no member for.
+TypeRef multiRegisterReturnType(const std::vector<MedReturnReg> &Fields) {
+  std::vector<TypeRef> Members;
+  for (const MedReturnReg &Field : Fields) {
+    const bool Supported = Field.IsFP ? Field.Size == 4 || Field.Size == 8
+                                      : Field.Size == 1 || Field.Size == 2 ||
+                                            Field.Size == 4 || Field.Size == 8;
+    if (!Supported)
+      return {};
+    Members.push_back(Field.IsFP ? NdType::makeFloat(Field.Size)
+                                 : NdType::makeInt(Field.Size, false));
+  }
+  TypeRef Record = NdType::makeStruct(std::move(Members));
+  if (!Record)
+    return {};
+  Record->RegisterReturnRecord = true;
+  return !sourceAggregateMembers(Record).empty() ? Record : TypeRef();
+}
+
 // Temporary, opt-in observation of the actual source-recovery conversion.
 // Keep this independent of the analysis state and remove it with the CI probe.
 class HighConversionTrace {
@@ -1212,6 +1234,9 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
       Med.MultiReturn[0].Size == ReturnTRI.PointerSize &&
       Med.MultiReturn[1].Size == ReturnTRI.PointerSize)
     Func.ReturnType = NdType::makeInt(2 * ReturnTRI.PointerSize);
+  else if (!Med.SourceParametersBound && Med.MultiReturn.size() >= 2)
+    if (TypeRef Record = multiRegisterReturnType(Med.MultiReturn))
+      Func.ReturnType = std::move(Record);
   Func.SourceTypeHint = Med.SourceTypeHint;
   Func.RegisterCopyProjections = Med.RegisterCopyProjections;
   Func.ClassGetterCallFacts = Med.ClassGetterCallFacts;
@@ -1317,7 +1342,11 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
                  PtrParamIds.count(static_cast<int>(PI)))
         HP.Type = NdType::makePtr();
       else
-        HP.Type = NdType::makeInt(MP.Size);
+        // The code reads only part of a register it may extend itself, so the
+        // C promises no more about the incoming value than an int.  A narrower
+        // parameter is one AAPCS, Apple's arm64 ABI and Clang's x86-64 have
+        // the caller extend, and its C would skip the code's own extension.
+        HP.Type = NdType::makeInt(MP.Size > 0 && MP.Size < 4 ? 4 : MP.Size);
       Func.Params.push_back(HP);
     }
 

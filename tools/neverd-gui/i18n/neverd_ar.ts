@@ -2547,4 +2547,23 @@ Signed: %4</source>
         <translation>Windows</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>تصغير</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>تكبير</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>استعادة</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>إغلاق</translation>
+    </message>
+</context>
 </TS>

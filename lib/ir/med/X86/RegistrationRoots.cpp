@@ -14,6 +14,31 @@
 
 namespace neverd::x86_registration {
 
+bool hasNoReturnCallEffect(const LowFunc &Low, const LowBlock &Block,
+                           size_t OpIndex,
+                           const LowInstructionBoundary &Boundary) {
+  if (!Low.RegistrationStates || OpIndex >= Block.Ops.size() ||
+      Boundary.Control != LowInstructionControl::Call ||
+      hasLowInstructionControlFlag(Boundary.ControlFlags,
+                                   LowInstructionControlFlag::Conditional) ||
+      !Boundary.Size || Boundary.Address < Block.StartAddr ||
+      Boundary.Address >= Block.EndAddr ||
+      Boundary.Size > Block.EndAddr - Boundary.Address ||
+      Boundary.FirstOp > OpIndex ||
+      Boundary.OpCount > Block.Ops.size() - Boundary.FirstOp ||
+      OpIndex - Boundary.FirstOp >= Boundary.OpCount)
+    return false;
+  const auto &Op = Block.Ops[OpIndex];
+  if (Op.Opcode != NdOp::CALL || Op.NumInputs != 1 || Op.Seq < 0 ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4 ||
+      Boundary.Address != Op.Addr || Boundary.Immediate != Op.Inputs[0].Offset)
+    return false;
+  const auto *Effect = Low.RegistrationStates->callFrameEffect(Op.Addr, Op.Seq);
+  return Effect && Effect->DoesNotReturn &&
+         Effect->Target == Op.Inputs[0].Offset &&
+         Effect->EndAddress == Boundary.Address + Boundary.Size;
+}
+
 RegistrationRoots::RegistrationRoots(const LowFunc &Low, Arch Architecture,
                                      BinaryFormat Format)
     : Low(Low) {
@@ -47,11 +72,15 @@ RegistrationRoots::RegistrationRoots(const LowFunc &Low, Arch Architecture,
     return;
   for (const auto &Resume : State->CxxContinuations) {
     const bool Valid =
-        EH.CodeRange.contains(Resume.TargetVA) &&
-        Resume.SavedStackOffset <= int64_t(*Chain.RegistrationOffset) - 4;
-    auto [It, New] =
-        RestoredStacks.emplace(Resume.TargetVA, Resume.SavedStackOffset);
-    if (!Valid || (!New && It->second != Resume.SavedStackOffset))
+        EH.ownsCode(Resume.TargetVA) &&
+        (Resume.SavedCallbackVA ? EH.ownsCode(Resume.SavedCallbackVA) &&
+                                      Resume.SavedStackOffset <= 0
+                                : Resume.SavedStackOffset <=
+                                      int64_t(*Chain.RegistrationOffset) - 4);
+    const auto Coordinate =
+        std::make_pair(Resume.SavedCallbackVA, Resume.SavedStackOffset);
+    auto [It, New] = RestoredStacks.emplace(Resume.TargetVA, Coordinate);
+    if (!Valid || (!New && It->second != Coordinate))
       It->second.reset();
   }
 }
@@ -73,18 +102,17 @@ void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
       if (Op.Opcode != NdOp::CALL || !Op.DoesNotReturn || Op.NumInputs != 1 ||
           !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 4)
         continue;
-      const auto *Effect =
-          Low.RegistrationStates->callFrameEffect(Op.Addr, Op.OriginSeq);
       const auto Boundary =
           llvm::find_if(Source.InstructionBoundaries,
                         [&](const auto &B) { return B.Address == Op.Addr; });
-      if (!Effect || !Effect->DoesNotReturn ||
-          Effect->Target != Op.Inputs[0].ConstVal ||
-          Boundary == Source.InstructionBoundaries.end() ||
-          Boundary->Control != LowInstructionControl::Call ||
-          Boundary->Immediate != Effect->Target ||
-          Effect->EndAddress != Boundary->Address + Boundary->Size ||
-          Effect->EndAddress <= Op.Addr || Effect->EndAddress > Block.EndAddr ||
+      const auto SourceOp = llvm::find_if(Source.Ops, [&](const auto &LowOp) {
+        return LowOp.Addr == Op.Addr && LowOp.Seq == Op.OriginSeq;
+      });
+      if (Boundary == Source.InstructionBoundaries.end() ||
+          SourceOp == Source.Ops.end() ||
+          !hasNoReturnCallEffect(Low, Source, SourceOp - Source.Ops.begin(),
+                                 *Boundary) ||
+          SourceOp->Inputs[0].Offset != Op.Inputs[0].ConstVal ||
           llvm::any_of(Block.Succs, [&](int Succ) {
             return Succ < 0 || size_t(Succ) >= Func.Blocks.size();
           }))
@@ -100,6 +128,7 @@ void RegistrationRoots::disconnectNoReturnFallthroughs(MedFunc &Func) const {
       break;
     }
   }
+  removeUnreachedBlocks(Func);
 }
 
 bool RegistrationRoots::isCxxHandler(const MedBlock &Block) const {
@@ -111,8 +140,8 @@ bool RegistrationRoots::isCxxHandler(const MedBlock &Block) const {
          });
 }
 
-std::optional<int32_t>
-RegistrationRoots::restoredStackOffset(const MedBlock &Block) const {
+std::optional<std::pair<va_t, int32_t>>
+RegistrationRoots::restoredStack(const MedBlock &Block) const {
   if (Block.StartAddr == Low.Entry || !Block.Preds.empty() ||
       Low.OrdinaryModuleAnalysisRoots.count(Block.StartAddr))
     return std::nullopt;
@@ -120,8 +149,9 @@ RegistrationRoots::restoredStackOffset(const MedBlock &Block) const {
   return It == RestoredStacks.end() ? std::nullopt : It->second;
 }
 
-void RegistrationRoots::initialize(MedOp &Op, bool RuntimeRoot, bool Callback,
-                                   std::optional<int32_t> RestoredSP) const {
+void RegistrationRoots::initialize(
+    MedOp &Op, bool RuntimeRoot, bool Callback,
+    std::optional<std::pair<va_t, int32_t>> RestoredSP) const {
   const auto &Value = Op.Output;
   if (!(Direct || Realigned) || !RuntimeRoot || Value.Kind != MedVar::Reg ||
       Value.Size != 4)
@@ -137,9 +167,11 @@ void RegistrationRoots::initialize(MedOp &Op, bool RuntimeRoot, bool Callback,
       Op.RegistrationRoot = MedOp::RegistrationRootKind::DisplacedFramePointer;
   } else if (Value.RegOff == TRI.StackPointer && RestoredSP) {
     Op.RegistrationRoot =
-        Realigned ? MedOp::RegistrationRootKind::RealignedRestoredStackPointer
-                  : MedOp::RegistrationRootKind::RestoredStackPointer;
-    Op.RegistrationStackOffset = *RestoredSP;
+        RestoredSP->first
+            ? MedOp::RegistrationRootKind::RestoredCallbackStackPointer
+        : Realigned ? MedOp::RegistrationRootKind::RealignedRestoredStackPointer
+                    : MedOp::RegistrationRootKind::RestoredStackPointer;
+    Op.RegistrationStackOffset = RestoredSP->second;
   } else if (Value.RegOff == TRI.StackPointer && Callback)
     Op.RegistrationRoot = MedOp::RegistrationRootKind::CallbackStackPointer;
 }

@@ -104,6 +104,17 @@ std::string renderX86TypedIntrinsicCall(
     bool GnuToolchain,
     std::function<std::string(Intrinsic, unsigned)> FPHelperName = {});
 
+/// Whether \p Id is a scalar LSE operation HighC prints as a builtin of
+/// NeverD's Clang (ScalarLSEFallbacks.def).
+bool isScalarLSEBuiltin(Intrinsic Id);
+
+/// Write, for each scalar LSE operation of \p Ids, the definition a compiler
+/// without NeverD's builtin reads it through: the GNU `__atomic` builtin of
+/// the operation, or a compare-and-swap loop where the compiler has no
+/// `__atomic` minimum or maximum.
+void writeScalarLSEFallbacks(llvm::raw_ostream &OS,
+                             const std::set<Intrinsic> &Ids);
+
 /// The lane width, in bits, of an x86 saturating lane operation
 /// (X86SaturatingLanes.def) whose C helper \p Call needs, or nullopt when
 /// \p Call is no such operation of a 1- or 2-byte lane.

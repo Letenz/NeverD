@@ -342,6 +342,15 @@ enum class Intrinsic : uint16_t {
 #include "neverd/ir/intrinsics/intrinsics_x86.inc"
 #include "neverd/ir/intrinsics/intrinsics_x86_fp_state.inc"
 
+  // Append after the existing x86 FP family to preserve every published ID.
+  // LoadConstant retains its ROM selector and explicit incoming control word.
+  X87ReadControl,
+  X87WriteControl,
+  X87LoadConstant,
+  // Append-only: scalar comparison flags below the outgoing MXCSR.
+  X86FPComiState,
+  X86FPComiMemoryState,
+
   _Count = 16000
 };
 
@@ -621,6 +630,11 @@ intrinsicPdepPextShapeIsValid(Intrinsic Id,
 constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::X86FPRoundMemoryState:
+  case Intrinsic::X86FPComiMemoryState:
+  case Intrinsic::X86FPScalarConvertMemoryState:
+  case Intrinsic::X86F16CReadState:
+  case Intrinsic::X86F16CStoreState:
+  case Intrinsic::X86FPPackedConvertMemoryState:
   case Intrinsic::X86FPApprox12MemoryState:
   case Intrinsic::Movsb:
   case Intrinsic::X86FPArithMemoryState:
@@ -834,6 +848,24 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
     return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
            DataSize + 4 == OutputSize &&
            (DataSize == 4 || DataSize == 8 || DataSize == 16 || DataSize == 32);
+  case Intrinsic::X86FPScalarConvertMemoryState:
+    // [id,address,control,MXCSR]; widths are owned by X86FPState.h.
+    return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 4 && (OutputSize == 8 || OutputSize == 12);
+  case Intrinsic::X86FPComiMemoryState:
+    return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
+           (DataSize == 4 || DataSize == 8) && OutputSize == 8;
+  case Intrinsic::X86F16CReadState:
+    return NumInputs == 5 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 1 && (OutputSize == 20 || OutputSize == 36);
+  case Intrinsic::X86F16CStoreState:
+    return NumInputs == 6 && AddressSize == 8 &&
+           (MaskSize == 16 || MaskSize == 32) && DataSize == 1 &&
+           OutputSize == 4;
+  case Intrinsic::X86FPPackedConvertMemoryState:
+    // [id,address,control,MXCSR]; complete output includes register padding.
+    return NumInputs == 4 && AddressSize == 8 && MaskSize == 1 &&
+           DataSize == 4 && (OutputSize == 20 || OutputSize == 36);
   case Intrinsic::X86FPApprox12MemoryState:
     // [id, address, control], without a CSR operand or effect.
     return NumInputs == 3 && AddressSize == 8 && MaskSize == 1 &&

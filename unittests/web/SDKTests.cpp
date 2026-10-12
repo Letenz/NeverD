@@ -450,8 +450,10 @@ TEST_F(WebSDK, CLIBunExportWorksWithNoExternalTools) {
   const auto Errors = (Root / "stderr").string();
   const llvm::StringRef Args[] = {NEVERD_WEB_TEST_CLI, "web", "bun-export",
                                   Path, Destination};
+  // The blob spool needs an existing temporary directory on every host.
+  const auto Temporary = "TMPDIR=" + Root.string();
   const llvm::StringRef Environment[] = {"PATH=/neverd-no-external-tools",
-                                         "TMPDIR=/private/tmp"};
+                                         Temporary};
   const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
                                                       Errors};
   std::string LaunchError;
@@ -1348,6 +1350,50 @@ TEST_F(WebSDK, NavigationIsPagedPrivateAndDoesNotAssertRuntimeTargets) {
   EXPECT_EQ(errorCode(navigation("2", Source)), "unknown_source");
 }
 
+TEST_F(WebSDK, ClientFeaturePagesKeepConfidenceAnchorsAndPrivateValues) {
+  write("function CANARY_CALLBACK(v){return v;}"
+        "server.registerTool('CANARY_TOOL',{description:'CANARY'},CANARY_"
+        "CALLBACK);"
+        "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+        "const settings={mcpServers:{CANARY:{}},hooks:{PreToolUse:[]},"
+        "permissions:{deny:['CANARY']}};");
+  commit(preview());
+  const auto Source = field(analyze("1", rootID("1")), "source_id");
+  const auto Summary = navigation("1", Source);
+  const auto *Features = Summary.getAsObject()->getObject("client_features");
+  ASSERT_NE(Features, nullptr);
+  EXPECT_EQ(Features->getString("profile"),
+            "javascript-client-syntax-features-v1");
+  EXPECT_EQ(Features->getString("status"), "partial");
+  EXPECT_EQ(Features->getInteger("record_count"), 7);
+  EXPECT_EQ(Features->getBoolean("feature_inventory_complete"), false);
+  EXPECT_EQ(Features->getString("effective_policy"), "not_analyzed");
+  const auto Page = navigationRecords("1", Source, "features", 0, 1);
+  ASSERT_EQ(Page.getAsObject()->getArray("items")->size(), 1);
+  EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), 1);
+  const auto &R = (*Page.getAsObject()->getArray("items"))[0];
+  EXPECT_EQ(field(R, "pattern"), "tool_registration_named_call");
+  EXPECT_EQ(field(R, "confidence"), "source_syntax_only");
+  EXPECT_EQ(field(R, "callback_source_link"),
+            "lexical_declaration_or_initializer");
+  EXPECT_EQ(field(R, "runtime_callback_target"), "not_proven");
+  const auto Functions = navigationRecords("1", Source, "functions");
+  EXPECT_EQ(
+      field(R, "callback_source_function_id"),
+      field((*Functions.getAsObject()->getArray("items"))[0], "function_id"));
+  const auto Rest = navigationRecords("1", Source, "features", 1, 512);
+  EXPECT_EQ(Rest.getAsObject()->getBoolean("page_complete"), true);
+  EXPECT_EQ(Rest.getAsObject()->getArray("items")->size(), 6);
+  for (const auto *Result : {&Summary, &Page, &Functions, &Rest})
+    EXPECT_EQ(llvm::formatv("{0}", *Result).str().find("CANARY"),
+              std::string::npos);
+  commit(preview());
+  EXPECT_EQ(errorCode(navigationRecords("1", Source, "features")),
+            "stale_revision");
+  EXPECT_EQ(errorCode(navigationRecords("2", Source, "features")),
+            "unknown_source");
+}
+
 TEST_F(WebSDK,
        SourceAnchorsDistinguishOriginalBytesAndRedactedDisplayCoverage) {
   const std::string Text = "const SECRET = 'PRIVATE😀';\r\n";
@@ -1816,6 +1862,8 @@ TEST_F(WebSDK, DisabledParserHasNoImplicitExternalFallback) {
   EXPECT_EQ(errorCode(viewChunk("1", "view")), "capability_unavailable");
   EXPECT_EQ(errorCode(navigation("1", "source")), "capability_unavailable");
   EXPECT_EQ(errorCode(navigationRecords("1", "source", "functions")),
+            "capability_unavailable");
+  EXPECT_EQ(errorCode(navigationRecords("1", "source", "features")),
             "capability_unavailable");
   EXPECT_EQ(errorCode(anchor("1", "source", 0, 0)), "capability_unavailable");
 }

@@ -2531,4 +2531,23 @@ Con segno: %4</translation>
         <translation>Windows</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Riduci a icona</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Ingrandisci</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Ripristina</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Chiudi</translation>
+    </message>
+</context>
 </TS>

@@ -42,17 +42,42 @@ NEVERD_CHROME_COLOR(DisabledText, "#A0A0A0", "#6E6E6E")
 NEVERD_CHROME_COLOR(Accent, "#007ACC", "#007ACC")
 NEVERD_CHROME_COLOR(Focus, "#0090F1", "#007FD4")
 NEVERD_CHROME_COLOR(Border, "#E5E5E5", "#3C3C3C")
-NEVERD_CHROME_COLOR(MenuBar, "#DDDDDD", "#3C3C3C")
+// The menu bar shares the toolbar's surface, so the chrome above the windows
+// reads as one band.
+NEVERD_CHROME_COLOR(MenuBar, "#F3F3F3", "#2D2D2D")
 NEVERD_CHROME_COLOR(MenuBarText, "#333333", "#CCCCCC")
-NEVERD_CHROME_COLOR(MenuBarSelection, "#CCCCCC", "#505050")
+NEVERD_CHROME_COLOR(MenuBarSelection, "#E1E1E1", "#3C3C3C")
 NEVERD_CHROME_COLOR(Menu, "#FFFFFF", "#252526")
 NEVERD_CHROME_COLOR(MenuText, "#3B3B3B", "#CCCCCC")
 NEVERD_CHROME_COLOR(MenuSelection, "#0060C0", "#04395E")
 NEVERD_CHROME_COLOR(MenuSeparator, "#D4D4D4", "#454545")
 NEVERD_CHROME_COLOR(ToolBar, "#F3F3F3", "#2D2D2D")
 NEVERD_CHROME_COLOR(ToolBarHover, "#E1E1E1", "#3C3C3C")
-NEVERD_CHROME_COLOR(StatusBar, "#007ACC", "#007ACC")
-NEVERD_CHROME_COLOR(StatusBarText, "#FFFFFF", "#FFFFFF")
+// The status bar shares the windows' surface with a hairline above it, as in
+// Visual Studio Code's Modern themes; the accent marks states, not chrome.
+NEVERD_CHROME_COLOR(StatusBar, "#F3F3F3", "#252526")
+NEVERD_CHROME_COLOR(StatusBarText, "#3B3B3B", "#CCCCCC")
+NEVERD_CHROME_COLOR(StatusBarBorder, "#E5E5E5", "#3C3C3C")
+// A window that draws its own frame, after Visual Studio Code's custom title
+// bar: the title bar carries the menus on the menu bar's surface, its text
+// dims while the window is inactive, its controls take a light wash under the
+// pointer and Close turns red, and the command center is a quiet field.
+NEVERD_CHROME_COLOR(TitleBar, "#F3F3F3", "#2D2D2D")
+NEVERD_CHROME_COLOR(TitleBarText, "#333333", "#CCCCCC")
+NEVERD_CHROME_COLOR(TitleBarInactiveText, "#808080", "#8C8C8C")
+NEVERD_CHROME_COLOR(WindowControlHover, "#DBDBDB", "#424242")
+NEVERD_CHROME_COLOR(WindowControlPressed, "#C2C2C2", "#575757")
+NEVERD_CHROME_COLOR(WindowCloseHover, "#E81123", "#E81123")
+NEVERD_CHROME_COLOR(WindowClosePressed, "#F1707A", "#F1707A")
+NEVERD_CHROME_COLOR(WindowCloseText, "#FFFFFF", "#FFFFFF")
+NEVERD_CHROME_COLOR(CommandCenter, "#E7E7E7", "#383838")
+NEVERD_CHROME_COLOR(CommandCenterBorder, "#CDCDCD", "#4D4D4D")
+NEVERD_CHROME_COLOR(CommandCenterHover, "#E0E0E0", "#3E3E3E")
+NEVERD_CHROME_COLOR(CommandCenterHoverBorder, "#B9B9B9", "#5D5D5D")
+// Under Wayland GNOME draws no shadow for such a window, so it draws its own:
+// a hairline at its visible edge over a shadow that fades outward (#AARRGGBB).
+NEVERD_CHROME_COLOR(WindowEdge, "#38000000", "#B3000000")
+NEVERD_CHROME_COLOR(WindowShadow, "#30000000", "#66000000")
 NEVERD_CHROME_COLOR(TabBar, "#F3F3F3", "#252526")
 NEVERD_CHROME_COLOR(TabActive, "#FFFFFF", "#1E1E1E")
 NEVERD_CHROME_COLOR(TabInactive, "#ECECEC", "#2D2D2D")
@@ -65,6 +90,8 @@ NEVERD_CHROME_COLOR(DockSeparator, "#E5E5E5", "#3C3C3C")
 NEVERD_CHROME_COLOR(DockSeparatorHover, "#0090F1", "#007FD4")
 NEVERD_CHROME_COLOR(FloatingWindowBorder, "#D4D4D4", "#454545")
 NEVERD_CHROME_COLOR(Hover, "#E8E8E8", "#2A2D2E")
+// Status lines and legends, which describe rather than act.
+NEVERD_CHROME_COLOR(SecondaryText, "#717171", "#9D9D9D")
 NEVERD_CHROME_COLOR(Input, "#FFFFFF", "#3C3C3C")
 NEVERD_CHROME_COLOR(InputBorder, "#CECECE", "#3C3C3C")
 NEVERD_CHROME_COLOR(CheckboxBackground, "#FFFFFF", "#3C3C3C")

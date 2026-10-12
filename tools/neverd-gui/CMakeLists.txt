@@ -40,6 +40,13 @@ target_include_directories(neverd_gui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(neverd_gui_core PUBLIC cxx_std_20)
 target_link_libraries(neverd_gui_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
 
+# Offline package presentation and local journals; all analysis stays in the
+# shared worker/C API owner. No LLVM or input runtime enters this target.
+add_library(neverd_gui_web STATIC
+  web/ReviewJournal.cpp web/PackageSession.cpp web/FindingModel.cpp
+  web/PackageReviewDialog.cpp)
+target_link_libraries(neverd_gui_web PUBLIC neverd_gui_core Qt6::Widgets)
+
 # The workbench: views, windows and the command set.
 file(GLOB NEVERD_GUI_APP_SOURCES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/app/*.cpp")
@@ -51,8 +58,11 @@ target_include_directories(neverd_gui_app PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../neverd-worker"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../include"
   "${neverd_docking_SOURCE_DIR}/src")
-target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core Qt6::Widgets Qt6::Svg
+target_link_libraries(neverd_gui_app PUBLIC neverd_gui_core neverd_gui_web Qt6::Widgets Qt6::Svg
   Qt6::Sql Qt6::Concurrent KDAB::kddockwidgets)
+# A window that draws its own frame tells the Wayland compositor where its
+# shadow ends through Qt's private native window interface.
+target_link_libraries(neverd_gui_app PRIVATE Qt6::GuiPrivate)
 file(GLOB NEVERD_GUI_ICONS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.svg")
 qt_add_resources(neverd_gui_app "workbench_assets" PREFIX /neverd
@@ -72,7 +82,7 @@ target_link_libraries(neverd-gui PRIVATE neverd_gui_app)
 file(GLOB NEVERD_TRANSLATIONS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.ts")
 if(NEVERD_TRANSLATIONS)
   qt_add_translations(neverd-gui TS_FILES ${NEVERD_TRANSLATIONS}
-    SOURCE_TARGETS neverd-gui neverd_gui_app neverd_gui_core
+    SOURCE_TARGETS neverd-gui neverd_gui_app neverd_gui_core neverd_gui_web
     QM_FILES_OUTPUT_VARIABLE NEVERD_QM_FILES)
   qt_add_resources(neverd-gui "app_translations" PREFIX /i18n
     BASE "${CMAKE_CURRENT_BINARY_DIR}" FILES ${NEVERD_QM_FILES})
@@ -103,6 +113,19 @@ if(BUILD_TESTING)
       -o "-,txt")
   endif()
   find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+  if(NEVERD_WORKER_WEB_ENGINE_TESTS)
+    qt_add_executable(neverd-gui-web-tests tests/WebReviewTests.cpp)
+    target_link_libraries(neverd-gui-web-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_include_directories(neverd-gui-web-tests PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../unittests/web")
+    target_compile_definitions(neverd-gui-web-tests PRIVATE
+      TEST_WEB_WORKER="$<TARGET_FILE:neverd-worker>")
+    add_dependencies(neverd-gui-web-tests neverd-worker)
+    add_test(NAME NeverDGuiWebReview COMMAND neverd-gui-web-tests)
+    set_tests_properties(NeverDGuiWebReview PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 120)
+    set_target_properties(neverd-gui-web-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+  endif()
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   target_sources(neverd-gui PRIVATE tests/WidgetsProbe.cpp)
   target_compile_definitions(neverd-gui PRIVATE NEVERD_GUI_TEST_PROBES=1)

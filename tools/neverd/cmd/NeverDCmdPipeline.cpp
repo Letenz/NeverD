@@ -71,6 +71,18 @@ std::optional<std::string> validateSanitizeArguments() {
   const Conflict Conflicts[] = {
       {PatchFromIR.getNumOccurrences(), "--from-ir"},
       {PatchFromC.getNumOccurrences(), "--from-c"},
+      {PatchFromSource.getNumOccurrences(), "--from-source"},
+      {PatchFromObject.getNumOccurrences(), "--from-object"},
+      {PatchCompiler.getNumOccurrences(), "--compiler"},
+      {PatchCompilerPath.getNumOccurrences(), "--compiler-path"},
+      {PatchLanguage.getNumOccurrences(), "--language"},
+      {PatchArtifact.getNumOccurrences(), "--artifact"},
+      {PatchCompileMode.getNumOccurrences(), "--compile-mode"},
+      {PatchEntry.getNumOccurrences(), "--entry"},
+      {PatchCompilerArgs.getNumOccurrences(), "--compiler-arg"},
+      {PatchBindings.getNumOccurrences(), "--bind"},
+      {PatchCompilerTimeout.getNumOccurrences(), "--compiler-timeout"},
+      {PatchReport.getNumOccurrences(), "--patch-report"},
       {PatchFuncAddr.getNumOccurrences(), "--func"},
       {MaxFunc.getNumOccurrences(), "--max-func"},
       {InjectHello.getNumOccurrences(), "--hello"},
@@ -81,6 +93,145 @@ std::optional<std::string> validateSanitizeArguments() {
       return "--sanitize=strict cannot be combined with " +
              std::string(Entry.Flag);
   return std::nullopt;
+}
+
+std::optional<std::string> validateSourcePatchArguments() {
+  const int Inputs = (PatchFromIR.getNumOccurrences() != 0) +
+                     (PatchFromC.getNumOccurrences() != 0) +
+                     (PatchFromSource.getNumOccurrences() != 0) +
+                     (PatchFromObject.getNumOccurrences() != 0);
+  if (Inputs > 1)
+    return "select exactly one of --from-c, --from-source, --from-ir, or "
+           "--from-object";
+  const bool CompilerOptions = PatchCompiler.getNumOccurrences() ||
+                               PatchCompilerPath.getNumOccurrences() ||
+                               PatchLanguage.getNumOccurrences() ||
+                               PatchArtifact.getNumOccurrences() ||
+                               PatchCompileMode.getNumOccurrences() ||
+                               PatchCompilerArgs.getNumOccurrences() ||
+                               PatchCompilerTimeout.getNumOccurrences();
+  if (CompilerOptions && PatchFromC.empty() && PatchFromSource.empty())
+    return "compiler options require --from-c or --from-source";
+  if (Inputs == 0 &&
+      (PatchFuncAddr.getNumOccurrences() || PatchEntry.getNumOccurrences() ||
+       PatchReport.getNumOccurrences() || PatchBindings.getNumOccurrences()))
+    return "replacement options require an external patch input";
+  if (Inputs && PatchFromIR.empty() && PatchFromC.empty() &&
+      PatchFromSource.empty() && PatchFromObject.empty())
+    return "external patch input path is empty";
+  if (PatchEntry.getNumOccurrences() &&
+      (PatchEntry.empty() || !PatchFuncAddr.getNumOccurrences()))
+    return "--entry requires a nonempty symbol and --func";
+  uint64_t Address = 0;
+  if (PatchFuncAddr.getNumOccurrences() &&
+      (PatchFuncAddr.empty() ||
+       StringRef(PatchFuncAddr).getAsInteger(0, Address)))
+    return "--func requires a valid function address";
+  if (PatchCompiler != "clang" && PatchCompiler != "neverc" &&
+      PatchCompiler != "gcc")
+    return "--compiler must be clang, neverc, or gcc";
+  if (PatchLanguage != "c" && PatchLanguage != "c++")
+    return "--language must be c or c++";
+  if (!PatchFromC.empty() && PatchLanguage != "c")
+    return "--from-c requires language c; use --from-source for C++";
+  if (PatchArtifact != "ir" && PatchArtifact != "object")
+    return "--artifact must be ir or object";
+  if (PatchCompileMode != "normal" && PatchCompileMode != "dyncode")
+    return "--compile-mode must be normal or dyncode";
+  if (PatchCompilerTimeout == 0 || PatchCompilerTimeout > 3600)
+    return "--compiler-timeout must be between 1 and 3600 seconds";
+  return std::nullopt;
+}
+
+bool usesSourcePatchRequest() {
+  return !PatchFromC.empty() || !PatchFromSource.empty() ||
+         !PatchFromObject.empty() ||
+         (!PatchFromIR.empty() &&
+          (PatchFuncAddr.getNumOccurrences() ||
+           PatchEntry.getNumOccurrences() || PatchReport ||
+           PatchBindings.getNumOccurrences()));
+}
+
+int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
+  const std::string &Input =
+      !PatchFromC.empty()        ? PatchFromC.getValue()
+      : !PatchFromSource.empty() ? PatchFromSource.getValue()
+      : !PatchFromObject.empty() ? PatchFromObject.getValue()
+                                 : PatchFromIR.getValue();
+  auto Buffer = MemoryBuffer::getFile(Input);
+  if (!Buffer) {
+    WithColor::error() << "cannot read replacement input: " << Input << "\n";
+    return 1;
+  }
+  neverd_source_patch_options_v1 Options{};
+  Options.struct_size = sizeof(Options);
+  Options.input_kind = !PatchFromObject.empty() ? NEVERD_SOURCE_PATCH_OBJECT
+                       : !PatchFromIR.empty()   ? NEVERD_SOURCE_PATCH_LLVM_IR
+                                                : NEVERD_SOURCE_PATCH_SOURCE;
+  Options.compiler = PatchCompiler == "neverc" ? NEVERD_SOURCE_PATCH_NEVERC
+                     : PatchCompiler == "gcc"  ? NEVERD_SOURCE_PATCH_GCC
+                                               : NEVERD_SOURCE_PATCH_CLANG;
+  Options.language =
+      PatchLanguage == "c++" ? NEVERD_SOURCE_PATCH_CXX : NEVERD_SOURCE_PATCH_C;
+  Options.artifact =
+      PatchArtifact == "object" || !PatchFromObject.empty() ||
+              (PatchCompiler == "gcc" && !PatchArtifact.getNumOccurrences())
+          ? NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT
+          : NEVERD_SOURCE_PATCH_ARTIFACT_IR;
+  Options.mode = PatchCompileMode == "dyncode" ? NEVERD_SOURCE_PATCH_DYNCODE
+                                               : NEVERD_SOURCE_PATCH_NORMAL;
+  Options.strategy = Strategy;
+  Options.compiler_path = PatchCompilerPath.c_str();
+  Options.source_name = Input.c_str();
+  Options.timeout_seconds = PatchCompilerTimeout;
+  std::vector<const char *> Arguments;
+  for (const std::string &Argument : PatchCompilerArgs)
+    Arguments.push_back(Argument.c_str());
+  Options.compiler_args = Arguments.data();
+  Options.compiler_arg_count = Arguments.size();
+  neverd_source_patch_mapping_v1 Mapping{};
+  if (PatchFuncAddr.getNumOccurrences()) {
+    Mapping.symbol = PatchEntry.c_str();
+    StringRef(PatchFuncAddr).getAsInteger(0, Mapping.original_va);
+    Options.mappings = &Mapping;
+    Options.mapping_count = 1;
+  }
+  std::vector<std::string> BindingNames;
+  std::vector<neverd_source_patch_binding_v1> Bindings;
+  BindingNames.reserve(PatchBindings.size());
+  for (const std::string &Text : PatchBindings) {
+    const auto [Kind, Rest] = StringRef(Text).split(':');
+    const auto [Symbol, Location] = Rest.split('=');
+    const auto [Address, Size] = Location.split(':');
+    neverd_source_patch_binding_v1 Binding{};
+    if (Kind == "function")
+      Binding.kind = NEVERD_SOURCE_BIND_FUNCTION;
+    else if (Kind == "const")
+      Binding.kind = NEVERD_SOURCE_BIND_READ_ONLY_DATA;
+    else if (Kind == "data")
+      Binding.kind = NEVERD_SOURCE_BIND_WRITABLE_DATA;
+    else {
+      WithColor::error() << "--bind kind must be function, const, or data\n";
+      return 1;
+    }
+    if (Symbol.empty() || Address.empty() ||
+        Address.getAsInteger(0, Binding.original_va) ||
+        (Location.contains(':') &&
+         (Size.empty() || Size.getAsInteger(0, Binding.size)))) {
+      WithColor::error() << "--bind requires KIND:SYMBOL=VA[:SIZE]\n";
+      return 1;
+    }
+    BindingNames.push_back(Symbol.str());
+    Binding.symbol = BindingNames.back().c_str();
+    Bindings.push_back(Binding);
+  }
+  Options.bindings = Bindings.data();
+  Options.binding_count = Bindings.size();
+  return neverd_patch_source(Sess, (*Buffer)->getBufferStart(),
+                             (*Buffer)->getBufferSize(), &Options,
+                             Output.str().c_str())
+             ? 0
+             : 1;
 }
 
 const char *hardforkSpelling(evm::Hardfork Fork) {
@@ -758,6 +909,10 @@ int runPatch(neverd_session_t Sess) {
     WithColor::error() << *Error << "\n";
     return 1;
   }
+  if (std::optional<std::string> Error = validateSourcePatchArguments()) {
+    WithColor::error() << *Error << "\n";
+    return 1;
+  }
   const bool StrictSanitize = PatchSanitize.getNumOccurrences() != 0;
 
   std::string OutPath = OutputFile.getValue();
@@ -830,6 +985,16 @@ int runPatch(neverd_session_t Sess) {
     }
     SanitizePublicationDisposition =
         sanitizer_publication::successDisposition(*SanitizeResult);
+  } else if (usesSourcePatchRequest()) {
+    Ret = runSourcePatch(Sess, OutPath, Strategy);
+    if (PatchReport) {
+      const char *Report = neverd_patch_source_report(Sess);
+      if (Report && *Report)
+        outs() << Report << "\n";
+      neverd_free_string(Report);
+      if (Ret == 0)
+        return 0;
+    }
   } else if (!PatchFromIR.empty()) {
     // Patch from external LLVM IR: skip the lift stage and feed the IR
     // straight into the rewrite pipeline (section or inplace per --mode).
@@ -841,20 +1006,6 @@ int runPatch(neverd_session_t Sess) {
     }
     Ret = neverd_patch_from_ir(Sess, (*IRBuf)->getBufferStart(), Strategy,
                                OutPath.c_str())
-              ? 0
-              : 1;
-  } else if (!PatchFromC.empty()) {
-    auto CBuf = MemoryBuffer::getFile(PatchFromC.getValue());
-    if (!CBuf) {
-      WithColor::error() << "cannot read C file: " << PatchFromC.getValue()
-                         << "\n";
-      return 1;
-    }
-    uint64_t FuncAddr = 0;
-    if (!PatchFuncAddr.empty())
-      StringRef(PatchFuncAddr.getValue()).getAsInteger(0, FuncAddr);
-    Ret = neverd_patch_from_c(Sess, (*CBuf)->getBufferStart(), FuncAddr,
-                              OutPath.c_str())
               ? 0
               : 1;
   } else {

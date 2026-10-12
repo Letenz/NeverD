@@ -1,13 +1,18 @@
 add_neverd_component_library(NeverDCodeGen
   COFF/COFFExceptionPatch.cpp
+  COFF/COFFSourceImage.cpp
   COFF/COFFFH4Encoding.cpp
   COFF/COFFInplace.cpp
   COFF/COFFPatch.cpp
+  COFF/COFFTrampolineRegions.cpp
   COFF/PESignaturePolicy.cpp
   COFF/COFFReloc.cpp
   COFF/COFFRegistrationPatch.cpp
   COFF/COFFRegistrationCallbackProof.cpp
   COFF/COFFRegistrationFrameProof.cpp
+  COFF/COFFRegistrationFrameStores.cpp
+  COFF/COFFRegistrationFrameTaint.cpp
+  COFF/COFFRegistrationFrameBits.cpp
   COFF/COFFRegistrationImageProof.cpp
   COFF/COFFRegistrationIncomingFrame.cpp
   COFF/COFFRegistrationIR.cpp
@@ -15,10 +20,15 @@ add_neverd_component_library(NeverDCodeGen
   COFF/COFFRegistrationCxx.cpp
   COFF/COFFRegistrationCxxStateProof.cpp
   COFF/COFFRegistrationCxxIR.cpp
+  COFF/COFFRegistrationCxxEdges.cpp
+  COFF/COFFRegistrationCxxCall.cpp
   COFF/COFFRegistrationCxxCatch.cpp
   COFF/COFFRegistrationCxxContinuation.cpp
   COFF/COFFRegistrationCxxStack.cpp
+  COFF/COFFRegistrationCxxResume.cpp
+  COFF/COFFRegistrationCxxLifetime.cpp
   COFF/COFFRegistrationCxxFrame.cpp
+  COFF/COFFRegistrationCxxThrow.cpp
   COFF/COFFRegistrationIRProof.cpp
   CodeGen.cpp
   CodeGenAArch64.cpp
@@ -34,6 +44,9 @@ add_neverd_component_library(NeverDCodeGen
   ELF/ELFInplace.cpp
   ELF/ELFPatch.cpp
   ELF/ELFReloc.cpp
+  ELF/ELFSectionPatch.cpp
+  ELF/ELFSourceRelocations.cpp
+  ELF/ELFSourceSymbols.cpp
   MachO/MachOCompactUnwindPatch.cpp
   MachO/MachOExceptionPatch.cpp
   MachO/MachOInplace.cpp
@@ -42,6 +55,10 @@ add_neverd_component_library(NeverDCodeGen
   MachO/MachOSigner.cpp
   MachO/MachOSignaturePolicy.cpp
   RelocResolver.cpp
+  PatchObject.cpp
+  PatchStorage.cpp
+  SourcePatch.cpp
+  SourcePatchBindings.cpp
   rewrite/BinaryRewriter.cpp
   rewrite/InplaceRewriter.cpp
 

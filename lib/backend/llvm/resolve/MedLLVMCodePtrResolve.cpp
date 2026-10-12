@@ -83,7 +83,11 @@ llvm::Constant *MedLLVMEmitter::resolveLiftedCodeAddress(va_t Address) {
     if (Block && Block->getParent())
       return llvm::BlockAddress::get(Block->getParent(), Block);
   }
-  return resolveLiftedFunctionInterior(Address);
+  if (auto *Interior = resolveLiftedFunctionInterior(Address))
+    return Interior;
+  // A retained handler identity belongs to the image, independently of the
+  // referencing function's EH metadata or inclusion of its original parent.
+  return resolveX86RegistrationHandlerReference(Address);
 }
 
 llvm::Constant *MedLLVMEmitter::resolveLiftedFunctionInterior(va_t Address) {

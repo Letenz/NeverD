@@ -5,10 +5,10 @@ description: >-
 license: LicenseRef-Qt-Commercial OR BSD-3-Clause
 metadata:
   author: qt-ai-skills
-  version: "1.1"
+  version: "1.2"
   qt-version: "6.x"
   category: conceptual
-  changelog: "Added the NeverD desktop design profile and visual verification guidance"
+  changelog: "Added NeverD workbench chrome guidance and window-manager checks"
 ---
 # Qt UI Design
 
@@ -16,9 +16,10 @@ metadata:
 
 For NeverD screens, read [the NeverD desktop profile](references/neverd-desktop.md)
 before designing or auditing. It records the product's established visual
-direction, content hierarchy, resizing behavior, and Qt rendering checks. Apply
-its desktop density and layout guidance in place of the generic sizing defaults
-below; preserve accessibility requirements and the user's current instructions.
+direction, workbench chrome, content hierarchy, resizing behavior, and Qt
+rendering checks. Apply its desktop density and layout guidance in place of
+the generic sizing defaults below; preserve accessibility requirements and the
+user's current instructions.
 For other products, use the general guidance without importing NeverD's palette
 or screen dimensions.
 

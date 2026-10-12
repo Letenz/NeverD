@@ -7,6 +7,10 @@
 本指南说明贡献者安全修改 NeverD 所需了解的生产边界。内容有意仅涵盖
 NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部架构。
 
+## 源码与对象替换边界
+
+`SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
+
 ## 系统边界
 
 ```mermaid
@@ -292,6 +296,8 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 该可变子集接受 8/16/32/64/128 位标量存储，位计数输入最多为 64 位。非标准位宽和更宽存储需要单独的源码契约。
 
 架构 lifter 负责事务式的未定义输出附属元数据：每次尝试前清除旧证据，只为精确对应的成功提升发布效果。`Missing` 表示证据缺失，不等于空的 `Complete` 描述。普通 LowIR 保持确定的选定值。`LowIRUndefinedIndependence` 负责对传入的完整无环 LowIR 图进行有界关系证明，共享普通输入，并保留新产生未定义值的来源关联；它绑定完整指令边界和操作摘要，拒绝不完整证明。超出下述有限原生路径范围的一般原生图认证、循环不变量及原生代码到 C 的源码等价证明，仍属于独立工作。
+
+`FreshChoiceProjection` 是独立性检查器的内部组件。它在同一个不可变符号上下文中复用普通值的零投影，只允许加入前一次投影完成后新建的 fresh leaf。有界结果表在容量之外回退到原有替换算法。两次执行仍保留各自的新鲜选择；节点限额、查询成本和证明义务不变。
 
 `Decoder` 在指令形式审核和重定位匹配之前修正 x64 操作数前缀导致的 disp32 长度误报。ModRM/SIB 边界、完整字段、有符号位移、内存操作数及尾随立即数布局必须一致。完整解码、提升解码和启用详细信息的轻量解码共用此规范化。它只修改编码长度元数据；真正的 i386 disp16、disp8、moffs 及无操作数详细信息的解码保持原有行为。
 
@@ -781,6 +787,8 @@ x64 KVM/WHP/HVF 原生初始化在私有 supervisor 页面执行 `X64MachineProb
 共享的 `encodeX64XsaveState` / `decodeX64XsaveState` 编解码层拥有标准及压缩 FP/SSE 数据包、物理 TOP 轮转、缺失组件的初始状态和原子校验。WHP 使用完整 XSAVE API，优先选择 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`，旧 XSAVE API 作为兼容路径。单独的旧 x87 寄存器接口不能替代完整数据包。非初始扩展组件、畸形头部、非法控制位和截断捕获明确失败。WHP 映射错误保留 HRESULT、GPA 和大小以便诊断。
 
 `CheckedX64Instructions.def` 通过既有 CPU 后端准入 8/16/32/64 位无符号 `MUL` 和 `CBW/CWDE/CDQE/CWD/CDQ/CQO`。`NeverDX64IntegerTests` 使用独立的 `X64IntegerCases.def` 编码和预期值，在两种特权级验证部分寄存器保留、32 位零扩展、乘积高低两部分、已定义的 CF/OF 结果及符号扩展不改变标志位。普通 RAM 乘法保留完整访问范围的权限检查和读观察回调；故障或观察回调中止会保留隐式输出寄存器及 PC。设备操作数仍不支持。这些用例也在 checked Unicorn 上运行；不可用的原生后端明确跳过。
+
+同一受检 x64 指令清单支持 16/32/64 位 `BSF` 和 `BSR`。所选处理器执行原始指令，包括零源值；ISA 层不会为架构未定义的目标值编造可移植结果。寄存器和普通 RAM 源沿用完整范围访问检查及效果发生前的观察器；设备操作数和非法 LOCK 形式在回调或数据效果前拒绝。
 
 `X64BitInstructions.def` 支持 16/32/64 位寄存器及普通 RAM 的 `BT/BTS/BTR/BTC`。寄存器位索引按操作数宽度解释为有符号数并选中完整数据字；立即数索引限制在基址的数据字内。地址宽度截断先于 FS/GS 基址相加。CF 与写入值由处理器提供；`RAMTransaction` 在观察回调接受前保留私有执行结果。完整范围权限检查覆盖独立页面分配和别名。停止、回调失败或页面权限不足均保留原始 CPU 和 RAM。LOCK 要求自然对齐；修改型 MMIO 操作要求明确的预备原子事务提供方。`X64BitStringTests.cpp` 使用独立编码与 x64 本机实际执行对照，检查负索引、宽度截断、跨页访问、取消及非法 LOCK 形式。参见 [Intel 指令参考](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)。
 
@@ -1494,6 +1502,8 @@ DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；Da
 普通 RAM 的 `XCHG` 支持未对齐的 8/16/32/64 位操作数，包含显式 LOCK 前缀与隐式加锁两种形式。共享 RAM 事务保留入口有效地址、串行发布结果，并丢弃取消或故障时的写入；处理器执行原始交换指令。`X64Address` 覆盖地址与寄存器重叠、部分寄存器写入、缓存行与页面跨界、观察回调及缺页故障。MMIO 交换仍要求提供者契约和自然对齐，其他 LOCK 指令族沿用现有准入规则。
 
 DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码，并拒绝未建模的信号状态操作。Select 与 Pselect 共享 immediateSelect，统一处理位图、容量下界、提供方和按序复制；timeval 与 timespec 保留各自的字段宽度和边界。完整的非空掩码需要后续的信号状态模型。
+
+`isCheckedX86SafeSEHHandlerReference` 使用现有 SafeSEH 解码器、不可变的表及头部字节、带重定位的 load-config 指针，认证保留的 PE32 处理器入口。LLVM 在发射任何函数体前声明该源码身份，包括被分片省略的函数体。表成员资格不证明语言 personality、可调用 ABI 或原生 EH 重建权限；这些使用方仍执行独立校验。
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

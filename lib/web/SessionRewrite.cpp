@@ -1,4 +1,4 @@
-//===- SessionRewrite.cpp - Primitive rewrite publication ---------------===//
+//===- SessionRewrite.cpp - Local source rewrite publication ------------===//
 //
 // NeverD Decompiler
 //
@@ -24,12 +24,12 @@ bool verified(const SourceRewrite &A) {
 std::string exportReceipt(const SourceRewrite &A, uint64_t Revision) {
   return identity("source-rewrite-export",
                   {A.ID, A.SourceID, A.SourceType, A.Pass, A.SourceHash,
-                   A.CandidateHash, SourceRewriteProfile,
+                   A.CandidateHash, sourceRewriteProfile(A.Pass),
                    "raw-original-candidate-v1", std::to_string(Revision)});
 }
 
 llvm::json::Object summary(const SourceRewrite &A, uint64_t Revision) {
-  return llvm::json::Object{
+  llvm::json::Object Result{
       {"schema_version", 1},
       {"status", "ok"},
       {"revision", std::to_string(Revision)},
@@ -37,7 +37,7 @@ llvm::json::Object summary(const SourceRewrite &A, uint64_t Revision) {
       {"source_id", A.SourceID},
       {"artifact_id", A.ArtifactID},
       {"source_type", A.SourceType},
-      {"profile", std::string(SourceRewriteProfile)},
+      {"profile", std::string(sourceRewriteProfile(A.Pass))},
       {"pass", A.Pass},
       {"analysis_status", A.Status},
       {"analysis_reason", A.Reason},
@@ -70,11 +70,37 @@ llvm::json::Object summary(const SourceRewrite &A, uint64_t Revision) {
                              : llvm::json::Value(nullptr)},
       {"export_disclosure", "raw_original_and_candidate_local_files"},
       {"redaction_policy", "metadata-only-v1"}};
+  if (A.Pass == "scope_renaming") {
+    Result["value_analysis_id"] = nullptr;
+    Result["effect_analysis_id"] = nullptr;
+    Result["value_profile"] = nullptr;
+    Result["effect_profile"] = nullptr;
+    Result["value_verification"] = "not_applicable";
+    Result["outside_tree_verification"] =
+        verified(A) ? "same_tree_except_selected_identifier_names"
+                    : "unavailable";
+    Result["binding_verification"] =
+        verified(A) ? "same_scopes_declarations_and_reference_resolution"
+                    : "unavailable";
+    Result["original_name_recovery"] = false;
+  } else if (A.Pass == "boolean_branches") {
+    Result["value_verification"] =
+        verified(A) ? "constant_boolean_condition_only" : "unavailable";
+    Result["outside_tree_verification"] =
+        verified(A) ? "same_retained_tree_with_get_value_sequence"
+                    : "unavailable";
+    Result["binding_verification"] =
+        verified(A) ? "same_scopes_declarations_and_retained_references"
+                    : "unavailable";
+    Result["retained_expression_effects"] = "preserved_not_assumed_absent";
+    Result["statements_rewritten"] = false;
+  }
+  return Result;
 }
 
 llvm::json::Object record(const SourceRewriteRecord &R) {
   const bool Accepted = R.Status == "accepted";
-  return llvm::json::Object{
+  llvm::json::Object Result{
       {"record_id", R.ID},
       {"node_id", R.NodeID},
       {"status", R.Status},
@@ -89,6 +115,18 @@ llvm::json::Object record(const SourceRewriteRecord &R) {
       {"candidate_byte_length",
        Accepted ? llvm::json::Value(std::to_string(R.End - R.Start))
                 : llvm::json::Value(nullptr)}};
+  if (!R.BindingID.empty()) {
+    Result["binding_id"] = R.BindingID;
+    Result["identifier_role"] = R.Role;
+  }
+  if (!R.ConditionID.empty()) {
+    Result["condition_node_id"] = R.ConditionID;
+    Result["retained_node_id"] =
+        Accepted ? llvm::json::Value(R.RetainedID) : llvm::json::Value(nullptr);
+    Result["selected_operand"] =
+        Accepted ? llvm::json::Value(R.Selection) : llvm::json::Value(nullptr);
+  }
+  return Result;
 }
 } // namespace
 
@@ -100,7 +138,7 @@ std::string Session::analyzeSourceRewrite(std::string_view Revision,
 #else
   std::lock_guard Lock(State->Mutex);
   State->requireRevision(Revision);
-  if (Pass != "string_recovery" && Pass != "constant_folding")
+  if (sourceRewriteProfile(Pass).empty())
     throw Error("unknown_source_rewrite_pass");
   const auto Found = State->Sources.find(std::string(SourceID));
   if (Found == State->Sources.end())

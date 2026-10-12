@@ -131,6 +131,11 @@ public:
   std::optional<uint64_t> foldReadonlyScalar(va_t Addr, uint16_t Size) const;
   std::optional<std::string> imageObjectName(va_t Addr) const;
   std::optional<std::string> imageBackingAddress(va_t Addr) const;
+  /// \p Const as an address in an image backing.  One past the end of the
+  /// section its relocation names, it stays in that section's last backing
+  /// even where the next section's first object starts.
+  std::optional<std::string>
+  ownedImageBackingAddress(const HighExpr &Const) const;
   bool isImageDataAddress(va_t Addr) const;
   void noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                        bool MemoryAccess = false);
@@ -141,13 +146,16 @@ public:
   void writeMemoryHelpers();
   void writeX64SyscallHelper();
   void writeX64WindowsSyscallHelper();
+  void writeLinuxSyscallHelpers();
   // X86/HighCRegistration.cpp: explicit runtime ABI inputs in the EH view.
   void writeRegistrationEntryDeclarations(const std::vector<HighFunc> &Funcs);
   std::string registrationEntryExpression(const HighExpr &E) const;
   static bool preservesRegistrationMemory(const HighFunc &Func);
   bool isEmbeddedRegistrationCallback(const HighStmt &Stmt, size_t I) const;
-  void writeEmbeddedRegistrationCallbacks(const HighStmt &Stmt, int Indent);
-  unsigned RegistrationRegionNumber = 0;
+  bool isEmbeddedWindowsCallback(const HighStmt &Stmt, size_t I) const;
+  void writeEmbeddedNativeCallbacks(const HighStmt &Stmt, int Indent);
+  bool writeRegistrationCleanup(const HighStmt &Stmt, size_t I, int Indent);
+  unsigned NativeExceptionRegionNumber = 0;
   struct MemoryLoadDestination {
     std::string Name;
     bool Written = false;
@@ -207,6 +215,7 @@ public:
   void writeStmt(const HighStmt &Stmt, int Indent);
   void writeStmtImpl(const HighStmt &Stmt, int Indent);
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
+  TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
@@ -481,6 +490,9 @@ public:
   std::optional<int64_t> frameDisplacement(const HighExpr &E) const;
   std::optional<int64_t>
   certifiedFrameStorageDisplacement(const HighExpr &E) const;
+  /// Whether \p E combines a certified frame address with a run-time value,
+  /// so it reaches whichever frame bytes that value selects.
+  bool reachesFrameThroughIndex(const HighExpr &E) const;
   /// The C lvalue for the frame slot at \p E.  When \p Access is narrower
   /// than the slot, the access goes through the slot's address so it
   /// changes only those bytes.
@@ -488,6 +500,12 @@ public:
                                             const TypeRef &Access = {}) const;
   bool isNamedFrameMemory(const HighExpr &E) const;
   std::string constStr(uint64_t Val, TypeRef Type = nullptr);
+  /// \p Text as the ordinary render prints it, held in \p Storage when that
+  /// differs. A spelling chosen from printed text must read this, so the
+  /// source map's delimiters cannot change the source they annotate.
+  llvm::StringRef plainText(llvm::StringRef Text, std::string &Storage) const;
+  /// c_memory::castOperand of \p Text, decided on its ordinary text.
+  std::string castOperandText(std::string Text) const;
   /// \p E prints as a local declared as a \p Width-byte integer of the given
   /// signedness.
   bool declaredLocalInteger(const HighExpr &E, uint16_t Width, bool Signed);
@@ -744,6 +762,8 @@ public:
   std::string useX87Helper(X87CHelper Helper) const;
   bool NeedsX64SyscallHelper = false;
   bool NeedsX64WindowsSyscallHelper = false;
+  /// The modeled supervisor calls the output makes, whose helpers it defines.
+  std::set<Intrinsic> LinuxSyscallHelpers;
   /// A Windows x86 function renders an <intrin.h>-only intrinsic.
   bool NeedsMsvcIntrinsics = false;
   /// A non-Windows x86 function renders an <x86intrin.h>-only intrinsic.
@@ -789,6 +809,9 @@ public:
   /// The helper of each x86 saturating lane operation and lane width
   /// (X86SaturatingLanes.def).
   std::map<std::pair<Intrinsic, unsigned>, std::string> SaturatingLaneHelpers;
+  /// The scalar LSE builtins of NeverD's Clang the output calls, each given
+  /// a definition for other compilers (ScalarLSEFallbacks.def).
+  std::set<Intrinsic> ScalarLSEBuiltins;
   std::map<std::string, unsigned> PartialIntegerBytes;
   std::set<std::pair<std::string, NdMemoryAddressSpace>> SegmentedMemoryTypes;
   std::set<std::tuple<std::string, NdMemoryOrdering, NdMemoryAddressSpace>>
@@ -848,6 +871,10 @@ public:
     TypeRef CallType;
     bool AddressTaken = false;
     bool UsedAsMemory = false;
+    /// A run-time choice (`(p & m) | (&slot & ~m)`, `csel` between slots)
+    /// picks this slot's address for accesses of the slot's width: it stays a
+    /// named local whose address the choice takes, and its writes are kept.
+    bool Chosen = false;
     /// For a slot that shares bytes with others: the name of the storage that
     /// holds them all, this slot's byte offset in it, and its access through
     /// it, `(*(T *)((char *)&outer + k))`.
@@ -988,13 +1015,17 @@ public:
   /// The exact C constant for the float with bits \p Value.
   std::optional<std::string> floatConstantText(uint64_t Value,
                                                const TypeRef &Type) const;
-  /// The address constant of a sized image object that \p Address indexes
-  /// by a variable byte offset (`i + &table`), or null.  The constant may
-  /// point into the object (`i + &table[2]`).
+  /// The address constant of an image object (indexedObjectAt) that
+  /// \p Address indexes by a variable byte offset (`i + &table`), or null.
+  /// The constant may point into the object (`i + &table[2]`).
   const HighExpr *indexedImageBase(const HighExpr &Address) const;
   /// The address and size of the outermost data object, sized by its
   /// symbol, that holds \p Addr.
   std::optional<std::pair<va_t, uint64_t>> sizedObjectAt(va_t Addr) const;
+  /// The object code indexes at \p Addr: one a symbol sizes, else the
+  /// stretch of its data section between the sized objects around it (a
+  /// table a compiler emits under an assembler-local label).
+  std::optional<std::pair<va_t, uint64_t>> indexedObjectAt(va_t Addr) const;
   /// The image's sized data objects by address, each as large as the
   /// largest symbol there, and the furthest end of any object up to each.
   std::vector<std::pair<va_t, uint64_t>> SizedObjects;
@@ -1053,6 +1084,9 @@ public:
   }
   /// The constant a call argument prints as when it is a function's address.
   const HighExpr *functionAddressArgument(const HighExpr &Arg);
+  /// The entry FunctionAddressNames keys address constant \p Const by: its
+  /// value, less the Thumb interworking bit of a certified code address.
+  va_t functionAddressKey(const HighExpr &Const) const;
   struct ImageBacking {
     va_t Base;
     va_t End;

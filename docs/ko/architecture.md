@@ -8,6 +8,10 @@
 설명합니다. 의도적으로 NeverD 소유 코드만 다루며 LLVM, Capstone, Unicorn
 서브모듈은 각자의 내부 아키텍처를 유지합니다.
 
+## 소스 및 오브젝트 대체 경계
+
+`SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
+
 ## 시스템 경계
 
 ```mermaid
@@ -195,6 +199,8 @@ SSA 구성 한도를 넘는 큰 복원 함수는 `--llvm`을 통해 제한된 �
 가변 부분 집합은 8/16/32/64/128비트 스칼라 저장소를 허용하며 비트 개수 입력은 최대 64비트입니다. 비표준 너비와 더 넓은 저장소에는 별도 소스 계약이 필요합니다.
 
 아키텍처 lifter는 미정의 출력의 부가 메타데이터를 트랜잭션 방식으로 관리합니다. 각 시도 전에 이전 증거를 지우고 정확히 대응하는 성공한 리프트에만 효과를 게시합니다. `Missing`은 증거가 없다는 뜻이며 빈 `Complete` 설명과 다릅니다. 일반 LowIR은 선택된 결정적 값을 유지합니다. `LowIRUndefinedIndependence`는 전달받은 완전한 비순환 LowIR 그래프의 제한된 관계 증명을 담당하며, 일반 입력을 공유하고 새 미정의 값의 상관관계를 보존합니다. 전체 명령 경계와 연산 다이제스트에 증거를 결합하고 불완전한 증명을 거부합니다. 아래 유한 네이티브 실행 경로 범위를 넘는 일반 네이티브 그래프 인증, 루프 불변식, 네이티브 코드에서 C로의 동등성 증명은 별도 작업입니다.
+
+`FreshChoiceProjection`은 독립성 검사기의 내부 구성 요소입니다. 하나의 불변 심볼릭 컨텍스트에서 일반 값의 영 투영을 재사용하며, 이전 투영이 끝난 뒤 생성된 새 리프만 추가할 수 있습니다. 결과 테이블의 용량 밖에서는 기존 치환으로 돌아갑니다. 두 실행의 개별 선택, 노드 한도, 질의 비용 및 증명 의무는 유지됩니다.
 
 `Decoder`는 명령 형식 감사와 재배치 일치 검사 전에 x64 피연산자 접두사로 인한 disp32 너비 오보를 바로잡습니다. ModRM/SIB 경계, 전체 필드, 부호 있는 변위, 메모리 피연산자와 뒤따르는 즉시값 배치가 일치해야 합니다. 전체 디코딩, 리프팅용 디코딩, 상세 정보가 있는 경량 디코딩이 같은 정규화를 사용합니다. 인코딩 너비 메타데이터만 바꾸며 실제 i386 disp16, disp8, moffs 및 피연산자 상세 정보 없는 디코딩은 기존 동작을 유지합니다.
 
@@ -743,6 +749,8 @@ x64 KVM/WHP/HVF 네이티브 초기화는 비공개 supervisor 페이지에서 `
 공통 `encodeX64XsaveState` / `decodeX64XsaveState` 코덱은 표준·압축 FP/SSE 패킷, 물리 TOP 순환, 누락된 구성 요소의 초기 상태 및 원자적 검증을 소유합니다. WHP는 완전한 XSAVE API를 사용하며 `WHvGetVirtualProcessorState` / `WHvSetVirtualProcessorState`를 우선하고 이전 XSAVE API를 호환 경로로 사용합니다. 이전 개별 x87 레지스터 인터페이스는 완전한 패킷을 대체할 수 없습니다. 초기 상태가 아닌 확장 구성 요소, 잘못된 헤더·제어 값 및 잘린 캡처는 명시적으로 실패합니다. WHP 매핑 실패는 진단을 위해 HRESULT, GPA 및 크기를 보존합니다.
 
 `CheckedX64Instructions.def`는 기존 CPU 백엔드에서 8/16/32/64비트 부호 없는 `MUL`과 `CBW/CWDE/CDQE/CWD/CDQ/CQO`를 허용합니다. `NeverDX64IntegerTests`는 독립적인 `X64IntegerCases.def` 인코딩과 예상값을 사용하여 두 권한 수준에서 부분 레지스터 보존, 32비트 제로 확장, 곱의 상위·하위 결과, 정의된 CF/OF 및 부호 확장 시 플래그 보존을 검증합니다. 일반 RAM 곱셈은 전체 접근 범위의 권한 검사와 읽기 관찰 콜백을 유지하며, 오류나 관찰 콜백의 중지는 암시적 출력 레지스터와 PC를 보존합니다. 장치 피연산자는 지원하지 않습니다. checked Unicorn에서도 실행하며 사용할 수 없는 네이티브 백엔드는 명시적으로 건너뜁니다.
+
+동일한 검사형 x64 명령 목록은 16/32/64비트 `BSF`와 `BSR`을 허용합니다. 입력이 0인 경우도 선택한 프로세서가 원래 명령을 실행하며, ISA 계층은 정의되지 않은 목적지에 이식 가능한 값을 만들어 넣지 않습니다. 일반 RAM의 전체 범위 검사와 효과 발생 전 관찰을 유지하고, 장치 피연산자와 잘못된 LOCK 형식은 콜백이나 데이터 효과 전에 거부합니다.
 
 `X64BitInstructions.def`는 16/32/64비트 레지스터 및 일반 RAM의 `BT/BTS/BTR/BTC`를 허용합니다. 레지스터 비트 인덱스는 피연산자 너비의 부호 있는 값으로 전체 워드를 선택하며, 즉시값은 기준 워드 안에 머뭅니다. 주소 너비에 따른 절단은 FS/GS 기준 주소를 더하기 전에 적용됩니다. 프로세서가 CF와 쓰기 값을 제공하고, `RAMTransaction`은 관찰 콜백이 수락할 때까지 결과를 비공개로 유지합니다. 전체 범위 권한 검사는 독립 페이지 할당과 별칭을 포함하며, 중지·콜백 실패·페이지 접근 거부 시 원래 CPU와 RAM을 보존합니다. LOCK은 자연 정렬을 요구하며 수정 MMIO는 명시적인 준비형 원자 연산 제공자가 필요합니다. `X64BitStringTests.cpp`는 독립 인코딩을 실제 x64 호스트 실행과 비교하고 음수 인덱스, 너비 절단, 페이지 경계 접근, 취소, 잘못된 LOCK 형식을 검사합니다. [Intel 명령어 참조](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)를 참고하세요.
 
@@ -1481,6 +1489,8 @@ DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 �
 일반 RAM의 `XCHG`는 명시적 LOCK 접두사 유무와 관계없이 정렬되지 않은 8/16/32/64비트 피연산자를 허용합니다. 공유 RAM 트랜잭션은 진입 시 유효 주소를 유지하고 결과 게시를 직렬화하며 취소나 오류 시 쓰기를 폐기합니다. 프로세서는 원래 교환 명령을 실행합니다. `X64Address`는 주소와 레지스터 중첩, 부분 레지스터 쓰기, 캐시 라인 및 페이지 경계, 관찰자와 미매핑 페이지 오류를 검증합니다. MMIO 교환의 제공자 계약과 자연 정렬 요구 사항, 다른 LOCK 명령 계열의 기존 허용 규칙은 유지됩니다.
 
 DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를 읽고 모델링되지 않은 신호 상태 작업을 거부합니다. Select와 Pselect는 immediateSelect에서 비트맵, 용량 하한, 공급자 및 순서대로 복사를 공유하며 timeval과 timespec은 각 필드 폭과 경계를 유지합니다. 완전한 NULL이 아닌 마스크에는 향후 신호 상태 모델이 필요합니다.
+
+`isCheckedX86SafeSEHHandlerReference`는 기존 SafeSEH 디코더, 변경 불가능한 테이블과 헤더 바이트, 재배치된 load-config 포인터로 보존할 PE32 처리기 진입점을 인증합니다. LLVM은 분할 과정에서 생략된 본문을 포함해 모든 본문을 출력하기 전에 이 소스 식별자를 선언합니다. 테이블 소속은 언어 personality, 호출 ABI 또는 네이티브 EH 재구성 권한을 증명하지 않으며 각 소비자의 독립 검사는 유지됩니다.
 
 DarwinFiles extends its sole authorizer with typed Query, ModeSearch and ModeChange purposes. DarwinModes.cpp owns the three mode routes; DarwinServices only forwards raw events. The shared walker and statusMetadata owner select current complete directory/target records before effective-credential security actions. Initial regular objects retain independent provider/time grants in Contents. One commit changes only permissions/ctime after all checks; invalidated metadata, object/name identity, byte/namespace grants, accounting, xattrs and VM leases retain their owners. Process JSON imports a strict declaration through the same admission owner. Empty/absent declarations differ; both immutable query closures remain closed before mode preflight. This operation-specific ordinary environment excludes native file/directory leases and unmodeled pre-setattr lifecycle, and does not open general DAC or vnode authorization.
 

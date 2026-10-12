@@ -1,6 +1,6 @@
 **Sprachen**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](README.md) | [Español](../es/README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
+<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
 
 [← NeverD-Projekt](project.md)
 
@@ -17,6 +17,7 @@ Englische Anleitungen liegen direkt unter `docs/`. Übersetzungen sind in `ar/`,
 | [README (Deutsch)](project.md) | Überblick, Schnellstart, Build, SDK, CLI |
 | [Mitwirken](CONTRIBUTING.md) | Entwicklungsumgebung, Build-Profile, Ablauf, Stil und PR-Anforderungen |
 | [Architektur](architecture.md) | IR-Pfade, Komponentengrenzen, striktes Lifting, Supporttiefe und Änderungsorte |
+| [Quellcode- und native Objektpatches](source-patching.md) | Compilerwahl, native Objekte, Bindungen, Ausnahmen, Veröffentlichung und geprüfte Profile |
 | [Offline-Webanalyse (Englisch)](../web-analysis.md) | C++-Prüfung von Artefakten, Quellen, Bindungen und Maps, Metadatenrichtlinie, SDK und aktueller Prüfumfang |
 | [Primitive JavaScript-Umschreibungen (Englisch)](../web-source-rewrite-profile.md) | Explizite Durchläufe, lokale Ersetzungsprüfungen, exakte Umkehrung und beleggebundener lokaler Export |
 | [Profil für eigenständige Bun-Programme (Englisch)](../web-bun-profile.md) | Abgegrenzte ELF-, Thin-Mach-O- und PE-Extraktion für x64/ARM64, ursprüngliche Bereiche und Herkunft festgelegter Testdateien |

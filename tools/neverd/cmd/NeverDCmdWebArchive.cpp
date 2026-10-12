@@ -41,12 +41,13 @@ std::string field(const llvm::json::Value &V, const char *Name) {
 
 int runWebArchive() {
   const bool Packages = WebArguments[0] == "archive-packages";
-  const bool Bun = WebArguments[0] == "archive-bun";
+  const bool BunExport = WebArguments[0] == "archive-bun-export";
+  const bool Bun = WebArguments[0] == "archive-bun" || BunExport;
   const bool Desktop = WebArguments[0] == "archive-desktop";
   const bool Inventory = WebArguments[0] == "archive";
   if ((!Packages && !Bun && !Inventory && !Desktop) ||
       (Inventory && WebArguments.size() != 3 && WebArguments.size() != 4) ||
-      (Bun && WebArguments.size() != 5) ||
+      (Bun && WebArguments.size() != (BunExport ? 6 : 5)) ||
       (Packages && WebArguments.size() != 6) ||
       (Desktop && WebArguments.size() != 6) ||
       (WebArguments[2] != "tar" && WebArguments[2] != "tgz" &&
@@ -56,6 +57,8 @@ int runWebArchive() {
                     "<tar|tgz|zip> <artifact-index> <member-index> "
                     "<npm-lock|package-json> | archive-bun <file-or-root> "
                     "<tar|tgz|zip> <artifact-index> <member-index> | "
+                    "archive-bun-export <file-or-root> <tar|tgz|zip> "
+                    "<artifact-index> <member-index> <new-output-directory> | "
                     "archive-desktop <file-or-root> <tar|tgz|zip> "
                     "<artifact-index> <member-index> <nwjs|vsix>\n";
     return 2;
@@ -130,13 +133,24 @@ int runWebArchive() {
   if (!Items || Items->size() != 1)
     return 1;
   const auto MID = field((*Items)[0], "member_id");
-  if (Bun)
-    return reply(neverd_web_bun_extract_json(G.S, Revision.data(),
-                                             Revision.size(), MID.data(),
-                                             MID.size()),
+  if (Bun) {
+    const auto E =
+        reply(neverd_web_bun_extract_json(G.S, Revision.data(), Revision.size(),
+                                          MID.data(), MID.size()),
+              true);
+    if (!E)
+      return 1;
+    if (!BunExport)
+      return 0;
+    const auto ExtractionID = field(*E, "extraction_id");
+    const auto &Directory = WebArguments[5];
+    return reply(neverd_web_bun_export_json(
+                     G.S, Revision.data(), Revision.size(), ExtractionID.data(),
+                     ExtractionID.size(), Directory.data(), Directory.size()),
                  true)
                ? 0
                : 1;
+  }
   const auto &Kind = WebArguments[5];
   if (Desktop)
     return reply(neverd_web_desktop_manifest_analyze_json(

@@ -21,7 +21,7 @@ namespace neverd::web {
 
 inline constexpr std::string_view HARProfile = "har-1.2-metadata-v1";
 inline constexpr std::string_view SourceInterfaceProfile =
-    "fetch-websocket-xhr-syntax-v2";
+    "fetch-websocket-xhr-syntax-v3";
 inline constexpr std::string_view InterfaceCorrelationProfile =
     "absolute-http-method-origin-path-v1";
 inline constexpr std::string_view InterfaceRedactionPolicy =
@@ -100,6 +100,7 @@ struct SourceInterface {
   uint32_t OptionsNode = NoSourceIndex, MethodNode = NoSourceIndex;
   uint32_t HeadersNode = NoSourceIndex, BodyNode = NoSourceIndex;
   uint32_t ConstructorNode = NoSourceIndex, ReceiverBinding = NoSourceIndex;
+  uint32_t ReceiverNode = NoSourceIndex;
   uint32_t AsyncNode = NoSourceIndex, HeaderNameNode = NoSourceIndex;
   uint32_t HeaderValueNode = NoSourceIndex, HandlerNode = NoSourceIndex;
   std::string Method = "unknown", MethodStatus = "unknown";
