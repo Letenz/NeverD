@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>فحص أدلة الحزم المحلية ومراجعات المحللين</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>ملف &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>تحميل الرموز من ملف PDB محدد</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2124,6 +2132,26 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>سطر المصدر هذا ليس له ربط بعنوان تعليمة؛ يُعرض مدخل الدالة</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>تحميل ملف PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>ملفات PDB (*.pdb);;جميع الملفات (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>أسماء PDB غير موثقة</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>لا يحتوي ملف PE هذا على هوية مطابقة PDB ‏(GUID/age). تتطابق المعمارية وتخطيط المقاطع في ملف PDB المحدد، لكن لا يمكن التحقق من بنائه.
+
+هل تريد استيراد الأسماء للعرض فقط؟ لن تُستخدم الأنواع أو تواقيع الدوال أو نطاقات العناوين في التحليل.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2392,6 +2420,14 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>توجد تعليمة معرَّفة بالفعل عند %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>تم تحميل PDB: %1 (%2 اسم، تم التحقق من الهوية)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>تم استيراد أسماء عرض PDB: %1 (%2 اسم، غير موثقة)</translation>
     </message>
 </context>
 <context>

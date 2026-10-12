@@ -26,6 +26,19 @@ graphs. It rereads installed bytes and permissions before publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
+## Manual PDB presentation boundary
+
+`PDBDebugContext::inspect` owns manual PE/PDB validation. A missing CodeView
+identity allows machine- and section-checked names to be inspected without
+authenticating the context. Present mismatched or ambiguous identities fail.
+The C API exposes those names as immutable presentation JSON; it does not
+publish unauthenticated symbols, signatures, extents or debug types into a
+Session. The worker's Listing owns unverified aliases, using the existing
+engine-name-to-display-name projection for source views. Verified imports
+publish through the session's transactional PDB loader, retire old analysis
+before replacing its image/debug owners, and retain user edits. File stamps
+bind manually selected PDBs to owner snapshots and their analysis replicas.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and

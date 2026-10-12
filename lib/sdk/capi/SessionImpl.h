@@ -401,6 +401,13 @@ struct Session {
   }
 
   void resetFunctionsFromImage() {
+    // A debug import changes canonical image names, but the original spelling
+    // recorded with a committed user rename is part of its durable history.
+    std::map<va_t, std::string> RenameOriginals;
+    for (const auto &[Address, Name] : Renames)
+      if (const auto Original = OriginalNames.find(Address);
+          Original != OriginalNames.end())
+        RenameOriginals.emplace(Address, Original->second);
     Functions.clear();
     OriginalNames.clear();
     if (!Loaded)
@@ -421,6 +428,8 @@ struct Session {
     appendDiscoveredFunctions();
     appendCreatedFunctions();
     refreshFunctionNames();
+    for (auto &[Address, Name] : RenameOriginals)
+      OriginalNames.insert_or_assign(Address, std::move(Name));
   }
 
   /// Add the functions the user made that the list does not hold yet.

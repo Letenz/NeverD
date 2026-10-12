@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Lokale Paketnachweise und Analystenbewertungen prüfen</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>&amp;PDB-Datei...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Symbole aus einer ausgewählten PDB-Datei laden</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2108,6 +2116,26 @@ Mit Vorzeichen: %4</translation>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>Diese Quelltextzeile ist keiner Befehlsadresse zugeordnet; der Funktionseinstieg wird angezeigt</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB-Datei laden</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB-Dateien (*.pdb);;Alle Dateien (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>Ungeprüfte PDB-Namen</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>Dieser PE fehlt die PDB-Identität (GUID/age). Architektur und Abschnittslayout der ausgewählten PDB stimmen überein, aber ihr Build lässt sich nicht bestätigen.
+
+Nur Namen zur Anzeige importieren? Typen, Funktionssignaturen und Adressbereiche werden nicht zur Analyse verwendet.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2376,6 +2404,14 @@ Mit Vorzeichen: %4</translation>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>An %1 ist bereits ein Befehl definiert</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB geladen: %1 (%2 Namen, Identität geprüft)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB-Anzeigenamen importiert: %1 (%2 Namen, ungeprüft)</translation>
     </message>
 </context>
 <context>

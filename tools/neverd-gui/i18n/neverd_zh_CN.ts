@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>查看本地软件包证据和分析师审查</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB 文件(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>从所选 PDB 文件加载符号</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2104,6 +2112,26 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>此源代码行没有到指令地址的映射；显示函数入口</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>加载 PDB 文件</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 文件 (*.pdb);;所有文件 (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>未验证的 PDB 名称</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>此 PE 缺少 PDB 匹配标识（GUID/age）。所选 PDB 的架构和节区布局匹配，但无法确认它属于同一次构建。
+
+是否仅导入名称用于显示？类型、函数签名和地址范围不会用于分析。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2372,6 +2400,14 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>%1 处已定义了指令</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>已加载 PDB：%1（%2 个名称，身份已验证）</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>已导入 PDB 显示名称：%1（%2 个名称，未验证）</translation>
     </message>
 </context>
 <context>

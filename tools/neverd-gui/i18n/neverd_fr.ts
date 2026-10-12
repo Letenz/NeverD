@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Inspecter les preuves locales des paquets et les examens des analystes</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>Fichier &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Charger les symboles depuis un fichier PDB sélectionné</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2108,6 +2116,26 @@ Signé : %4</translation>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>Cette ligne source n'a pas de correspondance avec l'adresse d'une instruction ; affichage de l'entrée de la fonction</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Charger un fichier PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Fichiers PDB (*.pdb);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>Noms PDB non vérifiés</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>Ce PE ne contient pas d’identité PDB (GUID/age). L’architecture et la disposition des sections du PDB sélectionné correspondent, mais sa compilation ne peut pas être vérifiée.
+
+Importer uniquement les noms pour l’affichage ? Les types, signatures de fonctions et plages d’adresses ne seront pas utilisés pour l’analyse.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2376,6 +2404,14 @@ Signé : %4</translation>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>Une instruction est déjà définie à %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB chargé : %1 (%2 noms, identité vérifiée)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Noms d’affichage PDB importés : %1 (%2 noms, non vérifiés)</translation>
     </message>
 </context>
 <context>

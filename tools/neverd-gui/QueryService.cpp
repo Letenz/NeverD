@@ -44,6 +44,7 @@ bool readable(const QString &operation) {
                                         "string_encodings",
                                         "string_options",
                                         "identify",
+                                        "pdb_inspect",
                                         "search"};
   return cacheable(operation) || operations.contains(operation);
 }
@@ -52,6 +53,7 @@ bool command(const QString &operation) {
   static const QSet<QString> operations{"open",
                                         "analyze",
                                         "signatures_load",
+                                        "pdb_load",
                                         "annotation_set",
                                         "rename",
                                         "code_edit",

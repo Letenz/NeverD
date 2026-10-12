@@ -126,6 +126,23 @@ NEVERD_API int neverd_session_bitness(neverd_session_t Sess);
 NEVERD_API void neverd_session_set_pdb_path(neverd_session_t Sess,
                                             const char *Path);
 
+/// Inspect a manually selected PDB for the loaded PE. Returns owned JSON:
+/// {"verified":bool,"path","name_count","names":[{"address","name",
+/// "function":bool}]}. Names are returned only for an unverified import;
+/// authenticated inspection returns their count without a large name payload.
+/// A missing CodeView identity permits display names only. Present identities,
+/// machine and section layout are checked; mismatch or malformed input fails
+/// with NULL and neverd_last_error. This does not change the session, function
+/// inventory, types, ABI or analysis evidence. Caller frees.
+NEVERD_API const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
+                                                       const char *Path);
+
+/// Apply an authenticated PDB to the already loaded PE. Returns 1 on success,
+/// keeping user names, comments and edits; 0 with neverd_last_error on failure,
+/// leaving the existing image and analysis usable. Missing CodeView identity
+/// is an error. The selected path becomes the next-load debug search policy.
+NEVERD_API int neverd_session_load_pdb(neverd_session_t Sess, const char *Path);
+
 /// Linker MAP counterpart of neverd_session_set_pdb_path().
 NEVERD_API void neverd_session_set_map_path(neverd_session_t Sess,
                                             const char *Path);

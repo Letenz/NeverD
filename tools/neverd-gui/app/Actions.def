@@ -40,6 +40,10 @@ NEVERD_ACTION(FileReload,
                                 "Read the input file again, with its saved "
                                 "annotations"))
 NEVERD_ACTION(
+    FileLoadPdb,
+    QT_TRANSLATE_NOOP("Actions", "&PDB file..."), "", "names",
+    QT_TRANSLATE_NOOP("Actions", "Load symbols from a selected PDB file"))
+NEVERD_ACTION(
     FileLoadSignatures,
     QT_TRANSLATE_NOOP("Actions", "&FLIRT signature file..."), "", "signatures",
     QT_TRANSLATE_NOOP(

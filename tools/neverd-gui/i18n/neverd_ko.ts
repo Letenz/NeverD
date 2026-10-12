@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>로컬 패키지 증거와 분석가 검토를 살펴봅니다</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB 파일(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>선택한 PDB 파일에서 심볼 불러오기</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2104,6 +2112,26 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>이 소스 줄에는 명령어 주소 매핑이 없습니다. 함수 진입점을 표시합니다</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB 파일 불러오기</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB 파일 (*.pdb);;모든 파일 (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>검증되지 않은 PDB 이름</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>이 PE에는 PDB 일치 식별 정보(GUID/age)가 없습니다. 선택한 PDB의 아키텍처와 섹션 배치는 일치하지만 같은 빌드인지 확인할 수 없습니다.
+
+표시용 이름만 가져오시겠습니까? 형식, 함수 시그니처, 주소 범위는 분석에 사용하지 않습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2372,6 +2400,14 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>%1에 이미 명령어가 정의되어 있습니다</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB를 불러왔습니다: %1 (%2개 이름, 식별 정보 검증됨)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB 표시 이름을 가져왔습니다: %1 (%2개 이름, 검증되지 않음)</translation>
     </message>
 </context>
 <context>

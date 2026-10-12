@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Esamina le prove locali dei pacchetti e le revisioni degli analisti</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>File &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Carica simboli da un file PDB selezionato</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2108,6 +2116,26 @@ Con segno: %4</translation>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>Questa riga del sorgente non ha una corrispondenza con l'indirizzo di un'istruzione; viene mostrato l'ingresso della funzione</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Carica file PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>File PDB (*.pdb);;Tutti i file (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>Nomi PDB non verificati</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>Questo PE non contiene un’identità PDB (GUID/age). L’architettura e la disposizione delle sezioni del PDB selezionato corrispondono, ma la sua compilazione non può essere verificata.
+
+Importare solo i nomi per la visualizzazione? Tipi, firme delle funzioni e intervalli di indirizzi non saranno usati per l’analisi.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2376,6 +2404,14 @@ Con segno: %4</translation>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>Un'istruzione è già definita a %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB caricato: %1 (%2 nomi, identità verificata)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Nomi di visualizzazione PDB importati: %1 (%2 nomi, non verificati)</translation>
     </message>
 </context>
 <context>

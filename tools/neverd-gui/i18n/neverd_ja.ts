@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>ローカルのパッケージの証拠とアナリストのレビューを調べます</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB ファイル(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>選択した PDB ファイルからシンボルを読み込む</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2104,6 +2112,26 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>このソース行には命令アドレスへの対応がありません。関数の入口を表示します</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB ファイル (*.pdb);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>未検証の PDB 名</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>この PE には PDB の照合識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
+
+表示用の名前だけをインポートしますか？型、関数シグネチャ、アドレス範囲は解析に使用しません。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2372,6 +2400,14 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>%1 にはすでに命令が定義されています</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB を読み込みました: %1（%2 個の名前、識別情報を検証済み）</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB の表示名をインポートしました: %1（%2 個の名前、未検証）</translation>
     </message>
 </context>
 <context>

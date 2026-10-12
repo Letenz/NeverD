@@ -164,6 +164,15 @@ public:
   load(const std::filesystem::path &PdbPath, const BinaryImage &Image,
        const LoadProgress &Progress = {});
 
+  /// Explicit display-name import may inspect a PE without a CodeView
+  /// identity. Machine and section layout must still agree. A present
+  /// identity must match; malformed, ambiguous and mismatched identities
+  /// are never bypassed. The caller must not publish an unauthenticated
+  /// context as analysis evidence.
+  static llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  inspect(const std::filesystem::path &PdbPath, const BinaryImage &Image,
+          const LoadProgress &Progress = {});
+
   std::optional<FunctionSym> resolveFunction(va_t Addr) const override;
   std::optional<std::string> functionName(va_t Addr) const override;
   std::optional<VariableSym> resolveVariable(va_t FuncAddr,
@@ -198,6 +207,9 @@ public:
 
 private:
   PDBDebugContext();
+  static llvm::Expected<std::unique_ptr<PDBDebugContext>>
+  loadImpl(const std::filesystem::path &PdbPath, const BinaryImage &Image,
+           const LoadProgress &Progress, bool AllowMissingIdentity);
   void commitFunctions(std::vector<FunctionSym> Functions, bool Authenticated);
   void commitDebugFacts(std::vector<FunctionSym> Functions,
                         std::map<va_t, std::map<int64_t, VariableSym>> Locals,

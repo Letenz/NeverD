@@ -547,6 +547,24 @@ linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
+**File → Load file → PDB file...** selects a PDB anywhere on disk for the
+currently loaded PE. A matching CodeView identity applies its debug symbols and
+refreshes function names, the listing and open code views while preserving
+user renames, comments and other edits. Output reports the selected path and
+whether the identity was verified. A missing, malformed or mismatched PDB
+leaves the current session usable.
+
+If the PE has no CodeView identity, the dialog offers an explicitly unverified
+display-name import after machine and section-layout checks. These aliases
+name existing functions and mapped data in the workbench; they do not create
+engine symbols, function boundaries, types, ABI or other analysis evidence.
+An existing but mismatched or ambiguous identity cannot be overridden. The
+unverified route currently supports modern RSDS PDBs; a matching legacy NB10
+PDB still uses the ordinary authenticated loader. The chosen file and import
+mode accompany read-only analysis replicas and are remembered on reload and
+in saved databases. The PDB remains an external file and must be available
+when reopening that database.
+
 ## Databases
 
 **File → Save** (Ctrl+W) packs the project into a NeverD database next to the

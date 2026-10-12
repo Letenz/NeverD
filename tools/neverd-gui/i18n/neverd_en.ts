@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Inspect local package evidence and analyst reviews</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>&amp;PDB file...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Load symbols from a selected PDB file</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2108,6 +2116,26 @@ Signed: %4</translation>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>This source line has no instruction address mapping; showing the function entry</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Load PDB file</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB files (*.pdb);;All files (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>Unverified PDB names</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2376,6 +2404,14 @@ Signed: %4</translation>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>An instruction is already defined at %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB loaded: %1 (%2 names, identity verified)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB display names imported: %1 (%2 names, unverified)</translation>
     </message>
 </context>
 <context>

@@ -831,6 +831,14 @@
         <source>Inspect local package evidence and analyst reviews</source>
         <translation>Просмотреть локальные свидетельства о пакетах и отзывы аналитиков</translation>
     </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>Файл &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Загрузить символы из выбранного файла PDB</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -2112,6 +2120,26 @@ Signed: %4</source>
         <source>This source line has no instruction address mapping; showing the function entry</source>
         <translation>Для этой строки исходного кода нет сопоставления с адресом инструкции; показана точка входа функции</translation>
     </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Загрузить файл PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Файлы PDB (*.pdb);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Unverified PDB names</source>
+        <translation>Непроверенные имена PDB</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Import its names for display only? Types, function signatures and address ranges will not be used for analysis.</source>
+        <translation>В этом PE отсутствует идентификатор PDB (GUID/age). Архитектура и расположение секций выбранного PDB совпадают, но его сборку нельзя проверить.
+
+Импортировать только имена для отображения? Типы, сигнатуры функций и диапазоны адресов не будут использоваться для анализа.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2380,6 +2408,14 @@ Signed: %4</source>
     <message>
         <source>An instruction is already defined at %1</source>
         <translation>По адресу %1 уже определена инструкция</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB загружен: %1 (%2 имён, идентификатор проверен)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Имена PDB для отображения импортированы: %1 (%2 имён, не проверены)</translation>
     </message>
 </context>
 <context>
