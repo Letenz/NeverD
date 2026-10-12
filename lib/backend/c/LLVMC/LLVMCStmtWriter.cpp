@@ -1714,6 +1714,11 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       OS << Name << " = " << *Identity << ";\n";
       return;
     }
+    if (auto Cast = lowBitsMaskCast(llvm::cast<llvm::BinaryOperator>(Inst))) {
+      emitIndent(Indent);
+      OS << Name << " = " << *Cast << ";\n";
+      return;
+    }
     if (Inst.getOpcode() == llvm::Instruction::URem ||
         Inst.getOpcode() == llvm::Instruction::SRem) {
       if (std::string Rem = indexExprStr(&Inst); !Rem.empty()) {

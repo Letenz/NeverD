@@ -54,6 +54,11 @@ public:
   std::string interfaceRecords(std::string_view ExpectedRevision,
                                std::string_view AnalysisID, uint64_t Offset,
                                uint64_t Limit) const;
+  std::string analyzeInterfaceRelations(std::string_view ExpectedRevision,
+                                        std::string_view InterfaceAnalysisID);
+  std::string interfaceRelationRecords(std::string_view ExpectedRevision,
+                                       std::string_view RelationsID,
+                                       uint64_t Offset, uint64_t Limit) const;
   std::string compareInterfaces(std::string_view ExpectedRevision,
                                 std::string_view AnalysisID,
                                 std::string_view CaptureID);
@@ -85,6 +90,44 @@ public:
   std::string packageArchiveRecords(std::string_view ExpectedRevision,
                                     std::string_view ArchiveID, uint64_t Offset,
                                     uint64_t Limit) const;
+  std::string importPackageAttestation(std::string_view ExpectedRevision,
+                                       std::string_view ArtifactID,
+                                       std::string_view DescriptorArtifactID,
+                                       std::string_view InputKind);
+  std::string packageAttestationRecords(std::string_view ExpectedRevision,
+                                        std::string_view AttestationID,
+                                        std::string_view RecordKind,
+                                        uint64_t Offset, uint64_t Limit) const;
+  std::string matchPackageAttestationDigest(std::string_view ExpectedRevision,
+                                            std::string_view ArtifactID,
+                                            std::string_view AttestationID,
+                                            std::string_view DigestID);
+  std::string packageAttestationDigestResult(std::string_view ExpectedRevision,
+                                             std::string_view MatchID) const;
+  std::string assessPackage(std::string_view ExpectedRevision,
+                            std::string_view PackageAnalysisID,
+                            std::string_view SelectionJSON);
+  std::string packageAssessmentFindings(std::string_view ExpectedRevision,
+                                        std::string_view AssessmentID,
+                                        std::string_view ReviewHead,
+                                        uint64_t Offset, uint64_t Limit) const;
+  std::string reviewPackageFinding(std::string_view ExpectedRevision,
+                                   std::string_view AssessmentID,
+                                   std::string_view ExpectedHead,
+                                   std::string_view FindingID,
+                                   std::string_view Disposition);
+  std::string packageReviewDecisions(std::string_view ExpectedRevision,
+                                     std::string_view AssessmentID,
+                                     std::string_view ReviewHead,
+                                     uint64_t Offset, uint64_t Limit) const;
+  std::string restorePackageReview(std::string_view ExpectedRevision,
+                                   std::string_view AssessmentID,
+                                   std::string_view ExpectedHead,
+                                   std::string_view JournalJSON);
+  std::string packageAssessmentReport(std::string_view ExpectedRevision,
+                                      std::string_view AssessmentID,
+                                      std::string_view ReviewHead,
+                                      uint64_t Offset, uint64_t Limit) const;
   std::string analyzePackages(std::string_view ExpectedRevision,
                               std::string_view ArtifactID,
                               std::string_view InputKind);

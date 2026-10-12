@@ -50,17 +50,44 @@ Reimport clears pending and published analyses and comparisons.
 
 ## Source candidates
 
-`fetch-websocket-xhr-syntax-v2` consumes the shared parser, lexical binding
+`fetch-websocket-xhr-syntax-v3` consumes the shared parser, lexical binding
 and primitive-value models. It recognizes direct external `fetch(...)` and
 `new WebSocket(...)` syntax. A lexically external name is **not proof of a
 platform intrinsic**: every result remains static inference with unknown
 runtime identity and reachability. Shadowed/written names are excluded;
-possible direct eval refuses the analysis. Aliases, request wrappers and
-interprocedural request flow are unsupported. The v2 identity replaces the v1
-profile identity; operation names and existing fields remain available.
+possible direct eval refuses the analysis. General aliases, wrapper implementation
+identity and interprocedural request flow remain unsupported. The v3 identity
+replaces v2; operation names remain available, with additive receiver metadata.
 
-Literal strings, supported primitive concatenation and fully evaluated template
-literals provide private URL candidates. Unresolved template expressions,
+### Member spellings and argument boundaries
+
+V3 also retains non-computed `receiver.fetch(...)`, optional-member and
+optional-call spellings as `fetch_member_call`. `receiver_node_id` and an
+available lexical `receiver_binding_id` provide navigation anchors. The receiver
+is `member_spelling_syntax_only`; its method is unknown and options remain
+`wrapper_options_not_interpreted`. A property name, including `this.fetch`,
+does not authenticate a framework, wrapper implementation or browser API.
+It also cannot assign URL/options/header/body roles to arguments: those node
+fields and private endpoint comparison material remain unavailable even for
+literal arguments. The complete call anchor still permits source navigation.
+Computed names, other method spellings and member constructors remain outside
+this profile. These rows never participate in the direct-fetch HAR join.
+
+Every direct fetch, WebSocket constructor and member-fetch call now classifies
+its arguments as `positional` or `spread_unresolved`. Following
+[ECMAScript argument-list evaluation](https://tc39.es/ecma262/#sec-argument-lists-runtime-semantics-argumentlistevaluation),
+an AST spread ordinal cannot establish a runtime argument position or count.
+Any spread withholds URL/options/method/header/body role nodes, private endpoint
+comparison material and all default/absence claims, even when a static-looking
+argument precedes it. The call and any receiver remain navigable. Iterable
+contents are never evaluated or guessed. In particular, `fetch(...args)` cannot
+create an omitted-init GET candidate. XHR keeps the same conservative policy.
+
+### Direct request argument evidence
+
+For admitted non-spread direct calls, literal strings, supported primitive
+concatenation and fully evaluated template literals provide private URL
+candidates. Unresolved template expressions,
 identifiers and other dynamic expressions retain source node/range links and
 unknown values. Only omitted fetch init supplies a default GET candidate.
 An explicit object must contain distinct non-computed ordinary data properties;
@@ -112,8 +139,8 @@ not proof of callable callbacks, dispatch, a registered listener or response
 handling. Compound/logical event assignments, custom/dynamic events, `this`
 and upload-object inference are excluded. Listener options stay syntax only.
 
-`arguments_status` is specific to XHR and is `not_applicable` on fetch and
-WebSocket records. Any spread in an XHR call sets it to `spread_unresolved`, clears all
+`arguments_status` also applies to the direct/member call forms above. Any
+spread in an XHR call sets it to `spread_unresolved`, clears all
 parameter-role nodes, and withholds argument-presence and default claims. The
 call, constructor and receiver link remain navigable. This applies to every
 XHR call, including `send` and `addEventListener`; spread listener options are
@@ -207,11 +234,29 @@ shadowing/eval, prototype/method/credential exclusions and fanout refusal.
 XHR cases cover exact constructor/receiver/argument anchors, scope identity,
 forbidden methods, missing/dynamic values, spreads, callback-value distinctions,
 aliases/writes/computed members and atomic budget/model refusal. CLI, worker
-and MCP use the same v2 metadata; private URL, credential, header and callback
+and MCP use the same v3 metadata; private URL, credential, header and callback
 canaries stay withheld.
 CLI and framed worker checks use an unusable external-tool PATH.
 
-This does not complete #717. Request wrappers, response and transformation
+The optional captured Claude 2.1.296 macOS ARM64 module 928 was exported by
+NeverD from the original native SHA-256
+`c9b5341637becbd423ddffc5b254afb645682a3868cb708bbc6cc0e7bb419937`.
+Its 159,827 decoded bytes have SHA-256
+`a5e52526ae954aa74deb80cf1bb2372d1f4b77e1886bba69d55e30c51efa2cd2`.
+Using its declared module source type, the v3 CLI retains one member-fetch
+candidate at UTF-8 byte 150,734 for 36 bytes, with spread arguments unresolved
+and method unknown. The prior direct-only profile emitted zero candidates;
+neither result establishes an absent or authenticated runtime interface. The
+same pinned case runs through the C++ core with no target execution. This is
+one selected source unit, not a whole-client interface inventory.
+
+The separately selected [request source relationship profile](web-interface-relations-profile.md)
+adds function/direct-return anchors, direct awaited const-result origins,
+fixed lexical result-member uses and direct then-handler syntax. These are
+independently bounded syntax relations, with response API/value identity and
+execution unverified; they do not broaden HAR joins.
+
+This does not complete #717. Wrapper implementation/argument flow and general response/transformation
 tracing, schema exports, reviewed endpoint displays and
 broader host qualification remain required. Separately selected
 [SSE/JSONL/JSON-RPC/MCP-shape/log adapters](web-stream-profile.md) now provide

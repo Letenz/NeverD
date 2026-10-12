@@ -30,7 +30,7 @@ SourceInterfaces analyzeSourceInterfaces(const SourceAnalysis &Source,
     const auto Constructors = interfaces::xhrConstructors(C);
     for (uint32_t I = 0; I < Source.Nodes.size(); ++I) {
       C.step();
-      interfaces::inspectDirectRequest(C, I);
+      interfaces::inspectRequestSyntax(C, I);
       interfaces::inspectXHR(C, Constructors, I);
     }
     C.A.Status = "partial";

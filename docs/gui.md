@@ -81,6 +81,15 @@ worker never links the test engine.
 
 ## Layout
 
+**File → Offline package review** opens a separate modeless evidence workbench.
+Preview/capture a local file or directory, select a manifest/lock file or an
+available tar/tgz/zip member, and optionally select captured registry declarations.
+The table keeps evidence, binding, confidence and analyst disposition separate.
+Review files contain fixed assertions and opaque IDs; loading previews them and
+explicit restoration verifies the whole chain against the same assessment.
+Analysis uses the shared C++ backend and never launches the input. See the
+[workflow and limits](web-package-review-journal.md).
+
 A start without a file shows the quick start over the default desktop, as IDA
 does. Drag its window edges or lower-right grip to resize it; the next opening
 remembers that size. The action pane stays the same width while the recent

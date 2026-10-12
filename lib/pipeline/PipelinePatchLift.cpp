@@ -148,7 +148,8 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
   propagateStructReturnForwarderShapes(Img, Result);
 
-  recoverStructReturnFromBody(Img, Result);
+  recoverStructReturnFromBody(Img, Result,
+                              StructReturnEvidence::CallersAndBody);
 
   materializeKnownStructReturnCallSites(Img, Result);
 

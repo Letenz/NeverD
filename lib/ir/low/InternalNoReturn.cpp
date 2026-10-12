@@ -30,6 +30,12 @@ InternalNoReturnIndex::InternalNoReturnIndex(
     : Img(Img), KnownFuncEntries(KnownFuncEntries),
       NoReturnTargets(NoReturnTargets), Roots(Roots), CodeOwners(CodeOwners) {}
 
+void InternalNoReturnIndex::clearMemoizedProofs() {
+  std::lock_guard<std::mutex> Lock(Mutex);
+  Proofs.clear();
+  Screens.clear();
+}
+
 bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
   if (Depth >= limits::kMaxNoReturnProofDepth ||
       !Img.hasExecutableCodeOwnerAt(Target))
@@ -51,9 +57,8 @@ bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
     Builder.setAbsoluteRelocationRootIndex(Roots);
     Builder.setExecutableCodeOwnerIndex(CodeOwners);
     Builder.setNoReturnCalleeProver(this, Depth + 1);
-    const LowFunc Callee =
-        Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target));
-    Proved = lowFunctionNeverReturns(Callee, Img.Arch);
+    Proved = Builder.buildNoReturnProof(Img, Dec, Target,
+                                        Img.getFunctionNameAt(Target));
   }
   std::lock_guard<std::mutex> Lock(Mutex);
   return Proofs.emplace(Key, Proved).first->second;

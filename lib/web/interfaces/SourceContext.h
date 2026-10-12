@@ -41,7 +41,7 @@ struct SourceContext {
   void publish(SourceInterface R);
 };
 
-void inspectDirectRequest(SourceContext &C, uint32_t I);
+void inspectRequestSyntax(SourceContext &C, uint32_t I);
 std::vector<uint32_t> xhrConstructors(SourceContext &C);
 void inspectXHR(SourceContext &C, const std::vector<uint32_t> &Constructors,
                 uint32_t I);

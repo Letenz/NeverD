@@ -468,6 +468,11 @@ private:
   SymRef internMaskedSource(llvm::ArrayRef<SymRef> Source,
                             const llvm::APInt &Mask);
 
+  /// Completed, strictly narrowing projections of arithmetic/bitwise nodes.
+  /// Other nodes can have different direct and in-walk canonical forms.
+  SymRef findLowWordProjection(SymRef Source, uint32_t Width) const;
+  void retainLowWordProjection(SymRef Source, uint32_t Width, SymRef Image);
+
   llvm::APInt maskToWidth(const llvm::APInt &V, uint32_t Width) const;
 
   std::vector<SymNode> Nodes;
@@ -477,6 +482,16 @@ private:
   mutable std::vector<SymReadability> ReadabilityCosts;
   /// Literals wider than 64 bits, referenced by index from SymNode::Aux.
   std::vector<llvm::APInt> WideConsts;
+
+  struct LowWordProjectionEntry {
+    uint64_t Key = 0;
+    SymRef Image;
+  };
+  /// Context-owned values remain valid as the immutable DAG grows. The table
+  /// grows lazily from 32 to 4096 slots; full-key collisions only evict values.
+  /// Default copy/move follows the complete DAG, with no borrowed addresses.
+  std::vector<LowWordProjectionEntry> LowWordProjections;
+  uint32_t LowWordProjectionInsertions = 0;
 
   /// Hash of a node's identity to the nodes carrying that hash.  Collisions
   /// are resolved by comparing the candidate against each bucket entry.

@@ -102,6 +102,7 @@ struct Session {
 
   std::unique_ptr<llvm::LLVMContext> LLVMCtx;
   PipelineResult PipeResult;
+  PipelineAnalysisCache AnalysisCache;
   bool PipeRan = false;
   uint64_t PipelineFeatureGeneration = 0;
   std::optional<bool> LlvmModuleNoOpt;
@@ -172,6 +173,7 @@ struct Session {
   std::vector<FuncInfo> Functions;
 
   PatchResult LastPatch;
+  std::string LastSourcePatchReport;
 
   /// Internal JSON-boundary seams used to prove that no C++ exception crosses
   /// extern C. Empty in production.
@@ -517,7 +519,7 @@ struct Session {
     Source->Map->LLVMSources = nullptr;
   }
 
-  void clearPipeline() {
+  void clearPipelineResult() {
     // Every module lives in the context.
     FunctionLlvmModules.clear();
     FunctionSources.clear();
@@ -530,6 +532,19 @@ struct Session {
     NativeFunctionsSynchronized = false;
   }
 
+  void clearPipeline() {
+    clearPipelineResult();
+    AnalysisCache.reset();
+  }
+
+  /// Only navigation may keep immutable image facts. Edits, reloads and
+  /// policy changes continue through clearPipeline()/invalidatePipeline().
+  void selectFunction(va_t Entry) {
+    clearPipelineResult();
+    resetFunctionsFromImage();
+    OnlyFunctionEntries = {Entry};
+  }
+
   void invalidatePipeline() {
     clearPipeline();
     resetFunctionsFromImage();
@@ -540,12 +555,13 @@ struct Session {
       setError("no binary loaded");
       return false;
     }
-    if (PipeRan && PipelineFeatureGeneration != SigDB.featureGeneration())
+    if (PipelineFeatureGeneration != SigDB.featureGeneration())
       clearPipeline();
     if (!PipeRan) {
       LLVMCtx = std::make_unique<llvm::LLVMContext>();
       PipelineOptions Opts;
       applyAnalysisOptions(Opts);
+      Opts.AnalysisCache = &AnalysisCache;
       Pipeline ThePipeline;
       // Debug names already reached Img.Symbols at load time; handing the
       // context to the pipeline also carries source locations, declared sizes,

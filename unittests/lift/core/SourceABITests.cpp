@@ -1885,7 +1885,8 @@ TEST(SourceABI, AArch64CallerFieldReadsDistinguishAnHFAFromAVectorReturn) {
         Caller.StructReturnCandidates.push_back(Candidate);
       }
 
-      recoverStructReturnFromBody(Image, Result);
+      recoverStructReturnFromBody(Image, Result,
+                                  StructReturnEvidence::CallersAndBody);
       if (CallerReadsFields && WrittenLanes == 4) {
         ASSERT_EQ(Callee.MultiReturn.size(), 4U);
         for (size_t I = 0; I < 4; ++I) {
@@ -1983,7 +1984,11 @@ TEST(SourceABI, AArch64BodyReturnUsesPreDCELaterRegisterReads) {
     RawReturn.Addr = Return.Addr;
     LB.Ops.push_back(RawReturn);
 
-    recoverStructReturnFromBody(Image, Result);
+    // No caller reads W1, so only the body's writes could show a field.
+    recoverStructReturnFromBody(Image, Result, StructReturnEvidence::Callers);
+    EXPECT_TRUE(MF.MultiReturn.empty());
+    recoverStructReturnFromBody(Image, Result,
+                                StructReturnEvidence::CallersAndBody);
     if (LaterRead)
       EXPECT_TRUE(MF.MultiReturn.empty());
     else {
@@ -3836,8 +3841,10 @@ TEST(SourceABI, UnsupportedArithmeticNeverManufacturesAZeroResult) {
       Arithmetic.Output.Id = 30;
       Arithmetic.Output.Size = Mutation == 2 ? 2 : 8;
       Arithmetic.Output.SSAVer = 1;
-      Arithmetic.addInput(MedVar::makeConst(1, 8));
-      Arithmetic.addInput(MedVar::makeConst(2, Mutation == 3 ? 4 : 8));
+      // A minimum of 16-byte operands has no C float type to compute in.
+      const uint16_t Width = Mutation == 0 ? 16 : 8;
+      Arithmetic.addInput(MedVar::makeConst(1, Width));
+      Arithmetic.addInput(MedVar::makeConst(2, Mutation == 3 ? 4 : Width));
       if (Mutation >= 2)
         Arithmetic.addInput(MedVar::makeConst(3, 8));
       MedOp Return;

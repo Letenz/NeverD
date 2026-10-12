@@ -50,6 +50,11 @@ public:
   /// where a byte does not decode, the function may return.  Memoized.
   bool mayNeverReturn(va_t Target) const override;
 
+  /// Begin another run against the same immutable inputs, preserving this
+  /// prover's identity but not accumulating memo entries across selections.
+  /// The previous run's workers must have joined before calling this.
+  void clearMemoizedProofs();
+
 private:
   const BinaryImage &Img;
   const std::set<va_t> *KnownFuncEntries;

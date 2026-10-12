@@ -215,6 +215,10 @@ Heartbeat retains its native fields and adds
 | `web_package_advisory_records` | Exact `revision`, `package_advisory_id`, `record_kind:affected/severities`, optional page fields (max 512); original anchors and fixed coverage, no private name/score/source label |
 | `web_package_advisories_match` | Exact `revision`, `package_analysis_id`, optional `advisory_ids` (0..16); exact declared npm identity and admitted version selectors; unknown coverage is explicit |
 | `web_package_advisories_match_records` | Exact `revision`, `package_advisory_matches_id`, optional page fields (max 512); original package/affected-entry anchors, no installed-content or exploitability proof |
+| `web_package_attestation_import` | Exact `revision`, `artifact_id`, `descriptor_artifact_id`, `input_kind` (`registry-dist`, `intoto-statement`, `dsse-intoto`); bounded captured metadata without signature verification |
+| `web_package_attestation_records` | Exact `revision`, `package_attestation_id`, `record_kind` (`signatures`, `subjects`, `digests`), optional page fields (max 512); no raw keys, signatures, payloads, URIs or digests |
+| `web_package_attestation_digest_match` | Exact `revision`, original `artifact_id`, `package_attestation_id`, `digest_id`; one subject digest compared through the existing integrity owner; no inventory or publisher authentication |
+| `web_package_attestation_digest_result` | Exact `revision`, `package_attestation_digest_match_id`; retained original-byte receipt |
 | `web_source_bindings_analyze` | Exact `revision`, analyzed `source_id`; returns lexical-binding status and counts |
 | `web_source_binding_records` | Exact `revision`, `source_id`, `record_kind: scopes/bindings/declarations/references`, optional page fields |
 | `web_source_semantics_analyze` | Exact `revision`, `source_id`; returns bounded primitive/effect analysis status and counts |
