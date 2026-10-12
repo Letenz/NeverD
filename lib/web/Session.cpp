@@ -134,6 +134,30 @@ std::string Session::capabilities() {
         {"runtime_activation", "not_checked"},
         {"v8_decoding", "opaque"}});
   }
+  if (wailsAvailable()) {
+    Operations.emplace_back("wails_extract");
+    Operations.emplace_back("wails_records");
+    Operations.emplace_back("wails_export");
+    const WailsLimits Limits;
+    Analyses.emplace_back(llvm::json::Object{
+        {"kind", "wails_extraction"},
+        {"profile", std::string(WailsProfile)},
+        {"max_input_bytes", std::to_string(MaxWailsInputBytes)},
+        {"max_tables", Limits.Tables},
+        {"max_members", Limits.Members},
+        {"max_payload_bytes", std::to_string(Limits.PayloadBytes)},
+        {"max_private_bytes", std::to_string(Limits.PrivateBytes)},
+        {"max_reader_steps", std::to_string(Limits.Steps)},
+        {"max_cached_extractions", MaxCachedWailsExtractions},
+        {"max_cached_private_bytes",
+         std::to_string(MaxCachedWailsPrivateBytes)},
+        {"max_page_records", 128},
+        {"member_path_policy", std::string(ArchivePathProfile)},
+        {"executes_input", false},
+        {"authenticates_producer_version", false},
+        {"runtime_filesystem_binding", "not_checked"},
+        {"native_bridge_analysis", "not_analyzed"}});
+  }
   llvm::json::Array SEAProfiles;
   for (const auto &P : seaProfiles())
     SEAProfiles.emplace_back(P);
@@ -190,7 +214,8 @@ std::string Session::capabilities() {
 #ifdef NEVERD_ENABLE_WEB_JAVASCRIPT
   for (const auto *Name :
        {"interfaces_analyze", "interface_records", "interfaces_compare",
-        "interface_correlation_records"})
+        "interface_correlation_records", "interface_relations_analyze",
+        "interface_relation_records"})
     Operations.emplace_back(Name);
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "source_interfaces"},
@@ -211,6 +236,20 @@ std::string Session::capabilities() {
        llvm::json::Array{"fetch", "fetch_member_call", "websocket", "xhr_open",
                          "xhr_set_request_header", "xhr_send",
                          "xhr_event_handler"}}});
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "source_interface_relations"},
+      {"profile", std::string(InterfaceSourceRelationProfile)},
+      {"max_records", MaxInterfaceSourceRelations},
+      {"max_steps", MaxInterfaceRelationSteps},
+      {"max_cached", 4},
+      {"max_page_records", 128},
+      {"relationship_meaning", "source_syntax_only"},
+      {"response_api_identity", "member_spelling_unverified"},
+      {"wrapper_argument_flow", "not_analyzed"},
+      {"callback_parameter_roles", "not_assigned"},
+      {"har_correlation", false},
+      {"network_access", false},
+      {"executes_input", false}});
 #endif
   Operations.emplace_back("package_archive_extract");
   Operations.emplace_back("package_archive_records");
@@ -789,6 +828,7 @@ std::string Session::commit(std::string_view Token) {
   State->SEAExtractions.clear();
   State->NexeExtractions.clear();
   State->PkgExtractions.clear();
+  State->WailsExtractions.clear();
   State->AsarExtractions.clear();
   State->ElectronManifests.clear();
   State->DesktopManifests.clear();
@@ -820,6 +860,7 @@ std::string Session::commit(std::string_view Token) {
   State->PendingHAR.reset();
   State->HARPreviewToken.clear();
   State->InterfaceSources.clear();
+  State->InterfaceRelations.clear();
   State->InterfaceCorrelations.clear();
   State->CachedArchiveBytes = 0;
   State->PackageDiffs.clear();
@@ -859,6 +900,7 @@ std::string Session::metadata() const {
       {"sea_extraction_count", State->SEAExtractions.size()},
       {"nexe_extraction_count", State->NexeExtractions.size()},
       {"pkg_extraction_count", State->PkgExtractions.size()},
+      {"wails_extraction_count", State->WailsExtractions.size()},
       {"asar_extraction_count", State->AsarExtractions.size()},
       {"electron_manifest_count", State->ElectronManifests.size()},
       {"desktop_manifest_count", State->DesktopManifests.size()},
@@ -887,6 +929,7 @@ std::string Session::metadata() const {
       {"har_capture_count", State->HARCaptures.size()},
       {"stream_capture_count", State->StreamCaptures.size()},
       {"interface_analysis_count", State->InterfaceSources.size()},
+      {"interface_relation_analysis_count", State->InterfaceRelations.size()},
       {"interface_correlation_count", State->InterfaceCorrelations.size()},
       {"redaction_policy", "metadata-only-v1"}});
 }

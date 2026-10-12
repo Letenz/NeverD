@@ -3170,6 +3170,30 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   std::string Ordinary;
   llvm::raw_string_ostream OrdinaryOS(Ordinary);
   Render(OrdinaryOS, nullptr);
+  if (!Opts.SourceMap->Recognitions || Opts.SourceMap->Recognitions->empty()) {
+    // Without library evidence there is no independent coverage proof to
+    // protect. Verify definition and instruction locations together instead
+    // of repeating every source analysis for a library render with no events.
+    CSourceRecorder Combined(
+        *Opts.SourceMap, Ordinary,
+        CSourceRecorder::Recording::DefinitionsAndInstructions);
+    bool Mapped = false;
+    try {
+      Combined.prepareHighSources();
+      std::string Annotated;
+      llvm::raw_string_ostream AnnotatedOS(Annotated);
+      Render(AnnotatedOS, &Combined);
+      Mapped = Combined.finish(Annotated, Ordinary);
+    } catch (const std::exception &) {
+      // Independent recordings below can still recover either mapping.
+    }
+    if (Mapped) {
+      Out << Ordinary;
+      return true;
+    }
+    // A failed combined proof must not lose a definition or instruction map
+    // that the original, independent recordings could have established.
+  }
   CSourceRecorder Recorder(*Opts.SourceMap, Ordinary);
   try {
     Recorder.prepareHighSources();
@@ -3183,7 +3207,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   }
   // Statement markers must not affect expression spelling or the independent
   // library-region coverage proof. Each private render must reproduce Ordinary.
-  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary, true);
+  CSourceRecorder Instructions(*Opts.SourceMap, Ordinary,
+                               CSourceRecorder::Recording::Instructions);
   try {
     Instructions.prepareHighSources();
     std::string Annotated;

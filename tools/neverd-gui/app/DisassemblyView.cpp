@@ -29,9 +29,8 @@ DisassemblyView::DisassemblyView(Session &session, const AddressSpace &space,
   stack_->addWidget(listing_);
   stack_->addWidget(graph_);
   layout->addWidget(stack_, 1);
-  status_->setContentsMargins(6, 2, 6, 2);
   status_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  makeRowShrinkable(*status_);
+  makeStatusLine(*status_);
   layout->addWidget(status_);
   const auto applyFont = [this] {
     QFont font = Theme::instance().codeFont();

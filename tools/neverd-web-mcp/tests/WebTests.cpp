@@ -13,6 +13,7 @@
 #include "../../../unittests/web/NexeFixture.h"
 #include "../../../unittests/web/PkgFixture.h"
 #include "../../../unittests/web/SEAFixture.h"
+#include "../../../unittests/web/WailsFixture.h"
 #include "../../../unittests/web/ZipFixture.h"
 #include "TestSupport.h"
 #include "neverd-web-mcp/WebTools.h"
@@ -109,7 +110,8 @@ void discovery(Harness &H, const Json &Caps) {
   }
   for (const auto &Operation : Caps.at("operations")) {
     const auto Name = Operation.get<std::string>();
-    const bool Omitted = Name == "bun_export" || Name == "native_analyze" ||
+    const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
+                         Name == "native_analyze" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
             "MCP catalog drifted from the documented backend subset");
@@ -211,6 +213,33 @@ void sourceAndMaps(Harness &H) {
               Items[6].at("url_node_id").is_null() &&
               Items[6].at("method") == "unknown",
           "MCP promoted a member spelling or invented spread arguments");
+  const auto Relations =
+      H.same("web_interface_relations_analyze",
+             {{"revision", H.Revision},
+              {"analysis_id", Interfaces.at("interface_analysis_id")}});
+  require(Relations.at("profile") == "request-source-relations-v1" &&
+              Relations.at("relation_count") == 2 &&
+              Relations.at("response_api_identity") ==
+                  "member_spelling_unverified" &&
+              Relations.at("har_correlation") == false,
+          "MCP changed request relations or response identity");
+  const Json RelationArgs{{"revision", H.Revision},
+                          {"relations_id", Relations.at("relations_id")}};
+  const auto RelationPage =
+      H.same("web_interface_relation_records", RelationArgs);
+  require(RelationPage.at("items")[0].at("kind") ==
+                  "await_result_const_binding" &&
+              RelationPage.at("items")[1].at("kind") ==
+                  "bound_result_member_call" &&
+              RelationPage.at("items")[1].at("member_spelling") == "json" &&
+              RelationPage.at("items")[0].at("binding_id") ==
+                  RelationPage.at("items")[1].at("binding_id"),
+          "MCP changed result binding anchors");
+  redacted(Relations);
+  redacted(RelationPage);
+  auto UnsafeRelation = RelationArgs;
+  UnsafeRelation["execute"] = true;
+  invalid([&] { H.get("web_interface_relation_records", UnsafeRelation); });
   auto Bindings = Args;
   Bindings["record_kind"] = "bindings";
   H.same("web_source_binding_records", Bindings);
@@ -792,16 +821,19 @@ int main() {
       H.get("web_native_analyze",
             {{"revision", "1"}, {"handoff_id", "CANARY"}});
     });
-    F.write("source", "fetch('https://CANARY/a?token=CANARY'); const "
-                      "privateName = 'CANARY'; while(true) {};"
-                      "const CANARY_XHR = new XMLHttpRequest();"
-                      "CANARY_XHR.open('GET','https://CANARY/a');"
-                      "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
-                      "CANARY_XHR.send('CANARY');"
-                      "CANARY_XHR.onload = CANARY_CALLBACK;"
-                      "this.fetch('https://CANARY/a', {method:'POST'});"
-                      "fetch(...CANARY_ARGUMENTS);"
-                      "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
+    F.write(
+        "source",
+        "const CANARY_RESULT=await "
+        "fetch('https://CANARY/a?token=CANARY');CANARY_RESULT.json(); const "
+        "privateName = 'CANARY'; while(true) {};"
+        "const CANARY_XHR = new XMLHttpRequest();"
+        "CANARY_XHR.open('GET','https://CANARY/a');"
+        "CANARY_XHR.setRequestHeader('Authorization','CANARY');"
+        "CANARY_XHR.send('CANARY');"
+        "CANARY_XHR.onload = CANARY_CALLBACK;"
+        "this.fetch('https://CANARY/a', {method:'POST'});"
+        "fetch(...CANARY_ARGUMENTS);"
+        "const recovered='CAN'+'ARY_RECOVERED';const n=1+2;");
     F.write("sea", neverd::web::sea_test::blob(12));
     F.write("bun", neverd::web::test::BunFixture().Bytes);
     F.write(
@@ -923,6 +955,47 @@ int main() {
                                      {"source_id", Source.at("source_id")},
                                      {"byte_offset", "6"},
                                      {"byte_length", "1"}});
+      }
+    }
+    if (std::find(Ops.begin(), Ops.end(), "wails_extract") != Ops.end()) {
+      F.write("sea", neverd::web::wails_test::elf());
+      const auto A = H.import(1);
+      const Json Args{
+          {"revision", H.Revision},
+          {"artifact_id", A},
+          {"profile", "wails-2.11.0-go-1.25.7-linux-x64-elf-embedfs-v1"}};
+      const auto E = H.same("web_wails_extract", Args);
+      require(E.at("table_count") == 1 && E.at("member_count") == 3 &&
+                  E.at("asset_server_binding") == "not_checked",
+              "Wails stored table evidence differs");
+      const Json Page{{"revision", H.Revision},
+                      {"extraction_id", E.at("extraction_id")},
+                      {"record_kind", "members"},
+                      {"offset", 1},
+                      {"limit", 1}};
+      const auto M = H.same("web_wails_records", Page);
+      require(M.at("next_offset") == 2 &&
+                  M.dump().find("CANARY") == std::string::npos,
+              "Wails page differs or exposes private names");
+      auto Invalid = Args;
+      Invalid["execute"] = true;
+      invalid([&] { H.get("web_wails_extract", Invalid); });
+      auto InvalidPage = Page;
+      InvalidPage["limit"] = 129;
+      invalid([&] { H.get("web_wails_records", InvalidPage); });
+      H.fail("web_wails_records",
+             {{"revision", H.Revision},
+              {"extraction_id", E.at("extraction_id")},
+              {"record_kind", "paths"}},
+             "invalid_record_kind");
+      if (HasParser) {
+        const auto S =
+            H.same("web_source_analyze",
+                   {{"revision", H.Revision},
+                    {"artifact_id", M.at("items")[0].at("selection_id")},
+                    {"source_type", "module"}});
+        require(S.at("parse_status") == "parsed",
+                "Wails member source is unavailable");
       }
     }
     offlineAdvisories();

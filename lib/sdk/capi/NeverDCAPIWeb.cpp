@@ -425,6 +425,35 @@ const char *neverd_web_interface_records_json(neverd_web_session_t Session,
 #endif
 }
 
+const char *neverd_web_interface_relations_analyze_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.analyzeInterfaceRelations(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(AnalysisID, AnalysisIDSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_interface_relation_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *RelationsID, size_t RelationsIDSize,
+    uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.interfaceRelationRecords(
+        buffer(ExpectedRevision, RevisionSize, 20),
+        buffer(RelationsID, RelationsIDSize, 64), Offset, Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
 const char *neverd_web_interfaces_compare_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *AnalysisID, size_t AnalysisIDSize,
@@ -1044,6 +1073,54 @@ neverd_web_pkg_records_json(neverd_web_session_t Session,
     return S.pkgRecords(buffer(ExpectedRevision, RevisionSize, 20),
                         buffer(ExtractionID, ExtractionIDSize, 64),
                         buffer(RecordKind, RecordKindSize, 16), Offset, Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *
+neverd_web_wails_extract_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ArtifactID, size_t ArtifactIDSize,
+                              const char *Profile, size_t ProfileSize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.extractWails(buffer(ExpectedRevision, RevisionSize, 20),
+                          buffer(ArtifactID, ArtifactIDSize, 64),
+                          buffer(Profile, ProfileSize, 64));
+  });
+#else
+  return unavailable();
+#endif
+}
+const char *
+neverd_web_wails_records_json(neverd_web_session_t Session,
+                              const char *ExpectedRevision, size_t RevisionSize,
+                              const char *ExtractionID, size_t ExtractionIDSize,
+                              const char *RecordKind, size_t RecordKindSize,
+                              uint64_t Offset, uint64_t Limit) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.wailsRecords(buffer(ExpectedRevision, RevisionSize, 20),
+                          buffer(ExtractionID, ExtractionIDSize, 64),
+                          buffer(RecordKind, RecordKindSize, 16), Offset,
+                          Limit);
+  });
+#else
+  return unavailable();
+#endif
+}
+
+const char *neverd_web_wails_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ExtractionID, size_t ExtractionIDSize,
+    const char *OutputDirectory, size_t DirectorySize) {
+#ifdef NEVERD_ENABLE_WEB_ANALYSIS
+  return invoke(Session, [&](auto &S) {
+    return S.exportWails(buffer(ExpectedRevision, RevisionSize, 20),
+                         buffer(ExtractionID, ExtractionIDSize, 64),
+                         buffer(OutputDirectory, DirectorySize, 32768));
   });
 #else
   return unavailable();
