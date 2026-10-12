@@ -19,10 +19,15 @@ original binding validation and the exact `publishSourcePatch` transaction.
 Lifted rewrites keep their separate original EH evidence and provenance rules.
 See [source patches](source-patching.md).
 
-`COFFSourceImage` owns installation of compiler-produced PE x64 source output:
-separate code/state/metadata permissions, retained original runtime rows,
-new base relocations, exact compiler function/funclet ranges and bounded FH3
-graphs. It rereads installed bytes and permissions before publication. These
+`COFFSourceImage` owns installation of compiler-produced PE output on x86,
+x64, ARM32 and ARM64: separate code/state/metadata permissions, retained
+original runtime rows, new base relocations, exact compiler function/funclet
+ranges and bounded x64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
+evidence and native base-relocation fields. `MachOPatchObject` authenticates
+native linker atoms and unwind records; format-owned native installers register
+DWARF/compact records without inventing MC tokens. `sourcePatchTargetTriple`
+selects ARM mode, ELF float ABI and Mach-O CPU subtype from the loaded image. The installer rereads bytes and permissions before
+publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
@@ -85,6 +90,12 @@ handler discovery conservatively retires facts before expanding metadata.
 Other architectures and whole-image analyses retain run-local ownership.
 Core callers opt in through `PipelineOptions::AnalysisCache` and must reset it
 before input or policy mutation; image pointers alone do not establish validity.
+
+Function selection also retains decoded image data-access widths. Their exact
+ordered function address/size inventory is checked after synchronization;
+changed extents rebuild the widths and discard source using the former names.
+Image reloads, function edits, analysis-policy and signature changes retire
+these facts. Navigation still discards the preceding output IR and source.
 
 Each worker retains up to eight completed code documents under a 32 MiB
 conservative retained-size allowance. Exact function, representation, project
@@ -5274,3 +5285,7 @@ Kernel field initialization has a separate physical RAM owner. Permission valida
 `MemoryWriteWitness` retains exact physical allocation slices and shares the committed-write invalidation authority with RAM reservations. Same-value, partial and aliased writes invalidate it; opaque execution conservatively removes the proof. Creation and queries require a stopped owner. Driver observation binds validated DIR64 fields immediately after image copy, before session fixups, and publishes owned facts only while the mapped allocation and write history still match. These facts do not cover generated pointers or supply a native kernel materializer.
 
 The driver loader binds relocation facts to the validated file SHA-256. PE rebuilding consumes the owned facts and excludes fields replaced by import or metadata formatting before emitting diagnostic DIR64 records. This owner cannot infer generated-pointer relocations or remove the kernel runtime refusal.
+
+Driver execution watches publish the same stopped-memory guarantee as process execution watches. The session clears it before every CPU interval and establishes it only at a pure execution-watch exit without a committed watched write. Invocation entry clears it before callbacks. Kernel services, scheduler transitions and other exits remain conservative. The guarantee covers only the preceding installed RAM write watches; the transfer observer still initializes newly visited ranges.
+
+Kernel recovery classifies an arena allocation as a typed live pool only when the pool owner records the same allocation address and exact extent. Its pool dependency remains; unrelated retained objects keep their separate untyped dependency even while pools coexist or are later freed. Allocation identity does not prove pointer fields or supply a kernel materializer.

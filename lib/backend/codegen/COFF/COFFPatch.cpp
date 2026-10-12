@@ -603,7 +603,8 @@ PatchResult COFFPatcher::patch(const std::filesystem::path &InputPath,
                 CachedSymbols, CachedCodeRanges, TrampolineExports,
                 &PatchedOriginalEntries, &PatchedEntryMappings,
                 &InstalledFunctions, TrampolinePlan.Owners,
-                TrampolinePlan.OriginalVAs, CachedImage);
+                TrampolinePlan.OriginalVAs, CachedImage,
+                SourceReplacement ? &Img.ReplacementFunctionModes : nullptr);
           if (!validatePatchedSourceTrampolineClosure(
                   TrampolinePlan, InstalledFunctions, TrampCount,
                   SourceDetail)) {

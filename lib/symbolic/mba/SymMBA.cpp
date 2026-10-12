@@ -274,6 +274,32 @@ SymRef solveMasked(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
   return Rebuilt;
 }
 
+// These forms already meet a three-node, one-operation reading bound. Two
+// independent variables both need a leaf; a nontrivial constant transform is
+// neither a literal, a variable, its complement nor its negation (the only
+// cheaper same-width forms). Reject the coefficients and masks that can be
+// one of those forms. Only actual variables establish this bound: opaque
+// arithmetic inputs can be related and still need the complete region solver.
+bool isMinimalBinaryLeafExpression(const SymContext &Ctx, SymRef E,
+                                   const MBAOptions &Opts) {
+  const SymOp Op = Ctx.op(E);
+  if ((Op != SymOp::Add && Op != SymOp::Mul && Op != SymOp::And &&
+       Op != SymOp::Or && Op != SymOp::Xor) ||
+      Ctx.numOperands(E) != 2 || (Op == SymOp::Add && Ctx.width(E) <= 1))
+    return false;
+  SymRef A = Ctx.operand(E, 0), B = Ctx.operand(E, 1);
+  const unsigned MaxAtoms = resolveLimits(Opts).MaxAtoms;
+  if (Ctx.isVar(A) && Ctx.isVar(B))
+    return A != B && MaxAtoms >= 2;
+  if (Ctx.isVar(A))
+    std::swap(A, B);
+  if (!Ctx.isConst(A) || !Ctx.isVar(B) || MaxAtoms < 1 || Ctx.isConstZero(A))
+    return false;
+  if (Op == SymOp::Mul)
+    return !Ctx.constValue(A).isOne() && !Ctx.isConstOnes(A);
+  return Op == SymOp::Add || !Ctx.isConstOnes(A);
+}
+
 SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
                                const MBAOptions &Opts, WorkBudget &Budget,
                                SolveReport &Rep);
@@ -282,6 +308,10 @@ SymRef tryFastComplementarySum(SymContext &Ctx, SymRef E,
 /// a masked one into mask-uniform columns.
 SymRef solveRegionOrSplit(SymContext &Ctx, SymRef E, const MBAOptions &Opts,
                           WorkBudget &Budget, SolveReport &Rep) {
+  if (!Budget.exhausted() && isMinimalBinaryLeafExpression(Ctx, E, Opts)) {
+    Rep.Outcome = MBAOutcome::AlreadyShortest;
+    return E;
+  }
   if (SymRef Fast = tryFastComplementarySum(Ctx, E, Opts, Budget, Rep);
       Fast != E)
     return Fast;
@@ -783,6 +813,14 @@ MBAResult simplifyMBADeep(SymContext &Ctx, SymRef E, const MBAOptions &Opts) {
     // is meant to stop paying for at every remaining node.
     bool Complete = false;
     if (!Budget.exhausted() && Budget.consume(Ctx.dagSize(Rebuilt))) {
+      if (isMinimalBinaryLeafExpression(Ctx, Rebuilt, Opts)) {
+        // The children are leaves and no later factoring or original-region
+        // retry can beat this bound. Preserve the budget for larger parents.
+        if (Result.Outcome == MBAOutcome::NotApplicable)
+          Result.Outcome = MBAOutcome::AlreadyShortest;
+        Remember(Index, Rebuilt, true);
+        continue;
+      }
       const bool ChildrenChanged = Rebuilt != R;
       SolveReport Rep;
       SymRef Measured = solveRegionOrSplit(Ctx, Rebuilt, Opts, Budget, Rep);

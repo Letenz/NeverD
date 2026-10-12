@@ -13,6 +13,8 @@ Architektur.
 
 `SourcePatchCompiler` verwaltet Compileridentität und Artefaktauswahl. `validateSourcePatchTarget` ist die gemeinsame Zielzulassung für Quellcode und geliefertes IR; das Tripel allein beweist keinen Support. `bindSourcePatch` bestätigt IR-Einstiege; `PatchObject` verwaltet native Abschnitte, Relokationen und FDE-Bereichsnachweise. `publishSourcePatch` bereitet die genaue Transaktion vor, prüft und veröffentlicht sie exklusiv. `COFFSourceImage` verwaltet neuen PE-x64-Speicher und Unwind-Tabellen; geliftete Umschreibungen behalten ihre getrennten ursprünglichen EH-Nachweise. Siehe [Quellcodepatches](source-patching.md).
 
+`sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen.
+
 ## Systemgrenze
 
 ```mermaid

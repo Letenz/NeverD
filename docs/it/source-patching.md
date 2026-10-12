@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
+<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
 
 [← Documentation Index](README.md)
 
@@ -50,19 +50,19 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 modalità ordinaria | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 modalità ordinaria | Oggetto nativo | ELF x64 C |
 
-Sono profili verificati, non garanzie per ogni versione od opzione. `dyncode` e NeverC C++ non sono ammessi. GCC non produce LLVM IR. Gli oggetti nativi COFF/Mach-O non sono ammessi; l’installazione di oggetti richiede ELF x64. Rilocazioni sconosciute, TLS, costruttori, LTO, simboli common/IFUNC e import non risolti falliscono esplicitamente. La ricevuta JSON registra compilatore, argomenti, associazioni e indirizzi installati; gli oggetti includono anche SHA-256.
+La tabella descrive profili OS verificati, senza garantire ogni versione o opzione. Gli installatori nativi ELF, PE e Mach-O accettano tutte le quattro architetture. `dyncode` e NeverC C++ non sono ammessi. GCC richiede un driver ELF compatibile e non produce LLVM IR. Rilocazioni sconosciute, TLS, costruttori, LTO, simboli common/IFUNC e importazioni irrisolte falliscono esplicitamente. La ricevuta JSON registra compilatore, argomenti, associazioni e indirizzi; gli oggetti nativi includono SHA-256.
 
-La matrice CPU separata copre quattro architetture (`x86`, `x64`, `ARM32`, `ARM64`) e tre formati (`ELF`, `PE`, `Mach-O`), verificando l’installazione o il rifiuto esplicito. L’esecuzione CPU isolata non certifica il loader OS, l’unwinder C++ o ABI arbitrarie. Per queste conclusioni usare i profili runtime sopra.
+La matrice CPU richiede l’installazione riuscita di sorgente, IR esterno e oggetti nativi in tutte le dodici combinazioni. Verifica separatamente ARMv7k watchOS e ARMv7 iOS, dati modificabili／costanti, argomenti in virgola mobile e sullo stack di funzioni originali e ingressi dopo il cambio dell’indirizzo di caricamento. L’esecuzione CPU non certifica loader OS, unwinder C++ o ABI arbitrarie; usare i profili OS sopra.
 
 | Format | `x86` | `x64` | `ARM32` | `ARM64` |
 |---|---|---|---|---|
-| `ELF` | `CPU` | `CPU` | `REFUSED` | `CPU` |
-| `PE` | `REFUSED` | `CPU` | `REFUSED` | `REFUSED` |
-| `Mach-O` | `REFUSED` | `CPU` | `REFUSED` | `CPU` |
+| `ELF` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `PE` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `Mach-O` | `CPU` | `CPU` | `CPU` | `CPU` |
 
-`CPU` indica installazione ed esecuzione isolata delle funzioni; `REFUSED` indica un contratto di installazione mancante. ARM32 ELF richiede registrazione EHABI; Mach-O a 32 bit richiede contratti verificati di loader, frontend e unwinding; l’installazione PE da sorgente richiede attualmente x64.
+`CPU` significa installazione sorgente／IR／oggetto, ricaricamento ed esecuzione esatta. ARM ELF ricava EABI5, stato ARM/Thumb e ABI floating point dall’immagine e registra un indice `EHABI` completo e ordinato. PE conserva le righe x64/ARM e le rilocazioni `HIGHLOW`/`DIR64`/`MOV32T`; x86 usa il codice di registrazione del compilatore. Mach-O distingue watchOS DWARF e iOS `SjLj` secondo il sottotipo CPU. I salti d’ingresso ARM/Thumb sono relativi e restano validi dopo il cambio di base.
 
-La matrice CPU usa aritmetica, rami e chiamate ausiliarie autonome. Non certifica riferimenti dati ELF x86/ARM64 o import C++ ARM64; le prove aggiuntive hanno rifiutato i loro contratti di rilocazione non supportati.
+Gli oggetti nativi usano simboli di funzione delimitati, definizioni ausiliarie／di sezione e dati unwind propri, senza inventare ID MC né ricompilare IR. COFF richiede dimensioni ausiliarie esatte o sezioni con una sola funzione (`-ffunction-sections`). L’adattatore watchOS mantiene i frame delle funzioni foglia per ottenere registrazioni reali. Gli handler di linguaggio COFF/Mach-O nativi non rientrano nel profilo oggetti verificato; per le eccezioni C++ usare il percorso IR verificato. Sono rifiutati unwinder ARM statici con registro exidx fissato, puntatori assoluti Mach-O non registrati e memoria RELRO non supportata.
 
 <!-- i18n-section: references -->
 ## Riferimenti originali e memoria

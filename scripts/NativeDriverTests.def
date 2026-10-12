@@ -46,6 +46,8 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.RetainsModernFlagsAndInitializationSemantics")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.OwnsCurrentBytesAcrossMutationAndRelease")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "KernelUnpackState.ReleasedPoolsLeaveNoReconstructionRecord")
@@ -176,6 +178,9 @@ NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/"
     "UnpackDriver.CommittedWriteWatchesSuspendBeforeTheNextInstruction/"
+    "{backend_title}")
+NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
+    "Backends/UnpackDriver.SameValueWritesDoNotSupplyAnUnchangedMemoryProof/"
     "{backend_title}")
 NEVERD_NATIVE_DRIVER_REQUIRED_TEST(
     "Backends/UnpackDriver.CommittedWriteObserverFailuresRemainAPIErrors/"

@@ -159,6 +159,19 @@ installELFARMEHABIRecords(std::vector<uint8_t> &Binary,
 /// what makes EHABI rather than `.eh_frame` the model an ELF patch installs.
 bool hasGeneratedELFARMEHABI(const CompiledImage &Compiled);
 
+/// Build a complete relocated index, preserving the original entries and
+/// range boundaries. Descriptors remain at their compiler/original addresses.
+llvm::Expected<std::vector<uint8_t>>
+buildRelocatedELFARMEHABIIndex(llvm::ArrayRef<uint8_t> Binary,
+                               const ELFARMEHABIRegion &Region,
+                               const CompiledImage &Compiled, uint64_t IndexVA,
+                               llvm::ArrayRef<uint64_t> RequiredFunctions = {});
+
+/// Publish a relocated index only after its bytes have a unique load mapping.
+llvm::Error retargetELFARMEHABIIndex(std::vector<uint8_t> &Binary,
+                                     uint64_t IndexVA, uint64_t IndexSize,
+                                     const CompiledImage *Generated = nullptr);
+
 /// Register the regenerated `.ARM.exidx` in \p Compiled with the index at
 /// \p Region.
 ///
