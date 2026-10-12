@@ -3278,3 +3278,25 @@ the shared capability exclusions; the checker retains the sixteen existing
 unrelated source-patch declaration gaps on this pre-integration baseline.
 The [five-epic audit](web-epic-acceptance.md) records the new bounded criterion
 and remaining cross-track work; it does not declare the entire objective done.
+
+Integration merges `origin/dev` at `7aabfa363` normally; every new Web reader,
+SDK/native join and test remains byte-identical to the verified increment.
+The 302-step shared rebuild passes, followed by **748 passes / 28 skips out of
+776 distinct owning Web cases**. Five native-projection cases (including actual
+input), native buffer boundary and four transports pass (9.72 seconds). Qt
+app/worker/review builds and the selected review test pass (3.03 seconds).
+All changed C++ files pass clang-format and whitespace checks; source provenance
+passes across 7,485 files. Capability audit retains the same sixteen unrelated
+source-patch gaps. Both Web/JS options are ON; submodule revisions and the
+original checkout are unchanged.
+
+An initial integration run regenerated GoogleTest inventory concurrently from
+two CTest roots, causing duplicate discovery entries. Those 1,041 executions
+are not counted as distinct coverage. Regenerating inventory once restores
+exactly 265 source and 210 SDK cases; the clean owning run above is authoritative.
+The initial integration build also requested a nonexistent `NeverDLoaderTests`
+target; the correct existing `NeverDNativeBufferTests` target is built and run.
+Logs: `/tmp/neverd-tauri-{dev-integration,integrated-fixed-build,clean-discovery,
+integrated-clean-web-tests,integrated-native-transports-tests,
+integrated-gui-{build,tests},published-format,integrated-provenance,
+integrated-capabilities}.log`.
