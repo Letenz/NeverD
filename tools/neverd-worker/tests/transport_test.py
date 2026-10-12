@@ -492,6 +492,11 @@ def run(executable):
         rodata = wide_lines()
         assert any(line.startswith("aWide:") for line in rodata), rodata
         assert not any("??_C@" in line for line in rodata), rodata
+        # A literal among the code lists as a string there too.
+        code = [" ".join(line["text"].split()) for line in spelled.call(
+            "listing", {"address": "0xffff800012340200", "before": 0, "after": 4})["payload"]["lines"]]
+        assert any(line.startswith("aInline db 'Inline',0") for line in code), code
+        assert not any("??_C@" in line for line in code), code
         assert spelled.call("rename", {"address": "0xffff800012343108", "name": "kWide"})["status"] == "ok"
         rodata = wide_lines()
         assert any(line.startswith("kWide:") for line in rodata), rodata

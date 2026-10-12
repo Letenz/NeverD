@@ -2164,9 +2164,33 @@ struct Listing::Impl {
       // A table between functions, as MSVC places one after its function.
       if (asSwitchEntry(item, region, address))
         return item;
-      const std::uint64_t gapStart = previousCodeEnd(address, region);
-      const std::uint64_t gapEnd =
+      std::uint64_t gapStart = previousCodeEnd(address, region);
+      std::uint64_t gapEnd =
           std::min(nextFunctionStart(address, region), region.initializedEnd);
+      // A string between functions, as MSVC's literals sit among the code
+      // of a kernel's sections; the padding around it aligns it.
+      if (gapStart <= address && address < gapEnd) {
+        if (const auto *string = stringAt(address);
+            string && string->address >= gapStart &&
+            string->address + string->length + string->unit <= gapEnd) {
+          item.kind = ItemKind::String;
+          item.start = string->address;
+          item.size = string->length + string->unit;
+          item.index = static_cast<std::size_t>(string - strings.data());
+          return item;
+        }
+        const auto next =
+            std::upper_bound(strings.begin(), strings.end(), address,
+                             [](std::uint64_t value, const StringItem &s) {
+                               return value < s.address;
+                             });
+        if (next != strings.end() && next->address < gapEnd)
+          gapEnd = next->address;
+        if (next != strings.begin())
+          if (const auto &before = *std::prev(next);
+              before.address + before.length + before.unit > gapStart)
+            gapStart = before.address + before.length + before.unit;
+      }
       if (gapStart <= address && address < gapEnd)
         if (const auto alignment = paddingAlignment(gapStart, gapEnd)) {
           item.kind = ItemKind::Align;

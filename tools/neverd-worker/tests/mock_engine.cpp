@@ -107,6 +107,12 @@ MockSession *session(neverd_session_t s) {
 bool chunkedFixture(neverd_session_t s) {
   return session(s)->path.ends_with("function-chunks.bin");
 }
+/// In literal-names.bin, MSVC's names spell L"Wide" and the literal "Inline",
+/// which lies among the code where function_32 would be.
+constexpr std::uint64_t CodeLiteral = Base + 0x200;
+bool literalFixture(neverd_session_t s) {
+  return session(s)->path.ends_with("literal-names.bin");
+}
 std::uint64_t codeSize(neverd_session_t s) {
   return session(s)->path.ends_with("make-code.bin")
              ? CodeBase + sizeof(CodeBytes) - Base
@@ -158,9 +164,10 @@ int neverd_session_load(neverd_session_t s, const char *path) {
   // A large table for GUI paging tests; its functions are never executed.
   session(s)->imageFunctions =
       session(s)->path.ends_with("many-functions.bin") ? 20000 : ImageFunctions;
-  session(s)->absentFunctions = chunkedFixture(s)
-                                    ? std::set<std::uint64_t>{ChunkBegin}
-                                    : std::set<std::uint64_t>{};
+  session(s)->absentFunctions =
+      chunkedFixture(s)   ? std::set<std::uint64_t>{ChunkBegin}
+      : literalFixture(s) ? std::set<std::uint64_t>{CodeLiteral}
+                          : std::set<std::uint64_t>{};
   session(s)->functions = listedFunctions({}, session(s)->imageFunctions,
                                           session(s)->absentFunctions);
   notify("ready", 1);
@@ -1188,7 +1195,7 @@ const char *neverd_string_encodings_json(void) {
                             {"legacy", true}}})
                   .dump());
 }
-const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
+const char *neverd_strings_ex_json(neverd_session_t s, const char *options) {
   const Json parsed =
       options ? Json::parse(options, nullptr, false) : Json::object();
   const auto wanted = [&](const char *encoding) {
@@ -1200,6 +1207,13 @@ const char *neverd_strings_ex_json(neverd_session_t, const char *options) {
     return false;
   };
   Json items = Json::array();
+  if (literalFixture(s) && wanted("ascii"))
+    items.push_back({{"addr", hexAddress(CodeLiteral)},
+                     {"length", 6},
+                     {"chars", 6},
+                     {"encoding", "ascii"},
+                     {"literal", true},
+                     {"value", "Inline"}});
   if (wanted("utf-8"))
     items.push_back({{"addr", hexAddress(RodataBase)},
                      {"length", 6},
@@ -1328,13 +1342,17 @@ const char *neverd_symbols_json(neverd_session_t s) {
         {"name", "function_0"},
         {"type", "function"}},
        {{"addr", hexAddress(BssBase)}, {"name", "stderr"}, {"size", 8}}});
-  // MSVC's name of the literal L"Wide", which spells it rather than naming
-  // an object.
-  if (session(s)->path.ends_with("literal-names.bin"))
+  // MSVC's names of literals spell them rather than naming objects.
+  if (literalFixture(s)) {
+    rows.push_back({{"addr", hexAddress(CodeLiteral)},
+                    {"literal", true},
+                    {"name", "??_C@_06MOCKMOCK@Inline@"},
+                    {"size", 0}});
     rows.push_back({{"addr", hexAddress(RodataBase + 8)},
                     {"literal", true},
                     {"name", "??_C@_19LKAMOCKA@?$AAW?$AAi?$AAd?$AAe@"},
                     {"size", 0}});
+  }
   // The user's names of data replace the symbols' or add rows of their own.
   for (const auto &[address, name] : session(s)->names) {
     if (neverd_func_find_by_addr(s, address) >= 0)

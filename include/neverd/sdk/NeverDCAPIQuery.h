@@ -68,7 +68,11 @@ NEVERD_API const char *neverd_function_chunks_json(neverd_session_t Sess);
 NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// Text strings in the image's initialized data that is not code: C strings
 /// in ASCII or UTF-8, UTF-16 or UTF-32 strings in either byte order, and C
-/// strings in legacy code pages, each ending in a zero code unit.
+/// strings in legacy code pages, each ending in a zero code unit.  Also the
+/// literals symbols spell (neverd_symbols_json's "literal"), wherever they
+/// lie -- a kernel keeps them among its code -- however short they are and
+/// whatever characters they hold, where the image holds the bytes the name
+/// spells and one of the encodings searched reads them.
 /// \p OptionsJson is NULL for the defaults or an object with optional
 /// "encodings" (names from neverd_string_encodings_json(); default those it
 /// marks "default"), "preferred" (a legacy code page that reads a C string
@@ -77,9 +81,11 @@ NEVERD_API const char *neverd_segments_json(neverd_session_t Sess);
 /// the order neverd_string_encodings_json() lists them) and "min_length"
 /// (display columns, a wide East Asian character counting two, 1 to 1024,
 /// default 4).  Returns
-/// [{"addr","length","chars","encoding","value"},...] in address order, where
-/// "length" counts bytes without the terminator and "value" is UTF-8, or NULL
-/// with neverd_last_error() for malformed options.
+/// [{"addr","length","chars","encoding","literal"?,"value"},...] in address
+/// order, where "length" counts bytes without the terminator, "literal" is
+/// true for a literal a symbol spells, which wins over text a scan reads in
+/// its bytes, and "value" is UTF-8; or NULL with neverd_last_error() for
+/// malformed options.
 NEVERD_API const char *neverd_strings_ex_json(neverd_session_t Sess,
                                               const char *OptionsJson);
 /// One page of neverd_strings_ex_json(): the strings that start at or after
@@ -160,6 +166,11 @@ NEVERD_API const char *neverd_xrefs_from_json(neverd_session_t Sess,
 // ===--------------------------------------------------------------------===//
 
 NEVERD_API const char *neverd_sections_json(neverd_session_t Sess);
+/// The image's symbols with the user's names applied, as
+/// [{"addr","literal"?,"name","size"}].  "literal" is true where the name
+/// spells a string literal rather than naming an object, as MSVC names the
+/// literals it pools (`??_C@_15OHIPBLFN@?$AAS?$AAA@` is L"SA"); a listing
+/// names the string by its text instead.  A name the user gives is never one.
 NEVERD_API const char *neverd_symbols_json(neverd_session_t Sess);
 /// The symbols of neverd_symbols_json that are not functions.
 NEVERD_API const char *neverd_data_symbols_json(neverd_session_t Sess);
