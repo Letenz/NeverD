@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 80cc748a372b580d9d8ffc400f41aaa8182fa9a64e041111567fb76b33e5a0dc -->
+<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
 
 [← Documentation Index](README.md)
 
@@ -63,6 +63,8 @@ CPU 矩阵要求十二种组合的源码、外部 IR 和原生对象均成功安
 `CPU` 表示源码／IR／对象安装、重新加载及精确函数执行。ARM ELF 从镜像确定 EABI5、ARM/Thumb 状态和浮点 ABI，并注册完整排序的 `EHABI` 索引。PE 保留 x64/ARM 运行时记录与 `HIGHLOW`/`DIR64`/`MOV32T` 基址重定位；x86 使用编译器注册代码。Mach-O 根据 CPU 子类型区分 watchOS DWARF 与 iOS `SjLj`。源码的 ARM/Thumb 入口使用相对分支，可随镜像改变加载地址。
 
 原生对象依据自身有界函数符号、辅助／区段定义及展开记录验证范围，不伪造 MC 所有者 ID，也不重新编译 IR。COFF 需要精确辅助长度或单函数区段（`-ffunction-sections`）；watchOS 编译适配器保留叶函数栈帧以取得真实展开记录。原生 COFF/Mach-O 语言处理程序尚不属于已验证对象配置；C++ 异常应使用已验证 IR 路径。固化 exidx 注册表的静态 ARM 展开器、未注册的 Mach-O 绝对指针及不支持的 RELRO 存储均明确拒绝。
+
+GCC C 对象也在 ELF x86、ARM32、ARM64 上完成安装，并通过 Linux QEMU user mode 执行。适配器从镜像选择 ARM/Thumb 模式，GNU property 记录按 ELF 指针宽度对齐。
 
 <!-- i18n-section: references -->
 ## 原程序引用与存储

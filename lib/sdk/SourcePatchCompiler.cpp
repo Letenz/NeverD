@@ -209,6 +209,8 @@ compileSourcePatch(llvm::StringRef Source,
              llvm::Triple(*Target).getEnvironment()))
       return compilerError("selected GCC must match the loaded ELF "
                            "architecture and ABI; use a matching cross driver");
+    if (Architecture == Arch::ARM)
+      Args.push_back(llvm::Triple(*Target).isThumb() ? "-mthumb" : "-marm");
   }
 #ifdef __APPLE__
   if (Format == BinaryFormat::MachO) {

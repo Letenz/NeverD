@@ -398,10 +398,10 @@ TargetRegInfo::integerParamRegs(BinaryFormat Format) const {
 
 llvm::ArrayRef<uint64_t>
 TargetRegInfo::floatingParamRegs(BinaryFormat Format) const {
-  if (TheArch == Arch::X64 && Format == BinaryFormat::COFF)
-    return FPParamRegs.take_front(
-        std::min(FPParamRegs.size(), Win64ParamRegs.size()));
-  return FPParamRegs;
+  if (!FloatingParamRegCount)
+    return FPParamRegs;
+  return FPParamRegs.take_front(
+      std::min(FPParamRegs.size(), FloatingParamRegCount(Format)));
 }
 
 int IntegerArgumentLayout::registerIndex(uint64_t RegOff) const {

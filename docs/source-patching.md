@@ -62,6 +62,8 @@ The CPU matrix requires successful source, supplied-IR and native-object install
 
 Native objects use their own bounded function symbols, auxiliary/section definitions and unwind records; they never receive invented MC owner IDs or an IR recompilation. COFF producers need exact auxiliary sizes or singleton function sections (`-ffunction-sections`). The watchOS compiler adapter retains leaf frames to obtain real unwind rows. Native COFF/Mach-O language handlers remain outside the verified object profile; use the verified IR route for C++ exceptions. A statically linked ARM unwinder with a baked exidx registry is refused, as are unregistered absolute pointers in Mach-O and unsupported RELRO storage.
 
+GCC C objects were also installed and executed on ELF x86, ARM32 and ARM64 through Linux QEMU user mode. The adapter selects ARM/Thumb from the image, and GNU property records use the ELF pointer-width alignment.
+
 <!-- i18n-section: references -->
 ## Original references and storage
 
