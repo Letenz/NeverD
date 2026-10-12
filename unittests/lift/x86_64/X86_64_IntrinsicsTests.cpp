@@ -811,6 +811,33 @@ __attribute__((target("bmi2"))) int bits(int a) {
                             {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
 }
 
+// A gather clears each mask element as it loads it: after the first the
+// mask is {0, -1, -1, -1}, a 256-bit constant the C writes as the complement
+// of 2^64 - 1.  Printed `~-1`, C complemented an int and loaded only the
+// first element.
+TEST_F(X86_64_HighCIntrinsics, AGatherKeepsTheMaskOfTheElementsLeft) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+typedef int v4si __attribute__((vector_size(16)));
+typedef long long v4di __attribute__((vector_size(32)));
+__attribute__((target("avx2"))) int gather(int a) {
+  unsigned long long t[64], x = (unsigned)a | 1ull;
+  for (int i = 0; i < 64; i++) {
+    x = x * 6364136223846793005ull + 1442695040888963407ull;
+    t[i] = x;
+  }
+  v4si vi = {a & 63, (a >> 4) & 63, (a >> 8) & 63, (a >> 12) & 63};
+  v4di m = {-1, -1, -1, -1}, s = {0, 0, 0, 0};
+  v4di g = __builtin_ia32_gatherd_q256(s, (const long long *)t, vi, m, 8);
+  unsigned long long r = 0;
+  for (int i = 0; i < 4; i++)
+    r += (unsigned long long)g[i];
+  return (int)(r ^ (r >> 32));
+}
+)C",
+                            "gather", {"gather"},
+                            {0, 1, -1, 0x13579, 0x12345678});
+}
+
 // MULSD and ADDSS read their constant-pool operand through the address they
 // take, so each constant is the double or float the instruction reads.
 TEST_F(X86_64_HighCIntrinsics, ConstantPoolOperandsKeepTheirWidth) {

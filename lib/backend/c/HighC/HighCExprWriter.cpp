@@ -272,6 +272,10 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
     return "0";
   if (Val <= limits::kDecimalConstThreshold)
     return std::to_string(Val);
+  // A constant of a type wider than eight bytes is its value zero-extended:
+  // a negative literal would convert to that type sign-extended.
+  if (Type && Type->Kind == NdTypeKind::Int && Type->Size > 8)
+    return "0x" + llvm::utohexstr(Val);
 
   if (Val == 0xFFFFFFFFFFFFFFFFULL)
     return "-1";
@@ -560,6 +564,10 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         (E.Type->Size == 1 || E.Type->Size == 2))
       return "((" + typeToC(E.Type) + ")(~" + exprStr(*E.Operands[0], 99) +
              "))";
+    // Past eight bytes C complements an operand in its own narrower type;
+    // the machine complements every byte of the result.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int && E.Type->Size > 8)
+      return "~(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
     return "~" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_NEG2: {
     // Reuse the integer subtraction rule for -x, including signed-minimum
