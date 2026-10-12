@@ -5152,6 +5152,15 @@ These are source-analysis facts; native lowering rejects them until a replacemen
 call plan is proved. Jump-buffer resumption and the complete xcpt4 proof remain
 required.
 
+`RegistrationJumpRuntime` authenticates the exact PE32 capture, resume and EH3
+unwind import bindings and immutable FF25 veneers. `RegistrationJumpCapture`
+checks a current source CALL, complete buffer separation, the installed canonical
+frame and the explicit two-argument unwind protocol. It retains actual captured
+nonvolatile values, including unknown pointer provenance. These preparatory
+records are not integrated with state completion: surviving-buffer identity,
+mutation/lifetime checks, runtime unwind effects and CFG/SSA resumption consumers
+remain required. Neither routine publishes a zero-pop or no-return shortcut.
+
 A termination-only SEH function has no dispatcher-entered except body. Its
 returning-stack proof follows its ordinary entry and checks every finally's
 actual near return independently. A finally that writes the established frame

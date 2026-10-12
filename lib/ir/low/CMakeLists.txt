@@ -74,6 +74,8 @@ add_neverd_component_library(NeverDIRLow
   X86/RegistrationCalleeFrame.cpp
   X86/RegistrationConditionalCall.cpp
   X86/RegistrationConditionalCallee.cpp
+  X86/RegistrationJumpRuntime.cpp
+  X86/RegistrationJumpCapture.cpp
   X86/RegistrationCalleeIndex.cpp
   X86/RegistrationCalleeStack.cpp
   X86/RegistrationSEHControl.cpp

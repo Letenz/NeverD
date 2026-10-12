@@ -2918,6 +2918,14 @@ that source helper facts cannot mutate native IR without a replacement call
 receipt. These focused checks do not establish full xcpt4 or nonlocal-jump
 support.
 
+`RegistrationJumpRuntime` mutates each capture/resume/unwind binding in direct
+and indirect forms, including loader storage, DLL identity, delay imports,
+architecture, veneer opcode/slot and writable code. `RegistrationJumpCapture`
+checks physical PC and frame values, argument/admin overlap, wrong protocol,
+unknown callback roles, detached operations, source slices, caller ownership and
+work exhaustion. These tests validate preparation only; they do not establish
+buffer survival or a nonlocal resumption.
+
 CRT source regressions use synthetic tables and the pinned Windows corpus:
 
 ```bash
