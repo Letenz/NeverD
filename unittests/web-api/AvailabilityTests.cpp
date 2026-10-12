@@ -64,8 +64,10 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
        {"package_advisory_import", "package_advisory_records",
         "package_advisories_match", "package_advisories_match_records",
         "package_attestation_import", "package_attestation_records",
-        "package_attestation_digest_match",
-        "package_attestation_digest_result"})
+        "package_attestation_digest_match", "package_attestation_digest_result",
+        "package_assessment_create", "package_assessment_findings",
+        "package_review_append", "package_review_decisions",
+        "package_assessment_report"})
     EXPECT_TRUE(Has(Name));
   for (const auto Op : {"har_preview", "har_commit", "har_records",
                         "stream_preview", "stream_commit", "stream_records"})
@@ -278,6 +280,17 @@ TEST(WebAvailability, AllPublicEntryPointsRemainAvailableWhenBackendIsOmitted) {
             nullptr, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0),
         neverd_web_package_attestation_digest_result_json(nullptr, nullptr, 0,
                                                           nullptr, 0),
+        neverd_web_package_assessment_create_json(nullptr, nullptr, 0, nullptr,
+                                                  0, nullptr, 0),
+        neverd_web_package_assessment_findings_json(
+            nullptr, nullptr, 0, nullptr, 0, nullptr, 0, 0, 1),
+        neverd_web_package_review_append_json(nullptr, nullptr, 0, nullptr, 0,
+                                              nullptr, 0, nullptr, 0, nullptr,
+                                              0),
+        neverd_web_package_review_decisions_json(nullptr, nullptr, 0, nullptr,
+                                                 0, nullptr, 0, 0, 1),
+        neverd_web_package_assessment_report_json(nullptr, nullptr, 0, nullptr,
+                                                  0, nullptr, 0, 0, 1),
         neverd_web_package_integrity_verify_json(nullptr, nullptr, 0, nullptr,
                                                  0, nullptr, 0, nullptr, 0),
         neverd_web_package_archive_extract_json(nullptr, nullptr, 0, nullptr, 0,

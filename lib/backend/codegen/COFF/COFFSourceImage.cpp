@@ -1,0 +1,431 @@
+//===- COFFSourceImage.cpp - Compiler-produced PE replacement images ------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+
+#include "neverd/backend/codegen/COFF/COFFSourceImage.h"
+
+#include "neverd/backend/codegen/COFF/COFFExceptionPatch.h"
+#include "neverd/backend/codegen/PatchStorage.h"
+#include "neverd/loader/COFF/COFFLoader.h"
+#include "neverd/object/PELayout.h"
+
+#include "llvm/MC/MCFixup.h"
+#include "llvm/Support/Errc.h"
+#include "llvm/Support/MathExtras.h"
+
+#include <array>
+#include <map>
+#include <set>
+
+namespace neverd {
+namespace {
+llvm::Error fail(const llvm::Twine &Message) {
+  return llvm::createStringError(llvm::errc::not_supported,
+                                 "PE source image: " + Message);
+}
+using RuntimeRow = std::array<uint32_t, 3>;
+
+llvm::Expected<llvm::ArrayRef<uint8_t>>
+directoryBytes(const BinaryImage &Original, const PEHeaderPtrs &PE,
+               uint32_t Kind) {
+  auto *Directory = getPEDataDirectory(PE, Kind);
+  if (!Directory || (!Directory->Size && !Directory->RelativeVirtualAddress))
+    return llvm::ArrayRef<uint8_t>();
+  if (!Directory->Size || !Directory->RelativeVirtualAddress)
+    return fail("inconsistent original data directory");
+  const auto *Data = Original.readVA(
+      Original.Base + Directory->RelativeVirtualAddress, Directory->Size);
+  if (!Data)
+    return fail("original data directory is not file-backed");
+  return llvm::ArrayRef<uint8_t>(Data, Directory->Size);
+}
+
+bool owns(const CompiledImage &Image, uint64_t VA, uint64_t Size,
+          llvm::mc_rewrite::RewriteSectionKind Kind) {
+  return llvm::any_of(Image.Sections, [&](const auto &Section) {
+    return Section.IsAllocated && Section.IsInImage && Section.Kind == Kind &&
+           VA >= Section.VA &&
+           rangeInBounds(VA - Section.VA, Size, Section.Size);
+  });
+}
+
+llvm::Error verifyLanguage(const BinaryImage &Reloaded,
+                           const BinaryImage &Original,
+                           const CompiledImage &Compiled,
+                           const std::map<uint32_t, RuntimeRow> &Generated) {
+  using Kind = llvm::mc_rewrite::RewriteSectionKind;
+  std::map<uint64_t, const llvm::mc_rewrite::RewriteFunctionRange *> Ranges;
+  for (const auto &Range : Compiled.FunctionRanges)
+    if (!Ranges.emplace(Range.BeginVA, &Range).second)
+      return fail("ambiguous compiler function range");
+  std::set<uint32_t> Seen;
+  for (const auto &EH : Reloaded.ExceptionMetadata.Functions) {
+    if (EH.CodeRange.Begin < Original.Base ||
+        EH.CodeRange.Begin - Original.Base > UINT32_MAX)
+      continue;
+    auto Row = Generated.find(
+        static_cast<uint32_t>(EH.CodeRange.Begin - Original.Base));
+    if (Row == Generated.end())
+      continue;
+    if (!Seen.insert(Row->first).second ||
+        EH.CodeRange.End != Original.Base + Row->second[1] ||
+        EH.UnwindInfoRVA != Row->second[2] ||
+        EH.ParseStatus != ExceptionParseStatus::Complete ||
+        EH.Kind != RuntimeFunctionKind::Primary)
+      return fail("generated unwind record did not reload exactly");
+    const auto *Range = Ranges.at(EH.CodeRange.Begin);
+    const auto *Unwind = Reloaded.readVA(EH.UnwindInfoVA, 4);
+    if (!Unwind ||
+        !owns(Compiled, EH.UnwindInfoVA,
+              4 + 2 * llvm::alignTo(uint64_t(Unwind[2]), 2) +
+                  (EH.Personality == ExceptionPersonality::None ? 0 : 8),
+              Kind::ReadOnlyData))
+      return fail("unwind program leaves compiler read-only storage");
+    if (EH.Personality == ExceptionPersonality::None)
+      continue;
+    const auto Handler =
+        findCOFFExceptionPersonalityVA(Original, "__CxxFrameHandler3");
+    if (!Handler || EH.PersonalityVA != *Handler ||
+        EH.Personality != ExceptionPersonality::CxxFrameHandler3 || !EH.Cxx ||
+        EH.Cxx->NativeEncoding != CxxExceptionInfo::Encoding::FH3 ||
+        !EH.Cxx->hasValidStateGraph() || EH.Cxx->hasExceptionSpecification() ||
+        EH.Cxx->HasDynamicStackAlignment || EH.Cxx->BBTFlags ||
+        !owns(Compiled, EH.HandlerDataVA, 4, Kind::ReadOnlyData) ||
+        !owns(Compiled, EH.Cxx->NativeFuncInfoVA, 40, Kind::ReadOnlyData))
+      return fail("unsupported or incomplete compiler C++ FH3 metadata");
+    const auto &Cxx = *EH.Cxx;
+    const uint64_t Parent =
+        Range->ParentOwnerVA ? Range->ParentOwnerVA : Range->OwnerVA;
+    auto IsGroupCode = [&](uint64_t VA, bool AllowEnd) {
+      return llvm::any_of(Compiled.FunctionRanges, [&](const auto &Candidate) {
+        return (Candidate.OwnerVA == Parent ||
+                Candidate.ParentOwnerVA == Parent) &&
+               VA >= Candidate.BeginVA &&
+               (VA < Candidate.EndVA || (AllowEnd && VA == Candidate.EndVA));
+      });
+    };
+    auto IsGroupEntry = [&](uint64_t VA) {
+      auto It = Ranges.find(VA);
+      return It != Ranges.end() && (It->second->OwnerVA == Parent ||
+                                    It->second->ParentOwnerVA == Parent);
+    };
+    for (const auto &IP : Cxx.IPMap)
+      if (!IsGroupCode(IP.IP, true))
+        return fail("C++ IP state leaves its compiler function group");
+    for (const auto &Action : Cxx.UnwindMap)
+      if (Action.ActionVA && !IsGroupEntry(Action.ActionVA))
+        return fail("C++ cleanup does not name its compiler funclet");
+    for (const auto &Try : Cxx.TryBlocks)
+      for (const auto &Catch : Try.Handlers) {
+        auto Target = Ranges.find(Catch.HandlerVA);
+        if (Target == Ranges.end() || Target->second->ParentOwnerVA != Parent ||
+            Catch.ParentFrameOffset < 0 || Catch.ParentFrameOffset % 8 ||
+            (Catch.TypeDescriptorVA &&
+             !Reloaded.readVA(Catch.TypeDescriptorVA, 17)))
+          return fail("C++ catch has no exact compiler funclet/type record");
+        const auto *CatchEH =
+            Reloaded.ExceptionMetadata.findFunction(Catch.HandlerVA);
+        if (!CatchEH || !CatchEH->Cxx ||
+            CatchEH->Cxx->NativeFuncInfoVA != Cxx.NativeFuncInfoVA)
+          return fail("C++ catch changes its parent FuncInfo identity");
+      }
+    // Bound each physical FH3 table to compiler-produced read-only
+    // storage.
+    const auto *Info = Reloaded.readVA(Cxx.NativeFuncInfoVA, 40);
+    for (const auto [CountOffset, PointerOffset, Stride] :
+         {std::array<unsigned, 3>{4, 8, 8}, {12, 16, 20}, {20, 24, 8}}) {
+      const uint32_t Count = readLE<uint32_t>(Info + CountOffset);
+      const uint32_t RVA = readLE<uint32_t>(Info + PointerOffset);
+      if (Count && !owns(Compiled, Original.Base + RVA,
+                         uint64_t(Count) * Stride, Kind::ReadOnlyData))
+        return fail("C++ state table leaves compiler read-only storage");
+      if (Stride == 20)
+        for (uint32_t I = 0; I < Count; ++I) {
+          const auto *Try =
+              Reloaded.readVA(Original.Base + RVA + uint64_t(I) * 20, 20);
+          const auto NumCatches = readLE<uint32_t>(Try + 12);
+          const auto Handlers = readLE<uint32_t>(Try + 16);
+          if (!NumCatches ||
+              !owns(Compiled, Original.Base + Handlers,
+                    uint64_t(NumCatches) * 20, Kind::ReadOnlyData))
+            return fail("C++ handler table leaves compiler read-only storage");
+        }
+    }
+  }
+  if (Seen.size() != Generated.size())
+    return fail("generated runtime-function "
+                "directory is incomplete");
+  return llvm::Error::success();
+}
+} // namespace
+
+llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
+                                   const BinaryImage &Original,
+                                   const CompiledImage &Compiled) {
+  using Kind = llvm::mc_rewrite::RewriteSectionKind;
+  auto PE = locatePEHeaders(Binary.data(), Binary.size());
+  if (!PE.valid() || !PE.Is64 || !PE.SectionTable ||
+      Original.Arch != Arch::X64 ||
+      Compiled.InputKind != RewriteInputKind::ReplacementIR ||
+      !Compiled.FunctionRangesValid ||
+      !llvm::mc_rewrite::validateRewriteFunctionRanges(
+          Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))
+    return fail("PE x64 and authenticated compiler ranges are required");
+  const uint64_t Alignment = getPESectionAlignment(PE);
+  const uint64_t FileAlignment = getPEFileAlignment(PE);
+  if (!llvm::isPowerOf2_64(Alignment) || Alignment < 4096 ||
+      Alignment > 65536 || !llvm::isPowerOf2_64(FileAlignment) ||
+      FileAlignment < 512 || FileAlignment > Alignment ||
+      getPEImageBase(PE) != Original.Base || Compiled.BaseVA < Original.Base ||
+      Compiled.BaseVA !=
+          Original.Base + llvm::alignTo(getPESizeOfImage(PE), Alignment))
+    return fail("invalid PE placement or native alignment");
+  auto Storage = validatePatchStorageLayout(Compiled, Alignment);
+  if (!Storage)
+    return Storage.takeError();
+  auto OldPData = directoryBytes(Original, PE, llvm::COFF::EXCEPTION_TABLE);
+  if (!OldPData)
+    return OldPData.takeError();
+  std::map<uint32_t, RuntimeRow> Rows, Generated;
+  auto AddRows = [&](llvm::ArrayRef<uint8_t> Bytes, bool New) -> llvm::Error {
+    if (Bytes.size() % 12)
+      return fail("misaligned runtime-function table");
+    for (size_t I = 0; I < Bytes.size(); I += 12) {
+      RuntimeRow Row{readLE<uint32_t>(Bytes.data() + I),
+                     readLE<uint32_t>(Bytes.data() + I + 4),
+                     readLE<uint32_t>(Bytes.data() + I + 8)};
+      if (!Row[0] || Row[0] >= Row[1] || !Row[2] ||
+          !Rows.emplace(Row[0], Row).second)
+        return fail("invalid or duplicate runtime-function entry");
+      if (!New)
+        continue;
+      const uint64_t Begin = Original.Base + Row[0],
+                     End = Original.Base + Row[1];
+      const auto Count =
+          llvm::count_if(Compiled.FunctionRanges, [&](const auto &Range) {
+            return Range.BeginVA == Begin && Range.EndVA == End &&
+                   Range.OwnerVA == Begin;
+          });
+      if (Count != 1 || !owns(Compiled, Begin, End - Begin, Kind::Code) ||
+          !owns(Compiled, Original.Base + Row[2], 4, Kind::ReadOnlyData))
+        return fail("runtime row disagrees with its exact compiler range");
+      Generated.emplace(Row[0], Row);
+    }
+    return llvm::Error::success();
+  };
+  if (auto Error = AddRows(*OldPData, false))
+    return Error;
+  std::map<uint32_t, std::set<uint16_t>> NewRelocs;
+  std::set<uint64_t> RelocatedFields;
+  for (const auto &Section : Compiled.Sections) {
+    if (!Section.IsAllocated || !Section.IsInImage || !Section.Size)
+      continue;
+    if (llvm::StringRef(Section.Name).starts_with(".pdata"))
+      if (auto Error = AddRows(llvm::ArrayRef<uint8_t>(Compiled.Bytes)
+                                   .slice(Section.Offset, Section.Size),
+                               true))
+        return Error;
+    for (const auto &Fixup : Section.FixupReferences) {
+      if (Fixup.IsPCRel || Fixup.BitWidth != 64 ||
+          !Fixup.SubtractSymbol.empty())
+        continue;
+      if (!Fixup.IsResolved || !rangeInBounds(Fixup.Offset, 8, Section.Size) ||
+          (Section.Kind != Kind::WritableData &&
+           Section.Kind != Kind::UninitializedData))
+        return fail("absolute address lacks writable relocation storage");
+      const uint64_t RVA = Section.VA - Original.Base + Fixup.Offset;
+      if (RVA > UINT32_MAX - 7)
+        return fail("absolute relocation exceeds PE limits");
+      auto Next = RelocatedFields.lower_bound(RVA);
+      if ((Next != RelocatedFields.end() && *Next - RVA < 8) ||
+          (Next != RelocatedFields.begin() && RVA - *std::prev(Next) < 8))
+        return fail("overlapping absolute relocation fields");
+      RelocatedFields.insert(RVA);
+      if (!NewRelocs[static_cast<uint32_t>(RVA & ~4095ULL)]
+               .insert(static_cast<uint16_t>(
+                   (llvm::COFF::IMAGE_REL_BASED_DIR64 << 12) | (RVA & 4095)))
+               .second)
+        return fail("duplicate absolute relocation");
+    }
+  }
+  uint64_t PreviousEnd = 0;
+  std::vector<uint8_t> Metadata;
+  for (const auto &[Begin, Row] : Rows) {
+    if (Begin < PreviousEnd)
+      return fail("overlapping runtime-function ranges");
+    PreviousEnd = Row[1];
+    for (uint32_t Word : Row) {
+      const auto Offset = Metadata.size();
+      Metadata.resize(Offset + 4);
+      writeLE<uint32_t>(Metadata.data() + Offset, Word);
+    }
+  }
+  const uint64_t EHSize = Metadata.size();
+  const uint64_t MetaRVA = llvm::alignTo(
+      Compiled.BaseVA - Original.Base + Compiled.Bytes.size(), Alignment);
+  uint64_t RelocOffset = 0, RelocSize = 0;
+  if (!NewRelocs.empty()) {
+    if (PE.FileHeader->Characteristics & llvm::COFF::IMAGE_FILE_RELOCS_STRIPPED)
+      return fail("absolute pointers require a relocatable original image");
+    auto OldRelocs =
+        directoryBytes(Original, PE, llvm::COFF::BASE_RELOCATION_TABLE);
+    if (!OldRelocs)
+      return OldRelocs.takeError();
+    for (size_t Offset = 0; Offset < OldRelocs->size();) {
+      if (!rangeInBounds(Offset, 8, OldRelocs->size()))
+        return fail("truncated original base-relocation block");
+      const auto *Block = OldRelocs->data() + Offset;
+      const uint32_t Page = readLE<uint32_t>(Block);
+      const uint32_t Size = readLE<uint32_t>(Block + 4);
+      if ((Page & 4095) || Size < 8 || (Size & 3) ||
+          !rangeInBounds(Offset, Size, OldRelocs->size()))
+        return fail("invalid original base-relocation block");
+      for (uint32_t I = 8; I < Size; I += 2) {
+        const uint16_t Entry = readLE<uint16_t>(Block + I);
+        const uint16_t Type = Entry >> 12;
+        if (Type == llvm::COFF::IMAGE_REL_BASED_ABSOLUTE)
+          continue;
+        if (Type != llvm::COFF::IMAGE_REL_BASED_DIR64 ||
+            uint64_t(Page) + (Entry & 4095) + 8 > getPESizeOfImage(PE))
+          return fail("unsupported original base relocation");
+      }
+      Offset += Size;
+    }
+    RelocOffset = Metadata.size();
+    Metadata.insert(Metadata.end(), OldRelocs->begin(), OldRelocs->end());
+    for (const auto &[Page, Entries] : NewRelocs) {
+      const uint32_t Size =
+          static_cast<uint32_t>(llvm::alignTo(8 + 2 * Entries.size(), 4));
+      const auto Offset = Metadata.size();
+      Metadata.resize(Offset + Size, 0);
+      writeLE<uint32_t>(Metadata.data() + Offset, Page);
+      writeLE<uint32_t>(Metadata.data() + Offset + 4, Size);
+      size_t Index = Offset + 8;
+      for (uint16_t Entry : Entries) {
+        writeLE<uint16_t>(Metadata.data() + Index, Entry);
+        Index += 2;
+      }
+    }
+    RelocSize = Metadata.size() - RelocOffset;
+  }
+  struct Chunk {
+    llvm::StringRef Name;
+    uint64_t RVA;
+    llvm::ArrayRef<uint8_t> Bytes;
+    uint32_t Flags;
+  };
+  const uint32_t Read = llvm::COFF::IMAGE_SCN_MEM_READ;
+  const uint32_t Data = llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA;
+  const auto Bytes = llvm::ArrayRef<uint8_t>(Compiled.Bytes);
+  std::vector<Chunk> Chunks{{".ndtext", Compiled.BaseVA - Original.Base,
+                             Storage->WritableOffset
+                                 ? Bytes.take_front(Storage->WritableOffset)
+                                 : Bytes,
+                             Read | llvm::COFF::IMAGE_SCN_MEM_EXECUTE |
+                                 llvm::COFF::IMAGE_SCN_CNT_CODE}};
+  if (Storage->WritableOffset)
+    Chunks.push_back({".nddata",
+                      Compiled.BaseVA - Original.Base + Storage->WritableOffset,
+                      Bytes.drop_front(Storage->WritableOffset),
+                      Read | Data | llvm::COFF::IMAGE_SCN_MEM_WRITE});
+  if (!Metadata.empty())
+    Chunks.push_back({".ndmeta", MetaRVA, Metadata, Read | Data});
+  uint64_t HeaderLimit = getPESizeOfHeaders(PE);
+  forEachPESection(PE, [&](const PESectionFields &Section, uint16_t) {
+    if (Section.SizeOfRawData)
+      HeaderLimit = std::min<uint64_t>(HeaderLimit, Section.PointerToRawData);
+  });
+  const uint64_t TableOffset = PE.SectionTable - Binary.data();
+  const uint16_t OldCount = PE.NumSections;
+  if (OldCount + Chunks.size() > UINT16_MAX ||
+      !rangeInBounds(TableOffset,
+                     (OldCount + Chunks.size()) *
+                         sizeof(llvm::object::coff_section),
+                     std::min<uint64_t>(HeaderLimit, Binary.size())))
+    return fail("insufficient unused PE section-header space");
+  size_t Index = 0;
+  uint64_t ImageEnd = 0;
+  uint64_t AddedCode = 0, AddedData = 0;
+  for (const auto &Chunk : Chunks) {
+    const uint64_t RawOffset = llvm::alignTo(Binary.size(), FileAlignment);
+    const uint64_t RawSize = llvm::alignTo(Chunk.Bytes.size(), FileAlignment);
+    ImageEnd = llvm::alignTo(Chunk.RVA + Chunk.Bytes.size(), Alignment);
+    if (Chunk.Bytes.empty() || RawOffset + RawSize > UINT32_MAX ||
+        ImageEnd > UINT32_MAX)
+      return fail("new PE section exceeds format limits");
+    Binary.resize(RawOffset + RawSize, 0);
+    std::copy(Chunk.Bytes.begin(), Chunk.Bytes.end(),
+              Binary.begin() + RawOffset);
+    llvm::object::coff_section Section{};
+    std::memcpy(Section.Name, Chunk.Name.data(), Chunk.Name.size());
+    Section.VirtualAddress = Chunk.RVA;
+    Section.VirtualSize = Chunk.Bytes.size();
+    Section.PointerToRawData = RawOffset;
+    Section.SizeOfRawData = RawSize;
+    Section.Characteristics = Chunk.Flags;
+    if (Chunk.Flags & llvm::COFF::IMAGE_SCN_CNT_CODE)
+      AddedCode += RawSize;
+    else
+      AddedData += RawSize;
+    std::memcpy(Binary.data() + TableOffset +
+                    (OldCount + Index++) * sizeof(Section),
+                &Section, sizeof(Section));
+  }
+  PE = locatePEHeaders(Binary.data(), Binary.size());
+  PE.FileHeader->NumberOfSections = OldCount + Chunks.size();
+  auto *Optional =
+      reinterpret_cast<llvm::object::pe32plus_header *>(PE.OptionalHeader);
+  if (AddedCode > UINT32_MAX - Optional->SizeOfCode ||
+      AddedData > UINT32_MAX - Optional->SizeOfInitializedData)
+    return fail("PE optional-header storage totals overflow");
+  Optional->SizeOfCode = Optional->SizeOfCode + AddedCode;
+  Optional->SizeOfInitializedData = Optional->SizeOfInitializedData + AddedData;
+  setPESizeOfImage(PE, ImageEnd);
+  clearPEChecksum(PE);
+  clearPEDataDirectory(PE, llvm::COFF::CERTIFICATE_TABLE);
+  if (EHSize)
+    setPEDataDirectory(PE, llvm::COFF::EXCEPTION_TABLE, MetaRVA, EHSize);
+  if (RelocSize)
+    setPEDataDirectory(PE, llvm::COFF::BASE_RELOCATION_TABLE,
+                       MetaRVA + RelocOffset, RelocSize);
+  for (const auto [Kind, RVA, Size] :
+       {std::array<uint64_t, 3>{llvm::COFF::EXCEPTION_TABLE, MetaRVA, EHSize},
+        {llvm::COFF::BASE_RELOCATION_TABLE, MetaRVA + RelocOffset,
+         RelocSize}}) {
+    if (!Size)
+      continue;
+    const auto *Directory = getPEDataDirectory(PE, Kind);
+    if (!Directory || Directory->RelativeVirtualAddress != RVA ||
+        Directory->Size != Size)
+      return fail("PE header cannot publish the complete metadata directories");
+  }
+  // The common validator checks the PE and OS unwind encodings. Source-native
+  // ownership is checked separately, since the new directory is read-only
+  // metadata and the new C++ program is not a lifted copy of the original.
+  if (auto Error = validatePatchedCOFFImage(Binary, Arch::X64))
+    return Error;
+  COFFLoader Loader;
+  auto Reloaded = Loader.loadBuffer(llvm::MemoryBufferRef(
+      llvm::StringRef(reinterpret_cast<const char *>(Binary.data()),
+                      Binary.size()),
+      "source-candidate"));
+  if (!Reloaded)
+    return Reloaded.takeError();
+  for (const auto &Chunk : Chunks) {
+    const auto *Data =
+        Reloaded->readVA(Original.Base + Chunk.RVA, Chunk.Bytes.size());
+    const auto *Segment = Reloaded->getSegmentFor(Original.Base + Chunk.RVA);
+    if (!Data || !Segment ||
+        Segment->isWritable() !=
+            bool(Chunk.Flags & llvm::COFF::IMAGE_SCN_MEM_WRITE) ||
+        Segment->isExecutable() !=
+            bool(Chunk.Flags & llvm::COFF::IMAGE_SCN_MEM_EXECUTE) ||
+        !std::equal(Chunk.Bytes.begin(), Chunk.Bytes.end(), Data))
+      return fail("installed bytes or memory permissions disagree with the "
+                  "compiler image");
+  }
+  return verifyLanguage(*Reloaded, Original, Compiled, Generated);
+}
+} // namespace neverd

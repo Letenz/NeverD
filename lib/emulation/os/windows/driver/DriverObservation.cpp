@@ -289,6 +289,12 @@ DriverObservation::runtimeState(bool IncludeBacking) {
     return Relocations.takeError();
   if (!entryContextUnchanged(*Entry))
     State->Reasons.emplace_back("changed DriverEntry invocation context");
+  else if (Result.Instructions)
+    // Admission is not a proof that the prefix preserves arbitrary incoming
+    // values or that the continuation establishes its live outputs. Even a
+    // same-value write can discard a fresh caller's register or return status.
+    State->Reasons.emplace_back(
+        "DriverEntry continuation requires fresh-caller reconstruction");
   State->Entry = std::move(*Entry);
   State->Relocations = std::move(*Relocations);
   return std::shared_ptr<const ProcessRuntimeState>(

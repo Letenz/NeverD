@@ -17,6 +17,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include <functional>
@@ -393,6 +394,20 @@ private:
   bool lowerSwitchFromJumpTable(HighFunc &Func, const MedBlock &CurBlock,
                                 const MedOp &CurOp, const MedFunc &Med,
                                 const JumpTable &JT);
+  /// The definitions and image the shared dispatch selector recovery
+  /// (MedDispatchSlots.h) reads of \p Med.
+  MedDispatchContext dispatchContext(const MedFunc &Med);
+  /// Give every shared dispatch whose predecessors each select their own
+  /// entry one selector variable, which each predecessor sets on its edge:
+  /// an exact edge-merged plan, or the -O0 spill of each site's target.
+  void planDispatchSelectors(const MedFunc &Med);
+  /// Per shared dispatch (jump address, block): its selector variable.
+  std::map<std::pair<va_t, int>, MedVar> DispatchSelectorVars;
+  /// Per CFG edge into a shared dispatch: the selector assignment.
+  std::map<std::pair<int, int>, std::vector<HighStmt>> DispatchSelectorCopies;
+  /// Definition index for dispatchContext, built per function.
+  std::map<std::tuple<int, int, int>, const MedOp *> DispatchDefs;
+  const MedFunc *DispatchDefsFor = nullptr;
   bool lowerX86RegistrationCatchReturn(HighFunc &Func, const MedBlock &CurBlock,
                                        const MedOp &CurOp, const MedFunc &Med);
   void lowerReturn(HighFunc &Func, const MedBlock &CurBlock, const MedOp &CurOp,

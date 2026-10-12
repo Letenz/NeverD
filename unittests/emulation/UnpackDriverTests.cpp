@@ -329,7 +329,7 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
   ASSERT_EQ(Result->Outcome, UnpackOutcome::UnsupportedState)
       << unpackResultJSON(*Result);
   EXPECT_TRUE(Result->Image.empty());
-  EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
+  EXPECT_NE(Result->Diagnostic.find("additional owned OS resources"),
             std::string::npos);
   // Loader fields alone do not cover generated pointers or a fresh caller.
   // A successful model replay cannot certify the kernel loader boundary.
@@ -340,14 +340,18 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
       << unpackResultJSON(*Result);
   EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
             std::string::npos);
+  EXPECT_NE(Result->Diagnostic.find("kernel image relocation state"),
+            std::string::npos);
   EXPECT_EQ(Result->Profile, profile::ReportProfile);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
   EXPECT_EQ(Result->ProcessStop, "observer");
   ASSERT_FALSE(Result->Transfers.empty());
   EXPECT_TRUE(Result->Transfers.back().ProgramInvocation);
   EXPECT_TRUE(Result->RuntimeState.AdditionalStateInventoryKnown);
-  EXPECT_FALSE(Result->RuntimeState.HasAdditionalDependencies);
-  EXPECT_TRUE(Result->RuntimeState.AdditionalDependencyReasons.empty());
+  EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+  EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto Rebuilt = test::readImage(Result->Image);
   EXPECT_NE(Rebuilt.FileCharacteristics & llvm::COFF::IMAGE_FILE_DLL, 0u);
   EXPECT_EQ(Rebuilt.Entry, Original.Entry);
@@ -438,8 +442,12 @@ TEST_P(UnpackDriver, RecoversAfterReleasingTransientImageMDLs) {
   ASSERT_EQ(Result->Outcome, UnpackOutcome::Snapshot)
       << unpackResultJSON(*Result);
   EXPECT_EQ(Result->EntryRVA, Original.Entry);
-  EXPECT_FALSE(Result->RuntimeState.HasAdditionalDependencies);
-  EXPECT_TRUE(Result->RuntimeState.AdditionalDependencyReasons.empty());
+  EXPECT_TRUE(Result->RuntimeState.HasAdditionalDependencies);
+  // The released MDL no longer contributes a dependency; projecting the
+  // executed prefix onto a fresh DriverEntry caller remains unproved.
+  EXPECT_EQ(Result->RuntimeState.AdditionalDependencyReasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto Output = Scratch / "released-mdl.sys";
   test::writeFile(Output, Result->Image);
   checkLifecycle(Output);
@@ -1053,6 +1061,62 @@ TEST_P(UnpackDriver, StoppedViewOwnsEntryRegistersFramesAndStack) {
   }
 }
 
+TEST_P(UnpackDriver, EqualEntryValuesDoNotProveFreshCallerBindings) {
+  const auto *Program = Original.section(".prog");
+  ASSERT_NE(Program, nullptr);
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    for (unsigned Mode : {0u, 1u}) {
+      SCOPED_TRACE(Mode);
+      // Each XOR leaves the model's incoming zero value unchanged. A fresh
+      // caller can supply another value, and skipping the AX write also loses
+      // the computed DriverEntry status. Numeric equality is not a binding.
+      const auto Register = Mode ? CPURegister::X64R13 : CPURegister::X64AX;
+      const std::vector<uint8_t> Code =
+          Mode ? std::vector<uint8_t>{0x45, 0x31, 0xed, 0x90, 0xc3}
+               : std::vector<uint8_t>{0x31, 0xc0, 0x90, 0xc3};
+      ASSERT_GE(Program->FileSize, Code.size());
+      auto Bytes = Original.File;
+      std::copy(Code.begin(), Code.end(), Bytes.begin() + Program->FileOffset);
+      write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+      const auto Input = Scratch / "equal-entry.sys";
+      test::writeFile(Input, Bytes);
+      auto D = scenario();
+      D.Contract = Contract;
+      DriverContextObserver Observer(
+          {Program->RVA, Program->RVA + Code.size() - 2});
+      auto Run = observeDriver(Input, D, Observer);
+      ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+      ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+      EXPECT_EQ(Run->Instructions, 1u);
+      ASSERT_TRUE(Observer.Initial);
+      const auto &Initial =
+          static_cast<const WindowsDriverState &>(*Observer.Initial);
+      ASSERT_TRUE(Initial.Entry);
+      EXPECT_FALSE(Initial.hasAdditionalDependencies());
+      ASSERT_EQ(Initial.Entry->InitialRegisters.at(Register)[0], 0u);
+      ASSERT_EQ(Observer.Contents.size(), 2u);
+      const auto &Before =
+          static_cast<const WindowsDriverState &>(*Observer.Contents.front());
+      EXPECT_FALSE(Before.hasAdditionalDependencies());
+      const auto &State =
+          static_cast<const WindowsDriverState &>(*Observer.Contents.back());
+      ASSERT_TRUE(State.Entry);
+      const auto &Entry = *State.Entry;
+      EXPECT_EQ(Entry.Registers.at(Register),
+                Entry.InitialRegisters.at(Register));
+      EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
+                Entry.InitialRegisters.at(CPURegister::X64SP));
+      EXPECT_EQ(Entry.Frame, Entry.InitialFrame);
+      EXPECT_TRUE(State.hasAdditionalDependencies());
+      EXPECT_EQ(State.Reasons,
+                (std::vector<std::string>{"DriverEntry continuation requires "
+                                          "fresh-caller reconstruction"}));
+    }
+  }
+}
+
 TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   const auto Input = entryContextInput();
   ASSERT_FALSE(HasFailure());
@@ -1070,7 +1134,10 @@ TEST_P(UnpackDriver, LaterRestorationDoesNotChangeEarlierContextCaptures) {
   ASSERT_TRUE(Before.Entry);
   ASSERT_TRUE(After.Entry);
   EXPECT_TRUE(Before.hasAdditionalDependencies());
-  EXPECT_FALSE(After.hasAdditionalDependencies());
+  EXPECT_TRUE(After.hasAdditionalDependencies());
+  EXPECT_EQ(After.Reasons,
+            (std::vector<std::string>{"DriverEntry continuation requires "
+                                      "fresh-caller reconstruction"}));
   const auto &Entry = *After.Entry;
   EXPECT_EQ(Entry.InitialRegisters, Before.Entry->InitialRegisters);
   EXPECT_EQ(Entry.Registers.at(CPURegister::X64SP),
@@ -1206,7 +1273,9 @@ TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
     EXPECT_TRUE(Driver.hasAdditionalDependencies());
     EXPECT_EQ(Driver.additionalDependencyReasons(),
               (std::vector<std::string>{"live kernel pool allocations",
-                                        "retained kernel object allocations"}));
+                                        "retained kernel object allocations",
+                                        "DriverEntry continuation requires "
+                                        "fresh-caller reconstruction"}));
     if (State == Observer.Metadata)
       EXPECT_FALSE(Pool.Bytes);
     else {

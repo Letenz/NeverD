@@ -6320,6 +6320,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
           "uint8_t " + Slot.Name + "[" + std::to_string(Slot.RegionBytes) + "]";
     else
       Decl.Type = cDisplayType(Slot.Type);
+    // A slot's name has its declared type, as a local's has, whether it is
+    // declared here or after the body: `var_m24 < 0` is no signed test of a
+    // uint32_t slot.
+    if (Decl.Type && Decl.Type->Kind == NdTypeKind::Int && !Decl.Type->IsEnum)
+      DeclaredCTypes.emplace(Slot.Name, Decl.Type);
     const bool Printed = PrintedAddrSlots.count(Slot.Name) ||
                          PrintedSlotStores.count(Slot.Name) ||
                          PrintedSlotLoads.count(Slot.Name);
