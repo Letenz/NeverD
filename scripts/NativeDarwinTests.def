@@ -155,3 +155,5 @@ NEVERD_NATIVE_DARWIN_CASE(
 NEVERD_NATIVE_DARWIN_CASE(
     FullAndBarrierSynchronizationKeepIndependentObjectState)
 NEVERD_NATIVE_DARWIN_CASE(TimestampMutationsKeepExplicitClockAndObjectAuthority)
+NEVERD_NATIVE_DARWIN_CASE(
+    FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime)

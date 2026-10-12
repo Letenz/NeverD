@@ -8800,6 +8800,144 @@ virtual_created_regular_attributes(const char *path) {
   return 0;
 }
 
+/* Original bounded LP64 filesystem controls. Dynamic native capacity counts
+ * are observations, never constants derived from virtual bytes. */
+union file_system_guard {
+  u64 words[275];
+  unsigned char bytes[2200];
+};
+static int file_system_result(u64 number, u64 object, u64 output, u64 wanted) {
+  unsigned error;
+  const u64 value =
+      call(number, object, output, -1UL, -1UL, -1UL, -1UL, &error);
+  if (value != wanted || error != !!wanted)
+    return 350;
+#if defined(__aarch64__)
+  if (secondary)
+    return 350;
+#else
+  if (secondary != (wanted ? -1UL : 0))
+    return 350;
+#endif
+  return 0;
+}
+static int file_system_capture(u64 number, u64 object,
+                               union file_system_guard *out) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 275; ++i)
+    out->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (file_system_result(number, object, (u64)(out->bytes + 16), 0))
+    return 351;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 16; ++i)
+    if (out->bytes[i] != 0xa5 || out->bytes[2184 + i] != 0xa5)
+      return 351;
+#pragma clang loop unroll(full)
+  for (unsigned i = 16 + 2140; i != 2184; ++i)
+    if (out->bytes[i])
+      return 351;
+  const unsigned starts[] = {72, 88, 1112}, lengths[] = {16, 1024, 1024};
+  for (unsigned n = 0; n != 3; ++n) {
+    unsigned i = 0;
+    while (i < lengths[n] && out->bytes[16 + starts[n] + i])
+      ++i;
+    if (i == lengths[n])
+      return 351;
+  }
+  return 0;
+}
+static int file_system_same_stable(const union file_system_guard *a,
+                                   const union file_system_guard *b) {
+/* words3..7 are five dynamic uint64 counters, deliberately not compared. */
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 275; ++i)
+    if ((i < 3 || i > 7) && a->words[i] != b->words[i])
+      return 352;
+  return 0;
+}
+static __attribute__((noinline)) int filesystem_observations(const char *path) {
+  unsigned error;
+  const u64 a = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  const u64 b = call(5, (u64)path, 1, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  const u64 dir = call(5, (u64) "/", 0, 0, 0, 0, 0, &error);
+  if (error || secondary || call(199, d, 2, 0, 0, 0, 0, &error) != 2 || error ||
+      secondary)
+    return 353;
+  const u64 flags = call(92, a, 3, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 353;
+  union full_barrier_stat_guard before, after;
+  if (full_barrier_capture(a, &before))
+    return 353;
+  union file_system_guard first, current;
+  const u64 highs[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned h = 0; h != 3; ++h) {
+    const u64 high = highs[h];
+    if (file_system_capture(high | 345, (u64)path, &current))
+      return 354;
+    if (!h) {
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 275; ++i)
+        first.words[i] = current.words[i];
+    } else if (file_system_same_stable(&first, &current))
+      return 354;
+    if (file_system_capture(high | 346, high | a, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(high | 346, high | b, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(high | 346, high | d, &current) ||
+        file_system_same_stable(&first, &current) ||
+        file_system_capture(high | 346, high | dir, &current) ||
+        full_barrier_capture(a, &after) || timestamp_same(&before, &after) ||
+        file_sync_offset(d, 2) || file_sync_offset(b, 0) ||
+        full_barrier_flags(a, flags) || full_barrier_flags(b, 1))
+      return 354;
+  }
+  if (file_system_result(345, (u64) "", 1, 2) ||
+      file_system_result(346, -1UL, 1, 9) ||
+      file_system_result(346, a, 1, 14) || file_system_result(346, a, 0, 14) ||
+      file_system_result(345, (u64)path, 1, 14) ||
+      full_barrier_capture(b, &after) || timestamp_same(&before, &after))
+    return 355;
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      file_system_result(346, a, 1, 9) || call(6, d, 0, 0, 0, 0, 0, &error) ||
+      error || secondary || call(6, b, 0, 0, 0, 0, 0, &error) || error ||
+      secondary || call(6, dir, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      call(4, 1, (u64) "W", 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 356;
+  return 0;
+}
+/* Independent explicit creation snapshots and full guarded literal output;
+ * this virtual-only mode makes no native counter/mount identity claim. */
+static __attribute__((noinline)) int virtual_filesystem_creation(void) {
+  unsigned error;
+  const u64 a = call(5, (u64) "/fresh", 0x202, 0600, 0, 0, 0, &error);
+  if (error || secondary)
+    return 357;
+  union file_system_guard first, second;
+  if (file_system_capture(346, a, &first))
+    return 357;
+  const u64 d = call(41, a, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || file_system_capture(346, d, &second))
+    return 357;
+  if (call(6, a, 0, 0, 0, 0, 0, &error) || error || secondary ||
+      file_system_result(346, a, 1, 9) || call(6, d, 0, 0, 0, 0, 0, &error) ||
+      error || secondary ||
+      call(4, 1, (u64)first.bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+      secondary ||
+      call(4, 1, (u64)second.bytes, 2200, 0, 0, 0, &error) != 2200 || error ||
+      secondary)
+    return 358;
+  return 0;
+}
+
 int main(int argc, char **argv, char **envp, char **apple) {
   if (argc >= 2 && equal(argv[1], "thread-identity"))
     return thread_identity(0);
@@ -8846,6 +8984,14 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (argc < 2 || data != 0x1234 || bss != 0)
     return 101;
   bss = 99;
+  if (equal(argv[1], "filesystem-observations")) {
+    const int status = argc < 3 ? 349 : filesystem_observations(argv[2]);
+    return status ? status : 50;
+  }
+  if (equal(argv[1], "virtual-filesystem-creation")) {
+    const int status = virtual_filesystem_creation();
+    return status ? status : 51;
+  }
   if (equal(argv[1], "ordinary-timestamp-mutations")) {
     const int status = argc < 3 ? 329 : ordinary_timestamp_mutations(argv[2]);
     return status ? status : 48;

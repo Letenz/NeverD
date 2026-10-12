@@ -10,6 +10,7 @@
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
+#include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinModeTestData.h"
@@ -3775,6 +3776,136 @@ TEST_F(ProcessPublic,
                     .empty());
     EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
     EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+  }
+#endif
+}
+
+TEST_F(ProcessPublic,
+       DarwinFileSystemSnapshotsKeepIndependentProvidersAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto Common = emulation::darwin_test::fileSystemServices(),
+             Virtual = emulation::darwin_test::createdFileSystemServices();
+  const auto Bytes = emulation::darwin_test::createdFileSystemRecords();
+  const std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                            Bytes.size());
+  for (const auto &[File, Profile] :
+       {std::pair{"macos-arm64", MacOSMachO64},
+        std::pair{"macos-x86_64", MacOSMachO64},
+        std::pair{"ios-arm64", IOSMachO64},
+        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
+    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+    const uint64_t Class =
+        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+    for (bool Created : {false, true})
+      for (unsigned Variant = 0; Variant != (Created ? 4u : 3u); ++Variant) {
+        auto Files = llvm::cantFail(
+            llvm::json::parse(emulation::darwin_test::FileSystemFilesJSON));
+        auto &F = *Files.getAsObject();
+        if (Created) {
+          F["umask"] = 18;
+          auto &Parent = *(*F.getArray("directories"))[0].getAsObject();
+          Parent["mutable"] = true;
+          Parent["mutation_policy"] = llvm::json::Object{
+              {"directory_entry_size", 16},
+              {"mutation_time",
+               llvm::json::Object{{"seconds", 91}, {"nanoseconds", 92}}}};
+          F["creation_policy"] = llvm::cantFail(llvm::json::parse(
+              R"({"first_inode":100,"block_size":512,"generation":9,"creation_time":{"seconds":41,"nanoseconds":42},"mutation_policy":{"allocation_unit":512,"mutation_time":{"seconds":101,"nanoseconds":102}}})"));
+          (*F.getObject("filesystem_observations"))["created_regular_objects"] =
+              true;
+        }
+        if (Variant == 1)
+          F.erase("filesystem_observations");
+        if (Variant == 2)
+          F["filesystem_observations"] =
+              llvm::json::Object{{"objects", llvm::json::Array{}}};
+        llvm::json::Value Input = llvm::json::Object{
+            {"backend", "unicorn"},
+            {"instruction_quantum", 1024},
+            {"timeout_microseconds", 5000000},
+            {"arguments",
+             llvm::json::Array{"guest",
+                               Created ? "virtual-filesystem-creation"
+                                       : "filesystem-observations",
+                               "/data"}},
+            {"darwin_system",
+             llvm::cantFail(llvm::json::parse(
+                 emulation::darwin_test::ModeCredentialsJSON))},
+            {"darwin_files", std::move(Files)}};
+        if (Variant == 3)
+          (*Input.getAsObject()
+                ->getObject("darwin_files")
+                ->getObject(
+                    "filesystem_observations"))["created_regular_objects"] =
+              false;
+        const auto Options = llvm::formatv("{0}", Input).str();
+        auto Text = takeString(neverd_emulate_process_json(
+            Session, Path.c_str(), Profile, Options.c_str()));
+        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+        auto Report = llvm::json::parse(Text);
+        ASSERT_TRUE(bool(Report));
+        const auto *O = Report->getAsObject();
+        ASSERT_NE(O, nullptr);
+        EXPECT_EQ(O->getString(field::Stop),
+                  Variant ? "unsupported_service" : "exited");
+        EXPECT_EQ(O->getString(field::Stderr), "");
+        const auto *Calls = O->getArray(field::Services);
+        ASSERT_NE(Calls, nullptr);
+        if (!Variant) {
+          const auto &Wanted = Created ? Virtual : Common;
+          ASSERT_EQ(Calls->size(), Wanted.size());
+          EXPECT_EQ(O->getInteger(field::ExitStatus), Created ? 51 : 50);
+          EXPECT_EQ(O->getString(field::Stdout),
+                    Created ? llvm::toHex(Literal, true) : "57");
+          for (unsigned I = 0; I != Wanted.size(); ++I) {
+            const auto *E = (*Calls)[I].getAsObject();
+            ASSERT_NE(E, nullptr);
+            const auto &W = Wanted[I];
+            EXPECT_EQ(E->getString(field::Number),
+                      llvm::utohexstr(Class | W.Number, true));
+            EXPECT_EQ(E->getString(field::Result),
+                      llvm::utohexstr(W.Value, true));
+            EXPECT_EQ(E->getBoolean(field::Error), W.Error);
+            const auto *A = E->getArray(field::Arguments);
+            ASSERT_NE(A, nullptr);
+            ASSERT_EQ(A->size(), 6u);
+            if (W.Object)
+              EXPECT_EQ((*A)[0].getAsString(),
+                        llvm::utohexstr(*W.Object, true));
+            if (W.Output)
+              EXPECT_EQ((*A)[1].getAsString(),
+                        llvm::utohexstr(*W.Output, true));
+            const auto N = W.Number & 0xffffff;
+            if (N == 345 || N == 346)
+              for (unsigned J = 2; J != 6; ++J)
+                EXPECT_EQ((*A)[J].getAsString(), "ffffffffffffffff");
+          }
+        } else {
+          ASSERT_EQ(Calls->size(), Created ? 2u : 8u);
+          const auto *Last = Calls->back().getAsObject();
+          ASSERT_NE(Last, nullptr);
+          EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+          EXPECT_EQ(Last->get(field::Error), nullptr);
+          EXPECT_EQ(O->getString(field::Diagnostic),
+                    Variant == 1 ? "Darwin filesystem observation environment "
+                                   "is not configured"
+                                 : "Darwin object filesystem snapshot is not "
+                                   "configured");
+        }
+        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+        EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                  Variant ? process_cli::Incomplete
+                          : process_cli::GuestFailure);
+        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+      }
   }
 #endif
 }

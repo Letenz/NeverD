@@ -58,7 +58,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "poll230 / poll_nocancel417")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "constructive regular provider: nonrevoked")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "independent last requested index")
 NEVERD_EMULATION_DOC_TOKEN(Darwin,
-                           "all54 other file routes closed before preflight")
+                           "all56 other file routes closed before preflight")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "64 current native-common cases")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "582 mixed controls and captures")
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "select93 / select_nocancel407")
@@ -1949,7 +1949,7 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin, "no physical durability claim")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "normal XNU entry tests cancellation")
 
-NEVERD_EMULATION_DOC_TOKEN(Darwin, "all54 other logical file routes")
+NEVERD_EMULATION_DOC_TOKEN(Darwin, "all56 other logical file routes")
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "SDK-free68 service records")
 
@@ -2179,7 +2179,7 @@ NEVERD_EMULATION_DOC_TOKEN(
     "explicit effective ownership even equal times EPERM1 / current-time owner "
     "or proved ordinary POSIX write / group knowledge preserved")
 NEVERD_EMULATION_DOC_TOKEN(
-    Darwin, "all54 other file routes closed before preflight / both static "
+    Darwin, "all56 other file routes closed before preflight / both static "
             "queries reject even empty timestamp declaration")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "ordinary regular Contents grants retain actual dup link rename "
@@ -2206,3 +2206,71 @@ NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "native Intel and physical iOS unverified / original five-second native "
     "and guest bounds unchanged / full Apple frameworks incomplete")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "DarwinFileSystemSnapshot / DarwinFileSystemOptions "
+                           "/ FileSystemObservations / filesystem_observations")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "statfs64 BSD345 and fstatfs64 BSD346 / LP64 "
+                           "record2168 bytes / legacy157158 unsupported")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "block_size uint32 io_size int32 / five uint64 "
+                           "counters / filesystem_id two int32 words")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "owner type flags subtype uint32 / type_name16 mount_point1024 "
+            "mounted_from1024 / extended_flags uint32")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "reserved seven uint32 words zero / bounded UTF8 NUL-free names / "
+            "all sixteen JSON members required / zero and empty valid")
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "explicit exact immediate mount-stat provider / no "
+                           "host query mount identity quota live refresh MAC "
+                           "refusal wait or process mountpoint rewrite")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial regular and directory bindings / actual Contents "
+            "DirectoryNode / no target filestat prerequisite or recovery")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "created_regular_objects defaultfalse / true requires complete "
+    "CreationPolicy / successful new regular uses actual bound parent snapshot")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "initial children unbound parents new directories links receive "
+            "none / no fsid device inode or pathname prefix inference")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "effective ordinary ancestor search uses shared authorizer and group "
+    "knowledge / FD query borrows no target DAC credentials or access flags")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "pathname and low32 FD kind before output / ENOENT2 EBADF9 "
+            "EFAULT14 / individually partial output unsupported before effects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "both immutable query domains reject even empty filesystem declaration / "
+    "all56 other logical file routes closed before preflight")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "67 private identities / both4096 and16384 pages bothroutes / "
+            "full2200 guarded literal / shared16MiB budget")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "dup independent opens hardlinks rename directory moves CWD held-unlink "
+    "reuse / dirty bytes locks xattrs and real VM independent")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime / "
+            "49 authored common services / main50 stdout W")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "virtual-filesystem-creation / nine authored services / main51 / "
+            "independent4400 guarded literal bytes")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "114 original ARM64 O0 O1 O2 observations / readonly writeonly "
+            "directory and held-zero-name FD controls / native pipe EINVAL22 "
+            "opaque kind unsupported")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "native-common72 / mandatory87 per platform / matching ARM64 "
+            "required261 identities / no captured native service trace")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "constant guest validation loops unrolled with every assertion "
+            "retained / native5s guest5000000us quantum1024 public10s original "
+            "owner bounds unchanged")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "native Intel physical iOS full dyld Mach IPC ObjC Swift "
+            "Foundation UIKit unqualified / full Apple environment incomplete")

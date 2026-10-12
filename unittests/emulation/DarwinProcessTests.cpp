@@ -9,6 +9,7 @@
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinEntropyTestData.h"
+#include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinModeTestData.h"
@@ -2810,6 +2811,83 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
   EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.Arguments[2] = "/data";
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.reset();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  const auto Common = darwin_test::fileSystemServices(),
+             Virtual = darwin_test::createdFileSystemServices();
+  const auto Bytes = darwin_test::createdFileSystemRecords();
+  const std::string Literal(reinterpret_cast<const char *>(Bytes.data()),
+                            Bytes.size());
+  ASSERT_EQ(Common.size(), 49u);
+  ASSERT_EQ(Virtual.size(), 9u);
+  for (bool Created : {false, true}) {
+    const char *Mode =
+        Created ? "virtual-filesystem-creation" : "filesystem-observations";
+    const auto &Wanted = Created ? Virtual : Common;
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      Options.DarwinFiles = Created ? darwin_test::createdFileSystemOptions()
+                                    : darwin_test::fileSystemOptions();
+      Options.DarwinFiles->WritableFiles.insert("/data");
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, Created ? 51 : 50);
+      EXPECT_EQ(R->StandardOutput, Created ? Literal : "W");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        const auto &E = R->Services[I];
+        const auto &W = Wanted[I];
+        EXPECT_EQ(E.Number, Class | W.Number);
+        EXPECT_EQ(E.Result, W.Value);
+        EXPECT_EQ(E.Error, W.Error);
+        if (W.Object)
+          EXPECT_EQ(E.Arguments[0], *W.Object);
+        if (W.Output)
+          EXPECT_EQ(E.Arguments[1], *W.Output);
+        const auto N = W.Number & 0xffffff;
+        if (N == 345 || N == 346)
+          for (unsigned J = 2; J != 6; ++J)
+            EXPECT_EQ(E.Arguments[J], UINT64_MAX);
+      }
+    }
+    for (bool Missing : {false, true}) {
+      Options.DarwinFiles = Created ? darwin_test::createdFileSystemOptions()
+                                    : darwin_test::fileSystemOptions();
+      Options.DarwinFiles->WritableFiles.insert("/data");
+      if (Missing)
+        Options.DarwinFiles->FileSystemObservations.reset();
+      else {
+        Options.DarwinFiles->FileSystemObservations->Objects.clear();
+        Options.DarwinFiles->FileSystemObservations->CreatedRegularObjects =
+            false;
+      }
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R));
+      EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+      EXPECT_EQ(
+          R->Diagnostic,
+          Missing
+              ? "Darwin filesystem observation environment is not configured"
+              : "Darwin object filesystem snapshot is not configured");
+      ASSERT_EQ(R->Services.size(), Created ? 2u : 8u);
+      EXPECT_FALSE(R->Services.back().Result);
+      EXPECT_FALSE(R->Services.back().Error);
+    }
+  }
 }
 
 TEST_P(DarwinProcess, TimestampMutationsKeepExplicitClockAndObjectAuthority) {

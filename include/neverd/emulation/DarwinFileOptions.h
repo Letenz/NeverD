@@ -6,6 +6,7 @@
 #ifndef NEVERD_EMULATION_DARWINFILEOPTIONS_H
 #define NEVERD_EMULATION_DARWINFILEOPTIONS_H
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -248,6 +249,36 @@ struct DarwinFileTimestampMutationOptions {
   bool CreatedRegularObjects = false;
 };
 
+/// Exact immediate successful LP64 mount-stat observation. Every field is
+/// independently declared, including zero/empty values. No host mount, quota,
+/// live refresh, provider refusal/wait or process mountpoint rewrite is
+/// modeled.
+struct DarwinFileSystemSnapshot {
+  uint32_t BlockSize = 0;
+  int32_t IOSize = 0;
+  uint64_t Blocks = 0, FreeBlocks = 0, AvailableBlocks = 0;
+  uint64_t Files = 0, FreeFiles = 0;
+  std::array<int32_t, 2> FileSystemID{};
+  uint32_t Owner = 0, Type = 0, Flags = 0, Subtype = 0;
+  std::string TypeName, MountPoint, MountedFrom;
+  uint32_t ExtendedFlags = 0;
+};
+
+/// Independent statfs64/fstatfs64 provider, without MAC refusal or extra mount
+/// lifecycle. Path lookup declares ordinary effective ancestor search (no ACL,
+/// bypass or special attributes). Descriptor lookup needs no target DAC/stat.
+struct DarwinFileSystemOptions {
+  /// Initial regular/directory objects, including implicit directories.
+  /// Actual objects retain snapshots through links, moves, dup and held unlink.
+  /// This neither restores file metadata nor identifies mounts by equal IDs.
+  std::map<std::string, DarwinFileSystemSnapshot> Objects;
+  /// Explicit new-regular provider relation: successful creation uses the
+  /// actual parent's bound snapshot, if present. Requires CreationPolicy.
+  /// Initial children, unbound parents, mkdir/symlink and descendants through
+  /// new unbound directories receive none. Reused names inherit no old grant.
+  bool CreatedRegularObjects = false;
+};
+
 /// Explicit whole-file flock provider for ordinary regular objects.
 /// Initial locks are empty; every owner is a modeled current open description.
 /// No external peers, POSIX/OFD/range locks, fork/descriptor transfer, MAC,
@@ -345,6 +376,9 @@ struct DarwinFileOptions {
   /// Independent utimes/futimes authority; absence stays unknown. Both static
   /// query environments reject this declaration, including an empty list.
   std::optional<DarwinFileTimestampMutationOptions> TimestampMutations;
+  /// Independent filesystem observations. Both immutable query environments
+  /// reject even an empty declaration.
+  std::optional<DarwinFileSystemOptions> FileSystemObservations;
   /// Independent flock authority; absence is unknown. Either static query
   /// environment rejects this declaration, including an empty object list.
   std::optional<DarwinAdvisoryLockOptions> AdvisoryLocks;

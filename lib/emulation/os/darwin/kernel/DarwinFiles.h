@@ -17,6 +17,7 @@
 
 namespace neverd::emulation::darwin_model {
 llvm::Error validateFileOptions(const DarwinFileOptions &Options);
+bool validFileSystemSnapshot(const DarwinFileSystemSnapshot &Snapshot);
 bool validExtendedAttributeName(llvm::StringRef Name);
 bool ordinaryExtendedAttributeName(llvm::StringRef Name);
 
@@ -75,13 +76,20 @@ private:
     OwnershipChange,
     TimestampSearch,
     TimestampChangeExplicit,
-    TimestampChangeCurrent
+    TimestampChangeCurrent,
+    FileSystemSearch
   };
   struct OwnershipRequest {
     uint32_t UID;
     uint32_t GID;
   };
-  enum class LookupAuthorization { Query, Mode, Ownership, Timestamp };
+  enum class LookupAuthorization {
+    Query,
+    Mode,
+    Ownership,
+    Timestamp,
+    FileSystem
+  };
   using Authorization = std::variant<std::monostate, uint32_t, const char *>;
   // Retaining a terminal link and refusing required expansion are separate
   // namei policies. AT_SYMLINK_NOFOLLOW_ANY uses both; ordinary open uses only
@@ -125,6 +133,7 @@ private:
     uint32_t DirectoryEntrySize = 0;
     const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;
+    const DarwinFileSystemSnapshot *FileSystem = nullptr;
     const DarwinDirectoryEnumerationPolicy *EnumerationPolicy = nullptr;
     /// Bulk authorization belongs to an initial object, never its children.
     bool BulkAttributes = false;
@@ -180,6 +189,7 @@ private:
     const DarwinFileTime *ModeTime = nullptr;
     const DarwinFileTime *OwnershipTime = nullptr;
     const DarwinFileTime *TimestampTime = nullptr;
+    const DarwinFileSystemSnapshot *FileSystem = nullptr;
     bool AdvisoryLocks = false;
     bool Synchronization = false;
     bool DataSynchronization = false;
@@ -329,6 +339,9 @@ private:
   changeTimes(ServiceKind Service, const ProcessServiceEvent &Event,
               ProcessResult &Result,
               const std::optional<DarwinTimeOptions> &Time);
+  llvm::Expected<std::optional<ServiceResult>>
+  fileSystemStatus(ServiceKind Service, const ProcessServiceEvent &Event,
+                   ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>
   advisoryLock(const ProcessServiceEvent &Event, ProcessResult &Result);
   llvm::Expected<std::optional<ServiceResult>>

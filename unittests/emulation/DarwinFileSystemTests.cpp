@@ -1,0 +1,559 @@
+//===- DarwinFileSystemTests.cpp - Declared filesystem snapshots -------===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+#include "DarwinFileSystemTestData.h"
+#include "gtest/gtest.h"
+#include "os/darwin/kernel/DarwinFiles.h"
+#include "os/darwin/kernel/DarwinMemory.h"
+namespace neverd::emulation::darwin_model {
+namespace {
+class DarwinFileSystemTest
+    : public testing::TestWithParam<std::tuple<uint64_t, bool>> {
+protected:
+  static constexpr uint64_t Base = 0x100000;
+  uint64_t Page;
+  bool FDRoute;
+  std::shared_ptr<AddressSpace> Space;
+  std::optional<DarwinFileOptions> Options;
+  std::optional<DarwinCredentials> Credentials;
+  std::unique_ptr<DarwinFiles> Files;
+  ProcessResult Result{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                       ExecutionBackendKind::Unicorn, "filesystem"};
+  void SetUp() override {
+    std::tie(Page, FDRoute) = GetParam();
+    auto P = PhysicalMemory::create(Page * 16);
+    ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+    auto S = AddressSpace::create(*P, Page * 16);
+    ASSERT_TRUE(bool(S)) << llvm::toString(S.takeError());
+    Space = std::move(*S);
+    ASSERT_FALSE(
+        bool(Space->map(Base, Page * 4, Read | Write | UserAccessible)));
+    Options = darwin_test::fileSystemOptions();
+    Credentials = darwin_test::modeCredentials();
+    reset();
+  }
+  void reset() {
+    if (Options)
+      ASSERT_FALSE(bool(validateFileOptions(*Options)));
+    Files = std::make_unique<DarwinFiles>(
+        *Space, Options, process_defaults::Output, 501, Credentials);
+  }
+  uint64_t path(llvm::StringRef T, uint64_t A = Base) {
+    const auto S = T.str() + '\0';
+    llvm::cantFail(Space->write(
+        A, {reinterpret_cast<const uint8_t *>(S.data()), S.size()}));
+    return A;
+  }
+  std::optional<ServiceResult> invoke(ServiceKind K,
+                                      std::array<uint64_t, 6> A) {
+    Result =
+        ProcessResult{ProcessProfile::MacOSMachO64, GuestArchitecture::AArch64,
+                      ExecutionBackendKind::Unicorn, "filesystem"};
+    auto O = Files->handle(K, {0, 0, A, {}}, Result);
+    EXPECT_TRUE(bool(O)) << (O ? "" : llvm::toString(O.takeError()));
+    return O ? *O : std::nullopt;
+  }
+  uint64_t ok(ServiceKind K, std::array<uint64_t, 6> A) {
+    auto O = invoke(K, A);
+    EXPECT_TRUE(O) << Result.Diagnostic;
+    EXPECT_FALSE(O && O->Error);
+    return O ? O->Value : UINT64_MAX;
+  }
+  void error(ServiceKind K, std::array<uint64_t, 6> A, uint32_t N) {
+    auto O = invoke(K, A);
+    ASSERT_TRUE(O) << Result.Diagnostic;
+    EXPECT_TRUE(O->Error);
+    EXPECT_EQ(O->Value, N);
+  }
+  void refused(ServiceKind K, std::array<uint64_t, 6> A, const char *Reason) {
+    EXPECT_FALSE(invoke(K, A));
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(Result.Diagnostic, Reason);
+  }
+  uint64_t open(llvm::StringRef N = "/data", uint32_t F = 0) {
+    return ok(ServiceKind::Open, {path(N), F, 0600});
+  }
+  ServiceKind route() const {
+    return FDRoute ? ServiceKind::Fstatfs64 : ServiceKind::Statfs64;
+  }
+  std::array<uint64_t, 6> args(uint64_t FD, uint64_t Out,
+                               llvm::StringRef N = "/data") {
+    return {FDRoute ? FD : path(N),
+            Out,
+            UINT64_MAX,
+            UINT64_MAX,
+            UINT64_MAX,
+            UINT64_MAX};
+  }
+  using Record = std::array<uint8_t, 2200>;
+  Record capture(uint64_t FD, llvm::StringRef N = "/data", uint64_t High = 0) {
+    Record B;
+    B.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page, B));
+    EXPECT_EQ(ok(route(), args(High | FD, Base + Page + 16, N)), 0u);
+    llvm::cantFail(Space->read(Base + Page, B));
+    return B;
+  }
+  std::array<uint8_t, 160> status(uint64_t FD) {
+    std::array<uint8_t, 160> B;
+    B.fill(0xa5);
+    llvm::cantFail(Space->write(Base + Page * 2, B));
+    EXPECT_EQ(ok(ServiceKind::Fstat64, {FD, Base + Page * 2 + 8}), 0u);
+    llvm::cantFail(Space->read(Base + Page * 2, B));
+    return B;
+  }
+  void policies(bool Created = false) {
+    Options->WritableFiles.insert("/data");
+    Options->MutableDirectories.insert("/");
+    Options->DirectoryMutationPolicies["/"] = {16, {91, 92}};
+    Options->InitialUmask = 022;
+    Options->CreationPolicy =
+        DarwinFileCreationPolicy{100,
+                                 512,
+                                 9,
+                                 {41, 42},
+                                 {512, {101, 102}},
+                                 DarwinNamespaceCreationPolicy{512, 32, 7}};
+    Options->FileSystemObservations->CreatedRegularObjects = Created;
+    reset();
+  }
+};
+TEST(DarwinFileSystemOptions, AdmissionAndClosedQueryDomains) {
+  const auto Initial = darwin_test::fileSystemOptions();
+  EXPECT_FALSE(Initial.FileSystemObservations->CreatedRegularObjects);
+  EXPECT_FALSE(bool(validateFileOptions(Initial)));
+  for (unsigned I = 0; I != 12; ++I) {
+    auto O = Initial;
+    auto &F = *O.FileSystemObservations;
+    switch (I) {
+    case 0:
+      F.Objects["/missing"] = {};
+      break;
+    case 1:
+      O.SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+      F.Objects["/link"] = {};
+      break;
+    case 2:
+      F.Objects["/data"].TypeName = std::string(16, 'x');
+      break;
+    case 3:
+      F.Objects["/data"].MountPoint = std::string(1024, 'x');
+      break;
+    case 4:
+      F.Objects["/data"].MountedFrom = std::string(1024, 'x');
+      break;
+    case 5:
+      F.Objects["/data"].TypeName = std::string("a\0b", 3);
+      break;
+    case 6:
+      F.Objects["/data"].MountPoint = std::string(1, char(0xff));
+      break;
+    case 7:
+      F.CreatedRegularObjects = true;
+      break;
+    case 8:
+      O.Authorization = DarwinFileAuthorization::StaticOwnerQueries;
+      break;
+    case 9:
+      O.Authorization = DarwinFileAuthorization::StaticOrdinaryQueries;
+      break;
+    case 10:
+      F.Objects.clear();
+      O.Authorization = DarwinFileAuthorization::StaticOwnerQueries;
+      break;
+    case 11:
+      F.Objects.clear();
+      O.Authorization = DarwinFileAuthorization::StaticOrdinaryQueries;
+      break;
+    }
+    auto E = validateFileOptions(O);
+    EXPECT_TRUE(bool(E)) << I;
+    llvm::consumeError(std::move(E));
+  }
+}
+TEST(DarwinFileSystemOptions, IndependentMetadataAndSharedSnapshotBudget) {
+  auto O = darwin_test::fileSystemOptions();
+  O.Metadata.clear();
+  O.Files["/implicit/leaf"] = {};
+  O.FileSystemObservations->Objects["/implicit"] = {};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  auto Invalid = O;
+  Invalid.FileSystemObservations->Objects["/implicit//leaf"] = {};
+  auto E = validateFileOptions(Invalid);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.FileSystemObservations->Objects["/data"] = {};
+  // Find the exact admission boundary without borrowing private footprint.
+  uint64_t Low = 0, High = darwin_file_limits::Bytes;
+  while (Low < High) {
+    const auto Mid = (Low + High + 1) / 2;
+    O.Files["/data"].resize(Mid);
+    auto Err = validateFileOptions(O);
+    const bool Good = !Err;
+    llvm::consumeError(std::move(Err));
+    if (Good)
+      Low = Mid;
+    else
+      High = Mid - 1;
+  }
+  O.Files["/data"].resize(Low);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Files["/data"].push_back(0);
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.Files["/data"].resize(Low);
+  O.FileSystemObservations->Objects.erase("/implicit");
+  O.Files["/data"].resize(Low + 2168 + 10);
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+TEST(DarwinFileSystemOptions, ObservedImplicitDirectoriesShareEntryBudget) {
+  DarwinFileOptions O;
+  for (unsigned I = 0; I != 254; ++I)
+    O.Files["/dir/f" + std::to_string(I)] = {};
+  O.FileSystemObservations.emplace().Objects["/dir"] = {};
+  O.FileSystemObservations->Objects["/"] = {};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  auto Excess = O;
+  Excess.Files["/dir/extra"] = {};
+  auto E = validateFileOptions(Excess);
+  ASSERT_TRUE(bool(E));
+  EXPECT_EQ(llvm::toString(std::move(E)),
+            std::string(diagnostic::FileOptionsLimit));
+  // A directory already counted by another declaration is never counted twice.
+  for (unsigned I = 0; I != 5; ++I) {
+    auto Shared = O;
+    switch (I) {
+    case 0:
+      Shared.Directories.insert("/dir");
+      break;
+    case 1:
+      Shared.Metadata["/dir"] = darwin_test::modeMetadata(0040700, 1);
+      break;
+    case 2:
+      Shared.DirectoryContents["/dir"].MinimumBufferSize = 24;
+      Shared.DirectoryContents["/dir"].Entries = {{".", 1, 4, 1},
+                                                  {"..", 2, 4, 2}};
+      for (unsigned N = 0; N != 254; ++N)
+        Shared.DirectoryContents["/dir"].Entries.push_back(
+            {"f" + std::to_string(N), N + 3, 8, N + 3});
+      break;
+    case 3:
+      Shared.ExtendedAttributes["/dir"] = {};
+      break;
+    case 4:
+      Shared.MutableDirectories.insert("/dir");
+      break;
+    }
+    EXPECT_FALSE(bool(validateFileOptions(Shared))) << I;
+  }
+}
+
+TEST_P(DarwinFileSystemTest, FullGuardedRecordAndLowCarriers) {
+  const auto FD = open();
+  for (uint64_t H : {0ULL, 0x1234567800000000ULL, 0xffffffff00000000ULL})
+    EXPECT_EQ(capture(FD, "/data", H), darwin_test::fileSystemRecord());
+}
+TEST_P(DarwinFileSystemTest, ZeroValuesEmptyStringsAndMaximumNamesAreExplicit) {
+  Options->FileSystemObservations->Objects["/data"] = {};
+  reset();
+  auto FD = open();
+  auto B = capture(FD);
+  for (unsigned I = 16; I != 2184; ++I)
+    EXPECT_EQ(B[I], 0);
+  for (unsigned I = 0; I != 16; ++I) {
+    EXPECT_EQ(B[I], 0xa5);
+    EXPECT_EQ(B[I + 2184], 0xa5);
+  }
+  auto &S = Options->FileSystemObservations->Objects["/data"];
+  S.TypeName = std::string(15, 't');
+  S.MountPoint = std::string(1023, 'm');
+  S.MountedFrom = std::string(1023, 'f');
+  reset();
+  FD = open();
+  B = capture(FD);
+  EXPECT_EQ(B[16 + 87], 0);
+  EXPECT_EQ(B[16 + 1111], 0);
+  EXPECT_EQ(B[16 + 2135], 0);
+  EXPECT_EQ(B[16 + 72], 't');
+  EXPECT_EQ(B[16 + 88], 'm');
+  EXPECT_EQ(B[16 + 1112], 'f');
+}
+TEST_P(DarwinFileSystemTest, KnownObjectBeforeBadOutputAndPartialHasNoEffects) {
+  const auto FD = open();
+  error(route(), args(FD, 1), 14);
+  error(route(), args(FD, 0), 14);
+  if (FDRoute) {
+    error(route(), args(UINT64_MAX, 1), 9);
+    ok(ServiceKind::Close, {FD});
+    error(route(), args(FD, 1), 9);
+  } else {
+    error(route(), args(FD, 1, "/absent"), 2);
+    error(route(), args(FD, 1, ""), 2);
+  }
+  std::array<uint8_t, 32> B;
+  B.fill(0x6c);
+  llvm::cantFail(Space->write(Base + Page * 4 - 32, B));
+  const auto Valid = FDRoute ? open() : FD;
+  refused(route(), args(Valid, Base + Page * 4 - 32),
+          diagnostic::FileSystemPartialOutput);
+  std::array<uint8_t, 32> A;
+  llvm::cantFail(Space->read(Base + Page * 4 - 32, A));
+  EXPECT_EQ(A, B);
+}
+TEST_P(DarwinFileSystemTest, MissingEmptyAndDifferentPurposeNeverGrant) {
+  for (bool Missing : {false, true}) {
+    if (Missing)
+      Options->FileSystemObservations.reset();
+    else
+      Options->FileSystemObservations.emplace();
+    Options->Synchronization.emplace().Objects.insert("/data");
+    reset();
+    const auto FD = open();
+    refused(route(), args(FD, 1),
+            Missing ? diagnostic::FileSystemEnvironment
+                    : diagnostic::FileSystemProvider);
+  }
+}
+TEST_P(DarwinFileSystemTest, NoTargetStatOrAccessFlagRequirement) {
+  Options->Metadata.erase("/data");
+  Options->WritableFiles.insert("/data");
+  Options->FileSystemObservations->Objects["/"] =
+      darwin_test::fileSystemSnapshot();
+  if (FDRoute)
+    Credentials.reset();
+  reset();
+  for (uint32_t F : {0u, 1u, 2u}) {
+    const auto FD = open("/data", F);
+    EXPECT_EQ(capture(FD), darwin_test::fileSystemRecord());
+    refused(ServiceKind::Fstat64, {FD, Base + Page * 2},
+            diagnostic::FileMetadata);
+    ok(ServiceKind::Close, {FD});
+  }
+}
+TEST_P(DarwinFileSystemTest, EffectiveSearchUsesAuthoritativeGroupDecision) {
+  const auto Query = [&] {
+    return ok(ServiceKind::Statfs64, {path("/data"), Base + Page + 16});
+  };
+  auto &M = Options->Metadata["/"];
+  M.UID = 700;
+  M.GID = 31;
+  M.Mode = 0040010;
+  Credentials->GroupAccessList = std::vector<uint32_t>{20, 31};
+  reset();
+  EXPECT_EQ(Query(), 0u);
+  Credentials->GroupAccessList = std::vector<uint32_t>{20};
+  Credentials->GroupMembershipUID = 4294967195u;
+  reset();
+  error(ServiceKind::Statfs64, {path("/data"), 1}, 13);
+  Credentials->GroupMembershipUID.reset();
+  reset();
+  refused(ServiceKind::Statfs64, {path("/data"), 1},
+          diagnostic::FileOrdinaryAuthorizationGroups);
+  M.Mode = 0040001;
+  Credentials->GroupMembershipUID = 4294967195u;
+  reset();
+  EXPECT_EQ(Query(), 0u);
+}
+TEST_P(DarwinFileSystemTest, MissingRootSpecialAndUnknownAncestorFailClearly) {
+  Credentials.reset();
+  reset();
+  refused(ServiceKind::Statfs64, {path("/data"), 1},
+          diagnostic::FileOrdinaryAuthorizationCredentials);
+  Credentials = darwin_test::modeCredentials();
+  Credentials->EffectiveUID = 0;
+  reset();
+  refused(ServiceKind::Statfs64, {path("/data"), 1},
+          diagnostic::FileOrdinaryAuthorizationSubject);
+  Credentials = darwin_test::modeCredentials();
+  Options->Metadata["/"].Mode |= 01000;
+  reset();
+  refused(ServiceKind::Statfs64, {path("/data"), 1},
+          diagnostic::FileSystemSecurityAttributes);
+  Options->Metadata.erase("/");
+  reset();
+  refused(ServiceKind::Statfs64, {path("/data"), 1}, diagnostic::FileMetadata);
+}
+TEST_P(DarwinFileSystemTest, FollowedLinksCWDAndImplicitDirectoryBinding) {
+  Options->Files["/dir/leaf"] = {};
+  Options->Metadata["/dir"] = darwin_test::modeMetadata(0040700, 10);
+  Options->FileSystemObservations->Objects["/dir"] =
+      darwin_test::fileSystemSnapshot();
+  Options->FileSystemObservations->Objects["/dir/leaf"] =
+      darwin_test::fileSystemSnapshot();
+  Options->SymbolicLinks["/alias"] = {'d', 'i', 'r', '/', 'l', 'e', 'a', 'f'};
+  reset();
+  auto FD = open("/alias");
+  EXPECT_EQ(capture(FD, "/alias"), darwin_test::fileSystemRecord());
+  ok(ServiceKind::Chdir, {path("/dir")});
+  FD = open("leaf");
+  EXPECT_EQ(capture(FD, "leaf"), darwin_test::fileSystemRecord());
+  const auto Dir = open(".");
+  EXPECT_EQ(capture(Dir, "."), darwin_test::fileSystemRecord());
+}
+TEST_P(DarwinFileSystemTest,
+       DuplicatesSeparateDescriptionsKeepCursorFlagsAndMetadata) {
+  const auto A = open(), B = open();
+  const auto D = ok(ServiceKind::Dup, {A});
+  ok(ServiceKind::Lseek, {A, 2, 0});
+  ok(ServiceKind::Fcntl, {D, 2, 1});
+  const auto Before = status(A);
+  const auto Flags = ok(ServiceKind::Fcntl, {D, 3});
+  EXPECT_EQ(capture(D), darwin_test::fileSystemRecord());
+  EXPECT_EQ(status(B), Before);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 2u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 1}), 1u);
+  EXPECT_EQ(ok(ServiceKind::Fcntl, {D, 3}), Flags);
+  const auto F = ok(ServiceKind::Fcntl, {D, 0, 10});
+  EXPECT_EQ(capture(F), darwin_test::fileSystemRecord());
+}
+TEST_P(DarwinFileSystemTest, InitialChildrenAndEqualIDsConferNothing) {
+  Options->Files["/other"] = Options->Files["/data"];
+  Options->Metadata["/other"] = Options->Metadata["/data"];
+  reset();
+  const auto FD = open("/other");
+  refused(route(), args(FD, 1, "/other"), diagnostic::FileSystemProvider);
+}
+TEST_P(DarwinFileSystemTest, HardlinkRenameHeldUnlinkAndNameReuse) {
+  policies();
+  const auto A = open(), D = ok(ServiceKind::Dup, {A});
+  ok(ServiceKind::Link, {path("/data"), path("/linked", Base + 128)});
+  EXPECT_EQ(capture(D, "/linked"), darwin_test::fileSystemRecord());
+  ok(ServiceKind::Rename, {path("/linked"), path("/moved", Base + 128)});
+  EXPECT_EQ(capture(A, "/moved"), darwin_test::fileSystemRecord());
+  ok(ServiceKind::Unlink, {path("/data")});
+  ok(ServiceKind::Unlink, {path("/moved")});
+  if (FDRoute)
+    EXPECT_EQ(capture(D), darwin_test::fileSystemRecord());
+  else
+    error(ServiceKind::Statfs64, {path("/data"), 1}, 2);
+  const auto New = open("/data", 0x202);
+  refused(route(), args(New, 1), diagnostic::FileSystemProvider);
+  if (FDRoute)
+    EXPECT_EQ(capture(A), darwin_test::fileSystemRecord());
+  ok(ServiceKind::Close, {A});
+  ok(ServiceKind::Close, {D});
+  error(ServiceKind::Fstatfs64, {A, 1}, 9);
+}
+TEST_P(DarwinFileSystemTest,
+       CreationExplicitlyUsesBoundParentAndDefaultsClosed) {
+  policies();
+  const auto Old = open();
+  const auto N = open("/new", 0x202);
+  refused(route(), args(N, 1, "/new"), diagnostic::FileSystemProvider);
+  policies(true);
+  const auto New = open("/new", 0x202);
+  EXPECT_EQ(ok(ServiceKind::Fstatfs64, {New, Base + Page + 16}), 0u);
+  Record B;
+  B.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, B));
+  EXPECT_EQ(ok(ServiceKind::Fstatfs64, {New, Base + Page + 16}), 0u);
+  llvm::cantFail(Space->read(Base + Page, B));
+  EXPECT_EQ(B, darwin_test::fileSystemRecord());
+  EXPECT_EQ(capture(New, "/new"), darwin_test::fileSystemRecord());
+  Options->FileSystemObservations->Objects.erase("/");
+  policies(true);
+  const auto Unbound = open("/new", 0x202);
+  refused(ServiceKind::Fstatfs64, {Unbound, 1}, diagnostic::FileSystemProvider);
+  (void)Old;
+}
+TEST_P(DarwinFileSystemTest,
+       DirectoryMoveRetainsBindingAndNewDirectoriesReceiveNone) {
+  Options->Directories.insert("/dir");
+  Options->Metadata["/dir"] = darwin_test::modeMetadata(0040700, 10);
+  Options->FileSystemObservations->Objects["/dir"] =
+      darwin_test::fileSystemSnapshot();
+  Options->MutableDirectories = {"/", "/dir"};
+  Options->MovableDirectories.insert("/dir");
+  Options->DirectoryMutationPolicies["/dir"] = {16, {91, 92}};
+  policies(true);
+  const auto Dir = open("/dir");
+  ok(ServiceKind::Rename, {path("/dir"), path("/moved", Base + 128)});
+  Record B;
+  B.fill(0xa5);
+  llvm::cantFail(Space->write(Base + Page, B));
+  EXPECT_EQ(ok(ServiceKind::Fstatfs64, {Dir, Base + Page + 16}), 0u);
+  llvm::cantFail(Space->read(Base + Page, B));
+  EXPECT_EQ(B, darwin_test::fileSystemRecord());
+  ok(ServiceKind::Mkdir, {path("/newdir"), 0700});
+  const auto NewDir = open("/newdir");
+  refused(ServiceKind::Fstatfs64, {NewDir, 1}, diagnostic::FileSystemProvider);
+  const auto Child = open("/newdir/leaf", 0x202);
+  refused(ServiceKind::Fstatfs64, {Child, 1}, diagnostic::FileSystemProvider);
+}
+TEST_P(DarwinFileSystemTest,
+       DirtyBytesLocksXattrsAndMetadataValidityRemainIndependent) {
+  Options->ExtendedAttributes["/data"] = {{"user.test", {4, 5}}};
+  Options->AdvisoryLocks.emplace().Objects.insert("/data");
+  policies();
+  const auto A = open("/data", 2), B = open("/data", 2);
+  const auto Before = status(A);
+  ok(ServiceKind::Flock, {A, 2});
+  error(ServiceKind::Flock, {B, 2 | 4}, 35);
+  EXPECT_EQ(capture(A), darwin_test::fileSystemRecord());
+  EXPECT_EQ(status(A), Before);
+  EXPECT_EQ(
+      ok(ServiceKind::FgetXattr, {A, path("user.test", Base + 128), 0, 0}), 2u);
+  path("Z", Base + 512);
+  ok(ServiceKind::Pwrite, {A, Base + 512, 1, 0});
+  refused(ServiceKind::Fstat64, {A, Base + Page * 2},
+          diagnostic::FileMutatedMetadata);
+  EXPECT_EQ(capture(B), darwin_test::fileSystemRecord());
+  error(ServiceKind::Flock, {B, 2 | 4}, 35);
+  ok(ServiceKind::Flock, {A, 8});
+  refused(ServiceKind::FgetXattr, {B, path("user.test", Base + 128), 0, 0},
+          diagnostic::ExtendedAttributeUnknown);
+  std::array<uint8_t, 6> Data;
+  ok(ServiceKind::Pread, {B, Base + 512, 6, 0});
+  llvm::cantFail(Space->read(Base + 512, Data));
+  EXPECT_EQ(Data, (std::array<uint8_t, 6>{'Z', 'b', 0, 255, 'e', 'f'}));
+}
+TEST_P(DarwinFileSystemTest,
+       RealMappingRetainsBytesWithoutDescriptorAuthority) {
+  policies();
+  const auto FD = open();
+  ProcessOptions O;
+  O.MemoryLimit = Page * 16;
+  O.StackSize = Page;
+  MemoryLayout Layout{Page, Base + Page * 8, {}};
+  DarwinMemory VM(*Space, Layout, O);
+  auto M = VM.handle(ServiceKind::Mmap, {0, 0, {0, Page, 1, 2, FD, 0}, {}},
+                     *Files, Result);
+  ASSERT_TRUE(bool(M)) << llvm::toString(M.takeError());
+  ASSERT_TRUE(*M);
+  ASSERT_FALSE((**M).Error);
+  const auto Address = (**M).Value,
+             Allocated = Space->physicalMemory()->allocatedBytes();
+  EXPECT_EQ(capture(FD), darwin_test::fileSystemRecord());
+  EXPECT_EQ(Space->physicalMemory()->allocatedBytes(), Allocated);
+  ok(ServiceKind::Unlink, {path("/data")});
+  EXPECT_EQ(ok(ServiceKind::Fstatfs64, {FD, Base + Page + 16}), 0u);
+  ok(ServiceKind::Close, {FD});
+  error(ServiceKind::Fstatfs64, {FD, 1}, 9);
+  std::array<uint8_t, 6> Data;
+  llvm::cantFail(Space->read(Address, Data));
+  EXPECT_EQ(Data, (std::array<uint8_t, 6>{'a', 'b', 0, 255, 'e', 'f'}));
+  auto U = VM.handle(ServiceKind::Munmap, {0, 0, {Address, Page}, {}}, *Files,
+                     Result);
+  ASSERT_TRUE(bool(U)) << llvm::toString(U.takeError());
+  ASSERT_TRUE(*U);
+  EXPECT_FALSE((**U).Error);
+}
+TEST_P(DarwinFileSystemTest,
+       OpaqueStreamsAndSymbolicDescriptorsStayUnsupported) {
+  for (uint64_t FD : {0u, 1u, 2u})
+    refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemKind);
+  Options->SymbolicLinks["/link"] = {'d', 'a', 't', 'a'};
+  reset();
+  const auto FD = open("/link", 0x200000);
+  refused(ServiceKind::Fstatfs64, {FD, 1}, diagnostic::FileSystemKind);
+}
+INSTANTIATE_TEST_SUITE_P(PageAndRoute, DarwinFileSystemTest,
+                         testing::Combine(testing::Values(uint64_t(4096),
+                                                          uint64_t(16384)),
+                                          testing::Bool()));
+} // namespace
+} // namespace neverd::emulation::darwin_model

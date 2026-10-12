@@ -131,9 +131,9 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
        !Options.ExchangeableDirectories.empty() ||
        !Options.SwapRenameDirectories.empty() || Options.ModeMutations ||
        Options.OwnershipMutations || Options.TimestampMutations ||
-       Options.AdvisoryLocks || Options.Synchronization ||
-       Options.DataSynchronization || Options.FullSynchronization ||
-       Options.BarrierSynchronization))
+       Options.FileSystemObservations || Options.AdvisoryLocks ||
+       Options.Synchronization || Options.DataSynchronization ||
+       Options.FullSynchronization || Options.BarrierSynchronization))
     return failure(OptionDiagnostic);
   if (Options.InitialUmask && *Options.InitialUmask > 07777)
     return failure(diagnostic::FileUmaskOption);
@@ -395,6 +395,31 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   if (auto E = AdmitOrdinaryGrants(Options.TimestampMutations,
                                    diagnostic::FileTimestampOption))
     return E;
+  if (auto E = AdmitCreatedRegularProvider(Options.FileSystemObservations))
+    return E;
+  if (Options.FileSystemObservations) {
+    if (Options.FileSystemObservations->Objects.size() > limits::Files)
+      return failure(diagnostic::FileOptionsLimit);
+    for (const auto &[Path, Snapshot] :
+         Options.FileSystemObservations->Objects) {
+      const auto Kind = pathKind(Options, Path);
+      if ((Kind != PathKind::File && Kind != PathKind::Directory) ||
+          !validFileSystemSnapshot(Snapshot))
+        return failure(diagnostic::FileSystemOption);
+      // Observing an otherwise implicit directory declares one bounded
+      // catalogue object. Other observations or the later mutable-directory
+      // pass already account for their own existing entry.
+      if (Kind == PathKind::Directory && !Options.Directories.contains(Path) &&
+          !Options.Metadata.contains(Path) &&
+          !Options.DirectoryContents.contains(Path) &&
+          !Options.ExtendedAttributes.contains(Path) &&
+          !Options.MutableDirectories.contains(Path) &&
+          ++Entries > limits::Files)
+        return failure(diagnostic::FileOptionsLimit);
+      if (auto E = PathInput(Path, Kind == PathKind::Directory, 2168))
+        return E;
+    }
+  }
   const auto AdmitObjectProvider = [&](const auto &Environment,
                                        const char *Reason) -> llvm::Error {
     if (auto E = AdmitCreatedRegularProvider(Environment))
@@ -718,6 +743,11 @@ void DarwinFiles::initializeNamespace() {
       if (Time != Options->TimestampMutations->Objects.end())
         Node->TimestampTime = &Time->second;
     }
+    if (Options->FileSystemObservations) {
+      const auto I = Options->FileSystemObservations->Objects.find(Path);
+      if (I != Options->FileSystemObservations->Objects.end())
+        Node->FileSystem = &I->second;
+    }
     Nodes.emplace(Path, std::make_shared<FileEntry>(std::move(Node)));
   }
   for (const auto &[Path, Target] : Options->SymbolicLinks) {
@@ -812,6 +842,11 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
     return nullptr;
   auto Node = std::make_shared<DirectoryNode>();
   Node->Path = Path;
+  if (Options->FileSystemObservations) {
+    const auto I = Options->FileSystemObservations->Objects.find(Path);
+    if (I != Options->FileSystemObservations->Objects.end())
+      Node->FileSystem = &I->second;
+  }
   if (Path != "/")
     Node->Parent = initialDirectoryNode(parentPath(Path));
   const auto Attributes = Options->ExtendedAttributes.find(Path);
@@ -1077,25 +1112,29 @@ DarwinFiles::authorize(const DarwinFileMetadata *Metadata, uint32_t Request,
       Purpose == AuthorizationPurpose::TimestampSearch ||
       Purpose == AuthorizationPurpose::TimestampChangeExplicit ||
       Purpose == AuthorizationPurpose::TimestampChangeCurrent;
+  const bool FileSystem = Purpose == AuthorizationPurpose::FileSystemSearch;
   if ((Purpose == AuthorizationPurpose::OwnershipChange) != bool(Ownership))
     return diagnostic::FileOwnershipRequest;
-  if (Mode || Owner || Timestamp) {
+  if (Mode || Owner || Timestamp || FileSystem) {
     if (!Options || (Mode && !Options->ModeMutations) ||
         (Owner && !Options->OwnershipMutations) ||
-        (Timestamp && !Options->TimestampMutations))
-      return Timestamp ? diagnostic::FileTimestampEnvironment
-             : Owner   ? diagnostic::FileOwnershipEnvironment
-                       : diagnostic::FileModeEnvironment;
+        (Timestamp && !Options->TimestampMutations) ||
+        (FileSystem && !Options->FileSystemObservations))
+      return FileSystem  ? diagnostic::FileSystemEnvironment
+             : Timestamp ? diagnostic::FileTimestampEnvironment
+             : Owner     ? diagnostic::FileOwnershipEnvironment
+                         : diagnostic::FileModeEnvironment;
     User = Subject::Effective;
     if (!Metadata || Metadata->Flags || (Metadata->Mode & 07000))
-      return Timestamp ? diagnostic::FileTimestampSecurityAttributes
-             : Owner   ? diagnostic::FileOwnershipSecurityAttributes
-                       : diagnostic::FileModeSecurityAttributes;
+      return FileSystem  ? diagnostic::FileSystemSecurityAttributes
+             : Timestamp ? diagnostic::FileTimestampSecurityAttributes
+             : Owner     ? diagnostic::FileOwnershipSecurityAttributes
+                         : diagnostic::FileModeSecurityAttributes;
     if (Purpose == AuthorizationPurpose::ModeChange && (Request & 07000))
       return diagnostic::FileModePermissions;
   }
   const bool Ordinary =
-      Mode || Owner || Timestamp ||
+      Mode || Owner || Timestamp || FileSystem ||
       Options->Authorization == DarwinFileAuthorization::StaticOrdinaryQueries;
   if (!Credentials)
     return Ordinary ? diagnostic::FileOrdinaryAuthorizationCredentials
@@ -1175,10 +1214,12 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
   const bool ModeAuthorization = Scope == LookupAuthorization::Mode;
   const bool OwnershipAuthorization = Scope == LookupAuthorization::Ownership;
   const bool TimestampAuthorization = Scope == LookupAuthorization::Timestamp;
-  const bool MutationAuthorization =
-      ModeAuthorization || OwnershipAuthorization || TimestampAuthorization;
-  const bool AuthorizedLookup = queryEnvironment() || MutationAuthorization;
-  if (!Options && !MutationAuthorization)
+  const bool FileSystemAuthorization = Scope == LookupAuthorization::FileSystem;
+  const bool ExplicitAuthorization =
+      ModeAuthorization || OwnershipAuthorization || TimestampAuthorization ||
+      FileSystemAuthorization;
+  const bool AuthorizedLookup = queryEnvironment() || ExplicitAuthorization;
+  if (!Options && !ExplicitAuthorization)
     return diagnostic::FileInputs;
   if (Options)
     initializeNamespace();
@@ -1197,7 +1238,9 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
   std::string Path = std::move(std::get<std::string>(*Imported));
   if (!Options)
     return Path.empty() ? Lookup(uint32_t(NoEntry))
-                        : Lookup(TimestampAuthorization
+                        : Lookup(FileSystemAuthorization
+                                     ? diagnostic::FileSystemEnvironment
+                                 : TimestampAuthorization
                                      ? diagnostic::FileTimestampEnvironment
                                  : OwnershipAuthorization
                                      ? diagnostic::FileOwnershipEnvironment
@@ -1252,7 +1295,7 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
       // asking the filesystem for a child, including a missing one.
       if (AuthorizedLookup && (Part != ".." || Directory->Parent)) {
         const DarwinFileMetadata *Metadata = Directory->Metadata;
-        if (MutationAuthorization) {
+        if (ExplicitAuthorization) {
           Description Parent{Kind::Directory, {}, 0, Metadata, Directory->Path};
           Parent.Directory = Directory;
           auto Current = statusMetadata(Parent);
@@ -1262,7 +1305,8 @@ llvm::Expected<DarwinFiles::Lookup> DarwinFiles::resolvePath(
         }
         auto Authorization = authorize(
             Metadata, 1, User,
-            TimestampAuthorization   ? AuthorizationPurpose::TimestampSearch
+            FileSystemAuthorization  ? AuthorizationPurpose::FileSystemSearch
+            : TimestampAuthorization ? AuthorizationPurpose::TimestampSearch
             : OwnershipAuthorization ? AuthorizationPurpose::OwnershipSearch
             : ModeAuthorization      ? AuthorizationPurpose::ModeSearch
                                      : AuthorizationPurpose::Query);
@@ -2606,6 +2650,9 @@ DarwinFiles::create(Description &File, uint32_t Mode, ProcessResult &Result) {
     Node->CurrentMetadata = createdMetadata(
         *ParentIdentity, FileRegularMode | (Mode & 0777 & ~CurrentUmask), 1);
     Node->Policy = &Policy.Mutation;
+    if (Options->FileSystemObservations &&
+        Options->FileSystemObservations->CreatedRegularObjects)
+      Node->FileSystem = Node->Name->Parent->FileSystem;
     if (Options->ModeMutations && Options->ModeMutations->CreatedRegularObjects)
       Node->ModeTime = &Policy.Mutation.Time;
     if (Options->OwnershipMutations &&
@@ -2882,6 +2929,8 @@ DarwinFiles::handle(ServiceKind Service, const ProcessServiceEvent &Event,
     return synchronize(SynchronizationKind::Data, Event, Result);
   if (Service == ServiceKind::Utimes || Service == ServiceKind::Futimes)
     return changeTimes(Service, Event, Result, Time);
+  if (Service == ServiceKind::Statfs64 || Service == ServiceKind::Fstatfs64)
+    return fileSystemStatus(Service, Event, Result);
   if (Service == ServiceKind::Flock)
     return advisoryLock(Event, Result);
   if (Service == ServiceKind::Poll)

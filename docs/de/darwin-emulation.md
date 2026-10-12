@@ -1,6 +1,6 @@
 **Sprachen**: [English](../darwin-emulation.md) | [简体中文](../zh-CN/darwin-emulation.md) | [繁體中文](../zh-TW/darwin-emulation.md) | [日本語](../ja/darwin-emulation.md) | [한국어](../ko/darwin-emulation.md) | [Français](../fr/darwin-emulation.md) | [Deutsch](darwin-emulation.md) | [Español](../es/darwin-emulation.md) | [Italiano](../it/darwin-emulation.md) | [Русский](../ru/darwin-emulation.md) | [العربية](../ar/darwin-emulation.md)
 
-<!-- i18n-source: 62f041d4fac27029f3fa4b8d6a91bd2397b92d3a3cabc1b54701de985413abb6 -->
+<!-- i18n-source: d8086a3ad8380f63de6a58cee35f89b157bb352de8b16e939c09ad4553bcac58 -->
 
 [← Dokumentationsübersicht](README.md)
 
@@ -1179,7 +1179,7 @@ numeric FD + read/write filter / independent last requested index / distinct dup
 IN1 RDNORM64 OUT4 WRBAND256 / HUP16 trigger only / closed registrations POLLNVAL32
 negative and ignored-only rows zero / whole input snapshot / whole output / partial output unsupported
 EFAULT14 EINVAL22 / no ready prefix on unsupported row / zero count no pointer
-static-owner-queries and static-ordinary-queries / all54 other file routes closed before preflight
+static-owner-queries and static-ordinary-queries / all56 other file routes closed before preflight
 immediate-poll86 events / five software + three mandatory ARM64 HVF profiles / C CLI Python
 64 current native-common cases / prior58/59 source identities preserved / 582 mixed controls and captures
 native Intel and physical iOS unverified / select waits pselect signal-masks revoked-MAC-provider failures networking unfinished
@@ -1249,7 +1249,7 @@ OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState
 ARM64 matching native mandatory237 / native Intel and physical iOS unverified
 450 original owner observations / 414 literal controls and 36 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all54 other file routes closed before preflight / static query declarations incompatible
+all56 other file routes closed before preflight / static query declarations incompatible
 native guest5s / compile120s / build-C++1200s / Python-config300s / docs-caps120s
 ```
 
@@ -1280,7 +1280,7 @@ separate main return38 / OrdinaryOwnershipKeepsCurrentAuthorityAndObjectState
 ARM64 matching native mandatory237 / actual successful execution required
 720 owner observations / 702 literal controls and 18 final-link provider captures
 nonowner authorization is source/model evidence, not owner-native evidence
-all54 other file routes closed before preflight / static query declarations incompatible
+all56 other file routes closed before preflight / static query declarations incompatible
 no ACL MAC listener bypass revocation native file-directory leases or setattr lifecycle
 native Intel and physical iOS unverified / full macOS-iOS environment incomplete
 ```
@@ -1311,7 +1311,7 @@ runtime hardlink rename held zero-name unlink keep object grant
 created or reused names do not inherit provider grants / path registry not lock authority
 flock preserves bytes cursors stat xattrs and allocation / successful lock sets persistent FWASLOCKED0x4000
 mode ownership data namespace policies independent / invalidated records never restored
-all54 other file routes closed before preflight / either static query rejects even empty declaration
+all56 other file routes closed before preflight / either static query rejects even empty declaration
 SDK-free77 service records / 13 guarded full stat observations / separate main return39
 OrdinaryAdvisoryLocksKeepDescriptionAndObjectLifetime
 64 current native-common cases / 79 mandatory workloads per platform
@@ -1346,7 +1346,7 @@ created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
-all54 other logical file routes closed before preflight / both static queries reject empty declaration
+all56 other logical file routes closed before preflight / both static queries reject empty declaration
 one alias shares owner / no extra query route for fsync_nocancel
 SDK-free68 service records / 20 guarded full stat observations / separate main return40 / stdout S
 OrdinaryFileSynchronizationKeepsProviderAndCommittedState
@@ -1385,7 +1385,7 @@ created and reused names do not inherit initial completion grants
 VM mapping and retained Contents cannot make closed descriptors valid
 bytes cursors flags stat xattrs allocation namespace and advisory locks unchanged
 unknown metadata and xattrs remain unknown / no observation restoration
-all54 other logical file routes closed before preflight / both static queries reject empty declarations
+all56 other logical file routes closed before preflight / both static queries reject empty declarations
 fsync_nocancel408 remains one Fsync alias / fdatasync187 is not that alias
 SDK-free41 service records / 11 guarded full stat observations / separate main return41 / stdout D
 OrdinaryDataSynchronizationKeepsProviderAndCommittedState
@@ -1421,7 +1421,7 @@ Contents lifetime through dup fcntl dup2 runtime links rename held zero-name and
 closed FD returns EBADF9 / retained Contents or VM cannot revive a descriptor
 bytes stat cursor flags xattrs allocation namespace locks unchanged / no observation restoration
 completion grants supply no mode ownership xattr flock or general DAC authority
-both immutable query environments reject even false declarations / all54 other logical routes remain closed
+both immutable query environments reject even false declarations / all56 other logical routes remain closed
 SDK-free147 service records / 33 guarded full stat observations / separate main return42 / stdout C
 CreatedRegularSynchronizationKeepsIndependentProvidersAndState
 68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
@@ -1456,7 +1456,7 @@ nonblocking conflict35 before old-lock removal / failed upgrade retains shared l
 last description close releases lock / VM Contents lease cannot retain lock or revive closed FD9
 flock preserves bytes stat cursor xattrs allocation namespace and observation validity
 mode ownership completion xattr permissions remain independent / no general DAC grant
-both static query declarations reject even false environment / all54 other file routes closed
+both static query declarations reject even false environment / all56 other file routes closed
 SDK-free131 service records / 12 guarded full stat observations / separate main return43 / stdout L
 CreatedRegularAdvisoryLocksKeepProviderAndDescriptionStatus
 68 current native-common cases / 83 mandatory workloads per platform / ARM64 matching native mandatory249
@@ -1536,7 +1536,7 @@ fixed virtual ctime is separate from request conversion and current-time sample 
 NULL uses only explicit TimeOfDay / zero sample valid / missing sample stays unknown / no timezone or Mach prerequisite
 utimes pathname before input / futimes input before low32 FD / fully unmapped EFAULT14 / partial input unsupported
 explicit effective ownership even equal times EPERM1 / current-time owner or proved ordinary POSIX write / group knowledge preserved
-all54 other file routes closed before preflight / both static queries reject even empty timestamp declaration
+all56 other file routes closed before preflight / both static queries reject even empty timestamp declaration
 ordinary regular Contents grants retain actual dup link rename held-zero-name lifetime / replacement names inherit none
 opaque kind unsupported / native pipe EINVAL22 does not identify model kind / directories and symbolic vnodes outside provider
 62 private identities / pages4096 and16384 / full160-byte stat guards / independent dirty bytes locks xattrs and real VM
@@ -1548,3 +1548,39 @@ native Intel and physical iOS unverified / original five-second native and guest
 ```
 
 The original model references [pinned XNU syscall/vnode ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and [ordinary WRITE_ATTRIBUTES authorization](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_subr.c). The discovered futimes number is139; the rejected206 probe is retained as failure evidence. No XNU implementation was copied.
+
+## Explicit filesystem observations
+
+Explizite Dateisystem-Snapshots liefern unabhängig Kapazität, Typ und Mountnamen für reguläre Dateien und Verzeichnisse. Nullwerte und leere Namen sind gültig; das Hostdateisystem wird nicht abgefragt. Bindungen bleiben beim tatsächlichen Objekt über duplizierte Deskriptoren, Verschieben und Löschen bei offenem Deskriptor erhalten; Ersatznamen erben sie nicht. Neue reguläre Dateien erhalten den gebundenen Snapshot ihres tatsächlichen Elternverzeichnisses nur mit explizitem Erstellungsflag und vollständiger Erstellungsrichtlinie. Die Dateiumgebungsabfragen sind nutzbar; die vollständige macOS/iOS-Framework-Umgebung bleibt unvollständig.
+
+
+```text
+DarwinFileSystemSnapshot / DarwinFileSystemOptions / FileSystemObservations / filesystem_observations
+statfs64 BSD345 and fstatfs64 BSD346 / LP64 record2168 bytes / legacy157158 unsupported
+block_size uint32 io_size int32 / five uint64 counters / filesystem_id two int32 words
+owner type flags subtype uint32 / type_name16 mount_point1024 mounted_from1024 / extended_flags uint32
+reserved seven uint32 words zero / bounded UTF8 NUL-free names / all sixteen JSON members required / zero and empty valid
+explicit exact immediate mount-stat provider / no host query mount identity quota live refresh MAC refusal wait or process mountpoint rewrite
+initial regular and directory bindings / actual Contents DirectoryNode / no target filestat prerequisite or recovery
+created_regular_objects defaultfalse / true requires complete CreationPolicy / successful new regular uses actual bound parent snapshot
+initial children unbound parents new directories links receive none / no fsid device inode or pathname prefix inference
+effective ordinary ancestor search uses shared authorizer and group knowledge / FD query borrows no target DAC credentials or access flags
+pathname and low32 FD kind before output / ENOENT2 EBADF9 EFAULT14 / individually partial output unsupported before effects
+both immutable query domains reject even empty filesystem declaration / all56 other logical file routes closed before preflight
+67 private identities / both4096 and16384 pages bothroutes / full2200 guarded literal / shared16MiB budget
+dup independent opens hardlinks rename directory moves CWD held-unlink reuse / dirty bytes locks xattrs and real VM independent
+FileSystemSnapshotsPreserveLayoutAndIndependentObjectLifetime / 49 authored common services / main50 stdout W
+virtual-filesystem-creation / nine authored services / main51 / independent4400 guarded literal bytes
+114 original ARM64 O0 O1 O2 observations / readonly writeonly directory and held-zero-name FD controls / native pipe EINVAL22 opaque kind unsupported
+native-common72 / mandatory87 per platform / matching ARM64 required261 identities / no captured native service trace
+constant guest validation loops unrolled with every assertion retained / native5s guest5000000us quantum1024 public10s original owner bounds unchanged
+native Intel physical iOS full dyld Mach IPC ObjC Swift Foundation UIKit unqualified / full Apple environment incomplete
+```
+
+Raw BSD statfs64 345 and fstatfs64 346 use the independent FileSystemObservations provider. JSON places a unique array of {"path":canonical_initial_path,"snapshot":complete_record} entries under darwin_files.filesystem_observations.objects. Complete records require block_size, io_size, blocks, free_blocks, available_blocks, files, free_files, filesystem_id, owner, type, flags, subtype, type_name, mount_point, mounted_from and extended_flags. Integer fields accept the established exact integer/string-integer forms and enforce their widths. filesystem_id is exactly two signed32 words. The three strings contain no NUL, are valid UTF8 and fit15/1023/1023 bytes; empty values are explicit. Unknown members, incomplete records, duplicate paths, unknown/link objects and excess shared input budgets fail before image loading. Every snapshot plus its path reference is charged2168 bytes and NUL-inclusive path cost against the shared16MiB catalogue budget. Otherwise implicit observed directories consume one catalogue entry; directories already declared by metadata, enumeration, attributes or namespace authority are counted once within the shared256-entry limit.
+
+Path lookup follows symlinks and shares effective ordinary ancestor search, requiring only relevant current ordinary ancestor metadata and credentials. Root/special attributes and unresolved external group membership remain unsupported; no target filestat or access-mode authority is inferred. Known invalid/closed FD returns9 and missing/empty path returns2 before output preflight. Known regular and directory FD observations need no unrelated credentials or read/write flags. Opaque standard streams and symbolic-vnode FDs remain unsupported. A valid complete output record contains zeroed string padding and seven reserved words; fully unmapped output returns14, while individually partial output stops before effects.
+
+Snapshots bind to actual initial regular/directory objects, including implicit directories, and survive dup, independent opens, runtime hardlinks, rename, moved directories/CWD and held zero-name lifetime. Different or reused names inherit no initial grant. Optional created_regular_objects defaultsfalse. True requires complete CreationPolicy and explicitly binds each successful new regular file to its actual parent's already-bound snapshot, if one exists. Unbound parents, initial children, mkdir/symlink and children through new unbound directories receive none. This relation comes from the declared provider, never equality of filesystem_id/device/inode or a pathname prefix. Counters remain exactly declared observations and are not derived from bytes, allocation units or virtual storage limits.
+
+The original model follows the [pinned XNU namei/file-vnode/mount-stat ordering](https://github.com/apple-oss-distributions/xnu/blob/xnu-11417.140.69/bsd/vfs/vfs_syscalls.c) and the native SDK LP64 layout. No XNU implementation was copied. Native probes verify captured ABI and ordering on their owned test filesystem; dynamic capacity counts and IDs do not establish universal constants, real mount identity, quota or lifecycle. The SDK-free common workload compares stable fields and guards while deliberately excluding all five dynamic capacity counters. The independent virtual workload checks all4400 emitted bytes against authored literals. The first native virtualized round timed out in validation loops; fixed loops are unrolled without changing a single service, assertion, quantum or deadline. Broader default-fatal cleanup and framework execution are separate unfinished work.

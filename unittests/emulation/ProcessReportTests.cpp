@@ -6,6 +6,7 @@
 #include "DarwinCreatedAdvisoryLockTestData.h"
 #include "DarwinCreatedAttributeTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
+#include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
 #include "DarwinFullSynchronizationTestData.h"
 #include "DarwinSystemTestData.h"
@@ -30,6 +31,158 @@ namespace field = process_report;
 #define NEVERD_FAULT_REPORT_TEXT(Name, Text) constexpr char Name[] = Text;
 #include "FaultReportCases.def"
 #undef NEVERD_FAULT_REPORT_TEXT
+
+TEST(ProcessReport,
+     DarwinFileSystemSnapshotsKeepAllSixteenFieldsAndZeroValues) {
+  for (bool Zero : {false, true}) {
+    auto S =
+        llvm::cantFail(llvm::json::parse(darwin_test::FileSystemSnapshotJSON));
+    if (Zero) {
+      for (auto &[K, V] : *S.getAsObject()) {
+        if (V.getAsString() &&
+            (K == "type_name" || K == "mount_point" || K == "mounted_from"))
+          V = "";
+        else if (K == "filesystem_id")
+          V = llvm::json::Array{0, 0};
+        else
+          V = 0;
+      }
+    }
+    auto F = llvm::json::Object{
+        {"files", llvm::json::Array{llvm::json::Object{{"path", "/data"},
+                                                       {"bytes_hex", ""}}}},
+        {"filesystem_observations",
+         llvm::json::Object{{"objects", llvm::json::Array{llvm::json::Object{
+                                            {"path", "/data"},
+                                            {"snapshot", std::move(S)}}}}}}};
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(F)}}))
+            .str());
+    ASSERT_TRUE(bool(P)) << llvm::toString(P.takeError());
+    const auto &E = P->DarwinFiles->FileSystemObservations->Objects.at("/data");
+    EXPECT_EQ(E.BlockSize, Zero ? 0u : 0x10203040u);
+    EXPECT_EQ(E.IOSize, Zero ? 0 : -4096);
+    EXPECT_EQ(E.Blocks, Zero ? 0u : 0xfedcba9876543210ULL);
+    EXPECT_EQ(E.FreeBlocks, Zero ? 0u : 0x0102030405060708ULL);
+    EXPECT_EQ(E.AvailableBlocks, 0u);
+    EXPECT_EQ(E.Files, Zero ? 0u : UINT64_MAX);
+    EXPECT_EQ(E.FreeFiles, Zero ? 0u : 9u);
+    EXPECT_EQ(E.FileSystemID[0], Zero ? 0 : -1);
+    EXPECT_EQ(E.FileSystemID[1], Zero ? 0 : INT32_MIN);
+    EXPECT_EQ(E.Owner, Zero ? 0u : 0xfffffffeu);
+    EXPECT_EQ(E.Type, Zero ? 0u : 26u);
+    EXPECT_EQ(E.Flags, Zero ? 0u : 0x01020304u);
+    EXPECT_EQ(E.Subtype, Zero ? 0u : 7u);
+    EXPECT_EQ(E.ExtendedFlags, Zero ? 0u : 0x87654321u);
+    EXPECT_EQ(E.TypeName, Zero ? "" : "virtfs");
+    EXPECT_EQ(E.MountPoint, Zero ? "" : "/虚拟");
+    EXPECT_EQ(E.MountedFrom, Zero ? "" : "neverd:declared");
+    EXPECT_FALSE(P->DarwinFiles->FileSystemObservations->CreatedRegularObjects);
+  }
+}
+TEST(ProcessReport,
+     DarwinFileSystemRejectsIncompleteUnknownWidthsNamesAndDuplicatePaths) {
+  for (unsigned I = 0; I != 30; ++I) {
+    auto S =
+        llvm::cantFail(llvm::json::parse(darwin_test::FileSystemSnapshotJSON));
+    auto *Record = S.getAsObject();
+    auto Provider = llvm::json::Object{
+        {"objects", llvm::json::Array{llvm::json::Object{{"path", "/data"},
+                                                         {"snapshot", S}}}}};
+    if (I < 16) {
+      const char *Keys[] = {"block_size",
+                            "io_size",
+                            "blocks",
+                            "free_blocks",
+                            "available_blocks",
+                            "files",
+                            "free_files",
+                            "filesystem_id",
+                            "owner",
+                            "type",
+                            "flags",
+                            "subtype",
+                            "type_name",
+                            "mount_point",
+                            "mounted_from",
+                            "extended_flags"};
+      Record->erase(Keys[I]);
+    } else
+      switch (I) {
+      case 16:
+        (*Record)["extra"] = 0;
+        break;
+      case 17:
+        (*Record)["io_size"] = "2147483648";
+        break;
+      case 18:
+        (*Record)["blocks"] = "-1";
+        break;
+      case 19:
+        (*Record)["files"] = "18446744073709551616";
+        break;
+      case 20:
+        (*Record)["filesystem_id"] = llvm::json::Array{0};
+        break;
+      case 21:
+        (*Record)["filesystem_id"] = llvm::json::Array{0, "-2147483649"};
+        break;
+      case 22:
+        (*Record)["type_name"] = std::string(16, 'x');
+        break;
+      case 23:
+        (*Record)["mount_point"] = std::string(1024, 'x');
+        break;
+      case 24:
+        (*Record)["mounted_from"] = std::string("a\0b", 3);
+        break;
+      case 25:
+        (*Record)["owner"] = true;
+        break;
+      case 26:
+        Provider["created_regular_objects"] = 1;
+        break;
+      case 27:
+        Provider["created_regular_objects"] = true;
+        break;
+      case 28:
+        Provider["extra"] = false;
+        break;
+      case 29:
+        Provider.getArray("objects")->push_back(
+            llvm::json::Object{{"path", "/data"}, {"snapshot", S}});
+        break;
+      }
+    (*(*Provider.getArray("objects"))[0].getAsObject())["snapshot"] =
+        std::move(S);
+    auto F = llvm::json::Object{
+        {"files", llvm::json::Array{llvm::json::Object{{"path", "/data"},
+                                                       {"bytes_hex", ""}}}},
+        {"filesystem_observations", std::move(Provider)}};
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                                 {"darwin_files", std::move(F)}}))
+            .str());
+    EXPECT_FALSE(bool(P)) << I;
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+}
+TEST(ProcessReport,
+     DarwinFileSystemEmptyDeclarationsCloseBothImmutableDomains) {
+  for (const char *Domain :
+       {"static-owner-queries", "static-ordinary-queries"}) {
+    auto P = processOptionsFromJSON(
+        llvm::formatv("{{\"darwin_files\":{{\"authorization\":\"{0}\","
+                      "\"filesystem_observations\":{{\"objects\":[]}}}}}}",
+                      Domain)
+            .str());
+    EXPECT_FALSE(bool(P));
+    if (!P)
+      llvm::consumeError(P.takeError());
+  }
+}
 
 TEST(ProcessReport, DarwinTimestampDeclarationUsesStrictSharedTimedObjects) {
   for (bool Text : {false, true}) {
