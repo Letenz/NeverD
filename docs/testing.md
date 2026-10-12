@@ -1334,6 +1334,10 @@ Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
 
+`SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
+exhausts cheaper functions at small widths, and covers wide words, resource
+refusals and related or opaque inputs that still require full simplification.
+
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
 
