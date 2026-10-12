@@ -759,7 +759,14 @@ The GUI has no engine semantics, LLVM or target runtime dependency. See the
 vocabularies. `interfaces/HAR` owns bounded capture admission;
 `interfaces/SourceInterfaces` coordinates shared syntax/binding/value models.
 Its private `SourceContext` owns bounded admission, indexes, finite strings and
-record publication; `SourceFetch` and `SourceXHR` own their syntax rules. XHR
+record publication; `SourceFetch` and `SourceXHR` own their syntax rules.
+`SourceWrappers` uses the authoritative declaration index to admit unique,
+unwritten single-return fetch wrappers and map simple parameters at lexical
+call sites. It reuses `SourceFetch` option rules and `SourceContext` URL/private
+budget rules; no transport infers argument roles. These one-layer candidates
+retain caller, function, internal request, binding and parameter anchors and
+remain excluded from HAR correlation and the separate result-relation grammar.
+XHR
 links lexical constructors/receivers without inferring request sessions;
 `interfaces/Correlation` owns the explicit candidate join. `SessionInterfaces`
 owns redaction preview/commit, revision/cache lifetime and public metadata.

@@ -12,8 +12,7 @@
 #include "SourceContext.h"
 
 namespace neverd::web::interfaces {
-namespace {
-void options(SourceContext &C, SourceInterface &R) {
+void inspectFetchOptions(SourceContext &C, SourceInterface &R) {
   if (R.OptionsNode == None) {
     R.Method = "GET";
     R.MethodStatus = "omitted_init_default_candidate";
@@ -68,8 +67,6 @@ void options(SourceContext &C, SourceInterface &R) {
       R.MethodStatus = "fetch_forbidden_method";
   }
 }
-} // namespace
-
 void inspectRequestSyntax(SourceContext &C, uint32_t I) {
   const auto &N = C.S.Nodes[I];
   if (N.Kind != "CallExpression" && N.Kind != "OptionalCallExpression" &&
@@ -128,7 +125,7 @@ void inspectRequestSyntax(SourceContext &C, uint32_t I) {
   R.URLNode = C.child(I, "arguments");
   R.OptionsNode = C.child(I, "arguments", 1);
   if (R.Kind == "fetch")
-    options(C, R);
+    inspectFetchOptions(C, R);
   else if (R.Kind == "websocket")
     R.MethodStatus = "websocket_not_http_evidence";
   C.url(R);

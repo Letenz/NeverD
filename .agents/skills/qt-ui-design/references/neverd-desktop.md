@@ -70,8 +70,10 @@ judge each change in the real window.
   title bar on the menu bar's surface, a command center names the open file
   and opens the command palette, and the 46-pixel window controls take a light
   wash on hover with red behind Close. The bar dims while the window is
-  inactive. Draw the frame's glyphs and shadow from `ChromeColors.def` roles
-  instead of borrowing the platform's.
+  inactive. Dialogs take the same frame and a title bar of their own, with
+  the title in the middle and only the buttons their window flags ask for
+  (`WindowFrame::frameDialogs`). Draw the frame's glyphs and shadow from
+  `ChromeColors.def` roles instead of borrowing the platform's.
 - Keep the signature elements. The toolbar's colored duotone icons stay: the
   user kept them over a single-accent recolor and an outline variant, and had
   earlier rejected all-gray icons as lifeless. Refine spacing, weight, and

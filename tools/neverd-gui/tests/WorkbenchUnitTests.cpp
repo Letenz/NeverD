@@ -16,6 +16,7 @@
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDialog>
 #include <QDialogButtonBox>
 #include <QDirIterator>
 #include <QFile>
@@ -1109,7 +1110,7 @@ private slots:
     QWidget window;
     auto *menus = new QMenuBar;
     menus->addMenu(QStringLiteral("&File"));
-    auto *bar = new TitleBar(window, *menus);
+    auto *bar = new TitleBar(window, menus);
     QCOMPARE(menus->parentWidget(), bar);
     QAction palette;
     int runs = 0;
@@ -1155,6 +1156,43 @@ private slots:
     QTRY_VERIFY(!button("closeButton")->isVisible());
     window.showNormal();
     QTRY_VERIFY(button("closeButton")->isVisible());
+  }
+
+  void dialogTitleBarOffersTheButtonsItsFlagsAskFor() {
+    QDialog dialog;
+    dialog.setWindowTitle(QStringLiteral("Jump anywhere"));
+    auto *bar = new TitleBar(dialog);
+    dialog.resize(500, 300);
+    bar->setGeometry(0, 0, 500, bar->sizeHint().height());
+    dialog.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&dialog));
+    const auto button = [](TitleBar *owner, const char *name) {
+      return owner->findChild<QAbstractButton *>(QLatin1String(name));
+    };
+    // A dialog's bar has no command center and offers Close alone.
+    QVERIFY(!button(bar, "commandCenter"));
+    QVERIFY(button(bar, "closeButton")->isVisible());
+    QVERIFY(!button(bar, "maximizeButton")->isVisible());
+    QVERIFY(!button(bar, "minimizeButton")->isVisible());
+    QTest::mouseDClick(bar, Qt::LeftButton, Qt::NoModifier,
+                       QPoint(20, bar->height() / 2));
+    QVERIFY(!dialog.isMaximized());
+    QTest::mouseClick(button(bar, "closeButton"), Qt::LeftButton);
+    QTRY_VERIFY(!dialog.isVisible());
+
+    // A dialog whose flags ask for Maximize offers it.
+    QDialog resizable(
+        nullptr, Qt::Dialog | Qt::CustomizeWindowHint | Qt::WindowTitleHint |
+                     Qt::WindowCloseButtonHint | Qt::WindowMaximizeButtonHint);
+    auto *second = new TitleBar(resizable);
+    resizable.resize(500, 300);
+    second->setGeometry(0, 0, 500, second->sizeHint().height());
+    resizable.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&resizable));
+    QAbstractButton *maximize = button(second, "maximizeButton");
+    QVERIFY(maximize->isVisible());
+    QTest::mouseClick(maximize, Qt::LeftButton);
+    QTRY_VERIFY(resizable.isMaximized());
   }
 
   void themeDrawsFlatControls() {

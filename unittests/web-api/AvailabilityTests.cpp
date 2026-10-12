@@ -98,17 +98,24 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     if (!Entry || Entry->getString("kind") != "source_interfaces")
       continue;
     SourceInterfacesAvailable = true;
-    EXPECT_EQ(Entry->getString("profile"), "fetch-websocket-xhr-syntax-v3");
+    EXPECT_EQ(Entry->getString("profile"),
+              "fetch-websocket-xhr-wrappers-syntax-v4");
     EXPECT_FALSE(Entry->getBoolean("xhr_correlation").value_or(true));
     const auto *Kinds = Entry->getArray("candidate_kinds");
     ASSERT_NE(Kinds, nullptr);
-    EXPECT_EQ(Kinds->size(), 7u);
+    EXPECT_EQ(Kinds->size(), 8u);
     EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
       return Kind.getAsString() == "fetch_member_call";
     }));
     EXPECT_EQ(Entry->getString("fetch_member_identity"),
               "property_spelling_unverified");
     EXPECT_FALSE(Entry->getBoolean("fetch_member_correlation").value_or(true));
+    EXPECT_EQ(Entry->getString("wrapper_profile"),
+              "direct-lexical-fetch-forwarding-v1");
+    EXPECT_FALSE(Entry->getBoolean("wrapper_correlation").value_or(true));
+    EXPECT_TRUE(std::any_of(Kinds->begin(), Kinds->end(), [](const auto &Kind) {
+      return Kind.getAsString() == "fetch_wrapper_call";
+    }));
   }
   EXPECT_EQ(SourceInterfacesAvailable, bool(NEVERD_TEST_WEB_JS));
   unsigned RelationProfiles = 0;

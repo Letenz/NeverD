@@ -317,7 +317,7 @@ QString MainWindow::layoutPath() const {
 void MainWindow::buildMenusAndToolbars() {
   menuBar_ = new QMenuBar(this);
   if (frame_) {
-    titleBar_ = new TitleBar(*this, *menuBar_);
+    titleBar_ = new TitleBar(*this, menuBar_);
     titleBar_->setCommandCenterAction(
         actions_.action(ActionId::OptionsPalette));
     setMenuWidget(titleBar_);
