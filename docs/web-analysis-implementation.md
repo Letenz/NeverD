@@ -3531,3 +3531,17 @@ named supplement profiles. Future builds/hosts and unknown runtime behavior
 remain unsupported or partial as documented; no GitHub issue was closed or
 commented on by this task. Publication uses an ordinary fast-forward-compatible
 push to `dev`, with no history rewrite.
+
+The push encountered a further upstream advance to `fa7819708`. Normal merge
+`4de9a2b05` retains the Web implementation while integrating native source patch,
+loader data-in-code, SDK navigation/export-name and worker-listing changes.
+The 466-step engine/SDK/test build and three-step Qt worker build completed.
+The affected integration selection passed 86 of 88 checks (6.42 s), including
+the preserved Tauri initializer/archive, resource exports, passive reports,
+SDK navigation and worker/MCP. The absent optional full Bun compiler fixture
+and Claude VSIX fixture are explicit skips. Qt review with the preserved Claude
+package passed (6.09 s). Source provenance passed for 7,546 files and canonical
+ownership remained valid for 23 capabilities. Web, JS and ASAR remain ON.
+Receipts: `/tmp/neverd-epic-completion-final-{integrated-build,focused,
+gui-build,gui-tests,provenance,capabilities}.log`. This integration does not
+broaden the supported runtime profiles or change the acceptance boundaries.
