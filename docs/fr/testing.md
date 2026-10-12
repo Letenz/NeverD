@@ -1836,3 +1836,11 @@ ctest --test-dir build-source -L \
 ```
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` vérifie IF à CPL0 avec un contrôle CPL3, la correspondance des profils et des empreintes, les refus TF/AC/IOPL, la dépendance finale obligatoire d'IF même sans observations ordinaires, la restauration et les budgets exacts ou courts d'une opération. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` interdit aussi une sélection implicite de l'ABI source utilisateur. L'admission des instructions indéfinies et les guards de restauration des pilotes restent inchangés.
+
+`NeverDX86X87IntegerLoadTests` compare les instructions originales `FILD m16/m32/m64` à Codegen, HighC et LLVMC en default/NoOpt et C O0/O2. Les valeurs binary80, les gardes, le mot de contrôle et C1 défini couvrent tous les RC, PC valides et masques d'exception. Le modèle concret exécute toutes les entrées 16 bits et les frontières des puissances de deux des entiers larges. Les contrôles négatifs couvrent états d'exception inconnus/en attente, étendues mémoire exactes, métadonnées malformées et preuve de destination vide sur toutes les branches, boucles équilibrées/non équilibrées et appels inconnus. Les conversions pures conservent état FP et remplissage. Une entrée ABI ne prouve pas une pile vide : une destination inconnue ou occupée refuse la publication complète. Les oracles natifs exigent x64 GCC/Clang ; ils ne certifient ni l'état x87 complet, ni le débordement de pile, ni la priorité des fautes natives, ni l'exécution native Linux/macOS/x86-32. `NeverDLLVMCIntrinsicSemanticTests` exécute aussi `llvm.abs` scalaire jusqu'à 64 bits en C O0/O2 avec pièges de comportement indéfini, minimum signé défini et évaluation unique.
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+

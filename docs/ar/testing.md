@@ -1746,3 +1746,11 @@ ctest --test-dir build-source -L \
 ```
 
 تتحقق `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` من مسح وضبط IF في CPL0 مقابل تحكم CPL3، وتطابق الملفات وفصل الملخصات، ورفض TF/AC/IOPL، واعتماد IF النهائي الإلزامي حتى عند تعطيل الملاحظات العادية، والاستعادة والميزانيات الدقيقة أو الأقل بعملية واحدة. تتحقق `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` أيضاً من عدم اختيار ABI المستخدم ضمنياً. لم تتغير admission التعليمات غير المعرفة أو guards استعادة برامج التشغيل.
+
+تقارن `NeverDX86X87IntegerLoadTests` التعليمات الأصلية `FILD m16/m32/m64` بمسارات Codegen وHighC وLLVMC مع default/NoOpt وC O0/O2. تشمل المراقبة binary80 وبايتات الحماية وكلمة التحكم وC1 المعرّف لكل RC وPC صالح وأقنعة الاستثناء. تنفذ الاختبارات جميع مدخلات 16 بت وحدود قوى الاثنين للأعداد العريضة، وتحافظ التحويلات الصرفة على حالة FP والحشو. تغطي الضوابط السلبية الاستثناءات المعلقة/المجهولة ونطاقات الذاكرة الدقيقة والبيانات الوصفية غير الصالحة وإثبات فراغ الوجهة عبر الفروع والحلقات المتوازنة وغير المتوازنة والاستدعاءات المجهولة. لا يثبت مدخل ABI فراغ المكدس؛ ترفض الوجهة المجهولة أو المشغولة نشر الدالة الكاملة. تتطلب الاختبارات الأصلية x64 GCC/Clang ولا تصادق على حالة x87 الكاملة أو محاكاة فيضان المكدس أو أولوية الأخطاء الأصلية أو التنفيذ الأصلي Linux/macOS/x86-32. تنفذ `NeverDLLVMCIntrinsicSemanticTests` أيضًا `llvm.abs` العددي حتى 64 بت مع C O0/O2 وفخاخ السلوك غير المعرّف، بما فيها القيمة الدنيا المعرّفة ذات الإشارة والتقييم مرة واحدة.
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
