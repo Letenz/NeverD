@@ -495,7 +495,9 @@ static std::optional<uint16_t> definedMergedLowBytes(
 /// Low bytes of \p V this function defines on every path.  The bytes above
 /// them come from the entry value of a register that is not a parameter, so
 /// the caller never gave them a meaning: after `mov al, 1; ret` only AL of RAX
-/// is defined.  Anything else counts as fully defined.
+/// is defined.  So do the bytes a call leaves in a register it clobbers, the
+/// callee's scratch: after `call strcmp; setne dl`, only DL of RDX is.
+/// Anything else counts as fully defined.
 static uint16_t definedLowBytesRec(
     const std::map<std::pair<int, int>, const MedOp *> &Defs,
     const std::map<std::pair<int, int>, const PhiNode *> &PhiDefs,
@@ -520,6 +522,19 @@ static uint16_t definedLowBytesRec(
   }
   if (auto It = Memo.find(Key); It != Memo.end())
     return It->second;
+  for (const MedCallClobber &Clobber : Func.CallClobbers)
+    if (Clobber.Value == V) {
+      Memo[Key] = 0;
+      const uint16_t Preserved =
+          Clobber.PreservedPrefixSize
+              ? std::min(Clobber.PreservedPrefixSize,
+                         definedLowBytesRec(Defs, PhiDefs, Func,
+                                            Clobber.PreservedInput, Depth + 1,
+                                            Memo))
+              : 0;
+      Memo[Key] = Preserved;
+      return Preserved;
+    }
   // A PHI cycle defines what its other arms define.
   Memo[Key] = V.Size;
   uint16_t Result = V.Size;
