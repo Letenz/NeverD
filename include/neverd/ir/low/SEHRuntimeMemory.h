@@ -12,7 +12,9 @@
 #include "neverd/loader/ExceptionCommon.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/StringRef.h"
 
+#include <cstddef>
 #include <map>
 #include <string>
 #include <utility>
@@ -21,6 +23,13 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+
+/// Includes the terminating NUL for either image or source-written formats.
+inline constexpr size_t kMaxWindowsSEHFormatBytes = 4096;
+
+/// Check the bounded scalar Windows printf grammar, without a terminating NUL.
+/// Source argument type hints do not supply this runtime-memory contract.
+bool isWindowsSEHScalarFormat(llvm::StringRef Format);
 
 /// An exact PE import binding, supplied by the image owner. Neither a display
 /// name nor an ABI declaration supplies this identity. Call arguments and the
