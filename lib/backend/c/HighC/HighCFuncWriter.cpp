@@ -3632,7 +3632,10 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     return false;
   };
 
+  // Candidates already settled; one refused stays a statement of its own.
+  std::set<std::string> Decided;
   for (const Candidate &C : Candidates) {
+    Decided.insert(C.Name);
     unsigned Uses = 0;
     bool Redefined = false;
     bool OtherRegion = false;
@@ -3796,10 +3799,36 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       // changes memory. This also checks loads reached through candidates.
       if (EffectfulLoadAddress)
         continue;
-      // A folded atomic read-modify-write runs at its use: no other memory
-      // access may run between, or sit unsequenced beside it in the use,
-      // including one another fold brings there.
-      const bool WritesMemory = ExprWrites(*C.Stmt->Val, ExprWrites);
+      // A folded atomic read-modify-write or call runs at its use, also one
+      // folded into this value first: no other memory access may run
+      // between, or sit unsequenced beside it in the use, including one
+      // another fold brings there.
+      std::set<std::string> WriteSeen{C.Name};
+      std::function<bool(const HighExpr &, unsigned)> FoldWrites =
+          [&](const HighExpr &E, unsigned Depth) -> bool {
+        if (Depth > 64 || E.Kind == ExprKind::Call ||
+            E.Kind == ExprKind::Store ||
+            E.MemoryOrdering != NdMemoryOrdering::None)
+          return true;
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            WriteSeen.insert(varName(E.Var)).second) {
+          const std::string Read = varName(E.Var);
+          if (auto It = ValueForward.find(Read);
+              It != ValueForward.end() && It->second &&
+              FoldWrites(*It->second, Depth + 1))
+            return true;
+          if (auto It = CandidateDefs.find(Read);
+              !Decided.count(Read) && It != CandidateDefs.end() &&
+              It->second->Val && FoldWrites(*It->second->Val, Depth + 1))
+            return true;
+        }
+        bool Hit = false;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          Hit = Hit || FoldWrites(*Child, Depth + 1);
+        });
+        return Hit;
+      };
+      const bool WritesMemory = FoldWrites(*C.Stmt->Val, 0);
       std::set<std::string> AccessSeen{C.Name};
       std::function<bool(const HighExpr &, unsigned)> AccessesMemory =
           [&](const HighExpr &E, unsigned Depth) -> bool {

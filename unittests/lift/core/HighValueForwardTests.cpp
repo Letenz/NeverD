@@ -631,6 +631,49 @@ int main(void) { return array_slot(8) == 22 && array_slot(0) == 22 ? 0 : 1; }
   }
 }
 
+TEST(HighValueForward, AnAtomicAddACopyCarriesStaysBeforeALoadAfterIt) {
+  // The atomic add returns the old *arg0, the copy widens it, and the load
+  // after the add reads the sum.  Folded through the copy,
+  // `*arg0 ^ (uint64_t)__atomic_fetch_add(arg0, 1, ...)` would read *arg0
+  // unsequenced beside the add (x64o209_aacqrel).
+  const auto Half = NdType::makeInt(4, false);
+  const auto Word = NdType::makeInt(8, false);
+  const auto Pointer = NdType::makePtr(Half);
+  auto Narrow = [&](int Id) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.Size = 4;
+    V.TheArch = Arch::X64;
+    return HighExpr::makeVar(V, Half);
+  };
+  auto Widen = [&](ExprPtr Value) {
+    auto E = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Value));
+    E->Type = Word;
+    return E;
+  };
+  auto Add = HighExpr::makeBinop(NdOp::ATOMIC_ADD, typedParameter(0, Pointer),
+                                 HighExpr::makeConst(1, 4));
+  Add->Type = Half;
+  Add->MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+  auto Sum = op(NdOp::INT_XOR, local(3, Word), local(2, Word));
+  Sum->Type = Word;
+  HighFunc F = function(
+      "add_then_read",
+      {assign(Narrow(1), Add), assign(local(2, Word), Widen(Narrow(1))),
+       assign(local(3, Word),
+              Widen(HighExpr::makeLoad(typedParameter(0, Pointer), Half))),
+       result(Sum)});
+  F.Params = {{"arg0", Pointer}};
+  const std::string Source = emit({F});
+  compileAndRun(Source + R"(
+int main(void) {
+  uint32_t value = 5;
+  return add_then_read(&value) == (6 ^ 5) && value == 6 ? 0 : 1;
+}
+)");
+}
+
 TEST(HighValueForward, AnIndirectCallReadsItsTargetFromASlot) {
   // The function pointer is kept in a frame slot and called through it: the
   // slot is read like any other, and the frame that holds it is declared.
