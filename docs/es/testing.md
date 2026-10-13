@@ -1833,3 +1833,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 `NeverDLLVMCAllocaTests` ejecuta LLVM original y C generado en O0/O2 con trampas de comportamiento indefinido. Observa rangos completos, paso con relleno, alineación 16/32/64, independencia de asignaciones simultáneas/en bucle y evaluación única del productor de cantidad. Las rutas C normales y con tipos conservados retienen almacenamiento; contratos no admitidos, desbordamientos y stack save/restore se rechazan antes de DCE. No certifica direcciones originales de pila ni identidad de marcos de excepción.
+
+El mismo objetivo compara la alineación de escalares, punteros, arreglos y registros empaquetados estáticos hasta 128 bytes, la alineación global, el almacenamiento completo de cadenas rellenadas con ceros y la identidad de direcciones globales en inicializadores, retornos, llamadas, selecciones y conversiones de puntero a entero. Cubre, donde corresponde, salidas ordinarias/con tipos conservados y completas/de función seleccionada.

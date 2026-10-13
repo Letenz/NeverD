@@ -641,6 +641,7 @@ public:
   std::string getName(const llvm::Value *V);
   std::string freshVar(const std::string &Hint = "v");
   std::string valueStr(const llvm::Value *V, bool *PointerSpelling = nullptr);
+  std::string globalNameStr(const llvm::GlobalValue *Global);
   std::string constStr(const llvm::Constant *C);
   std::string blockLabel(const llvm::BasicBlock *BB);
   std::string binopStr(unsigned Opcode, const std::string &LHS,

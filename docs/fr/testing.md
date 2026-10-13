@@ -1847,3 +1847,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 `NeverDLLVMCAllocaTests` exécute LLVM original et C généré à O0/O2 avec pièges de comportement indéfini. Il observe l’étendue complète, le pas avec padding, l’alignement 16/32/64 octets, l’indépendance des allocations simultanées/en boucle et une seule évaluation du producteur de quantité. Les routes C ordinaires et à types conservés gardent le stockage ; contrats non pris en charge, débordements et stack save/restore sont refusés avant DCE. Les adresses de pile initiales et l’identité des cadres d’exception ne sont pas certifiées.
+
+La même cible compare l’alignement des scalaires, pointeurs, tableaux et structures compactées statiques jusqu’à 128 octets, l’alignement global, le stockage complet des chaînes complétées par des zéros et l’identité des adresses globales dans les initialisations, retours, appels, sélections et conversions pointeur-entier. Elle couvre, selon le cas, les sorties ordinaires/à types préservés et complètes/par fonction sélectionnée.

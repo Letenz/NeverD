@@ -1528,3 +1528,5 @@ DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマス�
 `isCanonicalX87Wait` は通常の registration 転送と検証済み local-finally の戻りで、正常経路のフレーム保持規則を共有します。FWAIT 操作と例外ディスパッチは保持されます。他の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
 
 `LLVMCStackAllocation` は非入口および要素数付きスタック割り当てを private C clone で管理し、DataLayout の割り当て幅、符号なし要素数、アラインメント、実行位置を保持します。副作用付きの private call は元の位置で通常の `__builtin_alloca` を出力し、サイズのオーバーフローを検査して追加バイト内で整列します。Clang/GCC で寿命は関数の復帰まで続きます。入口の単一オブジェクトは通常のローカル宣言を保持します。過大な整数幅、scalable storage、非既定アドレス空間、inalloca/swifterror、明示的 stack save/restore および入力 IR の private marker は正規化前に拒否します。元の IR は変更しません。
+
+`LLVMCStorage` はローカル・グローバルオブジェクトとその宣言の明示的な追加アラインメントを共有する。文字列定義は末尾のゼロバイトを含む LLVM 配列の全長を保持する。LLVM のグローバル値は式と初期化子ではアドレスを表し、オブジェクト宣言と直接のロード/ストアだけが C の名前をそのまま使う。インポートデータの束縛は既存のアドレス表現を保持する。

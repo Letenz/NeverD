@@ -1409,12 +1409,7 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     return;
   // Aggregate SSA values and storage arrays have distinct C declarations but
   // identical byte layouts. A byte copy also preserves unaligned accesses.
-  auto AggregateAddress = [&](const llvm::Value *Ptr) {
-    std::string Text = valueStr(Ptr);
-    if (llvm::isa<llvm::GlobalVariable>(Ptr))
-      Text = "&" + Text;
-    return Text;
-  };
+  auto AggregateAddress = [&](const llvm::Value *Ptr) { return valueStr(Ptr); };
   if (auto *Load = llvm::dyn_cast<llvm::LoadInst>(&Inst);
       Load && Load->getType()->isAggregateType()) {
     if (!Load->isSimple() || Load->getPointerAddressSpace() != 0)
@@ -1621,8 +1616,6 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       AddressText = "&" + Image;
     else if (const auto *Slot = asAllocaPointer(Address))
       AddressText = "&" + getName(Slot);
-    else if (llvm::isa<llvm::GlobalVariable>(Address->stripPointerCasts()))
-      AddressText = "&" + valueStr(Address->stripPointerCasts());
     else
       AddressText = valueStr(Address);
     if (!OnlyFunction && !Load->isAtomic())
@@ -3570,17 +3563,17 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
     // permits direct access; differently typed views still copy object bytes.
     if (Global->getValueType() == Type &&
         !ExternalDataIdentifiers.count(Global)) {
+      const std::string Object = globalNameStr(Global);
       emitIndent(Indent);
       if (Load)
-        OS << getName(Load) << " = " << Pointer << ";\n";
+        OS << getName(Load) << " = " << Object << ";\n";
       else
-        OS << Pointer << " = "
+        OS << Object << " = "
            << (Integer ? integerPointerOperandStr(Store->getValueOperand())
                        : valueStr(Store->getValueOperand()))
            << ";\n";
       return true;
     }
-    Pointer = "&" + Pointer;
   }
   emitIndent(Indent);
   if (WideInteger) {

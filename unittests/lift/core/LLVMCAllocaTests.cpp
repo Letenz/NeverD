@@ -38,7 +38,8 @@ std::string moduleText(const llvm::Module &Module) {
 
 void comparePrograms(llvm::StringRef IR, llvm::StringRef Driver,
                      bool PreserveTypes = false,
-                     llvm::StringRef SelectedFunction = {}) {
+                     llvm::StringRef SelectedFunction = {},
+                     bool RequireRuntimeAllocation = true) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;
   auto Module = llvm::parseAssemblyString(IR, Diagnostic, Context);
@@ -60,8 +61,12 @@ void comparePrograms(llvm::StringRef IR, llvm::StringRef Driver,
       LLVMCEmitter().emit(*Module, Stream, Options, nullptr, nullptr, Only));
   EXPECT_EQ(moduleText(*Module), Before) << "C projection mutated original IR";
   // Do not execute the known underallocation produced by the old emitter.
-  ASSERT_NE(Text.find("__builtin_alloca("), std::string::npos) << Text;
+  if (RequireRuntimeAllocation)
+    ASSERT_NE(Text.find("__builtin_alloca("), std::string::npos) << Text;
   auto Original = llvm::CloneModule(*Module);
+  for (auto &Global : Original->globals())
+    if (Global.hasInitializer())
+      Global.setName("original_" + Global.getName());
   for (auto &Function : *Original)
     if (!Function.isDeclaration())
       Function.setName("original_" + Function.getName());
@@ -118,6 +123,177 @@ void comparePrograms(llvm::StringRef IR, llvm::StringRef Driver,
 }
 
 } // namespace
+
+TEST(LLVMCAlloca, StaticObjectsPreserveExplicitAlignment) {
+  for (bool Preserve : {false, true})
+    comparePrograms(R"(
+target datalayout = "e-p:64:64-i64:64-i128:128-n8:16:32:64-S128"
+%packed = type <{ i8, i64 }>
+declare void @observe_static(ptr, i64, i64)
+define i64 @static_objects() {
+entry:
+  %byte = alloca i8, align 64
+  %word = alloca i16, align 64
+  %wide = alloca i64, align 128
+  %pointer = alloca ptr, align 64
+  %real = alloca double, align 32
+  %array = alloca [4 x i16], align 64
+  %record = alloca %packed, align 64
+  %natural = alloca i64, align 1
+  call void @observe_static(ptr %byte, i64 1, i64 64)
+  call void @observe_static(ptr %word, i64 2, i64 64)
+  call void @observe_static(ptr %wide, i64 8, i64 128)
+  call void @observe_static(ptr %pointer, i64 8, i64 64)
+  call void @observe_static(ptr %real, i64 8, i64 32)
+  call void @observe_static(ptr %array, i64 8, i64 64)
+  call void @observe_static(ptr %record, i64 9, i64 64)
+  call void @observe_static(ptr %natural, i64 8, i64 1)
+  ret i64 17
+}
+)",
+                    R"(
+extern uint64_t original_static_objects(void);
+static unsigned calls, bad;
+static void *saved[8];
+static uint64_t lengths[8];
+void observe_static(void *address, uint64_t count, uint64_t alignment) {
+  if (((uintptr_t)address & (alignment-1)) != 0) bad=1;
+  for (unsigned j=0; j<calls; ++j) {
+    if (saved[j] == address) bad=1;
+    for (uint64_t i=0; i<lengths[j]; ++i)
+      if (((uint8_t*)saved[j])[i] != (uint8_t)(i+j*19+7)) bad=1;
+  }
+  saved[calls]=address;
+  lengths[calls]=count;
+  for (uint64_t i=0; i<count; ++i) ((uint8_t*)address)[i]=(uint8_t)(i+calls*19+7);
+  ++calls;
+}
+int main(void) {
+  calls=bad=0;
+  uint64_t expected=original_static_objects();
+  if (bad || calls != 8) return 1;
+  calls=bad=0;
+  uint64_t actual=static_objects();
+  return (bad || calls != 8 || actual != expected) ? 2 : 0;
+}
+)",
+                    Preserve, {}, false);
+}
+
+TEST(LLVMCAlloca, GlobalObjectsPreserveExplicitAlignment) {
+  for (bool Selected : {false, true})
+    comparePrograms(R"(
+target datalayout = "e-p:64:64-i64:64-i128:128-n8:16:32:64-S128"
+@aligned_byte = global i8 0, align 64
+@aligned_word = internal global i16 0, align 64
+@aligned_wide = global i64 0, align 128
+@aligned_array = global [4 x i16] zeroinitializer, align 64
+@aligned_string = private constant [4 x i8] c"abc\00", align 64
+declare void @observe_global(i64, i64)
+define i64 @global_objects() {
+entry:
+  %byte = ptrtoint ptr @aligned_byte to i64
+  %word = ptrtoint ptr @aligned_word to i64
+  %wide = ptrtoint ptr @aligned_wide to i64
+  %array = ptrtoint ptr @aligned_array to i64
+  %string = ptrtoint ptr @aligned_string to i64
+  call void @observe_global(i64 %byte, i64 64)
+  call void @observe_global(i64 %word, i64 64)
+  call void @observe_global(i64 %wide, i64 128)
+  call void @observe_global(i64 %wide, i64 128)
+  call void @observe_global(i64 ptrtoint (ptr @aligned_byte to i64), i64 64)
+  call void @observe_global(i64 %array, i64 64)
+  call void @observe_global(i64 %string, i64 64)
+  ret i64 23
+}
+)",
+                    R"(
+extern uint64_t original_global_objects(void);
+static unsigned calls, bad;
+void observe_global(uint64_t address, uint64_t alignment) {
+  if (!address || (address & (alignment-1)) != 0) bad=1;
+  ++calls;
+}
+int main(void) {
+  calls=bad=0;
+  uint64_t expected=original_global_objects();
+  if (bad || calls != 7) return 1;
+  calls=bad=0;
+  uint64_t actual=global_objects();
+  return (bad || calls != 7 || actual != expected) ? 2 : 0;
+}
+)",
+                    false, Selected ? "global_objects" : "", false);
+}
+
+TEST(LLVMCAlloca, StringStorageRetainsTrailingZeroExtent) {
+  for (bool Selected : {false, true})
+    comparePrograms(R"(
+target datalayout = "e-p:64:64-i64:64-i128:128-n8:16:32:64-S128"
+@padded_text = internal constant [8 x i8] c"ab\00\00\00\00\00\00", align 8
+declare i64 @read_last(i64, i64)
+define i64 @string_extent() {
+entry:
+  %address = ptrtoint ptr @padded_text to i64
+  %result = call i64 @read_last(i64 %address, i64 7)
+  ret i64 %result
+}
+)",
+                    R"(
+_Static_assert(sizeof(padded_text) == 8, "complete LLVM string storage");
+extern uint64_t original_string_extent(void);
+uint64_t read_last(uint64_t address, uint64_t offset) {
+  return ((const uint8_t*)(uintptr_t)address)[offset];
+}
+int main(void) { return string_extent() != original_string_extent(); }
+)",
+                    false, Selected ? "string_extent" : "", false);
+}
+
+TEST(LLVMCAlloca, ScalarGlobalPointersRetainAddressIdentity) {
+  for (bool Preserve : {false, true})
+    comparePrograms(R"(
+target datalayout = "e-p:64:64-i64:64-i128:128-n8:16:32:64-S128"
+@global_value = global i64 5, align 8
+@global_pointer = global ptr @global_value, align 8
+declare i64 @identify_pointer(ptr)
+define ptr @returned_pointer() {
+  ret ptr @global_value
+}
+define i64 @pointer_values(i1 %which) {
+  %selected = select i1 %which, ptr @global_value, ptr @global_pointer
+  %first = call i64 @identify_pointer(ptr @global_value)
+  %second = call i64 @identify_pointer(ptr %selected)
+  %loaded = load ptr, ptr @global_pointer
+  %third = call i64 @identify_pointer(ptr %loaded)
+  %partial = add i64 %first, %second
+  %result = add i64 %partial, %third
+  ret i64 %result
+}
+)",
+                    R"(
+extern uint64_t original_global_value;
+extern void *original_global_pointer;
+extern void *original_returned_pointer(void);
+extern uint64_t original_pointer_values(bool);
+uint64_t identify_pointer(void *value) {
+  if (value == &global_value || value == &original_global_value) return 11;
+  if (value == &global_pointer || value == &original_global_pointer) return 19;
+  return 0;
+}
+int main(void) {
+  if (original_returned_pointer() != &original_global_value) return 1;
+  if (returned_pointer() != &global_value) return 2;
+  for (unsigned i=0; i!=2; ++i) {
+    uint64_t expected=original_pointer_values(i != 0);
+    if (expected != (i ? 33 : 41)) return 3;
+    if (pointer_values(i != 0) != expected) return 4;
+  }
+  return 0;
+}
+)",
+                    Preserve, {}, false);
+}
 
 TEST(LLVMCAlloca, DynamicBytesKeepExtentAlignmentAndIndependentInstances) {
   comparePrograms(R"(

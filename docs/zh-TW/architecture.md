@@ -1456,3 +1456,5 @@ DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩�
 `isCanonicalX87Wait` 為一般 registration 轉移和經驗證的 local-finally 返回提供相同的正常路徑框架保留規則。FWAIT 操作與例外分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。此規則不授予非區域 finally 退出或原生還原證明。
 
 `LLVMCStackAllocation` 在私有 C 複本統一管理帶數量和非入口堆疊配置，保留 DataLayout 配置步長、無號數量、對齊與執行位置。具副作用的私有呼叫在原指令處輸出一般 `__builtin_alloca`，檢查長度溢位並在額外位元組內對齊，因此 Clang/GCC 的配置存續到函式返回。入口單物件配置保留一般區域宣告。過寬數量、可伸縮儲存、非預設位址空間、inalloca/swifterror 和明確堆疊儲存/還原在正規化前拒絕；輸入 IR 的私有標記也拒絕，呼叫者 IR 不變。
+
+`LLVMCStorage` 統一保留區域物件、全域物件及其宣告的明確額外對齊。字串定義保留完整的 LLVM 陣列長度，包括尾端零位元組。LLVM 全域值在運算式和初始化器中代表位址；只有物件宣告和直接載入/儲存使用單純的 C 名稱。匯入資料綁定保留既有位址表示。

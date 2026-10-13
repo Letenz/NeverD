@@ -1848,3 +1848,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 `NeverDLLVMCAllocaTests` führt ursprüngliches LLVM und erzeugtes C bei O0/O2 mit Fallen für undefiniertes Verhalten aus. Beobachtet werden vollständige Bereiche, gepolsterte Schrittweite, 16/32/64-Byte-Ausrichtung, unabhängige gleichzeitige/Schleifen-Allokationen und einmalige Auswertung der Anzahl. Normale und typerhaltende C-Wege behalten Speicher; nicht unterstützte oder überlaufende Verträge und stack save/restore scheitern vor DCE. Ursprüngliche Stack-Adressen und Ausnahmeframe-Identität werden nicht zertifiziert.
+
+Dasselbe Ziel vergleicht die Ausrichtung statischer Skalare, Zeiger, Arrays und gepackter Strukturen bis 128 Byte, globale Ausrichtung, den vollständigen Speicher nullaufgefüllter Zeichenketten und die globale Adressidentität in Initialisierungen, Rückgaben, Aufrufen, Auswahlen und Zeiger-Ganzzahl-Konvertierungen. Geprüft werden soweit anwendbar normale/typerhaltende und vollständige/ausgewählte Funktionsausgaben.

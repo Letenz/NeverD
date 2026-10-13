@@ -719,13 +719,6 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
         return "(" + typeToCLLVM(CE->getType()) + ")(void*)" +
                functionIdentifier(*Fn);
       }
-      // A global denotes its address, never its initializer bytes. Arrays
-      // decay to that address; imported data already carries an address.
-      if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(Src);
-          Global && !Global->isDeclaration() &&
-          !Global->getValueType()->isArrayTy() &&
-          !ExternalDataIdentifiers.count(Global))
-        return "(" + typeToCLLVM(CE->getType()) + ")(void*)&" + valueStr(Src);
       return "(" + typeToCLLVM(CE->getType()) + ")(void*)" + valueStr(Src);
     }
     if (CE->getOpcode() == llvm::Instruction::IntToPtr) {
@@ -763,38 +756,14 @@ std::string LLVMCWriter::constStr(const llvm::Constant *C) {
   }
 
   if (auto *GV = llvm::dyn_cast<llvm::GlobalValue>(C)) {
-    if (const auto *Fn = llvm::dyn_cast<llvm::Function>(GV))
-      return functionIdentifier(*Fn);
-    if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(GV))
-      if (const auto It = ExternalDataIdentifiers.find(Global);
-          It != ExternalDataIdentifiers.end())
-        return It->second;
-    std::string N = GV->getName().str();
-    if (N.empty())
-      return getName(C);
-
-    std::string Resolved = resolveNdDataName(N);
-    if (!Resolved.empty())
-      return Resolved;
-
-    // A symbol defined elsewhere keeps its C name: `__cxa_atexit` is not
-    // `_cxa_atexit`.
-    if (GV->isDeclaration())
-      return canonicalizeCProjectionIdentifier(cNameOfGlobal(N, true),
-                                               "nd_symbol");
-
-    if (N[0] == '_')
-      N = N.substr(1);
-    std::string Clean;
-    for (char Ch : N) {
-      if (std::isalnum(static_cast<unsigned char>(Ch)) || Ch == '_')
-        Clean += Ch;
-      else
-        Clean += '_';
-    }
-    if (Clean.empty() || std::isdigit(static_cast<unsigned char>(Clean[0])))
-      Clean = "g_" + Clean;
-    return Clean;
+    const std::string Name = globalNameStr(GV);
+    // An LLVM global value is an address in initializers and expressions.
+    // Only object declarations and direct loads/stores use the bare C name.
+    if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(GV);
+        Global && !Global->getValueType()->isArrayTy() &&
+        !ExternalDataIdentifiers.count(Global))
+      return "&" + Name;
+    return Name;
   }
 
   // LLVM arrays are first-class values. Their C carrier is a record containing
@@ -2726,10 +2695,38 @@ std::string LLVMCWriter::valueStr(const llvm::Value *V, bool *PointerSpelling) {
     }
   }
   if (auto *C = llvm::dyn_cast<llvm::Constant>(V))
-    return constStr(C);
+    return llvm::isa<llvm::GlobalVariable>(C) ? AddressText(constStr(C))
+                                              : constStr(C);
   if (const llvm::AllocaInst *Slot = llvm::dyn_cast<llvm::AllocaInst>(V))
     return AddressText("&" + getName(Slot));
   return getName(V);
+}
+
+std::string LLVMCWriter::globalNameStr(const llvm::GlobalValue *Global) {
+  if (const auto *Function = llvm::dyn_cast<llvm::Function>(Global))
+    return functionIdentifier(*Function);
+  if (const auto *Variable = llvm::dyn_cast<llvm::GlobalVariable>(Global))
+    if (const auto It = ExternalDataIdentifiers.find(Variable);
+        It != ExternalDataIdentifiers.end())
+      return It->second;
+  std::string Name = Global->getName().str();
+  if (Name.empty())
+    return getName(Global);
+  if (std::string Resolved = resolveNdDataName(Name); !Resolved.empty())
+    return Resolved;
+  // External symbols keep their C names, including meaningful underscores.
+  if (Global->isDeclaration())
+    return canonicalizeCProjectionIdentifier(cNameOfGlobal(Name, true),
+                                             "nd_symbol");
+  if (Name[0] == '_')
+    Name.erase(0, 1);
+  for (char &Character : Name)
+    if (!std::isalnum(static_cast<unsigned char>(Character)) &&
+        Character != '_')
+      Character = '_';
+  if (Name.empty() || std::isdigit(static_cast<unsigned char>(Name[0])))
+    Name = "g_" + Name;
+  return Name;
 }
 
 std::string LLVMCWriter::blockLabel(const llvm::BasicBlock *BB) {
@@ -3223,10 +3220,6 @@ std::string LLVMCWriter::gepExpr(const llvm::GEPOperator &GEP) {
     }
   const std::string Carrier = "uint" + std::to_string(Bits) + "_t";
   std::string Base = valueStr(GEP.getPointerOperand());
-  if (const auto *Global =
-          llvm::dyn_cast<llvm::GlobalVariable>(GEP.getPointerOperand());
-      Global && !Global->getValueType()->isArrayTy())
-    Base = "&" + Base;
   std::string Sum = "(" + Carrier + ")(uintptr_t)(" + Base + ")";
   if (!Offset.isZero())
     Sum += " + (" + Carrier + ")0x" + llvm::utohexstr(Offset.getZExtValue()) +
