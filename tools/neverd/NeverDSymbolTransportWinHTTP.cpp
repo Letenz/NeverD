@@ -12,6 +12,8 @@
 
 #include "NeverDSymbolDownload.h"
 
+#include "neverd/support/FilePath.h"
+
 #include <fstream>
 #include <memory>
 #include <string>
@@ -122,7 +124,7 @@ TransferResult fetchURL(const std::string &URL,
 
   std::ofstream Out(File, std::ios::binary | std::ios::trunc);
   if (!Out)
-    return {0, "cannot write " + File.string()};
+    return {0, "cannot write " + pathToUTF8(File)};
   const auto Started = GetTickCount64();
   std::vector<char> Buffer;
   uint64_t Received = 0;
@@ -144,7 +146,7 @@ TransferResult fetchURL(const std::string &URL,
       return {0, "the download timed out"};
     Out.write(Buffer.data(), Read);
     if (!Out)
-      return {0, "cannot write " + File.string()};
+      return {0, "cannot write " + pathToUTF8(File)};
     if (Progress)
       Progress(Received, Total);
   }
