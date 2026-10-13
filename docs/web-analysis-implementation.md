@@ -3752,3 +3752,11 @@ unusable external-tool PATH and zero stderr. The 23-capability check, LLVM
 formatter and source-provenance scan of 7,675 files pass. Final receipts use
 `/tmp/neverd-js-continuation-final-*`; missing producer corpora remain the same
 explicit qualification gaps.
+
+The first push encountered newer remote `960e6a8eb`. Its only implementation
+change is native object-patch ABI metadata; no Web owner changed. Normal merge
+`c9782cfa5` and the seven-step SDK/CLI/transport rebuild succeeded. The final
+focused run passed **20 of 22** large-source/SDK/native-handoff/availability/
+transport cases in 5.50 s; the missing optional Bun producer image and the
+normal backend-omission case are explicit skips. Capability ownership remains
+valid. These receipts use `/tmp/neverd-js-continuation-push-retry-*`.
