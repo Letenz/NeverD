@@ -5595,6 +5595,8 @@ fail those source cases rather than silently use Clang. The adapter disables
 NeverC's automatic PE default libraries with `-fno-autolink`. The same matrix
 still rejects externally supplied `.drectve` contracts without publication.
 
+The matrix also checks `target` receipts against an independent ABI inventory for compiled and supplied native objects. Malformed-object tests must then install and execute the unmodified object as a positive control.
+
 The dedicated `source-patch-windows.yml` workflow uses Clang 22.1.6, the native
 MSVC CRT and the Windows SDK. `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1` makes missing
 runtime inputs fail; the workflow also rejects skipped PE/object/matrix cases.

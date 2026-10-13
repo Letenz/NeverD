@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
+<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
 
 [← Documentation Index](README.md)
 
@@ -51,6 +51,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
 
 يعرض الجدول ملفات تشغيل OS المتحقق منها، ولا يضمن كل إصدار أو خيار للمترجم. تقبل مثبتات ELF وPE وMach-O الأصلية المعماريات الأربع. لا يُقبل `dyncode` أو NeverC C++. يتطلب GCC برنامج تشغيل ELF مطابقًا ولا ينتج LLVM IR. تفشل بوضوح عمليات النقل المجهولة وTLS والمنشئات وLTO ورموز common/IFUNC والاستيرادات غير المحلولة. يسجل إيصال JSON المترجم والوسائط والربط والعناوين، ويسجل SHA-256 للكائنات الأصلية أيضًا.
+
+يُستمد حقل `target` في إيصال الكائن الأصلي من ABI للصورة المحمّلة، بما في ذلك أعلام الفاصلة العائمة ARM ELF والتمييز بين منصتَي iOS/watchOS. تتبع الكائنات المترجمة والمقدمة قاعدة الهوية نفسها.
 
 تتطلب مصفوفة CPU نجاح تثبيت المصدر وIR المقدم والكائنات الأصلية في التركيبات الاثنتي عشرة. وتتحقق بصورة منفصلة من ARMv7k watchOS وARMv7 iOS، والحالة القابلة للكتابة／للقراءة فقط، ووسائط الفاصلة العائمة والمكدس للدوال الأصلية، وتنفيذ نقطة الدخول بعد تغيير عنوان التحميل. لا يصادق تنفيذ CPU على محمل OS أو فك مكدس C++ أو أي ABI؛ راجع ملفات OS أعلاه.
 

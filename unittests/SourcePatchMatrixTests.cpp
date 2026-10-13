@@ -38,22 +38,27 @@ struct Profile {
   Arch Architecture;
   BinaryFormat Format;
   const char *Name;
+  const char *ReceiptTriple;
   const char *FrontendTriple = nullptr;
 };
 const Profile Profiles[] = {
-    {Arch::X86, BinaryFormat::ELF, "ELF_X86"},
-    {Arch::X64, BinaryFormat::ELF, "ELF_X64"},
-    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32"},
-    {Arch::AArch64, BinaryFormat::ELF, "ELF_ARM64"},
-    {Arch::X86, BinaryFormat::COFF, "PE_X86"},
-    {Arch::X64, BinaryFormat::COFF, "PE_X64"},
-    {Arch::ARM, BinaryFormat::COFF, "PE_ARM32"},
-    {Arch::AArch64, BinaryFormat::COFF, "PE_ARM64"},
-    {Arch::X86, BinaryFormat::MachO, "MachO_X86"},
-    {Arch::X64, BinaryFormat::MachO, "MachO_X64"},
-    {Arch::ARM, BinaryFormat::MachO, "MachO_ARM32"},
-    {Arch::AArch64, BinaryFormat::MachO, "MachO_ARM64"},
-    {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "armv7-apple-ios5.0"},
+    {Arch::X86, BinaryFormat::ELF, "ELF_X86", "i386-unknown-linux-gnu"},
+    {Arch::X64, BinaryFormat::ELF, "ELF_X64", "x86_64-unknown-linux-gnu"},
+    {Arch::ARM, BinaryFormat::ELF, "ELF_ARM32",
+     "armv7-unknown-linux-gnueabihf"},
+    {Arch::AArch64, BinaryFormat::ELF, "ELF_ARM64",
+     "aarch64-unknown-linux-gnu"},
+    {Arch::X86, BinaryFormat::COFF, "PE_X86", "i686-pc-windows-msvc"},
+    {Arch::X64, BinaryFormat::COFF, "PE_X64", "x86_64-pc-windows-msvc"},
+    {Arch::ARM, BinaryFormat::COFF, "PE_ARM32", "thumbv7-pc-windows-msvc"},
+    {Arch::AArch64, BinaryFormat::COFF, "PE_ARM64", "aarch64-pc-windows-msvc"},
+    {Arch::X86, BinaryFormat::MachO, "MachO_X86", "i386-apple-darwin"},
+    {Arch::X64, BinaryFormat::MachO, "MachO_X64", "x86_64-apple-macos14.0"},
+    {Arch::ARM, BinaryFormat::MachO, "MachO_ARM32", "thumbv7k-apple-watchos"},
+    {Arch::AArch64, BinaryFormat::MachO, "MachO_ARM64",
+     "arm64-apple-macos14.0"},
+    {Arch::ARM, BinaryFormat::MachO, "MachO_ARMv7", "thumbv7-apple-ios5.0",
+     "armv7-apple-ios5.0"},
 };
 std::string take(const char *Text) {
   std::string Result = Text ? Text : "";
@@ -304,6 +309,20 @@ protected:
       std::filesystem::remove_all(Directory, Ignored);
   }
   std::string error() { return take(neverd_last_error(Session)); }
+  void expectObjectReceipt() {
+    auto Report = llvm::json::parse(take(neverd_patch_source_report(Session)));
+    ASSERT_TRUE(bool(Report));
+    const auto *Object = Report->getAsObject();
+    ASSERT_NE(Object, nullptr);
+    EXPECT_EQ(Object->getBoolean("success"), true);
+    EXPECT_EQ(Object->getString("target"), GetParam().ReceiptTriple);
+    EXPECT_EQ(Object->getInteger("artifact"),
+              NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT);
+    if (Options.input_kind == NEVERD_SOURCE_PATCH_OBJECT) {
+      EXPECT_EQ(Object->getString("producer"), "external");
+      EXPECT_EQ(Object->getInteger("input_kind"), NEVERD_SOURCE_PATCH_OBJECT);
+    }
+  }
   int patch() {
     constexpr const char *Source =
         "__attribute__((noinline)) static int helper(int x) { volatile int "
@@ -479,6 +498,7 @@ TEST_P(SourcePatchMatrix, NativeObjectFloatingPointAndStackArgumentABI) {
 TEST_P(SourcePatchMatrix, NativeObjectProfileCannotFallBackToIR) {
   Options.artifact = NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   ASSERT_EQ(patch(), 1) << error();
+  expectObjectReceipt();
   auto Reader = Loader::create(Output);
   ASSERT_NE(Reader, nullptr);
   auto Reloaded = Reader->load(Output);
@@ -548,6 +568,20 @@ TEST_P(SourcePatchMatrix, NativeObjectRejectsMismatchedAndTruncatedHeaders) {
     EXPECT_FALSE(std::filesystem::exists(Output));
     EXPECT_EQ(read(Original), OriginalBytes);
   }
+  // The same independent object must also succeed. This prevents rejection of
+  // every object from satisfying the malformed-input assertions above, and
+  // checks receipt identity without going through the source compiler adapter.
+  ASSERT_EQ(neverd_patch_source(Session, Bytes.data(), Bytes.size(), &Options,
+                                Output.string().c_str()),
+            1)
+      << error();
+  expectObjectReceipt();
+  auto Reader = Loader::create(Output);
+  ASSERT_NE(Reader, nullptr);
+  auto Reloaded = Reader->load(Output);
+  ASSERT_TRUE(bool(Reloaded)) << llvm::toString(Reloaded.takeError());
+  execute(*Reloaded, GetParam(), 7, 61);
+  EXPECT_EQ(read(Original), OriginalBytes);
 }
 TEST_P(SourcePatchMatrix, SourceEntrySurvivesImageRebasing) {
   ASSERT_EQ(patch(), 1) << error();

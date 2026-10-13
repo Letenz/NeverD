@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
+<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
 
 [← Documentation Index](README.md)
 
@@ -51,6 +51,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 normaler Modus | Natives Objekt | ELF x64 C |
 
 Die Tabelle nennt geprüfte OS-Laufzeitprofile, keine Zusage für jede Compiler-Version oder Option. Die nativen Installer für ELF, PE und Mach-O akzeptieren alle vier Architekturen. `dyncode` und NeverC C++ sind nicht zugelassen. GCC benötigt einen passenden ELF-Treiber und erzeugt kein LLVM IR. Unbekannte Relokationen, TLS, Konstruktoren, LTO, common/IFUNC-Symbole und unaufgelöste Imports führen zu klaren Fehlern. Der JSON-Beleg enthält Compiler, Argumente, Bindungen und Adressen; native Objekte erhalten zusätzlich SHA-256.
+
+Das Feld `target` im Beleg eines nativen Objekts folgt der ABI des geladenen Images, einschließlich der ARM-ELF-Gleitkommaflags und der unterschiedlichen iOS/watchOS-Plattformen. Kompilierte und bereitgestellte Objekte verwenden dieselbe Identitätsregel.
 
 Die CPU-Matrix verlangt erfolgreiche Installation von Quellcode, bereitgestelltem IR und nativen Objekten in allen zwölf Kombinationen. Sie prüft ARMv7k watchOS und ARMv7 iOS getrennt sowie veränderliche／konstante Daten, Fließkomma- und Stackargumente originaler Funktionen und Einsprünge nach Änderung der Ladeadresse. CPU-Ausführung bestätigt weder OS-Loader noch C++-Unwinder oder beliebige ABIs; dafür gelten die OS-Profile oben.
 

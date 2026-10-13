@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
+<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
 
 [← Documentation Index](README.md)
 
@@ -51,6 +51,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 普通模式 | 原生对象 | ELF x64 C |
 
 上表是已验证的操作系统运行配置，不承诺所有编译器版本和选项。ELF、PE、Mach-O 的原生安装器均接入四种架构。尚未接入 `dyncode` 或 NeverC C++；GCC 需要匹配的 ELF 驱动，不能生成 LLVM IR。未知重定位、TLS、构造函数、LTO、common/IFUNC 符号及未解析导入均明确失败。JSON 凭据记录编译器身份、参数、绑定与安装地址，原生对象另记录 SHA-256。
+
+原生对象回执中的 `target` 字段来自已加载映像的 ABI，包括 ARM ELF 浮点标志以及不同的 iOS/watchOS 平台。编译产生的对象与外部对象使用同一条身份规则。
 
 CPU 矩阵要求十二种组合的源码、外部 IR 和原生对象均成功安装。另分别覆盖 ARMv7k watchOS、ARMv7 iOS、可写／只读状态、原程序浮点与栈参数绑定，以及改变加载地址后的入口执行。CPU 执行不能证明操作系统加载器、C++ 展开器或任意 ABI 正确；这些结论应依据上表的运行配置。
 

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
+<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
 
 [← Documentation Index](README.md)
 
@@ -51,6 +51,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 通常モード | ネイティブオブジェクト | ELF x64 C |
 
 上表は検証済み OS 実行構成です。すべてのコンパイラ版やオプションを保証するものではありません。ELF、PE、Mach-O のネイティブインストーラは四つのアーキテクチャを受け付けます。`dyncode` と NeverC C++ は未対応です。GCC は一致する ELF ドライバが必要で、LLVM IR は生成できません。未知の再配置、TLS、コンストラクタ、LTO、common/IFUNC シンボル、未解決インポートは明示的に失敗します。JSON 証跡はコンパイラ、引数、バインド、設置アドレスを記録し、ネイティブオブジェクトには SHA-256 も記録します。
+
+ネイティブオブジェクトの証跡にある `target` は、読み込んだイメージの ABI に基づきます。ARM ELF の浮動小数点フラグと iOS/watchOS の区別も含まれます。コンパイル済みオブジェクトと外部オブジェクトには同じ識別規則を適用します。
 
 CPU 行列は十二の組み合わせすべてでソース、外部 IR、ネイティブオブジェクトの設置成功を要求します。ARMv7k watchOS と ARMv7 iOS、可変／読み取り専用状態、元の浮動小数点・スタック引数バインド、ロードアドレス変更後の入口実行も検証します。CPU 実行は OS ローダー、C++ アンワインダ、任意の ABI を保証しません。上表の OS 構成を参照してください。
 

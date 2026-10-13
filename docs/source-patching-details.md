@@ -67,6 +67,9 @@ flag or binary. The checked target, actual compiler path/version, arguments,
 artifact, requested bindings and installed addresses appear in the JSON report.
 Native objects additionally have a SHA-256 digest. An external object has an
 unknown producer; its file name does not establish compiler identity.
+The native object `target` field is selected from the loaded image ABI by
+`sourcePatchTargetTriple`, for both compiled and supplied objects. It preserves
+ARM ELF float flags and the distinct iOS/watchOS frontend contracts.
 
 The IR route uses NeverD's LLVM code generator. Native objects retain producer
 machine instructions and section contents, changing only admitted relocation
@@ -574,3 +577,27 @@ checks, without skips. Python SDK validation passed 110 of 165 cases, with 55
 explicit platform or fixture skips; ABI auditing and mypy also passed. These
 focused results do not turn the historical broader C-recovery defects above
 into passing coverage.
+
+### Native object receipt identity correction (2026-10-13)
+
+A subsequent review found that native object receipts still reported
+`x86_64-unknown-linux-gnu` regardless of the loaded architecture and format.
+The installed PE bytes, machine headers and native process observations above
+were checked independently, but this receipt field was incorrect. Both compiled
+and supplied objects now derive it from the loader-owned image ABI through
+`sourcePatchTargetTriple`.
+
+The unchanged 143-check Clang and 66-check NeverC inventories passed after the
+correction. Their compiled-object and valid supplied-object cases also verify
+receipt identity against independent expected triples for all thirteen target
+profiles. The malformed-object cases require successful installation and CPU
+execution of their unmodified object as a positive control. The PE fixture
+preparer now rejects a wrong receipt target; its thirteen evidence-rule tests
+passed, including object and versioned MSVC IR targets.
+
+The freshly built engine also reinstalled the nine supplied PE objects from
+[Windows run 38350079817](https://github.com/NeverSight/NeverD/actions/runs/38350079817).
+x86/x64/ARM64 each covered nonleaf calls, mutable pointers and FP/stack arguments.
+All nine output files matched the corresponding native-qualified images byte
+for byte, with correct new target receipts and unchanged original files.
+Windows process evidence remains attached to that exact run and its image hashes.
