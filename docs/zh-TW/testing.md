@@ -1208,7 +1208,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5508`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1332,6 +1332,8 @@ Windows ring3 依獨立原生觀測，將 checked x64 的 `operand_alignment` �
 `WindowsLifetimeTests.cpp` 將固定通知序列與獨立原生 Windows 程序及 KVM/WHP/Unicorn 執行比對，涵蓋正常結束、進入點返回、兩個 DLL 初始化失敗、四處提早結束及無進入點 DLL。另驗證回呼故障、共用預算、重定位 TLS 欄位及 TLS 總容量。原生進入點返回探針保留初始執行緒控制代碼，重複64 次核對執行緒結束碼及精確執行緒／程序通知序列。觀察後終止其餘子程序執行緒，不將程序結束碼視為進入點返回值。
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests` 和 `NeverDUnpackPublicTests` 涵蓋加殼映像的還原；參見[脫殼](unpack.md)。`UnpackGeneratedTests.cpp` 用測試自己加殼的程式，在 x86-64 和 ARM64 上檢查入口規則。`X64ReturnPrefixTests.cpp` 在每種傳輸上檢查雙位元組近返回，並確認其它帶前綴的返回仍被拒絕。`WindowsDeferredTests.cpp` 檢查不透明入口與已停止行程的觀察；`ExecutionSessionTests.cpp` 檢查執行監視。 `DirectX64Tests.cpp` 另驗證部分頁監視、跨頁取指、恢復後僅執行一次、服務邊界、非法指令和逾時狀態。
+
+`DirectX64.UnobservedStoresInvalidatePhysicalWriteWitnesses` 檢查未設定寫入監視時的改值、同值及還原原值寫入。直接執行保守地使舊的實體寫入歷史失效；無效指令和逾時退出亦然。停止後可建立新歷史，執行監視及已提交寫入通知維持原有行為。
 
 `LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`、`ExplicitSnapshotsKeepExternalHeapDependenciesVisible` 與 `ReleasedHeapStateDoesNotBlockRecovery` 在可用的逐指令與直接執行後端上比較獨立編譯的啟動及入口行為。`HeapReferencesInCapturedTLSCannotBeDiscarded` 涵蓋僅存在於 TLS 的相依性。公開介面測試要求拒絕時保留既有輸出檔案，並驗證 C API 與 CLI 的明確快照一致。位址匹配是保守證據，不是原生執行證明。
 
