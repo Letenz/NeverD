@@ -50,6 +50,15 @@ loads opens the project without it, with a warning. Older display-only
 selections remain presentation aliases until the user selects the PDB again
 for analysis.
 
+`pdbSymbolRequest` derives symbol-store path components from the loader's unique,
+validated CodeView identity. The existing headers JSON exposes those components
+and the current debug-information status; worker metadata advertises a download
+candidate only when debug loading is enabled and no PDB is loaded. The GUI owns
+user consent, HTTPS transport and its private cache. It never reparses PE records
+or treats a network response as analysis evidence: inspection and transactional
+application use the existing strict PDB APIs. Epoch and request guards retire
+downloads on document changes, and network errors do not change the image.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and
@@ -843,7 +852,11 @@ See the [relationship profile](web-interface-relations-profile.md).
 `interfaces/TransformationLinks` adds fixed call spellings only through direct
 request-body and result-argument containment; no value propagation or API
 authentication is duplicated. `interfaces/report/Source` projects existing
-frontend evidence, `Shapes` inspects admitted observed JSON types, `Compose`
+frontend evidence. `SourceStructure`/`URLStructure` consume its admitted
+request roles and preserve lexical components and direct value syntax.
+`Shapes` admits observed JSON bodies; `ObservedStructure` owns private
+capture-local field dictionaries, example trees and observed presence counts.
+`Compose`
 reuses the HTTP join and shared MCP spelling vocabulary, and `Publication`
 emits closed metadata. `SessionPassiveReport` owns explicit committed selections,
 atomic bounded caches and revision-bound pages. See the

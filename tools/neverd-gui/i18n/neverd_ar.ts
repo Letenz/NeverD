@@ -1476,6 +1476,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>أسماء المتغيرات المحفوظة تخص عرضًا مختلفًا للمصدر</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>توسيع الكتلة (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>طي الكتلة (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2156,6 +2164,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>لا يستطيع هذا المحرك استخدام PDB غير موثق للتحليل</translation>
     </message>
+    <message>
+        <source>Line</source>
+        <translation>السطر</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>العمود</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>الشيفرة</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>انتظر اكتمال تحميل الدالة قبل البحث عن المراجع</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2687,6 +2711,113 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>لا تستطيع عملية التحليل استعادة حالة التحليل.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>انتهت مهلة تنزيل الرموز.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>تنزيل رموز التصحيح</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>لم يتم تحميل ملف PDB محلي مطابق للملف %1.
+
+هل تريد محاولة تنزيل %2 من خادم رموز Microsoft؟ ينجح ذلك فقط إذا نشرت Microsoft رموزًا لهذا الإصدار.
+
+سيُرسل اسم ملف PDB ومعرّف الإصدار فقط، ولن يُرفع الملف الثنائي. ستُحفظ الرموز المطابقة في ذاكرة التخزين المؤقت وتُحمّل تلقائيًا.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>تنزيل</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>ليس الآن</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>تعذر إنشاء مجلد التخزين المؤقت للرموز: %1</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>تعذر فتح ملف رموز مؤقت في %1: %2</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>أُلغي تنزيل الرموز.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>جارٍ تنزيل %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>يتجاوز ملف الرموز حد التنزيل البالغ 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>لا توجد لدى Microsoft رموز مطابقة لهذا الإصدار.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>فشل تنزيل الرموز: %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>ملف الرموز الذي تم تنزيله فارغ.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>تعذرت الكتابة إلى ملف الرموز %1: %2</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>ملف الرموز المضغوط غير صالح.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>تعذر إنشاء مجلد رموز مؤقت في %1: %2</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>جارٍ فك ضغط الرموز…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>تعذر فك ضغط ملف الرموز.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>تتطلب الرموز المضغوطة Windows.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>جارٍ التحقق من الرموز التي تم تنزيلها…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>لا يطابق ملف PDB الملف المحمّل.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>تعذر حفظ ملف PDB الذي تم التحقق منه في %1: %2</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>فشل التحقق من الرموز: %1</translation>
     </message>
 </context>
 </TS>

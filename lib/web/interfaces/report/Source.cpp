@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../SourceModel.h"
+#include "SourceStructure.h"
 
 #include "neverd/web/Error.h"
 #include "neverd/web/PassiveReport.h"
@@ -99,6 +100,7 @@ projectPassiveSource(const SourceAnalysis &S, const SourceBindingAnalysis &B,
     R.Reason = Request.URLStatus;
     Publish(std::move(R), Request.Node);
   }
+  passive_report::projectRequestStructure(S, I, Relations, Result);
   for (const auto &Link : Relations.Records) {
     Step();
     PassiveReportRecord R;

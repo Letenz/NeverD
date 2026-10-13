@@ -31,6 +31,7 @@ class ExtensionsView;
 class GraphOverview;
 class HexView;
 class NavigationBand;
+class MicrosoftSymbols;
 class OutputWindow;
 class Session;
 class TitleBar;
@@ -154,6 +155,7 @@ private:
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
+  void showLocalReferences(CodeView *origin, const QJsonObject &target);
   void showReferencesDialog(std::optional<Address> address, bool to,
                             CodeView *origin);
   void showPseudocode(const QString &representation,
@@ -207,6 +209,7 @@ private:
   DisassemblyView *disassembly_ = nullptr;
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;
+  MicrosoftSymbols *microsoftSymbols_ = nullptr;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   ChooserView *functions_ = nullptr;

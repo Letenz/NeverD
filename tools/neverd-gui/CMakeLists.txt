@@ -170,6 +170,16 @@ if(BUILD_TESTING)
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 
   if(TARGET neverd-worker-test-server)
+    qt_add_executable(neverd-gui-symbol-tests tests/MicrosoftSymbolsTests.cpp)
+    target_link_libraries(neverd-gui-symbol-tests PRIVATE neverd_gui_app Qt6::Test)
+    target_compile_definitions(neverd-gui-symbol-tests PRIVATE
+      TEST_WORKER="$<TARGET_FILE:neverd-worker-test-server>")
+    add_dependencies(neverd-gui-symbol-tests neverd-worker-test-server)
+    set_target_properties(neverd-gui-symbol-tests PROPERTIES WIN32_EXECUTABLE FALSE)
+    add_test(NAME NeverDGuiMicrosoftSymbols COMMAND neverd-gui-symbol-tests)
+    set_tests_properties(NeverDGuiMicrosoftSymbols PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
     qt_add_executable(neverd-gui-tests tests/WorkbenchTests.cpp)
     target_link_libraries(neverd-gui-tests PRIVATE neverd_gui_app Qt6::Test)
     target_compile_definitions(neverd-gui-tests PRIVATE
