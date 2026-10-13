@@ -148,6 +148,8 @@ static int realMain(int Argc, char *Argv[]) {
                                    PdbUnverified ? 1 : 0);
   if (!MapFile.getValue().empty())
     neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
+  if (SymbolPathOption.getNumOccurrences())
+    neverd_session_set_symbol_path(Sess, SymbolPathOption.getValue().c_str());
   std::set<neverd_va_t> SeenARMEntries;
   for (const std::string &Hint : ARMFunctionModeHints) {
     const auto Parts = StringRef(Hint).split(':');

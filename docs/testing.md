@@ -63,11 +63,17 @@ executes ordinary HighC against native extended-precision encodings; ARM mode
 tests execute both ordinary and explicitly enhanced source.
 
 `NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
-to check download consent, local/disabled/absent-identity gating, strict PDB
-application, cache reuse, 404/mismatch failure and cancellation on file changes.
-It never contacts a real symbol server. `DebugInfoDiscovery.SymbolStoreKey*` and
-`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order, hexadecimal
-age, NB10 keys and refusal of unusable identities or unsafe path components.
+to check the Load PDB file dialog (a matching local copy, declining, downloads
+into the store the worker names, 404 and another build's file leaving the store
+again) and the offer for an open file (local/disabled/absent-identity gating,
+strict PDB application, the next load finding the stored copy, cancellation on
+file changes). It never contacts a real symbol server. `SymbolStore.*` covers
+`_NT_SYMBOL_PATH` parsing, store and server paths and candidate order;
+`DebugInfoDiscovery.SymbolStoreKey*` and
+`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order,
+hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
+components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
+that PDB before opening it.
 
 `SessionCAPITest.PrepareFunction*` checks analysis without source emission,
 restricted and whole-image scope, repeated and switched entries, address zero,

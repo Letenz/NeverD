@@ -1,11 +1,14 @@
-//===- MicrosoftSymbols.h - Optional Microsoft PDB acquisition -*- C++ -*-===//
+//===- MicrosoftSymbols.h - Load the PDB an open PE lacks ------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Consent, asynchronous transport and caching for symbols whose identity the
-/// engine publishes. Inspection and application stay in the worker/C API.
+/// The PDB an open PE names but loaded without: a project whose PDB was not
+/// where it was, or a file opened before anyone was asked.  A copy that has
+/// reached a symbol store loads at once; otherwise the user is asked, as the
+/// load of a new file asks, and a download goes where a later load finds it.
+/// Inspection and application stay in the worker/C API.
 //===----------------------------------------------------------------------===//
 
 #pragma once
@@ -13,60 +16,37 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
-#include <QTimer>
-#include <QUrl>
-#include <memory>
 
-class QMessageBox;
 class QNetworkAccessManager;
-class QNetworkReply;
-class QProcess;
-class QProgressDialog;
-class QTemporaryDir;
-class QTemporaryFile;
 class QWidget;
 
 namespace neverd::gui {
+class PdbPromptDialog;
 class Session;
 
 class MicrosoftSymbols final : public QObject {
   Q_OBJECT
 public:
+  /// Downloads go through \p network, or a network of its own when null.
   MicrosoftSymbols(Session &session, QWidget *window,
-                   QNetworkAccessManager *network = nullptr,
-                   const QString &cacheRoot = {});
+                   QNetworkAccessManager *network = nullptr);
   ~MicrosoftSymbols() override;
   /// Also called before the user starts a manual PDB selection.
   void cancel();
-  /// Validate transport path components; never accept a server URL from input.
-  static bool validRequest(const QJsonObject &request);
-  static QUrl downloadUrl(const QJsonObject &request, bool compressed = false);
 
 private:
   void opened();
   bool current(quint64 serial) const;
-  void ask(quint64 serial);
-  void download(quint64 serial, bool compressed = false);
-  void consume(quint64 serial);
-  void expand(quint64 serial);
-  void inspect(const QString &path, quint64 serial, bool cached);
+  /// Ask about \p reference, the worker's pdb_reference for the open file.
+  void offer(quint64 serial, const QJsonObject &reference);
   void apply(const QString &path, quint64 serial);
-  void fail(const QString &message);
 
   Session &session_;
   QWidget *window_;
   QNetworkAccessManager *network_;
-  QPointer<QNetworkReply> reply_;
-  QPointer<QMessageBox> prompt_;
-  QPointer<QProgressDialog> progress_;
-  QPointer<QProcess> expand_;
-  QTimer deadline_;
-  std::shared_ptr<QTemporaryFile> file_;
-  std::shared_ptr<QTemporaryDir> expanded_;
+  QPointer<PdbPromptDialog> prompt_;
+  /// The open file's pdb_download, {file,key}, while it is offered.
   QJsonObject request_;
-  QString cachePath_;
-  QString cacheRoot_;
   quint64 serial_ = 0, epoch_ = 0;
-  qint64 received_ = 0;
 };
 } // namespace neverd::gui

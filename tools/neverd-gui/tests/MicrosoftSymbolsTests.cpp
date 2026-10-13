@@ -1,21 +1,26 @@
-//===- MicrosoftSymbolsTests.cpp - Symbol download lifecycle tests -------===//
+//===- MicrosoftSymbolsTests.cpp - PDB prompt and download tests ---------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Exercise consent, cache verification and stale completion with an in-memory
-/// network reply and the fixture worker. No test contacts a symbol server.
+/// Exercise the Load PDB file question, consent, downloads into the store the
+/// worker names, verification and stale completion with an in-memory network
+/// reply and the fixture worker. No test contacts a symbol server.
 //===----------------------------------------------------------------------===//
 
 #include "MicrosoftSymbols.h"
+#include "PdbPromptDialog.h"
 #include "Session.h"
+#include "SymbolDownload.h"
 
+#include <QDir>
 #include <QFile>
-#include <QMessageBox>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QLabel>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
-#include <QProgressDialog>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -93,46 +98,163 @@ protected:
   }
 };
 
-QString fixture(const QTemporaryDir &directory, const QString &name) {
+QString fixture(const QTemporaryDir &directory, const QString &name,
+                const QByteArray &bytes = "fixture") {
   const auto path = directory.filePath(name);
   QFile file(path);
-  if (!file.open(QIODevice::WriteOnly) || file.write("fixture") != 7)
+  if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size())
     return {};
   return path;
 }
 
-void choose(QMessageBox *prompt, QMessageBox::ButtonRole role) {
-  for (auto *button : prompt->buttons())
-    if (prompt->buttonRole(button) == role) {
-      button->click();
-      return;
-    }
+constexpr char MatchingPdb[] = "matching fixture PDB";
+constexpr char FixtureKey[] = "123456789ABCDEF0123456789ABCDEF01";
+
+/// Where the fixture worker's symbol store keeps the PDB of \p input.
+QString storePdb(const QString &input) {
+  return QFileInfo(input).dir().filePath(
+      QStringLiteral("symbols/fixture.pdb/%1/fixture.pdb").arg(FixtureKey));
+}
+
+/// The worker's pdb_reference for \p input, before it is opened.
+QJsonObject reference(Session &session, const QString &input) {
+  QJsonObject result;
+  bool answered = false;
+  // The worker reads once it has said hello.
+  QTest::qWaitFor([&] { return session.findsPdbFiles(); }, 10000);
+  session.read(QStringLiteral("pdb_reference"), {{"path", input}}, &session,
+               [&](const QJsonObject &payload) {
+                 result = payload.value("pdb").toObject();
+                 answered = true;
+               });
+  QTest::qWaitFor([&] { return answered; }, 10000);
+  return result;
+}
+
+/// Whether \p choice loads \p path, however the engine spelled its
+/// separators.
+bool loads(const QJsonObject &choice, const QString &path) {
+  return choice.value("mode").toString() == QLatin1String("verified") &&
+         QFileInfo(choice.value("path").toString()) == QFileInfo(path);
+}
+
+QPushButton *button(QWidget &dialog, const char *name) {
+  return dialog.findChild<QPushButton *>(QLatin1String(name));
+}
+
+bool shows(QWidget &dialog, const char *name) {
+  auto *found = button(dialog, name);
+  return found && found->isVisibleTo(&dialog);
+}
+
+PdbPromptDialog *prompt(QWidget &window) {
+  return window.findChild<PdbPromptDialog *>(QStringLiteral("pdbPrompt"));
 }
 } // namespace
 
 class MicrosoftSymbolsTests final : public QObject {
   Q_OBJECT
 private slots:
-  void requestCannotRedirectOrEscapeCache() {
-    const QJsonObject valid{{"file", "kernel name.pdb"},
-                            {"key", "123456789ABCDEF0123456789ABCDEF02a"}};
-    const auto url = MicrosoftSymbols::downloadUrl(valid);
-    QCOMPARE(url.scheme(), QStringLiteral("https"));
-    QCOMPARE(url.host(), QStringLiteral("msdl.microsoft.com"));
-    QVERIFY(url.toEncoded().contains("kernel%20name.pdb"));
-    QVERIFY(MicrosoftSymbols::downloadUrl(valid, true)
-                .path()
-                .endsWith("kernel name.pd_"));
-    for (const auto &file : {"../other.pdb", "C:/other.pdb", "bad?query.pdb",
-                             "bad:stream.pdb", "bad\nname.pdb"}) {
-      auto invalid = valid;
-      invalid["file"] = file;
-      QVERIFY(!MicrosoftSymbols::validRequest(invalid));
-      QVERIFY(MicrosoftSymbols::downloadUrl(invalid).isEmpty());
-    }
-    auto invalid = valid;
-    invalid["key"] = "../../other";
-    QVERIFY(!MicrosoftSymbols::validRequest(invalid));
+  void downloadAsksOnlyHttpServers() {
+    QTemporaryDir directory;
+    Network network;
+    SymbolDownload download(&network);
+    QSignalSpy failed(&download, &SymbolDownload::failed);
+    download.start(QJsonArray{QJsonObject{
+                       {"url", "file:///etc/passwd"},
+                       {"path", directory.filePath("store/x.pdb/1/x.pdb")}}},
+                   QStringLiteral("x.pdb"));
+    QTRY_COMPARE(failed.count(), 1);
+    QVERIFY(!failed.first().at(1).toBool());
+    QVERIFY(network.requests.isEmpty());
+    QVERIFY(!download.running());
+  }
+
+  void promptLoadsAMatchingLocalCopy() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    Network network;
+    const auto input = fixture(directory, "symbols-local.bin");
+    const auto beside = fixture(directory, "fixture.pdb", MatchingPdb);
+    const auto pdb = reference(session, input);
+    QCOMPARE(pdb.value("found").toObject().value("location").toString(),
+             QStringLiteral("beside"));
+    PdbPromptDialog dialog(session, input, pdb, &network);
+    QVERIFY(shows(dialog, "yes") && shows(dialog, "no"));
+    QVERIFY(!shows(dialog, "browse") && !shows(dialog, "cancel"));
+    QVERIFY(button(dialog, "yes")->isDefault());
+    QCOMPARE(dialog.findChild<QLabel *>("path")->toolTip(),
+             QDir::toNativeSeparators(beside));
+    button(dialog, "yes")->click();
+    QCOMPARE(dialog.result(), int(QDialog::Accepted));
+    QVERIFY(loads(dialog.choice(), beside));
+    QVERIFY(network.requests.isEmpty());
+  }
+
+  void promptDeclinesWithNoOrEscape() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    Network network;
+    const auto input = fixture(directory, "symbols-missing.bin");
+    const auto pdb = reference(session, input);
+    QVERIFY(pdb.value("found").isNull());
+    PdbPromptDialog answered(session, input, pdb, &network);
+    button(answered, "no")->click();
+    QCOMPARE(answered.choice(), (QJsonObject{{"mode", "none"}}));
+    PdbPromptDialog closed(session, input, pdb, &network);
+    closed.open();
+    QTest::keyClick(&closed, Qt::Key_Escape);
+    QCOMPARE(closed.choice(), (QJsonObject{{"mode", "none"}}));
+    QVERIFY(network.requests.isEmpty());
+  }
+
+  void promptDownloadsIntoTheStoreItNames() {
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    Network network;
+    network.bytes = MatchingPdb;
+    const auto input = fixture(directory, "symbols-missing.bin");
+    PdbPromptDialog dialog(session, input, reference(session, input), &network);
+    dialog.open();
+    QVERIFY(network.requests.isEmpty());
+    button(dialog, "yes")->click();
+    QTRY_VERIFY(!dialog.choice().isEmpty());
+    QCOMPARE(network.requests.size(), 1);
+    QCOMPARE(network.requests.first().toString(),
+             QStringLiteral("https://msdl.microsoft.com/download/symbols/"
+                            "fixture.pdb/%1/fixture.pdb")
+                 .arg(FixtureKey));
+    QVERIFY(loads(dialog.choice(), storePdb(input)));
+    QFile stored(storePdb(input));
+    QVERIFY(stored.open(QIODevice::ReadOnly));
+    QCOMPARE(stored.readAll(), QByteArray(MatchingPdb));
+  }
+
+  void promptOffersBrowsingWhenNoMatchArrives_data() {
+    QTest::addColumn<int>("status");
+    QTest::addColumn<QByteArray>("bytes");
+    QTest::newRow("not-found") << 404 << QByteArray("not found");
+    QTest::newRow("another-build") << 200 << QByteArray("wrong PDB identity");
+  }
+  void promptOffersBrowsingWhenNoMatchArrives() {
+    QFETCH(int, status);
+    QFETCH(QByteArray, bytes);
+    QTemporaryDir directory;
+    Session session(QString::fromLocal8Bit(TEST_WORKER));
+    Network network;
+    network.status = status;
+    network.bytes = bytes;
+    const auto input = fixture(directory, "symbols-missing.bin");
+    PdbPromptDialog dialog(session, input, reference(session, input), &network);
+    dialog.open();
+    button(dialog, "yes")->click();
+    QTRY_VERIFY(shows(dialog, "browse"));
+    QVERIFY(button(dialog, "browse")->isDefault() && shows(dialog, "no"));
+    QVERIFY(dialog.choice().isEmpty() && dialog.isVisible());
+    // A file of another build leaves the store again.
+    QVERIFY(!QFileInfo::exists(storePdb(input)));
+    button(dialog, "no")->click();
+    QCOMPARE(dialog.choice(), (QJsonObject{{"mode", "none"}}));
   }
 
   void onlyMissingEligibleSymbolsPrompt_data() {
@@ -150,14 +272,14 @@ private slots:
     Session session(QString::fromLocal8Bit(TEST_WORKER));
     QWidget window;
     Network network;
-    MicrosoftSymbols symbols(session, &window, &network, directory.path());
+    MicrosoftSymbols symbols(session, &window, &network);
     LoadOptions options;
     options.debugInfo = debug;
     session.open(fixture(directory, name), options);
     QTRY_VERIFY(session.loaded());
-    QCoreApplication::processEvents();
+    QTest::qWait(200);
     QVERIFY(!session.metadata().value("pdb_download").isObject());
-    QVERIFY(!window.findChild<QMessageBox *>("downloadPdbPrompt"));
+    QVERIFY(!prompt(window));
     QVERIFY(network.requests.isEmpty());
   }
 
@@ -166,73 +288,43 @@ private slots:
     Session session(QString::fromLocal8Bit(TEST_WORKER));
     QWidget window;
     Network network;
-    MicrosoftSymbols symbols(session, &window, &network, directory.path());
+    MicrosoftSymbols symbols(session, &window, &network);
     session.open(fixture(directory, "symbols-missing.bin"));
-    QTRY_VERIFY(window.findChild<QMessageBox *>("downloadPdbPrompt"));
+    QTRY_VERIFY(prompt(window));
     QVERIFY(network.requests.isEmpty());
-    choose(window.findChild<QMessageBox *>("downloadPdbPrompt"),
-           QMessageBox::RejectRole);
+    button(*prompt(window), "no")->click();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
     QVERIFY(network.requests.isEmpty());
     QVERIFY(session.loaded());
     QVERIFY(!session.metadata().value("pdb").isObject());
   }
 
-  void consentDownloadsVerifiesAndReusesCache() {
+  void consentDownloadsVerifiesAndStoresForTheNextLoad() {
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));
     QWidget window;
     Network network;
-    MicrosoftSymbols symbols(session, &window, &network, directory.path());
+    network.bytes = MatchingPdb;
+    MicrosoftSymbols symbols(session, &window, &network);
     const auto input = fixture(directory, "symbols-missing.bin");
     session.open(input);
-    QTRY_VERIFY(window.findChild<QMessageBox *>("downloadPdbPrompt"));
+    QTRY_VERIFY(prompt(window));
     QVERIFY(network.requests.isEmpty());
-    choose(window.findChild<QMessageBox *>("downloadPdbPrompt"),
-           QMessageBox::AcceptRole);
+    button(*prompt(window), "yes")->click();
     QTRY_VERIFY(session.metadata().value("pdb").isObject());
     QCOMPARE(network.requests.size(), 1);
     const auto selected = session.metadata().value("pdb").toObject();
     QCOMPARE(selected.value("mode").toString(), QStringLiteral("verified"));
+    QVERIFY(loads(selected, storePdb(input)));
     QVERIFY(selected.value("stamp").isObject());
-    QFile cached(selected.value("path").toString());
-    QVERIFY(cached.open(QIODevice::ReadOnly));
-    QCOMPARE(cached.readAll(), network.bytes);
-    cached.close();
     session.closeFile();
+    // The store is where the next load finds it, without asking.
     session.open(input);
-    QTRY_VERIFY(session.loaded() && session.metadata().value("pdb").isObject());
+    QTRY_VERIFY(session.loaded());
+    QTest::qWait(200);
+    QVERIFY(!session.metadata().value("pdb_download").isObject());
+    QVERIFY(!prompt(window));
     QCOMPARE(network.requests.size(), 1);
-  }
-
-  void failedDownloadsDoNotReplaceAnalysis_data() {
-    QTest::addColumn<int>("status");
-    QTest::addColumn<QByteArray>("bytes");
-    QTest::newRow("not-found") << 404 << QByteArray("not found");
-    QTest::newRow("wrong-pdb") << 200 << QByteArray("wrong PDB identity");
-  }
-  void failedDownloadsDoNotReplaceAnalysis() {
-    QFETCH(int, status);
-    QFETCH(QByteArray, bytes);
-    QTemporaryDir directory;
-    Session session(QString::fromLocal8Bit(TEST_WORKER));
-    QWidget window;
-    Network network;
-    network.status = status;
-    network.bytes = bytes;
-    MicrosoftSymbols symbols(session, &window, &network, directory.path());
-    session.open(fixture(directory, "symbols-missing.bin"));
-    QTRY_VERIFY(window.findChild<QMessageBox *>("downloadPdbPrompt"));
-    QSignalSpy messages(&session, &Session::message);
-    choose(window.findChild<QMessageBox *>("downloadPdbPrompt"),
-           QMessageBox::AcceptRole);
-    QTRY_VERIFY(
-        std::any_of(messages.cbegin(), messages.cend(),
-                    [](const auto &args) { return args[1].toInt() == 1; }));
-    QVERIFY(!network.requests.isEmpty());
-    QVERIFY(session.loaded());
-    QVERIFY(!session.metadata().value("pdb").isObject());
-    QTRY_VERIFY(!window.findChild<QProgressDialog *>("downloadPdbProgress"));
   }
 
   void changingFileCancelsPendingDownload() {
@@ -241,18 +333,17 @@ private slots:
     QWidget window;
     Network network;
     network.delayed = true;
-    MicrosoftSymbols symbols(session, &window, &network, directory.path());
+    MicrosoftSymbols symbols(session, &window, &network);
     session.open(fixture(directory, "symbols-missing.bin"));
-    QTRY_VERIFY(window.findChild<QMessageBox *>("downloadPdbPrompt"));
-    choose(window.findChild<QMessageBox *>("downloadPdbPrompt"),
-           QMessageBox::AcceptRole);
+    QTRY_VERIFY(prompt(window));
+    button(*prompt(window), "yes")->click();
     QTRY_COMPARE(network.requests.size(), 1);
     const auto next = fixture(directory, "symbols-absent.bin");
     session.open(next);
     QTRY_VERIFY(session.loaded() && session.filePath() == next);
     QTRY_COMPARE(network.aborted, 1);
     QVERIFY(!session.metadata().value("pdb").isObject());
-    QTRY_VERIFY(!window.findChild<QProgressDialog *>("downloadPdbProgress"));
+    QTRY_VERIFY(!prompt(window));
   }
 };
 
