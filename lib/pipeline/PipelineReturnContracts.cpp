@@ -336,8 +336,20 @@ private:
       if (const auto Known = NoValue.find(*Target); Known != NoValue.end())
         return Known->second;
     }
-    const Import *Imp = importAt(Target ? *Target : Slot.value_or(InvalidVA));
-    return Imp && namedNoValue(Imp->Name).value_or(false);
+    if (const Import *Imp =
+            importAt(Target ? *Target : Slot.value_or(InvalidVA)))
+      return namedNoValue(Imp->Name).value_or(false);
+    // A loaded GOT slot names its import through the canonical storage view
+    // (`mov rax, [slot]; jmp rax`).
+    if (Slot) {
+      const ImportStorageSlotCollection Storage =
+          Img.collectImportStorageSlot(*Slot);
+      if (const auto It = Storage.Slots.find(*Slot);
+          It != Storage.Slots.end() && !Storage.Conflicts.count(*Slot) &&
+          It->second.Addend == 0)
+        return namedNoValue(It->second.Name).value_or(false);
+    }
+    return false;
   }
 
   /// What \p Value hands back, each path a PHI joins counted on its own.

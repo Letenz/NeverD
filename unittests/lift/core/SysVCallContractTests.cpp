@@ -956,6 +956,9 @@ TEST(SysVCallContract, AJumpThroughALoadedSlotPassesTheArgumentsSetBefore) {
   ASSERT_FALSE(Body.empty()) << Source;
   EXPECT_NE(Body.find("_ITM_registerTMCloneTable("), std::string::npos) << Body;
   EXPECT_EQ(Body.find("unknown value"), std::string::npos) << Body;
+  // The jump through the import's GOT slot reaches a void routine, so the
+  // wrapper returns nothing either, like GCC's register_tm_clones.
+  EXPECT_NE(Source.find("void wrap(void)"), std::string::npos) << Source;
 }
 
 TEST(SysVCallContract, ACallThroughALoaderBoundSlotPassesThePrototype) {
