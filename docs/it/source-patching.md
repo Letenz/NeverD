@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
+<!-- i18n-source: f684e44974d11ab73953095844ff651d947f0160044fc4ef826d80e0e9c5dc5d -->
 
 [← Documentation Index](README.md)
 
@@ -71,7 +71,7 @@ Clang LLVM IR ammette Windows ARM64 C++ FH3 e verifica xdata, ABI del frame padr
 | NeverC 3389.1.5 modalità ordinaria | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 modalità ordinaria | Oggetto nativo | ELF x64 C |
 
-La tabella descrive profili OS verificati, senza garantire ogni versione o opzione. Gli installatori nativi ELF, PE e Mach-O accettano tutte le quattro architetture. GCC richiede un driver ELF compatibile e non produce LLVM IR. Rilocazioni sconosciute, TLS, costruttori, LTO, simboli common/IFUNC e importazioni irrisolte falliscono esplicitamente. La ricevuta JSON registra compilatore, argomenti, associazioni e indirizzi; gli oggetti nativi includono SHA-256.
+La tabella descrive profili OS verificati, senza garantire ogni versione o opzione. Gli installatori nativi ELF, PE e Mach-O accettano tutte le quattro architetture. GCC richiede un driver ELF compatibile e non produce LLVM IR. Rilocazioni sconosciute, TLS, costruttori globali al caricamento, LTO, simboli common/IFUNC e importazioni irrisolte falliscono esplicitamente. La ricevuta JSON registra compilatore, argomenti, associazioni e indirizzi; gli oggetti nativi includono SHA-256.
 
 Il campo `target` della ricevuta di un oggetto nativo deriva dall’ABI dell’immagine caricata, inclusi i flag in virgola mobile ARM ELF e la distinzione iOS/watchOS. Gli oggetti compilati e forniti seguono la stessa regola di identità.
 
@@ -85,7 +85,7 @@ La matrice CPU richiede l’installazione riuscita di sorgente, IR esterno e ogg
 
 `CPU` significa installazione sorgente／IR／oggetto, ricaricamento ed esecuzione esatta. ARM ELF ricava EABI5, stato ARM/Thumb e ABI floating point dall’immagine e registra un indice `EHABI` completo e ordinato. PE conserva le righe x64/ARM e le rilocazioni `HIGHLOW`/`DIR64`/`MOV32T`; x86 usa il codice di registrazione del compilatore. Mach-O distingue watchOS DWARF e iOS `SjLj` secondo il sottotipo CPU. I salti d’ingresso ARM/Thumb sono relativi e restano validi dopo il cambio di base.
 
-Gli oggetti nativi usano simboli di funzione delimitati, definizioni ausiliarie／di sezione e dati unwind propri, senza inventare ID MC né ricompilare IR. COFF richiede dimensioni ausiliarie esatte o sezioni con una sola funzione (`-ffunction-sections`). L’adattatore watchOS mantiene i frame delle funzioni foglia per ottenere registrazioni reali. Gli handler di linguaggio COFF/Mach-O nativi non rientrano nel profilo oggetti verificato; per le eccezioni C++ usare il percorso IR verificato. Sono rifiutati unwinder ARM statici con registro exidx fissato, puntatori assoluti Mach-O non registrati e memoria RELRO non supportata.
+Gli oggetti nativi usano simboli di funzione delimitati, definizioni ausiliarie／di sezione e dati unwind propri, senza inventare ID MC né ricompilare IR. I limiti delle funzioni COFF richiedono dimensioni ausiliarie esatte, sezioni con una sola funzione (`-ffunction-sections`) o record nativi di funzioni runtime decodificati; il simbolo successivo non serve mai a dedurre una dimensione. L’adattatore watchOS mantiene i frame delle funzioni foglia per ottenere registrazioni reali. Gli handler di linguaggio COFF/Mach-O nativi non rientrano nel profilo oggetti verificato; per le eccezioni C++ usare il percorso IR verificato. Sono rifiutati unwinder ARM statici con registro exidx fissato, puntatori assoluti Mach-O non registrati e memoria RELRO non supportata.
 
 Gli oggetti C di GCC sono stati installati ed eseguiti anche su ELF x86, ARM32 e ARM64 tramite Linux QEMU user mode. L’adattatore sceglie ARM/Thumb dall’immagine e allinea le proprietà GNU alla larghezza dei puntatori ELF.
 
@@ -109,7 +109,7 @@ La crescita delle tabelle Mach-O richiede anche spazio libero adiacente nel file
 <!-- i18n-section: exceptions -->
 ## Eccezioni C++
 
-ELF usa FDE/LSDA del compilatore; Mach-O usa compact unwind/DWARF. PE x64 ammette tabelle FH3 con runtime MSVC esistente compatibile e identità dei tipi coerenti. I dati type-info possono richiedere associazioni esplicite. FH4, personality personalizzate, sorgenti SEH e modalità CFG/EHCont/XFG attive sono rifiutati; le protezioni originali restano invariate.
+ELF usa FDE/LSDA del compilatore; Mach-O usa compact unwind/DWARF. PE x64/ARM64 ammette tabelle FH3 con runtime MSVC esistente compatibile e identità dei tipi coerenti. I dati type-info possono richiedere associazioni esplicite. FH4, personality personalizzate, sorgenti SEH e modalità CFG/EHCont/XFG attive sono rifiutati; le protezioni originali restano invariate.
 
 I casi runtime coprono ritorno normale, catch interno, una nuova eccezione catturata dal chiamante originale, un’eccezione dall’originale attraverso la sostituzione, pulizia RAII esattamente una volta, rilancio, terminazione noexcept e funzioni intatte. Il punto di chiamata originale deve già consentire la propagazione. Una patch non ripristina catch eliminati attorno a una funzione dimostrata non generare eccezioni.
 
@@ -159,3 +159,5 @@ Il workflow Windows prepara anche 27 sostituzioni PE per x86, x64 e ARM64. `scri
 `NEVERD_TEST_MATRIX_NEVERC` seleziona il compilatore facoltativo della matrice. NeverC 3389.1.5 ha superato tutti i 66 controlli x64/ARM64 per ELF, PE e Mach-O, compresa l’installazione IR/oggetto nativo e l’esecuzione CPU. Questa versione non supporta x86 o ARM32; usare Clang, oppure un driver GCC compatibile per ELF. Per compilare PE con NeverC, l’adattatore aggiunge `-fno-autolink`: i riferimenti vengono risolti nell’immagine esistente senza collegare un altro CRT. Gli oggetti forniti con contratti di collegamento `.drectve` restano rifiutati.
 
 La verifica dei processi Windows nativi [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) ha superato tutte le 90 osservazioni: 30 per ciascuna architettura x86, x64 e ARM64, tramite IR sorgente, oggetti compilati e oggetti forniti. x86/x64 sono stati eseguiti su Windows x64; ARM64 su `windows-11-arm`, usando le stesse immagini verificate tramite hash. La stessa esecuzione ha superato anche i 16 test mirati PE/oggetti/trampoline e i 143 test della matrice Unicorn, senza casi saltati. Il test FH3 ha mantenuto i suoi sette scenari C++ x64.
+
+La verifica nativa fissa NeverC alla revisione `182fd2c5dc`, usa originali compilati indipendentemente e l’installatore NeverD attuale. `check_source_patch_hosted_pe_runtime.py` richiede 36 osservazioni Windows native per architettura per i cicli di vita C++ IR/oggetti/hosted e un’eccezione che attraversa due frame hosted. `check_source_patch_elf_runtime.py` richiede 66 osservazioni Linux native per architettura per C++ IR/oggetti/hosted, propagazione hosted e nove scenari di eccezioni Clang. Ricevute, hash e architettura effettiva dell’host devono corrispondere. Le verifiche installano output reali del compilatore senza affermare che NeverC sia stato eseguito sull’host CI.

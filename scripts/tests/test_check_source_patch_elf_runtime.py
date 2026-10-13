@@ -50,12 +50,12 @@ class ELFRuntimeEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "extent"):
                 checker.image_bytes(image, 0xffffffffffffffff, 4)
 
-    def test_independent_complete_inventory_has_sixty_observations(self):
+    def test_independent_complete_inventory_has_sixty_six_observations(self):
         run = self.execute()
-        self.assertEqual(run.call_count, 60)
+        self.assertEqual(run.call_count, 66)
         report = json.loads((self.root / "arm64-runtime.json").read_text())
         self.assertEqual(report["native_host"], "arm64")
-        self.assertEqual(len(report["observations"]), 60)
+        self.assertEqual(len(report["observations"]), 66)
         self.assertEqual({row["mode"] for row in report["observations"] if row["case"] == "exceptions"},
                          {0, 1, 2, 3, 4, 5, 6, 7, 9})
 

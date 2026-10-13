@@ -1799,3 +1799,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
+
+يثبت التحقق الأصلي مراجعة NeverC على `182fd2c5dc` ويستخدم برامج أصلية مترجمة بصورة مستقلة ومثبت NeverD الحالي. يتطلب `check_source_patch_hosted_pe_runtime.py` عدد 36 ملاحظة Windows أصلية لكل معمارية لأعمار كائنات C++ عبر IR والكائنات وhosted، واستثناء يعبر إطارين hosted. ويتطلب `check_source_patch_elf_runtime.py` عدد 66 ملاحظة Linux أصلية لكل معمارية لـ C++ عبر IR والكائنات وhosted وانتقال استثناءات hosted وتسعة سيناريوهات Clang. يجب تطابق الإيصالات والبصمات ومعمارية المضيف الفعلية. تثبت هذه الفحوص مخرجات مترجم حقيقية ولا تدعي تشغيل برنامج NeverC التنفيذي على مضيف CI.

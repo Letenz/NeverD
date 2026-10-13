@@ -1842,3 +1842,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
+
+Нативная проверка фиксирует NeverC на ревизии `182fd2c5dc`, использует независимо скомпилированные оригиналы и текущий установщик NeverD. `check_source_patch_hosted_pe_runtime.py` требует 36 нативных наблюдений Windows на архитектуру для времени жизни C++ через IR/объекты/hosted и исключения через два hosted-кадра. `check_source_patch_elf_runtime.py` требует 66 нативных наблюдений Linux на архитектуру для C++ IR/объектов/hosted, hosted-передачи исключений и девяти сценариев Clang. Квитанции, хеши и реальная архитектура хоста должны совпадать. Проверки устанавливают настоящий вывод компилятора, но не утверждают запуск исполняемого NeverC на CI-хосте.

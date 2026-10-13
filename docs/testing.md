@@ -5589,7 +5589,7 @@ See the [source patch matrix](source-patching.md).
 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` selects the optional ordinary NeverC
 producer while originals remain compiled by Clang as independent ABI oracles.
 For NeverC 3389.1.5 use
-`--gtest_filter=*/*.*/*_X64:*/*.*/*_ARM64`: its 66 checks cover six supported
+`--gtest_filter=AllTargets/*.*/*_X64:AllTargets/*.*/*_ARM64`: its 66 checks cover six supported
 profiles. This compiler does not implement x86/ARM32; an unfiltered run must
 fail those source cases rather than silently use Clang. The adapter disables
 NeverC's automatic PE default libraries with `-fno-autolink`. The same matrix
@@ -5684,3 +5684,5 @@ The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profil
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
+
+Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.

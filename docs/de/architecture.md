@@ -17,6 +17,8 @@ Architektur.
 
 `SourcePatchCompiler` verbindet NeverC `cpp-core-v2` mit C23; `validateDynCodePatchImage` bindet den Bericht an echte Objekt-/Nutzlasthashes, Code und Einstieg. Formatinstaller registrieren echte Unwind-Daten. ARM64 FH3 nutzt Loader-xdata-Grenzen und MC-funclet/FuncInfo-Gruppen. Ohne ursprüngliches DWARF müssen native Compact-Daten alle Mach-O-Funktionen abdecken.
 
+`CompiledImage` normalisiert AArch64-ELF-Doppelpunkt-Spezifizierer einmal für direkte Auflösung und erfasste Fixups. ELF-Auflösung und Loader-Relokationsveröffentlichung teilen genaue ABS/GOT-Identitäten; TLS und unbekannte Formen bleiben abgewiesen. Native COFF-Funktionsbereiche dürfen dekodierte Laufzeiteinträge nutzen; hosted-Code erfordert vollständige Compiler-Unwind-Abdeckung.
+
 ## Systemgrenze
 
 ```mermaid

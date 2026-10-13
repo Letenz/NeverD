@@ -16,6 +16,8 @@ LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキ
 
 `SourcePatchCompiler` は NeverC `cpp-core-v2` と C23 生成を組み合わせ、`validateDynCodePatchImage` は監査と実際の成果物ハッシュ・コード・入口を結び付けます。形式別インストーラが本物の展開記録を登録します。ARM64 FH3 はローダの xdata 範囲と MC の funclet/FuncInfo 所有関係を使います。DWARF がない Mach-O では全関数の native compact 記録が必要です。
 
+`CompiledImage` は AArch64 ELF のコロン修飾子を一か所で正規化し、実際の解決と記録した fixup で共有します。ELF リゾルバとローダ再配置の発行は正確な ABS/GOT 識別を使い、TLS と未知の形式は拒否します。COFF のネイティブ関数範囲はデコード済み実行時記録を使えますが、hosted コードにはコンパイラの完全な展開情報が必要です。
+
 ## システム境界
 
 ```mermaid

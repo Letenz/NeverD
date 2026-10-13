@@ -66,5 +66,25 @@
     "unittests/Inputs/source-patch/neverc-linux/hosted.c",
     "-o",
     "unittests/Inputs/source-patch/neverc-linux/arm64/hosted.bin"
+  ],
+  [
+    "neverc",
+    "--no-default-config",
+    "--target=aarch64-unknown-linux-gnu",
+    "-std=c23",
+    "-O2",
+    "-funwind-tables",
+    "-fno-discard-value-names",
+    "-fno-lto",
+    "-fdyncode",
+    "-fdyncode-hosted",
+    "-fdyncode-entry=replacement",
+    "-fdyncode-keep-obj=unittests/Inputs/source-patch/neverc-linux/arm64/cpp-hosted.o",
+    "-fdyncode-report=unittests/Inputs/source-patch/neverc-linux/arm64/cpp-hosted.audit.json",
+    "-x",
+    "c",
+    "unittests/Inputs/source-patch/neverc-linux/arm64/translated.nc",
+    "-o",
+    "unittests/Inputs/source-patch/neverc-linux/arm64/cpp-hosted.bin"
   ]
 ]

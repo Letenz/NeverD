@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
+<!-- i18n-source: f684e44974d11ab73953095844ff651d947f0160044fc4ef826d80e0e9c5dc5d -->
 
 [← Documentation Index](README.md)
 
@@ -71,7 +71,7 @@ Clang LLVM IR は Windows ARM64 C++ FH3 も受け付け、xdata、親フレー�
 | NeverC 3389.1.5 通常モード | LLVM IR | ELF x64 C、Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 通常モード | ネイティブオブジェクト | ELF x64 C |
 
-上表は検証済み OS 実行構成です。すべてのコンパイラ版やオプションを保証するものではありません。ELF、PE、Mach-O のネイティブインストーラは四つのアーキテクチャを受け付けます。GCC は一致する ELF ドライバが必要で、LLVM IR は生成できません。未知の再配置、TLS、コンストラクタ、LTO、common/IFUNC シンボル、未解決インポートは明示的に失敗します。JSON 証跡はコンパイラ、引数、バインド、設置アドレスを記録し、ネイティブオブジェクトには SHA-256 も記録します。
+上表は検証済み OS 実行構成です。すべてのコンパイラ版やオプションを保証するものではありません。ELF、PE、Mach-O のネイティブインストーラは四つのアーキテクチャを受け付けます。GCC は一致する ELF ドライバが必要で、LLVM IR は生成できません。未知の再配置、TLS、ロード時のグローバルコンストラクタ、LTO、common/IFUNC シンボル、未解決インポートは明示的に失敗します。JSON 証跡はコンパイラ、引数、バインド、設置アドレスを記録し、ネイティブオブジェクトには SHA-256 も記録します。
 
 ネイティブオブジェクトの証跡にある `target` は、読み込んだイメージの ABI に基づきます。ARM ELF の浮動小数点フラグと iOS/watchOS の区別も含まれます。コンパイル済みオブジェクトと外部オブジェクトには同じ識別規則を適用します。
 
@@ -85,7 +85,7 @@ CPU 行列は十二の組み合わせすべてでソース、外部 IR、ネイ�
 
 `CPU` はソース／IR／オブジェクトの設置、再ロード、正確な関数実行を意味します。ARM ELF はイメージから EABI5、ARM/Thumb 状態、浮動小数点 ABI を選択し、完全な整列済み `EHABI` 索引を登録します。PE は x64/ARM 実行時行と `HIGHLOW`/`DIR64`/`MOV32T` ベース再配置を保持し、x86 はコンパイラ登録コードを使います。Mach-O は CPU サブタイプに従い watchOS DWARF と iOS `SjLj` を区別します。ソースの ARM/Thumb 入口は相対分岐で、再ベースに耐えます。
 
-ネイティブオブジェクトは自身の境界付き関数シンボル、補助／セクション定義、アンワインド記録で範囲を検証します。MC 所有者 ID の捏造や IR 再コンパイルは行いません。COFF には正確な補助サイズまたは単一関数セクション（`-ffunction-sections`）が必要です。watchOS アダプタは実際の記録を得るため葉関数フレームを保持します。ネイティブ COFF/Mach-O 言語ハンドラは検証済みオブジェクト構成外です。C++ 例外には検証済み IR 経路を使ってください。固定 exidx レジストリを持つ静的 ARM アンワインダ、未登録 Mach-O 絶対ポインタ、未対応 RELRO は拒否します。
+ネイティブオブジェクトは自身の境界付き関数シンボル、補助／セクション定義、アンワインド記録で範囲を検証します。MC 所有者 ID の捏造や IR 再コンパイルは行いません。COFF の関数範囲には正確な補助サイズ、単一関数セクション（`-ffunction-sections`）、またはデコード済みのネイティブ実行時関数記録が必要です。次のシンボルから長さを推測しません。watchOS アダプタは実際の記録を得るため葉関数フレームを保持します。ネイティブ COFF/Mach-O 言語ハンドラは検証済みオブジェクト構成外です。C++ 例外には検証済み IR 経路を使ってください。固定 exidx レジストリを持つ静的 ARM アンワインダ、未登録 Mach-O 絶対ポインタ、未対応 RELRO は拒否します。
 
 GCC C オブジェクトも ELF x86、ARM32、ARM64 に設置し、Linux QEMU user mode で実行しました。アダプタはイメージから ARM/Thumb を選択し、GNU property は ELF ポインタ幅で整列します。
 
@@ -109,7 +109,7 @@ Mach-O のアンワインド表の拡張には、隣接するファイル領域�
 <!-- i18n-section: exceptions -->
 ## C++ 例外
 
-ELF はコンパイラの FDE/LSDA、Mach-O は compact unwind/DWARF を使います。PE x64 はコンパイラの FH3 テーブルを受け入れ、元プログラムに互換性のある MSVC ランタイムと型識別が必要です。type-info データは明示的な束縛を要する場合があります。FH4、独自 personality、SEH ソース、有効な CFG/EHCont/XFG は拒否し、元の保護フラグを保持します。
+ELF はコンパイラの FDE/LSDA、Mach-O は compact unwind/DWARF を使います。PE x64/ARM64 はコンパイラの FH3 テーブルを受け入れ、元プログラムに互換性のある MSVC ランタイムと型識別が必要です。type-info データは明示的な束縛を要する場合があります。FH4、独自 personality、SEH ソース、有効な CFG/EHCont/XFG は拒否し、元の保護フラグを保持します。
 
 実行ケースは通常の戻り、内部 catch、新しい例外を元の呼出元で捕捉、元の呼出先から置換関数を通る例外、RAII の一度だけの解放、再送出、noexcept 終了、未変更の関数を検証します。元の呼出箇所は既に例外伝播を許容している必要があります。元コンパイラが非送出関数の周囲から削除した catch はパッチで復元できません。
 
@@ -159,3 +159,5 @@ Windows ワークフローは x86、x64、ARM64 向けに 27 個の PE 置換バ
 行列のオプションのコンパイラーは `NEVERD_TEST_MATRIX_NEVERC` で選択します。NeverC 3389.1.5 は x64/ARM64 と ELF、PE、Mach-O の全 66 チェックに成功し、IR・ネイティブオブジェクトのインストールと CPU 実行を確認しました。このバージョンは x86 と ARM32 に対応しないため、これらには Clang を使用し、ELF では対応する GCC ドライバーも使用できます。NeverC の PE コンパイルではアダプターが `-fno-autolink` を追加し、別の CRT をリンクせず既存イメージ内で参照を解決します。`.drectve` リンカー契約を含む外部オブジェクトは引き続き拒否します。
 
 Windows のネイティブプロセス検証 [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) では、ソース IR、コンパイル済みオブジェクト、外部オブジェクトの各経路を含む全 90 回の観測が成功しました。x86、x64、ARM64 はそれぞれ 30 回で、x86/x64 は Windows x64、ARM64 は同じハッシュ検証済みイメージを使って `windows-11-arm` で実行しました。同じ実行で PE/オブジェクト/trampoline の専用テスト 16 件と Unicorn ターゲット行列テスト 143 件も、スキップなしですべて成功しました。FH3 のテストでは x64 C++ の実行シナリオ 7 種類も引き続き検証しました。
+
+ネイティブ検証は NeverC リビジョン `182fd2c5dc`、独立してコンパイルした元プログラム、現在の NeverD インストーラを使用します。`check_source_patch_hosted_pe_runtime.py` は各アーキテクチャで 36 回のネイティブ Windows 観測を要求し、C++ IR/オブジェクト/hosted のライフタイムと二つの hosted フレームを通る例外コールバックを確認します。`check_source_patch_elf_runtime.py` は各アーキテクチャで 66 回のネイティブ Linux 観測を要求し、C++ IR/オブジェクト/hosted、hosted の例外伝播、九つの Clang 例外シナリオを確認します。レシート、成果物ハッシュ、実際のホストアーキテクチャは一致しなければなりません。実際のコンパイラ出力をインストールする検証であり、CI ホスト上で NeverC 実行ファイルを動かしたとは主張しません。

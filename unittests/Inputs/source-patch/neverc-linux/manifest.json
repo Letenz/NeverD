@@ -49,7 +49,7 @@
         },
         "producer-commands.json": {
           "path": "x64/producer-commands.json",
-          "sha256": "657352ddb3045db52104ca3771aa58f6eda7d026afe58e7db12b77d2bc69dba3"
+          "sha256": "1c7b89cf0847c0f9e96c1d6588a08102648da8c32b43fe27602acca48cf1ee6d"
         },
         "translated.nc": {
           "path": "x64/translated.nc",
@@ -62,6 +62,18 @@
         "translated.nc.map.json": {
           "path": "x64/translated.nc.map.json",
           "sha256": "71dbc9427a50d5989e0be93e39f746e2fdb2ea48676329c6b018560d9c03495f"
+        },
+        "cpp-hosted.o": {
+          "path": "x64/cpp-hosted.o",
+          "sha256": "87c504e6c43367f3c4d1bd69c0be8a1e676891057b4149cb03eed187e4485e90"
+        },
+        "cpp-hosted.audit.json": {
+          "path": "x64/cpp-hosted.audit.json",
+          "sha256": "d9a60df235dc5f69c3279475a4b41217b18151cde13ff28e8bd0562d7c519ac5"
+        },
+        "cpp-hosted.bin": {
+          "path": "x64/cpp-hosted.bin",
+          "sha256": "77dd4b81e28f854547fb9afc5077a0000b0508e39e5e13f41ba376f7a649c03e"
         }
       }
     },
@@ -104,7 +116,7 @@
         },
         "producer-commands.json": {
           "path": "arm64/producer-commands.json",
-          "sha256": "902e9de3a59b7e31661f7a0c20effaff92387b92ab43c1007139e0908c076286"
+          "sha256": "4746fb923bd4c380bd5f3c8a679d4c29460b1db10725427062a68429cb062a70"
         },
         "translated.nc": {
           "path": "arm64/translated.nc",
@@ -117,6 +129,18 @@
         "translated.nc.map.json": {
           "path": "arm64/translated.nc.map.json",
           "sha256": "8ec282bfcae0c478af6939aff6876a793510e44f5710c743878e34fdc5696c3e"
+        },
+        "cpp-hosted.o": {
+          "path": "arm64/cpp-hosted.o",
+          "sha256": "f4a48fa2f407ddfde6cf99c1a5cfbb707d3c0ad5cb18b1e9efb1fd5fb7fb0ad1"
+        },
+        "cpp-hosted.audit.json": {
+          "path": "arm64/cpp-hosted.audit.json",
+          "sha256": "8e875c132540a004a83d713846bc393dc1827dd02842cc0c222232019de143c6"
+        },
+        "cpp-hosted.bin": {
+          "path": "arm64/cpp-hosted.bin",
+          "sha256": "550cbee07f61789d11107dceb0551ff978843d5556e5f321df6477406a79496f"
         }
       }
     }

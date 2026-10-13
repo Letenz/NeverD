@@ -1774,3 +1774,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
+
+ネイティブ検証は NeverC リビジョン `182fd2c5dc`、独立してコンパイルした元プログラム、現在の NeverD インストーラを使用します。`check_source_patch_hosted_pe_runtime.py` は各アーキテクチャで 36 回のネイティブ Windows 観測を要求し、C++ IR/オブジェクト/hosted のライフタイムと二つの hosted フレームを通る例外コールバックを確認します。`check_source_patch_elf_runtime.py` は各アーキテクチャで 66 回のネイティブ Linux 観測を要求し、C++ IR/オブジェクト/hosted、hosted の例外伝播、九つの Clang 例外シナリオを確認します。レシート、成果物ハッシュ、実際のホストアーキテクチャは一致しなければなりません。実際のコンパイラ出力をインストールする検証であり、CI ホスト上で NeverC 実行ファイルを動かしたとは主張しません。

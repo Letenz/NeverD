@@ -232,10 +232,14 @@ extern "C" int replacement(int x) {
   { Guard guard(&value); value = twice(value); }
   return value;
 })";
-  for (uint32_t Artifact :
-       {NEVERD_SOURCE_PATCH_ARTIFACT_IR, NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT}) {
+  for (const auto [Artifact, CompileMode] :
+       {std::pair{NEVERD_SOURCE_PATCH_ARTIFACT_IR, NEVERD_SOURCE_PATCH_NORMAL},
+        {NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT, NEVERD_SOURCE_PATCH_NORMAL},
+        {NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT, NEVERD_SOURCE_PATCH_DYNCODE}}) {
     Options.artifact = Artifact;
-    Output = Directory / ("neverc-cpp-" + std::to_string(Artifact));
+    Options.mode = CompileMode;
+    Output = Directory / ("neverc-cpp-" + std::to_string(Artifact) + "-" +
+                          std::to_string(CompileMode));
     ASSERT_EQ(neverd_patch_source(Session, Source.data(), Source.size(),
                                   &Options, Output.string().c_str()),
               1)

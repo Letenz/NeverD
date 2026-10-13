@@ -22,7 +22,7 @@ See [source patches](source-patching.md).
 `COFFSourceImage` owns installation of compiler-produced PE output on x86,
 x64, ARM32 and ARM64: separate code/state/metadata permissions, retained
 original runtime rows, new base relocations, exact compiler function/funclet
-ranges and bounded x64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
+ranges and bounded x64/ARM64 FH3 graphs. `COFFPatchObject` supplies separate auxiliary/section range
 evidence and native base-relocation fields. `MachOPatchObject` authenticates
 native linker atoms and unwind records; format-owned native installers register
 DWARF/compact records without inventing MC tokens. `sourcePatchTargetTriple`
@@ -32,6 +32,8 @@ new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
 `SourcePatchCompiler` composes NeverC `cpp-core-v2` translation and C23 generation; `validateDynCodePatchImage` binds the hosted audit to actual object/payload hashes and exact linked code/entry layout. Format installers register real compiler unwind records. ARM64 source FH3 uses loader-owned xdata extents and MC-owned funclet/FuncInfo groups. Native compact records may cover every Mach-O function when the original has no DWARF section.
+
+`CompiledImage` normalizes AArch64 ELF colon specifiers once for live resolution and captured fixups. The ELF resolver and loader-relocation publisher share exact ABS/GOT identities; TLS and unknown forms remain rejected. COFF native function extents may use decoded runtime rows, with complete compiler unwind coverage required for hosted code.
 
 ## Manual PDB presentation boundary
 

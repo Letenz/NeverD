@@ -69,7 +69,7 @@ The Clang LLVM-IR route also admits Windows ARM64 C++ FH3, checking compiler-own
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
-These are checked OS runtime profiles, not promises for every compiler version or option. The native installers accept all four architectures in ELF, PE and Mach-O. GCC requires a matching ELF driver and cannot produce LLVM IR. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
+These are checked OS runtime profiles, not promises for every compiler version or option. The native installers accept all four architectures in ELF, PE and Mach-O. GCC requires a matching ELF driver and cannot produce LLVM IR. Unknown relocations, TLS, load-time global constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
 
 The `target` field of a native object receipt comes from the loaded image ABI, including ARM ELF floating-point flags and the distinct iOS/watchOS platforms. Compiler-produced and supplied objects use the same identity rule.
 
@@ -83,7 +83,7 @@ The CPU matrix requires successful source, supplied-IR and native-object install
 
 `CPU` means source/IR/object installation, reload and exact function execution. ARM ELF selects EABI5, ARM/Thumb state and the floating-point ABI from the image and registers a complete sorted `EHABI` index. PE preserves x64/ARM runtime rows and `HIGHLOW`/`DIR64`/`MOV32T` base relocations; x86 uses compiler registration code. Mach-O selects the image's CPU subtype and preserves the distinct watchOS DWARF and iOS `SjLj` contracts. Source ARM/Thumb entry branches are relative and survive rebasing.
 
-Native objects use their own bounded function symbols, auxiliary/section definitions and unwind records; they never receive invented MC owner IDs or an IR recompilation. COFF producers need exact auxiliary sizes or singleton function sections (`-ffunction-sections`). The watchOS compiler adapter retains leaf frames to obtain real unwind rows. Native COFF/Mach-O language handlers remain outside the verified object profile; use the verified IR route for C++ exceptions. A statically linked ARM unwinder with a baked exidx registry is refused, as are unregistered absolute pointers in Mach-O and unsupported RELRO storage.
+Native objects use their own bounded function symbols, auxiliary/section definitions and unwind records; they never receive invented MC owner IDs or an IR recompilation. COFF function extents require exact auxiliary sizes, singleton function sections (`-ffunction-sections`), or decoded native runtime-function rows; the next symbol is never used to guess a size. The watchOS compiler adapter retains leaf frames to obtain real unwind rows. Native COFF/Mach-O language handlers remain outside the verified object profile; use the verified IR route for C++ exceptions. A statically linked ARM unwinder with a baked exidx registry is refused, as are unregistered absolute pointers in Mach-O and unsupported RELRO storage.
 
 GCC C objects were also installed and executed on ELF x86, ARM32 and ARM64 through Linux QEMU user mode. The adapter selects ARM/Thumb from the image, and GNU property records use the ELF pointer-width alignment.
 
@@ -107,7 +107,7 @@ Mach-O unwind-table growth also requires unused adjacent file and virtual space;
 <!-- i18n-section: exceptions -->
 ## C++ exceptions
 
-ELF uses compiler FDE/LSDA data; Mach-O uses compact unwind/DWARF. PE x64 admits compiler FH3 tables with a compatible existing MSVC runtime and type identities. Type-info data may need explicit bindings. FH4, custom personalities, SEH source and active CFG/EHCont/XFG modes are refused; original protection flags are preserved.
+ELF uses compiler FDE/LSDA data; Mach-O uses compact unwind/DWARF. PE x64/ARM64 admits compiler FH3 tables with a compatible existing MSVC runtime and type identities. Type-info data may need explicit bindings. FH4, custom personalities, SEH source and active CFG/EHCont/XFG modes are refused; original protection flags are preserved.
 
 Runtime cases cover normal return, internal catch, a new throw caught by an original caller, an original callee throwing through the replacement, exactly-once RAII cleanup, rethrow, noexcept termination and untouched original functions. The original caller must already allow propagation: a patch cannot restore catches that the original compiler eliminated around a proven no-throw function.
 
@@ -157,3 +157,5 @@ The Windows workflow also prepares 27 PE replacements across x86, x64 and ARM64.
 The optional matrix producer is selected by `NEVERD_TEST_MATRIX_NEVERC`. NeverC 3389.1.5 passed all 66 checks for x64/ARM64 across ELF, PE and Mach-O, including IR and native-object installation and CPU execution. This compiler version does not support x86 or ARM32; use Clang for those targets, or a matching GCC driver for ELF. For NeverC PE compilation, the adapter adds `-fno-autolink`: patches resolve against the existing image without linking another CRT. Supplied objects with `.drectve` linker contracts remain rejected.
 
 Native Windows process qualification at [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) passed all 90 observations: 30 each for x86, x64 and ARM64, covering source IR, compiled objects and supplied objects. x86/x64 executed on Windows x64; ARM64 executed on `windows-11-arm`, using the same hashed images. The same run passed all 16 focused PE/object/trampoline checks and all 143 Unicorn target-matrix checks without skips. The FH3 case retained its seven x64 C++ runtime scenarios.
+
+Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C++ IR/object/hosted lifetimes and a throwing callback through two hosted frames. `check_source_patch_elf_runtime.py` requires 66 native Linux observations per architecture for C++ IR/objects/hosted, hosted propagation and nine Clang exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real producer outputs; they do not claim a NeverC executable ran on the CI host.

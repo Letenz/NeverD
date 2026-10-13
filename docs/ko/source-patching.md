@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
+<!-- i18n-source: f684e44974d11ab73953095844ff651d947f0160044fc4ef826d80e0e9c5dc5d -->
 
 [← Documentation Index](README.md)
 
@@ -71,7 +71,7 @@ Clang LLVM IR 경로는 Windows ARM64 C++ FH3를 지원하며 xdata, 부모 프�
 | NeverC 3389.1.5 일반 모드 | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 일반 모드 | 네이티브 오브젝트 | ELF x64 C |
 
-위 표는 검증된 OS 실행 구성이며 모든 컴파일러 버전이나 옵션을 보장하지 않습니다. ELF, PE, Mach-O 네이티브 설치기는 네 아키텍처를 모두 받아들입니다. GCC는 일치하는 ELF 드라이버가 필요하며 LLVM IR을 생성할 수 없습니다. 알 수 없는 재배치, TLS, 생성자, LTO, common/IFUNC 심볼, 미해결 가져오기는 명확히 실패합니다. JSON 기록에는 컴파일러, 인수, 바인딩, 설치 주소가 포함되며 네이티브 객체에는 SHA-256도 기록합니다.
+위 표는 검증된 OS 실행 구성이며 모든 컴파일러 버전이나 옵션을 보장하지 않습니다. ELF, PE, Mach-O 네이티브 설치기는 네 아키텍처를 모두 받아들입니다. GCC는 일치하는 ELF 드라이버가 필요하며 LLVM IR을 생성할 수 없습니다. 알 수 없는 재배치, TLS, 로드 시 전역 생성자, LTO, common/IFUNC 심볼, 미해결 가져오기는 명확히 실패합니다. JSON 기록에는 컴파일러, 인수, 바인딩, 설치 주소가 포함되며 네이티브 객체에는 SHA-256도 기록합니다.
 
 네이티브 객체 기록의 `target` 필드는 로드한 이미지의 ABI에서 결정하며 ARM ELF 부동소수점 플래그와 iOS/watchOS 플랫폼 구분도 포함합니다. 컴파일된 객체와 외부 객체에 같은 식별 규칙을 적용합니다.
 
@@ -85,7 +85,7 @@ CPU 행렬은 열두 조합 모두에서 소스, 외부 IR, 네이티브 객체 
 
 `CPU`는 소스／IR／객체 설치, 재로드, 정확한 함수 실행을 뜻합니다. ARM ELF는 이미지에서 EABI5, ARM/Thumb 상태, 부동소수점 ABI를 선택하고 완전히 정렬된 `EHABI` 색인을 등록합니다. PE는 x64/ARM 런타임 행과 `HIGHLOW`/`DIR64`/`MOV32T` 기본 주소 재배치를 유지하며 x86은 컴파일러 등록 코드를 사용합니다. Mach-O는 CPU 하위 유형에 따라 watchOS DWARF와 iOS `SjLj`를 구분합니다. 소스 ARM/Thumb 진입점은 상대 분기로 주소 변경을 견딥니다.
 
-네이티브 객체는 자체의 경계가 있는 함수 심볼, 보조／섹션 정의, 언와인드 기록으로 범위를 확인합니다. MC 소유자 ID를 만들거나 IR을 재컴파일하지 않습니다. COFF에는 정확한 보조 길이 또는 단일 함수 섹션(`-ffunction-sections`)이 필요합니다. watchOS 어댑터는 실제 기록을 얻도록 리프 함수 프레임을 유지합니다. 네이티브 COFF/Mach-O 언어 처리기는 검증된 객체 구성에 포함되지 않으며 C++ 예외에는 검증된 IR 경로를 사용해야 합니다. 고정 exidx 등록부를 가진 정적 ARM 언와인더, 등록되지 않은 Mach-O 절대 포인터와 미지원 RELRO 저장소는 거부합니다.
+네이티브 객체는 자체의 경계가 있는 함수 심볼, 보조／섹션 정의, 언와인드 기록으로 범위를 확인합니다. MC 소유자 ID를 만들거나 IR을 재컴파일하지 않습니다. COFF 함수 범위는 정확한 보조 길이, 단일 함수 섹션(`-ffunction-sections`) 또는 디코딩된 네이티브 런타임 함수 기록으로 확인합니다. 다음 심볼로 길이를 추측하지 않습니다. watchOS 어댑터는 실제 기록을 얻도록 리프 함수 프레임을 유지합니다. 네이티브 COFF/Mach-O 언어 처리기는 검증된 객체 구성에 포함되지 않으며 C++ 예외에는 검증된 IR 경로를 사용해야 합니다. 고정 exidx 등록부를 가진 정적 ARM 언와인더, 등록되지 않은 Mach-O 절대 포인터와 미지원 RELRO 저장소는 거부합니다.
 
 GCC C 객체도 ELF x86, ARM32, ARM64에 설치하고 Linux QEMU user mode에서 실행했습니다. 어댑터는 이미지에서 ARM/Thumb을 선택하며 GNU property는 ELF 포인터 너비로 정렬합니다.
 
@@ -109,7 +109,7 @@ Mach-O 언와인드 테이블 확장에는 인접한 파일 및 가상 공간의
 <!-- i18n-section: exceptions -->
 ## C++ 예외
 
-ELF는 컴파일러 FDE/LSDA, Mach-O는 compact unwind/DWARF를 사용합니다. PE x64는 컴파일러 FH3 테이블을 허용하며 원래 프로그램에 호환 MSVC 런타임과 타입 식별자가 필요합니다. type-info 데이터는 명시적 바인딩이 필요할 수 있습니다. FH4, 사용자 정의 personality, SEH 소스 및 활성 CFG/EHCont/XFG 모드는 거부하며 원래 보호 플래그는 유지합니다.
+ELF는 컴파일러 FDE/LSDA, Mach-O는 compact unwind/DWARF를 사용합니다. PE x64/ARM64는 컴파일러 FH3 테이블을 허용하며 원래 프로그램에 호환 MSVC 런타임과 타입 식별자가 필요합니다. type-info 데이터는 명시적 바인딩이 필요할 수 있습니다. FH4, 사용자 정의 personality, SEH 소스 및 활성 CFG/EHCont/XFG 모드는 거부하며 원래 보호 플래그는 유지합니다.
 
 실행 사례는 정상 반환, 내부 catch, 원래 호출자의 새 예외 포착, 원래 피호출 함수의 예외 전파, 정확히 한 번의 RAII 정리, 재던지기, noexcept 종료와 변경하지 않은 함수를 검증합니다. 원래 호출 지점은 예외 전파를 이미 허용해야 합니다. 원래 컴파일러가 예외를 던지지 않는 함수 주위에서 제거한 catch 경로는 패치로 복원할 수 없습니다.
 
@@ -159,3 +159,5 @@ Windows 워크플로는 x86, x64, ARM64용 PE 교체 바이너리 27개도 생�
 행렬의 선택적 컴파일러는 `NEVERD_TEST_MATRIX_NEVERC`로 지정합니다. NeverC 3389.1.5는 x64/ARM64와 ELF, PE, Mach-O 조합의 66개 검사를 모두 통과했으며 IR 및 네이티브 객체 설치와 CPU 실행을 확인했습니다. 이 컴파일러 버전은 x86과 ARM32를 지원하지 않으므로 해당 대상에는 Clang을 사용하며 ELF에는 호환 GCC 드라이버도 사용할 수 있습니다. NeverC의 PE 컴파일 시 어댑터는 `-fno-autolink`를 추가하여 다른 CRT를 링크하지 않고 기존 이미지에서 참조를 해결합니다. `.drectve` 링크 계약이 있는 외부 객체는 계속 거부됩니다.
 
 Windows 네이티브 프로세스 검증 [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817)에서 소스 IR, 컴파일된 객체, 외부 객체 경로를 포함한 관측 90회가 모두 통과했습니다. x86, x64, ARM64 각각 30회이며, x86/x64는 Windows x64에서, ARM64는 동일한 해시 검증 이미지를 사용해 `windows-11-arm`에서 실행했습니다. 같은 실행에서 PE/객체/trampoline 전용 검사 16개와 Unicorn 대상 행렬 검사 143개도 건너뛰기 없이 모두 통과했습니다. FH3 사례는 x64 C++ 실행 시나리오 7가지도 계속 검증했습니다.
+
+네이티브 검증은 NeverC 리비전 `182fd2c5dc`, 독립적으로 컴파일한 원본과 현재 NeverD 설치기를 사용합니다. `check_source_patch_hosted_pe_runtime.py`는 아키텍처마다 Windows 네이티브 관측 36회를 요구하며 C++ IR/객체/hosted 수명과 두 hosted 프레임을 통과하는 예외 콜백을 확인합니다. `check_source_patch_elf_runtime.py`는 아키텍처마다 Linux 네이티브 관측 66회를 요구하며 C++ IR/객체/hosted, hosted 예외 전파, Clang 예외 시나리오 9개를 확인합니다. 영수증, 산출물 해시와 실제 호스트 아키텍처가 일치해야 합니다. 실제 컴파일러 산출물을 설치하는 검사이며 CI 호스트에서 NeverC 실행 파일을 실행했다고 주장하지 않습니다.

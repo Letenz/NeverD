@@ -1875,3 +1875,5 @@ La matriz también compara los recibos `target` de objetos nativos compilados y 
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
+
+La validación nativa fija NeverC en la revisión `182fd2c5dc`, usa originales compilados de forma independiente y el instalador NeverD actual. `check_source_patch_hosted_pe_runtime.py` exige 36 observaciones nativas de Windows por arquitectura para ciclos de vida C++ con IR/objetos/hosted y una excepción que atraviesa dos marcos hosted. `check_source_patch_elf_runtime.py` exige 66 observaciones nativas de Linux por arquitectura para C++ IR/objetos/hosted, propagación hosted y nueve escenarios de excepciones Clang. Deben coincidir los recibos, hashes y arquitectura real del host. Se instalan salidas reales del compilador; no se afirma que NeverC se ejecutara en el host CI.

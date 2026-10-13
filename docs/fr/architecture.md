@@ -17,6 +17,8 @@ leur propre architecture interne.
 
 `SourcePatchCompiler` compose NeverC `cpp-core-v2` et C23 ; `validateDynCodePatchImage` lie l’audit aux empreintes, octets et entrée réels. Les installateurs enregistrent les vrais records de déroulage. ARM64 FH3 utilise les limites xdata du chargeur et les groupes funclet/FuncInfo du MC. Sans DWARF original, tous les cadres Mach-O doivent avoir des records compacts natifs.
 
+`CompiledImage` normalise une seule fois les spécificateurs ELF AArch64 à deux-points pour la résolution réelle et les fixups capturés. Le résolveur ELF et la publication des relocations utilisent les mêmes identités ABS/GOT exactes ; TLS et formes inconnues restent refusés. COFF peut utiliser les limites des fonctions natives décodées, mais le code hosted exige une couverture complète des records de déroulage du compilateur.
+
 ## Frontière du système
 
 ```mermaid

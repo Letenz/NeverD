@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
+<!-- i18n-source: f684e44974d11ab73953095844ff651d947f0160044fc4ef826d80e0e9c5dc5d -->
 
 [← Documentation Index](README.md)
 
@@ -71,7 +71,7 @@ Clang 的 LLVM IR 路径也接入 Windows ARM64 C++ FH3，核对编译器拥有�
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生对象 | ELF x64 C |
 
-上表是已验证的操作系统运行配置，不承诺所有编译器版本和选项。ELF、PE、Mach-O 的原生安装器均接入四种架构。GCC 需要匹配的 ELF 驱动，不能生成 LLVM IR。未知重定位、TLS、构造函数、LTO、common/IFUNC 符号及未解析导入均明确失败。JSON 凭据记录编译器身份、参数、绑定与安装地址，原生对象另记录 SHA-256。
+上表是已验证的操作系统运行配置，不承诺所有编译器版本和选项。ELF、PE、Mach-O 的原生安装器均接入四种架构。GCC 需要匹配的 ELF 驱动，不能生成 LLVM IR。未知重定位、TLS、装载时的全局构造函数、LTO、common/IFUNC 符号及未解析导入均明确失败。JSON 凭据记录编译器身份、参数、绑定与安装地址，原生对象另记录 SHA-256。
 
 原生对象回执中的 `target` 字段来自已加载映像的 ABI，包括 ARM ELF 浮点标志以及不同的 iOS/watchOS 平台。编译产生的对象与外部对象使用同一条身份规则。
 
@@ -85,7 +85,7 @@ CPU 矩阵要求十二种组合的源码、外部 IR 和原生对象均成功安
 
 `CPU` 表示源码／IR／对象安装、重新加载及精确函数执行。ARM ELF 从镜像确定 EABI5、ARM/Thumb 状态和浮点 ABI，并注册完整排序的 `EHABI` 索引。PE 保留 x64/ARM 运行时记录与 `HIGHLOW`/`DIR64`/`MOV32T` 基址重定位；x86 使用编译器注册代码。Mach-O 根据 CPU 子类型区分 watchOS DWARF 与 iOS `SjLj`。源码的 ARM/Thumb 入口使用相对分支，可随镜像改变加载地址。
 
-原生对象依据自身有界函数符号、辅助／区段定义及展开记录验证范围，不伪造 MC 所有者 ID，也不重新编译 IR。COFF 需要精确辅助长度或单函数区段（`-ffunction-sections`）；watchOS 编译适配器保留叶函数栈帧以取得真实展开记录。原生 COFF/Mach-O 语言处理程序尚不属于已验证对象配置；C++ 异常应使用已验证 IR 路径。固化 exidx 注册表的静态 ARM 展开器、未注册的 Mach-O 绝对指针及不支持的 RELRO 存储均明确拒绝。
+原生对象依据自身有界函数符号、辅助／区段定义及展开记录验证范围，不伪造 MC 所有者 ID，也不重新编译 IR。COFF 函数范围须来自精确辅助长度、单函数区段（`-ffunction-sections`）或解码后的原生运行时函数记录，不能按下一个符号猜测长度；watchOS 编译适配器保留叶函数栈帧以取得真实展开记录。原生 COFF/Mach-O 语言处理程序尚不属于已验证对象配置；C++ 异常应使用已验证 IR 路径。固化 exidx 注册表的静态 ARM 展开器、未注册的 Mach-O 绝对指针及不支持的 RELRO 存储均明确拒绝。
 
 GCC C 对象也在 ELF x86、ARM32、ARM64 上完成安装，并通过 Linux QEMU user mode 执行。适配器从镜像选择 ARM/Thumb 模式，GNU property 记录按 ELF 指针宽度对齐。
 
@@ -109,7 +109,7 @@ Mach-O 展开表增长还需要相邻的空余文件与虚拟空间；仅预留�
 <!-- i18n-section: exceptions -->
 ## C++ 异常
 
-ELF 使用编译器的 FDE/LSDA；Mach-O 使用紧凑展开/DWARF。PE x64 支持编译器的 FH3 表，要求原程序已有兼容的 MSVC 运行库和类型身份；type-info 数据可能需要显式绑定。FH4、自定义 personality、SEH 源码和启用的 CFG/EHCont/XFG 模式会被拒绝，原保护标志保持不变。
+ELF 使用编译器的 FDE/LSDA；Mach-O 使用紧凑展开/DWARF。PE x64/ARM64 支持编译器的 FH3 表，要求原程序已有兼容的 MSVC 运行库和类型身份；type-info 数据可能需要显式绑定。FH4、自定义 personality、SEH 源码和启用的 CFG/EHCont/XFG 模式会被拒绝，原保护标志保持不变。
 
 运行用例覆盖正常返回、内部捕获、新异常被原调用者捕获、原被调函数的异常穿过替换函数、恰好一次 RAII 清理、重新抛出、noexcept 终止及未替换函数。原调用点必须允许异常传播；patch 不能恢复原编译器因函数不抛异常而删除的捕获路径。
 
@@ -159,3 +159,5 @@ Windows 工作流还会为 x86、x64 和 ARM64 生成 27 个 PE 替换产物。`
 可通过 `NEVERD_TEST_MATRIX_NEVERC` 选择矩阵的可选编译器。NeverC 3389.1.5 在 x64/ARM64 × ELF、PE、Mach-O 的 66 个检查中全部通过，包括 IR 和原生对象安装及 CPU 执行。该编译器版本不支持 x86 或 ARM32；这些目标使用 Clang，ELF 也可使用匹配的 GCC 驱动。NeverC 编译 PE 时，适配器加入 `-fno-autolink`：patch 在现有映像中解析引用，不再链接另一套 CRT。带有 `.drectve` 链接契约的外部对象仍会被拒绝。
 
 Windows 原生进程验收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) 的 90 次观测全部通过：x86、x64 和 ARM64 各 30 次，覆盖源码 IR、编译对象和外部对象三条路径。x86/x64 在 Windows x64 上执行；ARM64 在 `windows-11-arm` 上执行，使用同一批经过哈希校验的映像。同一轮的 16 个 PE/对象/trampoline 专项检查和 143 个 Unicorn 目标矩阵检查也全部通过，无跳过。FH3 用例继续验证七种 x64 C++ 运行场景。
+
+原生生产器验证固定 NeverC 提交 `182fd2c5dc`，使用独立编译的原程序和当前 NeverD 安装器。`check_source_patch_hosted_pe_runtime.py` 要求每种架构完成 36 次原生 Windows 观测，覆盖 C++ IR/对象/hosted 生命周期，以及异常穿过两个 hosted 帧的回调。`check_source_patch_elf_runtime.py` 要求每种架构完成 66 次原生 Linux 观测，覆盖 C++ IR/对象/hosted、hosted 异常传播及九种 Clang 异常场景。回执、制品哈希和实际主机架构必须匹配。这些检查安装真实编译器产物，不表示在 CI 主机上运行过 NeverC 编译器。

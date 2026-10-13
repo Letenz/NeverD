@@ -1720,3 +1720,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```sh
 NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
 ```
+
+原生產生器驗證固定 NeverC 提交 `182fd2c5dc`，使用獨立編譯的原程式與目前 NeverD 安裝器。`check_source_patch_hosted_pe_runtime.py` 要求每種架構完成 36 次原生 Windows 觀測，涵蓋 C++ IR/物件/hosted 生命週期，以及例外穿過兩個 hosted 框架的回呼。`check_source_patch_elf_runtime.py` 要求每種架構完成 66 次原生 Linux 觀測，涵蓋 C++ IR/物件/hosted、hosted 例外傳播及九種 Clang 例外情境。回執、製品雜湊與實際主機架構必須相符。這些檢查安裝真實編譯器產物，不表示在 CI 主機執行過 NeverC 編譯器。
