@@ -144,7 +144,7 @@ cmake --build build
 ./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
-# ネイティブ関数単位の任意の変換（通常の HighC は実行しない）
+# 単一ネイティブ関数の任意変換（通常の HighC では実行しません）
 ./build/bin/neverd decompile --func main --symbolic-simplify -o enhanced.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=O3 -o optimized.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=custom \

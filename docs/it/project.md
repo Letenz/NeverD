@@ -145,7 +145,7 @@ cmake --build build
 ./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
-# Trasformazioni facoltative per una funzione nativa (HighC ordinario le salta)
+# Trasformazioni facoltative di una funzione nativa (HighC ordinario le omette)
 ./build/bin/neverd decompile --func main --symbolic-simplify -o enhanced.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=O3 -o optimized.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=custom \

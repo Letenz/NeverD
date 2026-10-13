@@ -144,7 +144,7 @@ cmake --build build
 ./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
-# 네이티브 함수 하나의 선택적 변환 (일반 HighC에서는 실행하지 않음)
+# 단일 네이티브 함수의 선택적 변환 (일반 HighC는 이 단계를 건너뜁니다)
 ./build/bin/neverd decompile --func main --symbolic-simplify -o enhanced.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=O3 -o optimized.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=custom \

@@ -144,7 +144,7 @@ cmake --build build
 ./build/bin/neverd decompile --language=cpp -o out.cpp cpp-binary
 ./build/bin/neverd decompile --language=go --func main.main go-binary
 
-# تحويلات اختيارية لدالة أصلية واحدة (يتخطاها HighC العادي)
+# تحويلات اختيارية لدالة أصلية واحدة (يتجاوزها HighC العادي)
 ./build/bin/neverd decompile --func main --symbolic-simplify -o enhanced.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=O3 -o optimized.c binary
 ./build/bin/neverd decompile --func main --llvm --llvm-opt=custom \
