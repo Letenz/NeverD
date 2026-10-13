@@ -21,14 +21,69 @@
 namespace neverd {
 namespace detail {
 
-bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
-                                  uint64_t RegOff, MedVar &Out) {
-  auto blockById = [&](int Id) -> const MedBlock * {
-    for (const auto &Blk : Func.Blocks)
-      if (Blk.Id == Id)
-        return &Blk;
-    return nullptr;
+namespace {
+
+const MedBlock *blockOf(const MedFunc &Func, int Id) {
+  for (const auto &Block : Func.Blocks)
+    if (Block.Id == Id)
+      return &Block;
+  return nullptr;
+}
+
+/// Whether \p Block, or a block it reaches, reads \p View before writing it:
+/// the reads the sub-register fixup keeps a view in step with writes to the
+/// whole register for.
+bool viewReadFrom(const MedFunc &Func, const MedBlock &Block,
+                  const MedVar &View) {
+  std::set<int> Seen{Block.Id};
+  std::vector<const MedBlock *> Pending{&Block};
+  while (!Pending.empty()) {
+    const MedBlock *Current = Pending.back();
+    Pending.pop_back();
+    std::set<int> Written;
+    for (const auto &Op : Current->Ops) {
+      for (uint8_t I = 0; I < Op.NumInputs; ++I) {
+        const MedVar &Input = Op.Inputs[I];
+        if (Input.Kind == MedVar::Reg && Input.RegOff == View.RegOff &&
+            Input.Size == View.Size && !Written.count(Input.SSAVer))
+          return true;
+      }
+      if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == View.RegOff &&
+          Op.Output.Size == View.Size)
+        Written.insert(Op.Output.SSAVer);
+    }
+    for (int Succ : Current->Succs)
+      if (Seen.insert(Succ).second)
+        if (const MedBlock *Next = blockOf(Func, Succ))
+          Pending.push_back(Next);
+  }
+  return false;
+}
+
+} // namespace
+
+const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
+                           uint64_t RegOff, const TargetRegInfo &TRI) {
+  auto OnRegister = [&](const PhiNode &Phi) {
+    return Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff &&
+           Phi.Output.Size > 0;
   };
+  const PhiNode *Widest = nullptr;
+  for (const auto &Phi : Block.Phis)
+    if (OnRegister(Phi) && (!Widest || Phi.Output.Size > Widest->Output.Size))
+      Widest = &Phi;
+  for (const auto &Phi : Block.Phis)
+    if (OnRegister(Phi) && (Phi.Output.Size == Widest->Output.Size ||
+                            !TRI.writeZeroExtends(RegOff, Phi.Output.Size) ||
+                            viewReadFrom(Func, Block, Phi.Output)))
+      return &Phi;
+  return Widest;
+}
+
+bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
+                                  uint64_t RegOff, const TargetRegInfo &TRI,
+                                  MedVar &Out) {
+  auto blockById = [&](int Id) { return blockOf(Func, Id); };
 
   std::set<int> Visited;
   std::function<bool(const MedBlock &, MedVar &)> entryOf;
@@ -36,12 +91,10 @@ bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
   entryOf = [&](const MedBlock &Blk, MedVar &R) -> bool {
     if (!Visited.insert(Blk.Id).second)
       return false;
-    for (const auto &Phi : Blk.Phis)
-      if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff &&
-          Phi.Output.Size > 0) {
-        R = Phi.Output;
-        return true;
-      }
+    if (const PhiNode *Phi = registerPhi(Func, Blk, RegOff, TRI)) {
+      R = Phi->Output;
+      return true;
+    }
     if (Blk.Preds.empty()) {
       // Function entry: the identity COPY is the live-in. Do not invent every
       // unused incoming parameter; a later 1-arg call still has rdx live.
@@ -96,8 +149,8 @@ storedStackArguments(const MedFunc &Func, const MedBlock &Block, size_t CallIdx,
       Known = true;
     }
   if (!Known)
-    Known =
-        reachingRegisterAtBlockEntry(Func, Block, TRI.StackPointer, CallStack);
+    Known = reachingRegisterAtBlockEntry(Func, Block, TRI.StackPointer, TRI,
+                                         CallStack);
   const std::optional<int64_t> Base =
       Known ? Offsets.offset(CallStack) : std::nullopt;
   if (!Base)

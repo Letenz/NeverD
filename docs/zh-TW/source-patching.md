@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: e4a0692201d6aed196a2d3754627545fcc84707b2bb16eb47b48da1e8d1ebb14 -->
+<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
 
 [← Documentation Index](README.md)
 
@@ -50,19 +50,21 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生物件 | ELF x64 C |
 
-這些是經過驗證的設定，不代表所有編譯器版本或選項皆相容。尚未接入 `dyncode` 或 NeverC C++。GCC 無法產生 LLVM IR。原生 COFF/Mach-O 物件尚不支援；物件安裝要求 ELF x64。未知重定位、TLS、建構函式、LTO、common/IFUNC 符號及無法解析的匯入皆明確失敗。JSON 憑據記錄編譯器身分、參數、繫結與安裝位址；原生物件另記錄 SHA-256。
+上表是已驗證的作業系統執行設定，不保證所有編譯器版本與選項。ELF、PE、Mach-O 原生安裝器皆接入四種架構。尚未接入 `dyncode` 或 NeverC C++；GCC 需要相符的 ELF 驅動，不能產生 LLVM IR。未知重定位、TLS、建構函式、LTO、common/IFUNC 符號及未解析匯入皆明確失敗。JSON 憑據記錄編譯器身分、參數、繫結及安裝位址，原生物件另記錄 SHA-256。
 
-獨立 CPU 矩陣涵蓋四種架構（`x86`、`x64`、`ARM32`、`ARM64`）與三種格式（`ELF`、`PE`、`Mach-O`），檢查原始碼安裝或明確拒絕。隔離的 CPU 執行不能驗證作業系統載入器、C++ 展開器或任意 ABI；這些結論應依據上表執行設定。
+CPU 矩陣要求十二種組合的原始碼、外部 IR 及原生物件皆成功安裝。另分別涵蓋 ARMv7k watchOS、ARMv7 iOS、可寫／唯讀狀態、原程式浮點與堆疊參數繫結，以及改變載入位址後的入口執行。CPU 執行無法證明作業系統載入器、C++ 展開器或任意 ABI 正確；應依據上表的執行設定。
 
 | Format | `x86` | `x64` | `ARM32` | `ARM64` |
 |---|---|---|---|---|
-| `ELF` | `CPU` | `CPU` | `REFUSED` | `CPU` |
-| `PE` | `REFUSED` | `CPU` | `REFUSED` | `REFUSED` |
-| `Mach-O` | `REFUSED` | `CPU` | `REFUSED` | `CPU` |
+| `ELF` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `PE` | `CPU` | `CPU` | `CPU` | `CPU` |
+| `Mach-O` | `CPU` | `CPU` | `CPU` | `CPU` |
 
-`CPU` 表示原始碼安裝與隔離函式執行；`REFUSED` 表示明確缺少安裝契約。ARM32 ELF 需要 EHABI 註冊；32 位 Mach-O 需要經驗證的載入器、前端與展開契約；PE 原始碼安裝目前要求 x64。
+`CPU` 表示原始碼／IR／物件安裝、重新載入及精確函式執行。ARM ELF 從映像確定 EABI5、ARM/Thumb 狀態與浮點 ABI，並註冊完整排序的 `EHABI` 索引。PE 保留 x64/ARM 執行階段記錄與 `HIGHLOW`/`DIR64`/`MOV32T` 基底重定位；x86 使用編譯器註冊程式碼。Mach-O 依 CPU 子類型區分 watchOS DWARF 與 iOS `SjLj`。原始碼 ARM/Thumb 入口使用相對分支，可隨映像改變載入位址。
 
-CPU 矩陣使用獨立的算術、分支與輔助函式呼叫。其結果不能驗證 ELF x86/ARM64 資料參照或 ARM64 C++ 匯入；額外執行探測因尚未支援的重定位契約而明確拒絕安裝。
+原生物件依自身有界函式符號、輔助／區段定義及展開記錄驗證範圍，不虛構 MC 擁有者 ID，也不重新編譯 IR。COFF 需要精確輔助長度或單函式區段（`-ffunction-sections`）；watchOS 編譯轉接器保留葉函式堆疊框架以取得真實展開記錄。原生 COFF/Mach-O 語言處理常式尚不屬於已驗證物件設定；C++ 例外應使用已驗證 IR 路徑。固化 exidx 註冊表的靜態 ARM 展開器、未註冊 Mach-O 絕對指標及不支援 RELRO 儲存皆明確拒絕。
+
+GCC C 物件亦在 ELF x86、ARM32、ARM64 上完成安裝並透過 Linux QEMU user mode 執行。轉接器從映像選擇 ARM/Thumb 模式，GNU property 記錄依 ELF 指標寬度對齊。
 
 <!-- i18n-section: references -->
 ## 原程式參照與儲存

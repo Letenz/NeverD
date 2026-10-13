@@ -9,7 +9,9 @@ NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部
 
 ## 源码与对象替换边界
 
-`SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
+`SourcePatchCompiler` 负责编译器身份和制品选择。`validateSourcePatchTarget` 统一决定源码与外部 IR 的目标准入，目标三元组本身不足以证明支持。`bindSourcePatch` 确认 IR 入口映射；`PatchObject` 负责原生节、重定位和 FDE 范围证据。`publishSourcePatch` 暂存、检查并独占发布完整事务。`COFFSourceImage` 负责 PE x86/x64/ARM32/ARM64 的新存储和展开表；提升后的重写继续要求独立的原 EH 证据。参见[源码 patch](source-patching.md)。
+
+`sourcePatchTargetTriple` 从镜像确定 ARM 指令模式、ELF 浮点 ABI 和 Mach-O CPU 子类型。`COFFPatchObject` 与 `MachOPatchObject` 使用对象自身的符号、辅助／区段定义和展开记录验证范围，原生对象不伪造 MC 标识；格式安装器负责注册实际展开表。
 
 ## 系统边界
 
@@ -1514,3 +1516,5 @@ DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码�
 驱动加载器用已验证文件的 SHA-256 绑定重定位事实。PE 重建消费这些自有事实，在输出诊断 DIR64 记录前排除导入修复或元数据格式化替换的字段。该层不能推断生成指针的重定位，也不能解除内核运行时拒绝。
 
 `isCanonicalX87Wait` 为普通 registration 转移和经过验证的 local-finally 返回提供同一套正常路径帧保留规则。FWAIT 操作及异常分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。该规则不授予非局部 finally 退出或原生恢复证明。
+
+受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。

@@ -994,6 +994,7 @@ struct ResolverValueExpr {
   bool HasOpcode = false;
   ResolverConstraintKind ConstraintKind = ResolverConstraintKind::None;
   bool ContainsMerge = false;
+  bool ContainsPredecessorMerge = false;
   std::optional<ResolverScalarModelOrigin> ScalarModelOrigin;
   ResolverValue Input;
   std::vector<ResolverValue> Inputs;
@@ -1050,6 +1051,7 @@ static ResolverValue resolverConstraint(const ResolverValue &Input,
   E->Constant = Constant & resolverWidthMask(Input->Size);
   E->ConstraintKind = Kind;
   E->ContainsMerge = Input->ContainsMerge;
+  E->ContainsPredecessorMerge = Input->ContainsPredecessorMerge;
   E->Input = Input;
   return E;
 }
@@ -1061,6 +1063,11 @@ static ResolverValue resolverMerge(uint16_t Size, std::string Root,
   auto E = std::make_shared<ResolverValueExpr>();
   E->K = ResolverValueExpr::Kind::Merge;
   E->ContainsMerge = true;
+  E->ContainsPredecessorMerge =
+      Root.starts_with("PB:") || Root.starts_with("M:") ||
+      std::any_of(Inputs.begin(), Inputs.end(), [](const ResolverValue &Input) {
+        return Input && Input->ContainsPredecessorMerge;
+      });
   E->Size = Size;
   E->Root = std::move(Root);
   E->Inputs = std::move(Inputs);
@@ -1078,6 +1085,10 @@ resolverTransform(uint16_t Size, std::string Root,
   E->ContainsMerge =
       std::any_of(Inputs.begin(), Inputs.end(), [](const ResolverValue &Input) {
         return Input && Input->ContainsMerge;
+      });
+  E->ContainsPredecessorMerge =
+      std::any_of(Inputs.begin(), Inputs.end(), [](const ResolverValue &Input) {
+        return Input && Input->ContainsPredecessorMerge;
       });
   E->Size = Size;
   E->Root = std::move(Root);
@@ -1331,6 +1342,7 @@ resolverExtend(const ResolverValue &Input, uint16_t Size, bool Signed,
                   : ResolverValueExpr::Kind::ZeroExtend;
     E->Size = Size;
     E->ContainsMerge = Node->ContainsMerge;
+    E->ContainsPredecessorMerge = Node->ContainsPredecessorMerge;
     E->Input = Node;
     return remember(Node, std::move(E));
   };
@@ -1533,6 +1545,7 @@ resolverSlice(const ResolverValue &Input, uint16_t Offset, uint16_t Size,
     E->Size = Size;
     E->SliceOffset = CurrentOffset;
     E->ContainsMerge = Node->ContainsMerge;
+    E->ContainsPredecessorMerge = Node->ContainsPredecessorMerge;
     E->Input = Node;
     return remember(Node, CurrentOffset, std::move(E));
   };
@@ -5296,7 +5309,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   std::optional<bool> MemoOccurrenceRootMode;
   std::optional<bool> MemoPrivateFrameCallMode;
   std::optional<bool> MemoScalarConstantFoldMode;
-  std::optional<bool> MemoUnsignedOrderMode;
+  std::optional<unsigned> MemoEdgeConstraintMode;
 
   auto constantValue = [&](const NdVar &V) -> ResolverResult {
     if (!V.isConst() || V.Size == 0)
@@ -5389,14 +5402,29 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // Exact equality and unsigned-order predicates filter the lane they compare.
   // Keep that relation on CFG edges and SELECT arms: a loop's checked index
   // must not regain out-of-range values through its predecessor merge.
-  auto constrainOnCondition = [&](ResolverResult Value,
-                                  ResolverResult Condition,
-                                  bool Taken) -> ResolverResult {
+  // Boolean predicates retain their actual polarity. A conjunction may
+  // refine one value successively; a disjunction is the union of both arms.
+  // An unknown arm therefore keeps the entire incoming value. These extra
+  // constraints belong to the joined-guard query, whose symbolic owner keeps
+  // predecessor predicates separate. Ordinary mask/group queries retain their
+  // existing domain/publication protocol.
+  std::function<ResolverResult(ResolverResult, ResolverResult, bool, unsigned)>
+      constrainPredicate;
+  constrainPredicate = [&](ResolverResult Value, ResolverResult Condition,
+                           bool Taken, unsigned Depth) -> ResolverResult {
+    const bool JoinedGuard =
+        ActiveValueQuery &&
+        ActiveValueQuery->Relation ==
+            JumpTableValueRelation::JoinedUnsignedFeasibleSet;
+    if (Depth > MaxResolverDepth || (JoinedGuard && !consumeEvidence())) {
+      QueryResolverAnalysisIncomplete = true;
+      QueryResolverDepthExceeded |= Depth > MaxResolverDepth;
+      return resolverInvalid();
+    }
     if (Value.Kind != ResolverResultKind::Value || !Value.Value ||
         Condition.Kind != ResolverResultKind::Value || !Condition.Value)
       return Value;
     ResolverValue Predicate = Condition.Value;
-    unsigned Depth = 0;
     while (Predicate && Predicate->K == ResolverValueExpr::Kind::Transform &&
            Predicate->HasOpcode && Predicate->Opcode == NdOp::BOOL_NOT &&
            Predicate->Inputs.size() == 1) {
@@ -5408,6 +5436,31 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       Taken = !Taken;
       Predicate = Predicate->Inputs.front();
     }
+    if (Predicate && Predicate->K == ResolverValueExpr::Kind::Transform &&
+        Predicate->HasOpcode && Predicate->Inputs.size() == 2 && JoinedGuard &&
+        (Predicate->Opcode == NdOp::BOOL_AND ||
+         Predicate->Opcode == NdOp::BOOL_OR)) {
+      const bool Conjunction = Taken == (Predicate->Opcode == NdOp::BOOL_AND);
+      ResolverResult Left = constrainPredicate(
+          Value, resolverValue(Predicate->Inputs[0]), Taken, Depth + 1);
+      if (Conjunction)
+        return constrainPredicate(Left, resolverValue(Predicate->Inputs[1]),
+                                  Taken, Depth + 1);
+      ResolverResult Right = constrainPredicate(
+          Value, resolverValue(Predicate->Inputs[1]), Taken, Depth + 1);
+      if (Left.Kind != ResolverResultKind::Value ||
+          Right.Kind != ResolverResultKind::Value || !Left.Value ||
+          !Right.Value || !consumeEvidence(8))
+        return resolverInvalid();
+      // Avoid inventing a new identity for an unrelated predicate. Besides
+      // bounding growth, this preserves a later guard's exact lane match.
+      if (Left.Value == Value.Value || Right.Value == Value.Value)
+        return Value;
+      // This is a logical union, not a named CFG predecessor choice. An
+      // anonymous merge keeps its selector independent of every other union.
+      return resolverValue(budgetedResolverMerge(
+          Value.Value->Size, "", {Left.Value, Right.Value}, consumeEvidence));
+    }
     if (!Predicate || Predicate->K != ResolverValueExpr::Kind::Transform ||
         !Predicate->HasOpcode ||
         (Predicate->Opcode != NdOp::INT_EQUAL &&
@@ -5418,6 +5471,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       return Value;
     if ((Predicate->Opcode == NdOp::INT_LESS ||
          Predicate->Opcode == NdOp::INT_LESSEQUAL) &&
+        !JoinedGuard &&
         (!ActiveValueQuery || ActiveValueQuery->Relation !=
                                   JumpTableValueRelation::UnsignedFeasibleSet))
       return Value;
@@ -5451,6 +5505,25 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
         Compared->Inputs[1]->Provenance == ConstantAddressProvenance::Scalar &&
         Compared->Inputs[1]->Constant == 0)
       Compared = Compared->Inputs[0];
+    // At the same width, (x - c) == 0 is exactly x == c, including
+    // modular wraparound. This is the ZF half of an x64 inclusive guard;
+    // unlike an ordering comparison, it needs no no-wrap assumption.
+    if (JoinedGuard && Compared && Constant &&
+        (Predicate->Opcode == NdOp::INT_EQUAL ||
+         Predicate->Opcode == NdOp::INT_NOTEQUAL) &&
+        Constant->K == ResolverValueExpr::Kind::Constant &&
+        Constant->Provenance == ConstantAddressProvenance::Scalar &&
+        Constant->Constant == 0 && Constant->Size == Compared->Size &&
+        Compared->K == ResolverValueExpr::Kind::Transform &&
+        Compared->HasOpcode && Compared->Opcode == NdOp::INT_SUB &&
+        Compared->Inputs.size() == 2 && Compared->Inputs[0] &&
+        Compared->Inputs[1] && Compared->Inputs[0]->Size == Compared->Size &&
+        Compared->Inputs[1]->Size == Compared->Size &&
+        Compared->Inputs[1]->K == ResolverValueExpr::Kind::Constant &&
+        Compared->Inputs[1]->Provenance == ConstantAddressProvenance::Scalar) {
+      Constant = Compared->Inputs[1];
+      Compared = Compared->Inputs[0];
+    }
     if (!Compared || !Constant ||
         Constant->Provenance != ConstantAddressProvenance::Scalar)
       return Value;
@@ -5506,6 +5579,11 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
                                    /*Signed=*/false, consumeEvidence,
                                    &QueryResolverAnalysisIncomplete);
     return Constrained ? resolverValue(Constrained) : resolverInvalid();
+  };
+
+  auto constrainOnCondition = [&](ResolverResult Value,
+                                  ResolverResult Condition, bool Taken) {
+    return constrainPredicate(std::move(Value), std::move(Condition), Taken, 0);
   };
 
   auto relocatedLiteralValue = [&](va_t Slot, uint16_t Size) -> ResolverValue {
@@ -8645,18 +8723,23 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       ++ResolverMemoGeneration;
     }
     MemoScalarConstantFoldMode = Query.FoldScalarConstantOps;
-    const bool UnsignedOrderMode =
+    const bool JoinedFiniteSet =
+        Query.Relation == JumpTableValueRelation::JoinedUnsignedFeasibleSet;
+    const bool FiniteSet =
+        JoinedFiniteSet ||
         Query.Relation == JumpTableValueRelation::UnsignedFeasibleSet;
-    if (MemoUnsignedOrderMode && *MemoUnsignedOrderMode != UnsignedOrderMode) {
+    const unsigned EdgeConstraintMode = JoinedFiniteSet ? 2 : FiniteSet ? 1 : 0;
+    if (MemoEdgeConstraintMode &&
+        *MemoEdgeConstraintMode != EdgeConstraintMode) {
       ValueMemo.clear();
       MemoryMemo.clear();
       ++ResolverMemoGeneration;
     }
-    MemoUnsignedOrderMode = UnsignedOrderMode;
+    MemoEdgeConstraintMode = EdgeConstraintMode;
     if (Query.Candidate.Size == 0 ||
         (Query.Relation != JumpTableValueRelation::UnsignedLessThan &&
          Query.Relation != JumpTableValueRelation::ResolvableValue &&
-         Query.Relation != JumpTableValueRelation::UnsignedFeasibleSet &&
+         !FiniteSet &&
          Query.Relation != JumpTableValueRelation::ExactUnsignedModuloRecipe &&
          Query.Relation != JumpTableValueRelation::AuthenticatedFrameMemory &&
          Query.Alternatives.empty()))
@@ -8832,7 +8915,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       if (Query.Relation == JumpTableValueRelation::MayDepend ||
           Query.Relation == JumpTableValueRelation::UnsignedLessThan ||
           Query.Relation == JumpTableValueRelation::ResolvableValue ||
-          Query.Relation == JumpTableValueRelation::UnsignedFeasibleSet) {
+          FiniteSet) {
         markIncomplete(QueryIndex);
       }
       continue;
@@ -8863,7 +8946,12 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       continue;
     }
 
-    if (Query.Relation == JumpTableValueRelation::UnsignedFeasibleSet) {
+    if (FiniteSet) {
+      // A predicate disjunction may create an anonymous value union even on
+      // one straight-line path. It cannot grant joined-guard ownership over
+      // an ordinary mask or a shared physical table.
+      if (JoinedFiniteSet && !CandidateValue.Value->ContainsPredecessorMerge)
+        continue;
       bool ProofComplete = false;
       uint64_t FeasibleMask = 0;
       Results[QueryIndex] = provesUnsignedUpperBound(

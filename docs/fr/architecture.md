@@ -11,7 +11,9 @@ leur propre architecture interne.
 
 ## Frontière du remplacement source et objet
 
-`SourcePatchCompiler` gère l’identité du compilateur et le choix de l’artefact. `validateSourcePatchTarget` est l’admission commune de la source et de l’IR fourni ; le triplet seul ne prouve pas le support. `bindSourcePatch` authentifie les entrées IR ; `PatchObject` gère les sections natives, les relocations et les preuves de plage FDE. `publishSourcePatch` prépare, vérifie et publie la transaction exacte. `COFFSourceImage` gère le nouveau stockage et les tables de déroulement PE x64 ; les réécritures levées gardent leurs preuves EH originales distinctes. Voir [les correctifs source](source-patching.md).
+`SourcePatchCompiler` gère l’identité du compilateur et le choix de l’artefact. `validateSourcePatchTarget` est l’admission commune de la source et de l’IR fourni ; le triplet seul ne prouve pas le support. `bindSourcePatch` authentifie les entrées IR ; `PatchObject` gère les sections natives, les relocations et les preuves de plage FDE. `publishSourcePatch` prépare, vérifie et publie la transaction exacte. `COFFSourceImage` gère le nouveau stockage et les tables de déroulement PE x86/x64/ARM32/ARM64 ; les réécritures levées gardent leurs preuves EH originales distinctes. Voir [les correctifs source](source-patching.md).
+
+`sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles.
 
 ## Frontière du système
 
@@ -1663,3 +1665,5 @@ L’initialisation des champs du noyau dépend d’un propriétaire distinct de 
 Le chargeur de pilotes lie les faits de relocalisation au SHA-256 du fichier validé. La reconstruction PE utilise ces faits possédés et exclut les champs remplacés par les imports ou le formatage avant d’émettre des enregistrements DIR64 de diagnostic. Ce composant ne déduit pas les relocalisations des pointeurs générés et ne retire pas le refus du noyau.
 
 `isCanonicalX87Wait` définit la même règle de conservation du cadre sur le chemin normal pour le transfert registration ordinaire et les retours local-finally vérifiés. L’opération FWAIT et la distribution des exceptions restent intactes. Les autres intrinsic et les formes incorrectes restent opaques ; cette règle ne prouve ni une sortie finally non locale ni une restauration native.
+
+L’exécution KVM x64 vérifiée confie toute la boucle d’instructions au thread vCPU privé via `withExecutionOwner`. La boucle conserve l’admission, les transactions RAM, les hooks et les budgets ; chaque entrée native garde ses contrôles et la priorité des exceptions. L’appelant surveille les entrées actives et attend l’acquittement de l’annulation. Les hooks CPU exécutés sur ce thread ne doivent pas dépendre de l’état local du thread appelant. Une entrée native autonome conserve sa finalisation sur son appelant. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` et `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` vérifient la propriété et l’annulation réelle ; ce changement ne certifie pas un pilote récupéré.

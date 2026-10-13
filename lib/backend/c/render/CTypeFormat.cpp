@@ -92,10 +92,17 @@ bool terminatesStrings(const BinaryImage &Img) {
   return Img.ExceptionMetadata.Runtime.Runtime != SourceLanguageRuntime::Go;
 }
 
+/// The characters that end a trigraph after `??`, which C reads as one
+/// other character (`??)` as `]`).
+constexpr llvm::StringLiteral TrigraphEnds = "=/'()!<>-";
+
 /// Appends the character \p Ch to a C literal's text, escaped where C needs
 /// it; false for a character a literal does not show, a control or one
 /// past ASCII.
 bool appendLiteralCharacter(uint32_t Ch, std::string &Out) {
+  if (Ch < 0x80 && TrigraphEnds.contains(static_cast<char>(Ch)) &&
+      llvm::StringRef(Out).ends_with("??"))
+    Out.insert(Out.size() - 1, "\\");
   switch (Ch) {
   case '\\':
     Out += "\\\\";
@@ -118,6 +125,40 @@ bool appendLiteralCharacter(uint32_t Ch, std::string &Out) {
     Out += static_cast<char>(Ch);
     return true;
   }
+}
+
+/// UTF-16 surrogates: a high one then a low one write a character past the
+/// Basic Multilingual Plane, and C names neither alone.
+constexpr uint32_t HighSurrogateFirst = 0xD800, HighSurrogateLast = 0xDBFF;
+constexpr uint32_t LowSurrogateFirst = 0xDC00, LowSurrogateLast = 0xDFFF;
+constexpr uint32_t FirstSupplementaryCode = 0x10000;
+
+/// Appends the character \p Ch of a literal a symbol states, which may hold
+/// any character: as a guessed literal shows it where that can, else as an
+/// escape.  An octal escape takes three digits, so no character after it
+/// joins it.  False for what C cannot write: a lone UTF-16 surrogate, or a
+/// code past Unicode.
+bool appendStatedLiteralCharacter(uint32_t Ch, std::string &Out) {
+  constexpr uint32_t LastByte = 0xFF, LastBMP = 0xFFFF, LastCode = 0x10FFFF;
+  if (appendLiteralCharacter(Ch, Out))
+    return true;
+  if (Ch <= LastByte) {
+    Out += '\\';
+    Out += static_cast<char>('0' + (Ch >> 6));
+    Out += static_cast<char>('0' + ((Ch >> 3) & 7));
+    Out += static_cast<char>('0' + (Ch & 7));
+    return true;
+  }
+  if (Ch >= HighSurrogateFirst && Ch <= LowSurrogateLast)
+    return false;
+  if (Ch <= LastBMP) {
+    Out += "\\u" + llvm::utohexstr(Ch, /*LowerCase=*/false, 4);
+    return true;
+  }
+  if (Ch > LastCode)
+    return false;
+  Out += "\\U" + llvm::utohexstr(Ch, /*LowerCase=*/false, 8);
+  return true;
 }
 } // namespace
 
@@ -237,25 +278,38 @@ std::optional<std::string> stringLiteralAt(const BinaryImage *Img,
       Literal->Bytes ? Img->readVA(Addr, Literal->Bytes) : nullptr;
   if (Literal->Bytes && !Bytes)
     return std::nullopt;
-  std::string Text;
-  for (uint64_t At = 0; At < Literal->Bytes; At += Literal->UnitBytes) {
+  const unsigned Unit = Literal->UnitBytes;
+  const auto CodeAt = [&](uint64_t At) {
     uint32_t Ch = 0;
-    for (unsigned Byte = 0; Byte < Literal->UnitBytes; ++Byte)
+    for (unsigned Byte = 0; Byte < Unit; ++Byte)
       Ch |= static_cast<uint32_t>(Bytes[At + Byte]) << (8 * Byte);
-    if (!appendLiteralCharacter(Ch, Text))
+    return Ch;
+  };
+  std::string Text;
+  for (uint64_t At = 0; At < Literal->Bytes; At += Unit) {
+    uint32_t Ch = CodeAt(At);
+    // A UTF-16 pair writes one character.
+    if (Unit == 2 && Ch >= HighSurrogateFirst && Ch <= HighSurrogateLast &&
+        At + Unit < Literal->Bytes)
+      if (const uint32_t Low = CodeAt(At + Unit);
+          Low >= LowSurrogateFirst && Low <= LowSurrogateLast) {
+        Ch = FirstSupplementaryCode + ((Ch - HighSurrogateFirst) << 10) +
+             (Low - LowSurrogateFirst);
+        At += Unit;
+      }
+    if (!appendStatedLiteralCharacter(Ch, Text))
       return std::nullopt;
   }
-  const llvm::StringRef Prefix = Literal->UnitBytes == 2   ? "L"
-                                 : Literal->UnitBytes == 4 ? "U"
-                                                           : "";
+  // The zeros past the terminator C adds: the literal is as large as the
+  // program's (`L"%04d\0"`).
+  for (uint64_t At = Literal->Bytes + Unit; At < Literal->Size; At += Unit)
+    Text += "\\0";
+  const llvm::StringRef Prefix = Unit == 2 ? "L" : Unit == 4 ? "U" : "";
   return (Prefix + "\"" + Text + "\"").str();
 }
 
-bool isCodeSectionData(const DebugContext *Dbg, va_t Addr) {
-  if (!Dbg)
-    return false;
-  const auto Data = Dbg->resolveDataObject(Addr);
-  return Data && !Data->Name.empty() && !Dbg->resolveFunction(Addr);
+bool isCodeSectionData(const BinaryImage *Img, va_t Addr) {
+  return Img && Img->DataInCode.count(Addr) != 0;
 }
 
 namespace {

@@ -873,6 +873,38 @@ TEST(ApplyDebugSymbolsTest, PointerToALiteralWhereAGuessWasPointsToData) {
   EXPECT_TRUE(Img.DataPtrRelocSlots.count(0x3000));
 }
 
+// A kernel keeps tables among its code, where the debug information names
+// them as data and its PDB marks assembly labels the same way.  An address
+// the image's code metadata covers, or where that code ends (a routine's end
+// label), stays code, a literal names no object, and data outside the code
+// needs no record.
+TEST(ApplyDebugSymbolsTest, DataAmongCodeIsWhereNoCodeIs) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  for (const auto &[VA, Flags] :
+       {std::pair{va_t{0x1000},
+                  SegmentFlags::Readable | SegmentFlags::Executable},
+        std::pair{va_t{0x3000},
+                  SegmentFlags::Readable | SegmentFlags::Writable}}) {
+    Segment Seg;
+    Seg.VA = VA;
+    Seg.Size = Seg.FileSz = 0x100;
+    Seg.Flags = Flags;
+    Seg.Data.assign(0x100, 0);
+    Img.Segments.push_back(std::move(Seg));
+  }
+  Img.KnownCodeRanges.push_back({0x1000, 0x1020});
+  FakeDebugContext Dbg({}, {{"KiServiceLabel", 0x1010, 0, false},
+                            {"KiServiceEnd", 0x1020, 0, false},
+                            {"NlsRegKeyName", 0x1040, 0, false},
+                            {"??_C@_15OHIPBLFN@?$AAS?$AAA@", 0x1060, 0, false},
+                            {"NlsSectionLock", 0x3000, 0, false}});
+  EXPECT_EQ(applyDebugSymbols(Img, Dbg), 0u);
+  EXPECT_EQ(Img.DataInCode, std::set<va_t>{0x1040});
+}
+
 TEST(ApplyDebugSymbolsTest, PublishesOnlyAuthenticatedTypedObjectExtents) {
   const std::vector<DataObjectSym> Objects = {
       {"array", 0x2000, 8, true},

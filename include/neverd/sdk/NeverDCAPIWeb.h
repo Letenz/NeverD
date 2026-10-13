@@ -50,6 +50,26 @@ NEVERD_API void neverd_web_session_destroy(neverd_web_session_t Session);
 /// Null means allocation failure. Errors use schema_version/status/error.code;
 /// no untrusted source text or input name is included in ordinary diagnostics.
 NEVERD_API const char *neverd_web_capabilities_json(void);
+/// Explicit local disclosure of a supplied CEF/WebView resource descriptor.
+/// Fixed files, exclusive fresh destination and read-back hashes. No MCP raw
+/// export; framework identity and complete application recovery stay unknown.
+NEVERD_API const char *neverd_web_desktop_resources_export_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ManifestID, size_t ManifestIDSize,
+    const char *OutputDirectory, size_t DirectorySize);
+
+/// Selection JSON: schema_version:1 and optional interface_analysis_id,
+/// har_capture_id, stream_capture_id. At least one selection is required;
+/// observations must already be committed after redaction preview. Reports
+/// contain fixed metadata, original anchors and observed JSON type counts;
+/// values/names are withheld and server constraints/optionality stay unknown.
+NEVERD_API const char *neverd_web_passive_report_create_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *SelectionJSON, size_t SelectionSize);
+NEVERD_API const char *neverd_web_passive_report_records_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ReportID, size_t ReportIDSize,
+    uint64_t Offset, uint64_t Limit);
 
 /// Explicit passive transcript profile, followed by redaction preview/commit.
 /// Every dispatched current-revision preview revokes its previous token;

@@ -53,8 +53,12 @@ struct KvmRunControl::State {
   std::mutex Mutex;
   std::condition_variable Changed;
   std::thread Worker;
+  std::thread::id WorkerID;
   MachineRunControl Control{};
   StateTransfer Prepare, Capture;
+  Completion Loop;
+  bool NativeActive = false;
+  MachineRunControl NativeControl{};
   llvm::Error TransferError = llvm::Error::success();
   std::atomic<bool> Cancel{false};
   bool Ready = false, Initialized = false, Shutdown = false, Running = false;
@@ -64,6 +68,68 @@ struct KvmRunControl::State {
   KvmHandoffPolicy OwnerHandoff;
   bool PendingKick = false;
   bool EntryInterrupted = false;
+
+  struct Entry {
+    int Status = -1;
+    bool Interrupted = false;
+    llvm::Error Error = llvm::Error::success();
+  };
+
+  Entry enter(MachineRunControl Control, StateTransfer Prepare,
+              StateTransfer Capture) {
+    Entry Result;
+    if (Prepare && !Cancel.load() && !Control.interrupted())
+      Result.Error = Prepare();
+    if (Result.Error)
+      return Result;
+    do {
+      if (Cancel.load() || Control.interrupted()) {
+        Result.Interrupted = true;
+        break;
+      }
+      Result.Status = ioctl(VCPU, KVM_RUN, 0);
+    } while (Result.Status < 0 && errno == EINTR);
+    if (Result.Status >= 0 && Capture)
+      Result.Error = Capture();
+    return Result;
+  }
+
+  llvm::Error enterOwned(MachineRunControl Control, StateTransfer Prepare,
+                         StateTransfer Capture, Completion Complete) {
+    {
+      std::lock_guard Lock(Mutex);
+      if (NativeActive)
+        return diagnostic::error(diagnostic::KvmRunActive);
+      if (Control.interrupted())
+        return diagnostic::interrupted(diagnostic::KvmRun, Control);
+      struct sigaction Action{};
+      if (sigaction(Signal, nullptr, &Action) || Action.sa_handler == SIG_IGN)
+        return diagnostic::error(diagnostic::KvmRunSignal);
+      NativeControl = Control;
+      NativeActive = true;
+    }
+    auto Release = llvm::scope_exit([&] {
+      std::lock_guard Lock(Mutex);
+      NativeActive = false;
+      NativeControl.Stop = nullptr;
+    });
+    auto Result = enter(Control, Prepare, Capture);
+    if (Result.Error)
+      return std::move(Result.Error);
+    if (Result.Status < 0) {
+      if (Result.Interrupted && (Cancel || Control.interrupted()))
+        return diagnostic::interrupted(diagnostic::KvmRun, Control);
+      return diagnostic::error(diagnostic::KvmRun);
+    }
+    // The checked loop and its execution lease are already on this thread.
+    // Authenticate the capture before classifying a concurrent cancellation.
+    if (Complete)
+      if (auto E = Complete())
+        return E;
+    if (Cancel || Control.interrupted())
+      return diagnostic::interrupted(diagnostic::KvmRun, Control);
+    return llvm::Error::success();
+  }
 
   ~State() {
     if (!Worker.joinable())
@@ -124,6 +190,7 @@ struct KvmRunControl::State {
   void work() {
     const bool Success = initialize();
     std::unique_lock Lock(Mutex);
+    WorkerID = std::this_thread::get_id();
     Initialized = Success;
     Ready = true;
     Changed.notify_all();
@@ -142,29 +209,20 @@ struct KvmRunControl::State {
         return;
       Requested = false;
       Lock.unlock();
-      int Result = -1;
-      bool Interrupted = false;
-      llvm::Error Error = llvm::Error::success();
-      if (Prepare && !Cancel.load() && !Control.stopRequested() &&
-          Clock::now() < Control.Deadline)
-        Error = Prepare();
-      if (!Error) {
-        do {
-          if (Cancel.load() || Control.stopRequested() ||
-              Clock::now() >= Control.Deadline) {
-            Result = -1;
-            Interrupted = true;
-            break;
-          }
-          Result = ioctl(VCPU, KVM_RUN, 0);
-        } while (Result < 0 && errno == EINTR);
-        if (Result >= 0 && Capture)
-          Error = Capture();
-      }
+      Entry Result;
+      if (Loop) {
+        Result.Status = 0;
+        try {
+          Result.Error = Loop();
+        } catch (...) {
+          Result.Error = diagnostic::error(diagnostic::Callback);
+        }
+      } else
+        Result = enter(Control, Prepare, Capture);
       Lock.lock();
-      Status = Result;
-      EntryInterrupted = Interrupted;
-      TransferError = std::move(Error);
+      Status = Result.Status;
+      EntryInterrupted = Result.Interrupted;
+      TransferError = std::move(Result.Error);
       Completed = true;
       Changed.notify_all();
       // Retiring the private thread discards its pending kick without ever
@@ -196,8 +254,26 @@ llvm::Error KvmRunControl::run(MachineRunControl Control) {
 
 llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
                                StateTransfer Capture, Completion Complete) {
+  return dispatch(Control, Prepare, Capture, Complete, {});
+}
+
+llvm::Error KvmRunControl::withExecutionOwner(Completion Loop) {
+  if (!Loop)
+    return diagnostic::error(diagnostic::Callback);
+  return dispatch({Clock::time_point::max()}, {}, {}, {}, Loop);
+}
+
+llvm::Error KvmRunControl::dispatch(MachineRunControl Control,
+                                    StateTransfer Prepare,
+                                    StateTransfer Capture, Completion Complete,
+                                    Completion Loop) {
   auto &S = *Impl;
   std::unique_lock Lock(S.Mutex);
+  if (!Loop && S.Loop && S.Running &&
+      S.WorkerID == std::this_thread::get_id()) {
+    Lock.unlock();
+    return S.enterOwned(Control, Prepare, Capture, Complete);
+  }
   if (S.Running)
     return diagnostic::error(diagnostic::KvmRunActive);
   if (Control.interrupted())
@@ -215,6 +291,7 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   S.Control = Control;
   S.Prepare = Prepare;
   S.Capture = Capture;
+  S.Loop = Loop;
   S.Cancel = false;
   S.PendingKick = false;
   S.Completed = false;
@@ -230,15 +307,21 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   }
   while (!S.Completed) {
     const auto Now = Clock::now();
-    if (Now >= Control.Deadline || Control.stopRequested())
+    // A delegated ISA loop owns its ordinary budget checks. Only an active
+    // native entry needs a targeted interrupt; its borrowed control remains
+    // protected by Mutex until that entry retires. Polling also avoids a
+    // notification and scheduling handoff for every native instruction.
+    const auto Current = Loop ? S.NativeControl : Control;
+    const bool Active = !Loop || S.NativeActive;
+    if (Active && (Now >= Current.Deadline || Current.stopRequested()))
       S.Cancel = true;
     if (S.Cancel && !S.PendingKick)
       S.PendingKick = pthread_kill(S.Worker.native_handle(), S.Signal) == 0;
     // A blocked, pending signal survives an early kick and is observed on
     // KVM entry. Unlike an API cancellation edge, it needs no repeated posts.
-    const auto Wake = S.Cancel       ? Now + Poll
-                      : Control.Stop ? std::min(Now + Poll, Control.Deadline)
-                                     : Control.Deadline;
+    const auto Wake = S.Cancel || Loop ? Now + Poll
+                      : Control.Stop   ? std::min(Now + Poll, Control.Deadline)
+                                       : Control.Deadline;
     S.Changed.wait_until(Lock, Wake, [&] { return S.Completed.load(); });
   }
   if (S.Cancel) {
@@ -251,6 +334,7 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   }
   S.Control.Stop = nullptr;
   S.Prepare = S.Capture = {};
+  S.Loop = {};
   auto TransferError = std::move(S.TransferError);
   const int Status = S.Status;
   const bool Cancelled = S.Cancel, EntryInterrupted = S.EntryInterrupted;
@@ -272,7 +356,7 @@ llvm::Error KvmRunControl::run(MachineRunControl Control, StateTransfer Prepare,
   if (Complete)
     if (auto E = Complete())
       return E;
-  if (Cancelled || Control.interrupted())
+  if (!Loop && (Cancelled || Control.interrupted()))
     return diagnostic::interrupted(diagnostic::KvmRun, Control);
   return llvm::Error::success();
 }

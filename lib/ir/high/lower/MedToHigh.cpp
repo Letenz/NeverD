@@ -346,10 +346,18 @@ ExprPtr MedToHighConverter::inlineableDefinition(VarKey Key) const {
     return nullptr;
   auto It = DefExpr.find(Key);
   if (It == DefExpr.end() || !It->second ||
-      It->second->Kind == ExprKind::Call ||
       It->second->Kind == ExprKind::EntryRegister ||
       It->second->MemoryOrdering != NdMemoryOrdering::None ||
       It->second->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return nullptr;
+  // A call, or a conversion of one (the storage a run-time stack allocation
+  // returns), runs once: each use reads the variable it set.
+  const HighExpr *Value = It->second.get();
+  while (Value &&
+         (Value->Kind == ExprKind::Cast || Value->Kind == ExprKind::BitCast) &&
+         Value->Operands.size() == 1)
+    Value = Value->Operands[0].get();
+  if (!Value || Value->Kind == ExprKind::Call)
     return nullptr;
   return It->second;
 }
@@ -379,6 +387,10 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
   }
   // The proven GOT base of an unlinked i386 object is address zero.
   if (I386GotBase.count(varKey(V)))
+    return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
+  // The zero register reads as zero, as the index of `[x11, xzr, lsl #3]`.
+  if (const auto Zero = getTargetRegInfo(TargetArch).ZeroRegister;
+      Zero && V.Kind == MedVar::Reg && V.RegOff == *Zero)
     return HighExpr::makeConst(0, V.Size, ConstantAddressProvenance::Scalar);
 
   auto SourceParameter = [&](MedVar Parameter, size_t Index) -> ExprPtr {
@@ -1203,6 +1215,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   ParamCopyIndexFunc = nullptr;
   LoadedEntrySlotsFor = nullptr;
   EntryOffsetDefsFor = nullptr;
+  DynamicStackFor = nullptr;
   EntryStackOffsets.reset();
   SourceParameters = Med.SourceTypeHint
                          ? sourceABIParameters(*Med.SourceTypeHint)

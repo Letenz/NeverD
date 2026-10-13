@@ -13,6 +13,8 @@ Architektur.
 
 `SourcePatchCompiler` verwaltet Compileridentität und Artefaktauswahl. `validateSourcePatchTarget` ist die gemeinsame Zielzulassung für Quellcode und geliefertes IR; das Tripel allein beweist keinen Support. `bindSourcePatch` bestätigt IR-Einstiege; `PatchObject` verwaltet native Abschnitte, Relokationen und FDE-Bereichsnachweise. `publishSourcePatch` bereitet die genaue Transaktion vor, prüft und veröffentlicht sie exklusiv. `COFFSourceImage` verwaltet neuen PE-x64-Speicher und Unwind-Tabellen; geliftete Umschreibungen behalten ihre getrennten ursprünglichen EH-Nachweise. Siehe [Quellcodepatches](source-patching.md).
 
+`sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen.
+
 ## Systemgrenze
 
 ```mermaid
@@ -1657,3 +1659,5 @@ Die Initialisierung von Kernelfeldern hat einen eigenen Besitzer im physischen R
 Der Treiber-Loader bindet Relokationsfakten an SHA-256 der geprüften Datei. Die PE-Rekonstruktion verwendet die eigenen Fakten und schließt durch Importreparatur oder Formatierung ersetzte Felder vor der Ausgabe diagnostischer DIR64-Einträge aus. Diese Komponente kann weder generierte Zeigerrelokationen ableiten noch die Kernel-Laufzeitverweigerung aufheben.
 
 `isCanonicalX87Wait` definiert dieselbe Regel zum Erhalt des Frames auf dem normalen Pfad für gewöhnliche registration-Transfers und geprüfte local-finally-Rückkehrpfade. Die FWAIT-Operation und die Ausnahmeverteilung bleiben erhalten. Andere intrinsic und fehlerhafte Formen bleiben undurchsichtig; die Regel beweist weder einen nichtlokalen finally-Austritt noch eine native Wiederherstellung.
+
+Die geprüfte KVM-x64-Ausführung übergibt die vollständige Befehlsschleife mit `withExecutionOwner` an den privaten vCPU-Thread. Zulassung, RAM-Transaktionen, Hooks und Budgets bleiben in dieser Schleife; jeder native Eintritt behält seine Kontrolle und Ausnahmepriorität. Der Aufrufer überwacht aktive Eintritte und wartet auf die bestätigte Abbruchbeendigung. CPU-Hooks dürfen nicht vom lokalen Zustand des aufrufenden Threads abhängen. Die Fertigstellung eines eigenständigen nativen Eintritts bleibt beim Aufrufer. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` und `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` prüfen Zuständigkeit und echten Abbruch; diese Änderung zertifiziert keinen wiederhergestellten Treiber.

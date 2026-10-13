@@ -4,6 +4,7 @@
 
 #include "neverd/ArchSupport.h"
 #include "neverd/backend/codegen/SourcePatch.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/SmallString.h"
@@ -118,16 +119,15 @@ llvm::Error appendUserArguments(std::vector<std::string> &Arguments,
 llvm::Expected<SourcePatchCompilation>
 compileSourcePatch(llvm::StringRef Source,
                    const neverd_source_patch_options_v1 &Options,
-                   Arch Architecture, BinaryFormat Format) {
+                   const BinaryImage &Image) {
+  const Arch Architecture = Image.Arch;
+  const BinaryFormat Format = Image.Format;
   if (Options.mode != NEVERD_SOURCE_PATCH_NORMAL)
     return compilerError("dyncode requires a separate code-block adapter");
   const bool Object = Options.artifact == NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT;
   const bool GCC = Options.compiler == NEVERD_SOURCE_PATCH_GCC;
   if (GCC && !Object)
     return compilerError("GCC requires the native object artifact profile");
-  if (Object && (Format != BinaryFormat::ELF || Architecture != Arch::X64))
-    return compilerError(
-        "native object installation currently requires ELF x64");
   if (Options.compiler == NEVERD_SOURCE_PATCH_NEVERC &&
       Options.language != NEVERD_SOURCE_PATCH_C)
     return compilerError(
@@ -135,9 +135,9 @@ compileSourcePatch(llvm::StringRef Source,
   if (!Object)
     if (auto Error = validateSourcePatchTarget(Architecture, Format))
       return std::move(Error);
-  const char *Target = llvmCodegenTriple(Architecture, Format);
+  auto Target = sourcePatchTargetTriple(Image);
   if (!Target)
-    return compilerError("unsupported native target");
+    return Target.takeError();
 
   const std::string Name =
       Options.compiler_path && *Options.compiler_path  ? Options.compiler_path
@@ -191,6 +191,7 @@ compileSourcePatch(llvm::StringRef Source,
 
   auto &Args = Result.Arguments;
   Args = {*Program, "-O2"};
+  Args.push_back("-funwind-tables");
   if (!GCC)
     Args.push_back("-fno-discard-value-names");
   if (GCC) {
@@ -199,10 +200,17 @@ compileSourcePatch(llvm::StringRef Source,
       return std::move(Error);
     const llvm::Triple DriverTarget(
         llvm::Triple::normalize(llvm::StringRef(readText(Stdout)).trim()));
-    if (DriverTarget.getArch() != llvm::Triple::x86_64 ||
-        !DriverTarget.isOSLinux())
-      return compilerError(
-          "selected GCC must target x86_64 Linux; use a matching cross driver");
+    if ((DriverTarget.getArch() != llvm::Triple(*Target).getArch() &&
+         !((DriverTarget.isARM() || DriverTarget.isThumb()) &&
+           Architecture == Arch::ARM)) ||
+        !DriverTarget.isOSLinux() ||
+        (Architecture == Arch::ARM &&
+         DriverTarget.getEnvironment() !=
+             llvm::Triple(*Target).getEnvironment()))
+      return compilerError("selected GCC must match the loaded ELF "
+                           "architecture and ABI; use a matching cross driver");
+    if (Architecture == Arch::ARM)
+      Args.push_back(llvm::Triple(*Target).isThumb() ? "-mthumb" : "-marm");
   }
 #ifdef __APPLE__
   if (Format == BinaryFormat::MachO) {
@@ -230,11 +238,30 @@ compileSourcePatch(llvm::StringRef Source,
   }
   if (auto Error = appendUserArguments(Args, Options))
     return std::move(Error);
-  if (!GCC)
-    Args.push_back("--target=" + std::string(Target));
+  if (!GCC) {
+    // Darwin's driver accepts an ARM CPU spelling and selects Thumb with
+    // -mthumb. The resulting IR/backend triple still carries the Thumb state.
+    if (Format == BinaryFormat::MachO && Architecture == Arch::ARM &&
+        llvm::StringRef(*Target).starts_with("thumb")) {
+      Args.push_back("--target=arm" + Target->substr(5));
+      Args.push_back("-mthumb");
+    } else {
+      Args.push_back("--target=" + *Target);
+    }
+  }
   Args.push_back("-fno-lto");
   if (Object) {
-    Args.push_back("-fPIC");
+    if (Format != BinaryFormat::COFF)
+      Args.push_back("-fPIC");
+    if (Format == BinaryFormat::COFF)
+      Args.push_back("-ffunction-sections");
+    if (Format == BinaryFormat::MachO && Architecture == Arch::ARM &&
+        llvm::Triple(*Target).isWatchOS()) {
+      // Watch's object producer omits unwind rows for frameless leaf functions.
+      // Keep compiler-owned frames instead of inventing native unwind recipes.
+      Args.push_back("-fno-omit-frame-pointer");
+      Args.push_back("-mno-omit-leaf-frame-pointer");
+    }
     Args.push_back("-c");
   } else {
     Args.push_back("-emit-llvm");

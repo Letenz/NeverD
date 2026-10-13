@@ -22,6 +22,7 @@ struct ELFSourceRelocationTable {
   uint64_t AddressTagOffset = 0;
   uint64_t SizeTagOffset = 0;
   uint64_t SectionHeaderOffset = 0;
+  bool Is64 = true;
 };
 
 struct ELFSourcePointerRelocation {

@@ -10,7 +10,9 @@ LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキ
 
 ## ソースとオブジェクト置換の境界
 
-`SourcePatchCompiler` はコンパイラの識別と成果物の選択を担当します。`validateSourcePatchTarget` はソースと外部 IR に共通の対象判定であり、対象トリプルだけでは対応を証明できません。`bindSourcePatch` は IR 入口を確認し、`PatchObject` はネイティブセクション、再配置、FDE 範囲の根拠を管理します。`publishSourcePatch` は候補の作成、検証、排他的公開を担当します。`COFFSourceImage` は PE x64 の新領域とアンワインド表を担当し、リフト後の書き換えは元の EH の独立した根拠を必要とします。[ソースパッチ](source-patching.md)を参照してください。
+`SourcePatchCompiler` はコンパイラの識別と成果物の選択を担当します。`validateSourcePatchTarget` はソースと外部 IR に共通の対象判定であり、対象トリプルだけでは対応を証明できません。`bindSourcePatch` は IR 入口を確認し、`PatchObject` はネイティブセクション、再配置、FDE 範囲の根拠を管理します。`publishSourcePatch` は候補の作成、検証、排他的公開を担当します。`COFFSourceImage` は PE x86/x64/ARM32/ARM64 の新領域とアンワインド表を担当し、リフト後の書き換えは元の EH の独立した根拠を必要とします。[ソースパッチ](source-patching.md)を参照してください。
+
+`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。
 
 ## システム境界
 
@@ -1524,3 +1526,5 @@ DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマス�
 ドライバーローダーは検証済みファイルの SHA-256 に再配置の事実を結び付けます。PE 再構築は所有された事実を使用し、診断用 DIR64 レコードを出力する前にインポート修復やメタデータ整形で置換したフィールドを除外します。この層は生成ポインターの再配置を推測せず、カーネル実行時の拒否を解除しません。
 
 `isCanonicalX87Wait` は通常の registration 転送と検証済み local-finally の戻りで、正常経路のフレーム保持規則を共有します。FWAIT 操作と例外ディスパッチは保持されます。他の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
+
+検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。

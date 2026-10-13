@@ -10,7 +10,9 @@
 
 ## 소스 및 오브젝트 대체 경계
 
-`SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
+`SourcePatchCompiler`는 컴파일러 식별과 산출물 선택을 담당합니다. `validateSourcePatchTarget`는 소스와 외부 IR의 공통 대상 판정이며 대상 트리플만으로 지원을 증명할 수 없습니다. `bindSourcePatch`는 IR 진입점 매핑을 확인하고 `PatchObject`는 네이티브 섹션, 재배치 및 FDE 범위 증거를 관리합니다. `publishSourcePatch`는 준비, 검증 및 배타적 출력을 담당합니다. `COFFSourceImage`는 PE x86/x64/ARM32/ARM64의 새 저장 공간과 언와인드 테이블을 담당하며 리프팅 후 재작성은 원래 EH의 별도 증거를 요구합니다. [소스 패치](source-patching.md)를 참조하세요.
+
+`sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다.
 
 ## 시스템 경계
 
@@ -1501,3 +1503,5 @@ DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를
 드라이버 로더는 검증된 파일의 SHA-256에 재배치 사실을 연결합니다. PE 재구축은 소유된 사실을 사용하고 진단 DIR64 레코드를 출력하기 전에 가져오기 수정이나 메타데이터 형식화가 대체한 필드를 제외합니다. 이 계층은 생성 포인터의 재배치를 추론하거나 커널 런타임 거부를 해제할 수 없습니다.
 
 `isCanonicalX87Wait`는 일반 registration 전이와 검증된 local-finally 반환에 같은 정상 경로 프레임 보존 규칙을 제공합니다. FWAIT 연산과 예외 디스패치는 유지됩니다. 다른 intrinsic 및 잘못된 형식은 여전히 불투명하며, 이 규칙은 비지역 finally 종료나 네이티브 복원 증명을 제공하지 않습니다.
+
+검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.

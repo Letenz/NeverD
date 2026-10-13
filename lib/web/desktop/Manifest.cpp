@@ -34,7 +34,9 @@ std::string shape(const llvm::json::Value *V) {
 }
 
 ManifestContext::ManifestContext(const Snapshot &Input,
-                                 std::string_view ArtifactID) {
+                                 std::string_view ArtifactID,
+                                 std::string_view RequiredName) {
+  ResourceTypes = RequiredName == "neverd-resources.json";
   if (Input.Artifacts.size() > Limits::HardEntries + 1)
     throw Error("desktop_manifest_namespace_budget_exceeded");
   DirectoryNamespace =
@@ -59,7 +61,7 @@ ManifestContext::ManifestContext(const Snapshot &Input,
   const auto Slash = Manifest->MemberPath.rfind('/');
   const auto Name = std::string_view(Manifest->MemberPath)
                         .substr(Slash == std::string::npos ? 0 : Slash + 1);
-  if (Name != "package.json")
+  if (Name != RequiredName)
     throw Error("desktop_manifest_name_not_in_profile");
   if (Slash != std::string::npos)
     ParentPath = Manifest->MemberPath.substr(0, Slash + 1);
@@ -131,10 +133,23 @@ DesktopEntry ManifestContext::entry(std::string_view Field,
   }
   E.LinkStatus = "exact_admitted_file_candidate";
   E.ArtifactID = It->second->ID;
+  E.BlobHash = It->second->BlobHash;
+  E.ByteLength = It->second->Content.size();
   if (Path.ends_with(".js") || Path.ends_with(".mjs") || Path.ends_with(".cjs"))
     E.ContentKind = "javascript_filename_candidate";
   else if (Path.ends_with(".html") || Path.ends_with(".htm"))
     E.ContentKind = "html_filename_candidate";
+  else if (ResourceTypes && Path.ends_with(".map"))
+    E.ContentKind = "source_map_filename_candidate";
+  else if (ResourceTypes && Path.ends_with(".css"))
+    E.ContentKind = "css_filename_candidate";
+  else if (ResourceTypes && (Path.ends_with(".pak") || Path.ends_with(".dat") ||
+                             Path.ends_with(".wasm") ||
+                             Path.ends_with(".hbc") || Path.ends_with(".jsc")))
+    E.ContentKind = "opaque_resource_filename_candidate";
+  else if (ResourceTypes && (Path.ends_with(".exe") || Path.ends_with(".dll") ||
+                             Path.ends_with(".so") || Path.ends_with(".dylib")))
+    E.ContentKind = "native_filename_candidate";
   return E;
 }
 } // namespace neverd::web::desktop
@@ -144,11 +159,13 @@ DesktopManifest analyzeDesktopManifest(const Snapshot &Input,
                                        std::string_view ArtifactID,
                                        std::string_view Bytes,
                                        std::string_view Kind) {
-  if (Kind != "nwjs" && Kind != "vsix")
+  const bool Resources = Kind == "cef-assets" || Kind == "webview-assets";
+  if (Kind != "nwjs" && Kind != "vsix" && !Resources)
     throw Error("unsupported_desktop_manifest_profile");
   if (Bytes.size() > MaxDesktopManifestBytes)
     throw Error("desktop_manifest_byte_budget_exceeded");
-  const desktop::ManifestContext Context(Input, ArtifactID);
+  const desktop::ManifestContext Context(
+      Input, ArtifactID, Resources ? "neverd-resources.json" : "package.json");
   const auto Hash = sha256(Bytes);
   if (Hash != Context.Manifest->BlobHash)
     throw Error("desktop_manifest_hash_mismatch");
@@ -159,16 +176,27 @@ DesktopManifest analyzeDesktopManifest(const Snapshot &Input,
     throw Error("desktop_manifest_not_object");
   DesktopManifest A;
   A.ArtifactID = ArtifactID;
-  A.Framework = Kind == "nwjs" ? "nwjs" : "vscode_extension";
-  A.Profile = Kind == "nwjs" ? NWManifestProfile : VSIXManifestProfile;
-  A.ID = identity("desktop-manifest", {Input.ID, ArtifactID, Hash, A.Profile});
+  A.Framework = Resources        ? (Kind == "cef-assets" ? "cef" : "webview")
+                : Kind == "nwjs" ? "nwjs"
+                                 : "vscode_extension";
+  A.Profile = Resources        ? DesktopResourceProfile
+              : Kind == "nwjs" ? NWManifestProfile
+                               : VSIXManifestProfile;
+  A.ID = Resources ? identity("desktop-manifest",
+                              {Input.ID, ArtifactID, Hash, A.Profile, Kind})
+                   : identity("desktop-manifest",
+                              {Input.ID, ArtifactID, Hash, A.Profile});
   A.Layout = "not_observed";
   if (Kind == "nwjs")
     desktop::readNWManifest(A, Context, *Object);
-  else
+  else if (Kind == "vsix")
     desktop::readVSIXManifest(A, Context, *Object);
+  else
+    desktop::readResourceManifest(A, Context, *Object);
   for (auto &E : A.Entries)
-    E.ID = identity("desktop-entry", {A.ID, E.Field});
+    E.ID = Resources ? identity("desktop-entry",
+                                {A.ID, E.Field, std::to_string(E.Ordinal)})
+                     : identity("desktop-entry", {A.ID, E.Field});
   return A;
 }
 } // namespace neverd::web

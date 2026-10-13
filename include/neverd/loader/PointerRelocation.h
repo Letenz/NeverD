@@ -297,6 +297,14 @@ void recordAbsolutePointerRelocations(
 unsigned recordDataPointerTargets(BinaryImage &Img,
                                   llvm::function_ref<bool(va_t)> InData);
 
+/// Record in Img.DataInCode the starts of \p Objects, data objects that debug
+/// information places in sections the image gives to code, that the image's
+/// own metadata leaves to data: no function symbol or its extent, runtime
+/// function record, known code range or the entry point covers one, and no
+/// code ends at one (an assembly routine's end label is no data).  Returns
+/// how many it recorded.
+unsigned recordDataInCode(BinaryImage &Img, llvm::ArrayRef<va_t> Objects);
+
 } // namespace neverd
 
 #endif // NEVERD_LOADER_POINTERRELOCATION_H

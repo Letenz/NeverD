@@ -25,6 +25,14 @@
 namespace neverd {
 namespace elf_loader {
 
+/// ABI mapping markers are local, untyped symbols, with an optional suffix.
+inline bool isMappingSymbolName(llvm::StringRef Name) {
+  return Name.size() >= 2 && Name[0] == '$' &&
+         (Name[1] == 'a' || Name[1] == 'd' || Name[1] == 't' ||
+          Name[1] == 'x') &&
+         (Name.size() == 2 || Name[2] == '.');
+}
+
 /// Parse the .dynamic section and populate DynInfo (NEEDED, SONAME, RPATH,
 /// INIT/FINI).  Its string table is the one of \p Sections its sh_link names.
 template <typename ELFT>

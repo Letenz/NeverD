@@ -210,6 +210,11 @@ void Pipeline::buildHighIR(const BinaryImage &Img,
 
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
     MedToHighConverter Local;
+    // The outer helper runs small batches on the caller. Only those batches
+    // can lend their unused worker allowance to a large function's independent
+    // semantic segments; parallel function workers must not nest another pool.
+    Local.setSemanticThreadLimit(
+        Total < limits::kMinParallelIRWorkItems ? workerThreadCount() : 1);
     Local.setBinaryImage(&Img);
     Local.setFuncNames(&AllFuncNames);
     Local.setResolvedCalleeNames(&ResolvedCalleeNames);

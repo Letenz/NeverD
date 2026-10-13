@@ -71,7 +71,7 @@ bool skipSLEB(llvm::ArrayRef<uint8_t> Bytes, size_t &Cursor) {
 
 bool readCIEEncoding(llvm::ArrayRef<uint8_t> Record, size_t Cursor,
                      bool Is64BitAddress, uint8_t &Encoding,
-                     bool &HasAugmentationData) {
+                     bool &HasAugmentationData, bool &HasLanguageAugmentation) {
   Encoding = Absptr;
   HasAugmentationData = false;
   if (Cursor >= Record.size())
@@ -125,11 +125,13 @@ bool readCIEEncoding(llvm::ArrayRef<uint8_t> Record, size_t Cursor,
   for (char Kind : Augmentation.drop_front()) {
     switch (Kind) {
     case 'L':
+      HasLanguageAugmentation = true;
       if (Cursor >= AugmentationEnd)
         return false;
       ++Cursor;
       break;
     case 'P': {
+      HasLanguageAugmentation = true;
       if (Cursor >= AugmentationEnd)
         return false;
       const uint8_t PersonalityEncoding = Record[Cursor++];
@@ -260,6 +262,7 @@ decodeDwarfEHFrameRecords(llvm::ArrayRef<uint8_t> Bytes, uint64_t BaseVA,
   struct CIEInfo {
     uint8_t Encoding = Absptr;
     bool HasAugmentationData = false;
+    bool HasLanguageAugmentation = false;
   };
   std::map<uint64_t, CIEInfo> CIEs;
   std::set<uint64_t> FDEBegins;
@@ -299,7 +302,8 @@ decodeDwarfEHFrameRecords(llvm::ArrayRef<uint8_t> Bytes, uint64_t BaseVA,
       CIEInfo Info;
       llvm::ArrayRef<uint8_t> Record = Bytes.take_front(RecordEnd);
       if (!readCIEEncoding(Record, IdOffset + IdSize, Is64BitAddress,
-                           Info.Encoding, Info.HasAugmentationData))
+                           Info.Encoding, Info.HasAugmentationData,
+                           Info.HasLanguageAugmentation))
         return parseError("malformed CIE augmentation");
       if (!CIEs.emplace(Offset, Info).second)
         return parseError("duplicate CIE offset");
@@ -374,7 +378,9 @@ decodeDwarfEHFrameRecords(llvm::ArrayRef<uint8_t> Bytes, uint64_t BaseVA,
       FDERanges.emplace(BeginVA, EndVA);
       if (Offset > std::numeric_limits<uint64_t>::max() - BaseVA)
         return parseError("FDE record address overflows");
-      Records.push_back({BeginVA, EndVA, BaseVA + Offset});
+      Records.push_back({BeginVA, EndVA, BaseVA + Offset, InitialOffset,
+                         CIE->second.Encoding, uint8_t(Initial->Size),
+                         CIE->second.HasLanguageAugmentation});
     }
 
     if (RecordEnd <= Offset)

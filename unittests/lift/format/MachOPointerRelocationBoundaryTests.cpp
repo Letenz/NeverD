@@ -14,6 +14,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/loader/MachO/MachOLoaderUtils.h"
+#include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -20129,6 +20130,48 @@ TEST(LLVMCodePointerInvariantBoundary,
               std::string::npos)
         << Diagnostic;
   }
+}
+
+TEST(LLVMCodePointerInvariantBoundary, DataAmongCodeIsNoCodeAddress) {
+  // A kernel keeps a table in an executable section, which its PDB names as
+  // data and no function or unwind record covers, and a call passes the
+  // table's address.  Taken for code, no lifted function identifies it; the
+  // image's record of data among code makes it the address it is.
+  constexpr va_t TableVA = TextVA + 0x520;
+  BinaryImage Image = makeSpilledConstTableImage(Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(Image.isCodeAddress(TableVA));
+  const MedFunc Caller = makePointerCall(
+      "pass_table", CodeVA,
+      {MedVar::makeConst(TableVA, 8, ConstantAddressProvenance::Address)});
+  const MedFunc Callee = makeReturnFunction("table_callee", CodeVA);
+  {
+    llvm::LLVMContext Context;
+    testing::internal::CaptureStderr();
+    auto Module =
+        MedLLVMEmitter().emit({Caller, Callee}, Context, "code-table",
+                              Arch::X64, {}, &Image, BinaryFormat::COFF);
+    const std::string Diagnostic = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(Module, nullptr);
+    EXPECT_NE(Diagnostic.find("no unique lifted code identity"),
+              std::string::npos)
+        << Diagnostic;
+  }
+  EXPECT_EQ(recordDataInCode(Image, {TableVA}), 1u);
+  llvm::LLVMContext Context;
+  auto Module =
+      MedLLVMEmitter().emit({Caller, Callee}, Context, "data-table", Arch::X64,
+                            {}, &Image, BinaryFormat::COFF);
+  ASSERT_NE(Module, nullptr);
+  expectValidModule(*Module);
+  llvm::Function *Emitted = Module->getFunction(Caller.Name);
+  ASSERT_NE(Emitted, nullptr);
+  bool PassesTable = false;
+  for (llvm::BasicBlock &Block : *Emitted)
+    for (llvm::Instruction &Instruction : Block) {
+      std::set<const llvm::Value *> Seen;
+      PassesTable |= valueReferencesInteger(&Instruction, TableVA, Seen);
+    }
+  EXPECT_TRUE(PassesTable);
 }
 
 TEST(LLVMCodePointerInvariantBoundary,

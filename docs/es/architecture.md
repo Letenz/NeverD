@@ -11,7 +11,9 @@ arquitectura interna.
 
 ## Límite de sustitución de fuentes y objetos
 
-`SourcePatchCompiler` gestiona la identidad del compilador y el artefacto. `validateSourcePatchTarget` admite los destinos tanto de fuentes como de IR externo; el triplete por sí solo no demuestra soporte. `bindSourcePatch` autentica entradas IR; `PatchObject` gestiona secciones nativas, reubicaciones y evidencias de rangos FDE. `publishSourcePatch` prepara, verifica y publica la transacción exacta. `COFFSourceImage` gestiona el nuevo almacenamiento y las tablas de desenrollado PE x64; las reescrituras elevadas conservan evidencias EH originales separadas. Consulte [los parches de fuentes](source-patching.md).
+`SourcePatchCompiler` gestiona la identidad del compilador y el artefacto. `validateSourcePatchTarget` admite los destinos tanto de fuentes como de IR externo; el triplete por sí solo no demuestra soporte. `bindSourcePatch` autentica entradas IR; `PatchObject` gestiona secciones nativas, reubicaciones y evidencias de rangos FDE. `publishSourcePatch` prepara, verifica y publica la transacción exacta. `COFFSourceImage` gestiona el nuevo almacenamiento y las tablas de desenrollado PE x86/x64/ARM32/ARM64; las reescrituras elevadas conservan evidencias EH originales separadas. Consulte [los parches de fuentes](source-patching.md).
+
+`sourcePatchTargetTriple` selecciona modo ARM, ABI flotante ELF y subtipo CPU Mach-O desde la imagen. `COFFPatchObject` y `MachOPatchObject` verifican símbolos, definiciones auxiliares／de sección y registros nativos sin inventar identificadores MC. Los instaladores de formato registran las tablas reales.
 
 ## Límite del sistema
 
@@ -1655,3 +1657,5 @@ La inicialización de campos del kernel tiene un propietario independiente en la
 El cargador de controladores vincula los hechos de reubicación al SHA-256 del archivo validado. La reconstrucción PE consume los hechos propios y excluye campos sustituidos por importaciones o formato antes de emitir registros DIR64 de diagnóstico. Este componente no infiere reubicaciones de punteros generados ni elimina el rechazo del núcleo.
 
 `isCanonicalX87Wait` define la misma regla de conservación del marco en la ruta normal para las transferencias registration ordinarias y los retornos local-finally verificados. Se conservan la operación FWAIT y el despacho de excepciones. Los demás intrinsic y las formas incorrectas siguen siendo opacos; esta regla no prueba una salida finally no local ni una restauración nativa.
+
+La ejecución KVM x64 verificada delega el bucle completo de instrucciones al hilo vCPU privado mediante `withExecutionOwner`. El bucle conserva la admisión, las transacciones RAM, los hooks y los presupuestos; cada entrada nativa mantiene sus controles y la prioridad de excepciones. El llamador supervisa las entradas activas y confirma la cancelación antes de regresar. Los hooks CPU no deben depender del estado local del hilo llamador. Una entrada nativa independiente conserva su finalización en el llamador. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` y `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verifican la propiedad y la cancelación real; este cambio no certifica un controlador recuperado.

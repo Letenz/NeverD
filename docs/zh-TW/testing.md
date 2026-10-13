@@ -1208,7 +1208,7 @@ KVM 驗收要求真實且不主動退出的 vCPU 取消，以及 `KvmStateTransf
 
 在 `native_cpu_only=true` 時，設定 `native_driver_tests=true` 可啟用不依賴 Unicorn 的 `NeverDNativeDriverTests`。設定前，`build_wdk_driver_fixtures.py` 驗證微軟官方 WDK/SDK 10.0.26100.6584 套件的完整 SHA-256，並從原始程式碼重建 48 個一般、CFG 或 DBG 驅動程式映像。`WDKDriverFixtures.def` 統一定義套件身分、編譯與連結參數及範例繫結。未修改的微軟檔案與授權保留在本機建置或快取目錄；CI 僅上傳建置中繼資料與記錄。清單記錄工具版本、命令、原始碼與標頭摘要及輸出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 與 `DriverBackendParityCases.def` 中全部 115 個負載產生 230 項 WHP 結果：27 個內建映像、48 個 WDK 映像及 40 個要求情境，各涵蓋原始與重定位位址。完整必測清單為 `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`。30 項等待集合檢查包含十六項可攜模型測試及十四項原創原生驅動測試。`run_native_cpu_ci.py --with-drivers` 在停用 Unicorn 時保留精確清單與 JUnit 證據；必要範例遺失或略過會使此選用驗收失敗，一般建置仍可不提供外部範例。固定位址映像保留預期的重定位拒絕。ARM64 原生客體執行仍未驗證。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在兩條不同啟動指令前注入逾時、停止及兩者同時發生的中斷，檢查精確階段診斷、訊息自行持有的生命週期、錯誤類型和原因位元、步驟間不變的統一截止時間及記憶體占用釋放。既有真實傳輸失敗與狀態不符仍分別處理。原生 x64 啟動驗證預算為 `5 s`；一般客體截止時間及單步寬限不變。
 
@@ -1274,6 +1274,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 維護、客體執行與完�
 `NeverDRunControlTests` 包含可攜式 `NativeEntryTests.cpp` 和 Windows 啟用 WHP 時的 `WhpEntryControlTests.cpp`。記憶體主機回呼驗證拒絕入口、重試、晚到取消、真實錯誤保留、完成結果優先順序和已確認的回呼生命週期，無需 Hyper-V。`NeverDKvmRunTests` 檢查呼叫執行緒完成、錯誤優先順序及重入拒絕。真實 `NeverDKvmStateTransferTests` 執行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真實暫存器/XSAVE 讀取後停止，並保留除零例外、原始上下文、RAM 和明確恢復。Wine 上採用 Windows ABI 執行的可攜式測試僅提供執行緒及控制協定證據，不證明原生 WHP 執行。不可用的原生後端仍明確略過。
 
 `NeverDInstructionFetchTests` 透過 Unicorn、KVM 與 WHP，在核心態與使用者態執行 x64/ARM64 checked 程式。`InstructionFetchCases.def` 涵蓋運算元形式切換、相對分支、客體與主機經程式碼別名寫入、上下文還原、權限撤銷、獨立頁面儲存、頁尾預讀、無效或截斷編碼及遞迴執行拒絕。Windows 原生 CI 要求所有 x64 WHP 案例通過。無法使用的主機/ISA 組合明確略過；可攜式 ARM64 執行不構成原生 ARM64 支援證據。
+
+`RepeatedOperandsSurviveCodeWorkingSetEviction` 在執行較大的程式碼集前後，重複驗證運算元、記憶體掛鉤及相對分支。受檢執行僅在目前指令位元組一致時重用有容量上限且自行持有的 Capstone 中繼資料；每一步仍讀取目前位元組並檢查執行權限。快取命中保留完整運算元詳情及解碼器別名。
 
 `WhpStateTransferTests.cpp` 對兩代 XSAVE API 注入暫存器傳輸，檢查精確變更組、完整擷取、填補忽略、部分失敗、取消、例外優先順序與分區重建。`ContinuedStepsReuseCapturedRegistersAndFP` 統計省略的安裝；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢復。這些是協定檢查，而非原生執行證據；既有原生 FP、狀態轉換、驅動及 ring3 測試仍屬必要驗證。
 
@@ -1652,9 +1654,11 @@ MSVC 單元測試目標使用 `/bigobj`，允許 GoogleTest 和 LLVM 範本實�
 
 ## 原始碼與原生物件 patch
 
-`CPU` 表示原始碼安裝與隔離函式執行；`REFUSED` 表示明確缺少安裝契約。ARM32 ELF 需要 EHABI 註冊；32 位 Mach-O 需要經驗證的載入器、前端與展開契約；PE 原始碼安裝目前要求 x64。
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+目前矩陣要求 143 項檢查成功，涵蓋原始碼／IR／原生物件、四架構三格式、ARMv7k watchOS 與 ARMv7 iOS、可寫／唯讀狀態、浮點／堆疊參數及兩次非零基底位址變更。舊 32 位 Mach-O 容器保留真實編譯器程式碼及中繼資料，執行結果不代表作業系統驗證；物件不虛構 MC 範圍身分。
 
 [原始碼與原生物件 patch](source-patching.md)
 
@@ -1668,9 +1672,11 @@ ctest --test-dir build-source -L \
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` 檢查 CPL0 IF 清除／設定與 CPL3 反向控制、profile 匹配及摘要區分、TF/AC/IOPL 拒絕、關閉一般觀察後仍須檢查最終 IF 相依、還原與精確／少一操作預算。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` 也確認此原生核心 profile 不能默默選用使用者態原始碼 ABI。正式未定義指令 admission 與驅動還原 guards 未變更。
 
-`NeverDX86X87IntegerLoadTests` 比較原始 `FILD m16/m32/m64` 與 Codegen、HighC、LLVMC 的預設/NoOpt 和 C O0/O2 路徑，觀察完整 binary80、保護位元組、控制字及已定義的 C1，涵蓋全部 RC、有效 PC 和異常遮罩。具體執行遍歷所有 16 位輸入與寬整數的二次冪邊界，檢查純轉換保留浮點狀態與填充位元組。反例涵蓋待處理/未知異常、精確記憶體範圍、畸形中繼資料，以及分支、平衡/不平衡迴圈和未知呼叫後的全路徑空槽證明。ABI 入口不能證明空堆疊；未知或已佔用的目標槽拒絕完整函式發布。原生 oracle 要求 x64 GCC/Clang；不認證完整 x87 TOP/標籤/狀態交付、堆疊溢位模擬、原生異常與記憶體故障優先級或 Linux/macOS/x86-32 原生執行。`NeverDLLVMCIntrinsicSemanticTests` 亦以 C O0/O2 和未定義行為陷阱執行至 64 位的純量 `llvm.abs`，檢查已定義的最小有號值與單次求值。
+`NeverDX86X87IntegerLoadTests` 比較原始 `FILD m16/m32/m64` 與 Codegen、HighC、LLVMC 的預設/NoOpt 和 C O0/O2 路徑，觀察完整 binary80、保護位元組、控制字及已定義的 C1，涵蓋全部 RC、有效 PC 和異常遮罩。具體執行遍歷所有 16 位輸入與寬整數的二次冪邊界，檢查純轉換保留浮點狀態與填充位元組。反例涵蓋待處理/未知異常、精確記憶體範圍、畸形中繼資料，以及分支、平衡/不平衡迴圈和未知呼叫後的全路徑空槽證明。函式入口依呼叫慣例從空暫存器堆疊開始，槽內取值未定義；其他位置未知或已佔用的目標槽拒絕完整函式發布。原生 oracle 要求 x64 GCC/Clang；不認證完整 x87 TOP/標籤/狀態交付、堆疊溢位模擬、原生異常與記憶體故障優先級或 Linux/macOS/x86-32 原生執行。`NeverDLLVMCIntrinsicSemanticTests` 亦以 C O0/O2 和未定義行為陷阱執行至 64 位的純量 `llvm.abs`，檢查已定義的最小有號值與單次求值。
 
 ```sh
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。

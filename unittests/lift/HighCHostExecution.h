@@ -90,7 +90,11 @@ protected:
     const auto HostSource = tmpFile("host.c");
     const auto Program = tmpFile("host.exe");
     std::ofstream(HostSource) << C << "\n" << Reference << "\n" << Main;
-    std::vector<std::string> HostArgs = {"-std=gnu11", "-O2"};
+    // The C reads and writes scalars through plain pointer casts, which its
+    // header says to build with -fno-strict-aliasing, as the semantic grid
+    // does.
+    std::vector<std::string> HostArgs = {"-std=gnu11", "-O2",
+                                         "-fno-strict-aliasing"};
     HostArgs.insert(HostArgs.end(), HostFlags.begin(), HostFlags.end());
     HostArgs.insert(HostArgs.end(),
                     {HostSource.string(), "-o", Program.string()});

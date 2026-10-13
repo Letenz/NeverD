@@ -36,6 +36,7 @@
 #include "neverd/web/PackageInstall.h"
 #include "neverd/web/PackageIntegrity.h"
 #include "neverd/web/Packages.h"
+#include "neverd/web/PassiveReport.h"
 #include "neverd/web/Pkg.h"
 #include "neverd/web/SEA.h"
 #include "neverd/web/Session.h"
@@ -129,6 +130,7 @@ struct Session::Impl {
   std::map<std::string, SourceInterfaces> InterfaceSources;
   std::map<std::string, InterfaceSourceRelations> InterfaceRelations;
   std::map<std::string, InterfaceCorrelation> InterfaceCorrelations;
+  std::map<std::string, PassiveReport> PassiveReports;
   uint64_t CachedArchiveBytes = 0;
   struct HTMLResults {
     HTMLDocument Document;

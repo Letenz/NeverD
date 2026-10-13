@@ -25,7 +25,7 @@ llvm::Error fail(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::errc::not_supported,
                                  "PE source image: " + Message);
 }
-using RuntimeRow = std::array<uint32_t, 3>;
+using RuntimeRow = COFFRuntimeFunctionRecord;
 
 llvm::Expected<llvm::ArrayRef<uint8_t>>
 directoryBytes(const BinaryImage &Original, const PEHeaderPtrs &PE,
@@ -54,7 +54,8 @@ bool owns(const CompiledImage &Image, uint64_t VA, uint64_t Size,
 llvm::Error verifyLanguage(const BinaryImage &Reloaded,
                            const BinaryImage &Original,
                            const CompiledImage &Compiled,
-                           const std::map<uint32_t, RuntimeRow> &Generated) {
+                           const std::map<uint32_t, RuntimeRow> &Generated,
+                           bool NativeObject) {
   using Kind = llvm::mc_rewrite::RewriteSectionKind;
   std::map<uint64_t, const llvm::mc_rewrite::RewriteFunctionRange *> Ranges;
   for (const auto &Range : Compiled.FunctionRanges)
@@ -70,12 +71,19 @@ llvm::Error verifyLanguage(const BinaryImage &Reloaded,
     if (Row == Generated.end())
       continue;
     if (!Seen.insert(Row->first).second ||
-        EH.CodeRange.End != Original.Base + Row->second[1] ||
-        EH.UnwindInfoRVA != Row->second[2] ||
+        EH.CodeRange.End != Original.Base + Row->second.End ||
+        (Original.Arch == Arch::X64 &&
+         EH.UnwindInfoRVA != Row->second.Unwind) ||
         EH.ParseStatus != ExceptionParseStatus::Complete ||
         EH.Kind != RuntimeFunctionKind::Primary)
       return fail("generated unwind record did not reload exactly");
-    const auto *Range = Ranges.at(EH.CodeRange.Begin);
+    if (Original.Arch != Arch::X64) {
+      if (EH.PackedUnwindData != Row->second.Unwind ||
+          EH.Personality != ExceptionPersonality::None)
+        return fail("ARM compiler unwind record did not reload exactly");
+      continue;
+    }
+    const auto *Range = NativeObject ? nullptr : Ranges.at(EH.CodeRange.Begin);
     const auto *Unwind = Reloaded.readVA(EH.UnwindInfoVA, 4);
     if (!Unwind ||
         !owns(Compiled, EH.UnwindInfoVA,
@@ -85,6 +93,8 @@ llvm::Error verifyLanguage(const BinaryImage &Reloaded,
       return fail("unwind program leaves compiler read-only storage");
     if (EH.Personality == ExceptionPersonality::None)
       continue;
+    if (NativeObject)
+      return fail("native object language-handler ownership is unsupported");
     const auto Handler =
         findCOFFExceptionPersonalityVA(Original, "__CxxFrameHandler3");
     if (!Handler || EH.PersonalityVA != *Handler ||
@@ -163,16 +173,26 @@ llvm::Error verifyLanguage(const BinaryImage &Reloaded,
 
 llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
                                    const BinaryImage &Original,
-                                   const CompiledImage &Compiled) {
+                                   const CompiledImage &Compiled,
+                                   const COFFObjectEvidence *Object) {
   using Kind = llvm::mc_rewrite::RewriteSectionKind;
+  if (auto E = validateCOFFReplacementFeatures(Original, Compiled.TargetArch))
+    return E;
   auto PE = locatePEHeaders(Binary.data(), Binary.size());
-  if (!PE.valid() || !PE.Is64 || !PE.SectionTable ||
-      Original.Arch != Arch::X64 ||
-      Compiled.InputKind != RewriteInputKind::ReplacementIR ||
-      !Compiled.FunctionRangesValid ||
-      !llvm::mc_rewrite::validateRewriteFunctionRanges(
-          Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))
-    return fail("PE x64 and authenticated compiler ranges are required");
+  if (!PE.valid() || !PE.SectionTable ||
+      PE.Is64 !=
+          (Original.Arch == Arch::X64 || Original.Arch == Arch::AArch64) ||
+      Compiled.TargetArch != Original.Arch ||
+      (Object
+           ? (Compiled.InputKind != RewriteInputKind::ReplacementObject ||
+              !Compiled.FunctionRanges.empty() ||
+              !Compiled.FunctionOwnerAddrs.empty() || Object->Functions.empty())
+           : (Compiled.InputKind != RewriteInputKind::ReplacementIR ||
+              !Compiled.FunctionRangesValid ||
+              !llvm::mc_rewrite::validateRewriteFunctionRanges(
+                  Compiled.FunctionRanges, Compiled.FunctionOwnerAddrs))))
+    return fail(
+        "matching PE headers and authenticated compiler ranges are required");
   const uint64_t Alignment = getPESectionAlignment(PE);
   const uint64_t FileAlignment = getPEFileAlignment(PE);
   if (!llvm::isPowerOf2_64(Alignment) || Alignment < 4096 ||
@@ -189,36 +209,98 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
   if (!OldPData)
     return OldPData.takeError();
   std::map<uint32_t, RuntimeRow> Rows, Generated;
+  const unsigned RowSize = Original.Arch == Arch::X64 ? 12 : 8;
   auto AddRows = [&](llvm::ArrayRef<uint8_t> Bytes, bool New) -> llvm::Error {
-    if (Bytes.size() % 12)
+    if (Original.Arch == Arch::X86) {
+      if (!Bytes.empty())
+        return fail(
+            "x86 uses compiler registration code, not a pdata directory");
+      return llvm::Error::success();
+    }
+    if (Bytes.size() % RowSize)
       return fail("misaligned runtime-function table");
-    for (size_t I = 0; I < Bytes.size(); I += 12) {
-      RuntimeRow Row{readLE<uint32_t>(Bytes.data() + I),
-                     readLE<uint32_t>(Bytes.data() + I + 4),
-                     readLE<uint32_t>(Bytes.data() + I + 8)};
-      if (!Row[0] || Row[0] >= Row[1] || !Row[2] ||
-          !Rows.emplace(Row[0], Row).second)
+    auto Read = [&](uint32_t RVA, uint64_t Size) -> const uint8_t * {
+      const uint64_t VA = Original.Base + RVA;
+      if (!New)
+        return Original.readVA(VA, Size);
+      if (VA < Compiled.BaseVA ||
+          !rangeInBounds(VA - Compiled.BaseVA, Size, Compiled.Bytes.size()))
+        return nullptr;
+      return Compiled.Bytes.data() + VA - Compiled.BaseVA;
+    };
+    for (size_t I = 0; I < Bytes.size(); I += RowSize) {
+      auto Parsed = decodeCOFFRuntimeFunction(Bytes.slice(I, RowSize),
+                                              Original.Arch, Read);
+      if (!Parsed)
+        return Parsed.takeError();
+      const RuntimeRow Row = *Parsed;
+      if (!Row.Begin || Row.Begin >= Row.End || !Row.Unwind ||
+          !Rows.emplace(Row.Begin, Row).second)
         return fail("invalid or duplicate runtime-function entry");
       if (!New)
         continue;
-      const uint64_t Begin = Original.Base + Row[0],
-                     End = Original.Base + Row[1];
+      const uint64_t Begin = Original.Base + Row.Begin,
+                     End = Original.Base + Row.End;
       const auto Count =
-          llvm::count_if(Compiled.FunctionRanges, [&](const auto &Range) {
-            return Range.BeginVA == Begin && Range.EndVA == End &&
-                   Range.OwnerVA == Begin;
-          });
+          Object
+              ? llvm::count_if(Object->Functions,
+                               [&](const auto &Range) {
+                                 return Range.BeginVA == Begin &&
+                                        Range.EndVA == End;
+                               })
+              : llvm::count_if(Compiled.FunctionRanges, [&](const auto &Range) {
+                  return Range.BeginVA == Begin && Range.EndVA == End;
+                });
       if (Count != 1 || !owns(Compiled, Begin, End - Begin, Kind::Code) ||
-          !owns(Compiled, Original.Base + Row[2], 4, Kind::ReadOnlyData))
+          ((Original.Arch == Arch::X64 || !(Row.Unwind & 3)) &&
+           !owns(Compiled, Original.Base + Row.Unwind, 4, Kind::ReadOnlyData)))
         return fail("runtime row disagrees with its exact compiler range");
-      Generated.emplace(Row[0], Row);
+      if (Row.HasLanguageHandler && (Object || Original.Arch != Arch::X64))
+        return fail("unverified replacement ARM language-handler program");
+      Generated.emplace(Row.Begin, Row);
     }
     return llvm::Error::success();
   };
   if (auto Error = AddRows(*OldPData, false))
     return Error;
   std::map<uint32_t, std::set<uint16_t>> NewRelocs;
-  std::set<uint64_t> RelocatedFields;
+  std::map<uint64_t, unsigned> RelocatedFields;
+  if (Object) {
+    uint64_t PreviousEnd = 0;
+    for (const auto &Range : Object->Functions) {
+      if (!Range.BeginVA || Range.BeginVA >= Range.EndVA ||
+          Range.BeginVA < PreviousEnd ||
+          !owns(Compiled, Range.BeginVA, Range.EndVA - Range.BeginVA,
+                Kind::Code))
+        return fail("invalid native object function extent");
+      PreviousEnd = Range.EndVA;
+    }
+    for (const auto &Field : Object->BaseRelocations) {
+      const bool ValidType =
+          (PE.Is64 && Field.Type == llvm::COFF::IMAGE_REL_BASED_DIR64 &&
+           Field.Width == 8) ||
+          (!PE.Is64 && Field.Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW &&
+           Field.Width == 4) ||
+          (Original.Arch == Arch::ARM &&
+           Field.Type == llvm::COFF::IMAGE_REL_BASED_ARM_MOV32T &&
+           Field.Width == 8);
+      if (!ValidType || Field.VA < Compiled.BaseVA ||
+          Field.VA < Original.Base ||
+          !rangeInBounds(Field.VA - Compiled.BaseVA, Field.Width,
+                         Compiled.Bytes.size()) ||
+          Field.VA - Original.Base > UINT32_MAX - (Field.Width - 1))
+        return fail("invalid native object absolute relocation");
+      const uint64_t RVA = Field.VA - Original.Base;
+      auto Next = RelocatedFields.lower_bound(RVA);
+      if ((Next != RelocatedFields.end() && Next->first - RVA < Field.Width) ||
+          (Next != RelocatedFields.begin() &&
+           RVA - std::prev(Next)->first < std::prev(Next)->second))
+        return fail("overlapping native object absolute relocations");
+      RelocatedFields.emplace(RVA, Field.Width);
+      NewRelocs[uint32_t(RVA & ~4095ULL)].insert(
+          uint16_t((Field.Type << 12) | (RVA & 4095)));
+    }
+  }
   for (const auto &Section : Compiled.Sections) {
     if (!Section.IsAllocated || !Section.IsInImage || !Section.Size)
       continue;
@@ -227,39 +309,81 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
                                    .slice(Section.Offset, Section.Size),
                                true))
         return Error;
+    std::set<uint64_t> PairedHighFields;
     for (const auto &Fixup : Section.FixupReferences) {
-      if (Fixup.IsPCRel || Fixup.BitWidth != 64 ||
-          !Fixup.SubtractSymbol.empty())
+      if (Fixup.IsPCRel || !Fixup.SubtractSymbol.empty() || Fixup.Specifier)
         continue;
-      if (!Fixup.IsResolved || !rangeInBounds(Fixup.Offset, 8, Section.Size) ||
-          (Section.Kind != Kind::WritableData &&
-           Section.Kind != Kind::UninitializedData))
-        return fail("absolute address lacks writable relocation storage");
+      unsigned Width = 0, Type = 0;
+      if (Original.Arch == Arch::ARM &&
+          Fixup.KindName == "fixup_t2_movw_lo16") {
+        auto High =
+            llvm::find_if(Section.FixupReferences, [&](const auto &Other) {
+              return Other.Offset == Fixup.Offset + 4 &&
+                     Other.KindName == "fixup_t2_movt_hi16" &&
+                     Other.Symbol == Fixup.Symbol &&
+                     Other.Addend == Fixup.Addend &&
+                     Other.SubtractSymbol.empty() && Other.Specifier == 0 &&
+                     Other.IsResolved && !Other.IsPCRel;
+            });
+        if (High == Section.FixupReferences.end() ||
+            High->ResolvedValue != Fixup.ResolvedValue ||
+            Section.Kind != Kind::Code ||
+            !PairedHighFields.insert(High->Offset).second)
+          return fail("ARM absolute address has no exact MOVW/MOVT pair");
+        Width = 8;
+        Type = llvm::COFF::IMAGE_REL_BASED_ARM_MOV32T;
+      } else if (Original.Arch == Arch::ARM &&
+                 Fixup.KindName == "fixup_t2_movt_hi16") {
+        // The complete pair is registered at MOVW, independently of callback
+        // order. Check all high fields after the collection pass.
+        continue;
+      } else if (Fixup.Kind == llvm::FK_Data_8 && Fixup.BitWidth == 64 &&
+                 PE.Is64) {
+        Width = 8;
+        Type = llvm::COFF::IMAGE_REL_BASED_DIR64;
+      } else if ((Fixup.Kind == llvm::FK_Data_4 ||
+                  (Original.Arch == Arch::X86 &&
+                   Fixup.KindName == "reloc_signed_4byte")) &&
+                 Fixup.BitWidth == 32 && !PE.Is64) {
+        Width = 4;
+        Type = llvm::COFF::IMAGE_REL_BASED_HIGHLOW;
+      } else {
+        continue; // Other ISA fixups encode offsets/RVAs, not pointer fields.
+      }
+      if (!Fixup.IsResolved ||
+          !rangeInBounds(Fixup.Offset, Width, Section.Size))
+        return fail("absolute address lacks bounded relocation storage");
       const uint64_t RVA = Section.VA - Original.Base + Fixup.Offset;
-      if (RVA > UINT32_MAX - 7)
+      if (RVA > UINT32_MAX - (Width - 1))
         return fail("absolute relocation exceeds PE limits");
       auto Next = RelocatedFields.lower_bound(RVA);
-      if ((Next != RelocatedFields.end() && *Next - RVA < 8) ||
-          (Next != RelocatedFields.begin() && RVA - *std::prev(Next) < 8))
+      if ((Next != RelocatedFields.end() && Next->first - RVA < Width) ||
+          (Next != RelocatedFields.begin() &&
+           RVA - std::prev(Next)->first < std::prev(Next)->second))
         return fail("overlapping absolute relocation fields");
-      RelocatedFields.insert(RVA);
+      RelocatedFields.emplace(RVA, Width);
       if (!NewRelocs[static_cast<uint32_t>(RVA & ~4095ULL)]
-               .insert(static_cast<uint16_t>(
-                   (llvm::COFF::IMAGE_REL_BASED_DIR64 << 12) | (RVA & 4095)))
+               .insert(static_cast<uint16_t>((Type << 12) | (RVA & 4095)))
                .second)
         return fail("duplicate absolute relocation");
     }
+    if (Original.Arch == Arch::ARM)
+      for (const auto &Fixup : Section.FixupReferences)
+        if (Fixup.KindName == "fixup_t2_movt_hi16" && !Fixup.IsPCRel &&
+            !Fixup.Specifier && !PairedHighFields.count(Fixup.Offset))
+          return fail("unpaired ARM absolute MOVT address");
   }
+
   uint64_t PreviousEnd = 0;
   std::vector<uint8_t> Metadata;
   for (const auto &[Begin, Row] : Rows) {
     if (Begin < PreviousEnd)
       return fail("overlapping runtime-function ranges");
-    PreviousEnd = Row[1];
-    for (uint32_t Word : Row) {
+    PreviousEnd = Row.End;
+    for (unsigned I = 0; I < Row.WordCount; ++I) {
       const auto Offset = Metadata.size();
       Metadata.resize(Offset + 4);
-      writeLE<uint32_t>(Metadata.data() + Offset, Word);
+      writeLE<uint32_t>(Metadata.data() + Offset, Row.Words[I]);
     }
   }
   const uint64_t EHSize = Metadata.size();
@@ -287,8 +411,16 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
         const uint16_t Type = Entry >> 12;
         if (Type == llvm::COFF::IMAGE_REL_BASED_ABSOLUTE)
           continue;
-        if (Type != llvm::COFF::IMAGE_REL_BASED_DIR64 ||
-            uint64_t(Page) + (Entry & 4095) + 8 > getPESizeOfImage(PE))
+        const unsigned Width = Type == llvm::COFF::IMAGE_REL_BASED_DIR64     ? 8
+                               : Type == llvm::COFF::IMAGE_REL_BASED_HIGHLOW ? 4
+                               : Type == llvm::COFF::IMAGE_REL_BASED_ARM_MOV32T
+                                   ? 8
+                                   : 0;
+        if (!Width || (PE.Is64 && Type != llvm::COFF::IMAGE_REL_BASED_DIR64) ||
+            (!PE.Is64 && Type == llvm::COFF::IMAGE_REL_BASED_DIR64) ||
+            (Type == llvm::COFF::IMAGE_REL_BASED_ARM_MOV32T &&
+             Original.Arch != Arch::ARM) ||
+            uint64_t(Page) + (Entry & 4095) + Width > getPESizeOfImage(PE))
           return fail("unsupported original base relocation");
       }
       Offset += Size;
@@ -375,13 +507,23 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
   }
   PE = locatePEHeaders(Binary.data(), Binary.size());
   PE.FileHeader->NumberOfSections = OldCount + Chunks.size();
-  auto *Optional =
-      reinterpret_cast<llvm::object::pe32plus_header *>(PE.OptionalHeader);
-  if (AddedCode > UINT32_MAX - Optional->SizeOfCode ||
-      AddedData > UINT32_MAX - Optional->SizeOfInitializedData)
-    return fail("PE optional-header storage totals overflow");
-  Optional->SizeOfCode = Optional->SizeOfCode + AddedCode;
-  Optional->SizeOfInitializedData = Optional->SizeOfInitializedData + AddedData;
+  auto AddStorageTotals = [&](auto *Optional) -> llvm::Error {
+    if (AddedCode > UINT32_MAX - Optional->SizeOfCode ||
+        AddedData > UINT32_MAX - Optional->SizeOfInitializedData)
+      return fail("PE optional-header storage totals overflow");
+    Optional->SizeOfCode = Optional->SizeOfCode + AddedCode;
+    Optional->SizeOfInitializedData =
+        Optional->SizeOfInitializedData + AddedData;
+    return llvm::Error::success();
+  };
+  auto Totals =
+      PE.Is64
+          ? AddStorageTotals(reinterpret_cast<llvm::object::pe32plus_header *>(
+                PE.OptionalHeader))
+          : AddStorageTotals(reinterpret_cast<llvm::object::pe32_header *>(
+                PE.OptionalHeader));
+  if (Totals)
+    return Totals;
   setPESizeOfImage(PE, ImageEnd);
   clearPEChecksum(PE);
   clearPEDataDirectory(PE, llvm::COFF::CERTIFICATE_TABLE);
@@ -404,7 +546,7 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
   // The common validator checks the PE and OS unwind encodings. Source-native
   // ownership is checked separately, since the new directory is read-only
   // metadata and the new C++ program is not a lifted copy of the original.
-  if (auto Error = validatePatchedCOFFImage(Binary, Arch::X64))
+  if (auto Error = validatePatchedCOFFImage(Binary, Original.Arch))
     return Error;
   COFFLoader Loader;
   auto Reloaded = Loader.loadBuffer(llvm::MemoryBufferRef(
@@ -426,6 +568,7 @@ llvm::Error installCOFFSourceImage(std::vector<uint8_t> &Binary,
       return fail("installed bytes or memory permissions disagree with the "
                   "compiler image");
   }
-  return verifyLanguage(*Reloaded, Original, Compiled, Generated);
+  return verifyLanguage(*Reloaded, Original, Compiled, Generated,
+                        Object != nullptr);
 }
 } // namespace neverd

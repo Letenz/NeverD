@@ -221,39 +221,61 @@ void scanWideStrings(llvm::ArrayRef<uint8_t> Data, Encoding Kind,
   const WideTextSet &Text = wideText();
   const uint8_t *Begin = Data.data();
   const uint8_t *End = Begin + Data.size() / Unit * Unit;
+  // Where a rejected run's text may begin after a character the bytes
+  // before a string start with.
+  const uint8_t *Resumed = nullptr;
   for (const uint8_t *Cursor = Begin; Cursor < End; Cursor += Unit) {
     const uint8_t *Start = Cursor;
     unsigned Chars = 0, Columns = 0, ASCII = 0;
     bool LowBytesZero = true;
+    // Where an ASCII character first follows a run's first character.
+    const uint8_t *LaterASCII = nullptr;
     uint32_t Code = 0;
     // Counted first; the text is decoded only for a candidate that ends.
     while (Cursor < End) {
       const unsigned Used = decodeWide<Unit, BigEndian>(Cursor, End, Code);
       if (!Used || !Text.contains(Code))
         break;
+      if (Code < 0x80 && Cursor != Start && !LaterASCII)
+        LaterASCII = Cursor;
       ++Chars;
       Columns += displayColumns(Code);
       ASCII += Code < 0x80;
       LowBytesZero &= Code < 0x80 || (Code & 0xff) == 0;
       Cursor += Used;
     }
+    // Text that begins after such a character is ASCII: what is not, here,
+    // is the rest of other data.
     if (Cursor >= End || readUnit<Unit, BigEndian>(Cursor) ||
-        Columns < MinLength)
+        Columns < MinLength || (Start == Resumed && ASCII != Chars))
       continue;
+    // A run that the bytes before a string start with a character, such as
+    // `00 40` (U+4000) before L"HashDigestLength", is no text; the string
+    // may begin at its first ASCII character all the same.
+    const auto Retry = [&] {
+      if (LaterASCII && readUnit<Unit, BigEndian>(Start) >= 0x80) {
+        Resumed = LaterASCII;
+        Cursor = LaterASCII - Unit;
+      }
+    };
     // Text mostly beyond ASCII also sits where a pool of strings puts it,
     // after a zero unit, and is not ASCII read one byte off.
     if (ASCII * 2 < Chars &&
         (LowBytesZero ||
-         (Start != Begin && readUnit<Unit, BigEndian>(Start - Unit))))
+         (Start != Begin && readUnit<Unit, BigEndian>(Start - Unit)))) {
+      Retry();
       continue;
+    }
     std::vector<uint32_t> Codes;
     Codes.reserve(Chars);
     for (const uint8_t *At = Start; At < Cursor;) {
       At += decodeWide<Unit, BigEndian>(At, End, Code);
       Codes.push_back(Code);
     }
-    if (!longEnoughText(Codes) || !readsAsText(Codes, Source::Wide))
+    if (!longEnoughText(Codes) || !readsAsText(Codes, Source::Wide)) {
+      Retry();
       continue;
+    }
     FoundString Found;
     Found.Offset = static_cast<uint64_t>(Start - Begin);
     Found.Bytes = static_cast<uint64_t>(Cursor - Start);

@@ -18,7 +18,10 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCFixup.h"
+#include "llvm/MC/MCRegisterInfo.h"
+#include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/WithColor.h"
 #include "llvm/Support/raw_ostream.h"
@@ -386,10 +389,35 @@ collectSourceFunctionOriginalVAs(const llvm::Module &Module) {
 }
 
 bool attachSourceFunctionOriginalVAs(
-    CompiledImage &Image, const std::map<std::string, uint64_t> &OriginalVAs) {
+    CompiledImage &Image, const std::map<std::string, uint64_t> &OriginalVAs,
+    const llvm::Module &Module) {
   if (!llvm::mc_rewrite::validateRewriteSourceFunctionOwners(
           Image.SourceFunctionOwners))
     return false;
+  if (Image.InputKind == RewriteInputKind::ReplacementIR &&
+      Image.TargetArch == Arch::ARM) {
+    for (const auto &Owner : Image.SourceFunctionOwners) {
+      if (Owner.Kind !=
+          llvm::mc_rewrite::RewriteSourceFunctionOwnerKind::FunctionEntry)
+        continue;
+      const auto *Function = Module.getFunction(Owner.SourceFunction);
+      if (!Function)
+        return false;
+      InstructionMode Mode = Image.TargetMode;
+      const auto Attribute = Function->getFnAttribute("target-features");
+      if (Attribute.isStringAttribute()) {
+        const auto Features = Attribute.getValueAsString();
+        const bool Thumb = Features.contains("+thumb-mode");
+        const bool ARM = Features.contains("-thumb-mode");
+        if (Thumb && ARM)
+          return false;
+        if (Thumb || ARM)
+          Mode = Thumb ? InstructionMode::Thumb : InstructionMode::ARM;
+      }
+      if (!Image.ReplacementFunctionModes.emplace(Owner.OwnerVA, Mode).second)
+        return false;
+    }
+  }
   for (const auto &[SourceFunction, OriginalVA] : OriginalVAs) {
     const size_t Matches =
         llvm::count_if(Image.SourceFunctionOwners, [&](const auto &Owner) {
@@ -555,6 +583,24 @@ static CompiledImage compileImageForPatchImpl(
         << "compileImageForPatch: sizing compile emitted no sections\n";
     return Out;
   }
+  std::string TargetError;
+  const auto *Backend = llvm::TargetRegistry::lookupTarget(Triple, TargetError);
+  if (!Backend)
+    return Out;
+  std::unique_ptr<llvm::MCRegisterInfo> Registers(
+      Backend->createMCRegInfo(Triple));
+  std::unique_ptr<llvm::MCAsmInfo> AsmInfo(
+      Registers ? Backend->createMCAsmInfo(*Registers, Triple,
+                                           llvm::MCTargetOptions())
+                : nullptr);
+  if (!AsmInfo)
+    return Out;
+  auto NameSpecifiers = [&](std::vector<CapturedFixupReference> &Fixups) {
+    for (auto &Fixup : Fixups)
+      Fixup.Reference.SpecifierName =
+          AsmInfo->getSpecifierNameOrEmpty(Fixup.Reference.Specifier).str();
+  };
+  NameSpecifiers(Pass1Fixups);
   const std::vector<WinEHSemanticEmissionShape> Pass1WinEHSemanticShape =
       collectWinEHSemanticEmissionShape(Res1.WinEHSemanticRecords);
 
@@ -608,7 +654,7 @@ static CompiledImage compileImageForPatchImpl(
     Out.FunctionRanges = std::move(Res1.FunctionRanges);
     Out.SourceFunctionOwners = std::move(Res1.SourceFunctionOwners);
     Out.WinEHSemanticRecords = std::move(Res1.WinEHSemanticRecords);
-    if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs)) {
+    if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs, Mod)) {
       llvm::WithColor::error()
           << "compileImageForPatch: sizing compile lost exact source "
              "function ownership\n";
@@ -762,6 +808,7 @@ static CompiledImage compileImageForPatchImpl(
     auto IterMod = llvm::CloneModule(Mod);
     auto ResN = CGn.compileForRewrite(*IterMod, TargetArch, PassN, Fmt,
                                       TargetTriple, InputKind);
+    NameSpecifiers(IterationFixups);
     if (!ResN.ImageValid) {
       llvm::WithColor::error()
           << "compileImageForPatch: layout compile produced an invalid image\n";
@@ -882,7 +929,7 @@ static CompiledImage compileImageForPatchImpl(
   Out.FunctionRanges = std::move(Final.FunctionRanges);
   Out.SourceFunctionOwners = std::move(Final.SourceFunctionOwners);
   Out.WinEHSemanticRecords = std::move(Final.WinEHSemanticRecords);
-  if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs)) {
+  if (!attachSourceFunctionOriginalVAs(Out, *OriginalVAs, Mod)) {
     llvm::WithColor::error()
         << "compileImageForPatch: layout compile lost exact source "
            "function ownership\n";

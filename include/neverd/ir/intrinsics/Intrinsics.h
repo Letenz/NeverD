@@ -1029,6 +1029,13 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   }
 }
 
+/// An x86 instruction that stores a descriptor-table selector or the machine
+/// status word: the value it writes is what it runs for, so a function that
+/// returns it returns a value.
+constexpr bool isX86SystemRegisterStore(Intrinsic Id) {
+  return Id == Intrinsic::Sldt || Id == Intrinsic::Str || Id == Intrinsic::Smsw;
+}
+
 /// Some x86 system instructions share an intrinsic ID between r/m16 memory
 /// and register encodings.  A default address space can therefore denote a
 /// genuine register form; an explicit FS/GS address space never can.
