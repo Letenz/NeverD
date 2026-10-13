@@ -224,6 +224,7 @@ int runWebStreams();
 int runWebSEA();
 int runWebNexe();
 int runWebPkg();
+int runWebDataPack();
 int runWebWails();
 int runWebTauri();
 int runWebReadableExport();

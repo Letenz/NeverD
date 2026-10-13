@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "witness": "2026-10-13",
+  "producer": "Node.js",
+  "producer_version": "22.15.0",
+  "compiler_archive_sha256": "92eb58f54d172ed9dee320b8450f1390db629d4262c936d5c074b25a110fed02",
+  "host": "darwin-arm64",
+  "source_sha256": "365e921526c985d65a610e50c7f1e942ff43f94d128e70b90766f26d5249c388",
+  "random_seed": 42,
+  "repeat_generation_is_bit_reproducible": false,
+  "executes_trusted_fixture_builder": true,
+  "executes_generated_images": false,
+  "cases": [
+    {
+      "name": "snapshot",
+      "file": "snapshot-2026-10-13.blob",
+      "flags": 3,
+      "sha256": "9e94efe5aed0592ce0338a8c80f0e352cd154ff5849e1fe32f866a4841e2772a",
+      "size": "5644095",
+      "source": null,
+      "redistributed": false
+    }
+  ]
+}

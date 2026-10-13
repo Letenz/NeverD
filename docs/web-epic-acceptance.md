@@ -17,9 +17,9 @@ executed, and the analyzer uses no external scripts, runtimes or network tools.
 
 | Issue | Implemented, reviewable evidence | Explicit supported boundary |
 | --- | --- | --- |
-| [#714](https://github.com/NeverSight/NeverD/issues/714) | Immutable source/map origins, bounded C++ parser, lexical/value/effect/module/bundle/navigation models, reversible primitive/rename/Boolean-expression profiles, reviewed source views and verified same-tree readable export. Known tool/config/permission/hook/MCP fixtures retain spans and uncertainty. Explicit large-source admission now parses and navigates all 2,364 pinned macOS ARM64 Claude units. Configuration order retains 418 objects, 3,702 terms and 32 possible later overwrites; interactive admission keeps its earlier bounds and counts. | Separate file layers, other merge forms and computed dispatch are outside the named grammar and remain unresolved. The issue requires identifiable source navigation and explicit unknowns, not effective policy or universal dataflow. Erased TypeScript/types/names and whole-program equivalence are not promised. |
+| [#714](https://github.com/NeverSight/NeverD/issues/714) | Immutable source/map origins, bounded C++ parser, lexical/value/effect/module/bundle/navigation models, reversible primitive/rename/Boolean-expression profiles, reviewed source views and verified same-tree readable export. Known tool/config/permission/hook/MCP fixtures retain spans and uncertainty. Explicit large-source admission now parses and navigates all 2,364 pinned macOS ARM64 Claude units. Configuration order retains 418 objects, 3,702 terms and 32 possible later overwrites. Independent minified file navigation retains 973 literal sites, 592 local lexical call candidates and 69 layer arrays; interactive admission keeps its earlier bounds. | Enabled file layers, effective precedence, other merge forms and computed dispatch remain unresolved. The issue requires identifiable source navigation and explicit unknowns, not effective policy or universal dataflow. Erased TypeScript/types/names and whole-program equivalence are not promised. |
 | [#715](https://github.com/NeverSight/NeverD/issues/715) | npm graphs/diffs, tar/gzip inventory, original-byte SRI, Node behavior/install associations and diffs, advisory/registry/provenance imports, assessments, persistent dispositions and Qt review. Eight Claude packages retain independent archive/payload integrity. | npm lockfile versions and the literal Node installation grammar are named; pnpm/Yarn, complete runtime resolution and other GUI selectors are further adapters/workbench extensions. The GUI preserves selected confidence/coverage/dispositions, with unselected evidence explicit. Hashes/signature declarations prove no publisher trust or benign behavior. |
-| [#716](https://github.com/NeverSight/NeverD/issues/716) | Safe ASAR/ZIP, Electron unpacked/manifests/entries/IPC, NW.js/VSIX/HTML/native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 ELF/PE x64 and measured Tauri PHF/Mach-O x64 assets have exact raw/readable exports and native links. Tauri yields 15 assets and 9 readable JS members. Direct Tauri/Wails bridge syntax retains private source anchors. A named supplied CEF/WebView resource descriptor links and exports local assets/helpers, including opaque resources. | Other Rust/Go layouts, ISAs, codecs, bridge aliases and runtime mount/window relations need independent profiles. The CEF/WebView descriptor is supplied local evidence, not automatic framework authentication or a `.pak` decoder. The issue asks for supported versioned layouts and clear refusal of unsupported builds. |
+| [#716](https://github.com/NeverSight/NeverD/issues/716) | Safe ASAR/ZIP, Electron unpacked/manifests/entries/IPC, NW.js/VSIX/HTML/native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 ELF/PE x64 and measured Tauri PHF/Mach-O x64 assets have exact raw/readable exports and native links. Tauri yields 15 assets and 9 readable JS members. Direct Tauri/Wails bridge syntax retains private source anchors. Fixed DataPack v5/u16 and Microsoft v5/u32 readers qualify actual CEF 120.2.7 and Teams WebView2 resources with explicit gzip, JS/HTML consumers and exact origins. Supplied resource descriptors remain independently supported. | Other Rust/Go layouts, ISAs, codecs, bridge aliases and runtime mount/window relations need independent profiles. Resource tables and supplied descriptors do not authenticate frameworks or runtime behavior. The issue asks for supported versioned layouts and clear refusal of unsupported builds. |
 | [#717](https://github.com/NeverSight/NeverD/issues/717) | Redacted HAR preview/commit, fetch/WebSocket/XHR/wrapper candidates, request/result and nearby JSON/base64/URI/crypto/zlib syntax links, direct-fetch HAR joins and versioned streams/logs. The v2 report adds template segments/expressions and lexical path/query roles, individual header and body syntax, per-example JSON field/array trees, capture-local type unions and observed presence. Existing source features, recorded links, same-MCP-method candidates and pagination remain. | Source components remain syntax; dynamic interpolations can change URL delimiters and cannot create new HAR matches. Names/values remain private. Observed absence is not inferred server optionality. Source body calls, unsupported object syntax, framework/API identity and server behavior remain unknown. No universal dataflow or optional OpenAPI completeness is claimed. |
 | [#718](https://github.com/NeverSight/NeverD/issues/718) | Independent Bun ELF/thin Mach-O/PE x64/ARM64 and Node SEA 22.15.0, nexe 4.0.0-rc.7, pkg 5.8.1 profiles; producer fixtures, exact original/member/range hashes, bounds, opaque caches and shared consumers. All eight Claude 2.1.296 deliveries preserve every shipped JS unit and verified readable copy. | New runtime/layout/host profiles require independent measurement. Opaque JSC/V8 caches remain explicitly unsupported, as the issue permits. Extraction is separate from native lifting and complete cross-track runtime behavior. |
 
@@ -119,17 +119,30 @@ runtime requests, effective policy or full dynamic client reconstruction.
 No additional blocking gap was established for the already named #714, #715
 or #718 profiles in this review. Useful follow-up qualification remains:
 
-- **#714 real-client navigation:** the named spelling patterns and object-order
-  model do not cover arbitrary minified aliases or separate configuration-file
-  precedence. The recorded Claude corpus has zero named loading links. Broader
-  navigation requires measured source patterns and new conservative profiles.
-- **#716 CEF/WebView:** the supplied `neverd-resources.json` adapter is an asset
-  index. `desktop/ResourceManifest.cpp` reads a caller declaration; it does not
-  discover a real client's runtime/package format. A pinned real CEF/WebView
-  input and a measured adapter would extend this phase beyond supplied metadata.
-- **#718 regression qualification:** several full producer-container tests are
-  optional environment-selected cases. A release qualification lane should
-  require the redistributable producer corpus and fail on its absence. Native
+- **#714 real-client navigation:** the independent [file navigation profile](web-configuration-file-profile.md)
+  now completes all 2,364 original units and retains 973 literal sites, 592 local
+  lexical call candidates and 69 layer arrays through minified names. The old
+  named-loader grammar still reports zero. Arbitrary alias/import propagation,
+  enabled layers, merge semantics and effective file precedence remain unknown;
+  recorded syntax relationships do not prove runtime loading.
+- **#716 CEF/WebView:** the follow-up [DataPack readers](web-datapack-profile.md)
+  now qualify actual CEF 120.2.7 NuGet resources and Teams' WebView2
+  154.0.4258.37 resource pack. Separate v5/u16 and v5/u32 profiles retain all
+  original resources/aliases, explicit gzip selections and nested origins. Fixed
+  JS/HTML consumers and source anchors pass. Framework authentication, native
+  runtime activation and arbitrary custom client layouts remain unverified.
+  [Fixed CEF GitHub qualification](https://github.com/NeverSight/NeverD/actions/runs/38413710185)
+  also passes at integration commit `9276ef94c`.
+- **#718 regression qualification:** the [required release lane](web-producer-corpus-qualification.md)
+  now selects all eleven fixed full-image cases, requires immutable corpus
+  URL/hash inputs and fails missing files/consumers instead of skipping. The
+  combined Web release qualification calls both the producer and fixed CEF
+  lanes, and its final gate requires both to succeed; cancellation/skips fail.
+  full-image corpus has been rebuilt in persistent storage: all original
+  container hashes match, and eleven required local cases pass without skips.
+  A separate fixed snapshot witness retains its opaque meaning. An accessible
+  archive and remote qualification receipt remain required for the release lane.
+  Native
   Windows input formats are supported on the qualified macOS host; a Windows
   analysis-host reader/export writer remains unavailable, as the matrix states.
 

@@ -13,6 +13,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/web/Bun.h"
+#include "neverd/web/ConfigurationFiles.h"
 #include "neverd/web/ConfigurationOrder.h"
 #include "neverd/web/Error.h"
 #include "neverd/web/PackageArchive.h"
@@ -66,6 +67,8 @@ void inspectCapturedClientUnits(SourceAnalysisMode Mode) {
            Callbacks = 0;
   uint64_t OrderUnits = 0, OrderUnavailable = 0, OrderObjects = 0,
            OrderTerms = 0, OrderOverwrites = 0, OrderLoadingLinks = 0;
+  uint64_t FileUnits = 0, FileUnavailable = 0, FileSites = 0, FileCalls = 0,
+           FileSequences = 0, FileTerms = 0;
   uint64_t FirstUnknownOrderModule = UINT64_MAX;
   std::string FirstUnknownOrderHash;
   std::array<uint64_t, 5> Counts{}, Unresolved{};
@@ -105,6 +108,16 @@ void inspectCapturedClientUnits(SourceAnalysisMode Mode) {
     const auto B = analyzeSourceBindings(Source);
     const auto N = analyzeSourceNavigation(Source, B);
     const auto A = analyzeClientSourceFeatures(Source, B, N);
+    const auto Files = analyzeConfigurationFiles(Source, B, N);
+    if (Files.Status == "partial") {
+      ++FileUnits;
+      FileSites += Files.Sites.size();
+      FileCalls += Files.Calls.size();
+      FileSequences += Files.Sequences.size();
+      FileTerms += Files.Terms;
+    } else {
+      ++FileUnavailable;
+    }
     ASSERT_EQ(A.SourceID, Source.ID);
     ASSERT_EQ(A.NavigationID, N.ID);
     if (A.Status != "partial") {
@@ -184,6 +197,19 @@ void inspectCapturedClientUnits(SourceAnalysisMode Mode) {
                  std::to_string(OrderOverwrites));
   RecordProperty("configuration_order_loading_syntax_links",
                  std::to_string(OrderLoadingLinks));
+  EXPECT_EQ(FileUnits, Parsed);
+  EXPECT_EQ(FileUnavailable, 0);
+  EXPECT_GT(FileSites, 0);
+  EXPECT_GT(FileCalls, 0);
+  EXPECT_GT(FileSequences, 0);
+  RecordProperty("configuration_file_units", std::to_string(FileUnits));
+  RecordProperty("configuration_file_unavailable_units",
+                 std::to_string(FileUnavailable));
+  RecordProperty("configuration_file_literal_sites", std::to_string(FileSites));
+  RecordProperty("configuration_file_lexical_calls", std::to_string(FileCalls));
+  RecordProperty("configuration_file_layer_sequences",
+                 std::to_string(FileSequences));
+  RecordProperty("configuration_file_layer_terms", std::to_string(FileTerms));
   if (FirstUnknownOrderModule != UINT64_MAX) {
     RecordProperty("configuration_first_unknown_module",
                    std::to_string(FirstUnknownOrderModule));

@@ -39,6 +39,17 @@ not execute that function or any selected input. Captured hashes identify
 these particular compiler outputs; byte-identical output on another build or
 host is not promised.
 
+The 2026-10-13 reconstruction retains the original manifest unchanged. The four
+ordinary preparation blobs match their old hashes. The snapshot includes its
+compiler path and differs even across repeated identical fixed-seed invocations.
+`snapshot-2026-10-13.manifest.json` records one newly captured immutable blob,
+its verified official compiler archive, source hash and precise size/hash.
+Select it explicitly with `NEVERD_NODE_SEA_SNAPSHOT_WITNESS=2026-10-13` and keep
+`snapshot-2026-10-13.blob` in the corpus. The default `original` witness still
+requires the original `snapshot.blob` hash; unknown witnesses fail. Tests never
+regenerate a snapshot or accept an arbitrary supplied digest. Both snapshots
+remain opaque to every consumer.
+
 `SEAFixture.h` supplies independent, deliberately synthetic ELF64, Mach-O64
 and PE32+ headers for x64 and ARM64 plus hostile mutation cases. Those headers
 prove reader boundary behavior, not that Node or postject produced the images.
