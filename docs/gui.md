@@ -91,7 +91,12 @@ Analysis uses the shared C++ backend and never launches the input. See the
 [workflow and limits](web-package-review-journal.md).
 
 A start without a file shows the quick start alone, as IDA does: the workbench
-appears once you choose how to start, and closing the quick start quits. Drag
+appears once you choose how to start, and closing the quick start quits. The
+questions asked before a file loads, **Load a new file** and **Load PDB file**,
+greet alone too while the workbench has not shown yet, after the quick start or
+for a file named on the command line; the workbench appears as the file starts
+to load, or when you cancel the load. A run that captures or measures asks
+nothing and loads the PDB that discovery finds. Drag
 its window edges or lower-right grip to resize it; the next opening remembers
 that size. The action pane stays the same width while the recent files use the
 available space. Its side pane holds the ways to start: **New** (N) asks for a

@@ -33,6 +33,9 @@ public:
   ~MicrosoftSymbols() override;
   /// Also called before the user starts a manual PDB selection.
   void cancel();
+  /// Whether an open file that lacks its PDB is offered one; a run nobody
+  /// answers is not.
+  void setOffers(bool offers);
 
 private:
   void opened();
@@ -48,5 +51,6 @@ private:
   /// The open file's pdb_download, {file,key}, while it is offered.
   QJsonObject request_;
   quint64 serial_ = 0, epoch_ = 0;
+  bool offers_ = true;
 };
 } // namespace neverd::gui

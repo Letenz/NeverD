@@ -11,6 +11,7 @@
 #include "LoadFileDialog.h"
 #include "MainWindow.h"
 #include "OutputWindow.h"
+#include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Session.h"
@@ -75,6 +76,9 @@ constexpr int NativeOpenTimeoutMs = 30000;
 // The widest a view may insist on being: a dock's tab bar keeps the dock some
 // 130 pixels wide whatever it shows.
 constexpr int NarrowViewWidth = 160;
+
+/// Long enough for the offer of a missing PDB to follow an open.
+constexpr int OfferWaitMs = 500;
 
 QString writeFixture(const QTemporaryDir &directory, const QString &name) {
   const auto path = directory.filePath(name);
@@ -2940,7 +2944,8 @@ private slots:
       QVERIFY(!bench.window->isVisible());
       return;
     }
-    QVERIFY(bench.window->isVisible());
+    // A chosen file shows the workbench as it starts to load.
+    QTRY_VERIFY_WITH_TIMEOUT(bench.window->isVisible(), OpenTimeoutMs);
     QVERIFY(bench.functions() && bench.functions()->isVisible());
     if (choice == QLatin1String("go") || choice == QLatin1String("escape")) {
       QVERIFY(bench.session.filePath().isEmpty());
@@ -2950,6 +2955,64 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QCOMPARE(QFileInfo(bench.session.filePath()).canonicalFilePath(),
              QFileInfo(path).canonicalFilePath());
+  }
+
+  void pdbQuestionAtStartupGreetsAlone() {
+    // As the quick start: a PE named at startup asks whether to load the PDB
+    // it names in a window of its own, and the workbench shows once the
+    // user answered, as the file starts to load.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-missing.bin"));
+    Workbench bench(QString::fromLocal8Bit(TEST_WORKER), false);
+    bool answered = false, alone = false;
+    QTimer answer;
+    connect(&answer, &QTimer::timeout, this, [&] {
+      auto *dialog =
+          qobject_cast<PdbPromptDialog *>(QApplication::activeModalWidget());
+      if (!dialog || answered)
+        return;
+      answered = true;
+      alone = dialog->isVisible() && !dialog->parentWidget() &&
+              !bench.window->isVisible();
+      if (auto *no = dialog->findChild<QPushButton *>(QStringLiteral("no")))
+        no->click();
+    });
+    answer.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(answered, OpenTimeoutMs);
+    QVERIFY(alone);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(bench.window->isVisible());
+    QCOMPARE(bench.session.metadata()
+                 .value("pdb")
+                 .toObject()
+                 .value("mode")
+                 .toString(),
+             QStringLiteral("none"));
+  }
+
+  void unattendedRunsAskNoPdbQuestion() {
+    // A run nobody answers, such as a capture, loads as discovery finds.
+    QTemporaryDir directory;
+    const auto path =
+        writeFixture(directory, QStringLiteral("symbols-missing.bin"));
+    Workbench bench;
+    bench.window->setAsksForPdb(false);
+    bool asked = false;
+    QTimer watch;
+    connect(&watch, &QTimer::timeout, this, [&] {
+      if (qobject_cast<PdbPromptDialog *>(QApplication::activeModalWidget())) {
+        asked = true;
+        QApplication::activeModalWidget()->close();
+      }
+    });
+    watch.start(5);
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // Nor once the file lacks its PDB, which an answered run would offer.
+    QTest::qWait(OfferWaitMs);
+    QVERIFY(!asked);
   }
 
   void quickStartShowsRecentFilesAndStartsAsChosen() {
