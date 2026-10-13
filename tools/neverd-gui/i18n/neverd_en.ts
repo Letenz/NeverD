@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>Load symbols from a selected PDB file</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>&amp;Edit function...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>Change the name of the current function and what it is</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1472,6 +1480,14 @@ Double-click to go to the declaration.</translation>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>Collapse block (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>Symbolic simplification</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>Transformation failed: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1486,6 +1502,54 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>Keep this function while the disassembly moves on</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>Optimization</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>Transform the current function</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>Symbolically simplify this function</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>Recover LLVM control flow</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM optimization</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>Basic cleanup</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (default)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>Choose passes…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>LLVM passes for this function</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>Restore default source</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>Cancel transformation</translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2517,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>Opened without the PDB the input names, as chosen</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>Edited the function at %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2861,6 +2929,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Cannot save the symbol file to %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>Edit function</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD does not keep this frame size</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>&amp;Name of function</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>Analysis decodes where the function ends</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>&amp;Start address</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>&amp;End address</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>&amp;Choose…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>Function color</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>&amp;Default</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>&amp;Color</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>Enter size of (in bytes)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>Local &amp;variables area</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>Saved &amp;registers</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>Only x86 functions pop their arguments</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>&amp;Purged bytes</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>Frame pointer &amp;delta</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD does not keep this flag</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>D&amp;oes not return</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>Analysis ends every call to the function</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>&amp;Far function</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>Only 16-bit x86 code has far functions</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>&amp;Library func</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>Static func</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>&amp;BP based frame</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP e&amp;quals to SP</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>Fuzzy SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>Outlined code</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>O&amp;K</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>DEFAULT</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
     </message>
 </context>
 </TS>

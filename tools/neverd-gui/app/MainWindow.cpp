@@ -6,6 +6,7 @@
 #include "DisassemblyView.h"
 #include "Docking.h"
 #include "ExtensionsView.h"
+#include "FunctionEditDialog.h"
 #include "GnomeWindowEdges.h"
 #include "GraphView.h"
 #include "HexView.h"
@@ -594,6 +595,16 @@ void MainWindow::buildDocks() {
 
   connect(functions_, &ChooserView::activated, this,
           &MainWindow::activateFunction);
+  // IDA's Functions window edits the function a row lists by its key and
+  // its context menu.
+  connect(functions_, &ChooserView::commandRequested, this,
+          [this](ChooserCommand command, Address entry) {
+            if (command == ChooserCommand::Edit)
+              editFunction(entry);
+          });
+  functions_->table()->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(functions_->table(), &QWidget::customContextMenuRequested, this,
+          [this](const QPoint &position) { functionsMenu(position); });
   connect(disassembly_, &DisassemblyView::locationChanged, this,
           [this](Address address) { synchronize(address, disassembly_); });
   connect(disassembly_, &DisassemblyView::navigateRequested, this,
@@ -1128,6 +1139,10 @@ void MainWindow::connectActions() {
     if (const auto address = currentAddress())
       session_.createFunction(*address);
   });
+  on(ActionId::EditFunction, [this] {
+    if (const auto function = currentFunction())
+      editFunction(*function);
+  });
   on(ActionId::EditDeleteFunction, [this] {
     if (const auto function = currentFunction())
       session_.deleteFunction(*function);
@@ -1422,6 +1437,11 @@ void MainWindow::updateActions() {
       ->setEnabled(functionEdits && function != currentAddress());
   actions_.action(ActionId::EditDeleteFunction)
       ->setEnabled(functionEdits && function.has_value());
+  const bool functionAttributes =
+      functionEdits && session_.statesFunctionAttributes();
+  actions_.action(ActionId::EditFunction)
+      ->setEnabled(functionAttributes && function.has_value());
+  functions_->enableCommand(ChooserCommand::Edit, functionAttributes);
   const bool dataItems =
       location && !session_.readOnly() && session_.keepsDataItems();
   for (const auto id : {ActionId::EditDefineCode, ActionId::EditDefineData,
@@ -2619,6 +2639,9 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   for (const auto id : {ActionId::JumpOperand, ActionId::JumpXrefOperand,
                         ActionId::JumpXrefsTo, ActionId::JumpXrefsFrom})
     menu.addAction(actions_.action(id));
+  // IDA offers the function's own dialog after its cross references.
+  if (auto *edit = actions_.action(ActionId::EditFunction); edit->isEnabled())
+    menu.addAction(edit);
   menu.addSeparator();
   for (const auto id :
        {ActionId::EditRename, ActionId::EditComment, ActionId::EditBookmark})
@@ -2664,6 +2687,64 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   menu.addSeparator();
   menu.addAction(actions_.action(ActionId::OptionsFont));
   menu.exec(globalPosition);
+}
+
+void MainWindow::functionsMenu(const QPoint &position) {
+  auto *table = functions_->table();
+  const QModelIndex row = table->indexAt(position);
+  if (!row.isValid())
+    return;
+  table->setCurrentIndex(row);
+  const auto entry = functions_->currentAddress();
+  if (!entry)
+    return;
+  QMenu menu(this);
+  // The commands of the disassembly's, run on the row's function.
+  auto *edit = actions_.action(ActionId::EditFunction);
+  auto *rowEdit = menu.addAction(edit->icon(), edit->text());
+  rowEdit->setShortcut(ChooserView::commandKey(ChooserCommand::Edit));
+  rowEdit->setShortcutContext(Qt::WidgetShortcut);
+  rowEdit->setEnabled(!session_.readOnly() && session_.keepsFunctionEdits() &&
+                      session_.statesFunctionAttributes());
+  connect(rowEdit, &QAction::triggered, this,
+          [this, entry = *entry] { editFunction(entry); });
+  auto *remove = actions_.action(ActionId::EditDeleteFunction);
+  auto *rowRemove = menu.addAction(remove->icon(), remove->text());
+  rowRemove->setEnabled(!session_.readOnly() && session_.keepsFunctionEdits());
+  connect(rowRemove, &QAction::triggered, this,
+          [this, entry = *entry] { session_.deleteFunction(entry); });
+  menu.exec(table->viewport()->mapToGlobal(position));
+}
+
+void MainWindow::editFunction(Address entry) {
+  // The dialog shows what the worker reports now, and its edits go to the
+  // session they were made for.
+  const auto epoch = session_.epoch();
+  session_.read(
+      QStringLiteral("function_attributes"), {{"address", hexAddress(entry)}},
+      this, [this, entry, epoch](const QJsonObject &attributes) {
+        if (session_.epoch() != epoch)
+          return;
+        const int digits = session_.bitness() == 64 ? 16 : 8;
+        const auto shown = [&](const QJsonValue &value) {
+          const auto address = addressValue(value);
+          if (!address)
+            return QString();
+          const auto *region = space_.regionOf(*address);
+          return (region ? region->name + QLatin1Char(':') : QString()) +
+                 displayAddress(*address, digits);
+        };
+        FunctionEditDialog dialog(attributes, shown(attributes.value("start")),
+                                  shown(attributes.value("end")), this);
+        if (dialog.exec() != QDialog::Accepted || session_.epoch() != epoch)
+          return;
+        // A new name is a rename, and the attributes an edit of their own:
+        // each is a step of the history.
+        if (const auto name = dialog.name();
+            !name.isEmpty() && name != attributes.value("name").toString())
+          session_.rename(entry, name, epoch);
+        session_.editFunction(entry, dialog.changedAttributes(), epoch);
+      });
 }
 
 //===----------------------------------------------------------------------===//

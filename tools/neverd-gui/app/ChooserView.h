@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QKeySequence>
 #include <QTimer>
 #include <QVector>
 #include <QWidget>
@@ -21,6 +22,14 @@ namespace neverd::gui {
 
 class AddressSpace;
 class Session;
+
+/// A command of IDA's list windows that a list window can run on its current
+/// row by IDA's key (IdaActions.def).
+enum class ChooserCommand {
+#define NEVERD_IDA_CHOOSER_COMMAND(IdaAction, Shortcut, QtShortcut, Command)   \
+  Command,
+#include "IdaActions.def"
+};
 
 /// Rows of a worker table operation, fetched in pages on demand so a list of
 /// a million functions costs only its visible pages.  Filtering and sorting
@@ -117,16 +126,28 @@ public:
   /// The selected rows, or else the current one, as text: a line a row in
   /// table order, its shown columns in header order separated by tabs.
   QString selectedText() const;
+  /// Let the user run \p command on the current row by its key, which then
+  /// wins over a window-wide command with the same key.
+  void enableCommand(ChooserCommand command, bool enabled);
+  /// IDA's key for \p command.
+  static QKeySequence commandKey(ChooserCommand command);
 
 signals:
   void activated(neverd::gui::Address address);
   void currentChanged(neverd::gui::Address address);
+  /// The user ran \p command on the row of \p address.
+  void commandRequested(neverd::gui::ChooserCommand command,
+                        neverd::gui::Address address);
 
 protected:
   bool eventFilter(QObject *object, QEvent *event) override;
 
 private:
   void updateStatus();
+  /// The enabled command whose key \p key is.
+  std::optional<ChooserCommand> commandFor(const QKeySequence &key) const;
+  /// The enabled commands, one bit each.
+  unsigned commands_ = 0;
   ChooserModel *model_;
   QTreeView *table_;
   QLineEdit *filter_;

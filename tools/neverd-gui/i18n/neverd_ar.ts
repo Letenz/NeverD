@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>تحميل الرموز من ملف PDB محدد</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>تعديل الدالة(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>تغيير اسم الدالة الحالية وما هي عليه</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1484,6 +1492,14 @@ Double-click to go to the declaration.</source>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>طي الكتلة (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>التبسيط الرمزي</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>فشل التحويل: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1498,6 +1514,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>الإبقاء على هذه الدالة أثناء تنقّل التفكيك</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>التحسين</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>تحويل الدالة الحالية</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>تبسيط هذه الدالة رمزيًا</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>استعادة تدفق التحكم في LLVM</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>تحسين LLVM</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>تنظيف أساسي</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (افتراضي)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>اختيار التمريرات…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>تمريرات LLVM لهذه الدالة</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>اختر تمريرات التنظيف العددية. يُتحكَّم في التبسيط الرمزي بشكل منفصل.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>استعادة المصدر الافتراضي</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>إلغاء التحويل</translation>
     </message>
 </context>
 <context>
@@ -2469,6 +2533,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>فُتح دون ملف PDB الذي يشير إليه ملف الإدخال، كما اخترت</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>عُدِّلت الدالة عند %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2877,6 +2945,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>يتعذّر حفظ ملف الرموز في %1: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>تعديل الدالة</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>لا يحتفظ NeverD بحجم الإطار هذا</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>اسم الدالة(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>يحدد التحليل أين تنتهي الدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>عنوان البداية(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>عنوان النهاية(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>اختيار(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>لون الدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>الافتراضي(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>اللون(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>أدخل حجم (بالبايت)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>منطقة المتغيرات المحلية(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>السجلات المحفوظة(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>دوال x86 وحدها تُزيل وسائطها من المكدس</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>البايتات المُزالة(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>إزاحة مؤشر الإطار(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>لا يحتفظ NeverD بهذه العلامة</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>لا تعود(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>ينهي التحليل كل استدعاء لهذه الدالة</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>دالة بعيدة(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>الدوال البعيدة موجودة في شيفرة x86 ذات 16 بت فقط</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>دالة مكتبة(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>دالة ساكنة</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>إطار قائم على BP(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP يساوي SP(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>SP تقريبي</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>شيفرة مُخرَجة</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>موافق(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>افتراضي</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>إلغاء</translation>
     </message>
 </context>
 </TS>

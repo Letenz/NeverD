@@ -31,6 +31,7 @@ bool isEdit(const QString &operation) {
                                    QStringLiteral("code_edit"),
                                    QStringLiteral("function_create"),
                                    QStringLiteral("function_delete"),
+                                   QStringLiteral("function_edit"),
                                    QStringLiteral("item_define"),
                                    QStringLiteral("operand_format"),
                                    QStringLiteral("undo"),
@@ -794,6 +795,21 @@ void Session::deleteFunction(Address entry, std::optional<quint64> epoch) {
             refreshHistory();
             emit message(
                 tr("Deleted the function at %1").arg(displayAddress(entry)), 0);
+          });
+}
+
+void Session::editFunction(Address entry, const QJsonObject &attributes,
+                           std::optional<quint64> epoch) {
+  if (attributes.isEmpty() || !acceptsEdit(epoch))
+    return;
+  if (dirty_)
+    save();
+  command(QStringLiteral("function_edit"),
+          {{"address", hexAddress(entry)}, {"attributes", attributes}},
+          [this, entry](const QJsonObject &) {
+            refreshHistory();
+            emit message(
+                tr("Edited the function at %1").arg(displayAddress(entry)), 0);
           });
 }
 
