@@ -294,12 +294,17 @@ These are per-session retained-data limits, not whole-process RSS guarantees.
 
 `source_navigation_analyze(revision, source_id)` builds the bounded
 `javascript-source-navigation-v1` index, admitting lexical bindings if needed.
-`source_navigation_records` pages four record kinds: `functions`, `calls`,
-`references` and `features`. Each row retains its AST identity and original
+`source_navigation_records` pages `functions`, `calls`, `references`, `features`,
+`desktop_bridges`, `config_merges` and `config_files`. Each row retains its AST
+identity and original
 UTF-8 byte range. Feature candidates have their own
 [`javascript-client-syntax-features-v1` profile](web-client-feature-profile.md),
 closed vocabulary, work/record limits and partial coverage. Their spelling or
 shape evidence does not authenticate APIs or establish effective policy.
+The independent [configuration file profile](web-configuration-file-profile.md)
+adds literal file/layer sites, local lexical call candidates through minified
+names and ordered array terms. Unknown aliases/imports/elements remain
+unresolved; source order does not establish effective file-layer precedence.
 Functions expose source containment, body/name nodes, parameter count and
 declaration/initializer binding links. Calls expose the syntactic callee and
 its lexical reference/binding when available. Direct function expressions have

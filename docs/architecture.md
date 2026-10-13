@@ -774,6 +774,14 @@ metadata and `SessionNavigation` composes its independent profile/cache with
 the other navigation owners. No layer promotes these source relationships to
 effective configuration or runtime values. See the
 [configuration order profile](web-configuration-order-profile.md).
+`features/configuration/Files` independently owns direct configuration file/layer
+literal sites, local minified lexical call candidates and array source sequences.
+`SourceModel::indexSourceFunctions` supplies the authoritative function/binding
+cardinality index to both this owner and existing client callbacks. The
+publication layer emits original anchors and fixed roles; it infers no runtime
+paths, enabled layers or effective configuration. `SessionNavigation` caches and
+revokes it with the other navigation results. See the
+[configuration file profile](web-configuration-file-profile.md).
 `packages/PackageReader` owns versioned Node metadata and captured placement
 evidence; `packages/PackageDiff` compares its model without transport concerns.
 `SessionPackages` owns revision-bound caches, fixed metadata pages and

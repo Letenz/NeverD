@@ -3859,3 +3859,52 @@ was executed and the C++ qualification invokes no producer or runtime. Remote
 release qualification still requires an accessible immutable archive and a
 green workflow receipt. Real minified-loader/configuration navigation remains
 the next implementation gap.
+
+### Minified configuration file navigation (2026-10-13)
+
+`javascript-configuration-file-navigation-v1` now retains fixed file/layer
+literal sites, common switch-case anchors, local lexical call candidates and
+ordered arrays under the existing source navigation operation. It uses
+`SourceModel::indexSourceFunctions`, also shared by existing client callbacks,
+for authoritative function declaration/initializer cardinality. Duplicate or
+conflicting candidates, dynamic scope, imports and alias chains retain unknown
+targets. Reassignment preserves a source relationship without proving the
+runtime target. Array terms preserve unknown spreads/holes/calls and establish
+source order only. Private paths/names/values remain withheld.
+
+All 2,364 original Claude units complete the new inventory under explicit large
+admission: 973 literal sites, 592 lexical call candidates, 69 layer arrays and
+209 terms. The interactive profile keeps its ten refusals; all 2,354 admitted
+units complete with 682 sites, 341 calls, 50 arrays and 156 terms. The existing
+named loader grammar remains unchanged at zero. Direct CLI navigation of the
+original `m00086.js` retains 30 sites, 19 call candidates and a two-term array
+with an unusable external-tool PATH and empty stderr. The profiles do not
+authenticate loaders or infer enabled layers, merge behavior or file precedence.
+
+Seven new focused C++ checks pass. Owning Web regression passes 823 of 852
+distinct cases with 29 explicit optional input/feature skips in 75.35 seconds;
+all eleven strict producer cases run from the verified archive round trip.
+Worker/MCP/availability passes seven of eight, including the actual fixed
+Linux Claude MCP inventory, with only the backend-omission-only case skipped.
+The full source counts use a separate GoogleTest property receipt because
+CTest JUnit preserves labels rather than those custom measurements. Receipts
+are `/tmp/neverd-configuration-file-*`.
+
+The actual CEF distribution also passes its
+[GitHub workflow](https://github.com/NeverSight/NeverD/actions/runs/38413710185)
+at `9276ef94c`. The persistent local full-corpus archive is 1.2 GiB and has
+SHA-256 `7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+It preserves producer locks, manifests and receipts; full-corpus remote
+qualification still needs an accessible immutable input and a successful run.
+
+Parser omission passes six of eight transport/availability cases with the
+unsupplied optional Claude input and backend-omission-only case skipped. Web
+omission passes six of eight with the two dependent positive Web cases skipped;
+the complete public C ABI omission check passes. Enabled Web/parser flags are
+restored and all seven focused cases pass again. These checks establish honest
+profile discovery and omission behavior, not Windows analysis-host support.
+The restored worker/MCP/availability selection passes seven of eight again,
+including the actual fixed Linux Claude inventory, and Qt Web review passes
+in 4.11 seconds. Formatting, all 23 capability records, the 7,705-file source
+provenance scan and all 309 localized Markdown entries pass. The primary
+checkout's existing signature and diagnostic changes are preserved.

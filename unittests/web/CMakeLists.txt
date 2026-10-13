@@ -113,6 +113,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceFeatureTests.cpp
     DesktopBridgeTests.cpp
     ConfigurationOrderTests.cpp
+    ConfigurationFileTests.cpp
     ClientFeatureCorpusTests.cpp
     LINK_COMPONENTS Web
   )

@@ -1542,6 +1542,42 @@ TEST_F(WebSDK,
             "stale_revision");
 }
 
+TEST_F(WebSDK, ConfigurationFilePagesRetainAnchorsPagingAndMinifiedLinks) {
+  write("function x(k){switch(k){case 'projectSettings':"
+        "return j('CANARY_PATH','settings.json');}}"
+        "x('projectSettings');"
+        "const order=['userSettings',...CANARY,'projectSettings'];");
+  commit(preview());
+  const auto Source = field(analyze("1", rootID("1")), "source_id");
+  const auto Summary = navigation("1", Source);
+  const auto *Files = Summary.getAsObject()->getObject("configuration_files");
+  ASSERT_NE(Files, nullptr);
+  EXPECT_EQ(Files->getString("profile"),
+            "javascript-configuration-file-navigation-v1");
+  EXPECT_EQ(Files->getInteger("literal_site_count"), 5);
+  EXPECT_EQ(Files->getInteger("lexical_call_count"), 1);
+  EXPECT_EQ(Files->getInteger("layer_sequence_count"), 1);
+  EXPECT_EQ(Files->getString("effective_configuration"), "not_analyzed");
+  const auto Page = navigationRecords("1", Source, "config_files", 0, 1);
+  EXPECT_EQ(Page.getAsObject()->getInteger("next_offset"), 1);
+  const auto &Row = (*Page.getAsObject()->getArray("items"))[0];
+  EXPECT_EQ(field(Row, "role"), "project_layer");
+  const auto At = std::stoull(field(Row, "byte_offset"));
+  const auto Length = std::stoull(field(Row, "byte_length"));
+  EXPECT_EQ(field(anchor("1", Source, At, Length), "status"), "ok");
+  const auto Rest = navigationRecords("1", Source, "config_files", 1, 512);
+  EXPECT_EQ(Rest.getAsObject()->getBoolean("page_complete"), true);
+  EXPECT_EQ(Rest.getAsObject()->getArray("items")->size(), 6);
+  for (const auto *Reply : {&Summary, &Page, &Rest})
+    EXPECT_EQ(llvm::formatv("{0}", *Reply).str().find("CANARY"),
+              std::string::npos);
+  EXPECT_EQ(errorCode(navigationRecords("1", Source, "config_files", 8, 1)),
+            "invalid_page");
+  commit(preview());
+  EXPECT_EQ(errorCode(navigationRecords("1", Source, "config_files")),
+            "stale_revision");
+}
+
 TEST_F(WebSDK, DesktopBridgePagesKeepPrivateTargetsAndSourceAnchors) {
   write("window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
         "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY_VALUE);");
