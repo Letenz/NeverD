@@ -74,6 +74,12 @@ configuration-object-order profile. Ordered terms and lexical loading syntax
 links retain source spans and unknown-key barriers while configuration values
 stay private. Loader identity and effective configuration remain unverified.
 See the [configuration profile](web-configuration-order-profile.md).
+The same operation adds `config_files`, under the independent
+`javascript-configuration-file-navigation-v1` profile. Direct file/layer literal
+sites, minified lexical call candidates and ordered array terms retain original
+anchors and private values. Runtime targets and file-layer precedence remain
+unknown. Worker and MCP share the SDK result; see the
+[file navigation profile](web-configuration-file-profile.md).
 
 `neverd_web_package_install_analyze` requires revision and package analysis ID;
 the matching package behavior ID is optional. No source selection is needed to

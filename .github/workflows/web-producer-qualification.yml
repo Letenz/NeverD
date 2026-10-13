@@ -11,6 +11,12 @@ on:
         description: 'Exact lowercase SHA-256 of that corpus archive'
         required: true
         type: string
+      snapshot_witness:
+        description: 'Fixed opaque snapshot witness; original metadata is preserved'
+        required: true
+        type: choice
+        default: original
+        options: [original, '2026-10-13']
   workflow_call:
     inputs:
       corpus_url:
@@ -19,6 +25,10 @@ on:
       corpus_sha256:
         required: true
         type: string
+      snapshot_witness:
+        required: false
+        type: string
+        default: original
 
 permissions:
   contents: read
@@ -36,6 +46,7 @@ jobs:
       NEVERD_BUN_142_CROSS_CORPUS: ${{ github.workspace }}/web-producer-corpus/bun-cross
       NEVERD_NODE_SEA_22150_CORPUS: ${{ github.workspace }}/web-producer-corpus/sea-cases
       NEVERD_NODE_SEA_22150_IMAGES: ${{ github.workspace }}/web-producer-corpus/sea-images
+      NEVERD_NODE_SEA_SNAPSHOT_WITNESS: ${{ inputs.snapshot_witness }}
       NEVERD_NEXE_4RC7_CORPUS: ${{ github.workspace }}/web-producer-corpus/nexe
       NEVERD_PKG_581_CORPUS: ${{ github.workspace }}/web-producer-corpus/pkg
     steps:
@@ -46,8 +57,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$CORPUS_URL" == https://* ]]
-          [[ "$CORPUS_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          if [[ "$CORPUS_URL" != https://* || ! "$CORPUS_SHA256" =~ ^[0-9a-f]{64}$ || \
+                ( "$NEVERD_NODE_SEA_SNAPSHOT_WITNESS" != original && \
+                  "$NEVERD_NODE_SEA_SNAPSHOT_WITNESS" != 2026-10-13 ) ]]; then
+            printf 'A pinned HTTPS archive, lowercase SHA-256 and known snapshot witness are required.\n' >&2
+            exit 1
+          fi
           curl --fail --location --retry 2 --max-time 1200 \
             --proto '=https' --proto-redir '=https' \
             --output "$RUNNER_TEMP/web-producer-corpus.tar" "$CORPUS_URL"

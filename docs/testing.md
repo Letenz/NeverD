@@ -1098,6 +1098,14 @@ pinned macOS ARM64 archive sequentially and records parser/feature coverage,
 including exact refusal reasons. See the
 [actual client qualification](web-client-feature-qualification.md); it does not
 claim complete feature attribution or run a target runtime.
+`WebConfigurationFiles.*` checks minified lexical source candidates, exact
+file/layer literal and switch-case anchors, unknown array elements, ambiguous
+bindings, foreign evidence and atomic record/term exhaustion. The SDK, worker
+and MCP checks compare `config_files` paging and private-value canaries through
+the existing navigation operation. Both captured-client cases also record this
+independent profile's sites, calls and layer sequences for every admitted unit;
+all admitted units must complete the inventory. See the
+[file navigation profile](web-configuration-file-profile.md).
 `WebSourceRecovery` checks comments/literals/ASI, reparse equality, large-input
 recovery without raising interactive budgets and invalid-source refusal.
 `WebReadableExportSDK.*` checks immutable input deletion, exact original and

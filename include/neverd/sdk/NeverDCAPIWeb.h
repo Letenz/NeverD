@@ -750,8 +750,8 @@ NEVERD_API const char *neverd_web_source_bundle_records_json(
 NEVERD_API const char *neverd_web_source_navigation_analyze_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize);
-/// RecordKind is functions/calls/references; Limit is 1..512. Text stays
-/// private.
+/// RecordKind is functions/calls/references/features/desktop_bridges/
+/// config_merges/config_files; Limit is 1..512. Text stays private.
 NEVERD_API const char *neverd_web_source_navigation_records_json(
     neverd_web_session_t Session, const char *ExpectedRevision,
     size_t RevisionSize, const char *SourceID, size_t SourceIDSize,

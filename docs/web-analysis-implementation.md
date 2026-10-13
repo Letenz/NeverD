@@ -3832,3 +3832,101 @@ changed. Worker/MCP/availability passed six of seven with its normal omission
 skip, and Qt Web review passed in 2.62 seconds. The 23-capability ledger and
 7,695-file source-provenance scan pass after the native merge. These receipts
 use `/tmp/neverd-js-gap-postmerge-*`.
+
+### Persistent full producer corpus restoration (2026-10-13)
+
+The fixed corpus has been rebuilt in a persistent local directory. All 25 Bun containers,
+six injected Node SEA images, three nexe images, six canonical pkg images and
+the BOM/shebang pkg witness match their original whole-file SHA-256 values.
+The preprocessing witness requires the original `stripped-inputs` basename;
+changing it changes the embedded virtual paths and is correctly rejected by
+the fixed hash check. Fresh nexe/pkg dependency locks are recorded separately
+instead of being passed off as the historical locks.
+
+Node's snapshot builder did not reproduce the old opaque snapshot bytes even
+with the original source, compiler path and fixed random seed. A separate
+immutable `2026-10-13` witness therefore pins its 5,644,095 bytes and SHA-256
+`9e94efe5aed0592ce0338a8c80f0e352cd154ff5849e1fe32f866a4841e2772a`.
+The old witness remains the default and unchanged; only an explicit known
+selection admits the new snapshot. Unknown selections and mismatched hashes
+fail. Both witnesses stay opaque and have no invented source selection.
+
+All eleven required producer cases pass with zero skips in 25.73 seconds;
+the receipt is `/tmp/neverd-full-producer-qualified-fixed.xml`. The invalid
+snapshot selection probe also fails as required. Production used only the
+fixed trusted builders in separate fixture preparation; no generated image
+was executed and the C++ qualification invokes no producer or runtime. Remote
+release qualification still requires an accessible immutable archive and a
+green workflow receipt. Real minified-loader/configuration navigation remains
+the next implementation gap.
+
+### Minified configuration file navigation (2026-10-13)
+
+`javascript-configuration-file-navigation-v1` now retains fixed file/layer
+literal sites, common switch-case anchors, local lexical call candidates and
+ordered arrays under the existing source navigation operation. It uses
+`SourceModel::indexSourceFunctions`, also shared by existing client callbacks,
+for authoritative function declaration/initializer cardinality. Duplicate or
+conflicting candidates, dynamic scope, imports and alias chains retain unknown
+targets. Reassignment preserves a source relationship without proving the
+runtime target. Array terms preserve unknown spreads/holes/calls and establish
+source order only. Private paths/names/values remain withheld.
+
+All 2,364 original Claude units complete the new inventory under explicit large
+admission: 973 literal sites, 592 lexical call candidates, 69 layer arrays and
+209 terms. The interactive profile keeps its ten refusals; all 2,354 admitted
+units complete with 682 sites, 341 calls, 50 arrays and 156 terms. The existing
+named loader grammar remains unchanged at zero. Direct CLI navigation of the
+original `m00086.js` retains 30 sites, 19 call candidates and a two-term array
+with an unusable external-tool PATH and empty stderr. The profiles do not
+authenticate loaders or infer enabled layers, merge behavior or file precedence.
+
+Seven new focused C++ checks pass. Owning Web regression passes 823 of 852
+distinct cases with 29 explicit optional input/feature skips in 75.35 seconds;
+all eleven strict producer cases run from the verified archive round trip.
+Worker/MCP/availability passes seven of eight, including the actual fixed
+Linux Claude MCP inventory, with only the backend-omission-only case skipped.
+The full source counts use a separate GoogleTest property receipt because
+CTest JUnit preserves labels rather than those custom measurements. Receipts
+are `/tmp/neverd-configuration-file-*`.
+
+The actual CEF distribution also passes its
+[GitHub workflow](https://github.com/NeverSight/NeverD/actions/runs/38413710185)
+at `9276ef94c`. The persistent local full-corpus archive is 1.2 GiB and has
+SHA-256 `7372a4fb66605e2d62405ee1e5ef55da1fbde99bed8cd61c1f5c6790c1d53ce3`.
+It preserves producer locks, manifests and receipts; full-corpus remote
+qualification still needs an accessible immutable input and a successful run.
+
+Parser omission passes six of eight transport/availability cases with the
+unsupplied optional Claude input and backend-omission-only case skipped. Web
+omission passes six of eight with the two dependent positive Web cases skipped;
+the complete public C ABI omission check passes. Enabled Web/parser flags are
+restored and all seven focused cases pass again. These checks establish honest
+profile discovery and omission behavior, not Windows analysis-host support.
+The restored worker/MCP/availability selection passes seven of eight again,
+including the actual fixed Linux Claude inventory, and Qt Web review passes
+in 4.11 seconds. Formatting, all 23 capability records, the 7,705-file source
+provenance scan and all 309 localized Markdown entries pass. The primary
+checkout's existing signature and diagnostic changes are preserved.
+
+### Combined Web release qualification (2026-10-13)
+
+The individual producer/CEF lanes now have a shared explicit/reusable release
+entry point. `web-release-qualification.yml` calls both workflows at the selected
+ref and exposes one final `Web release qualification gate`. The gate runs after
+the input preflight and both dependencies finish, and accepts only three
+successful results. Local execution of its exact shell condition verifies all
+64 combinations of success, failure, cancellation and skip. Input preflight
+rejects missing/invalid URL/hash/witness selections before reader builds.
+The producer and wrapper preflights use explicit failure exits: local Bash 3.2
+continued past a failing standalone `[[ ... ]]` despite `set -e`. Eighteen
+valid/invalid input cases now verify both exact preflight snippets on that shell.
+YAML parsing, documentation and provenance checks pass. No producer hash,
+consumer selection or raw-source policy changes.
+
+An immutable runner-accessible full-corpus URL remains unavailable. The local
+archive and eleven-case strict receipt are retained; a green combined remote
+release receipt cannot yet be claimed. The gate is ready to dispatch with the
+fixed archive SHA-256 and explicit `2026-10-13` snapshot witness once that input
+is supplied. This workflow does not publish fixtures or alter unrelated package
+publication. See [the release contract](web-producer-corpus-qualification.md).

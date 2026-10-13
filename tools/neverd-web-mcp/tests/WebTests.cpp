@@ -241,6 +241,22 @@ void clientSourceFeatures(Harness &H) {
               Config.at("items")[0].at("terms")[0].at("unknown_keys") == true,
           "MCP lost the configuration overwrite barrier");
   redacted(Config);
+  const auto &Files = N.at("configuration_files");
+  require(Files.at("literal_site_count") == 3 &&
+              Files.at("lexical_call_count") == 1 &&
+              Files.at("layer_sequence_count") == 1 &&
+              Files.at("effective_configuration") == "not_analyzed",
+          "MCP lost minified configuration source relationships");
+  ConfigPage["record_kind"] = "config_files";
+  ConfigPage["limit"] = 1;
+  const auto FilePage = H.same("web_source_navigation_records", ConfigPage);
+  require(FilePage.at("next_offset") == 1 &&
+              FilePage.at("items")[0].at("role") == "managed_settings_file",
+          "MCP changed configuration file paging or roles");
+  Anchor["byte_offset"] = FilePage.at("items")[0].at("byte_offset");
+  Anchor["byte_length"] = FilePage.at("items")[0].at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  redacted(FilePage);
   BridgePage["execute"] = true;
   invalid([&] { H.get("web_source_navigation_records", BridgePage); });
   Page["execute"] = true;
@@ -1023,7 +1039,9 @@ int main() {
           "const settings={...CANARY_DEFAULTS,permissions:{deny:['CANARY']},"
           "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
           "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
-          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
+          "function x(){return j('CANARY','managed-settings.json');}x();"
+          "const layers=['userSettings',...CANARY,'projectSettings'];");
       clientSourceFeatures(H);
       F.write("source", "/*" + std::string(1024 * 1024, ' ') +
                             "*/fetch(`/CANARY/${CANARY}`);");

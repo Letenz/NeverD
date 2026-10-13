@@ -878,7 +878,7 @@ int runWeb() {
         return 1;
       for (llvm::StringRef Kind :
            {"functions", "calls", "references", "features", "desktop_bridges",
-            "config_merges"}) {
+            "config_merges", "config_files"}) {
         uint64_t Offset = 0;
         do {
           auto Page = result(neverd_web_source_navigation_records_json(

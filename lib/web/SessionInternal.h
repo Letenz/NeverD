@@ -17,6 +17,7 @@
 
 #include "neverd/web/Asar.h"
 #include "neverd/web/Bun.h"
+#include "neverd/web/ConfigurationFiles.h"
 #include "neverd/web/ConfigurationOrder.h"
 #include "neverd/web/DataPack.h"
 #include "neverd/web/DesktopBridge.h"
@@ -76,6 +77,7 @@ struct Session::Impl {
     SourceFeatures Features;
     DesktopBridgeSource Bridges;
     ConfigurationSourceOrder Configuration;
+    ConfigurationFileNavigation ConfigurationFiles;
   };
   std::map<std::string, NavigationResults> Navigation;
   struct SemanticResults {

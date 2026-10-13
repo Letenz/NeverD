@@ -2657,7 +2657,9 @@ int main(int argc, char **argv) {
           "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
           "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
           "const defaults=loadSettings('CANARY');"
-          "({...defaults,permissions:{},...CANARY_OVERRIDES});");
+          "({...defaults,permissions:{},...CANARY_OVERRIDES});"
+          "function x(){return j('CANARY','managed-settings.json');}x();"
+          "const layers=['userSettings',...CANARY,'projectSettings'];");
       const auto before = web.revision(), projectBefore = web.projectId();
       const Json input{{"schema_version", 1}, {"path", fixture.path()}};
       const auto preview = web.execute("web_import_preview", input);
@@ -2723,6 +2725,17 @@ int main(int argc, char **argv) {
                     true &&
                 reply.dump().find("CANARY") == std::string::npos,
             "Worker configuration source order differs or reveals values");
+      args["record_kind"] = "config_files";
+      const auto files = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == files &&
+                files["configuration_files"]["lexical_call_count"] == 1 &&
+                files["configuration_files"]["layer_sequence_count"] == 1 &&
+                files["items"][0]["role"] == "managed_settings_file" &&
+                files["next_offset"] == 1 &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker minified configuration links differ or reveal values");
       args["execute"] = true;
       reply = process.call("web_source_navigation_records", args, revision,
                            project);

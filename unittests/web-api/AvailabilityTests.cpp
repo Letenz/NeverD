@@ -183,6 +183,26 @@ TEST(WebAvailability, CapabilitiesReflectCompiledBackendAndParser) {
     EXPECT_EQ(Entry->getBoolean("executes_input"), false);
   }
   EXPECT_EQ(BranchProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
+  unsigned NavigationProfiles = 0;
+  for (const auto &A : *Analysis) {
+    const auto *Entry = A.getAsObject();
+    if (!Entry || Entry->getString("kind") != "javascript_source_navigation")
+      continue;
+    ++NavigationProfiles;
+    EXPECT_EQ(Entry->getString("configuration_files_profile"),
+              "javascript-configuration-file-navigation-v1");
+    EXPECT_EQ(Entry->getInteger("max_configuration_file_records"), 1024);
+    EXPECT_EQ(Entry->getInteger("max_configuration_file_terms"), 4096);
+    EXPECT_EQ(Entry->getBoolean("resolves_runtime_values"), false);
+    const auto *Kinds = Entry->getArray("record_kinds");
+    ASSERT_NE(Kinds, nullptr);
+    EXPECT_NE(std::find_if(Kinds->begin(), Kinds->end(),
+                           [](const auto &Value) {
+                             return Value.getAsString() == "config_files";
+                           }),
+              Kinds->end());
+  }
+  EXPECT_EQ(NavigationProfiles, NEVERD_TEST_WEB_JS ? 1U : 0U);
   EXPECT_EQ(Has("asar_extract"), ASARAvailable);
   EXPECT_EQ(Has("asar_records"), ASARAvailable);
   EXPECT_TRUE(Has("native_open"));
