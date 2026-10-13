@@ -21,6 +21,7 @@
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/GlobalAlias.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Intrinsics.h"
@@ -5133,11 +5134,11 @@ TEST(COFFExceptionIR, ExceptHandlerSeesTheEstablishedFrame) {
 
 TEST(COFFExceptionIR, ExceptBodyKeepsTheBlockItRanInto) {
   // PoGetRequesterOld: the __except handler (`and qword [rsp+48h], 0;
-  // mov r8, [rsp+40h]`) runs on into a tail its try body also jumps to.  The
-  // structured tree puts part of the guarded range, statements that may
-  // fault, outside the only slice a __try could wrap, so that __try would
-  // leave them unprotected.  The region is reported unstructured instead,
-  // and the handler and the tail it runs on into stay printed.
+  // mov r8, [rsp+40h]`) runs on into a tail its try body also jumps to.
+  // Each path into the tail copies only the values it set, so the guarded
+  // range is one slice: the __try wraps every statement of it, the
+  // handler's statements are the __except arm, and the tail it runs on into
+  // follows the region.
   constexpr va_t F = 0x1403F75E4;
   BinaryImage Img;
   Img.Arch = Arch::X64;
@@ -5219,12 +5220,53 @@ TEST(COFFExceptionIR, ExceptBodyKeepsTheBlockItRanInto) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  EXPECT_EQ(Result.HighFuncs.front().StructuredExceptionRegions, 0u);
-  EXPECT_EQ(Result.HighFuncs.front().UnstructuredExceptionRegions, 1u);
-  EXPECT_NE(Source.find("unstructured SEH region"), std::string::npos)
+  EXPECT_EQ(Result.HighFuncs.front().StructuredExceptionRegions, 1u);
+  EXPECT_EQ(Result.HighFuncs.front().UnstructuredExceptionRegions, 0u);
+  EXPECT_EQ(Source.find("unstructured SEH region"), std::string::npos)
       << Source;
-  EXPECT_NE(Source.find("L_1403F76AC:"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("L_1403F76B7:"), std::string::npos) << Source;
+  // Where each instruction's statements are: the guarded range in the
+  // __try body, the handler in its __except arm, the rest outside both.
+  enum class Place { Outside, TryBody, Handler };
+  std::vector<std::pair<va_t, Place>> Placed;
+  unsigned Tries = 0;
+  std::function<void(const std::vector<HighStmt> &, Place)> Walk =
+      [&](const std::vector<HighStmt> &Stmts, Place Where) {
+        for (const HighStmt &S : Stmts) {
+          if (S.Kind == StmtKind::SEHTry) {
+            ++Tries;
+            Walk(S.Body, Place::TryBody);
+            for (const std::vector<HighStmt> &Clause : S.EHClauseBodies)
+              Walk(Clause, Place::Handler);
+            continue;
+          }
+          if (S.Addr)
+            Placed.push_back({S.Addr, Where});
+          Walk(S.Body, Where);
+          Walk(S.ElseBody, Where);
+          Walk(S.DefaultBody, Where);
+          for (const SwitchCase &Case : S.Cases)
+            Walk(Case.Body, Where);
+        }
+      };
+  Walk(Result.HighFuncs.front().Body, Place::Outside);
+  EXPECT_EQ(Tries, 1u) << Source;
+  for (const auto &[Addr, Where] : Placed) {
+    const Place Expected =
+        Addr >= 0x1403F7648 && Addr < 0x1403F76AC   ? Place::TryBody
+        : Addr >= 0x1403F76AC && Addr < 0x1403F76B7 ? Place::Handler
+                                                    : Place::Outside;
+    EXPECT_EQ(static_cast<int>(Where), static_cast<int>(Expected))
+        << llvm::utohexstr(Addr) << '\n'
+        << Source;
+  }
+  // The reads of [rdx+1720h] are copies of a block the guarded paths share,
+  // with no address of their own.
+  const size_t Try = Source.find("__try {");
+  const size_t GuardedRead = Source.find("+ 0x1720)");
+  const size_t Except = Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
+  ASSERT_NE(GuardedRead, std::string::npos) << Source;
+  EXPECT_LT(Try, GuardedRead) << Source;
+  EXPECT_LT(GuardedRead, Except) << Source;
 }
 
 TEST(COFFExceptionIR, HandlerWhoseFirstCopyIsDeadKeepsItsLabel) {

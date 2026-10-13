@@ -2837,7 +2837,52 @@ size_t countTests(const HighFunc &F) {
   });
   return Tests;
 }
+// The binary operations of \p Opcode the statements of \p F compute, each
+// parent of a shared expression counting it once more.
+size_t countOperations(HighFunc &F, NdOp Opcode) {
+  size_t Count = 0;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E)
+      return;
+    Count += E->Kind == ExprKind::BinOp && E->Op == Opcode;
+    E->forEachChildExpr(Visit);
+  };
+  walkStmts(F.Body, [&](const HighStmt &S) {
+    for (const ExprPtr &E : {S.Dst, S.Val, S.Cond, S.RetVal, S.CallExpr})
+      Visit(E);
+  });
+  return Count;
+}
 } // namespace
+
+TEST(HighControlFlowSemantics, JoinCopyReadsASharedValueThroughItsVariable) {
+  // `t = x * 3; r = x ? t + 1 : t;` The join PHI takes `t` from one edge
+  // and `t + 1`, which only the PHI reads, from the other.  `t` is read
+  // twice: it keeps its assignment and both copies read its variable, where
+  // inlining it into each would compute the product once per read.
+  auto M = blockFunction("shared_join_value", 3);
+  const MedVar Input = M.Params[0];
+  auto C = [](uint64_t V) { return MedVar::makeConst(V, 8); };
+  const auto Product = machineValue(3, Arch::X64);
+  const auto Sum = machineValue(4, Arch::X64);
+  auto IsZero = machineValue(1, Arch::X64);
+  IsZero.Size = 1;
+  M.Blocks[0].Succs = {2, 1};
+  M.Blocks[0].Ops = {operation(NdOp::INT_MULT, 0x1000, Product, {Input, C(3)}),
+                     operation(NdOp::INT_EQUAL, 0x1004, IsZero, {Input, C(0)}),
+                     operation(NdOp::COND_BR, 0x1008, {}, {C(0x1200), IsZero})};
+  M.Blocks[1].Preds = {0};
+  M.Blocks[1].Succs = {2};
+  M.Blocks[1].Ops = {operation(NdOp::INT_ADD, 0x1100, Sum, {Product, C(1)})};
+  M.Blocks[2].Preds = {0, 1};
+  M.Blocks[2].Phis = {{resultValue(1), {{0, Product}, {1, Sum}}}};
+  M.Blocks[2].Ops = {operation(NdOp::RETURN, 0x1200, {}, {resultValue(1)})};
+  auto F = MedToHighConverter().convert(M, Arch::X64);
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 0, true), 0u));
+  EXPECT_NO_THROW(EXPECT_EQ(execute(F, 5, true), 16u));
+  EXPECT_EQ(countOperations(F, NdOp::INT_MULT), 1u);
+  EXPECT_EQ(countOperations(F, NdOp::INT_ADD), 1u);
+}
 
 TEST(HighControlFlowSemantics, ConstantBranchKeepsOnlyTheArmThatRuns) {
   // deregister_tm_clones compares two addresses of one object, so its branch
