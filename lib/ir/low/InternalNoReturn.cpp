@@ -37,6 +37,8 @@ void InternalNoReturnIndex::clearMemoizedProofs() {
 }
 
 bool InternalNoReturnIndex::neverReturns(va_t Target, unsigned Depth) const {
+  if (const auto Stated = Img.userNoReturnAt(Target))
+    return *Stated;
   if (Depth >= limits::kMaxNoReturnProofDepth ||
       !Img.hasExecutableCodeOwnerAt(Target))
     return false;

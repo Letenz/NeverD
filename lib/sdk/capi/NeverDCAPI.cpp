@@ -194,6 +194,10 @@ bool PipelineRunner::load(const char *InputPath, std::string &Err,
   }
   Img = std::move(*ImgOrErr);
   settleBinaryFilePlatform(Img, LoadOpts.Choice);
+  // Analysis of the session's input reads what its user states, as the
+  // function edits the options carry.
+  if (Policy)
+    Img.UserNoReturn = Policy->Img.UserNoReturn;
 
   auto Found = loadDebugInfo(Path, Img, DbgRequest);
   if (!Found.Error.empty()) {
@@ -277,6 +281,7 @@ int finishSessionLoad(neverd_session_t Sess, Session &S, BinaryImage Image,
   S.Annotations.clear();
   S.Renames.clear();
   S.FunctionEdits.clear();
+  S.FunctionAttributeEdits.clear();
   S.DataItems.clear();
   S.OperandFormats.clear();
   S.SigDB.clear();
@@ -692,6 +697,7 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
   // Retire analysis while its old image and debug owners still exist.
   S->clearPipeline();
   S->Img = std::move(Image);
+  S->applyUserNoReturn();
   S->Dbg = std::move(Found.Context);
   S->DbgKind = Found.Kind;
   S->DbgPath = std::move(Found.Path);

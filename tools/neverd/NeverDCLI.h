@@ -416,6 +416,9 @@ extern llvm::cl::opt<bool> RenameClear;
 // Function edits.
 extern llvm::cl::opt<std::string> FunctionCreate;
 extern llvm::cl::opt<std::string> FunctionDelete;
+extern llvm::cl::opt<std::string> FunctionEdit;
+extern llvm::cl::list<std::string> FunctionSet;
+extern llvm::cl::opt<std::string> FunctionShow;
 extern llvm::cl::opt<bool> FunctionEditsList;
 extern llvm::cl::opt<std::string> ItemData;
 extern llvm::cl::opt<std::string> ItemString;

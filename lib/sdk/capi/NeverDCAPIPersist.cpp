@@ -9,11 +9,16 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "JSONText.h"
 #include "LoadOptions.h"
 #include "SessionImpl.h"
 
 #include "neverd/decode/Decoder.h"
+#include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/low/InternalNoReturn.h"
+#include "neverd/ir/low/LowNoReturn.h"
 #include "neverd/ir/low/PlatformEvidence.h"
+#include "neverd/libc/LibCNames.h"
 #include "neverd/loader/LoadCandidate.h"
 #include "neverd/loader/Raw/ISAIdentify.h"
 #include "neverd/support/AtomicOutput.h"
@@ -31,6 +36,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <set>
 #include <vector>
 
 using namespace neverd;
@@ -421,12 +427,112 @@ static std::filesystem::path functionsPath(const Session *S) {
   return Path;
 }
 
+/// \p Color as "#RRGGBB".
+static std::string colorText(uint32_t Color) {
+  std::string Text =
+      "#" + llvm::utohexstr(Color & 0xFFFFFF, /*LowerCase=*/false);
+  Text.insert(1, 7 - Text.size(), '0');
+  return Text;
+}
+
+/// The 0xRRGGBB color "#RRGGBB" spells, or none.
+static std::optional<uint32_t> parseColor(llvm::StringRef Text) {
+  uint32_t Color = 0;
+  if (!Text.consume_front("#") || Text.size() != 6 ||
+      Text.getAsInteger(16, Color))
+    return std::nullopt;
+  return Color;
+}
+
+/// The members of \p Attributes the user has stated, as Row's keys
+/// (FunctionAttributes.def).
+static void
+writeFunctionAttributes(const Session::FunctionAttributes &Attributes,
+                        llvm::json::Object &Row) {
+#define NEVERD_FUNCTION_FLAG(Member, Key)                                      \
+  if (Attributes.Member)                                                       \
+    Row[Key] = *Attributes.Member;
+#define NEVERD_FUNCTION_COLOR(Key)                                             \
+  if (Attributes.Color)                                                        \
+    Row[Key] = colorText(*Attributes.Color);
+#include "neverd/sdk/FunctionAttributes.def"
+}
+
+/// Apply the attribute members \p Row holds to \p Attributes: a value
+/// states one, null hands it back to analysis.  False, with \p Error, for a
+/// member of the wrong type, and when \p Strict (an edit rather than a
+/// sidecar row) for a key that names no attribute.
+static bool readFunctionAttributes(const llvm::json::Object &Row,
+                                   Session::FunctionAttributes &Attributes,
+                                   bool Strict, std::string &Error) {
+  for (const auto &[Key, Value] : Row) {
+    const llvm::StringRef Name = Key;
+    bool Known = false;
+#define NEVERD_FUNCTION_FLAG(Member, KeyName)                                  \
+  if (Name == KeyName) {                                                       \
+    Known = true;                                                              \
+    if (Value.kind() == llvm::json::Value::Null)                               \
+      Attributes.Member.reset();                                               \
+    else if (const auto Flag = Value.getAsBoolean())                           \
+      Attributes.Member = *Flag;                                               \
+    else {                                                                     \
+      Error = std::string("\"") + KeyName + "\" is true, false or null";       \
+      return false;                                                            \
+    }                                                                          \
+  }
+#define NEVERD_FUNCTION_COLOR(KeyName)                                         \
+  if (Name == KeyName) {                                                       \
+    Known = true;                                                              \
+    if (Value.kind() == llvm::json::Value::Null)                               \
+      Attributes.Color.reset();                                                \
+    else if (const auto Text = Value.getAsString(); Text && parseColor(*Text)) \
+      Attributes.Color = *parseColor(*Text);                                   \
+    else {                                                                     \
+      Error = std::string("\"") + KeyName + "\" is \"#RRGGBB\" or null";       \
+      return false;                                                            \
+    }                                                                          \
+  }
+#include "neverd/sdk/FunctionAttributes.def"
+    if (!Known && Strict) {
+      Error = "unknown function attribute \"" + Name.str() + "\"";
+      return false;
+    }
+  }
+  return true;
+}
+
 static llvm::json::Array functionEditRows(const Session *S) {
-  llvm::json::Array Rows;
+  std::set<va_t> Entries;
   for (const auto &[Entry, Created] : S->FunctionEdits)
-    Rows.push_back(llvm::json::Object{
-        {"addr", vaHex(Entry)}, {"state", Created ? "created" : "deleted"}});
+    Entries.insert(Entry);
+  for (const auto &[Entry, Attributes] : S->FunctionAttributeEdits)
+    Entries.insert(Entry);
+  llvm::json::Array Rows;
+  for (const va_t Entry : Entries) {
+    llvm::json::Object Row{{"addr", vaHex(Entry)}};
+    if (const auto Edit = S->FunctionEdits.find(Entry);
+        Edit != S->FunctionEdits.end())
+      Row["state"] = Edit->second ? "created" : "deleted";
+    if (const auto Attributes = S->FunctionAttributeEdits.find(Entry);
+        Attributes != S->FunctionAttributeEdits.end())
+      writeFunctionAttributes(Attributes->second, Row);
+    Rows.push_back(std::move(Row));
+  }
   return Rows;
+}
+
+/// Analysis reads what the user states of which functions return: give the
+/// statements to the image and restart analysis.  Discovery follows a call
+/// only into code that runs after it, so the functions it found are found
+/// again.  That decodes with a decoder the load already initialized for the
+/// image, so it cannot fail once the edit is made.
+static void restartWithUserNoReturn(neverd_session_t Sess, Session *S) {
+  const bool Discovered = S->DiscoveredFunctions.has_value();
+  S->applyUserNoReturn();
+  S->DiscoveredFunctions.reset();
+  S->invalidatePipeline();
+  if (Discovered)
+    (void)neverd_session_discover_functions(Sess);
 }
 
 int neverd_func_create(neverd_session_t Sess, neverd_va_t Entry) {
@@ -476,7 +582,16 @@ int neverd_func_delete(neverd_session_t Sess, neverd_va_t Entry) {
   // Recorded for a created function too: the image, the detector or analysis
   // may find a function there as well.
   S->FunctionEdits[Entry] = false;
-  S->invalidatePipeline();
+  // What the user stated of the function goes with it, as in IDA.
+  const auto Attributes = S->FunctionAttributeEdits.find(Entry);
+  const bool StatedNoReturn = Attributes != S->FunctionAttributeEdits.end() &&
+                              Attributes->second.NoReturn.has_value();
+  if (Attributes != S->FunctionAttributeEdits.end())
+    S->FunctionAttributeEdits.erase(Attributes);
+  if (StatedNoReturn)
+    restartWithUserNoReturn(Sess, S);
+  else
+    S->invalidatePipeline();
   return 0;
 }
 
@@ -523,6 +638,7 @@ int neverd_functions_load(neverd_session_t Sess) {
     return -1;
   }
   std::map<va_t, bool> Edits;
+  std::map<va_t, Session::FunctionAttributes> AttributeEdits;
   if (Exists) {
     std::ifstream In(Path);
     if (!In.is_open()) {
@@ -548,18 +664,174 @@ int neverd_functions_load(neverd_session_t Sess) {
       const auto State = Object ? Object->getString("state") : std::nullopt;
       const auto Entry =
           Address ? parsePersistedAddress(*Address) : std::optional<va_t>();
-      if (!Entry || !State || (*State != "created" && *State != "deleted")) {
+      // A row edits whether a function starts there, what it is, or both.
+      Session::FunctionAttributes Attributes;
+      std::string Error;
+      if (!Entry || (State && *State != "created" && *State != "deleted") ||
+          !readFunctionAttributes(*Object, Attributes, /*Strict=*/false,
+                                  Error) ||
+          (!State && Attributes.empty())) {
         S->setError("function edits sidecar has an invalid row");
         return -1;
       }
-      Edits[*Entry] = *State == "created";
+      if (State)
+        Edits[*Entry] = *State == "created";
+      if (!Attributes.empty())
+        AttributeEdits[*Entry] = Attributes;
     }
   }
-  if (Edits == S->FunctionEdits)
-    return 0;
+  const bool Changed =
+      Edits != S->FunctionEdits || AttributeEdits != S->FunctionAttributeEdits;
   S->FunctionEdits = std::move(Edits);
-  S->invalidatePipeline();
+  S->FunctionAttributeEdits = std::move(AttributeEdits);
+  // A load replaces the image, which holds what analysis reads of them.
+  const std::map<va_t, bool> NoReturnBefore = S->Img.UserNoReturn;
+  S->applyUserNoReturn();
+  if (S->Img.UserNoReturn != NoReturnBefore)
+    restartWithUserNoReturn(Sess, S);
+  else if (Changed)
+    S->invalidatePipeline();
   return 0;
+}
+
+int neverd_func_edit(neverd_session_t Sess, neverd_va_t Entry,
+                     const char *Row) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return -1;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return -1;
+  }
+  auto Parsed = llvm::json::parse(Row ? Row : "");
+  if (!Parsed) {
+    llvm::consumeError(Parsed.takeError());
+    S->setError("a function edit is a JSON object");
+    return -1;
+  }
+  const auto *Object = Parsed->getAsObject();
+  if (!Object) {
+    S->setError("a function edit is a JSON object");
+    return -1;
+  }
+  (void)S->synchronizeFunctions();
+  if (llvm::none_of(S->Functions,
+                    [&](const FuncInfo &F) { return F.Entry == Entry; })) {
+    S->setError("no function starts at " + vaHex(Entry));
+    return -1;
+  }
+  Session::FunctionAttributes Attributes;
+  if (const auto It = S->FunctionAttributeEdits.find(Entry);
+      It != S->FunctionAttributeEdits.end())
+    Attributes = It->second;
+  std::string Error;
+  if (!readFunctionAttributes(*Object, Attributes, /*Strict=*/true, Error)) {
+    S->setError(Error);
+    return -1;
+  }
+  const auto Before = S->FunctionAttributeEdits.find(Entry);
+  const std::optional<bool> OldNoReturn =
+      Before == S->FunctionAttributeEdits.end() ? std::nullopt
+                                                : Before->second.NoReturn;
+  if (Attributes.empty())
+    S->FunctionAttributeEdits.erase(Entry);
+  else
+    S->FunctionAttributeEdits[Entry] = Attributes;
+  // Whether a function returns decides how every call to it ends; the notes
+  // change nothing analysis reads.
+  if (Attributes.NoReturn != OldNoReturn)
+    restartWithUserNoReturn(Sess, S);
+  return 0;
+}
+
+const char *neverd_func_attributes_json(neverd_session_t Sess,
+                                        neverd_va_t Entry) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return nullptr;
+  S->clearError();
+  if (!S->Loaded) {
+    S->setError("no binary loaded");
+    return nullptr;
+  }
+  (void)S->synchronizeFunctions();
+  const auto Function = llvm::find_if(
+      S->Functions, [&](const FuncInfo &F) { return F.Entry == Entry; });
+  if (Function == S->Functions.end()) {
+    S->setError("no function starts at " + vaHex(Entry));
+    return nullptr;
+  }
+  Session::FunctionAttributes Stated;
+  if (const auto It = S->FunctionAttributeEdits.find(Entry);
+      It != S->FunctionAttributeEdits.end())
+    Stated = It->second;
+
+  // Analysis' own answers come from the function's CFG: the pipeline's when
+  // it has one, else one built for the question, so asking never analyzes
+  // the whole program.
+  const Arch A = S->Img.Arch;
+  const bool Native =
+      A == Arch::X86 || A == Arch::X64 || A == Arch::ARM || A == Arch::AArch64;
+  const LowFunc *Low = S->PipeRan ? S->findLowFunc(Entry) : nullptr;
+  LowFunc Built;
+  if (!Low && Native) {
+    std::set<va_t> Entries;
+    for (const FuncInfo &F : S->Functions)
+      Entries.insert(F.Entry);
+    InternalNoReturnIndex Prover(S->Img, &Entries, nullptr, nullptr, nullptr);
+    CFGBuilder Builder;
+    Builder.setKnownFuncEntries(&Entries);
+    Builder.setNoReturnCalleeProver(&Prover, 0);
+    Built = Builder.build(S->Img, S->Dec, Entry, Function->Name);
+    Low = &Built;
+  }
+
+  llvm::json::Object Row{{"addr", vaHex(Entry)},
+                         {"name", jsonSafeText(Function->Name)},
+                         {"start", vaHex(Entry)}};
+  Row["end"] = Function->Size ? llvm::json::Value(vaHex(Entry + Function->Size))
+                              : llvm::json::Value(nullptr);
+  // A call to the function ends where its name or its body says so.
+  if (Stated.NoReturn)
+    Row["noreturn"] = *Stated.NoReturn;
+  else if (Low)
+    Row["noreturn"] = libc::isNoReturnTarget(S->Img, Entry) ||
+                      lowFunctionNeverReturns(*Low, A);
+  else
+    Row["noreturn"] = nullptr;
+  // A whole-function recognition is analysis' library function, as a FLIRT
+  // match is IDA's; unknown until the pipeline has recognized libraries.
+  if (Stated.Library) {
+    Row["library"] = *Stated.Library;
+  } else if (S->SigDB.featurePacks().empty()) {
+    Row["library"] = false;
+  } else if (S->PipeRan && S->PipeResult.Success &&
+             S->PipelineFeatureGeneration == S->SigDB.featureGeneration()) {
+    bool Library = false;
+    if (const auto It = S->PipeResult.LibraryRecognitionsByFunction.find(Entry);
+        It != S->PipeResult.LibraryRecognitionsByFunction.end())
+      for (const size_t Index : It->second)
+        Library |= S->PipeResult.LibraryRecognitions[Index].Scope ==
+                   sigs::LibraryFeatureScope::WholeFunction;
+    Row["library"] = Library;
+  } else {
+    Row["library"] = nullptr;
+  }
+  // No loader records a symbol's linkage, so only the user says a function
+  // is static.
+  Row["static"] = Stated.Static ? llvm::json::Value(*Stated.Static)
+                                : llvm::json::Value(nullptr);
+  Row["color"] = Stated.Color ? llvm::json::Value(colorText(*Stated.Color))
+                              : llvm::json::Value(nullptr);
+  // x86 `ret imm` pops the caller's arguments; no other target does.
+  Row["purged_bytes"] = (A == Arch::X86 || A == Arch::X64) && Low
+                            ? llvm::json::Value(Low->CalleePopBytes)
+                            : llvm::json::Value(nullptr);
+  llvm::json::Object StatedRow;
+  writeFunctionAttributes(Stated, StatedRow);
+  Row["stated"] = std::move(StatedRow);
+  return dupStr(jsonToString(llvm::json::Value(std::move(Row))));
 }
 
 // ===--------------------------------------------------------------------===//
