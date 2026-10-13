@@ -298,6 +298,12 @@ et les opérandes mal formés doivent échouer explicitement.
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` vérifie que les arguments de registre requis conservent leurs positions inconnues finales. Évaluer un argument requis ou une condition inconnue doit provoquer un piège explicite ; les opérandes omis, nuls ou imbriqués ne doivent pas devenir silencieusement zéro. Les valeurs connues et les opérandes supplémentaires dont l’absence de lecture est prouvée restent exécutables. Un piège marque une limite de diagnostic, pas une preuve d’équivalence du comportement reconstruit.
 
+## Stockage des objets en LLVM C
+
+`NeverDLLVMCAllocaTests` exécute LLVM original et C généré à O0/O2 avec pièges de comportement indéfini. Il observe l’étendue complète, le pas avec padding, l’alignement 16/32/64 octets, l’indépendance des allocations simultanées/en boucle et une seule évaluation du producteur de quantité. Les routes C ordinaires et à types conservés gardent le stockage ; contrats non pris en charge, débordements et stack save/restore sont refusés avant DCE. Les adresses de pile initiales et l’identité des cadres d’exception ne sont pas certifiées.
+
+La même cible compare l’alignement des scalaires, pointeurs, tableaux et structures compactées statiques jusqu’à 128 octets, l’alignement global, le stockage complet des chaînes complétées par des zéros et l’identité des adresses globales dans les initialisations, retours, appels, sélections et conversions pointeur-entier. Elle couvre, selon le cas, les sorties ordinaires/à types préservés et complètes/par fonction sélectionnée.
+
 ## Tests d’exécution CPU
 
 `NeverDIntegerABITests` compile des fixtures Clang originales pour Windows x64, Linux x64 et Linux ARM64. Des fonctions réelles à dix arguments vérifient registres, pile et frames d’appel. La matrice Unicorn/KVM/WHP marque explicitement les couples hôte/ISA indisponibles comme ignorés ; un skip n’est pas un succès. `NeverDExecutionBudgetTests` contrôle budgets partagés de continuation, réservations et échéance absolue sans attente dépendante du temps.
