@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
+<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
 
 [← Documentation Index](README.md)
 
@@ -44,8 +44,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 
 | المترجم | الناتج | ملف تنفيذ نظام التشغيل المتحقق |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x64 C/C++ FH3 |
-| Clang 22.1.6 | كائن أصلي | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | كائن أصلي | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | كائن أصلي | ELF x64 C/C++ مع بيئة Itanium متوافقة |
 | NeverC 3389.1.5 الوضع العادي | LLVM IR | ELF x64 C؛ Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
@@ -134,3 +134,5 @@ ctest --test-dir build-source -L \
 يُنشئ سير عمل Windows أيضًا 27 بديلًا بصيغة PE لمعمارية x86 وx64 وARM64. يتحقق `scripts/check_source_patch_pe_runtime.py` من الاستدعاءات غير الورقية وحالة المؤشرات القابلة للتغيير ووسائط الفاصلة العائمة والمكدس عبر IR المصدر والكائنات المترجمة والكائنات المقدمة. يُشغّل كل أصل وكل نتيجة ثلاث مرات، أي 30 ملاحظة تنفيذ لكل معمارية. يعمل x86/x64 على Windows x64، ويعمل ARM64 على `windows-11-arm`. يتطلب التحقق المضيف الأصلي المتوقع وتطابق الإيداع وبصمات الملفات واكتمال جميع الحالات، مع تسجيل المشغلات الخارجية بصورة منفصلة. لا يثبت هذا الملف دعم استثناءات C++ على ARM64.
 
 يحدد `NEVERD_TEST_MATRIX_NEVERC` المترجم الاختياري للمصفوفة. اجتاز NeverC 3389.1.5 جميع الفحوص الـ66 لمعمارية x64/ARM64 مع ELF وPE وMach-O، بما فيها تثبيت IR والكائنات الأصلية وتنفيذ CPU. لا يدعم هذا الإصدار x86 أو ARM32؛ استخدم Clang لهما، أو مشغل GCC متوافقًا مع ELF. عند ترجمة PE باستخدام NeverC، يضيف المحوّل `-fno-autolink` لحل المراجع داخل الصورة الحالية دون ربط CRT آخر. تظل الكائنات المقدمة التي تحتوي عقود ربط `.drectve` مرفوضة.
+
+اجتاز التحقق من عمليات Windows الأصلية [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) جميع الملاحظات الـ90: 30 لكل من x86 وx64 وARM64، عبر IR المصدر والكائنات المترجمة والكائنات المقدمة. نُفّذ x86/x64 على Windows x64، ونُفّذ ARM64 على `windows-11-arm` باستخدام الصور نفسها بعد التحقق من بصماتها. اجتاز التشغيل نفسه أيضًا جميع الفحوص المتخصصة الـ16 لمسارات PE والكائنات وtrampoline، وجميع فحوص مصفوفة Unicorn الـ143، دون تخطي أي حالة. احتفظ اختبار FH3 بسيناريوهات تشغيل C++ x64 السبعة.

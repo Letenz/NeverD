@@ -15,6 +15,7 @@
 
 #include "X86LiftDetail.h"
 
+#include "neverd/decode/Decoder.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86Lifter.h"
 
@@ -1127,9 +1128,20 @@ bool liftSIMDMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     break;
   }
 
-  // FEMMS / EMMS — exit MMX State (no-Opc for our purposes).
+  // MMX aliases the x87 bank; exiting it must publish the empty tags.
   case X86_INS_EMMS:
+    if (L.ownsX87Context()) {
+      S.emitVoidIntrinsic(Intrinsic::X87ContextStep,
+                          {NdVar::reg(x86reg::X87ContextHandle, 8),
+                           NdVar::cst(0x770f, 4), NdVar::cst(0, 8),
+                           NdVar::cst(0, 8), NdVar::cst(S.Addr, 8)});
+      break;
+    }
+    S.emit(NdOp::NOP, {}, {});
+    break;
   case X86_INS_FEMMS:
+    if (L.ownsX87Context())
+      throw UnliftedInstruction(Insn->address, Insn->mnemonic, Insn->op_str);
     S.emit(NdOp::NOP, {}, {});
     break;
 

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
+<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
 
 [← Documentation Index](README.md)
 
@@ -44,8 +44,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 
 | Компилятор | Артефакт | Проверенный профиль выполнения ОС |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | Нативный объект | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | Нативный объект | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | Нативный объект | ELF x64 C/C++ с совместимой средой Itanium |
 | NeverC 3389.1.5 обычный режим | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 обычный режим | Нативный объект | ELF x64 C |
@@ -134,3 +134,5 @@ ctest --test-dir build-source -L \
 Рабочий процесс Windows также создаёт 27 замен PE для x86, x64 и ARM64. `scripts/check_source_patch_pe_runtime.py` проверяет нелистовые вызовы, изменяемое состояние указателей, аргументы с плавающей точкой и стековые аргументы через исходный IR, скомпилированные и предоставленные объекты. Каждый оригинал и результат запускается трижды: по 30 наблюдений процессов на архитектуру. x86/x64 запускаются в Windows x64, ARM64 — на `windows-11-arm`. Проверка требует ожидаемый нативный хост, совпадение коммита и хешей файлов, а также полный набор случаев; внешние среды выполнения отмечаются отдельно. Этот профиль не подтверждает поддержку исключений C++ на ARM64.
 
 `NEVERD_TEST_MATRIX_NEVERC` выбирает дополнительный компилятор матрицы. NeverC 3389.1.5 прошёл все 66 проверок x64/ARM64 для ELF, PE и Mach-O, включая установку IR и нативных объектов и выполнение на CPU. Эта версия не поддерживает x86 и ARM32; используйте для них Clang, а для ELF также подходит соответствующий драйвер GCC. При компиляции PE через NeverC адаптер добавляет `-fno-autolink`: ссылки разрешаются в существующем образе без подключения другой CRT. Предоставленные объекты с контрактами компоновщика `.drectve` по-прежнему отклоняются.
+
+Проверка нативных процессов Windows [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) успешно завершила все 90 наблюдений: по 30 для x86, x64 и ARM64 через исходный IR, скомпилированные и предоставленные объекты. x86/x64 выполнялись в Windows x64, а ARM64 — на `windows-11-arm` с теми же образами, проверенными по хешам. В этом же запуске успешно выполнены все 16 специализированных проверок PE/объектов/trampoline и все 143 проверки матрицы Unicorn, без пропусков. Тест FH3 сохранил семь сценариев выполнения C++ x64.

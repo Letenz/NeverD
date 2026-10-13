@@ -42,6 +42,11 @@ NdOpEmulator::NdOpEmulator(BinaryImage &&Image)
 }
 
 void NdOpEmulator::resetX87State() {
+  X87ContextKnown = false;
+  X87PayloadKnown = 0;
+  X87ContextState.fill(0);
+  if (Img.Arch == Arch::X64)
+    Registers[x86reg::X87ContextHandle] = UINT64_C(0xffffffffffff8700);
   if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
     return;
   // These pseudo-registers are complete 16-bit architectural containers, not
@@ -54,6 +59,10 @@ void NdOpEmulator::resetX87State() {
 
 bool NdOpEmulator::executeX87(const LowOp &Op) {
   if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
+    return false;
+  // Scalar pseudo-register updates cannot authenticate the retained tags and
+  // payloads of an owned snapshot. Mixing the two models must stop atomically.
+  if (X87ContextKnown)
     return false;
   if (Op.NumInputs == 0 || !Op.Inputs[0].isConst() ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
