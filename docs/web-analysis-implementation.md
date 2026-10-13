@@ -3577,3 +3577,71 @@ Qt Claude-package review passed (6.24 s), source provenance passed for 7,548
 files, and all 23 capability declarations remained valid. Receipts use
 `/tmp/neverd-epic-completion-publish-{integration,build,tests,gui-tests,
 provenance,capabilities}.log`.
+
+## Passive component and field evidence follow-up — 2026-10-13
+
+Starting from published `a81518354`, the v2 passive report implements both
+confirmed #717 audit gaps. All implementation and authored fixtures remain C++,
+with LLVM formatting and NeverD file banners. No input execution, network
+analysis, external runtime, new dependency or public C ABI entry point is added.
+
+`SourceStructure` consumes admitted request roles and existing transform links;
+`URLStructure` owns lexical component projection. They preserve original
+template/expression anchors, cooked UTF-16 component positions, ordinary header
+properties, body object/array/literal syntax and directly selected
+JSON-stringify argument structure. Dynamic calls/variables, getters, spreads,
+computed/duplicate properties and deferred functions stay explicit unknowns.
+Interpolation cannot widen the existing HTTP candidate join.
+
+`Shapes` retains body admission. `ObservedStructure` owns private field
+dictionaries, per-example trees and capture-local aggregate types/presence.
+Array examples keep actual positions; aggregate elements share a path. Object
+presence counts only eligible observed object parents; missing/null, other
+parent types and malformed/absent bodies stay distinct. Public field IDs encode
+capture/profile/ordinals rather than private names. A 2 MiB private-dictionary
+budget complements the existing body, node, record and metadata bounds.
+`Compose`/`Publication` carry the same evidence through SDK/CLI/worker/MCP.
+Server optionality, completeness and source execution remain unknown.
+
+Verification receipts under `/tmp/neverd-passive-structure-*`:
+
+- The full integrated engine/SDK/transport build completed. Initial focused
+  checks passed 17 cases; route/SDK/worker/MCP coverage passed 46 cases (3.69 s).
+- Owning Web regression passed **749 / 800**, with 51 explicit optional-input
+  or feature skips (3.03 s). Skips are not qualified corpus successes.
+- Parser OFF: rebuild succeeded, 28 report/SDK/transport checks passed (4.11 s).
+  The original two-body HAR CLI report was byte-identical to parser ON.
+- Whole Web backend OFF: rebuild succeeded; two availability and three MCP
+  checks passed; worker's positive backend case explicitly skipped (2.13 s).
+- Web/JS restored ON: rebuild succeeded and 48 source/report/SDK/transport and
+  supplied Claude corpus checks passed (15.36 s). The full Claude source-feature
+  corpus check took 13.00 s. ASAR remains ON.
+- Qt web review passed (2.91 s). Source provenance and the 23-capability
+  ownership checks passed.
+- A later C++ real-template regression initially missed its private capture
+  header; the compile failed and an early run of the old test binary is not
+  counted. After adding the header and a successful rebuild, all eight request
+  structure cases passed (1.08 s), including the pinned real templates.
+
+The production CLI replays the original audit fixtures with
+`PATH=/neverd-no-external-tools`: the request gives 23 static rows, including
+21 structural rows, and the HAR gives 19 observed rows, including eight value
+nodes and five aggregate nodes. Both old equal-histogram bodies now retain their
+different nesting. Every selected command returned zero stderr; no observations
+were invented.
+
+Real Claude module 928 keeps its three existing static records. Twenty additional
+fetch-spelling candidate modules were inspected through NeverD's CLI: sixteen
+reports completed, module 141/299 hit the existing parser-work bound and module
+415/1452 hit the existing source-byte bound. All diagnostic output stayed
+redacted with empty stderr. In the successful selections, modules 1357 and 1740
+provide ten/eight structure rows, respectively; each has three template segments
+and two exact expression anchors. The regression and
+[profile](web-passive-report-profile.md) pin their original hashes and lengths.
+Unresolved header/body variables remain unknown. This is selected real-client
+evidence, not full dynamic request reconstruction.
+
+The [acceptance audit](web-epic-acceptance.md) marks the two confirmed #717 gaps
+addressed. It retains the separate recommendations for real CEF/WebView
+qualification, broader minified-client patterns and a mandatory producer-corpus
+release lane. No issue state/comment or unrelated checkout is modified.

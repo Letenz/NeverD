@@ -236,20 +236,21 @@ std::string Session::capabilities() {
     Operations.emplace_back(Name);
   for (const auto *Name : {"passive_report_create", "passive_report_records"})
     Operations.emplace_back(Name);
-  Analyses.emplace_back(
-      llvm::json::Object{{"kind", "passive_report"},
-                         {"profile", std::string(PassiveReportProfile)},
-                         {"max_records", MaxPassiveReportRecords},
-                         {"max_steps", MaxPassiveReportSteps},
-                         {"max_cached", 2},
-                         {"max_page_records", 128},
-                         {"max_metadata_bytes", 16 * 1024 * 1024},
-                         {"max_json_body_bytes", MaxPassiveShapeBytes},
-                         {"max_aggregate_body_nodes", MaxPassiveShapeNodes},
-                         {"all_input_values", "withheld"},
-                         {"server_constraints", "unknown"},
-                         {"executes_input", false},
-                         {"network_access", false}});
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "passive_report"},
+      {"profile", std::string(PassiveReportProfile)},
+      {"max_records", MaxPassiveReportRecords},
+      {"max_steps", MaxPassiveReportSteps},
+      {"max_cached", 2},
+      {"max_page_records", 128},
+      {"max_metadata_bytes", 16 * 1024 * 1024},
+      {"max_json_body_bytes", MaxPassiveShapeBytes},
+      {"max_aggregate_body_nodes", MaxPassiveShapeNodes},
+      {"max_shape_private_bytes", MaxPassiveShapePrivateBytes},
+      {"all_input_values", "withheld"},
+      {"server_constraints", "unknown"},
+      {"executes_input", false},
+      {"network_access", false}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "har_observations"},
       {"profile", std::string(HARProfile)},

@@ -2,10 +2,11 @@
 
 This audit was rechecked against the GitHub issue bodies on 2026-10-13.
 All five issues remain open, with no comments or later requirement changes.
-The earlier blanket statement that all five were complete was too broad:
-#717 still lacks the component/field-level request and observed-schema evidence
-described below. Existing named profiles remain implemented and qualified;
-passing their tests does not establish coverage of every issue requirement.
+The earlier blanket statement that all five were complete was too broad.
+The follow-up v2 passive report implements both confirmed #717 gaps described
+below: component-level request syntax and field-level observed structure.
+The qualification recommendations remain separate from those repaired gaps.
+Passing a named profile's tests does not establish universal issue coverage.
 A passed fixture or captured sample qualifies its selected profile and
 operation; it does not establish general framework support, source equivalence,
 publisher trust or runtime behavior.
@@ -19,7 +20,7 @@ executed, and the analyzer uses no external scripts, runtimes or network tools.
 | [#714](https://github.com/NeverSight/NeverD/issues/714) | Immutable source/map origins, bounded C++ parser, lexical/value/effect/module/bundle/navigation models, reversible primitive/rename/Boolean-expression profiles, reviewed source views and verified same-tree readable export. Known tool/config/permission/hook/MCP fixtures retain spans and uncertainty. Configuration-object order includes loading initializer links and unknown-key overwrite barriers; real Claude units retain 273 objects, 2,279 terms and 19 possible later overwrites. | Separate file layers, other merge forms and computed dispatch are outside the named grammar and remain unresolved. The issue requires identifiable source navigation and explicit unknowns, not effective policy or universal dataflow. Erased TypeScript/types/names and whole-program equivalence are not promised. |
 | [#715](https://github.com/NeverSight/NeverD/issues/715) | npm graphs/diffs, tar/gzip inventory, original-byte SRI, Node behavior/install associations and diffs, advisory/registry/provenance imports, assessments, persistent dispositions and Qt review. Eight Claude packages retain independent archive/payload integrity. | npm lockfile versions and the literal Node installation grammar are named; pnpm/Yarn, complete runtime resolution and other GUI selectors are further adapters/workbench extensions. The GUI preserves selected confidence/coverage/dispositions, with unselected evidence explicit. Hashes/signature declarations prove no publisher trust or benign behavior. |
 | [#716](https://github.com/NeverSight/NeverD/issues/716) | Safe ASAR/ZIP, Electron unpacked/manifests/entries/IPC, NW.js/VSIX/HTML/native handoff. Real Wails Go 1.25.7 / Wails 2.11.0 ELF/PE x64 and measured Tauri PHF/Mach-O x64 assets have exact raw/readable exports and native links. Tauri yields 15 assets and 9 readable JS members. Direct Tauri/Wails bridge syntax retains private source anchors. A named supplied CEF/WebView resource descriptor links and exports local assets/helpers, including opaque resources. | Other Rust/Go layouts, ISAs, codecs, bridge aliases and runtime mount/window relations need independent profiles. The CEF/WebView descriptor is supplied local evidence, not automatic framework authentication or a `.pak` decoder. The issue asks for supported versioned layouts and clear refusal of unsupported builds. |
-| [#717](https://github.com/NeverSight/NeverD/issues/717) | Redacted HAR preview/commit, fetch/WebSocket/XHR/wrapper candidates, request/result and nearby JSON/base64/URI/crypto/zlib syntax links, direct-fetch HAR joins and versioned streams/logs. Selected reports retain source features, recorded links, separate same-MCP-method candidates and observed JSON type summaries with example IDs, unknown optionality/server constraints and pagination. | Incomplete: unresolved templates retain a whole-expression anchor and hole count, without component/path/query structure; fetch headers/body retain node anchors without a parameter-shape inventory. Observed body reports aggregate types, losing field paths/nesting and per-field presence. These gaps concern the requested evidence model, not universal dataflow or optional OpenAPI. Dynamic/API/server behavior remains unknown. |
+| [#717](https://github.com/NeverSight/NeverD/issues/717) | Redacted HAR preview/commit, fetch/WebSocket/XHR/wrapper candidates, request/result and nearby JSON/base64/URI/crypto/zlib syntax links, direct-fetch HAR joins and versioned streams/logs. The v2 report adds template segments/expressions and lexical path/query roles, individual header and body syntax, per-example JSON field/array trees, capture-local type unions and observed presence. Existing source features, recorded links, same-MCP-method candidates and pagination remain. | Source components remain syntax; dynamic interpolations can change URL delimiters and cannot create new HAR matches. Names/values remain private. Observed absence is not inferred server optionality. Source body calls, unsupported object syntax, framework/API identity and server behavior remain unknown. No universal dataflow or optional OpenAPI completeness is claimed. |
 | [#718](https://github.com/NeverSight/NeverD/issues/718) | Independent Bun ELF/thin Mach-O/PE x64/ARM64 and Node SEA 22.15.0, nexe 4.0.0-rc.7, pkg 5.8.1 profiles; producer fixtures, exact original/member/range hashes, bounds, opaque caches and shared consumers. All eight Claude 2.1.296 deliveries preserve every shipped JS unit and verified readable copy. | New runtime/layout/host profiles require independent measurement. Opaque JSC/V8 caches remain explicitly unsupported, as the issue permits. Extraction is separate from native lifting and complete cross-track runtime behavior. |
 
 The [support matrix](web-support-matrix.md) is authoritative for individual
@@ -34,7 +35,7 @@ owners with fetched `dev` at `587227e57`; those owners were unchanged. Issue
 bodies and comment counts were read from GitHub on 2026-10-13. This review does
 not close, edit or comment on any issue.
 
-1. **#717 request structure is incomplete.**
+1. **#717 request structure: original finding, resolved by v2.**
    `interfaces/SourceContext.cpp` records unresolved template expression counts;
    `interfaces/SourceFetch.cpp` retains headers/body node IDs. For an original
    fixture with a `/users/${id}?page=${page}` URL, two ordinary header properties
@@ -42,18 +43,19 @@ not close, edit or comment on any issue.
    holes, no comparable endpoint, zero path/query counts and only headers/body
    anchors. The whole source is preserved, but the interface inventory does not
    represent static components, parameter shapes or individual fetch headers.
-   Add bounded component/field evidence with private or reviewed names, stable
-   anchors and explicit unknown values. This does not require evaluating the
-   request or changing HAR matching rules.
-2. **#717 type statistics do not supply field-level schema evidence.**
+   The finding called for bounded component/field evidence with private or
+   reviewed names, stable anchors and explicit unknown values. This does not
+   require evaluating the request or changing HAR matching rules.
+2. **#717 field-level schema evidence: original finding, resolved by v2.**
    `interfaces/report/Shapes.cpp::countTypes` discards parent/field relationships.
    The production `report-har` command gives both original fixture bodies
    `{"left":{"x":1},"right":true}` and
    `{"left":1,"right":{"x":true}}` the same shape summary: two objects, one
    number, one Boolean and two top-level members. Their observation IDs remain
    distinct, but their different field types/nesting cannot be inspected through
-   this report. Add bounded observed field/array nodes, example links and
-   presence evidence across explicitly selected observations; keep inferred
+   the v1 report. The finding called for bounded observed field/array nodes,
+   example links and presence evidence across explicitly selected observations;
+   keep inferred
    optionality separate from observed absence and unknown server constraints.
    Redaction must preserve structural relationships without publishing secrets.
    OpenAPI remains optional; this finding concerns the issue's parameter-shape
@@ -68,6 +70,34 @@ not executed as JavaScript. Local receipts are
 optional Claude feature-corpus selection initially skipped without its
 environment input, then passed against the preserved macOS ARM64 package in
 25.73 seconds. Its receipt is `/tmp/neverd-issue-audit-claude-corpus.log`.
+
+### Follow-up implementation and evidence
+
+The `passive-evidence-shape-report-v2` implementation addresses both findings.
+The same source fixture now yields 23 static rows, including 21 structure rows:
+three template segments, two expressions, eight lexical components, two header
+fields and two body fields. The same two HAR bodies yield 19 observed rows,
+including eight value nodes and five aggregate field nodes; their nesting is
+distinct and shared fields retain capture-local identities.
+
+The actual CLI used an unusable external-tool PATH and emitted no stderr.
+With the JS parser disabled, the HAR report is byte-identical. C API one-row
+pages, worker and MCP preserve the same parent/field evidence. All 46 initial
+route checks passed; owning Web regression passed 749 cases with 51 explicit
+optional-input/feature skips out of 800. Parser-off checks passed 28 cases.
+Backend omission passed five checks and explicitly skipped worker's positive
+backend case. Qt review passed. Restored source/SDK/transport checks plus the
+provided Claude feature corpus passed 48 cases; the later eight request
+structure checks include both pinned real templates and escaped-coordinate
+boundaries. See the implementation ledger for receipts and integration.
+
+Real Claude 2.1.296 macOS ARM64 modules 1357 and 1740 retain respectively ten
+and eight structure rows, each with three template segments and two exact
+expression anchors. The new C++ regression pins original sizes/hashes and
+checks actual interpolation delimiters. Headers/body variables remain unknown;
+no traffic was supplied. A broader 20-module candidate probe returned 16
+bounded reports and four existing byte/parser-budget refusals, all with empty
+stderr. It does not establish full client network reconstruction.
 
 No additional blocking gap was established for the already named #714, #715
 or #718 profiles in this review. Useful follow-up qualification remains:
@@ -134,7 +164,8 @@ was supplied for these selections, so source/capture correlation is not attempte
 ## Criterion coverage
 
 The table maps implemented evidence to the original acceptance items; it is not
-an all-passed checklist. The #717 gaps above remain pending. Additional builds,
+a claim that every framework/version is supported. The #717 gaps above are
+addressed by the v2 profile. Additional builds,
 runtime resolution and workbench workflows may extend the named profiles;
 absent optional samples are omissions, never passed acceptance cases.
 
@@ -152,9 +183,9 @@ absent optional samples are omissions, never passed acceptance cases.
 | #716 matrix, ASAR/unpacked/NW and Tauri/Wails supported/native handoff | Desktop/ASAR/Electron/Wails/Tauri suites and real fixed-profile releases; [resource descriptor](web-desktop-resource-profile.md) covers named supplied CEF/WebView assets |
 | #716 hostile archives, reproducible origin/export, offline and opaque data | Archive/ZIP/ASAR/path/export suites; native/readable SDK checks preserve exact compressed or direct parent ranges and explicit unsupported members |
 | #716 VSIX/helper/version/redaction supplement | ZIP/desktop SDK and pinned VSIX-to-Bun checks retain separate extension/helper versions; normal pages exclude private content |
-| #717 literal/template anchors, static/HAR-only/correlated classes | Anchors and evidence classes are tested; component/parameter/header shape inventory remains incomplete. Existing HTTP equality remains authoritative |
+| #717 literal/template anchors, static/HAR-only/correlated classes | `WebRequestStructure` covers template/URL/header/body syntax, private names, exact source anchors, unknown forms and unchanged HTTP matching. Existing HTTP equality remains authoritative |
 | #717 canaries, malformed/missing/WS/budgets, offline and stable navigation | HAR/stream/source/SDK/CLI/worker/MCP checks; no raw values, implicit network, target runtime or manufactured offsets |
-| #717 exported example/schema boundaries and stream/source supplement | Type statistics, example IDs, stream links and unknown constraints are tested; field/nesting/presence evidence remains pending. The [report](web-passive-report-profile.md) is not a field-level schema |
+| #717 exported example/schema boundaries and stream/source supplement | `WebPassiveStructure` covers per-example field/array trees, capture-local type/presence aggregates, missing versus null, grouping, names and budgets. SDK/CLI/worker/MCP use the same [report](web-passive-report-profile.md); server optionality/constraints remain unknown |
 | #718 matrix and primary pinned plain/minified/assets/maps/cache fixtures | Bun/SEA/nexe/pkg suites and redistributable producer graph/blob manifests; each format has independent version/platform/profile coverage |
 | #718 reproducible ranges, hostile input, source frontend and opaque caches | Extraction/map/native/source/export suites refuse truncated/unknown/compression-bomb data and retain unsupported cache evidence |
 | #718 fixed Claude manifest and per-track states | [Eight-platform qualification](web-claude-code-cross-platform-qualification.md) and the per-input table above; all 18,794 shipped JS units preserved, absent observations/maps and partial source analyses explicit |

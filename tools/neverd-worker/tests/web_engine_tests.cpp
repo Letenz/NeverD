@@ -1916,7 +1916,7 @@ int main(int argc, char **argv) {
       "entries":[{"request":{"method":"GET",
         "url":"https://SECRET_WEB/a?token=SECRET_WEB",
         "headers":[{"name":"Authorization","value":"SECRET_WEB"}],
-        "postData":{"text":"SECRET_WEB"}},
+        "postData":{"mimeType":"application/json","text":"{\"SECRET_WEB\":null}"}},
         "response":{"status":200,"content":{"text":"SECRET_WEB"}}}]}})";
       std::ofstream(interfaceRoot / "b.js")
           << "const SECRET_WEB_RESULT=await "
@@ -1983,6 +1983,31 @@ int main(int argc, char **argv) {
       check(reply["payload"] == harRecords &&
                 reply.dump().find("SECRET_WEB") == std::string::npos,
             "HAR transport differs or exposes private values");
+      const Json shapeArgs{{"schema_version", 1},
+                           {"revision", interfaceRevision},
+                           {"har_capture_id", redaction["capture_id"]}};
+      const auto shape = web.execute("web_passive_report_create", shapeArgs);
+      reply = process.call("web_passive_report_create", shapeArgs,
+                           interfaceRevision, interfaceProject);
+      check(reply["payload"] == shape, "Worker changed shape summary");
+      const Json shapePage{{"schema_version", 1},
+                           {"revision", interfaceRevision},
+                           {"passive_report_id", shape["passive_report_id"]}};
+      const auto shapes = web.execute("web_passive_report_records", shapePage);
+      reply = process.call("web_passive_report_records", shapePage,
+                           interfaceRevision, interfaceProject);
+      uint64_t shapeFields = 0;
+      for (const auto &row : shapes["items"])
+        if (row["kind"] == "observed_json_schema_node" &&
+            row["structure"]["edge"] == "object_field") {
+          ++shapeFields;
+          check(row["structure"]["observed_instances"] == 1 &&
+                    row["structure"]["observed_missing_instances"] == 0,
+                "Worker lost observed field presence");
+        }
+      check(reply["payload"] == shapes && shapeFields == 1 &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed structure pages or exposed private keys");
       auto invalidHAR = harPreview;
       invalidHAR["replay"] = true;
       reply = process.call("web_har_preview", invalidHAR, interfaceRevision,
