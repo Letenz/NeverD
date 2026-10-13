@@ -171,7 +171,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
   // Late ABI remodelling may reconvert a function from LowIR.  Refresh the
   // interprocedural facts before either serial or sharded LLVM emission.
-  propagateInternalNoReturn(Result.MedFuncs, Img.Arch);
+  propagateInternalNoReturn(Result.MedFuncs, Img.Arch, Img.UserNoReturn);
 
   if (!recordMedIRVerification(Result, "pipeline-backend-input")) {
     Result.Error = "MedIR verification failed before backend emission";
