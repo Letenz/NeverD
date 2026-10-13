@@ -58,8 +58,10 @@ path, beside the image, then the path's directories and stores). Discovery and
 `neverd_pdb_reference_json` share those candidates, so a PDB the GUI downloads
 into a store is the one the next load, and the command line's, finds; the C API
 names the first copy whose Info/DBI identity matches without loading the PE. No
-engine code contacts a server: the GUI owns consent and HTTPS transport into the
-store path the engine names, then loads the file through the strict PDB loader.
+engine code contacts a server: each frontend owns its transport into the store
+path the engine names, the GUI Qt's after the user consents and the command
+line the system's libcurl or WinHTTP for `--download-symbols`, and then loads
+the file through the strict PDB loader.
 `neverd_session_set_pdb_search(0)` opens a PE without the PDB the user declined,
 or before the PDB they chose loads. Epoch and request guards retire downloads on
 document changes, and network errors do not change the image.

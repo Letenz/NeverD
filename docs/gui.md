@@ -640,6 +640,9 @@ for its build. Transfers have a 2 GiB limit, a 30-second inactivity timeout and
 a 10-minute overall deadline; a broken connection or a server error is tried
 twice more before the dialog reports it. Windows also tries a server's
 compressed `.pd_` variant. Symbol-store `file.ptr` indirection is not followed.
+The command line searches the same stores, takes the search path as
+`--symbol-path`, and with `--download-symbols` downloads a missing PDB the same
+way before it loads the file, through the system's libcurl or WinHTTP.
 
 A project whose PDB no longer loads, and a file opened before anyone was asked,
 offer the same dialog once the file is open; a copy that has reached a store
