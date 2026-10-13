@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: 6412cda4a321abfee72d3480eacd2b54c2a554da6d7e9c60e4744bf2df2dc6a4 -->
+<!-- i18n-source: c6ec2d7f83d4de6feb6a7f4ca10a13a786c17aaf2cb332085a9221dc8046eb65 -->
 
 [← Documentation Index](README.md)
 
@@ -44,8 +44,8 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 
 | 编译器 | 制品 | 已验证的操作系统运行配置 |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++；Mach-O x64/ARM64 C/C++；PE x64 C/C++ FH3 |
-| Clang 22.1.6 | 原生对象 | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | 原生对象 | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | 原生对象 | ELF x64 C/C++，需要兼容的 Itanium 运行库 |
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生对象 | ELF x64 C |
@@ -134,3 +134,5 @@ Windows x64 原生验收 [2ed7e78fc](https://github.com/NeverSight/NeverD/action
 Windows 工作流还会为 x86、x64 和 ARM64 生成 27 个 PE 替换产物。`scripts/check_source_patch_pe_runtime.py` 通过源码 IR、编译对象和外部对象三条路径检查非叶函数调用、可变指针状态及浮点/栈参数。每个原程序和替换产物均运行三次，即每种架构 30 次进程观测。x86/x64 在 Windows x64 上运行，ARM64 在 `windows-11-arm` 上运行。验证器要求原生主机架构、提交和文件摘要匹配，并检查用例清单完整；外部运行器的结果单独标记。这组进程测试不代表 ARM64 C++ 异常支持。
 
 可通过 `NEVERD_TEST_MATRIX_NEVERC` 选择矩阵的可选编译器。NeverC 3389.1.5 在 x64/ARM64 × ELF、PE、Mach-O 的 66 个检查中全部通过，包括 IR 和原生对象安装及 CPU 执行。该编译器版本不支持 x86 或 ARM32；这些目标使用 Clang，ELF 也可使用匹配的 GCC 驱动。NeverC 编译 PE 时，适配器加入 `-fno-autolink`：patch 在现有映像中解析引用，不再链接另一套 CRT。带有 `.drectve` 链接契约的外部对象仍会被拒绝。
+
+Windows 原生进程验收 [a4a5ae3cb](https://github.com/NeverSight/NeverD/actions/runs/38350079817) 的 90 次观测全部通过：x86、x64 和 ARM64 各 30 次，覆盖源码 IR、编译对象和外部对象三条路径。x86/x64 在 Windows x64 上执行；ARM64 在 `windows-11-arm` 上执行，使用同一批经过哈希校验的映像。同一轮的 16 个 PE/对象/trampoline 专项检查和 143 个 Unicorn 目标矩阵检查也全部通过，无跳过。FH3 用例继续验证七种 x64 C++ 运行场景。
