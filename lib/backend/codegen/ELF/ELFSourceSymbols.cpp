@@ -144,7 +144,9 @@ llvm::Expected<std::optional<uint64_t>> resolveELFSourceSymbol(
                     Specifier == "GOT_PAGE" || Specifier == "GOT_LO12";
   if (!Slot && Specifier != "PLT" &&
       !(Request.Specifier == 0 && Specifier.empty()) && !AArch64Call)
-    return Fail("unsupported relocation specifier: " + Specifier);
+    return Fail("unsupported relocation specifier: " + Specifier + " (" +
+                llvm::Twine(Request.Specifier) + ", " + Request.FixupKindName +
+                ", " + Request.SectionName + ")");
 
   if (auto VA = parseNdDataSymbol(Request.Symbol)) {
     const auto *Declaration = Module.getNamedValue(Request.Symbol);

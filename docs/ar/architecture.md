@@ -14,6 +14,8 @@
 
 يحدد `sourcePatchTargetTriple` وضع ARM وABI الفاصلة العائمة ELF والنوع الفرعي CPU في Mach-O من الصورة. يتحقق `COFFPatchObject` و`MachOPatchObject` من رموز الكائن وتعريفاته المساعدة／الأقسام وسجلاته الأصلية دون اختلاق معرفات MC، وتسجل مثبتات التنسيق الجداول الفعلية.
 
+يجمع `SourcePatchCompiler` ترجمة NeverC `cpp-core-v2` وتوليد C23؛ ويربط `validateDynCodePatchImage` التدقيق ببصمات الكائن والحمولة والكود والمدخل الفعلية. تسجل المثبتات بيانات فك المكدس الحقيقية. يستخدم ARM64 FH3 حدود xdata للودر ومجموعات funclet/FuncInfo في MC. دون DWARF أصلي يجب أن تغطي سجلات compact الأصلية كل دوال Mach-O.
+
 ## حدود النظام
 
 ```mermaid

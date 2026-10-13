@@ -1676,3 +1676,9 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 源码 patch 的 Windows 工作流还会运行 `scripts/check_source_patch_pe_runtime.py`：先生成 x86/x64/ARM64 的三份原程序和 27 份替换产物，再为每种架构执行 30 次进程观测。x86/x64 在 Windows x64 上执行，ARM64 在 `windows-11-arm` 上执行；提交、PE 架构、文件哈希和用例清单必须匹配。此 C 进程配置不验证 ARM64 C++ 异常。可用 `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` 选择普通 NeverC 生产器。3389.1.5 的 66 项配置覆盖 x64/ARM64 × ELF、PE、Mach-O；它不支持 x86/ARM32，不能静默切换编译器。PE 适配器使用 `-fno-autolink`，外部 `.drectve` 对象仍被拒绝。
 
 矩阵还会按独立的 ABI 清单核对编译对象和外部原生对象的 `target` 回执。错误对象测试随后必须安装并执行未修改的对象，作为有效输入对照。
+
+可选 `NeverCProfiles/*` 为六个 x64/ARM64 配置增加 30 项测试，覆盖 C++ IR、对象、hosted DynCode、非内联辅助函数/递归和不支持 C++ 的拒绝。`NeverDSourcePatchDynCodeTests` 拒绝伪造摘要、入口、目标、状态和最终验证。`SourcePatchException.NeverC*` 在真实进程检查生命周期及穿过两个 hosted 帧的异常回调。Windows C++ 检查器要求九种补丁场景、原始对照、三次执行以及匹配的机器、提交、摘要和原生 x64/ARM64 主机。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```

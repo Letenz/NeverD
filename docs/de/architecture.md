@@ -15,6 +15,8 @@ Architektur.
 
 `sourcePatchTargetTriple` bestimmt ARM-Modus, ELF-Fließkomma-ABI und Mach-O-CPU-Untertyp anhand des Images. `COFFPatchObject` und `MachOPatchObject` prüfen native Symbole, Hilfs／Abschnittsdefinitionen und Unwind-Daten ohne erfundene MC-IDs. Format-Installer registrieren die tatsächlichen Tabellen.
 
+`SourcePatchCompiler` verbindet NeverC `cpp-core-v2` mit C23; `validateDynCodePatchImage` bindet den Bericht an echte Objekt-/Nutzlasthashes, Code und Einstieg. Formatinstaller registrieren echte Unwind-Daten. ARM64 FH3 nutzt Loader-xdata-Grenzen und MC-funclet/FuncInfo-Gruppen. Ohne ursprüngliches DWARF müssen native Compact-Daten alle Mach-O-Funktionen abdecken.
+
 ## Systemgrenze
 
 ```mermaid

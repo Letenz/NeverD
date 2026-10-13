@@ -116,6 +116,10 @@ target_include_directories(NeverDSessionLLVMTests PRIVATE
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi")
 
 if(TARGET neverd_shared)
+  add_neverd_unittest(NeverDSourcePatchDynCodeTests
+    SourcePatchDynCodeTests.cpp
+    LINK_COMPONENTS CodeGen
+  )
   set(NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE
     "${NEVERD_TEST_CLANG_EXECUTABLE}" CACHE FILEPATH
     "Clang executable for the source-patch LLVM IR compatibility profile")

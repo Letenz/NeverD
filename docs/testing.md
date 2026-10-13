@@ -5655,3 +5655,9 @@ Driver write-watch controls independently encode changed-value and repeated same
 `KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.
 
 Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.
+
+The optional `NeverCProfiles/*` matrix adds 30 tests across six x64/ARM64 profiles: C++ IR, C++ objects, C++ hosted DynCode, noninline helpers/recursion and unsupported C++ rejection. `NeverDSourcePatchDynCodeTests` rejects forged artifact digests, entries, targets, state and final verification. `SourcePatchException.NeverC*` runs actual lifetimes and a throwing callback through two hosted frames. The Windows C++ checker requires nine patched scenarios, original controls, three attempts, matching machine/commit/digests and native x64/ARM64 hosts.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```

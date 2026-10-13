@@ -14,6 +14,8 @@
 
 `sourcePatchTargetTriple`은 이미지에서 ARM 모드, ELF 부동소수점 ABI와 Mach-O CPU 하위 유형을 선택합니다. `COFFPatchObject`와 `MachOPatchObject`는 객체 자체 심볼, 보조／섹션 정의와 언와인드 기록으로 범위를 검증하며 MC ID를 만들지 않습니다. 형식별 설치기가 실제 테이블을 등록합니다.
 
+`SourcePatchCompiler`는 NeverC `cpp-core-v2`와 C23 생성을 조합하며 `validateDynCodePatchImage`는 감사를 실제 객체/페이로드 해시, 코드, 진입점에 연결합니다. 형식 설치기는 실제 언와인드 기록을 등록합니다. ARM64 FH3는 로더 xdata 범위와 MC funclet/FuncInfo 소유권을 사용합니다. DWARF가 없는 Mach-O는 모든 함수의 native compact 기록이 필요합니다.
+
 ## 시스템 경계
 
 ```mermaid

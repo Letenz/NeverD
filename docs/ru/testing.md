@@ -1836,3 +1836,9 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 Рабочий процесс Windows для исходных патчей также запускает `scripts/check_source_patch_pe_runtime.py`: три оригинала и 27 замен x86/x64/ARM64, затем по 30 наблюдений процессов на архитектуру. x86/x64 используют Windows x64, ARM64 — `windows-11-arm`. Коммит, архитектура PE, хеши и полный набор случаев должны совпадать. Этот профиль C не проверяет исключения C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` выбирает обычный NeverC. Его 66 проверок версии 3389.1.5 охватывают x64/ARM64 с ELF, PE и Mach-O; x86/ARM32 не поддерживаются, автоматической замены компилятора нет. Адаптер PE использует `-fno-autolink`; внешние объекты `.drectve` по-прежнему отклоняются.
 
 Матрица также сверяет квитанции `target` скомпилированных и предоставленных нативных объектов с независимым перечнем ABI. После проверки повреждённых входных данных тесты должны установить и выполнить неизменённый объект как положительный контроль.
+
+`NeverCProfiles/*` добавляет 30 тестов для шести x64/ARM64-профилей: C++ IR/объекты/hosted DynCode, неинлайновые helpers, рекурсия и отказ неподдерживаемому C++. `NeverDSourcePatchDynCodeTests` отвергает поддельные хеши, входы, цели, состояние и проверки. `SourcePatchException.NeverC*` проверяет реальные процессы и исключения через два кадра. Windows требует девять patch-сценариев, исходные контроли, три повтора, совпадающие машину/коммит/хеши и нативные x64/ARM64-хосты.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```

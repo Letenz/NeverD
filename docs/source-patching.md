@@ -9,11 +9,13 @@ NeverD compiles a replacement with the selected compiler and installs it at an e
 <!-- i18n-section: compiler -->
 ## Compiler selection
 
-Choose `--compiler=clang`, `--compiler=gcc` or `--compiler=neverc`. Clang and ordinary NeverC can produce LLVM IR; the `object` artifact preserves native producer instructions. The CLI selects objects for GCC. The Python SDK needs an explicit `artifact="object"` for GCC. A selected compiler never silently falls back.
+Choose `--compiler=clang`, `--compiler=gcc` or `--compiler=neverc`. Clang and ordinary NeverC can produce LLVM IR; the `object` artifact preserves native producer instructions. The CLI selects objects for GCC. The Python SDK also selects objects for GCC. A selected compiler never silently falls back.
 
 Use `--compiler-arg` or SDK `compiler_args` for includes, macro definitions and supported source options. Target/output overrides and response-file tokens (`@file`) are refused in all positions, including separate option values. Ordinary `-I` paths and `-D` definitions remain supported.
 
 Use authenticated entries for the example addresses. The replacement declaration must match the original machine ABI, including calling convention and structure layouts; an address cannot prove that declaration. C++ needs `--language=c++` and the correct Clang++/G++ executable. Prefer an `extern "C"` entry or pass the exact mangled symbol. Extra helpers are allowed. Both `--entry` and `--func` select the replacement explicitly. The legacy `--from-c` address is also honored.
+
+You can also select `artifact="object"` explicitly.
 
 ```sh
 # Clang C -> LLVM IR
@@ -40,6 +42,25 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## Verified profiles and limits
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++ and hosted DynCode**
+
+NeverC C++ uses the built-in `cpp-core-v2` C++17 translator and then NeverC C23 code generation on x64/ARM64 ELF, PE and Mach-O. Templates and normal constructor/destructor lifetimes are supported within that documented subset. Use an explicit `extern "C"` entry. C++ exceptions, RTTI, virtual dispatch and cleanup during foreign exception propagation are outside that translation profile; use Clang for exception code. The receipt contains both commands, the target manifest, source map and verified hashes.
+
+`dyncode`: `--compile-mode=dyncode` selects NeverC’s `-fdyncode-hosted` profile. It requires source, one explicit entry, a native object and no original bindings. CLI and Python default to the object artifact for this mode and GCC. The adapter verifies the kept object and final payload digests; the installer compares every linked code byte and the native entry offset before publishing. Real compiler CFI/SEH or complete native compact records provide unwind coverage. It rejects mutable/TLS globals, implicit syscall/PEB/heap/string runtime lowering, unresolved imports and changed/reordered code. Data and callback pointers can be passed as parameters.
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+The Clang LLVM-IR route also admits Windows ARM64 C++ FH3, checking compiler-owned xdata, parent-frame ABI and exact funclet/FuncInfo groups. Native object language handlers remain unsupported. `check_source_patch_cpp_runtime.py` prepares x64/ARM64 images and runs nine patched exception scenarios on matching native Windows hosts; CPU execution and OS unwinder qualification remain separate evidence.
+
 | Producer | Artifact | Verified OS runtime profile |
 |---|---|---|
 | Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
@@ -48,7 +69,7 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
-These are checked OS runtime profiles, not promises for every compiler version or option. The native installers accept all four architectures in ELF, PE and Mach-O. `dyncode` and NeverC C++ are not admitted; GCC requires a matching ELF driver and cannot produce LLVM IR. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
+These are checked OS runtime profiles, not promises for every compiler version or option. The native installers accept all four architectures in ELF, PE and Mach-O. GCC requires a matching ELF driver and cannot produce LLVM IR. Unknown relocations, TLS, constructors, LTO, common/IFUNC symbols and unresolved imports fail clearly. The JSON receipt records compiler identity, arguments, bindings and installed addresses; native objects also record SHA-256.
 
 The `target` field of a native object receipt comes from the loaded image ABI, including ARM ELF floating-point flags and the distinct iOS/watchOS platforms. Compiler-produced and supplied objects use the same identity rule.
 

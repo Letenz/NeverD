@@ -217,25 +217,30 @@ def native_machine() -> int:
     return native.value
 
 
+def runtime_host(arch: str, runner: Path | None, expected_native_host: str | None) -> str:
+    if runner:
+        if expected_native_host:
+            raise ValueError("an external runner cannot claim native Windows coverage")
+        return "external-runner"
+    else:
+        if expected_native_host is None:
+            raise ValueError("--expected-native-host is required for native qualification")
+        actual = native_machine()
+        expected = PROFILES[expected_native_host][1]
+        if actual != expected:
+            raise RuntimeError(f"native machine {actual:#x} differs from {expected:#x}")
+        host = expected_native_host
+        if arch == "arm64" and host != "arm64":
+            raise ValueError("ARM64 fixtures require native Windows ARM64")
+        return host
+
+
 def execute(args: argparse.Namespace) -> None:
     root = args.root.resolve()
     report_path = root / (args.arch + "-runtime.json")
     # A failed replay must not leave an earlier success for artifact consumers.
     report_path.unlink(missing_ok=True)
-    if args.runner:
-        if args.expected_native_host:
-            raise ValueError("an external runner cannot claim native Windows coverage")
-        host = "external-runner"
-    else:
-        if args.expected_native_host is None:
-            raise ValueError("--expected-native-host is required for native qualification")
-        actual = native_machine()
-        expected = PROFILES[args.expected_native_host][1]
-        if actual != expected:
-            raise RuntimeError(f"native machine {actual:#x} differs from {expected:#x}")
-        host = args.expected_native_host
-        if args.arch == "arm64" and host != "arm64":
-            raise ValueError("ARM64 fixtures require native Windows ARM64")
+    host = runtime_host(args.arch, args.runner, args.expected_native_host)
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("schema") != "neverd.source-patch.pe-runtime.v1":
         raise ValueError("unknown runtime manifest schema")

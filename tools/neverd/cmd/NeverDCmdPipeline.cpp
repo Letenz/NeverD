@@ -175,7 +175,8 @@ int runSourcePatch(neverd_session_t Sess, StringRef Output, int Strategy) {
       PatchLanguage == "c++" ? NEVERD_SOURCE_PATCH_CXX : NEVERD_SOURCE_PATCH_C;
   Options.artifact =
       PatchArtifact == "object" || !PatchFromObject.empty() ||
-              (PatchCompiler == "gcc" && !PatchArtifact.getNumOccurrences())
+              ((PatchCompiler == "gcc" || PatchCompileMode == "dyncode") &&
+               !PatchArtifact.getNumOccurrences())
           ? NEVERD_SOURCE_PATCH_ARTIFACT_OBJECT
           : NEVERD_SOURCE_PATCH_ARTIFACT_IR;
   Options.mode = PatchCompileMode == "dyncode" ? NEVERD_SOURCE_PATCH_DYNCODE

@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
+<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@ NeverD は指定したコンパイラで置換関数をコンパイルし、明�
 <!-- i18n-section: compiler -->
 ## コンパイラの選択
 
-`--compiler=clang`、`--compiler=gcc`、`--compiler=neverc` を選択します。Clang と通常モードの NeverC は LLVM IR を生成できます。`object` は生成された機械命令を保持します。CLI は GCC に対してオブジェクトを既定で選び、Python SDK では `artifact="object"` の指定が必要です。他のコンパイラへの暗黙のフォールバックはありません。
+`--compiler=clang`、`--compiler=gcc`、`--compiler=neverc` を選択します。Clang と通常モードの NeverC は LLVM IR を生成できます。`object` は生成された機械命令を保持します。CLI は GCC に対してオブジェクトを既定で選び、Python SDK も GCC にはオブジェクトを既定で選びます。他のコンパイラへの暗黙のフォールバックはありません。
 
 インクルードパス、マクロ定義、対応するソースオプションには `--compiler-arg` または SDK の `compiler_args` を使います。ターゲットや出力モードの上書きとレスポンスファイルのトークン（`@file`）は、独立したオプションの値を含め、どの引数位置でも拒否されます。通常の `-I` パスと `-D` 定義は引き続き使用できます。
 
 例のアドレスは確認済みの元関数入口に置き換えてください。置換関数の宣言は呼出規約と構造体配置を含む元の機械 ABI と一致する必要があり、アドレスだけでは証明できません。C++ は `--language=c++` と適切な Clang++/G++ を使います。入口は `extern "C"` にするか、正確な修飾名を指定してください。補助関数は追加できます。`--entry` と `--func` で置換対象を明示し、従来の `--from-c` も指定アドレスを尊重します。
+
+`artifact="object"` を明示することもできます。
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,6 +44,25 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## 検証済みプロファイルと制限
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++ と hosted DynCode**
+
+NeverC C++ は x64/ARM64 の ELF、PE、Mach-O で組み込み `cpp-core-v2` C++17 変換と NeverC C23 コード生成を使います。文書化された部分集合でテンプレートと通常の構築・破棄を扱い、入口は `extern "C"` が必須です。C++ 例外、RTTI、仮想呼び出し、外部例外中の後始末は対象外で、例外コードには Clang を使います。証跡には両段階のコマンド、対象マニフェスト、ソースマップ、検証済みハッシュを含みます。
+
+`dyncode`: `--compile-mode=dyncode` は NeverC の `-fdyncode-hosted` を使い、ソース、一つの明示入口、ネイティブオブジェクト、既存シンボルへのバインドなしを要求します。CLI と Python はこのモードと GCC にオブジェクトを既定で選択します。両成果物のハッシュ、リンク済みコード全バイト、入口を検証し、実際の CFI/SEH または完全な native compact 記録を登録します。可変/TLS 状態、暗黙の syscall/PEB/heap/string 変換、未解決参照、コード再配置は拒否します。データやコールバックは引数で渡せます。
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+Clang LLVM IR は Windows ARM64 C++ FH3 も受け付け、xdata、親フレーム ABI、funclet/FuncInfo の所有関係を確認します。オブジェクトの言語ハンドラは対象外です。`check_source_patch_cpp_runtime.py` は x64/ARM64 のネイティブ Windows で九つの例外シナリオを実行し、CPU と OS 展開器の証拠を区別します。
+
 | コンパイラ | 成果物 | OS 上で検証した実行プロファイル |
 |---|---|---|
 | Clang 22.1.6 | LLVM IR | ELF x64 C/C++、Mach-O x64/ARM64 C/C++、PE x86/x64/ARM64 C; PE x64 C++ FH3 |
@@ -50,7 +71,7 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 通常モード | LLVM IR | ELF x64 C、Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 通常モード | ネイティブオブジェクト | ELF x64 C |
 
-上表は検証済み OS 実行構成です。すべてのコンパイラ版やオプションを保証するものではありません。ELF、PE、Mach-O のネイティブインストーラは四つのアーキテクチャを受け付けます。`dyncode` と NeverC C++ は未対応です。GCC は一致する ELF ドライバが必要で、LLVM IR は生成できません。未知の再配置、TLS、コンストラクタ、LTO、common/IFUNC シンボル、未解決インポートは明示的に失敗します。JSON 証跡はコンパイラ、引数、バインド、設置アドレスを記録し、ネイティブオブジェクトには SHA-256 も記録します。
+上表は検証済み OS 実行構成です。すべてのコンパイラ版やオプションを保証するものではありません。ELF、PE、Mach-O のネイティブインストーラは四つのアーキテクチャを受け付けます。GCC は一致する ELF ドライバが必要で、LLVM IR は生成できません。未知の再配置、TLS、コンストラクタ、LTO、common/IFUNC シンボル、未解決インポートは明示的に失敗します。JSON 証跡はコンパイラ、引数、バインド、設置アドレスを記録し、ネイティブオブジェクトには SHA-256 も記録します。
 
 ネイティブオブジェクトの証跡にある `target` は、読み込んだイメージの ABI に基づきます。ARM ELF の浮動小数点フラグと iOS/watchOS の区別も含まれます。コンパイル済みオブジェクトと外部オブジェクトには同じ識別規則を適用します。
 

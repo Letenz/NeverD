@@ -1768,3 +1768,9 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ソース patch の Windows ワークフローは `scripts/check_source_patch_pe_runtime.py` も実行します。x86/x64/ARM64 の元プログラム 3 個と置換結果 27 個を生成し、アーキテクチャごとにプロセス実行を 30 回観測します。x86/x64 は Windows x64、ARM64 は `windows-11-arm` で実行し、コミット、PE の種類、ファイルハッシュ、全ケースの一致を要求します。この C プロファイルは ARM64 C++ 例外を検証しません。`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` は通常モードの NeverC を選択します。3389.1.5 の 66 チェックは x64/ARM64 と ELF、PE、Mach-O を対象とし、x86/ARM32 は非対応です。コンパイラーは自動で切り替わりません。PE アダプターは `-fno-autolink` を使用し、外部の `.drectve` オブジェクトは引き続き拒否します。
 
 行列は、コンパイル済みおよび外部のネイティブオブジェクトについて、独立した ABI 一覧と `target` 証跡を照合します。不正なオブジェクトのテストでは、未変更の有効なオブジェクトもインストールして実行する必要があります。
+
+任意の `NeverCProfiles/*` は六つの x64/ARM64 構成で 30 件を追加し、C++ IR/オブジェクト/hosted DynCode、非インライン補助関数・再帰、未対応 C++ の拒否を扱います。`NeverDSourcePatchDynCodeTests` はハッシュ、入口、対象、状態、検証の偽造を拒否します。`SourcePatchException.NeverC*` は実プロセスで寿命と二つのフレームを通る例外を検証します。Windows 検査は九つの置換シナリオと元の対照を三回実行し、マシン・コミット・ハッシュと native x64/ARM64 ホストを要求します。
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```

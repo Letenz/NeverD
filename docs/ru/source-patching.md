@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
+<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@ NeverD компилирует замену выбранным компилято
 <!-- i18n-section: compiler -->
 ## Выбор компилятора
 
-Выберите `--compiler=clang`, `--compiler=gcc` или `--compiler=neverc`. Clang и обычный режим NeverC могут создавать LLVM IR; артефакт `object` сохраняет машинные инструкции производителя. CLI по умолчанию выбирает объекты для GCC. В Python SDK для GCC нужно явно указать `artifact="object"`. Незаметной подмены компилятора нет.
+Выберите `--compiler=clang`, `--compiler=gcc` или `--compiler=neverc`. Clang и обычный режим NeverC могут создавать LLVM IR; артефакт `object` сохраняет машинные инструкции производителя. CLI по умолчанию выбирает объекты для GCC. Python SDK также выбирает объекты для GCC. Незаметной подмены компилятора нет.
 
 Передавайте пути включения, определения макросов и поддерживаемые параметры исходного кода через `--compiler-arg` или `compiler_args` SDK. Изменение целевой платформы или режима вывода и токены файлов отклика (`@file`) отклоняются в любой позиции аргументов, включая отдельные значения параметров. Обычные пути `-I` и определения `-D` по-прежнему поддерживаются.
 
 Замените адреса примеров подтверждёнными входами исходных функций. Объявление замены должно совпадать с исходным машинным ABI, включая соглашение о вызовах и размещение структур; адрес этого не доказывает. Для C++ нужны `--language=c++` и подходящий Clang++/G++. Используйте вход `extern "C"` или точное декорированное имя. Дополнительные функции разрешены. `--entry` и `--func` явно выбирают замену; прежний `--from-c` также учитывает адрес.
+
+Можно также явно выбрать `artifact="object"`.
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,6 +44,25 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## Проверенные профили и ограничения
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++ и hosted DynCode**
+
+NeverC C++ использует встроенный `cpp-core-v2` C++17 и генерацию NeverC C23 для ELF, PE, Mach-O x64/ARM64. Документированное подмножество включает шаблоны и обычные времена жизни; вход требует `extern "C"`. Исключения C++, RTTI, виртуальные вызовы и очистка при внешних исключениях исключены; для исключений выбирайте Clang. Квитанция содержит обе команды, манифест ABI, карту и проверенные хеши.
+
+`dyncode`: `--compile-mode=dyncode` использует `-fdyncode-hosted`: исходник, один явный вход, нативный объект и отсутствие исходных привязок. CLI и Python выбирают объект для этого режима и GCC. Перед публикацией проверяются хеши, каждый байт кода и вход; развёртку обеспечивают настоящие CFI/SEH или полные compact-записи. Изменяемое/TLS-состояние, неявные syscall/PEB/heap/string-преобразования, неразрешённые импорты и переставленный код отклоняются. Данные и callback передаются параметрами.
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+Clang LLVM IR поддерживает Windows ARM64 C++ FH3 с проверкой xdata, ABI родительского кадра и групп funclet/FuncInfo. Языковые обработчики объектов пока не поддерживаются. `check_source_patch_cpp_runtime.py` запускает девять сценариев на нативном Windows x64/ARM64, разделяя CPU и OS-unwinder доказательства.
+
 | Компилятор | Артефакт | Проверенный профиль выполнения ОС |
 |---|---|---|
 | Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
@@ -50,7 +71,7 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 обычный режим | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 обычный режим | Нативный объект | ELF x64 C |
 
-Таблица описывает проверенные профили ОС, а не гарантии для всех версий и параметров. Нативные установщики ELF, PE и Mach-O принимают все четыре архитектуры. `dyncode` и NeverC C++ не поддерживаются. GCC требует подходящий драйвер ELF и не создаёт LLVM IR. Неизвестные релокации, TLS, конструкторы, LTO, символы common/IFUNC и неразрешённые импорты вызывают явную ошибку. JSON-квитанция содержит компилятор, аргументы, привязки и адреса; для нативных объектов также записывается SHA-256.
+Таблица описывает проверенные профили ОС, а не гарантии для всех версий и параметров. Нативные установщики ELF, PE и Mach-O принимают все четыре архитектуры. GCC требует подходящий драйвер ELF и не создаёт LLVM IR. Неизвестные релокации, TLS, конструкторы, LTO, символы common/IFUNC и неразрешённые импорты вызывают явную ошибку. JSON-квитанция содержит компилятор, аргументы, привязки и адреса; для нативных объектов также записывается SHA-256.
 
 Поле `target` в квитанции нативного объекта определяется ABI загруженного образа, включая флаги плавающей точки ARM ELF и различие платформ iOS/watchOS. Скомпилированные и предоставленные объекты используют одно правило идентификации.
 

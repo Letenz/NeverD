@@ -2060,7 +2060,7 @@ planCOFFSourcePatch(const llvm::Module &Mod, const BinaryImage &Image,
     if (Function.isDeclaration())
       continue;
     if (Function.hasPersonalityFn()) {
-      if (TargetArch != Arch::X64)
+      if (!isFH3OutputArchitecture(TargetArch))
         return patchError("replacement language handlers require a verified "
                           "architecture-specific source ABI");
       const auto *Personality = llvm::dyn_cast<llvm::Function>(

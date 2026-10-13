@@ -14,6 +14,8 @@
 
 `sourcePatchTargetTriple` определяет режим ARM, ABI плавающей точки ELF и подтип CPU Mach-O по образу. `COFFPatchObject` и `MachOPatchObject` проверяют собственные символы, вспомогательные／секционные определения и записи объекта без вымышленных ID MC. Форматные установщики регистрируют реальные таблицы.
 
+`SourcePatchCompiler` объединяет NeverC `cpp-core-v2` и C23; `validateDynCodePatchImage` связывает отчёт с реальными хешами, кодом и входом. Установщики регистрируют настоящую развёртку. ARM64 FH3 использует границы xdata загрузчика и группы funclet/FuncInfo MC. Без исходного DWARF native compact должен покрывать все функции Mach-O.
+
 ## Граница системы
 
 ```mermaid

@@ -31,6 +31,8 @@ publication. These
 new-program contracts do not assert equivalence to the original Windows EH
 graph; `COFFExceptionPatch` continues to require that evidence for lifted code.
 
+`SourcePatchCompiler` composes NeverC `cpp-core-v2` translation and C23 generation; `validateDynCodePatchImage` binds the hosted audit to actual object/payload hashes and exact linked code/entry layout. Format installers register real compiler unwind records. ARM64 source FH3 uses loader-owned xdata extents and MC-owned funclet/FuncInfo groups. Native compact records may cover every Mach-O function when the original has no DWARF section.
+
 ## Manual PDB presentation boundary
 
 `PDBDebugContext::inspect` owns manual PE/PDB validation. A missing CodeView

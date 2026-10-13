@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
+<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@ NeverD는 선택한 컴파일러로 대체 함수를 컴파일한 뒤 명시된 
 <!-- i18n-section: compiler -->
 ## 컴파일러 선택
 
-`--compiler=clang`, `--compiler=gcc`, `--compiler=neverc` 중에서 선택합니다. Clang과 일반 모드 NeverC는 LLVM IR을 생성할 수 있으며 `object`는 컴파일러의 기계어를 보존합니다. CLI는 GCC에 오브젝트를 기본으로 선택합니다. Python SDK에서는 GCC에 `artifact="object"`를 명시해야 합니다. 다른 컴파일러로 조용히 대체하지 않습니다.
+`--compiler=clang`, `--compiler=gcc`, `--compiler=neverc` 중에서 선택합니다. Clang과 일반 모드 NeverC는 LLVM IR을 생성할 수 있으며 `object`는 컴파일러의 기계어를 보존합니다. CLI는 GCC에 오브젝트를 기본으로 선택합니다. Python SDK도 GCC에 오브젝트를 기본 선택합니다. 다른 컴파일러로 조용히 대체하지 않습니다.
 
 포함 경로, 매크로 정의 및 지원하는 소스 옵션은 `--compiler-arg` 또는 SDK의 `compiler_args`로 전달합니다. 대상과 출력 모드 재정의 및 응답 파일 토큰(`@file`)은 별도로 전달하는 옵션 값을 포함한 모든 인수 위치에서 거부됩니다. 일반적인 `-I` 경로와 `-D` 정의는 계속 지원됩니다.
 
 예시 주소를 확인된 원래 함수 진입점으로 바꾸세요. 대체 선언은 호출 규약과 구조체 배치를 포함한 원래 기계 ABI와 일치해야 하며 주소만으로 이를 증명할 수 없습니다. C++에는 `--language=c++`와 적절한 Clang++/G++ 경로가 필요합니다. `extern "C"` 진입점을 사용하거나 정확한 맹글링 이름을 전달하세요. 추가 보조 함수는 허용됩니다. `--entry`와 `--func`가 대체 대상을 명시하며 기존 `--from-c`도 지정 주소를 따릅니다.
+
+`artifact="object"`를 명시할 수도 있습니다.
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,6 +44,25 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## 검증된 프로파일 및 제한
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++와 hosted DynCode**
+
+NeverC C++는 x64/ARM64 ELF, PE, Mach-O에서 내장 `cpp-core-v2` C++17 변환 후 NeverC C23 코드를 생성합니다. 문서화된 부분집합의 템플릿과 정상 생성·소멸 수명을 지원하며 `extern "C"` 진입점이 필요합니다. C++ 예외, RTTI, 가상 디스패치와 외부 예외 중 정리는 범위 밖이므로 예외 코드는 Clang을 사용합니다. 기록에는 두 명령, 대상 매니페스트, 소스 맵과 검증 해시가 포함됩니다.
+
+`dyncode`: `--compile-mode=dyncode`는 NeverC `-fdyncode-hosted`를 사용하며 소스, 하나의 명시적 진입점, 네이티브 객체와 기존 심볼 바인딩 없음이 필요합니다. CLI와 Python은 이 모드와 GCC에 객체를 기본 선택합니다. 객체·최종 페이로드 해시, 링크된 모든 코드 바이트와 진입점을 검사하고 실제 CFI/SEH 또는 완전한 native compact 기록으로 언와인드를 보장합니다. 가변/TLS 상태, 암시적 syscall/PEB/heap/string 변환, 미해결 참조와 재배열 코드는 거부합니다. 데이터·콜백 포인터는 인수로 전달할 수 있습니다.
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+Clang LLVM IR 경로는 Windows ARM64 C++ FH3를 지원하며 xdata, 부모 프레임 ABI와 funclet/FuncInfo 소유권을 확인합니다. 객체 언어 처리기는 지원하지 않습니다. `check_source_patch_cpp_runtime.py`는 x64/ARM64 네이티브 Windows에서 아홉 예외 시나리오를 실행하며 CPU와 OS 언와인더 증거를 구분합니다.
+
 | 컴파일러 | 산출물 | 검증된 OS 실행 프로파일 |
 |---|---|---|
 | Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
@@ -50,7 +71,7 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 일반 모드 | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 일반 모드 | 네이티브 오브젝트 | ELF x64 C |
 
-위 표는 검증된 OS 실행 구성이며 모든 컴파일러 버전이나 옵션을 보장하지 않습니다. ELF, PE, Mach-O 네이티브 설치기는 네 아키텍처를 모두 받아들입니다. `dyncode`와 NeverC C++는 지원하지 않습니다. GCC는 일치하는 ELF 드라이버가 필요하며 LLVM IR을 생성할 수 없습니다. 알 수 없는 재배치, TLS, 생성자, LTO, common/IFUNC 심볼, 미해결 가져오기는 명확히 실패합니다. JSON 기록에는 컴파일러, 인수, 바인딩, 설치 주소가 포함되며 네이티브 객체에는 SHA-256도 기록합니다.
+위 표는 검증된 OS 실행 구성이며 모든 컴파일러 버전이나 옵션을 보장하지 않습니다. ELF, PE, Mach-O 네이티브 설치기는 네 아키텍처를 모두 받아들입니다. GCC는 일치하는 ELF 드라이버가 필요하며 LLVM IR을 생성할 수 없습니다. 알 수 없는 재배치, TLS, 생성자, LTO, common/IFUNC 심볼, 미해결 가져오기는 명확히 실패합니다. JSON 기록에는 컴파일러, 인수, 바인딩, 설치 주소가 포함되며 네이티브 객체에는 SHA-256도 기록합니다.
 
 네이티브 객체 기록의 `target` 필드는 로드한 이미지의 ABI에서 결정하며 ARM ELF 부동소수점 플래그와 iOS/watchOS 플랫폼 구분도 포함합니다. 컴파일된 객체와 외부 객체에 같은 식별 규칙을 적용합니다.
 

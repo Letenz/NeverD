@@ -15,6 +15,8 @@ architettura interna.
 
 `sourcePatchTargetTriple` ricava modo ARM, ABI floating point ELF e sottotipo CPU Mach-O dall’immagine. `COFFPatchObject` e `MachOPatchObject` verificano simboli, definizioni ausiliarie／di sezione e dati unwind nativi senza inventare ID MC. Gli installatori di formato registrano le tabelle effettive.
 
+`SourcePatchCompiler` combina NeverC `cpp-core-v2` e C23; `validateDynCodePatchImage` lega l’audit a hash, codice e ingresso reali. Gli installatori registrano unwind reale. ARM64 FH3 usa limiti xdata del loader e gruppi funclet/FuncInfo MC. Senza DWARF originale, record compact nativi devono coprire tutte le funzioni Mach-O.
+
 ## Confine del sistema
 
 ```mermaid

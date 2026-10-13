@@ -13,6 +13,8 @@ NeverD 自有代码；LLVM、Capstone 和 Unicorn 子模块维护各自的内部
 
 `sourcePatchTargetTriple` 从镜像确定 ARM 指令模式、ELF 浮点 ABI 和 Mach-O CPU 子类型。`COFFPatchObject` 与 `MachOPatchObject` 使用对象自身的符号、辅助／区段定义和展开记录验证范围，原生对象不伪造 MC 标识；格式安装器负责注册实际展开表。
 
+`SourcePatchCompiler` 组合 NeverC `cpp-core-v2` 翻译和 C23 生成；`validateDynCodePatchImage` 将 hosted 审计绑定到实际对象/载荷摘要及最终代码和入口布局。格式安装器注册真实展开记录。ARM64 源 FH3 使用加载器拥有的 xdata 范围和 MC 拥有的 funclet/FuncInfo 分组。原始 Mach-O 没有 DWARF 节时，必须由原生 compact 记录覆盖全部函数。
+
 ## 系统边界
 
 ```mermaid

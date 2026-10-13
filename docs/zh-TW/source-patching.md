@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
+<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@ NeverD 使用指定編譯器編譯替換函式，再安裝到明確的原函式�
 <!-- i18n-section: compiler -->
 ## 選擇編譯器
 
-使用 `--compiler=clang`、`--compiler=gcc` 或 `--compiler=neverc`。Clang 與普通模式 NeverC 可產生 LLVM IR；`object` 製品保留編譯器產生的機器指令。CLI 對 GCC 預設選擇物件；Python SDK 使用 GCC 時須指定 `artifact="object"`。選定的編譯器不會靜默退回其他編譯器。
+使用 `--compiler=clang`、`--compiler=gcc` 或 `--compiler=neverc`。Clang 與普通模式 NeverC 可產生 LLVM IR；`object` 製品保留編譯器產生的機器指令。CLI 對 GCC 預設選擇物件；Python SDK 對 GCC 也預設選擇物件。選定的編譯器不會靜默退回其他編譯器。
 
 使用 `--compiler-arg` 或 SDK 的 `compiler_args` 傳入包含路徑、巨集定義及受支援的原始碼選項。禁止覆寫目標或輸出模式，也禁止在任何參數位置傳入回應檔標記（`@file`），包括獨立選項的值。一般的 `-I` 路徑和 `-D` 巨集定義仍然受支援。
 
 示例位址須替換為已確認的原函式入口。替換宣告必須符合原機器 ABI，包括呼叫慣例與結構配置；位址本身不能證明宣告正確。C++ 需要 `--language=c++` 與正確的 Clang++/G++ 路徑。建議使用 `extern "C"` 入口，否則傳入精確的修飾名稱。允許額外輔助函式。`--entry` 與 `--func` 共同明確指定替換目標；舊入口 `--from-c` 亦遵守指定位址。
+
+也可明確指定 `artifact="object"`。
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,6 +44,25 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## 已驗證設定與限制
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++ 與 hosted DynCode**
+
+NeverC C++ 在 x64/ARM64 ELF、PE、Mach-O 上透過內建 `cpp-core-v2` C++17 翻譯器，再由 NeverC 產生 C23。文件子集支援模板及正常控制流程的建構、解構，入口须使用 `extern "C"`。C++ 例外、RTTI、虛擬分派及外部例外傳播時的清理不在此設定內；例外程式碼請用 Clang。憑據包含兩階段命令、目標清單、來源映射及驗證雜湊。
+
+`dyncode`: `--compile-mode=dyncode` 使用 NeverC `-fdyncode-hosted`，要求原始碼、一個明確入口及原生物件，不允許既有符號繫結。CLI 與 Python 對此模式及 GCC 預設選擇物件。安裝前驗證物件與最終載荷摘要、程式碼位元組和入口偏移，並使用真實 CFI/SEH 或完整 native compact 展開記錄。可寫/TLS 狀態、隱含 syscall/PEB/heap/string 改寫、未解析匯入及變動或重排的程式碼明確失敗；指標可由參數傳入。
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+Clang LLVM IR 路徑接入 Windows ARM64 C++ FH3，驗證 xdata、父框架 ABI 與 funclet/FuncInfo 歸屬。原生物件語言處理器仍不支援。`check_source_patch_cpp_runtime.py` 在相符的 x64/ARM64 原生 Windows 主機執行九種例外補丁情境；CPU 與 OS 展開器證據分別記錄。
+
 | 編譯器 | 製品 | 已驗證的作業系統執行設定 |
 |---|---|---|
 | Clang 22.1.6 | LLVM IR | ELF x64 C/C++；Mach-O x64/ARM64 C/C++；PE x86/x64/ARM64 C; PE x64 C++ FH3 |
@@ -50,7 +71,7 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 普通模式 | LLVM IR | ELF x64 C；Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 普通模式 | 原生物件 | ELF x64 C |
 
-上表是已驗證的作業系統執行設定，不保證所有編譯器版本與選項。ELF、PE、Mach-O 原生安裝器皆接入四種架構。尚未接入 `dyncode` 或 NeverC C++；GCC 需要相符的 ELF 驅動，不能產生 LLVM IR。未知重定位、TLS、建構函式、LTO、common/IFUNC 符號及未解析匯入皆明確失敗。JSON 憑據記錄編譯器身分、參數、繫結及安裝位址，原生物件另記錄 SHA-256。
+上表是已驗證的作業系統執行設定，不保證所有編譯器版本與選項。ELF、PE、Mach-O 原生安裝器皆接入四種架構。GCC 需要相符的 ELF 驅動，不能產生 LLVM IR。未知重定位、TLS、建構函式、LTO、common/IFUNC 符號及未解析匯入皆明確失敗。JSON 憑據記錄編譯器身分、參數、繫結及安裝位址，原生物件另記錄 SHA-256。
 
 原生物件憑據中的 `target` 欄位來自已載入映像的 ABI，包括 ARM ELF 浮點旗標以及不同的 iOS/watchOS 平台。編譯產生的物件與外部物件使用同一項身分規則。
 

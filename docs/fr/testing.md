@@ -1883,3 +1883,9 @@ L’exécution KVM x64 vérifiée confie toute la boucle d’instructions au thr
 Le workflow Windows des patches source exécute aussi `scripts/check_source_patch_pe_runtime.py` : trois originaux et 27 remplacements pour x86/x64/ARM64, puis 30 observations de processus par architecture. x86/x64 utilisent Windows x64 et ARM64 utilise `windows-11-arm`. Commit, architecture PE, empreintes et inventaire doivent correspondre. Ce profil C ne valide pas les exceptions C++ ARM64. `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` sélectionne le mode ordinaire de NeverC. Les 66 vérifications de 3389.1.5 couvrent x64/ARM64 avec ELF, PE et Mach-O ; x86/ARM32 sont indisponibles et aucun autre compilateur n’est choisi automatiquement. L’adaptateur PE utilise `-fno-autolink` ; les objets externes `.drectve` restent refusés.
 
 La matrice compare aussi les reçus `target` des objets natifs compilés et fournis à un inventaire ABI indépendant. Après les entrées malformées, les tests doivent installer et exécuter l’objet non modifié comme témoin valide.
+
+`NeverCProfiles/*` ajoute 30 tests sur six profils x64/ARM64 : C++ IR/objets/hosted DynCode, helpers non inline, récursion et refus C++ non pris en charge. `NeverDSourcePatchDynCodeTests` refuse empreintes, entrées, cibles, état et vérification falsifiés. `SourcePatchException.NeverC*` exécute les durées de vie et exceptions traversant deux cadres. Le vérificateur Windows exige neuf scénarios modifiés, contrôles originaux, trois répétitions et machine/commit/empreintes/hôtes natifs x64/ARM64 concordants.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```

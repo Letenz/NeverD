@@ -1793,3 +1793,9 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 يشغّل سير Windows لرقع المصدر أيضًا `scripts/check_source_patch_pe_runtime.py`: ثلاثة أصول و27 بديلًا لـx86/x64/ARM64، ثم 30 ملاحظة تنفيذ لكل معمارية. يعمل x86/x64 على Windows x64 وARM64 على `windows-11-arm`. يجب تطابق الإيداع ومعمارية PE وبصمات الملفات وجميع الحالات. لا يتحقق ملف C هذا من استثناءات C++ على ARM64. يختار `NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` وضع NeverC العادي. تغطي فحوص الإصدار 3389.1.5 الـ66 معمارية x64/ARM64 مع ELF وPE وMach-O؛ لا يدعم x86/ARM32 ولا يستبدل المترجم تلقائيًا. يستخدم محوّل PE الخيار `-fno-autolink` وتظل كائنات `.drectve` الخارجية مرفوضة.
 
 تقارن المصفوفة أيضًا إيصالات `target` للكائنات الأصلية المترجمة والمقدمة بقائمة ABI مستقلة. بعد اختبار المدخلات غير السليمة، يجب تثبيت الكائن غير المعدّل وتنفيذه بوصفه حالة ضابطة صالحة.
+
+يضيف `NeverCProfiles/*` ثلاثين اختبارًا لستة ملفات x64/ARM64: C++ IR والكائنات وhosted DynCode والدوال غير المضمنة والتكرار ورفض C++ غير المدعوم. يرفض `NeverDSourcePatchDynCodeTests` البصمات والمداخل والأهداف والحالة والتحقق المزيف. يتحقق `SourcePatchException.NeverC*` من عمليات حقيقية واستثناء يمر بإطارين. يتطلب فاحص Windows تسعة سيناريوهات معدلة وضوابط أصلية وثلاث محاولات وتطابق الجهاز والالتزام والبصمات ومضيف x64/ARM64 أصلي.
+
+```sh
+NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatchMatrixTests --gtest_filter="NeverCProfiles/*"
+```

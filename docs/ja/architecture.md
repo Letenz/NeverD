@@ -14,6 +14,8 @@ LLVM、Capstone、Unicorn の各サブモジュールは独自の内部アーキ
 
 `sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。
 
+`SourcePatchCompiler` は NeverC `cpp-core-v2` と C23 生成を組み合わせ、`validateDynCodePatchImage` は監査と実際の成果物ハッシュ・コード・入口を結び付けます。形式別インストーラが本物の展開記録を登録します。ARM64 FH3 はローダの xdata 範囲と MC の funclet/FuncInfo 所有関係を使います。DWARF がない Mach-O では全関数の native compact 記録が必要です。
+
 ## システム境界
 
 ```mermaid

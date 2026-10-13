@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](source-patching.md)
 
-<!-- i18n-source: f3410ee46302b5410aa48a98390c4124032bb9d882fb29cb79cb93031fd10eb9 -->
+<!-- i18n-source: 686b676a1b27b2fd7f3e4df8423c5ad368aa8991bb1621580f755ea25fd6dcda -->
 
 [← Documentation Index](README.md)
 
@@ -11,11 +11,13 @@
 <!-- i18n-section: compiler -->
 ## اختيار المترجم
 
-اختر `--compiler=clang` أو `--compiler=gcc` أو `--compiler=neverc`. يستطيع Clang وNeverC في الوضع العادي إنتاج LLVM IR؛ وتحافظ صيغة `object` على التعليمات الأصلية المنتجة. تختار CLI الكائنات افتراضياً مع GCC. يتطلب Python SDK تحديد `artifact="object"` صراحةً مع GCC. لا يحدث انتقال صامت إلى مترجم آخر.
+اختر `--compiler=clang` أو `--compiler=gcc` أو `--compiler=neverc`. يستطيع Clang وNeverC في الوضع العادي إنتاج LLVM IR؛ وتحافظ صيغة `object` على التعليمات الأصلية المنتجة. تختار CLI الكائنات افتراضياً مع GCC. يختار Python SDK الكائنات افتراضيًا مع GCC أيضًا. لا يحدث انتقال صامت إلى مترجم آخر.
 
 استخدم `--compiler-arg` أو `compiler_args` في SDK لتمرير مسارات التضمين وتعريفات الماكرو وخيارات المصدر المدعومة. تُرفض تغييرات الهدف أو نمط الإخراج ورموز ملفات الاستجابة (`@file`) في جميع مواضع الوسائط، بما فيها القيم المنفصلة للخيارات. تظل مسارات `-I` وتعريفات `-D` العادية مدعومة.
 
 استبدل عناوين الأمثلة بمداخل أصلية مؤكدة. يجب أن يطابق تصريح البديل ABI الأصلي بما فيه اتفاقية الاستدعاء وتخطيط البنى؛ لا يثبت العنوان ذلك. تتطلب C++ الخيار `--language=c++` ومسار Clang++/G++ الصحيح. يفضل مدخل `extern "C"` أو الاسم المزخرف الدقيق. يسمح بدوال مساعدة إضافية. يحدد `--entry` و`--func` البديل صراحةً، ويحترم `--from-c` القديم العنوان أيضاً.
+
+يمكن أيضًا اختيار `artifact="object"` صراحةً.
 
 ```sh
 # Clang C -> LLVM IR
@@ -42,6 +44,25 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 <!-- i18n-section: profiles -->
 ## الملفات المتحققة والقيود
 
+[NeverC producer: 182fd2c5dc](https://github.com/NeverSight/NeverC/commit/182fd2c5dc)
+
+**NeverC C++ وDynCode المستضاف**
+
+يستخدم NeverC C++ مترجم `cpp-core-v2` المضمن لـC++17 ثم توليد NeverC C23 على ELF وPE وMach-O لـx64/ARM64. تدعم المجموعة الجزئية الموثقة القوالب وأعمار الإنشاء والتدمير العادية، مع مدخل `extern "C"`. لا تشمل استثناءات C++ أو RTTI أو الإرسال الافتراضي أو التنظيف خلال استثناءات خارجية؛ استخدم Clang للاستثناءات. يتضمن الإيصال الأمرين وبيان الهدف والخريطة والبصمات المتحقق منها.
+
+يستخدم `dyncode`: `--compile-mode=dyncode` وضع `-fdyncode-hosted` ويتطلب مصدرًا ومدخلًا صريحًا واحدًا وكائنًا أصليًا دون ربط بالرموز القائمة. تختار CLI وPython الكائنات لهذا الوضع وGCC. تُفحص البصمتان وكل بايت والمدخل قبل النشر، مع CFI/SEH حقيقية أو سجلات compact كاملة. تُرفض الحالة القابلة للكتابة/TLS وتحويلات syscall/PEB/heap/string الضمنية والاستيرادات غير المحلولة والكود المعاد ترتيبه. تُمرر البيانات وcallbacks كمعاملات.
+
+```sh
+neverd patch app --from-source=replacement.cpp --language=c++ \
+  --compiler=neverc --compiler-path=/path/to/neverc \
+  --entry=replacement --func=0x401140 --patch-report -o app.cpp
+neverd patch app --from-source=replacement.c --compiler=neverc \
+  --compiler-path=/path/to/neverc --compile-mode=dyncode \
+  --entry=replacement --func=0x401140 --patch-report -o app.dyncode
+```
+
+يدعم مسار Clang LLVM IR استثناءات Windows ARM64 C++ FH3 مع التحقق من xdata وABI الإطار الأب ومجموعات funclet/FuncInfo. تبقى معالجات اللغة في الكائنات الأصلية غير مدعومة. ينفذ `check_source_patch_cpp_runtime.py` تسعة سيناريوهات على Windows أصلي x64/ARM64 مع فصل أدلة CPU ومفك المكدس في النظام.
+
 | المترجم | الناتج | ملف تنفيذ نظام التشغيل المتحقق |
 |---|---|---|
 | Clang 22.1.6 | LLVM IR | ELF x64 C/C++؛ Mach-O x64/ARM64 C/C++؛ PE x86/x64/ARM64 C; PE x64 C++ FH3 |
@@ -50,7 +71,7 @@ neverd patch app --from-object=replacement.o --entry=replacement \
 | NeverC 3389.1.5 الوضع العادي | LLVM IR | ELF x64 C؛ Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 الوضع العادي | كائن أصلي | ELF x64 C |
 
-يعرض الجدول ملفات تشغيل OS المتحقق منها، ولا يضمن كل إصدار أو خيار للمترجم. تقبل مثبتات ELF وPE وMach-O الأصلية المعماريات الأربع. لا يُقبل `dyncode` أو NeverC C++. يتطلب GCC برنامج تشغيل ELF مطابقًا ولا ينتج LLVM IR. تفشل بوضوح عمليات النقل المجهولة وTLS والمنشئات وLTO ورموز common/IFUNC والاستيرادات غير المحلولة. يسجل إيصال JSON المترجم والوسائط والربط والعناوين، ويسجل SHA-256 للكائنات الأصلية أيضًا.
+يعرض الجدول ملفات تشغيل OS المتحقق منها، ولا يضمن كل إصدار أو خيار للمترجم. تقبل مثبتات ELF وPE وMach-O الأصلية المعماريات الأربع. يتطلب GCC برنامج تشغيل ELF مطابقًا ولا ينتج LLVM IR. تفشل بوضوح عمليات النقل المجهولة وTLS والمنشئات وLTO ورموز common/IFUNC والاستيرادات غير المحلولة. يسجل إيصال JSON المترجم والوسائط والربط والعناوين، ويسجل SHA-256 للكائنات الأصلية أيضًا.
 
 يُستمد حقل `target` في إيصال الكائن الأصلي من ABI للصورة المحمّلة، بما في ذلك أعلام الفاصلة العائمة ARM ELF والتمييز بين منصتَي iOS/watchOS. تتبع الكائنات المترجمة والمقدمة قاعدة الهوية نفسها.
 

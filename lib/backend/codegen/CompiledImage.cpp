@@ -596,9 +596,27 @@ static CompiledImage compileImageForPatchImpl(
   if (!AsmInfo)
     return Out;
   auto NameSpecifiers = [&](std::vector<CapturedFixupReference> &Fixups) {
-    for (auto &Fixup : Fixups)
+    for (auto &Fixup : Fixups) {
       Fixup.Reference.SpecifierName =
           AsmInfo->getSpecifierNameOrEmpty(Fixup.Reference.Specifier).str();
+      // AArch64 ELF's colon forms are not in MCAsmInfo's @-specifier table.
+      // Name the supported LLVM 22 AArch64::Specifier combinations here, at
+      // the capture boundary, so resolvers and relocation registration share
+      // one identity. TLS/authenticated and other forms remain unsupported.
+      if (TargetArch == Arch::AArch64 && Fmt == BinaryFormat::ELF &&
+          Fixup.Reference.SpecifierName.empty()) {
+        switch (Fixup.Reference.Specifier) {
+        case 0x004 | 0x010: // S_GOT | S_PAGE
+          Fixup.Reference.SpecifierName = "GOT_PAGE";
+          break;
+        case 0x004 | 0x020 | 0x100: // S_GOT | S_PAGEOFF | S_NC
+          Fixup.Reference.SpecifierName = "GOT_LO12";
+          break;
+        default:
+          break;
+        }
+      }
+    }
   };
   NameSpecifiers(Pass1Fixups);
   const std::vector<WinEHSemanticEmissionShape> Pass1WinEHSemanticShape =

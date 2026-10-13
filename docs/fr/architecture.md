@@ -15,6 +15,8 @@ leur propre architecture interne.
 
 `sourcePatchTargetTriple` choisit le mode ARM, l’ABI flottante ELF et le sous-type CPU Mach-O à partir de l’image. `COFFPatchObject` et `MachOPatchObject` authentifient les symboles, définitions auxiliaires／de section et enregistrements natifs sans inventer d’ID MC. Les installateurs de format enregistrent les tables réelles.
 
+`SourcePatchCompiler` compose NeverC `cpp-core-v2` et C23 ; `validateDynCodePatchImage` lie l’audit aux empreintes, octets et entrée réels. Les installateurs enregistrent les vrais records de déroulage. ARM64 FH3 utilise les limites xdata du chargeur et les groupes funclet/FuncInfo du MC. Sans DWARF original, tous les cadres Mach-O doivent avoir des records compacts natifs.
+
 ## Frontière du système
 
 ```mermaid
