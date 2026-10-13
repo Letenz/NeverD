@@ -9,6 +9,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QHBoxLayout>
 #include <QHelpEvent>
 #include <QJsonObject>
@@ -195,6 +196,7 @@ CodeText::CodeText(Session &session, QWidget *parent)
   setFrameShape(QFrame::NoFrame);
   viewport()->setAttribute(Qt::WA_OpaquePaintEvent);
   viewport()->setCursor(Qt::IBeamCursor);
+  viewport()->setMouseTracking(true);
   updateMetrics();
   connect(&Theme::instance(), &Theme::changed, this, [this] {
     ++styleStamp_;
@@ -237,9 +239,13 @@ void CodeText::updateRange() {
 void CodeText::resizeEvent(QResizeEvent *event) {
   QAbstractScrollArea::resizeEvent(event);
   updateRange();
+  updateMouseCursor(viewport()->mapFromGlobal(QCursor::pos()));
 }
 
-void CodeText::scrollContentsBy(int, int) { viewport()->update(); }
+void CodeText::scrollContentsBy(int, int) {
+  updateMouseCursor(viewport()->mapFromGlobal(QCursor::pos()));
+  viewport()->update();
+}
 
 void CodeText::cancel() {
   ++serial_;
@@ -273,6 +279,8 @@ void CodeText::clear() {
   status_.clear();
   cursorLine_ = cursorColumn_ = 0;
   anchor_.reset();
+  selecting_ = false;
+  viewport()->setCursor(Qt::IBeamCursor);
   marked_.clear();
   sourceNames_.clear();
   editNames_.clear();
@@ -303,6 +311,7 @@ void CodeText::load(Address function, const QString &representation) {
   }
   inComment_ = false;
   loading_ = true;
+  viewport()->setCursor(Qt::IBeamCursor);
   interrupted_ = false;
   // Folding state survives a refresh of the same function as "fold all";
   // a new function opens at its definition, its prelude folded.
@@ -634,6 +643,7 @@ void CodeText::rebuildLines(bool append) {
   cursorLine_ =
       std::clamp(previousLine, 0, std::max(0, int(lines_.size()) - 1));
   updateRange();
+  updateMouseCursor(viewport()->mapFromGlobal(QCursor::pos()));
   viewport()->update();
 }
 
@@ -660,6 +670,23 @@ QString CodeText::blockAt(const QPoint &position) const {
                  position.x() < right
              ? lines_[line].block
              : QString();
+}
+
+void CodeText::updateMouseCursor(const QPoint &position) {
+  const bool clickable =
+      !loading_ && !selecting_ && viewport()->rect().contains(position) &&
+      (!blockAt(position).isEmpty() || !regionAt(position).isEmpty());
+  const auto shape = clickable ? Qt::PointingHandCursor : Qt::IBeamCursor;
+  if (viewport()->cursor().shape() != shape)
+    viewport()->setCursor(shape);
+}
+
+bool CodeText::viewportEvent(QEvent *event) {
+  if (event->type() == QEvent::Enter)
+    updateMouseCursor(viewport()->mapFromGlobal(QCursor::pos()));
+  else if (event->type() == QEvent::Leave)
+    viewport()->setCursor(Qt::IBeamCursor);
+  return QAbstractScrollArea::viewportEvent(event);
 }
 
 void CodeText::setRegionFolded(const QString &id, bool folded) {
@@ -1425,10 +1452,12 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
     const auto name = sourceNameAt(line, column);
     highlight_ = name ? name->first : lines_[line].styled.tokenAt(column);
   }
+  updateMouseCursor(event->position().toPoint());
   viewport()->update();
 }
 
 void CodeText::mouseMoveEvent(QMouseEvent *event) {
+  updateMouseCursor(event->position().toPoint());
   if (!selecting_ || !(event->buttons() & Qt::LeftButton) || lines_.isEmpty())
     return;
   pendingAddress_.reset();
@@ -1442,8 +1471,9 @@ void CodeText::mouseMoveEvent(QMouseEvent *event) {
   viewport()->update();
 }
 
-void CodeText::mouseReleaseEvent(QMouseEvent *) {
+void CodeText::mouseReleaseEvent(QMouseEvent *event) {
   selecting_ = false;
+  updateMouseCursor(event->position().toPoint());
   if (anchor_ && *anchor_ == std::pair{cursorLine_, cursorColumn_})
     anchor_.reset();
 }

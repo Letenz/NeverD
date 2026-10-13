@@ -141,6 +141,7 @@ protected:
   void contextMenuEvent(QContextMenuEvent *event) override;
   void scrollContentsBy(int dx, int dy) override;
   bool event(QEvent *event) override;
+  bool viewportEvent(QEvent *event) override;
 
 private:
   void request(int offset, quint64 serial);
@@ -153,6 +154,7 @@ private:
   int displayPosition(int line, int column) const;
   QString regionAt(const QPoint &position) const;
   QString blockAt(const QPoint &position) const;
+  void updateMouseCursor(const QPoint &position);
   void setRegionFolded(const QString &id, bool folded);
   void highlightLine(Line &line, bool &inComment) const;
   void updateMetrics();
