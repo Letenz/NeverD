@@ -31,6 +31,7 @@ class ExtensionsView;
 class GraphOverview;
 class HexView;
 class NavigationBand;
+class MicrosoftSymbols;
 class OutputWindow;
 class Session;
 class TitleBar;
@@ -208,6 +209,7 @@ private:
   DisassemblyView *disassembly_ = nullptr;
   HexView *hex_ = nullptr;
   OutputWindow *output_ = nullptr;
+  MicrosoftSymbols *microsoftSymbols_ = nullptr;
   GraphOverview *overview_ = nullptr;
   ExtensionsView *extensions_ = nullptr;
   ChooserView *functions_ = nullptr;

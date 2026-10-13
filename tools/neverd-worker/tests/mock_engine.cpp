@@ -69,6 +69,7 @@ struct MockSession {
   std::string path, error;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
+  bool pdbLoaded = false;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
@@ -304,12 +305,45 @@ const char *neverd_headers_json(neverd_session_t s) {
   Json pseudocode = Json::array({"c"});
   if (runtime != "c")
     pseudocode.push_back(runtime);
-  return copy(Json{{"language",
-                    {{"runtime", runtime},
-                     {"secondary", Json::array()},
-                     {"evidence", Json::array()},
-                     {"pseudocode", pseudocode}}}}
-                  .dump());
+  Json result{{"language",
+               {{"runtime", runtime},
+                {"secondary", Json::array()},
+                {"evidence", Json::array()},
+                {"pseudocode", pseudocode}}}};
+  if (session(s)->path.ends_with("symbols-missing.bin") ||
+      session(s)->path.ends_with("symbols-local.bin")) {
+    result["debug_info"] = {
+        {"enabled", session(s)->debugInfo},
+        {"kind", session(s)->pdbLoaded ||
+                         session(s)->path.ends_with("symbols-local.bin")
+                     ? "pdb"
+                     : "none"}};
+    result["dynamic"]["pdb_symbol"] = {
+        {"file", "fixture.pdb"}, {"key", "123456789ABCDEF0123456789ABCDEF01"}};
+  }
+  return copy(result.dump());
+}
+
+const char *neverd_session_inspect_pdb_json(neverd_session_t s,
+                                            const char *path) {
+  std::ifstream input(std::filesystem::u8path(path), std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  if (bytes != "matching fixture PDB") {
+    session(s)->error = "fixture PDB identity mismatch";
+    return nullptr;
+  }
+  return copy(
+      Json{{"verified", true}, {"names", Json::array()}, {"name_count", 1}}
+          .dump());
+}
+
+int neverd_session_load_pdb(neverd_session_t s, const char *path) {
+  const auto inspected = neverd_session_inspect_pdb_json(s, path);
+  if (!inspected)
+    return 0;
+  neverd_free_string(inspected);
+  session(s)->pdbLoaded = true;
+  return 1;
 }
 
 // Deterministic fixture-only identity. The real engine uses SHA-256; the
