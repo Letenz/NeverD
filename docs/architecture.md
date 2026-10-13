@@ -858,7 +858,11 @@ See the [relationship profile](web-interface-relations-profile.md).
 `interfaces/TransformationLinks` adds fixed call spellings only through direct
 request-body and result-argument containment; no value propagation or API
 authentication is duplicated. `interfaces/report/Source` projects existing
-frontend evidence, `Shapes` inspects admitted observed JSON types, `Compose`
+frontend evidence. `SourceStructure`/`URLStructure` consume its admitted
+request roles and preserve lexical components and direct value syntax.
+`Shapes` admits observed JSON bodies; `ObservedStructure` owns private
+capture-local field dictionaries, example trees and observed presence counts.
+`Compose`
 reuses the HTTP join and shared MCP spelling vocabulary, and `Publication`
 emits closed metadata. `SessionPassiveReport` owns explicit committed selections,
 atomic bounded caches and revision-bound pages. See the

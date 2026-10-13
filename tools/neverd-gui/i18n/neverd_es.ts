@@ -1464,6 +1464,14 @@ Haz doble clic para ir a la declaración.</translation>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>Los nombres de variables guardados pertenecen a otra representación del código fuente</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Expandir bloque (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Contraer bloque (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2139,6 +2147,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>Este motor no puede usar una PDB sin verificar para el análisis</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Línea</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>Columna</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Código</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>Espere a que la función termine de cargarse antes de buscar referencias</translation>
     </message>
 </context>
 <context>

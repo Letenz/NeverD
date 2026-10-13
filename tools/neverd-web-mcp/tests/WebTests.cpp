@@ -721,6 +721,16 @@ void passiveInputs(Harness &H) {
              {{"revision", H.Revision},
               {"passive_report_id", HARReport.at("passive_report_id")}});
   redacted(HARReportPage);
+  uint64_t Fields = 0;
+  for (const auto &Row : HARReportPage.at("items"))
+    if (Row.at("kind") == "observed_json_schema_node" &&
+        Row.at("structure").at("edge") == "object_field") {
+      ++Fields;
+      require(Row.at("structure").at("observed_instances") == 1 &&
+                  Row.at("structure").at("observed_missing_instances") == 0,
+              "MCP lost observed field presence");
+    }
+  require(Fields == 1, "MCP omitted observed field structure");
 
   Artifact = H.import(5);
   const auto Stream = H.same("web_stream_preview",
@@ -928,7 +938,7 @@ int main() {
         R"({"name":"CANARY","version":"1.0.0","scripts":{"postinstall":"CANARY"}})");
     F.write(
         "har",
-        R"({"log":{"version":"1.2","entries":[{"request":{"method":"GET","url":"https://CANARY/a?token=CANARY","headers":[{"name":"Authorization","value":"CANARY"}]},"response":{"status":200,"content":{"text":"CANARY"}}}]}})");
+        R"({"log":{"version":"1.2","entries":[{"request":{"method":"GET","url":"https://CANARY/a?token=CANARY","headers":[{"name":"Authorization","value":"CANARY"}]},"response":{"status":200,"content":{"mimeType":"application/json","text":"{\"CANARY\":null}"}}}]}})");
     F.write(
         "stream",
         R"({"session":"CANARY","direction":"client_to_server","message":{"jsonrpc":"2.0","id":"CANARY","method":"CANARY","params":{"key":"CANARY"}}})"

@@ -30,7 +30,9 @@ llvm::json::Object summary(const PassiveReport &R, uint64_t Revision) {
       {"mcp_method_candidates", R.MethodCandidates},
       {"steps", R.Steps},
       {"analysis_status", "partial"},
-      {"schema_meaning", "observed_type_summary"},
+      {"schema_meaning", "observed_structure_and_presence"},
+      {"field_names", "capture_local_opaque_identity"},
+      {"url_component_meaning", "lexical_syntax_only"},
       {"examples", "observation_ids_only_values_withheld"},
       {"inferred_optionality", "unknown"},
       {"server_constraints", "unknown"},
@@ -50,6 +52,28 @@ llvm::json::Object record(const PassiveReportRecord &R) {
   llvm::json::Object Types;
   for (const auto &[Type, Count] : R.Types)
     Types[Type] = Count;
+  llvm::json::Value Structure = nullptr;
+  if (R.Structure) {
+    const auto &S = *R.Structure;
+    auto Number = [](std::optional<uint64_t> V) -> llvm::json::Value {
+      return V ? llvm::json::Value(*V) : llvm::json::Value(nullptr);
+    };
+    Structure = llvm::json::Object{
+        {"node_id", S.NodeID},
+        {"parent_node_id", S.ParentNodeID},
+        {"group_id", S.GroupID},
+        {"schema_node_id", S.SchemaNodeID},
+        {"edge", S.Edge},
+        {"name_class", S.NameClass},
+        {"component", S.Component},
+        {"ordinal", S.Ordinal},
+        {"component_index", Number(S.ComponentIndex)},
+        {"observed_instances", Number(S.Instances)},
+        {"eligible_parent_instances", Number(S.EligibleParents)},
+        {"observed_missing_instances", Number(S.MissingInstances)},
+        {"decoded_utf16_offset", Number(S.DecodedOffset)},
+        {"decoded_utf16_length", Number(S.DecodedLength)}};
+  }
   return llvm::json::Object{
       {"record_id", R.ID},
       {"kind", R.Kind},
@@ -76,9 +100,12 @@ llvm::json::Object record(const PassiveReportRecord &R) {
            ? llvm::json::Value(R.Members)
            : llvm::json::Value(nullptr)},
       {"observed_type_counts", std::move(Types)},
+      {"structure", std::move(Structure)},
       {"reason", R.Reason},
-      {"observed_example_id",
-       R.EvidenceClass == "imported_observation" ? R.AnchorID : ""},
+      {"observed_example_id", R.EvidenceClass == "imported_observation" &&
+                                      R.Kind != "observed_json_schema_node"
+                                  ? R.AnchorID
+                                  : ""},
       {"inferred_optionality", "unknown"},
       {"server_constraints", "unknown"},
       {"source_execution_observed", false},

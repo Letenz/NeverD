@@ -1461,6 +1461,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>已儲存的變數名稱屬於另一份原始碼呈現</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>展開程式碼區塊 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>摺疊程式碼區塊 (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2135,6 +2143,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>目前引擎不支援使用未驗證的 PDB 進行分析</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>行</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>欄</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>程式碼</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>請等待函式載入完成後再尋找參照</translation>
     </message>
 </context>
 <context>

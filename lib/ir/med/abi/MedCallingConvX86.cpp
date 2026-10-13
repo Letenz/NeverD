@@ -229,6 +229,16 @@ void detectXMMParams(
           record(Op.Output, In[0] & byteMask(Op.Output.Size));
           return false;
         }
+        // A vector register widened from its own low bytes (`vzeroupper`,
+        // a VEX upper clear) keeps its value in place, which hands a caller
+        // back nothing new, as a register the code leaves alone does not.
+        if (Op.Opcode == NdOp::INT_ZEXT && Op.Output.Kind == MedVar::Reg &&
+            Op.Inputs[0].Kind == MedVar::Reg &&
+            Op.Output.RegOff == Op.Inputs[0].RegOff &&
+            TRI.isVectorReg(Op.Output.RegOff) && Op.Output.Size <= MaskBytes) {
+          record(Op.Output, In[0] & byteMask(Op.Inputs[0].Size));
+          return false;
+        }
         const auto Fresh = FreshLow.find(valueKey(Op.Inputs[0]));
         if (Fresh != FreshLow.end() &&
             keepsLanesOnly(Op.Output, In[0], Fresh->second))

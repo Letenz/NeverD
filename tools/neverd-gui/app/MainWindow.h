@@ -154,6 +154,7 @@ private:
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);
+  void showLocalReferences(CodeView *origin, const QJsonObject &target);
   void showReferencesDialog(std::optional<Address> address, bool to,
                             CodeView *origin);
   void showPseudocode(const QString &representation,

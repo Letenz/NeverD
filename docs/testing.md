@@ -775,6 +775,15 @@ explicit unavailable window; journals/models still work. Run the existing GUI
 unit/controller/language and smoke suites when modifying workbench commands.
 See the [journal/desktop profile](web-package-review-journal.md).
 
+`WebPassiveStructure.*` distinguishes equal-histogram bodies with different
+field nesting, absent versus null fields, mixed array/object parents, private
+name identity, endpoint/direction isolation and aggregate private-byte limits.
+`WebRequestStructure.*` checks exact template-expression/segment anchors,
+lexical path/query roles, direct header/body syntax, unknown dispatch/getters/
+spreads/deferred functions, unchanged HAR matching and shared record budgets.
+`WebInterfaceSDK.PassiveStructureRetainsFieldsAcrossSingleRowPages` verifies
+parent IDs and every field across one-row public pages, including parser-off
+builds. Worker/MCP verify the same observed structure with private canaries.
 `WebPassiveReport.*` verifies independently counted observed JSON types,
 malformed/encoded/missing bodies, aggregate node work, explicit selections and
 record refusal. `WebPassiveSource.*` verifies exact transformation/message
