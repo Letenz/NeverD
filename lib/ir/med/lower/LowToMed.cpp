@@ -750,42 +750,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &Low, Arch TheArch,
       // A register/temp XOR with itself is a machine zero idiom, including
       // 128/256/512-bit vector containers. Eliminate the read before liveness
       // and SSA: folding only in HighIR leaves a false incoming FP parameter.
-      // Keep effect-bearing operations and mismatched-width slices intact.
-      const bool SelfXor =
-          LOp.Opcode == NdOp::INT_XOR && LOp.NumInputs == 2 &&
-          LOp.MemoryOrdering == NdMemoryOrdering::None &&
-          LOp.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
-          (LOp.Output.isReg() || LOp.Output.isTemp()) && LOp.Output.Size &&
-          (LOp.Inputs[0].isReg() || LOp.Inputs[0].isTemp()) &&
-          LOp.Inputs[0] == LOp.Inputs[1] &&
-          LOp.Output.Size == LOp.Inputs[0].Size;
-      // `or r, -1` and `and r, 0` (MSVC sets a register to all ones or zero
-      // this way) do not depend on the register's old value.  Folding them
-      // here keeps that value from becoming a read before SSA: otherwise a
-      // path where it is undefined merges `0 /* unknown */` into it.
-      const auto AbsorbingConstant = [&]() -> std::optional<uint64_t> {
-        if ((LOp.Opcode != NdOp::INT_OR && LOp.Opcode != NdOp::INT_AND) ||
-            LOp.NumInputs != 2 ||
-            LOp.MemoryOrdering != NdMemoryOrdering::None ||
-            LOp.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
-            !(LOp.Output.isReg() || LOp.Output.isTemp()) || !LOp.Output.Size ||
-            LOp.Output.Size > 8)
-          return std::nullopt;
-        const uint64_t Mask = LOp.Output.Size == 8
-                                  ? ~uint64_t{0}
-                                  : (uint64_t{1} << (8 * LOp.Output.Size)) - 1;
-        for (unsigned I = 0; I < 2; ++I) {
-          const NdVar &C = LOp.Inputs[I];
-          if (!C.isConst())
-            continue;
-          const uint64_t V = C.Offset & Mask;
-          if (LOp.Opcode == NdOp::INT_OR && V == Mask)
-            return Mask;
-          if (LOp.Opcode == NdOp::INT_AND && V == 0)
-            return 0;
-        }
-        return std::nullopt;
-      }();
+      const bool SelfXor = isLowSelfXor(LOp);
+      // `or r, -1` and `and r, 0` do not depend on the register's old value.
+      // Folding them here keeps that value from becoming a read before SSA:
+      // otherwise a path where it is undefined merges `0 /* unknown */` into
+      // it.
+      const std::optional<uint64_t> AbsorbingConstant =
+          lowAbsorbingConstant(LOp);
       if (SelfXor) {
         MOp.Opcode = NdOp::COPY;
         MOp.addInput(MedVar::makeConst(0, LOp.Output.Size,

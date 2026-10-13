@@ -968,6 +968,10 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
               return Register / 8 == Op.Inputs[In].Offset / 8;
             }))
           continue;
+        // A zero idiom (`pxor xmm0, xmm0`) or an absorbing constant reads
+        // nothing of the register, as LowToMed folds it.
+        if (isLowSelfXor(Op) || lowAbsorbingConstant(Op))
+          continue;
         if (In == 0 && SlicedVector)
           addRead(Img.Arch, Step.Reads,
                   Op.Inputs[0].Offset + Op.Inputs[1].Offset, Op.Output.Size);
