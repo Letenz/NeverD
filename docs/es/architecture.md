@@ -1632,6 +1632,8 @@ Las claves de prueba de desplazamientos de marco normalizan la suma superior de 
 
 El exportador de fuentes Objective-C desactiva `CEmitterOptions::EmitRecordGuards` y `CEmitterOptions::UseUnalignedPointers` para la unidad nativa completa y cada unidad de método. Las copias de bytes de ancho exacto preservan los accesos a memoria no alineados y evitan introducir macros generadas en el analizador móvil; las directivas condicionales y las que modifican macros siguen rechazándose.
 
+El analizador también reconoce el bloque fijo y completo `ContractionPolicy` compartido con los generadores C. Conserva el texto para compilarlo sin evaluar directivas condicionales arbitrarias. Los bloques modificados, truncados o rodeados por otra condición siguen sin admitirse.
+
 ## Atributos de directorio por lotes acotados
 
 DarwinFiles posee importación común, validez nombre/stat y codificación. DarwinDirectory posee grupos, autorización de objeto y estado de iteración/cursor/EOF de la descripción, compartiendo hijos actuales con getdirentries64. dup comparte una descripción; seek cero reinicia su contrato. JSON aporta política explícita y el despacho no inventa observaciones del sistema de archivos.

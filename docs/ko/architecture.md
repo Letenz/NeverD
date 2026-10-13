@@ -1478,6 +1478,8 @@ Swift SDK Published의 enclosing-instance 접근자는 포인터 네 개를 유�
 
 Objective-C 소스 내보내기는 전체 네이티브 단위와 개별 메서드 단위에서 `CEmitterOptions::EmitRecordGuards`와 `CEmitterOptions::UseUnalignedPointers`를 끕니다. 정확한 너비의 바이트 복사로 비정렬 메모리 접근 의미를 보존하고 생성된 매크로가 모바일 파서에 들어가지 않게 합니다. 조건부 지시문과 매크로를 변경하는 지시문은 계속 거부합니다.
 
+파서는 C 생성기와 공유하는 완전한 고정 `ContractionPolicy` 블록도 인식합니다. 컴파일할 원문을 보존하며 임의의 조건부 지시문을 평가하지 않습니다. 수정되거나 잘리거나 추가 조건으로 감싼 블록은 계속 지원하지 않습니다.
+
 ## 제한된 디렉터리 일괄 속성
 
 DarwinFiles는 공통 속성 가져오기, 이름/stat 유효성과 레코드 인코딩을 소유한다. DarwinDirectory는 일괄 그룹, 명시 객체 권한과 설명 객체의 반복/커서/EOF를 소유하며 getdirentries64와 현재 자식 투영을 공유한다. dup는 한 설명을 공유하고 0 seek는 반복 계약을 재설정한다. JSON은 명시 정책 입력을 전달하며 서비스 디스패치는 파일 시스템 관측을 추측하지 않는다.
