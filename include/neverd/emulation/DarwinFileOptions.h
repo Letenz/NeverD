@@ -234,14 +234,15 @@ struct DarwinOwnershipMutationOptions {
   bool CreatedRegularObjects = false;
 };
 
-/// Explicit ordinary regular-vnode timestamp provider on a writable nonopaque
-/// mount. No ACL, MAC, privilege bypass, revocation, leases, notifications or
-/// other setattr lifecycle. This declares virtual storage of requested times:
-/// signed seconds/microseconds become signed nanoseconds saturated to int64,
-/// then floor-normalized; earlier nonnegative mtime reduces known birthtime.
-/// These rules identify no host filesystem and grant no data/namespace rights.
+/// Explicit ordinary regular/directory-vnode timestamp provider on a writable
+/// nonopaque mount. No ACL, MAC, privilege bypass, revocation, leases,
+/// notifications or other setattr lifecycle. This declares virtual storage of
+/// requested times: signed seconds/microseconds become signed nanoseconds
+/// saturated to int64, then floor-normalized; earlier nonnegative mtime reduces
+/// known birthtime. These rules identify no host filesystem and grant no
+/// data/namespace rights.
 struct DarwinFileTimestampMutationOptions {
-  /// Initial ordinary regular objects and separately fixed resulting ctime.
+  /// Initial ordinary regular/directory objects and separately fixed ctime.
   /// Empty declares only the environment. Grants follow actual Contents
   /// through links/rename/held unlink, never replacement names. Execution
   /// cannot restore invalidated complete metadata.
@@ -251,6 +252,10 @@ struct DarwinFileTimestampMutationOptions {
   /// receive none. NULL requests use only the separately supplied TimeOfDay
   /// sample.
   bool CreatedRegularObjects = false;
+  /// Independent new-directory grant. True requires complete CreationPolicy
+  /// with Namespace and uses Mutation.Time as fixed ctime. Initial directories,
+  /// children and namespace authority receive no grant from this flag.
+  bool CreatedDirectoryObjects = false;
 };
 
 /// Exact immediate successful LP64 mount-stat observation. Every field is

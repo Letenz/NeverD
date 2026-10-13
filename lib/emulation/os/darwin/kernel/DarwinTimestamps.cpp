@@ -99,9 +99,9 @@ DarwinFiles::changeTimes(ServiceKind Service, const ProcessServiceEvent &Event,
       return returned(BadDescriptor, true);
     File = *I->second.Open;
   }
-  if (File.Type == Kind::Directory || File.Type == Kind::SymbolicLink)
+  if (File.Type == Kind::SymbolicLink)
     return unsupported(Result, diagnostic::FileTimestampTarget);
-  if (File.Type != Kind::File)
+  if (File.Type != Kind::File && File.Type != Kind::Directory)
     return unsupported(Result, diagnostic::FileTimestampKind);
   auto Current = statusMetadata(File);
   if (auto *Reason = std::get_if<const char *>(&Current))
@@ -115,15 +115,20 @@ DarwinFiles::changeTimes(ServiceKind Service, const ProcessServiceEvent &Event,
     return returned(*Error, true);
   if (auto *Reason = std::get_if<const char *>(&Authority))
     return unsupported(Result, *Reason);
-  auto &Node = *File.File;
-  if (!Node.TimestampTime)
+  const auto *ProviderTime = File.Type == Kind::File
+                                 ? File.File->TimestampTime
+                                 : File.Directory->TimestampTime;
+  if (!ProviderTime)
     return unsupported(Result, diagnostic::FileTimestampProvider);
-  Node.CurrentMetadata = *Metadata;
-  Node.CurrentMetadata->AccessTime = Access;
-  Node.CurrentMetadata->ModificationTime = Modification;
-  Node.CurrentMetadata->ChangeTime = *Node.TimestampTime;
+  auto &CurrentMetadata = File.Type == Kind::File
+                              ? File.File->CurrentMetadata
+                              : File.Directory->CurrentMetadata;
+  CurrentMetadata = *Metadata;
+  CurrentMetadata->AccessTime = Access;
+  CurrentMetadata->ModificationTime = Modification;
+  CurrentMetadata->ChangeTime = *ProviderTime;
   if (Modification.Seconds >= 0 && earlier(Modification, Metadata->BirthTime))
-    Node.CurrentMetadata->BirthTime = Modification;
+    CurrentMetadata->BirthTime = Modification;
   return returned(0);
 }
 } // namespace neverd::emulation::darwin_model

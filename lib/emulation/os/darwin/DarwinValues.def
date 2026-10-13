@@ -531,9 +531,9 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(
     FileOwnershipProvider,
     "Darwin regular-object ownership provider is not configured")
-NEVERD_DARWIN_DIAGNOSTIC(
-    FileTimestampOption,
-    "Darwin timestamp grants require complete ordinary initial regular objects")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampOption,
+                         "Darwin timestamp grants require complete ordinary "
+                         "initial regular or directory objects")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileTimestampEnvironment,
     "Darwin ordinary timestamp environment is not configured")
@@ -542,12 +542,11 @@ NEVERD_DARWIN_DIAGNOSTIC(FileTimestampSecurityAttributes,
                          "ordinary security attributes")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileTimestampTarget,
-    "Darwin timestamp mutation requires an ordinary regular vnode")
+    "Darwin timestamp mutation requires an ordinary regular or directory vnode")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileTimestampKind, "Darwin timestamp mutation requires a known vnode kind")
-NEVERD_DARWIN_DIAGNOSTIC(
-    FileTimestampProvider,
-    "Darwin regular-object timestamp provider is not configured")
+NEVERD_DARWIN_DIAGNOSTIC(FileTimestampProvider,
+                         "Darwin object timestamp provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(FileSystemOption,
                          "Darwin filesystem snapshots require known initial "
                          "regular or directory objects and bounded names")

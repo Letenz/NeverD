@@ -3,7 +3,7 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
-#include "DarwinTimestampMutationTestData.h"
+#include "DarwinDirectoryTimestampTestData.h"
 #include "gtest/gtest.h"
 #include "os/darwin/kernel/DarwinFiles.h"
 #include "os/darwin/kernel/DarwinMemory.h"
@@ -159,7 +159,7 @@ TEST(DarwinTimestampMutationOptions, AdmissionDefaultsAndBothClosedDomains) {
       O.TimestampMutations->Objects["/missing"] = {1, 2};
       break;
     case 1:
-      O.TimestampMutations->Objects["/"] = {1, 2};
+      O.TimestampMutations->Objects["/missing-directory"] = {1, 2};
       break;
     case 2:
       O.Metadata.erase("/data");
@@ -410,9 +410,9 @@ TEST_P(DarwinTimestampMutationTest, SymlinkLookupAndKindsStayDistinct) {
   refused(ServiceKind::Futimes, {0, input()}, diagnostic::FileTimestampKind);
   const auto Dir = open("/");
   refused(ServiceKind::Futimes, {Dir, input()},
-          diagnostic::FileTimestampTarget);
+          diagnostic::FileTimestampProvider);
   refused(ServiceKind::Utimes, {path("/"), input()},
-          diagnostic::FileTimestampTarget);
+          diagnostic::FileTimestampProvider);
 }
 TEST_P(DarwinTimestampMutationTest,
        GrantsFollowHardlinksRenameAndHeldZeroName) {
@@ -456,7 +456,7 @@ TEST_P(DarwinTimestampMutationTest,
   EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir"), 0700}), 0u);
   const auto Dir = open("/dir");
   refused(ServiceKind::Futimes, {Dir, input()},
-          diagnostic::FileTimestampTarget);
+          diagnostic::FileTimestampProvider);
   EXPECT_EQ(
       ok(ServiceKind::Symlink, {path("/failed"), path("/link", Base + 128)}),
       0u);
@@ -549,6 +549,300 @@ TEST_P(DarwinTimestampMutationTest,
           diagnostic::ExtendedAttributeUnknown);
   EXPECT_EQ(ok(ServiceKind::Flock, {A, 8}), 0u);
   EXPECT_EQ(ok(ServiceKind::Flock, {B, 2 | 4}), 0u);
+}
+
+TEST(DarwinTimestampMutationOptions,
+     DirectoryAdmissionKeepsAliasesAndCreationIndependent) {
+  auto O = darwin_test::directoryTimestampOptions();
+  EXPECT_FALSE(O.TimestampMutations->CreatedDirectoryObjects);
+  O.Metadata["/dir"].LinkCount = 7;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Directories.insert("/alias");
+  O.Metadata["/alias"] = O.Metadata["/dir"];
+  auto E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.Metadata["/alias"].Device = 8;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.TimestampMutations->Objects["/"] = {1, 2};
+  O.MutableDirectories.clear();
+  O.MovableDirectories.clear();
+  O.DirectoryMutationPolicies.clear();
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.TimestampMutations->CreatedDirectoryObjects = true;
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.CreationPolicy =
+      darwin_test::directoryTimestampOptions(true).CreationPolicy;
+  O.MutableDirectories.insert("/");
+  O.InitialUmask = 022;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.CreationPolicy->Namespace.reset();
+  E = validateFileOptions(O);
+  EXPECT_TRUE(bool(E));
+  llvm::consumeError(std::move(E));
+  O.TimestampMutations->CreatedDirectoryObjects = false;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+}
+TEST_P(DarwinTimestampMutationTest,
+       DirectoryCompleteRecordsAndNullSampleStayIndependent) {
+  Options = darwin_test::directoryTimestampOptions();
+  reset();
+  const auto A = open("/dir"), D = ok(ServiceKind::Dup, {A}), B = open("/dir");
+  const auto Before = darwin_test::directoryTimestampRecord();
+  EXPECT_EQ(status(A), Before);
+  const auto P = input();
+  std::array<uint8_t, 32> Original, After;
+  llvm::cantFail(Space->read(P, Original));
+  EXPECT_EQ(
+      ok(route(), {FDRoute ? (0xffffffff00000000ULL | D) : path("/dir"), P}),
+      0u);
+  auto Wanted = changed(Before, 11, 12000, 13, 14000);
+  EXPECT_EQ(status(A), Wanted);
+  EXPECT_EQ(status(B), Wanted);
+  EXPECT_EQ(status(D), Wanted);
+  llvm::cantFail(Space->read(P, After));
+  EXPECT_EQ(Original, After);
+  refused(route(), {FDRoute ? D : path("/dir"), 0},
+          diagnostic::TimeOfDayMissing);
+  EXPECT_EQ(status(A), Wanted);
+  Time.emplace().TimeOfDay = DarwinTimeOfDay{21, 22};
+  EXPECT_EQ(ok(route(), {FDRoute ? D : path("/dir"), 0}), 0u);
+  Wanted = changed(Before, 21, 22000, 21, 22000);
+  EXPECT_EQ(status(A), Wanted);
+  error(ServiceKind::Futimes, {UINT64_MAX, 1}, 14);
+  error(ServiceKind::Futimes, {UINT64_MAX, P}, 9);
+  error(ServiceKind::Utimes, {path("/missing"), 1}, 2);
+  EXPECT_EQ(status(D), Wanted);
+  refused(ServiceKind::Futimes, {open("/data"), P},
+          diagnostic::FileTimestampProvider);
+  refused(ServiceKind::Fchmod, {D, 0750}, diagnostic::FileModeEnvironment);
+  refused(ServiceKind::Fchown, {D, 501, 20}, diagnostic::FileOwnershipTarget);
+  EXPECT_EQ(status(D), Wanted);
+  // Earlier nonnegative mtime updates only the declared birth observation.
+  EXPECT_EQ(ok(ServiceKind::Futimes, {D, input(1, 2, 2, 3)}), 0u);
+  EXPECT_EQ(status(A), changed(Before, 1, 2000, 2, 3000, 2, 3000));
+}
+TEST_P(DarwinTimestampMutationTest,
+       CreatedDirectoryAndRegularTimestampFlagsAreSeparate) {
+  for (bool Regular : {false, true})
+    for (bool Directory : {false, true}) {
+      Options = darwin_test::timestampOptions();
+      policies(Regular);
+      Options->TimestampMutations->CreatedDirectoryObjects = Directory;
+      reset();
+      EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/child"), 0700}), 0u);
+      const auto D = open("/child");
+      const auto Before = status(D);
+      if (Directory) {
+        EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+        EXPECT_EQ(status(D),
+                  changed(Before, 11, 12000, 13, 14000, 13, 14000, 101, 102));
+      } else {
+        refused(ServiceKind::Futimes, {D, input()},
+                diagnostic::FileTimestampProvider);
+        EXPECT_EQ(status(D), Before);
+      }
+      const auto F = open("/new", 0x202);
+      const auto NewBefore = status(F);
+      if (Regular) {
+        EXPECT_EQ(ok(ServiceKind::Futimes, {F, input()}), 0u);
+        EXPECT_EQ(status(F), changed(NewBefore, 11, 12000, 13, 14000, 13, 14000,
+                                     101, 102));
+      } else {
+        refused(ServiceKind::Futimes, {F, input()},
+                diagnostic::FileTimestampProvider);
+        EXPECT_EQ(status(F), NewBefore);
+      }
+      const auto Root = open("/");
+      const auto RootBefore = status(Root);
+      refused(ServiceKind::Futimes, {Root, input()},
+              diagnostic::FileTimestampProvider);
+      EXPECT_EQ(status(Root), RootBefore);
+    }
+}
+TEST_P(DarwinTimestampMutationTest,
+       DirectoryNamespaceNeverBorrowsTimestampAuthority) {
+  for (bool NamespaceTime : {false, true})
+    for (bool TimestampFirst : {false, true}) {
+      Options = darwin_test::directoryTimestampOptions();
+      Options->MutableDirectories.insert("/dir");
+      if (!NamespaceTime)
+        Options->DirectoryMutationPolicies.erase("/dir");
+      reset();
+      const auto D = open("/dir");
+      auto Expected = darwin_test::directoryTimestampRecord();
+      if (TimestampFirst) {
+        EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+        Expected = changed(Expected, 11, 12000, 13, 14000);
+      }
+      EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir/sub"), 0700}), 0u);
+      if (!NamespaceTime) {
+        Record Buffer;
+        Buffer.fill(0xa5);
+        llvm::cantFail(Space->write(Base + Page, Buffer));
+        refused(ServiceKind::Fstat64, {D, Base + Page + 8},
+                diagnostic::DirectoryMutated);
+        refused(ServiceKind::Futimes, {D, input()},
+                diagnostic::DirectoryMutated);
+        Record After;
+        llvm::cantFail(Space->read(Base + Page, After));
+        EXPECT_EQ(After, Buffer);
+        continue;
+      }
+      llvm::support::endian::write16le(Expected.data() + 14, 3);
+      llvm::support::endian::write64le(Expected.data() + 104, 48);
+      time(Expected, 48, 81, 82);
+      time(Expected, 64, 81, 82);
+      EXPECT_EQ(status(D), Expected);
+      EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+      EXPECT_EQ(status(D), changed(Expected, 11, 12000, 13, 14000));
+    }
+}
+TEST_P(DarwinTimestampMutationTest,
+       DirectoryMovesAndExchangesKeepActualObjectGrants) {
+  for (bool Swap : {false, true})
+    for (bool NamespaceTime : {false, true})
+      for (bool First : {false, true}) {
+        Options = darwin_test::directoryTimestampOptions();
+        Options->Directories = {"/", "/a", "/b"};
+        Options->Metadata.erase("/dir");
+        Options->DirectoryMutationPolicies.erase("/dir");
+        Options->MovableDirectories.erase("/dir");
+        Options->Metadata["/a"] = darwin_test::modeMetadata(0040700, 3);
+        Options->Metadata["/b"] = darwin_test::modeMetadata(0040700, 4);
+        Options->MovableDirectories.insert("/a");
+        Options->ExchangeableDirectories = {"/a", "/b"};
+        Options->SwapRenameDirectories.insert("/");
+        Options->TimestampMutations->Objects.clear();
+        Options->TimestampMutations->Objects["/a"] = {111, 112};
+        if (NamespaceTime) {
+          Options->DirectoryMutationPolicies["/a"] = {16, {81, 82}};
+          Options->DirectoryMutationPolicies["/b"] = {16, {91, 92}};
+        }
+        reset();
+        const auto A = open("/a"), D = ok(ServiceKind::Dup, {A}),
+                   B = open("/b");
+        auto Expected = status(A), Other = status(B);
+        if (First) {
+          EXPECT_EQ(ok(ServiceKind::Futimes, {A, input()}), 0u);
+          Expected = changed(Expected, 11, 12000, 13, 14000);
+        }
+        const auto From = path("/a"),
+                   To = path(Swap ? "/b" : "/moved", Base + 128);
+        if (Swap)
+          EXPECT_EQ(
+              ok(ServiceKind::RenameAtX, {UINT64_MAX, From, UINT64_MAX, To, 2}),
+              0u);
+        else
+          EXPECT_EQ(ok(ServiceKind::Rename, {From, To}), 0u);
+        if (!NamespaceTime) {
+          refused(ServiceKind::Fstat64, {D, Base + Page + 8},
+                  diagnostic::DirectoryMutated);
+          refused(ServiceKind::Futimes, {D, input()},
+                  diagnostic::DirectoryMutated);
+          continue;
+        }
+        time(Expected, 64, 81, 82);
+        EXPECT_EQ(status(D), Expected);
+        EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+        Expected = changed(Expected, 11, 12000, 13, 14000);
+        EXPECT_EQ(status(open(Swap ? "/b" : "/moved")), Expected);
+        EXPECT_EQ(status(A), Expected);
+        if (Swap)
+          time(Other, 64, 91, 92);
+        EXPECT_EQ(status(B), Other);
+        refused(ServiceKind::Futimes, {B, input()},
+                diagnostic::FileTimestampProvider);
+        EXPECT_EQ(status(B), Other);
+      }
+}
+TEST_P(DarwinTimestampMutationTest,
+       HeldRemovedDirectoryAndReplacementNeverShareTimestampGrants) {
+  Options = darwin_test::directoryTimestampOptions();
+  Options->RemovableDirectories.insert("/dir");
+  Options->CreationPolicy =
+      darwin_test::directoryTimestampOptions(true).CreationPolicy;
+  Options->InitialUmask = 022;
+  reset();
+  const auto A = open("/dir"), D = ok(ServiceKind::Dup, {A});
+  auto Expected = darwin_test::directoryTimestampRecord();
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {path("/dir")}), 0u);
+  time(Expected, 64, 81, 82);
+  EXPECT_EQ(status(D), Expected);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir"), 0700}), 0u);
+  const auto New = open("/dir");
+  const auto Before = status(New);
+  refused(ServiceKind::Futimes, {New, input()},
+          diagnostic::FileTimestampProvider);
+  EXPECT_EQ(status(New), Before);
+  EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+  EXPECT_EQ(status(A), changed(Expected, 11, 12000, 13, 14000));
+  EXPECT_EQ(status(New), Before);
+  EXPECT_EQ(ok(ServiceKind::Close, {A}), 0u);
+  error(ServiceKind::Futimes, {A, input()}, 9);
+  EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+}
+TEST_P(DarwinTimestampMutationTest,
+       DirectoryNonownerExplicitAndCurrentAuthorizationRemainDistinct) {
+  Options = darwin_test::directoryTimestampOptions();
+  Options->Metadata["/"].Mode = 0040755;
+  Options->Metadata["/dir"].UID = 600;
+  Options->Metadata["/dir"].Mode = 0040666;
+  reset();
+  const auto D = open("/dir");
+  const auto Before = status(D);
+  error(route(), {FDRoute ? D : path("/dir"), input(1, 0, 3, 0)}, 1);
+  EXPECT_EQ(status(D), Before);
+  Time.emplace().TimeOfDay = DarwinTimeOfDay{21, 22};
+  EXPECT_EQ(ok(route(), {FDRoute ? D : path("/dir"), 0}), 0u);
+  EXPECT_EQ(status(D), changed(Before, 21, 22000, 21, 22000));
+  Options->Metadata["/dir"].Mode = 0040644;
+  reset();
+  const auto Denied = open("/dir");
+  const auto DeniedBefore = status(Denied);
+  error(route(), {FDRoute ? Denied : path("/dir"), 0}, 13);
+  EXPECT_EQ(status(Denied), DeniedBefore);
+}
+TEST_P(DarwinTimestampMutationTest,
+       DirectoryEnumerationAndChildrenKeepTheirOwnState) {
+  Options = darwin_test::directoryTimestampOptions();
+  Options->Files["/dir/leaf"] = {'x'};
+  Options->Metadata["/dir/leaf"] = darwin_test::modeMetadata(0100600, 4, 1);
+  Options->Directories.insert("/dir/sub");
+  Options->Metadata["/dir/sub"] = darwin_test::modeMetadata(0040700, 5);
+  Options->Metadata["/dir"].Size = 96;
+  Options->DirectoryContents["/dir"] = {{{".", 3, 4, 11, 0},
+                                         {"..", 1, 4, 22, 0},
+                                         {"leaf", 4, 8, 33, 0},
+                                         {"sub", 5, 4, 44, 0}},
+                                        1};
+  reset();
+  const auto A = open("/dir"), D = ok(ServiceKind::Dup, {A}), B = open("/dir");
+  const auto Before = status(A);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {A, Base + Page * 2, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(ok(ServiceKind::Futimes, {D, input()}), 0u);
+  EXPECT_EQ(status(B), changed(Before, 11, 12000, 13, 14000));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {D, 0, 1}), 11u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {B, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {D}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Utimes, {path("."), input()}), 0u);
+  for (auto F : {open("leaf"), open("sub")}) {
+    const auto Child = status(F);
+    refused(ServiceKind::Futimes, {F, input()},
+            diagnostic::FileTimestampProvider);
+    EXPECT_EQ(status(F), Child);
+  }
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {D, Base + Page * 2, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {A, 0, 1}), 22u);
+  refused(ServiceKind::Mkdir, {path("/dir/new"), 0700},
+          diagnostic::DirectoryNotMutable);
+  EXPECT_EQ(status(A), changed(Before, 11, 12000, 13, 14000));
 }
 
 INSTANTIATE_TEST_SUITE_P(PageAndRoute, DarwinTimestampMutationTest,

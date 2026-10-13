@@ -7899,6 +7899,143 @@ directory_mode_mutations(const char *path, unsigned virtual_kind) {
   return 0;
 }
 
+/* Original complete directory timestamp workload. Fixed metadata is virtual;
+ * the native mode checks actual complete observations outside time fields. */
+static int directory_timestamp_status(u64 number, u64 object,
+                                      union mode_stat_guard *record,
+                                      const union mode_stat_guard *before,
+                                      unsigned kind, unsigned phase) {
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 211;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      (little_integer(record->bytes + 12, 2) & 0170000u) != 0040000u)
+    return 212;
+  if (before) {
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i)
+      if ((i < 5 || i > 12) && record->words[i] != before->words[i])
+        return 213;
+  }
+  if (kind) {
+    u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
+                        7UL | (0040700UL << 32) | (2UL << 48),
+                        kind == 2 ? 100UL : 3UL,
+                        501UL | (20UL << 32),
+                        0,
+                        kind == 2 ? 41UL : 1UL,
+                        kind == 2 ? 42UL : 2UL,
+                        kind == 2 ? 41UL : 3UL,
+                        kind == 2 ? 42UL : 4UL,
+                        kind == 2 ? 41UL : 5UL,
+                        kind == 2 ? 42UL : 6UL,
+                        kind == 2 ? 41UL : 7UL,
+                        kind == 2 ? 42UL : 8UL,
+                        kind == 2 ? 64UL : 32UL,
+                        7,
+                        512,
+                        9,
+                        0,
+                        0,
+                        0xa5a5a5a5a5a5a5a5UL};
+    if (phase) {
+      expected[5] = phase == 2 || phase == 3 ? 21 : 11;
+      expected[6] = phase == 2 || phase == 3 ? 22000 : 12000;
+      expected[7] = phase == 2 || phase == 3 ? 21 : 13;
+      expected[8] = phase == 2 || phase == 3 ? 22000 : 14000;
+      expected[9] = kind == 2 ? 101 : phase == 3 ? 81 : 111;
+      expected[10] = kind == 2 ? 102 : phase == 3 ? 82 : 112;
+      if (kind == 2) {
+        expected[11] = 13;
+        expected[12] = 14000;
+      }
+    }
+#pragma clang loop unroll(full)
+    for (unsigned i = 0; i != 20; ++i)
+      if (record->words[i] != expected[i])
+        return 214;
+  }
+  return 0;
+}
+static __attribute__((noinline)) int
+directory_timestamp_mutations(const char *path, unsigned kind) {
+  char moved[1024];
+  unsigned n = 0, error;
+  while (path[n] && n < 1017) {
+    moved[n] = path[n];
+    ++n;
+  }
+  if (path[n])
+    return 215;
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[n + i] = suffix[i];
+  if (kind == 2 && mode_result(136, (u64)path, 0700, 0, 0, 0))
+    return 216;
+  u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 217;
+  u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd)
+    return 218;
+  u64 other = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || other == fd || other == copy)
+    return 219;
+  union mode_stat_guard initial, a, b, c;
+  if (directory_timestamp_status(339, fd, &initial, 0, kind, 0))
+    return 220;
+  u64 input[4] = {11, 0xa5a5a5a50000000cUL, 13, 0x13579bdf0000000eUL};
+  const u64 high[3] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  for (unsigned api = 0; api != 2; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      if (mode_result(high[h] | (api ? 139 : 138),
+                      api ? (high[h] | copy) : (u64)path, (u64)input, 0, 0, 0))
+        return 221;
+      if (input[0] != 11 || input[1] != 0xa5a5a5a50000000cUL ||
+          input[2] != 13 || input[3] != 0x13579bdf0000000eUL)
+        return 222;
+      if (directory_timestamp_status(339, copy, &a, &initial, kind, 1) ||
+          directory_timestamp_status(338, (u64)path, &b, &initial, kind, 1) ||
+          directory_timestamp_status(339, other, &c, &initial, kind, 1))
+        return 223;
+#pragma clang loop unroll(full)
+      for (unsigned i = 0; i != 20; ++i)
+        if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+          return 224;
+    }
+  if (mode_result(139, copy, 0, 0, 0, 0) ||
+      directory_timestamp_status(339, copy, &a, &initial, kind, 2))
+    return 225;
+  if (mode_result(138, (u64)moved, 1, 0, 0, 2) ||
+      mode_result(139, -1UL, 1, 0, 0, 14) ||
+      mode_result(139, -1UL, (u64)input, 0, 0, 9) ||
+      mode_result(139, fd, 1, 0, 0, 14) ||
+      directory_timestamp_status(339, copy, &b, &initial, kind, 2))
+    return 226;
+#pragma clang loop unroll(full)
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != b.words[i])
+      return 227;
+  if (mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_timestamp_status(339, copy, &b, &initial, kind, 3) ||
+      mode_result(139, copy, (u64)input, 0, 0, 0) ||
+      directory_timestamp_status(338, (u64)moved, &c, &initial, kind, 4))
+    return 228;
+  if (mode_result(6, fd, 0, 0, 0, 0) ||
+      mode_result(139, fd, (u64)input, 0, 0, 9) ||
+      mode_result(139, copy, (u64)input, 0, 0, 0) ||
+      directory_timestamp_status(339, other, &b, &initial, kind, 4) ||
+      mode_result(6, copy, 0, 0, 0, 0) || mode_result(6, other, 0, 0, 0, 0))
+    return 229;
+  const char mark = 'T';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 230;
+  return 0;
+}
+
 /* Original SDK-free ordinary ownership controls. Native ctime remains a
  * captured provider result; both-inactive calls compare the complete record. */
 union ownership_stat_guard {
@@ -9302,6 +9439,16 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "ordinary-mode-mutations")) {
     const int status = argc < 3 ? 209 : ordinary_mode_mutations(argv[2]);
     return status ? status : 37;
+  }
+  if (equal(argv[1], "directory-timestamp-mutations") ||
+      equal(argv[1], "virtual-directory-timestamps") ||
+      equal(argv[1], "created-directory-timestamps")) {
+    const unsigned kind = equal(argv[1], "created-directory-timestamps")   ? 2
+                          : equal(argv[1], "virtual-directory-timestamps") ? 1
+                                                                           : 0;
+    const int status =
+        argc < 3 ? 209 : directory_timestamp_mutations(argv[2], kind);
+    return status ? status : 54;
   }
   if (equal(argv[1], "directory-mode-mutations") ||
       equal(argv[1], "virtual-directory-mode") ||

@@ -9,6 +9,7 @@
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinDirectoryModeTestData.h"
+#include "DarwinDirectoryTimestampTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
@@ -2815,6 +2816,60 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
 }
 
 TEST_P(DarwinProcess,
+       DirectoryTimestampMutationsPreserveIndependentObjectAndNamespaceState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  Options.DarwinTime.emplace().TimeOfDay = DarwinTimeOfDay{21, 22};
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (const char *Mode :
+       {"directory-timestamp-mutations", "virtual-directory-timestamps",
+        "created-directory-timestamps"}) {
+    const bool Created =
+        llvm::StringRef(Mode) == "created-directory-timestamps";
+    Options.Arguments[2] = Created ? "/child" : "/dir";
+    Options.DarwinFiles = darwin_test::directoryTimestampOptions(Created);
+    const auto Wanted = darwin_test::directoryTimestampServices(Created);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
+      EXPECT_EQ(R->ExitStatus, 54);
+      EXPECT_EQ(R->StandardOutput, "T");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+      }
+      EXPECT_EQ(R->ReturnValue, 54u);
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").Mode, 0040700);
+      EXPECT_EQ(Options.DarwinFiles->TimestampMutations->CreatedRegularObjects,
+                false);
+    }
+    Options.DarwinFiles->TimestampMutations->Objects.clear();
+    Options.DarwinFiles->TimestampMutations->CreatedDirectoryObjects = false;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic,
+              "Darwin object timestamp provider is not configured");
+    ASSERT_EQ(R->Services.size(), Created ? 6u : 5u);
+    EXPECT_EQ(R->Services.back().Number, Class | 138);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
+}
+
+TEST_P(DarwinProcess,
        DirectoryModesPreserveIndependentObjectAndNamespaceState) {
   Options.InstructionQuantum = 1024;
   Options.Limits.TimeoutMicroseconds = 5000000;
@@ -3050,11 +3105,10 @@ TEST_P(DarwinProcess, TimestampMutationsKeepExplicitClockAndObjectAuthority) {
       auto R = run(Mode);
       ASSERT_TRUE(bool(R));
       EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
-      EXPECT_EQ(
-          R->Diagnostic,
-          Missing
-              ? "Darwin ordinary timestamp environment is not configured"
-              : "Darwin regular-object timestamp provider is not configured");
+      EXPECT_EQ(R->Diagnostic,
+                Missing
+                    ? "Darwin ordinary timestamp environment is not configured"
+                    : "Darwin object timestamp provider is not configured");
       ASSERT_EQ(R->Services.size(), Created ? 3u : 8u);
       EXPECT_FALSE(R->Services.back().Result);
       EXPECT_FALSE(R->Services.back().Error);

@@ -160,3 +160,5 @@ NEVERD_NATIVE_DARWIN_CASE(
 NEVERD_NATIVE_DARWIN_CASE(MountEnumerationKeepsOrderedSnapshotsAndRefreshCache)
 NEVERD_NATIVE_DARWIN_CASE(
     DirectoryModesPreserveIndependentObjectAndNamespaceState)
+NEVERD_NATIVE_DARWIN_CASE(
+    DirectoryTimestampMutationsPreserveIndependentObjectAndNamespaceState)

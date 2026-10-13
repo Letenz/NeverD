@@ -2369,7 +2369,8 @@ NEVERD_EMULATION_DOC_TOKEN(
             "CurrentMetadata never supplies namespace authority")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "directory nlink greater than1 valid / equal known Device-Inode "
-            "aliases rejected / ownership and timestamps regular-only")
+            "aliases rejected / ownership regular-only / timestamps require a "
+            "separate provider")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "mode changes only permissions and ctime / independent namespace time "
@@ -2382,8 +2383,40 @@ NEVERD_EMULATION_DOC_TOKEN(
             "services / 33 full guarded stat144 records / main53 stdout Q")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "five software profiles C CLI Python / three matching ARM64 HVF "
-            "required / native common74 mandatory89 ARM64267")
+            "required / native common75 mandatory90 ARM64270")
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin,
     "60 native directory observations plus3 separate unexpanded-symlink "
     "controls / ARM64 O0 O1 O2 / native5s guest5000000us quantum1024 public30s")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "directory timestamps: utimes138 futimes139 / "
+                           "ordinary initial regular or directory objects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "TimestampMutations CreatedDirectoryObjects=false / "
+    "created_directory_objects strict Boolean / separate CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory timestamp provider requires complete "
+            "CreationPolicy.Namespace / fixed ctime Mutation.Time")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DirectoryNode TimestampTime independent of ModeTime MutationTime "
+            "DirectoryEntrySize / unknown metadata never restored")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "explicit timestamps require owner even when equal / NULL uses "
+            "declared TimeOfDay and shared WRITE_ATTRIBUTES authorization")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "LP64 timeval32 signed64 seconds signed32 microseconds ignored "
+            "padding / int64 nanosecond saturation floor normalization / "
+            "earlier nonnegative mtime reduces birthtime")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "directory-timestamp-mutations46 services / created-directory-timestamps47 "
+    "services / 24 complete guarded stat144 records / main54 stdout T")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "five software profiles C CLI Python / three matching ARM64 HVF "
+            "required / native common75 mandatory90 ARM64270")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "141 owned native directory timestamp observations / ARM64 O0 O1 "
+            "O2 / native5s compiler120s build1200s parallel2 guest5000000us "
+            "quantum1024 public30s")

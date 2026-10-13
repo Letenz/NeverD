@@ -10,6 +10,7 @@
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
 #include "DarwinDirectoryModeTestData.h"
+#include "DarwinDirectoryTimestampTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
@@ -3912,6 +3913,116 @@ TEST_F(ProcessPublic,
 #endif
 }
 
+class DarwinDirectoryTimestampPublic
+    : public ProcessPublic,
+      public testing::WithParamInterface<
+          std::pair<const char *, const char *>> {};
+TEST_P(DarwinDirectoryTimestampPublic,
+       PreserveCompleteDirectoryTimestampRecordsAcrossCAndCLI) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  llvm::SmallString<128> Directory;
+  ASSERT_FALSE(llvm::sys::fs::createUniqueDirectory(Prefix, Directory));
+  const std::filesystem::path Root(Directory.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Output = (Root / OutputFile).string();
+  const auto &[File, Profile] = GetParam();
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+  const uint64_t Class =
+      llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
+    const bool Created = Variant == 2 || Variant == 4, Missing = Variant >= 3;
+    auto Files = emulation::darwin_test::directoryTimestampFilesJSON(Created);
+    if (Missing) {
+      auto &M = *Files.getAsObject()->getObject("timestamp_mutations");
+      M["objects"] = llvm::json::Array{};
+      M["created_directory_objects"] = false;
+      // A regular creation grant cannot authorize the new directory.
+      M["created_regular_objects"] = Created;
+    }
+    const auto Options =
+        llvm::formatv("{0}",
+                      llvm::json::Value(llvm::json::Object{
+                          {"backend", "unicorn"},
+                          {"instruction_quantum", 1024},
+                          {"timeout_microseconds", 5000000},
+                          {"arguments",
+                           llvm::json::Array{
+                               "guest",
+                               Created        ? "created-directory-timestamps"
+                               : Variant == 0 ? "directory-timestamp-mutations"
+                                              : "virtual-directory-timestamps",
+                               Created ? "/child" : "/dir"}},
+                          {"darwin_files", std::move(Files)},
+                          {"darwin_time",
+                           llvm::json::Object{
+                               {"time_of_day",
+                                llvm::json::Object{{"seconds", 21},
+                                                   {"microseconds", 22}}}}},
+                          {"darwin_system",
+                           llvm::cantFail(llvm::json::parse(
+                               emulation::darwin_test::ModeCredentialsJSON))}}))
+            .str();
+    auto Text = takeString(neverd_emulate_process_json(
+        Session, Path.c_str(), Profile, Options.c_str()));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    auto Report = llvm::json::parse(Text);
+    ASSERT_TRUE(bool(Report));
+    const auto *O = Report->getAsObject();
+    ASSERT_NE(O, nullptr);
+    EXPECT_EQ(O->getString(field::Stop),
+              Missing ? "unsupported_service" : "exited");
+    EXPECT_EQ(O->getString(field::Stdout), Missing ? "" : "54");
+    EXPECT_EQ(O->getString(field::Stderr), "");
+    const auto *Calls = O->getArray(field::Services);
+    ASSERT_NE(Calls, nullptr);
+    if (Missing) {
+      EXPECT_EQ(O->getString(field::Diagnostic),
+                "Darwin object timestamp provider is not configured");
+      ASSERT_EQ(Calls->size(), Created ? 6u : 5u);
+      const auto *Last = Calls->back().getAsObject();
+      ASSERT_NE(Last, nullptr);
+      EXPECT_EQ(Last->getString(field::Number),
+                llvm::utohexstr(Class | 138, true));
+      EXPECT_EQ(*Last->get(field::Result), llvm::json::Value(nullptr));
+      EXPECT_EQ(Last->get(field::Error), nullptr);
+    } else {
+      EXPECT_EQ(O->getInteger(field::ExitStatus), 54);
+      const auto Wanted =
+          emulation::darwin_test::directoryTimestampServices(Created);
+      ASSERT_EQ(Calls->size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        const auto *E = (*Calls)[I].getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | Wanted[I].Number, true));
+        EXPECT_EQ(E->getString(field::Result),
+                  llvm::utohexstr(Wanted[I].Value, true));
+        EXPECT_EQ(E->getBoolean(field::Error), Wanted[I].Error);
+      }
+    }
+    EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+    EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+              Missing ? process_cli::Incomplete : process_cli::GuestFailure);
+    ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+  }
+#endif
+}
+INSTANTIATE_TEST_SUITE_P(
+    Platforms, DarwinDirectoryTimestampPublic,
+    testing::Values(std::pair{"macos-arm64", MacOSMachO64},
+                    std::pair{"macos-x86_64", MacOSMachO64},
+                    std::pair{"ios-arm64", IOSMachO64},
+                    std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
+                    std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}),
+    [](const testing::TestParamInfo<std::pair<const char *, const char *>>
+           &Info) {
+      std::string Name = Info.param.first;
+      std::replace(Name.begin(), Name.end(), '-', '_');
+      return Name;
+    });
+
 class DarwinDirectoryModePublic : public ProcessPublic,
                                   public testing::WithParamInterface<
                                       std::pair<const char *, const char *>> {};
@@ -4238,7 +4349,7 @@ TEST_F(ProcessPublic,
               Variant == 3 ? "Darwin time_of_day is not configured"
               : Variant == 1
                   ? "Darwin ordinary timestamp environment is not configured"
-                  : "Darwin regular-object timestamp provider is not "
+                  : "Darwin object timestamp provider is not "
                     "configured");
         }
         EXPECT_EQ(neverd_session_is_loaded(Session), 0);

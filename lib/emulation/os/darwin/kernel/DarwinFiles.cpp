@@ -370,17 +370,21 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       return failure(Reason);
     return PathInput(Path, Directory);
   };
-  const auto AdmitCreatedRegularProvider =
+  const auto AdmitCreatedObjectProviders =
       [&](const auto &Environment) -> llvm::Error {
     if (Environment && Environment->CreatedRegularObjects &&
         !Options.CreationPolicy)
       return failure(diagnostic::FileCreationPolicy);
+    if constexpr (requires { Environment->CreatedDirectoryObjects; })
+      if (Environment && Environment->CreatedDirectoryObjects &&
+          (!Options.CreationPolicy || !Options.CreationPolicy->Namespace))
+        return failure(diagnostic::FileCreationPolicy);
     return llvm::Error::success();
   };
   const auto AdmitOrdinaryGrants =
       [&](const auto &Environment, const char *Reason,
           bool AllowDirectories = false) -> llvm::Error {
-    if (auto E = AdmitCreatedRegularProvider(Environment))
+    if (auto E = AdmitCreatedObjectProviders(Environment))
       return E;
     if (!Environment)
       return llvm::Error::success();
@@ -392,9 +396,6 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return llvm::Error::success();
   };
-  if (Options.ModeMutations && Options.ModeMutations->CreatedDirectoryObjects &&
-      (!Options.CreationPolicy || !Options.CreationPolicy->Namespace))
-    return failure(diagnostic::FileCreationPolicy);
   if (auto E = AdmitOrdinaryGrants(Options.ModeMutations,
                                    diagnostic::FileModeOption, true))
     return E;
@@ -402,9 +403,9 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
                                    diagnostic::FileOwnershipOption))
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.TimestampMutations,
-                                   diagnostic::FileTimestampOption))
+                                   diagnostic::FileTimestampOption, true))
     return E;
-  if (auto E = AdmitCreatedRegularProvider(Options.FileSystemObservations))
+  if (auto E = AdmitCreatedObjectProviders(Options.FileSystemObservations))
     return E;
   if (Options.FileSystemObservations) {
     if (Options.FileSystemObservations->Objects.size() > limits::Files)
@@ -446,7 +447,7 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
   }
   const auto AdmitObjectProvider = [&](const auto &Environment,
                                        const char *Reason) -> llvm::Error {
-    if (auto E = AdmitCreatedRegularProvider(Environment))
+    if (auto E = AdmitCreatedObjectProviders(Environment))
       return E;
     if (!Environment)
       return llvm::Error::success();
@@ -873,6 +874,11 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
     const auto I = Options->ModeMutations->Objects.find(Path);
     if (I != Options->ModeMutations->Objects.end())
       Node->ModeTime = &I->second;
+  }
+  if (Options->TimestampMutations) {
+    const auto I = Options->TimestampMutations->Objects.find(Path);
+    if (I != Options->TimestampMutations->Objects.end())
+      Node->TimestampTime = &I->second;
   }
   if (Options->FileSystemObservations) {
     const auto I = Options->FileSystemObservations->Objects.find(Path);
@@ -1853,6 +1859,9 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
     if (Options->ModeMutations &&
         Options->ModeMutations->CreatedDirectoryObjects)
       Node->ModeTime = &Policy->Mutation.Time;
+    if (Options->TimestampMutations &&
+        Options->TimestampMutations->CreatedDirectoryObjects)
+      Node->TimestampTime = &Policy->Mutation.Time;
   }
   Directories.emplace(File.Path, std::move(Node));
   *StorageUsed += Charge;
