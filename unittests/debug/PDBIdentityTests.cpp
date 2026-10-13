@@ -1160,14 +1160,20 @@ TEST(PDBUserSelection, MissingIdentityLoadsFunctionAndLocalTypesForAnalysis) {
       << llvm::toString(Context.takeError());
   EXPECT_FALSE((*Context)->hasAuthenticatedImageIdentity());
   EXPECT_TRUE((*Context)->hasAnalysisAuthority());
-  auto Function = (*Context)->resolveFunction(0x140001000);
+  // The same facts LaterFuncLoadStillNamesEarlierLocals reads through a
+  // matching identity: Overflow's procedure names no parameters, Outer's does.
+  constexpr va_t Overflow = 0x140001000;
+  constexpr va_t Outer = 0x1400012a0;
+  auto Function = (*Context)->resolveFunction(Overflow);
   ASSERT_TRUE(Function);
   EXPECT_EQ(Function->Name, "tainted_stack_overflow");
   ASSERT_TRUE(Function->ReturnType);
-  ASSERT_EQ(Function->Params.size(), 1u);
-  EXPECT_EQ(Function->Params[0].first, "s");
-  EXPECT_TRUE(isCharPointer(Function->Params[0].second));
-  auto Buffer = (*Context)->resolveVariable(0x140001000, -0x18);
+  auto OuterFunction = (*Context)->resolveFunction(Outer);
+  ASSERT_TRUE(OuterFunction);
+  ASSERT_EQ(OuterFunction->Params.size(), 1u);
+  EXPECT_EQ(OuterFunction->Params[0].first, "s");
+  EXPECT_TRUE(isCharPointer(OuterFunction->Params[0].second));
+  auto Buffer = (*Context)->resolveVariable(Overflow, -0x18);
   ASSERT_TRUE(Buffer);
   EXPECT_EQ(Buffer->Name, "buf");
   ASSERT_TRUE(Buffer->Type);
@@ -1191,7 +1197,7 @@ TEST(PDBUserSelection, DiscoveryRequiresAnExplicitNamedPDBChoice) {
                                 *ImageOr, Request);
   ASSERT_TRUE(static_cast<bool>(Selected)) << Selected.Error;
   EXPECT_EQ(Selected.Kind, DebugInfoKind::PDB);
-  auto Function = Selected.Context->resolveFunction(0x140001000);
+  auto Function = Selected.Context->resolveFunction(0x1400012a0);
   ASSERT_TRUE(Function);
   ASSERT_TRUE(Function->ReturnType);
   EXPECT_EQ(Function->Params.size(), 1u);

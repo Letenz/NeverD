@@ -113,6 +113,7 @@ void discovery(Harness &H, const Json &Caps) {
     const auto Name = Operation.get<std::string>();
     const bool Omitted = Name == "bun_export" || Name == "wails_export" ||
                          Name == "tauri_export" || Name == "native_analyze" ||
+                         Name == "desktop_resources_export" ||
                          Name == "source_readable_export" ||
                          Name == "source_rewrite_export";
     require(Names.contains("neverd_web_" + Name) != Omitted,
@@ -153,6 +154,48 @@ void clientSourceFeatures(Harness &H) {
   redacted(N);
   redacted(First);
   redacted(Rest);
+  const auto &B = N.at("desktop_bridges");
+  require(B.at("profile") == "tauri-1-wails-2-direct-bridge-syntax-v1" &&
+              B.at("record_count") == 2 &&
+              B.at("bridge_inventory_complete") == false &&
+              B.at("native_target") == "not_resolved",
+          "MCP promoted desktop bridge syntax or lost its profile");
+  auto BridgePage = Args;
+  BridgePage["record_kind"] = "desktop_bridges";
+  BridgePage["limit"] = 1;
+  const auto BridgeFirst = H.same("web_source_navigation_records", BridgePage);
+  const auto &Row = BridgeFirst.at("items").at(0);
+  require(Row.at("form") == "window_ipc_message" &&
+              Row.at("root_resolution") == "external" &&
+              Row.at("command_status") == "literal_string_redacted" &&
+              BridgeFirst.at("next_offset") == 1,
+          "MCP changed desktop bridge syntax or continuation");
+  auto Anchor = Args;
+  Anchor["byte_offset"] = Row.at("byte_offset");
+  Anchor["byte_length"] = Row.at("byte_length");
+  H.same("web_source_anchor", Anchor);
+  BridgePage["offset"] = 1;
+  const auto BridgeRest = H.same("web_source_navigation_records", BridgePage);
+  require(BridgeRest.at("items").size() == 1 &&
+              BridgeRest.at("page_complete") == true &&
+              BridgeRest.at("items").at(0).at("target_name_node_ids").size() ==
+                  3,
+          "MCP lost Wails target anchors");
+  redacted(BridgeFirst);
+  redacted(BridgeRest);
+  const auto &Order = N.at("configuration_order");
+  require(Order.at("object_count") == 1 && Order.at("term_count") == 4 &&
+              Order.at("effective_configuration") == "not_analyzed",
+          "MCP promoted or lost configuration source order");
+  auto ConfigPage = Args;
+  ConfigPage["record_kind"] = "config_merges";
+  const auto Config = H.same("web_source_navigation_records", ConfigPage);
+  require(Config.at("items").size() == 1 &&
+              Config.at("items")[0].at("terms")[0].at("unknown_keys") == true,
+          "MCP lost the configuration overwrite barrier");
+  redacted(Config);
+  BridgePage["execute"] = true;
+  invalid([&] { H.get("web_source_navigation_records", BridgePage); });
   Page["execute"] = true;
   invalid([&] { H.get("web_source_navigation_records", Page); });
 }
@@ -230,7 +273,7 @@ void sourceAndMaps(Harness &H) {
       H.same("web_interface_relations_analyze",
              {{"revision", H.Revision},
               {"analysis_id", Interfaces.at("interface_analysis_id")}});
-  require(Relations.at("profile") == "request-source-relations-v1" &&
+  require(Relations.at("profile") == "request-source-relations-v2" &&
               Relations.at("relation_count") == 4 &&
               Relations.at("response_api_identity") ==
                   "member_spelling_unverified" &&
@@ -662,9 +705,22 @@ void passiveInputs(Harness &H) {
   const Json Page{{"revision", H.Revision},
                   {"capture_id", Preview.at("capture_id")}};
   H.fail("web_har_records", Page, "har_capture_not_committed");
+  const Json ReportArgs{{"revision", H.Revision},
+                        {"har_capture_id", Preview.at("capture_id")}};
+  H.fail("web_passive_report_create", ReportArgs, "har_capture_not_committed");
   H.same("web_har_commit", {{"revision", H.Revision},
                             {"preview_token", Preview.at("preview_token")}});
   H.same("web_har_records", Page);
+  const auto HARReport = H.same("web_passive_report_create", ReportArgs);
+  require(HARReport.at("static_records") == 0 &&
+              HARReport.at("server_constraints") == "unknown" &&
+              HARReport.at("inferred_optionality") == "unknown",
+          "MCP promoted observed examples to server constraints");
+  const auto HARReportPage =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", HARReport.at("passive_report_id")}});
+  redacted(HARReportPage);
 
   Artifact = H.import(5);
   const auto Stream = H.same("web_stream_preview",
@@ -680,6 +736,19 @@ void passiveInputs(Harness &H) {
   require(Records.at("items").size() == 2 &&
               Records.at("protocol_negotiation_verified") == false,
           "Stream facts or evidence class changed");
+  const auto StreamReport =
+      H.same("web_passive_report_create",
+             {{"revision", H.Revision},
+              {"stream_capture_id", Stream.at("stream_capture_id")}});
+  const auto StreamReportPage =
+      H.same("web_passive_report_records",
+             {{"revision", H.Revision},
+              {"passive_report_id", StreamReport.at("passive_report_id")}});
+  require(StreamReportPage.at("items").size() == 2 &&
+              StreamReportPage.at("items")[0].at("related_id") ==
+                  Records.at("items")[1].at("record_id"),
+          "MCP changed recorded stream relationships");
+  redacted(StreamReportPage);
 }
 
 void zipArchive(Harness &H, bool HasParser) {
@@ -889,12 +958,15 @@ int main() {
       F.write("source", "function CANARY_NAME(CANARY_ARG){"
                         "return true ? CANARY_ARG.method() : CANARY_UNUSED;}");
       booleanBranches(H);
-      F.write("source",
-              "function CANARY_CALLBACK(v){return v;}"
-              "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
-              "if(checkPermissions('CANARY'))server.callTool('CANARY');"
-              "const settings={permissions:{deny:['CANARY']},"
-              "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};");
+      F.write(
+          "source",
+          "function CANARY_CALLBACK(v){return v;}"
+          "server.registerTool('CANARY_TOOL',{},CANARY_CALLBACK);"
+          "if(checkPermissions('CANARY'))server.callTool('CANARY');"
+          "const settings={...CANARY_DEFAULTS,permissions:{deny:['CANARY']},"
+          "mcpServers:{CANARY:{}},hooks:{PreToolUse:[]}};"
+          "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);");
       clientSourceFeatures(H);
     } else
       invalid([&] { H.get("web_source_analyze", Json::object()); });

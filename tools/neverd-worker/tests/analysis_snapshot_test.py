@@ -79,7 +79,7 @@ def run(executable):
         Path(str(invalid) + ".neverd-code.json").write_text(json.dumps([
             {"addr": BASE, "views": {}}, {"addr": BASE, "views": {}}]))
         assert owner.call("open", {"path": str(invalid)})["error"]["code"] == "invalid_request"
-        assert Path(ok(owner, "metadata")["path"]) == binary
+        assert Path(ok(owner, "metadata")["path"]).resolve() == binary.resolve()
         assert "source note" in ok(owner, "decompile", {"address": BASE, "representation": "c"})["text"]
 
 

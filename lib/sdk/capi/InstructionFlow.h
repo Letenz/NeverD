@@ -17,10 +17,12 @@
 #ifndef NEVERD_LIB_SDK_CAPI_INSTRUCTIONFLOW_H
 #define NEVERD_LIB_SDK_CAPI_INSTRUCTIONFLOW_H
 
+#include "neverd/DataAccessWidths.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
@@ -134,18 +136,30 @@ struct FunctionPage {
   std::vector<const FuncInfo *> Functions;
   std::optional<va_t> NextEntry;
 };
+FunctionPage functionPage(llvm::ArrayRef<FuncInfo> Functions, va_t FirstEntry,
+                          int MaxFunctions);
 FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions);
 
-/// Decodes each function of \p Page with a decoder of its own, functions in
-/// parallel, and calls \p Visit(Index, Decoder, Instruction) for each of
-/// its instructions in order: up to the function's recorded size, or to its
-/// first terminator when it has none.  One function's visits run on one
-/// thread, so writing only to its own output keeps the result independent
-/// of the thread count.  False when a decoder could not be set up.
+/// Decodes each function of \p Page in \p Img with a decoder of its own,
+/// functions in parallel, and calls \p Visit(Index, Decoder, Instruction) for
+/// each of its instructions in order: up to the function's recorded size, or
+/// to its first terminator when it has none, then the parts of it that lie
+/// apart from its body (ExceptionInfo::outlyingChunks).  One function's
+/// visits run on one thread, so writing only to its own output keeps the
+/// result independent of the thread count.  False when a decoder could not
+/// be set up.
 bool decodeFunctions(
-    const Session &S, const FunctionPage &Page,
+    const BinaryImage &Img, const FunctionPage &Page,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>
         Visit);
+
+/// The width of the reads and writes the instructions of each of \p
+/// Functions state at each address in \p Img: the direct references
+/// neverd_code_refs_json publishes, which the listing names data by.  None
+/// when a decoder could not be set up.
+std::optional<DataAccessWidths>
+collectDataAccessWidths(const BinaryImage &Img,
+                        llvm::ArrayRef<FuncInfo> Functions);
 
 } // namespace neverd::sdk
 

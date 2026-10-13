@@ -73,13 +73,18 @@ std::string Session::capabilities() {
                          {"resolves_external_references", false}}};
   Operations.emplace_back("electron_manifest_analyze");
   Operations.emplace_back("desktop_manifest_analyze");
+#ifndef _WIN32
+  Operations.emplace_back("desktop_resources_export");
+#endif
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "desktop_manifest"},
       {"profiles", llvm::json::Array{std::string(NWManifestProfile),
-                                     std::string(VSIXManifestProfile)}},
-      {"input_kinds", llvm::json::Array{"nwjs", "vsix"}},
+                                     std::string(VSIXManifestProfile),
+                                     std::string(DesktopResourceProfile)}},
+      {"input_kinds",
+       llvm::json::Array{"nwjs", "vsix", "cef-assets", "webview-assets"}},
       {"max_bytes", std::to_string(MaxDesktopManifestBytes)},
-      {"max_entries", 5},
+      {"max_entries", 641},
       {"max_cached", 16},
       {"framework_verified", false},
       {"runtime_entry_verified", false}});
@@ -229,6 +234,22 @@ std::string Session::capabilities() {
       {"executes_input", false}});
   for (const auto *Name : {"har_preview", "har_commit", "har_records"})
     Operations.emplace_back(Name);
+  for (const auto *Name : {"passive_report_create", "passive_report_records"})
+    Operations.emplace_back(Name);
+  Analyses.emplace_back(
+      llvm::json::Object{{"kind", "passive_report"},
+                         {"profile", std::string(PassiveReportProfile)},
+                         {"max_records", MaxPassiveReportRecords},
+                         {"max_steps", MaxPassiveReportSteps},
+                         {"max_cached", 2},
+                         {"max_page_records", 128},
+                         {"max_metadata_bytes", 16 * 1024 * 1024},
+                         {"max_json_body_bytes", MaxPassiveShapeBytes},
+                         {"max_aggregate_body_nodes", MaxPassiveShapeNodes},
+                         {"all_input_values", "withheld"},
+                         {"server_constraints", "unknown"},
+                         {"executes_input", false},
+                         {"network_access", false}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "har_observations"},
       {"profile", std::string(HARProfile)},
@@ -709,8 +730,16 @@ std::string Session::capabilities() {
       {"anchor_profile", std::string(SourceAnchorProfile)},
       {"max_steps", MaxJavaScriptNavigationSteps},
       {"record_kinds",
-       llvm::json::Array{"functions", "calls", "references", "features"}},
+       llvm::json::Array{"functions", "calls", "references", "features",
+                         "desktop_bridges", "config_merges"}},
       {"client_feature_profile", std::string(JavaScriptClientFeatureProfile)},
+      {"desktop_bridge_profile", std::string(DesktopBridgeProfile)},
+      {"max_desktop_bridge_records", MaxDesktopBridgeRecords},
+      {"max_desktop_bridge_steps", MaxDesktopBridgeSteps},
+      {"configuration_order_profile", std::string(ConfigurationOrderProfile)},
+      {"max_configuration_order_records", MaxConfigurationOrderRecords},
+      {"max_configuration_order_terms", MaxConfigurationOrderTerms},
+      {"max_configuration_order_steps", MaxConfigurationOrderSteps},
       {"max_client_feature_records", MaxJavaScriptClientFeatureRecords},
       {"max_client_feature_steps", MaxJavaScriptClientFeatureSteps},
       {"client_feature_attribution", "source_syntax_only"},
@@ -921,6 +950,7 @@ std::string Session::commit(std::string_view Token) {
   State->InterfaceSources.clear();
   State->InterfaceRelations.clear();
   State->InterfaceCorrelations.clear();
+  State->PassiveReports.clear();
   State->CachedArchiveBytes = 0;
   State->PackageDiffs.clear();
   State->HTMLDocuments.clear();

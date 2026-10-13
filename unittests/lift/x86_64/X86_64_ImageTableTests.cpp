@@ -254,3 +254,55 @@ int editdist(int a) {
 )C",
                        "editdist", {"editdist", "SA", "SB"});
 }
+
+// A table of string pointers becomes a relative table: each entry the
+// offset of its string, in another section of the object, from the table.
+// The code adds the entry back to the table's address, so the table's
+// object reaches the strings.
+TEST_F(X86_64_ImageTable, ARelativeTableReachesItsStrings) {
+  expectRunsLikeSource(R"C(
+static const char *const W[6] = {"alphaA", "bravoB", "charlC",
+                                 "deltaD", "echoEe", "foxtrF"};
+int offptr(int a) {
+  unsigned s = (unsigned)a, h = 0;
+  for (int i = 0; i < 200; i++) {
+    s = s * 1103515245u + 12345u;
+    unsigned j = (s >> 5) % 6u;
+    const char *p = W[j] + ((s >> 9) % 6u);
+    h = h * 131u + (unsigned)(unsigned char)*p;
+    h ^= h >> 11;
+  }
+  return (int)h;
+}
+)C",
+                       "offptr", {"offptr", "W"});
+}
+
+// A switch that picks a string becomes clang's lookup table: a relative
+// table no symbol sizes, whose strings the object's layout puts before it.
+// The code adds an entry back to the table in a variable it then reads
+// through, so one object spans from the first string through the table.
+TEST_F(X86_64_ImageTable, ASwitchTableReachesTheStringsBeforeIt) {
+  expectRunsLikeSource(R"C(
+int strsw(int a) {
+  unsigned s = (unsigned)a, acc = 0;
+  for (int i = 0; i < 300; i++) {
+    unsigned c = (s >> 3) % 6u;
+    const char *w;
+    switch (c) {
+    case 0: w = "alpha"; break;
+    case 1: w = "bravo"; break;
+    case 2: w = "charlie"; break;
+    case 3: w = "delta"; break;
+    case 4: w = "echo"; break;
+    default: w = "fox";
+    }
+    acc = acc * 131u + (unsigned)(unsigned char)w[0] +
+          ((unsigned)(unsigned char)w[1] << 8) + c;
+    s = s * 1103515245u + 12345u;
+  }
+  return (int)acc;
+}
+)C",
+                       "strsw", {"strsw"});
+}

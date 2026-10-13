@@ -101,7 +101,7 @@ protected:
     test::writeFile(Path, Bytes);
     return Path;
   }
-  std::filesystem::path writeWatchInput() {
+  std::filesystem::path writeWatchInput(bool SameValue = false) {
     auto Bytes = Original.File;
     const auto *Program = Original.section(".prog");
     const auto *Data = Original.section(".pack");
@@ -110,11 +110,14 @@ protected:
       return {};
     }
     std::fill_n(Bytes.begin() + Data->FileOffset, 8, 0);
-    // Five independently encoded mov dword ptr [rip+disp32], imm32 stores.
+    // Independently encoded mov dword ptr [rip+disp32], imm32 stores.
     // Only the first cell is watched. The second witnesses whether the CPU
     // ran past each committed watched store before notifying the observer.
-    const std::pair<uint32_t, uint32_t> Stores[] = {
-        {4, 0}, {0, 1}, {4, 0x11}, {0, 2}, {4, 0x22}};
+    const std::vector<std::pair<uint32_t, uint32_t>> Stores =
+        SameValue
+            ? std::vector<std::pair<uint32_t, uint32_t>>{{0, 0}, {0, 0}, {0, 0}}
+            : std::vector<std::pair<uint32_t, uint32_t>>{
+                  {4, 0}, {0, 1}, {4, 0x11}, {0, 2}, {4, 0x22}};
     for (size_t I = 0; I < std::size(Stores); ++I) {
       auto *Code = Bytes.data() + Program->FileOffset + I * 10;
       Code[0] = 0xc7;
@@ -123,8 +126,8 @@ protected:
                 Data->RVA + Stores[I].first - (Program->RVA + I * 10 + 10));
       write32le(Code + 6, Stores[I].second);
     }
-    Bytes[Program->FileOffset + 50] = 0x90; // Watched before execution.
-    Bytes[Program->FileOffset + 51] = 0xc3;
+    Bytes[Program->FileOffset + 10 * Stores.size()] = 0x90;
+    Bytes[Program->FileOffset + 10 * Stores.size() + 1] = 0xc3;
     write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
     const auto Path = Scratch / "write-watch.sys";
     test::writeFile(Path, Bytes);
@@ -362,6 +365,43 @@ TEST_P(UnpackDriver, RecoversDriverEntryImportsAndLifecycle) {
   checkLifecycle(Output);
 }
 
+TEST_P(UnpackDriver,
+       CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus) {
+  const auto *Program = Original.section(".prog");
+  ASSERT_NE(Program, nullptr);
+  const std::vector<uint8_t> Bodies[] = {
+      // A valid callee restores R13 before returning STATUS_SUCCESS.
+      {0x41, 0x55, 0x49, 0xc7, 0xc5, 77, 0, 0, 0, 0x41, 0x5d, 0x31, 0xc0, 0xc3},
+      // Balanced RSP and a successful NTSTATUS do not excuse the clobber.
+      {0x49, 0xc7, 0xc5, 77, 0, 0, 0, 0x31, 0xc0, 0xc3},
+  };
+  for (size_t I = 0; I < std::size(Bodies); ++I) {
+    ASSERT_LE(Bodies[I].size(), Program->FileSize);
+    auto Bytes = Original.File;
+    std::copy(Bodies[I].begin(), Bodies[I].end(),
+              Bytes.begin() + Program->FileOffset);
+    write32le(Bytes.data() + Original.EntryOffset, Program->RVA);
+    const auto Input = Scratch / "entry-caller.sys";
+    test::writeFile(Input, Bytes);
+    DriverOptions D;
+    D.Backend = GetParam().Kind;
+    D.Contract = ExecutionContract::CheckedX64;
+    auto Run = emulateDriver(Input, D);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    if (!I) {
+      EXPECT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
+      EXPECT_EQ(Run->NTStatus, 0u);
+    } else {
+      EXPECT_EQ(Run->Stop, DriverStopReason::ModelError) << Run->Diagnostic;
+      EXPECT_EQ(Run->Diagnostic,
+                "DriverEntry returned with changed nonvolatile r13");
+      EXPECT_FALSE(Run->NTStatus);
+      EXPECT_FALSE(Run->UnloadCompleted);
+    }
+    EXPECT_TRUE(Run->Requests.empty());
+  }
+}
+
 TEST_P(UnpackDriver, RetainedKernelObjectsAndBorrowedPointersAreNotRecovery) {
   for (unsigned Mode : {1, 2, 3, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20}) {
     SCOPED_TRACE(Mode);
@@ -566,7 +606,9 @@ class DriverObserver final : public ProcessObserver {
 public:
   std::string Fail;
   std::vector<bool> Entries;
+  size_t Invocations = 0, Exports = 0, PureResumes = 0;
   llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
+    EXPECT_FALSE(P.watchedMemoryUnchanged());
     if (Fail == "started")
       return llvm::createStringError("driver observer failure");
     auto M = P.inputModule();
@@ -574,24 +616,31 @@ public:
   }
   llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
   invoking(ProcessView &P) override {
+    EXPECT_FALSE(P.watchedMemoryUnchanged());
+    ++Invocations;
     auto M = P.inputModule();
     return std::vector<ExecutionWatch>{{M->Base, M->Size}};
   }
   llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
   watched(ProcessView &P, uint64_t) override {
+    EXPECT_TRUE(P.watchedMemoryUnchanged());
     if (Fail == "watched")
       return llvm::createStringError("driver observer failure");
     Entries.push_back(P.programInvocation());
     return std::vector<ExecutionWatch>{};
   }
   llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
-  resuming(ProcessView &) override {
+  resuming(ProcessView &P) override {
+    if (P.watchedMemoryUnchanged())
+      ++PureResumes;
     if (Fail == "resuming")
       return llvm::createStringError("driver observer failure");
     return std::nullopt;
   }
-  llvm::Error exporting(ProcessView &, const ProcessExportView &,
+  llvm::Error exporting(ProcessView &P, const ProcessExportView &,
                         std::optional<uint64_t>) override {
+    EXPECT_FALSE(P.watchedMemoryUnchanged());
+    ++Exports;
     if (Fail == "exporting")
       return llvm::createStringError("driver observer failure");
     return llvm::Error::success();
@@ -633,7 +682,10 @@ public:
       : DataRVA(DataRVA), StopRVA(StopRVA), Fail(Fail) {}
   std::vector<std::pair<uint32_t, uint32_t>> Changes;
   std::pair<uint32_t, uint32_t> Final{};
+  std::vector<bool> MemoryUnchanged;
+  bool FinalMemoryUnchanged = false;
   llvm::Expected<std::vector<ExecutionWatch>> started(ProcessView &P) override {
+    EXPECT_FALSE(P.watchedMemoryUnchanged());
     Base = P.inputModule()->Base;
     return std::vector<ExecutionWatch>{{Base + StopRVA, 1}};
   }
@@ -642,6 +694,7 @@ public:
   }
   llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
   resuming(ProcessView &P) override {
+    MemoryUnchanged.push_back(P.watchedMemoryUnchanged());
     auto Value = read(P);
     if (!Value)
       return Value.takeError();
@@ -656,6 +709,7 @@ public:
   }
   llvm::Expected<std::optional<std::vector<ExecutionWatch>>>
   watched(ProcessView &P, uint64_t) override {
+    FinalMemoryUnchanged = P.watchedMemoryUnchanged();
     auto Value = read(P);
     if (!Value)
       return Value.takeError();
@@ -1221,6 +1275,35 @@ TEST_P(UnpackDriver, CommittedWriteWatchesSuspendBeforeTheNextInstruction) {
     EXPECT_EQ(Observer.Final, (std::pair<uint32_t, uint32_t>{2, 0x22}));
     EXPECT_EQ(Run->Instructions, 5u);
     EXPECT_TRUE(Run->Writes.empty());
+    EXPECT_TRUE(Observer.FinalMemoryUnchanged);
+    EXPECT_TRUE(
+        llvm::none_of(Observer.MemoryUnchanged, [](bool V) { return V; }));
+  }
+}
+
+TEST_P(UnpackDriver, SameValueWritesDoNotSupplyAnUnchangedMemoryProof) {
+  const auto Input = writeWatchInput(true);
+  ASSERT_FALSE(HasFailure());
+  for (auto Contract :
+       {ExecutionContract::Legacy, ExecutionContract::CheckedX64}) {
+    SCOPED_TRACE(int(Contract));
+    DriverOptions D;
+    D.Backend = GetParam().Kind;
+    D.Contract = Contract;
+    D.TraceMemoryWrites = false;
+    DriverWriteObserver Observer(Original.section(".pack")->RVA,
+                                 Original.section(".prog")->RVA + 30, false);
+    auto Run = observeDriver(Input, D, Observer);
+    ASSERT_TRUE(bool(Run)) << llvm::toString(Run.takeError());
+    ASSERT_EQ(Run->Stop, DriverStopReason::Observer) << Run->Diagnostic;
+    EXPECT_EQ(Run->Instructions, 3u);
+    EXPECT_TRUE(Run->Writes.empty());
+    EXPECT_TRUE(Observer.Changes.empty());
+    EXPECT_EQ(Observer.Final, (std::pair<uint32_t, uint32_t>{0, 0}));
+    ASSERT_EQ(Observer.MemoryUnchanged.size(), 4u);
+    EXPECT_TRUE(
+        llvm::none_of(Observer.MemoryUnchanged, [](bool V) { return V; }));
+    EXPECT_TRUE(Observer.FinalMemoryUnchanged);
   }
 }
 
@@ -1273,7 +1356,6 @@ TEST_P(UnpackDriver, StoppedViewOwnsLivePoolContentsAndContracts) {
     EXPECT_TRUE(Driver.hasAdditionalDependencies());
     EXPECT_EQ(Driver.additionalDependencyReasons(),
               (std::vector<std::string>{"live kernel pool allocations",
-                                        "retained kernel object allocations",
                                         "DriverEntry continuation requires "
                                         "fresh-caller reconstruction"}));
     if (State == Observer.Metadata)
@@ -1292,6 +1374,9 @@ TEST_P(UnpackDriver, ObservationPreservesLifecycleAndCallbackProvenance) {
   ASSERT_EQ(Run->Stop, DriverStopReason::Returned) << Run->Diagnostic;
   EXPECT_TRUE(Run->UnloadCompleted);
   ASSERT_EQ(Observer.Entries.size(), 6u);
+  EXPECT_EQ(Observer.Invocations, 5u);
+  EXPECT_EQ(Observer.PureResumes, 6u);
+  EXPECT_GT(Observer.Exports, 0u);
   EXPECT_TRUE(Observer.Entries.front());
   EXPECT_TRUE(std::none_of(Observer.Entries.begin() + 1, Observer.Entries.end(),
                            [](bool E) { return E; }));

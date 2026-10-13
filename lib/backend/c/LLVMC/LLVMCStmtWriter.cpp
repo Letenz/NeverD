@@ -3678,6 +3678,30 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
     return false;
 
   auto IID = Callee->getIntrinsicID();
+  if (IID == llvm::Intrinsic::abs && Call.getType()->isIntegerTy() &&
+      Call.getType()->getIntegerBitWidth() <= 64) {
+    const unsigned Bits = Call.getType()->getIntegerBitWidth();
+    const std::string Source = freshVar("abs_bits");
+    emitIndent(Indent);
+    OS << "{ uint64_t " << Source << " = (uint64_t)("
+       << valueStr(Call.getArgOperand(0)) << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent + 1);
+    // Unsigned subtraction also handles the signed minimum when
+    // is_int_min_poison is false. With true that input is poison, so this is a
+    // valid refinement.
+    OS << getName(&Call) << " = ((" << Source << " & UINT64_C("
+       << (uint64_t(1) << (Bits - 1)) << ")) ? UINT64_C(0) - " << Source
+       << " : " << Source << ")";
+    if (Bits < 64)
+      OS << " & UINT64_C(" << ((uint64_t(1) << Bits) - 1) << ")";
+    OS << ";\n";
+    emitIndent(Indent);
+    OS << "}\n";
+    return true;
+  }
   if ((IID == llvm::Intrinsic::ctpop || IID == llvm::Intrinsic::ctlz ||
        IID == llvm::Intrinsic::cttz) &&
       Call.getType()->isIntegerTy() &&
@@ -4733,13 +4757,30 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call) {
   for (unsigned ArgIdx = 0; ArgIdx < Limit; ++ArgIdx) {
     if (ArgIdx > 0)
       Expr += ", ";
-    std::string Argument = callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx);
+    bool PointerSpelling = false;
+    std::string Argument =
+        callArgStr(Call.getArgOperand(ArgIdx), Call, ArgIdx, &PointerSpelling);
     const auto *Callee = Call.getCalledFunction();
-    if (!Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
+    const bool HeaderInteger =
+        !Opts.PreserveLLVMFunctionTypes && Callee && Callee->isDeclaration() &&
         libc::headerFor(CalleeName) &&
-        libc::isObjectPointerParameter(CalleeName, ArgIdx) &&
-        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy())
+        Call.getArgOperand(ArgIdx)->getType()->isIntegerTy();
+    // A header's pointer parameter takes the integer that holds an address
+    // converted, an object's or a function's (qsort's comparison).
+    if (HeaderInteger && libc::isObjectPointerParameter(CalleeName, ArgIdx))
       Argument = "(void *)(uintptr_t)(" + Argument + ")";
+    else if (const auto Function =
+                 HeaderInteger
+                     ? libc::functionPointerParameter(CalleeName, ArgIdx)
+                     : std::nullopt)
+      Argument =
+          "(" + std::string(*Function) + ")(uintptr_t)(" + Argument + ")";
+    // An address, such as a string literal, passed where the callee is
+    // declared to take an integer converts to it.
+    else if (PointerSpelling &&
+             declaredParameterIsInteger(Call, CalleeName, ArgIdx))
+      Argument = "(" + typeToCLLVM(Call.getArgOperand(ArgIdx)->getType()) +
+                 ")(uintptr_t)(" + Argument + ")";
     Expr += Argument;
   }
   Expr += ")";
@@ -5148,8 +5189,10 @@ std::string LLVMCWriter::comparedOperandText(const llvm::Value *V,
 }
 
 std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
-                                    const llvm::CallBase &Call,
-                                    unsigned ArgIdx) {
+                                    const llvm::CallBase &Call, unsigned ArgIdx,
+                                    bool *PointerSpelling) {
+  if (PointerSpelling)
+    *PointerSpelling = false;
   const llvm::BasicBlock *BB = Call.getParent();
   if (const llvm::PHINode *Phi = joinPhiForCallArg(Arg, BB))
     return getName(Phi);
@@ -5189,7 +5232,22 @@ std::string LLVMCWriter::callArgStr(const llvm::Value *Arg,
                 enumeratorDisplay(debugCallArgType(*FS, ArgIdx, Opts), Val))
           return *Name;
   }
-  return valueStr(Arg);
+  return valueStr(Arg, PointerSpelling);
+}
+
+bool LLVMCWriter::declaredParameterIsInteger(const llvm::CallBase &Call,
+                                             llvm::StringRef CalleeName,
+                                             unsigned ArgIdx) const {
+  // Headers and the MSVC table declare their own prototypes, and a module's
+  // own definition its C one; others are declared as LLVM types them.
+  const llvm::Function *Callee = Call.getCalledFunction();
+  if (!Callee || Callee->isIntrinsic() || Opts.PreserveLLVMFunctionTypes ||
+      (!Callee->isDeclaration() && !OnlyFunction) ||
+      libc::isKnownFunction(CalleeName) || msvcCallee(CalleeName, Opts.Format))
+    return false;
+  const llvm::FunctionType *Type = Callee->getFunctionType();
+  return ArgIdx < Type->getNumParams() &&
+         Type->getParamType(ArgIdx)->isIntegerTy();
 }
 
 bool LLVMCWriter::writeExclusiveSkip(

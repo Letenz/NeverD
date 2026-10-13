@@ -17,7 +17,7 @@
 namespace neverd::web {
 
 inline constexpr std::string_view InterfaceSourceRelationProfile =
-    "request-source-relations-v1";
+    "request-source-relations-v2";
 inline constexpr uint64_t MaxInterfaceSourceRelations = 4096;
 inline constexpr uint64_t MaxInterfaceRelationSteps = 2000000;
 
@@ -33,6 +33,8 @@ struct InterfaceSourceRelation {
   uint32_t Request = NoSourceIndex, Node = NoSourceIndex;
   uint32_t FunctionNode = NoSourceIndex, ReceiverNode = NoSourceIndex;
   uint32_t Binding = NoSourceIndex, HandlerNode = NoSourceIndex;
+  uint32_t InputNode = NoSourceIndex;
+  uint32_t ContainmentDepth = 0;
   std::string MemberKind = "not_applicable";
   std::string ArgumentsStatus = "not_applicable";
   std::string HandlerStatus = "not_applicable";

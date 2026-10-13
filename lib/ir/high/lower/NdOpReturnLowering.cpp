@@ -10,6 +10,8 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "VariadicStackArguments.h"
+
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
@@ -223,9 +225,9 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
               RIt->Output.Size > 0 && RIt->Output.RegOff == RegOff &&
               !isRegisterLowView(*RIt))
             return ValueFromDefinition(*RIt);
-        for (const auto &Phi : Block.Phis)
-          if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == RegOff)
-            return HighExpr::makeVar(Phi.Output);
+        if (const PhiNode *Phi = detail::registerPhi(
+                Med, Block, RegOff, getTargetRegInfo(TargetArch)))
+          return HighExpr::makeVar(Phi->Output);
         return nullptr;
       };
       if (ExprPtr Value = WrittenIn(CurBlock))
@@ -241,10 +243,62 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         return medvarToExpr(Entry);
       return nullptr;
     };
+    // A field narrower than its register (a float in an SSE eightbyte) is
+    // merged into what the register held on entry.  Where no parameter
+    // arrives there, those bytes hold nothing a caller passed: they are the
+    // record's padding, and the field returns them as zero.
+    auto OverEntryPadding = [&](const MedReturnReg &Field) -> ExprPtr {
+      if (!Field.IsFP || std::any_of(Med.Params.begin(), Med.Params.end(),
+                                     [&](const MedVar &P) {
+                                       return P.RegOff == Field.RegOff;
+                                     }))
+        return nullptr;
+      const MedOp *Merge = nullptr;
+      std::set<const MedBlock *> Seen;
+      for (const MedBlock *Block = &CurBlock;
+           Block && !Merge && Seen.insert(Block).second;
+           Block = onlyPredecessor(Med, *Block)) {
+        for (auto RIt = Block->Ops.rbegin(); RIt != Block->Ops.rend(); ++RIt)
+          if (RIt->Opcode != NdOp::RETURN && RIt->Output.Kind == MedVar::Reg &&
+              RIt->Output.Size > 0 && RIt->Output.RegOff == Field.RegOff &&
+              !isRegisterLowView(*RIt)) {
+            Merge = &*RIt;
+            break;
+          }
+        if (!Merge && std::any_of(Block->Phis.begin(), Block->Phis.end(),
+                                  [&](const PhiNode &Phi) {
+                                    return Phi.Output.Kind == MedVar::Reg &&
+                                           Phi.Output.RegOff == Field.RegOff;
+                                  }))
+          return nullptr;
+      }
+      if (!Merge || Merge->Opcode != NdOp::CONCAT || Merge->NumInputs != 2)
+        return nullptr;
+      const MedVar &High = Merge->Inputs[0], &Low = Merge->Inputs[1];
+      if (!Low.Size || Low.Size >= Field.Size || High.isConst())
+        return nullptr;
+      const MedOp *Slice = uniqueMedDefinition(High);
+      if (!Slice || Slice->Opcode != NdOp::SUBBYTES || Slice->NumInputs != 2 ||
+          !Slice->Inputs[1].isConst() ||
+          Slice->Inputs[1].ConstVal != Low.Size ||
+          Slice->Inputs[0].Kind != MedVar::Reg ||
+          Slice->Inputs[0].RegOff != Field.RegOff ||
+          !isEntryIdentity(Med, Slice->Inputs[0]))
+        return nullptr;
+      ExprPtr Bits = sourceBitSlice(medvarToExpr(Low), 0, Low.Size);
+      if (!Bits->Type || Bits->Type->Kind != NdTypeKind::Int)
+        Bits = HighExpr::makeBitCast(std::move(Bits),
+                                     NdType::makeInt(Low.Size, false));
+      ExprPtr Padded = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Bits));
+      Padded->Type = NdType::makeInt(Field.Size, false);
+      return Padded;
+    };
     std::vector<ExprPtr> Leaves;
     for (size_t I = 0; I < Med.MultiReturn.size(); ++I) {
       const MedReturnReg &Field = Med.MultiReturn[I];
-      ExprPtr Value = Reaching(Field.RegOff);
+      ExprPtr Value = OverEntryPadding(Field);
+      if (!Value)
+        Value = Reaching(Field.RegOff);
       // A field the function never writes returns the argument its caller
       // passed in the register, which recoverCallAbi made a parameter.
       if (!Value &&
@@ -313,14 +367,9 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
     }
   }
 
-  if (!RetVal) {
-    for (auto &Phi : CurBlock.Phis) {
-      if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == ReturnReg) {
-        RetVal = HighExpr::makeVar(Phi.Output);
-        break;
-      }
-    }
-  }
+  if (!RetVal)
+    if (const PhiNode *Phi = detail::registerPhi(Med, CurBlock, ReturnReg, TRI))
+      RetVal = HighExpr::makeVar(Phi->Output);
 
   if (!RetVal) {
     // A bare RET block inherits the value established on its only incoming
@@ -340,10 +389,10 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
         RetVal = ValueFromDefinition(*RIt);
         break;
       }
-      for (const auto &Phi : Pred->Phis)
-        if (!RetVal && Phi.Output.Kind == MedVar::Reg &&
-            Phi.Output.RegOff == ReturnReg)
-          RetVal = HighExpr::makeVar(Phi.Output);
+      if (!RetVal)
+        if (const PhiNode *Phi =
+                detail::registerPhi(Med, *Pred, ReturnReg, TRI))
+          RetVal = HighExpr::makeVar(Phi->Output);
     }
   }
 
@@ -429,12 +478,9 @@ void MedToHighConverter::lowerReturn(HighFunc &Func, const MedBlock &CurBlock,
       }
     }
     if (!High)
-      for (const auto &Phi : CurBlock.Phis)
-        if (Phi.Output.Kind == MedVar::Reg &&
-            Phi.Output.RegOff == TRI.IntReturnReg2) {
-          High = HighExpr::makeVar(Phi.Output);
-          break;
-        }
+      if (const PhiNode *Phi =
+              detail::registerPhi(Med, CurBlock, TRI.IntReturnReg2, TRI))
+        High = HighExpr::makeVar(Phi->Output);
     if (!High) {
       if (const MedBlock *Pred = onlyPredecessor(Med, CurBlock)) {
         for (auto RIt = Pred->Ops.rbegin(); RIt != Pred->Ops.rend(); ++RIt) {

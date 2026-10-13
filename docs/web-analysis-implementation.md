@@ -3300,3 +3300,280 @@ Logs: `/tmp/neverd-tauri-{dev-integration,integrated-fixed-build,clean-discovery
 integrated-clean-web-tests,integrated-native-transports-tests,
 integrated-gui-{build,tests},published-format,integrated-provenance,
 integrated-capabilities}.log`.
+
+Two further normal integration merges retain the qualified Web changes while
+including `origin/dev` at `c01e257c9` and `0b783ff55`. The second shared rebuild
+passes 855 steps, followed by five native-projection cases, 53 selected Web/SDK
+cases and all four transports (2.97 seconds). The upstream capability-declaration
+repair resolves the earlier unrelated exclusions; the manifest now validates
+all 23 capabilities. The third six-step rebuild, five native cases and four
+Tauri SDK cases with the real archive enabled pass. Commit
+`84af5be4ad75e5859ce229dd7c0e197e525439a4` is normally pushed to `dev` and its exact
+remote head is checked. No force push or issue-state mutation is performed.
+Logs: `/tmp/neverd-tauri-{second-{integrated-build,native-tests,sdk-tests,
+transports-tests,capabilities},third-{integrated-build,native-tests,sdk-tests}}.log`.
+
+### Direct desktop bridge syntax and preserved-source anchors
+
+On the published `84af5be4a` baseline, the independent
+`tauri-1-wails-2-direct-bridge-syntax-v1` owner adds redacted direct Tauri 1 IPC/
+global invoke and Wails 2 target syntax to existing navigation pages. The
+source/bindings/navigation owners retain authority for parsing, lexical roots
+and generic call identities. Bridge publication does not authenticate APIs,
+resolve native targets, infer runtime activation or publish command/argument
+values. Record/work refusal clears only bridge candidates. Ordinary constructors,
+tags and dynamic imports remain valid unrelated navigation entries; changed
+callee/child agreement or call-kind models are refused explicitly.
+
+The real decoded Tauri member 6 (85,197 bytes, hash pinned in the
+[bridge profile](web-desktop-bridge-profile.md)) has one direct IPC call at
+decoded byte offset 3,013/length 53. Its spread message remains unresolved.
+The SDK source anchor links that span to native-container Brotli offset
+5,069,463/length 24,569 and the retained old-GNU archive parent. All nine
+readable Tauri JS exports still reparse with matching structure. A real CLI
+`web navigate` run over this same preserved decoded member succeeds with an
+unusable external-tool PATH and empty stderr; its metadata receipt is
+`/tmp/neverd-desktop-bridge-actual-navigation.jsonl`.
+
+The 62-step shared/CLI/transport build passes, five core bridge cases pass
+(including actual preserved JS), six selected SDK cases pass, and all four
+worker/MCP transport cases pass (4.78 seconds). The complete owning Web run is
+**755 passes / 28 explicit skips out of 783 distinct cases** (73.58 seconds),
+with all eight Claude platform captures and the preserved Tauri corpus enabled.
+The same absent optional corpora and ASAR omission-only boundary account for
+the skips; missing samples are not replaced. Parser omission passes its
+155-step build, five selected SDK cases with real Tauri enabled, and all four
+transports (14.60 seconds). The restored 161-step build and all fifteen focused
+core/SDK/transport cases pass (11.70 seconds), with both Web/JS options ON.
+Changed C++ passes LLVM formatting and whitespace checks; provenance scans
+7,504 worktree files and the capability manifest validates all 23 capabilities.
+Logs: `/tmp/neverd-desktop-bridge-{parity-build,final-{source,sdk}-tests,
+transports-tests,owning-web-tests,nojs-{configure,build,sdk-tests,
+transports-tests},restored-{configure,build,focused-tests},format,
+provenance,capabilities}.log`.
+
+### Issue-body re-audit correction — 2026-10-13
+
+The user requested another comparison with the original five GitHub issues.
+All remain open with zero comments; their bodies retain the October 9 scope.
+The blanket completion conclusion above is superseded by the updated
+[acceptance audit](web-epic-acceptance.md#re-audit-findings-and-follow-up).
+The named implementations and earlier verification receipts remain valid.
+
+Production CLI probes expose two #717 coverage gaps: unresolved URL templates
+and fetch header/body nodes lack a component/parameter inventory, and observed
+JSON type histograms cannot retain field types/nesting/presence. Two original
+bodies with different field structure produce identical shape summaries while
+retaining distinct observation IDs. Both checks used an unusable external-tool
+PATH, no target execution and zero stderr. Focused source, package/runtime and
+report/desktop checks passed 163 distinct cases, including a separate successful
+preserved-Claude feature-corpus run (25.73 s). These tests qualify the current
+limited contracts rather than proving the missing structures are implemented.
+
+This correction changes documentation only. It records #717 work still required
+and distinguishes recommended real CEF/WebView, minified-client navigation and
+mandatory producer-corpus qualification from unsupported universal recovery.
+It does not modify GitHub issue state or add new implementation claims.
+
+Normal integration with `origin/dev` at `be72c8ee4` preserves every Web bridge
+reader and test unchanged. The 64-step shared rebuild and integrated native
+targets pass. The complete owning Web run remains **755 passes / 28 skips out
+of 783 distinct cases** (90.24 seconds). Five native-projection cases, the
+immutable native-buffer boundary and four transports all pass (4.05 seconds).
+The correct `neverd-gui-web-tests` owner and Qt app rebuild successfully; the
+offline package review test passes (4.27 seconds). The earlier GUI build request
+used a nonexistent target name and is not evidence. Provenance again scans
+7,504 files, capabilities validate all 23 declarations, and both Web/JS options
+remain ON. Integration head is `6fd1505fa4e082a742ab35e1e1f98916f7ba2f81` before
+this receipt-only documentation commit. Logs:
+`/tmp/neverd-desktop-bridge-integrated-{build,native-build,owning-web-tests,
+native-transports-tests,gui-{build,tests},provenance,capabilities}.log`.
+
+### Configuration object order and lexical loading-source links
+
+On the published `a4c6144f6` baseline, the independent
+`javascript-configuration-object-order-v1` owner adds `config_merges` pages to
+existing navigation. It consumes shared source, bindings, navigation and client
+feature identities; shared declaration indexing owns unique binding admission.
+Ordered property/spread terms keep exact spans and lexical initializer/loading
+syntax links. Later unknown-key terms retain possible overwrite barriers;
+runtime values, loader authentication and separate file-layer policy remain
+unknown. Multiple declarations, including function/variable combinations,
+do not gain a unique initializer. Object/term/work failures clear only this
+owner's complete candidate list. All authored code and fixtures use C++ with
+LLVM formatting and project/file banners; no external target tool is invoked.
+
+The C++ archive/Bun/source corpus visits all 2,364 JS units and 45,035,899 bytes
+of the pinned Claude Code 2.1.296 macOS ARM64 package. The interactive frontend
+admits 2,354 and retains its ten explicit byte/work/node refusals. Order
+analysis finishes for every admitted feature inventory: 273 candidate objects,
+2,279 terms and 19 observed fields with later unknown terms. Named loading
+links are zero; no actual internal loader identity or policy is invented.
+Module 1676 has one object/four terms. Module 6 independently retains an
+unknown later term at object offset 2,451/length 96. Their source hashes and
+original release/channel/platform chain are pinned in the
+[configuration profile](web-configuration-order-profile.md). A real offline
+`bun-navigate` run selects module 6 directly from the retained original
+executable, with an unusable external-tool PATH and empty stderr. The original
+source is not redistributed or uploaded. Receipt:
+`/tmp/neverd-configuration-order-actual-bun-navigation.jsonl`.
+
+The first 51-step build passes all five initial core cases. The fourteen-step
+SDK/transport build passes six core/corpus cases (48.748 seconds), seven selected
+SDK cases and all four transports (5.31 seconds). After profile metadata and
+identity admission are finalized, the 58-step boundary rebuild and complete
+owning Web run pass **762 cases / 28 explicit skips out of 790 distinct cases**
+(85.30 seconds), with all eight retained Claude platform captures and both
+real desktop/Claude source selections enabled. The unchanged absent optional
+corpora and ASAR-policy omission-only case account for the skips.
+The final declaration-ambiguity guard passes its eleven-step rebuild and all
+thirteen affected core/SDK/transport cases (4.40 seconds). Qt package review
+passes (2.51 seconds). LLVM formatting and whitespace checks pass; provenance
+scans 7,510 files and the native capability manifest validates 23 declarations.
+Parser omission passes its 156-step build, all six selected SDK cases with the
+real Tauri archive enabled, and all four transports (2.60 seconds). Logs:
+`/tmp/neverd-configuration-order-{first-build,first-tests,parity-build,
+source-corpus-tests,sdk-tests,transports-tests,final-build,owning-build,
+boundary-build,owning-web-tests,declarations-{build,tests},gui-tests,
+nojs-{configure,build,sdk-tests,transports-tests},format,provenance,capabilities}.log`.
+
+Restoration completes all 160 build steps, followed by a two-step banner-only
+test rebuild. A mistakenly early CTest run used a parser-off SDK binary during
+parser-on relinking (its 744-case inventory and capability expectations were
+stale); it is interrupted, preserved and **not counted as acceptance evidence**.
+After completed linking, one explicit discovery produces exactly 790 cases.
+The authoritative restored run passes **762 / 28 skips out of 790 distinct
+cases** (118.84 seconds), including the final mixed-declaration refusal and
+both pinned actual configuration units. The final original-Bun CLI receipt
+again succeeds with empty stderr. Format, provenance (7,510 files) and capability
+(23 declarations) checks pass. Both Web/JS options are ON. Logs:
+`/tmp/neverd-configuration-order-{restored-{configure,build,clean-discovery,
+ready-owning-web-tests},banner-build,final-{format,provenance,capabilities}}.log`;
+actual receipt: `/tmp/neverd-configuration-order-final-actual-bun-navigation.jsonl`.
+
+Normal integration with `origin/dev` at `eb295fdbc` preserves every Web source,
+SDK join and owning test unchanged. The shared native/SDK/transport rebuild
+passes all 102 steps; Qt app/worker/review builds pass. All 28 selected source,
+SDK, actual Tauri/configuration, native-projection/buffer and transport cases
+pass (25.28 seconds); Qt package review passes (12.59 seconds). Provenance scans
+7,512 files and capabilities validate all 23 declarations. Both Web/JS options
+remain ON. Integration head is `779893528b51c3ccb7d57e60f04bf8763c01829a`
+before this receipt-only commit. Logs:
+`/tmp/neverd-configuration-order-{dev-integration,integrated-{build,
+focused-tests,gui-{build,tests},provenance,capabilities}}.log`.
+
+The first normal push is rejected because `dev` advanced. A second normal
+merge includes `5e08ef0eb` (two native HighIR-lowering owners and their tests),
+with the Web/SDK/fixture surfaces still unchanged. The twelve-step rebuild
+passes, followed by all nineteen affected core/SDK/native/transport cases
+(5.65 seconds). Integration head is
+`2537571a18225047ec1a484e9b7048575ad77ec9` before this receipt-only commit.
+Logs: `/tmp/neverd-configuration-order-{second-integration,
+second-integrated-build,second-focused-tests}.log`.
+
+## Five-issue bounded acceptance completion — 2026-10-12
+
+Base: `7e2309f7c249d69802cd4f13eec620edffd0bd68`. All authored implementation and
+fixtures remain C++; no target or external analysis runtime/tool executes.
+
+`request-source-relations-v2` adds independently bounded nearby JSON/base64/URI,
+crypto.subtle and zlib call-spelling containment. Deferred body functions,
+computed names and aliases do not gain value-flow or API-authentication claims.
+`passive-evidence-shape-report-v1` composes selected source/committed HAR/stream
+IDs, existing HTTP joins and a shared MCP method vocabulary. Recorded response
+links stay owned by streams. Examples are observation IDs; JSON type summaries
+withhold keys/values, and optionality/server constraints remain unknown.
+Two additive report C APIs, CLI forms and closed worker/MCP operations share
+this owner. Aggregate body work and report/cache/page bounds fail atomically.
+
+`cef-webview-local-resource-descriptor-v1` supplies an explicit named local
+resource index through existing namespace/path ownership. Directory and ZIP
+fixtures preserve exact hashes/origins, missing/opaque resources and independent
+CEF/WebView selection IDs. JS/HTML/native consumers and verified raw local export
+are qualified separately. The additive local export C API is excluded from
+worker/MCP; supplied declarations authenticate no framework or native version.
+
+Verification on macOS ARM64 Release/prebuilt LLVM 23.0.0 r4:
+
+- Enabled build completed. Focused checks passed 13 artifact cases, 10 source
+  cases (one absent optional source initially skipped), and six SDK/CLI cases.
+- Initial owning Web CTest: 805 distinct cases, 777 passed, 28 explicit skips,
+  27.73 s. Restored enabled build: the same 805/777/28, 63.55 s. Real supplied
+  Claude/Tauri inputs were selected; absent optional producer/npm/advisory/
+  Wails/VSIX captures remain skips, not passed evidence.
+- Native constant-store/buffer owners: six passed, including the pinned actual
+  Tauri initializer. Worker and three MCP gates passed. An initial MCP discovery
+  failure correctly found that the newly advertised local export needed the
+  test's explicit exclusion; adding that exclusion restored the required closed
+  surface. No raw MCP export was enabled.
+- Qt `NeverDGuiWebReview` passed with the preserved Claude corpus, 6.30 s.
+- Parser omission: 13 artifact, six SDK/CLI and four transport gates passed.
+  Observed reports/resources remain available; selected source explicitly refuses.
+- Whole-backend omission: three MCP gates passed, worker's unavailable-backend
+  gate skipped its positive integration; a C++ probe verified all three new ABI
+  functions return `capability_unavailable`. Both flags were restored to ON.
+- Formatting, source provenance (7,528 files) and canonical capability ownership
+  (23 capabilities) passed. The three new declarations were added to both C/JSON
+  ownership lists in lexical order.
+- Real Claude 2.1.296 macOS ARM64 module 928, SHA-256
+  `a5e52526ae954aa74deb80cf1bb2372d1f4b77e1886bba69d55e30c51efa2cd2`,
+  passed `report-source` with an unusable external-tool PATH and zero stderr.
+  Its three static records retain the interface/function/return anchors.
+  No real observation or transcript was supplied or manufactured.
+
+Local diagnostic receipts use `/tmp/neverd-epic-completion-*`; no raw samples,
+recovered source, build output or local screenshots are committed. The final
+criterion mapping is [the acceptance audit](web-epic-acceptance.md), with the
+[report](web-passive-report-profile.md) and
+[resource](web-desktop-resource-profile.md) contracts. Historical incomplete
+increment receipts remain historical; new runtime profiles, general dataflow,
+erased TypeScript/names, opaque bytecode decoding and other host qualification
+are explicit extensions/unsupported boundaries rather than universal promises.
+
+### Final dev integration — 2026-10-13
+
+The implementation commit is `e7ff8f2e9`. Normal integration first merged
+`5e8593cb8` as `0190e5c8d`; its 646-target build completed, owning Web retained
+805 distinct cases / 777 passed / 28 explicit skips (157.29 s), all ten selected
+native/worker/MCP checks passed (4.48 s), and Qt review passed (34.12 s).
+The actual Claude source report again completed with zero stderr and an unusable
+external-tool PATH.
+
+A later normal integration merged `a4f50d9cc` as `599393002`. Its changes concern
+native x87/rendering/loader, PDB and driver entry work; Web algorithms, new source
+profiles and Web fixtures were unchanged. The 160-target engine/SDK build and
+GUI build completed. Affected source/report/resource/Tauri/native/worker/MCP
+coverage passed 28 of 29 checks, with one absent optional full Bun compiler input
+explicitly skipped (21.41 s). Qt review passed again (18.99 s). Source provenance
+passed for 7,542 files and canonical ownership remained valid for 23 capabilities.
+Web, JS and ASAR are ON. No submodule revision, original checkout, diagnostic
+artifact or proprietary source was changed by this integration.
+
+The criterion audit now covers the original #714–#718 acceptance items and
+named supplement profiles. Future builds/hosts and unknown runtime behavior
+remain unsupported or partial as documented; no GitHub issue was closed or
+commented on by this task. Publication uses an ordinary fast-forward-compatible
+push to `dev`, with no history rewrite.
+
+The push encountered a further upstream advance to `fa7819708`. Normal merge
+`4de9a2b05` retains the Web implementation while integrating native source patch,
+loader data-in-code, SDK navigation/export-name and worker-listing changes.
+The 466-step engine/SDK/test build and three-step Qt worker build completed.
+The affected integration selection passed 86 of 88 checks (6.42 s), including
+the preserved Tauri initializer/archive, resource exports, passive reports,
+SDK navigation and worker/MCP. The absent optional full Bun compiler fixture
+and Claude VSIX fixture are explicit skips. Qt review with the preserved Claude
+package passed (6.09 s). Source provenance passed for 7,546 files and canonical
+ownership remained valid for 23 capabilities. Web, JS and ASAR remain ON.
+Receipts: `/tmp/neverd-epic-completion-final-{integrated-build,focused,
+gui-build,gui-tests,provenance,capabilities}.log`. This integration does not
+broaden the supported runtime profiles or change the acceptance boundaries.
+
+A concurrent advance to `170e3ad4c` required normal merge `c913e314b` before
+publication. Its native ABI, HighC and ELF patch changes completed a 228-step
+engine/SDK build. The affected native/resource/report/CLI/worker/MCP selection
+passed 61 of 63 checks (4.57 s); the same two optional inputs remain absent.
+Qt Claude-package review passed (6.24 s), source provenance passed for 7,548
+files, and all 23 capability declarations remained valid. Receipts use
+`/tmp/neverd-epic-completion-publish-{integration,build,tests,gui-tests,
+provenance,capabilities}.log`.

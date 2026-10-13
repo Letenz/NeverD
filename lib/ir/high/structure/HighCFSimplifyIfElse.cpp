@@ -2043,21 +2043,71 @@ static bool listAlwaysTransfers(const std::vector<HighStmt> &Body) {
   return false;
 }
 
+/// Whether \p S, or a statement nested in it, may set a variable \p Cond
+/// reads: by an assignment, or as an output of an intrinsic.
+static bool setsVarOf(const HighStmt &S, const HighExpr *Cond) {
+  bool Sets = false;
+  HighExprSet Seen;
+  auto Visit = [&](const HighStmt &N) {
+    if (Sets)
+      return;
+    if (N.Kind == StmtKind::Assign && N.Dst && N.Dst->Kind == ExprKind::Var &&
+        exprUsesVar(Cond, N.Dst->Var)) {
+      Sets = true;
+      return;
+    }
+    forEachExpr(N, [&](const ExprPtr &Root) {
+      std::vector<const HighExpr *> Work{Root.get()};
+      while (!Work.empty() && !Sets) {
+        const HighExpr *E = Work.back();
+        Work.pop_back();
+        if (!E || !Seen.insert(E).second)
+          continue;
+        for (const MedVar &Out : E->IntrinsicOutputs)
+          Sets |= exprUsesVar(Cond, Out);
+        E->forEachChildExpr(
+            [&](const ExprPtr &Child) { Work.push_back(Child.get()); });
+      }
+    });
+  };
+  Visit(S);
+  walkStmts(S.Body, Visit);
+  walkStmts(S.ElseBody, Visit);
+  for (const auto &C : S.Cases)
+    walkStmts(C.Body, Visit);
+  walkStmts(S.DefaultBody, Visit);
+  for (const auto &Clause : S.EHClauseBodies)
+    walkStmts(Clause, Visit);
+  return Sets;
+}
+
+/// \p Cond as the state before the statements of \p Body in [Begin, End)
+/// computes it: the values they assign substituted, the last first.  Only
+/// assignments every path to \p End runs are: the walk stops at a statement
+/// a goto reaches (a loop's back edge brings other values there), and at one
+/// that may set a variable of \p Cond in a way it cannot substitute, a
+/// call's result or an assignment nested in a compound statement.
 static ExprPtr composeWorkAssigns(const std::vector<HighStmt> &Body,
-                                  size_t Begin, size_t End, ExprPtr Cond) {
+                                  size_t Begin, size_t End, ExprPtr Cond,
+                                  const GotoUses &Uses) {
   if (!Cond || Begin > End)
     return Cond;
   if (End - Begin > limits::kMaxComposedWorkAssigns)
     Begin = End - limits::kMaxComposedWorkAssigns;
   for (size_t N = End; N > Begin; --N) {
     const HighStmt &S = Body[N - 1];
-    if (S.Kind == StmtKind::Nop ||
-        (S.Kind == StmtKind::Block && S.Body.empty()))
-      continue;
     MedVar Dest;
     ExprPtr Val;
-    if (isValueAssign(S, Dest, Val) && exprUsesVar(Cond.get(), Dest))
-      Cond = replaceVarInExpr(Cond, Dest, Val);
+    if (isValueAssign(S, Dest, Val) && !exprHasCall(Val.get())) {
+      if (exprUsesVar(Cond.get(), Dest))
+        Cond = replaceVarInExpr(Cond, Dest, Val);
+    } else if (S.Kind != StmtKind::Nop &&
+               !(S.Kind == StmtKind::Block && S.Body.empty()) &&
+               setsVarOf(S, Cond.get())) {
+      break;
+    }
+    if (isBranchEntry(S, Uses) || isEnteredFromOutside(S, Uses))
+      break;
   }
   return Cond;
 }
@@ -2086,10 +2136,10 @@ static bool dropImpliedFallthroughConds(std::vector<HighStmt> &Body,
     if ((Next.Kind != StmtKind::If && Next.Kind != StmtKind::IfElse) ||
         !Next.Cond || isBranchEntry(Next, Uses))
       continue;
-    ExprPtr Head =
-        composeWorkAssigns(Body, 0, I, std::make_shared<HighExpr>(*S.Cond));
-    ExprPtr Inner =
-        composeWorkAssigns(Body, 0, J, std::make_shared<HighExpr>(*Next.Cond));
+    ExprPtr Head = composeWorkAssigns(
+        Body, 0, I, std::make_shared<HighExpr>(*S.Cond), Uses);
+    ExprPtr Inner = composeWorkAssigns(
+        Body, 0, J, std::make_shared<HighExpr>(*Next.Cond), Uses);
     // The loads of either test, including those of the assignments composed
     // into it, come from this window; a write in it may make two loads of
     // one address differ.

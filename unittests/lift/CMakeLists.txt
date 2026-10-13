@@ -63,6 +63,7 @@ add_neverd_unittest(NeverDLiftTests
   arm32/ARM32_LogicTests.cpp
   arm32/ARM32_MemTests.cpp
   arm32/ARM32_MulDivTests.cpp
+  arm32/ARM32_ObjectImmediateTests.cpp
   arm32/ARM32_PipelineE2ETests.cpp
   arm32/ARM32_PredicatedStackTests.cpp
   arm32/ARM32_ShiftTests.cpp
@@ -79,6 +80,7 @@ add_neverd_unittest(NeverDLiftTests
   x86_32/X86_32_FPTests.cpp
   x86_32/X86_32_HighCDataTests.cpp
   x86_32/X86_32_HighCSignednessTests.cpp
+  x86_32/X86_32_HighCTruthTests.cpp
   x86_32/X86_32_LodsMiscTests.cpp
   x86_32/X86_32_LoopTests.cpp
   x86_32/X86_32_MiscTests.cpp
@@ -107,16 +109,19 @@ add_neverd_unittest(NeverDLiftTests
   x86_64/X86_64_ControlFlowTests.cpp
   x86_64/X86_64_ControlSemanticsTests.cpp
   x86_64/X86_64_DoubleShiftTests.cpp
+  x86_64/X86_64_DynamicStackTests.cpp
   x86_64/X86_64_ExtensionInvariantTests.cpp
   x86_64/X86_64_FlagOpsTests.cpp
   x86_64/X86_64_FlagsMiscTests.cpp
   x86_64/X86_64_FmaMiscTests.cpp
   x86_64/X86_64_FPConvertTests.cpp
+  x86_64/X86_64_FrameAliasTests.cpp
   x86_64/X86_64_FramePointerWalkTests.cpp
   x86_64/X86_64_ImageTableTests.cpp
   x86_64/X86_64_IntrinsicsTests.cpp
   x86_64/X86_64_LodsMiscTests.cpp
   x86_64/X86_64_LoopBitTests.cpp
+  x86_64/X86_64_LoopConditionTests.cpp
   x86_64/X86_64_MemAtomicTests.cpp
   x86_64/X86_64_MiscTests.cpp
   x86_64/X86_64_MulDivTests.cpp
@@ -295,6 +300,7 @@ add_neverd_unittest(NeverDLiftTests
   core/CircleRangeTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
@@ -1064,6 +1070,7 @@ add_neverd_unittest(NeverDJumpTableTests
   core/IndirectTailFrameTests.cpp
   core/JumpTableEnhancedTests.cpp
   core/JumpTableFiniteSelectorTests.cpp
+  core/JumpTableJoinedGuardTests.cpp
   core/JumpTableFixedAddressTests.cpp
   core/JumpTableSharedAbsoluteTests.cpp
   core/JumpTableProposalLFPTests.cpp
@@ -1907,6 +1914,7 @@ add_neverd_unittest(NeverDLanguageEHTests
   language/ObjCEHRuntimeCallTests.cpp
   language/ObjCEHRuntimeStateTests.cpp
   language/ScratchRealBinary.cpp
+  language/StringLiteralSymbolsTests.cpp
   language/SymbolSpellingTests.cpp
 )
 target_include_directories(NeverDLanguageEHTests PRIVATE
@@ -3810,6 +3818,18 @@ add_neverd_unittest(NeverDX86X87ConstantTests
   x86_64/X86_64_X87ConstantTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConstantTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86X87SignAccuracyTests
+  x86_64/X86_64_X87SignAccuracyTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87SignAccuracyTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86X87IntegerLoadTests
+  x86_64/X86_64_X87IntegerLoadTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86X87IntegerLoadTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86ComiStateTests

@@ -149,13 +149,14 @@ static bool isARMv7KTriple(const llvm::Triple &Triple) {
 }
 
 static bool isAllowedARMv7KFeature(llvm::StringRef Feature) {
-  return Feature == "+v7" || Feature == "+vfp2" || Feature == "+vfp2sp" ||
-         Feature == "+vfp3" || Feature == "+vfp3d16" ||
-         Feature == "+vfp3d16sp" || Feature == "+vfp3sp" ||
-         Feature == "+fp16" || Feature == "+vfp4" || Feature == "+vfp4d16" ||
-         Feature == "+vfp4d16sp" || Feature == "+vfp4sp" ||
-         Feature == "+fp64" || Feature == "+d32" || Feature == "+neon" ||
-         Feature == "+hwdiv" || Feature == "+hwdiv-arm";
+  return Feature == "+v7" || Feature == "+armv7-a" || Feature == "+dsp" ||
+         Feature == "+thumb-mode" || Feature == "+read-tp-tpidruro" ||
+         Feature == "+vfp2" || Feature == "+vfp2sp" || Feature == "+vfp3" ||
+         Feature == "+vfp3d16" || Feature == "+vfp3d16sp" ||
+         Feature == "+vfp3sp" || Feature == "+fp16" || Feature == "+vfp4" ||
+         Feature == "+vfp4d16" || Feature == "+vfp4d16sp" ||
+         Feature == "+vfp4sp" || Feature == "+fp64" || Feature == "+d32" ||
+         Feature == "+neon" || Feature == "+hwdiv" || Feature == "+hwdiv-arm";
 }
 
 static std::optional<std::string>
@@ -580,7 +581,11 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
   // code. Other ISAs use PIC: x86-64 gets RIP-relative, AArch64 gets ADRP+ADD,
   // ARM32 gets PC-relative LDR — all handled by AddressModelBackend.
   auto RM = std::optional<llvm::Reloc::Model>(
-      TargetArch == Arch::X86 ? llvm::Reloc::Static : llvm::Reloc::PIC_);
+      TargetArch == Arch::X86 &&
+              (InputKind != RewriteInputKind::ReplacementIR ||
+               ObjectFormat == BinaryFormat::COFF)
+          ? llvm::Reloc::Static
+          : llvm::Reloc::PIC_);
   std::string CPU;
   std::string Features;
   if (TargetArch == Arch::ARM && isARMv7KTriple(TT)) {
@@ -652,6 +657,10 @@ llvm::mc_rewrite::RewriteResult Codegen::compileForRewrite(
     if (!F.isDSOLocal())
       F.setDSOLocal(true);
   }
+  if (InputKind == RewriteInputKind::ReplacementIR)
+    for (auto &Global : Mod.globals())
+      if (!Global.isDeclaration())
+        Global.setDSOLocal(true);
 
   // Pre-pass: suppress every form of compiler-inserted stack probe. The probe
   // routine (Darwin __chkstk_darwin, Windows __chkstk) is NOT part of the

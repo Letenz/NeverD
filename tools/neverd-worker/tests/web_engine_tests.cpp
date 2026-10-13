@@ -2049,7 +2049,7 @@ int main(int argc, char **argv) {
                              interfaceRevision, interfaceProject);
         check(reply["payload"] == relations &&
                   relations["relation_count"] == 4 &&
-                  relations["profile"] == "request-source-relations-v1" &&
+                  relations["profile"] == "request-source-relations-v2" &&
                   relations["response_api_identity"] ==
                       "member_spelling_unverified" &&
                   relations["har_correlation"] == false,
@@ -2307,6 +2307,27 @@ int main(int argc, char **argv) {
                 records["protocol_negotiation_verified"] == false &&
                 reply.dump().find("SECRET_WEB") == std::string::npos,
             "Stream pages differ or expose values");
+      const Json reportArgs{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"stream_capture_id", redaction["stream_capture_id"]}};
+      const auto Report = web.execute("web_passive_report_create", reportArgs);
+      reply = process.call("web_passive_report_create", reportArgs, revision,
+                           project);
+      check(reply["payload"] == Report &&
+                Report["server_constraints"] == "unknown" &&
+                Report["record_count"] == 2,
+            "Worker changed passive report evidence");
+      const Json reportPage{{"schema_version", 1},
+                            {"revision", revision},
+                            {"passive_report_id", Report["passive_report_id"]}};
+      const auto ReportRecords =
+          web.execute("web_passive_report_records", reportPage);
+      reply = process.call("web_passive_report_records", reportPage, revision,
+                           project);
+      check(reply["payload"] == ReportRecords &&
+                reply.dump().find("SECRET_WEB") == std::string::npos,
+            "Worker changed report pages or exposed values");
       auto invalid = previewArgs;
       invalid["replay"] = true;
       reply = process.call("web_stream_preview", invalid, revision, project);
@@ -2538,6 +2559,84 @@ int main(int argc, char **argv) {
       reply = process.call("web_tauri_extract", invalid, revision, project);
       check(reply["error"]["code"] == "invalid_request",
             "Tauri accepted caller-supplied table");
+    }
+    if (std::find(caps["operations"].begin(), caps["operations"].end(),
+                  "source_analyze") != caps["operations"].end()) {
+      fixture.write(
+          "window.__TAURI_IPC__({cmd:'CANARY',callback:cb,error:err});"
+          "window.go.CANARY_PACKAGE.CANARY_STRUCT.CANARY_METHOD(CANARY);"
+          "const defaults=loadSettings('CANARY');"
+          "({...defaults,permissions:{},...CANARY_OVERRIDES});");
+      const auto before = web.revision(), projectBefore = web.projectId();
+      const Json input{{"schema_version", 1}, {"path", fixture.path()}};
+      const auto preview = web.execute("web_import_preview", input);
+      const auto committed = web.execute(
+          "web_import_commit",
+          {{"schema_version", 1}, {"preview_token", preview["preview_token"]}});
+      reply = process.call("web_import_preview", input, before, projectBefore);
+      reply =
+          process.call("web_import_commit",
+                       {{"schema_version", 1},
+                        {"preview_token", reply["payload"]["preview_token"]}},
+                       before, projectBefore);
+      check(reply["payload"] == committed, "Desktop bridge capture differs");
+      const auto revision = web.revision(), project = web.projectId();
+      const auto artifacts = web.execute(
+          "web_artifacts", {{"schema_version", 1}, {"revision", revision}});
+      const Json sourceArgs{
+          {"schema_version", 1},
+          {"revision", revision},
+          {"artifact_id", artifacts["items"][0]["artifact_id"]},
+          {"source_type", "script"}};
+      const auto source = web.execute("web_source_analyze", sourceArgs);
+      reply = process.call("web_source_analyze", sourceArgs, revision, project);
+      check(reply["payload"] == source, "Desktop bridge source differs");
+      Json args{{"schema_version", 1},
+                {"revision", revision},
+                {"source_id", source["source_id"]}};
+      const auto navigation =
+          web.execute("web_source_navigation_analyze", args);
+      reply = process.call("web_source_navigation_analyze", args, revision,
+                           project);
+      check(reply["payload"] == navigation &&
+                navigation["desktop_bridges"]["record_count"] == 2 &&
+                navigation["desktop_bridges"]["bridge_inventory_complete"] ==
+                    false,
+            "Worker desktop bridge coverage differs");
+      args["record_kind"] = "desktop_bridges";
+      args["limit"] = 1;
+      const auto first = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == first && first["next_offset"] == 1 &&
+                first["items"][0]["form"] == "window_ipc_message" &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker Tauri bridge page differs or reveals values");
+      args["offset"] = 1;
+      const auto rest = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == rest && rest["page_complete"] == true &&
+                rest["items"][0]["target_name_node_ids"].size() == 3 &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker Wails bridge anchors differ or reveal names");
+      args["record_kind"] = "config_merges";
+      args["offset"] = 0;
+      const auto order = web.execute("web_source_navigation_records", args);
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["payload"] == order && order["items"].size() == 1 &&
+                order["items"][0]["terms"][0]["configuration_call_feature_id"]
+                    .is_string() &&
+                order["items"][0]["fields"][0]["possible_later_overwrite"] ==
+                    true &&
+                reply.dump().find("CANARY") == std::string::npos,
+            "Worker configuration source order differs or reveals values");
+      args["execute"] = true;
+      reply = process.call("web_source_navigation_records", args, revision,
+                           project);
+      check(reply["error"]["code"] == "invalid_request",
+            "Worker bridge pages accepted execution options");
     }
     process.stop();
     std::ifstream errors(fixture.root / "stderr");

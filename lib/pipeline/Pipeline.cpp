@@ -496,7 +496,7 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // Patch/Lift mode: MedIR -> LLVM IR, skip HighIR.
   if (Opts.PatchMode || Opts.LiftMode) {
     Trace.start(NativePipelineTrace::Stage::LLVMEmission);
-    Result.Success = runPatchLiftMode(Img, Ctx, Opts, Result);
+    Result.Success = runPatchLiftMode(Img, Ctx, Opts, Result, Dbg);
     Trace.finish(Result.Success);
     return Result;
   }

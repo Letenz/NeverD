@@ -40,5 +40,6 @@ struct Context {
 
 void requestLinks(Context &C, uint32_t Request);
 void resultLinks(Context &C, uint32_t Node);
+void transformationLinks(Context &C, uint32_t Node);
 
 } // namespace neverd::web::interface_relations

@@ -29,7 +29,7 @@
     </message>
     <message>
         <source>Signature &amp;directory...</source>
-        <translation>Ré&amp;pertoire de signatures...</translation>
+        <translation>Répertoire de &amp;signatures...</translation>
     </message>
     <message>
         <source>Apply every matching pack from a signature tree</source>

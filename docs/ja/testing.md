@@ -1262,7 +1262,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1328,6 +1328,8 @@ checked Unicorn は `MachineRunControl` を使い、ARM64 の保守、ゲスト�
 `NeverDRunControlTests` は移植可能な `NativeEntryTests.cpp` と、Windows で WHP を有効にした場合の `WhpEntryControlTests.cpp` を含みます。メモリ内のホストコールバックで、実行拒否、再試行、遅いキャンセル、実エラーの保持、完了結果の優先順位、確認済みコールバックの寿命を Hyper-V なしで検証します。`NeverDKvmRunTests` は所有スレッドでの完了、エラーの優先順位、再入拒否を確認します。実際の `NeverDKvmStateTransferTests` は `KvmStateTransferCases.def` の元の命令を実行します。`ActualCPUExceptionOutranksStopDuringCapture` と `PublicCPUExceptionOutranksStopDuringCapture` は実際のレジスタ/XSAVE 読み出し後に停止し、除算例外、元のコンテキスト、RAM、明示的な回復を保持します。Wine 上の Windows ABI による移植可能テストはスレッドと制御の証拠であり、ネイティブ WHP 実行の証拠ではありません。利用できないネイティブ経路は明示的にスキップします。
 
 `NeverDInstructionFetchTests` は Unicorn、KVM、WHP で x64/ARM64 checked プログラムを特権モードとユーザーモードで実行します。`InstructionFetchCases.def` はオペランド形式の切り替え、相対分岐、コードエイリアス経由のゲストとホストの書き込み、コンテキスト復元、権限取り消し、独立したページ領域、ページ末尾の先読み、不正・切断された符号化、再帰実行の拒否を検証します。Windows ネイティブ CI では全 x64 WHP ケースの成功が必須です。利用できないホスト/ISA の組み合わせは明示的にスキップし、移植可能な ARM64 実行をネイティブ ARM64 の証拠とは扱いません。
+
+`RepeatedOperandsSurviveCodeWorkingSetEviction` は、大きなコード集合の実行前後でオペランド、メモリフック、相対分岐を再検証します。検証付き実行は、現在の命令バイトが一致する場合のみ、上限のある所有済み Capstone メタデータを再利用します。各ステップで現在のバイトと実行権限を確認し、ヒット時も完全なオペランド情報とデコーダーの別名を保持します。
 
 `WhpStateTransferTests.cpp` は両世代の XSAVE API で転送を注入し、変更グループ、完全取得、パディング無視、部分失敗、キャンセル、例外優先順位、区画再作成を検証します。`ContinuedStepsReuseCapturedRegistersAndFP` は省略された設定を数え、`PartialTransferFailuresPreserveStateAndForceFullRetry` は完全復元を要求します。これはプロトコル検証であり、既存のネイティブ FP・状態遷移・ドライバー・ring3 テストも引き続き必要です。
 
@@ -1706,9 +1708,11 @@ MSVC の単体テストは `/bigobj` を指定し、GoogleTest と LLVM のテ�
 
 ## ソースとネイティブオブジェクトのパッチ
 
-`CPU` はソースのインストールと隔離した関数実行、`REFUSED` はインストール契約不足による明示的拒否を示します。ARM32 ELF には EHABI 登録、32 ビット Mach-O には検証済みのローダー・フロントエンド・アンワインド契約が必要です。PE のソースインストールは現在 x64 に限られます。
+[source-patching.md](source-patching.md): `CPU` — source / IR / object, 143 checks.
 
 `NeverDSourcePatchTests` · `NeverDSourcePatchMatrixTests` · `SourcePatchPE` · `NEVERD_SOURCE_PATCH_TEST_CLANG_EXECUTABLE` · `NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1`.
+
+`sourcePatchTargetTriple` はイメージから ARM モード、ELF 浮動小数点 ABI、Mach-O CPU サブタイプを選択します。`COFFPatchObject` と `MachOPatchObject` はオブジェクト自身のシンボル、補助／セクション定義、アンワインド記録で範囲を検証し、MC ID を捏造しません。形式ごとのインストーラが実際のテーブルを登録します。 143 件の CPU テストはソース／IR／オブジェクト、四つのアーキテクチャ、三形式、状態、浮動小数点・スタック引数、二つの非ゼロ再ベースを要求します。旧 32 ビット Mach-O コンテナは実際のコンパイラコードを保持しますが OS 検証ではありません。
 
 [ソースとネイティブオブジェクトのパッチ](source-patching.md)
 
@@ -1719,3 +1723,14 @@ ctest --test-dir build-source -L \
   '^(NeverDSourcePatchTests|NeverDSourcePatchMatrixTests)$' \
   --output-on-failure --parallel 4
 ```
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*` は CPL0 の IF クリア／設定と CPL3 の対照、プロファイル一致とダイジェスト分離、TF/AC/IOPL の拒否、通常観測を無効化した場合の最終 IF 依存、復元、正確／一操作不足の予算を確認します。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` もユーザーモードのソース ABI が暗黙に選ばれないことを確認します。実運用の未定義命令 admission とドライバー復元 guards は変更しません。
+
+`NeverDX86X87IntegerLoadTests` は元の `FILD m16/m32/m64` を Codegen、HighC、LLVMC の default/NoOpt と C O0/O2 で比較します。binary80、保護領域、制御ワード、定義済み C1 を全 RC、有効 PC、例外マスクで検査し、全 16 ビット入力と広い整数の二の累乗境界を実行します。純粋変換の状態・パディング保持、保留/不明な例外、正確なメモリ範囲、不正メタデータ、分岐・均衡/不均衡ループ・不明な呼び出し後の空スロット証明も検査します。関数の入口は呼び出し規約が定める空のレジスタスタック（スロット値は未定義）から始まり、それ以外で不明/使用中の宛先は完全な関数の公開を拒否します。ネイティブ oracle は x64 GCC/Clang が必要です。完全な x87 TOP/タグ/状態、スタックオーバーフローの模擬、ネイティブ例外とメモリ障害の優先順位、Linux/macOS/x86-32 のネイティブ実行は認証しません。`NeverDLLVMCIntrinsicSemanticTests` は最大 64 ビットのスカラー `llvm.abs` を C O0/O2 と未定義動作トラップで実行し、定義済み符号付き最小値と一度だけの評価を検査します。
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
+検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。

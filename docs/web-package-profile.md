@@ -75,7 +75,9 @@ freshness, reachability, benignness and exploitability remain unverified.
 Explicit import-rooted source patterns and package delivery relationships have
 their own [Node behavior profile](web-node-behavior-profile.md). They do not
 establish install-script propagation or runtime effects. External evidence
-imports, analyst dispositions and readable reports remain pending. The native
+imports, analyst dispositions and readable reports use the separate
+[assessment](web-package-assessment-profile.md) and
+[journal/GUI](web-package-review-journal.md) contracts. The native
 [C++ MCP surface](web-mcp-profile.md) shares the C API's metadata policies.
 
 ## Surfaces and limits

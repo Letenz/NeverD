@@ -19,11 +19,20 @@ constexpr char WindowsPlatform[] = "windows";
 /// Visual Studio Code's custom title bar with its command center.
 constexpr int TitleBarHeight = 35;
 
+/// Whether windows are the Windows platform plugin's, whose native handles
+/// are HWNDs.
+bool onWindows() {
+  return QGuiApplication::platformName() == QLatin1String(WindowsPlatform);
+}
+
 /// The frame the system gives \p window's styles at its DPI, in device
-/// pixels: negative left and top, positive right and bottom.
+/// pixels: negative left and top, positive right and bottom.  None off the
+/// Windows platform plugin.
 RECT systemFrame(QWindow &window) {
-  const auto hwnd = reinterpret_cast<HWND>(window.winId());
   RECT frame{};
+  if (!onWindows())
+    return frame;
+  const auto hwnd = reinterpret_cast<HWND>(window.winId());
   AdjustWindowRectExForDpi(
       &frame, static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_STYLE)), FALSE,
       static_cast<DWORD>(GetWindowLongPtrW(hwnd, GWL_EXSTYLE)),
@@ -33,9 +42,7 @@ RECT systemFrame(QWindow &window) {
 } // namespace
 
 FrameKind frameKind() {
-  return QGuiApplication::platformName() == QLatin1String(WindowsPlatform)
-             ? FrameKind::Captionless
-             : FrameKind::System;
+  return onWindows() ? FrameKind::Captionless : FrameKind::System;
 }
 
 bool drawsShadow() { return false; }
@@ -58,7 +65,12 @@ QMargins maximizedInsets(QWindow &window) {
   return QMargins(0, qRound(border), 0, 0);
 }
 
-Qt::Edges ownResizeEdges() { return Qt::TopEdge; }
+// Off the Windows platform plugin no system frame resizes the window.
+Qt::Edges ownResizeEdges() {
+  return onWindows()
+             ? Qt::Edges(Qt::TopEdge)
+             : Qt::LeftEdge | Qt::TopEdge | Qt::RightEdge | Qt::BottomEdge;
+}
 
 int titleBarHeight() { return TitleBarHeight; }
 

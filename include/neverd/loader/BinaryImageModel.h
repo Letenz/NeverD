@@ -561,6 +561,11 @@ struct BinaryImage {
   /// UNW_FLAG_CHAININFO (hot/cold split and shrink-wrapped chunks).  A jump
   /// to one of these stays inside the jumping function.
   std::set<va_t> ContinuationCodeStarts;
+  /// Starts of the data objects that debug information places in executable
+  /// sections where the image's own code metadata gives no code: a kernel's
+  /// tables and UNICODE_STRINGs in PAGE and INIT.  An exact address of one is
+  /// data, though its section holds code (recordDataInCode).
+  std::set<va_t> DataInCode;
   /// When nonempty, PE language-table decode and x64 unwind materialization
   /// are limited to these entries and the catch/unwind funclets they name.
   /// KnownCodeRanges keeps the requested bodies plus immediate `.pdata`

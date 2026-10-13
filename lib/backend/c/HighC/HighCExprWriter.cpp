@@ -15,6 +15,7 @@
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -25,6 +26,7 @@
 #include "neverd/ir/med/MedSyscallConvention.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/ScopeExit.h"
@@ -270,6 +272,10 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
     return "0";
   if (Val <= limits::kDecimalConstThreshold)
     return std::to_string(Val);
+  // A constant of a type wider than eight bytes is its value zero-extended:
+  // a negative literal would convert to that type sign-extended.
+  if (Type && Type->Kind == NdTypeKind::Int && Type->Size > 8)
+    return "0x" + llvm::utohexstr(Val);
 
   if (Val == 0xFFFFFFFFFFFFFFFFULL)
     return "-1";
@@ -558,6 +564,10 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         (E.Type->Size == 1 || E.Type->Size == 2))
       return "((" + typeToC(E.Type) + ")(~" + exprStr(*E.Operands[0], 99) +
              "))";
+    // Past eight bytes C complements an operand in its own narrower type;
+    // the machine complements every byte of the result.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int && E.Type->Size > 8)
+      return "~(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
     return "~" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_NEG2: {
     // Reuse the integer subtraction rule for -x, including signed-minimum
@@ -832,7 +842,22 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::FLOAT_ISNAN:
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
-  case NdOp::FLOAT_UINT2FLOAT:
+  case NdOp::FLOAT_UINT2FLOAT: {
+    // The conversion reads its operand as a signed or an unsigned integer of
+    // its width, whatever C type the operand's text has: `(float)(x ^ 9)` of
+    // an unsigned x converts an unsigned value.
+    const HighExpr &Source = *E.Operands[0];
+    if (isPlainInteger(Source.Type)) {
+      const bool Signed = E.Op == NdOp::FLOAT_INT2FLOAT;
+      const uint16_t Width = Source.Type->Size;
+      return "(" + typeToC(E.Type) + ")" +
+             (declaredLocalInteger(Source, Width, Signed)
+                  ? exprStr(Source, 99)
+                  : castOperandText(integerView(
+                        Source, NdType::makeInt(Width, Signed), 99)));
+    }
+    return "(" + typeToC(E.Type) + ")" + exprStr(Source, 99);
+  }
   case NdOp::FLOAT_FLOAT2FLOAT:
     return "(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
   default:
@@ -1675,7 +1700,7 @@ std::string HighCWriter::stringArgumentNote(const HighExpr &Arg) {
     // A number is no address, and a literal shows its text itself.
     if (Inner->ConstProvenance == ConstantAddressProvenance::Scalar ||
         Inner->ConstProvenance == ConstantAddressProvenance::AddressFragment ||
-        imageStringLiteral(Opts.Image, Inner->ConstVal))
+        stringLiteralAt(Opts.Image, Dbg, Inner->ConstVal))
       return {};
     Target = Inner->ConstVal;
   } else if (Inner->Kind == ExprKind::Load && Inner->Operands.size() == 1 &&
@@ -1877,6 +1902,25 @@ std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)
     return exprStr(E);
+  // A view wider than its source extends it, with zeros or its sign.  The
+  // source's text says so only where C's own conversion to the wide type
+  // extends the same way: zeros for an unsigned source, its sign for a
+  // signed one.  A zero-extended signed source keeps the extension's text.
+  if (P->Type && E.Type && P->Type->Size < E.Type->Size) {
+    bool Zero = false, Sign = false;
+    for (const HighExpr *Cur = &E; Cur && Cur != P;
+         Cur = Cur->Operands.empty() ? nullptr : Cur->Operands[0].get())
+      if (Cur->Kind == ExprKind::UnaryOp &&
+          (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT) &&
+          Cur->Operands.size() == 1 && Cur->Operands[0] &&
+          Cur->Operands[0]->Type && Cur->Type &&
+          Cur->Operands[0]->Type->Size < Cur->Type->Size)
+        (Cur->Op == NdOp::INT_ZEXT ? Zero : Sign) = true;
+    const bool SourceSigned =
+        P->Type->Kind == NdTypeKind::Int && P->Type->IsSigned;
+    if ((Zero && Sign) || (Zero && SourceSigned) || (Sign && !SourceSigned))
+      return exprStr(E);
+  }
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi ||
       P->Kind == ExprKind::Const || P->Kind == ExprKind::Load)
     return exprStr(*P);
@@ -3741,7 +3785,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
     return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
   // Slot load of `*(vtbl + imm)` where `vtbl` is `*obj` (MSVC vfptr at 0).
   // Keep the inner vfptr load; `obj + imm` would name a field, not a method.
-  if (Depth >= 1 && Base) {
+  // Only one load reads the slot: under a second (`**(p + imm)`, a call
+  // through a field's pointer to a function pointer) the sum is the field.
+  if (Depth == 1 && Base) {
     const HighExpr *Addr = peelIntegerViewOps(Base);
     if (Addr && Addr->Kind == ExprKind::BinOp && Addr->Op == NdOp::INT_ADD &&
         Addr->Operands.size() == 2 && Addr->Operands[0] && Addr->Operands[1]) {
@@ -3929,6 +3975,123 @@ const HighExpr *HighCWriter::unwrapIntegerView(const HighExpr *E) const {
       }
     }
     break;
+  }
+  return E;
+}
+
+/// The width of the integer or pointer \p E holds, or 0 for another value
+/// or an untyped one.
+static uint16_t integerViewWidth(const HighExpr &E) {
+  if (E.Type)
+    return E.Type->Kind == NdTypeKind::Int || E.Type->Kind == NdTypeKind::Ptr
+               ? E.Type->Size
+               : 0;
+  return E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi ? E.Var.Size : 0;
+}
+
+bool HighCWriter::valueFitsInBytes(const HighExpr &E, uint16_t Bytes,
+                                   unsigned Depth) const {
+  if (Bytes >= 8)
+    return true;
+  if (Depth > limits::kMaxIntegerViewUnwrapDepth)
+    return false;
+  if (E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) {
+    const auto It = ValueForward.find(varName(E.Var));
+    if (It != ValueForward.end() && It->second && It->second != &E)
+      return valueFitsInBytes(*It->second, Bytes, Depth + 1);
+  }
+  const uint16_t Width = integerViewWidth(E);
+  if (Width && Width <= Bytes)
+    return true;
+  auto Fits = [&](size_t I) {
+    return I < E.Operands.size() && E.Operands[I] &&
+           valueFitsInBytes(*E.Operands[I], Bytes, Depth + 1);
+  };
+  // A sign extension keeps a fitting value's high bytes zero only where its
+  // own top byte is.
+  auto ExtensionFits = [&](bool Signed) {
+    if (E.Operands.empty() || !E.Operands[0])
+      return false;
+    const uint16_t In = integerViewWidth(*E.Operands[0]);
+    if (!In)
+      return false;
+    if (Width <= In || !Signed)
+      return Fits(0);
+    return Bytes < In && Fits(0);
+  };
+  switch (E.Kind) {
+  case ExprKind::Const:
+    return (E.ConstVal >> (8 * Bytes)) == 0;
+  case ExprKind::Cast:
+  case ExprKind::BitCast:
+    return ExtensionFits(E.Operands.empty() || !E.Operands[0] ||
+                         !E.Operands[0]->Type || E.Operands[0]->Type->IsSigned);
+  case ExprKind::UnaryOp:
+    if (E.Op == NdOp::BOOL_NOT)
+      return true;
+    if (E.Op == NdOp::INT_ZEXT || E.Op == NdOp::INT_SEXT)
+      return ExtensionFits(E.Op == NdOp::INT_SEXT);
+    return false;
+  case ExprKind::BinOp:
+    switch (E.Op) {
+    case NdOp::INT_EQUAL:
+    case NdOp::INT_NOTEQUAL:
+    case NdOp::INT_LESS:
+    case NdOp::INT_LESSEQUAL:
+    case NdOp::INT_SLESS:
+    case NdOp::INT_SLESSEQUAL:
+    case NdOp::BOOL_AND:
+    case NdOp::BOOL_OR:
+    case NdOp::BOOL_XOR:
+      return true;
+    case NdOp::INT_AND:
+      return Fits(0) || Fits(1);
+    case NdOp::INT_OR:
+    case NdOp::INT_XOR:
+      return Fits(0) && Fits(1);
+    case NdOp::SUBBYTES:
+      return E.Operands.size() == 2 && E.Operands[1] &&
+             E.Operands[1]->Kind == ExprKind::Const &&
+             E.Operands[1]->ConstVal == 0 && Fits(0);
+    default:
+      return false;
+    }
+  default:
+    return false;
+  }
+}
+
+const HighExpr *HighCWriter::truthTestedValue(const HighExpr *E) const {
+  for (unsigned Depth = 0; E && Depth < limits::kMaxIntegerViewUnwrapDepth;
+       ++Depth) {
+    if (E->Kind == ExprKind::Var || E->Kind == ExprKind::Phi) {
+      const auto It = ValueForward.find(varName(E->Var));
+      if (It == ValueForward.end() || !It->second || It->second == E)
+        return E;
+      E = It->second;
+      continue;
+    }
+    const bool View =
+        !E->Operands.empty() && E->Operands[0] &&
+        (E->Kind == ExprKind::Cast || E->Kind == ExprKind::BitCast ||
+         (E->Kind == ExprKind::UnaryOp &&
+          (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT)) ||
+         (E->Kind == ExprKind::BinOp && E->Op == NdOp::SUBBYTES &&
+          E->Operands.size() == 2 && E->Operands[1] &&
+          E->Operands[1]->Kind == ExprKind::Const &&
+          E->Operands[1]->ConstVal == 0));
+    if (!View)
+      return E;
+    // An extension, or a reinterpretation of the same bits, is zero just
+    // where its operand is; a conversion or a byte view may narrow it.
+    const HighExpr &Inner = *E->Operands[0];
+    if (E->Kind != ExprKind::BitCast && E->Kind != ExprKind::UnaryOp) {
+      const uint16_t Outer = integerViewWidth(*E);
+      const uint16_t In = integerViewWidth(Inner);
+      if (!Outer || !In || (Outer < In && !valueFitsInBytes(Inner, Outer)))
+        return E;
+    }
+    E = &Inner;
   }
   return E;
 }
@@ -4326,13 +4489,7 @@ std::string HighCWriter::exprStrImpl(const HighExpr &E, int ParentPrec,
         return "(" + typeToC(E.Type) + ")" + *Anchored;
       return PointerInteger(*Anchored);
     }
-    bool AllowEmpty = false;
-    if (Dbg) {
-      if (auto Data = Dbg->resolveDataObject(E.ConstVal);
-          Data && llvm::StringRef(Data->Name).starts_with("??_C@"))
-        AllowEmpty = true;
-    }
-    if (auto Lit = imageStringLiteral(Opts.Image, E.ConstVal, AllowEmpty))
+    if (auto Lit = stringLiteralAt(Opts.Image, Dbg, E.ConstVal))
       return LiteralAddressOperands.count(&E)
                  ? PointerInteger("(uintptr_t)" + *Lit)
                  : *Lit;
@@ -5023,9 +5180,10 @@ bool HighCWriter::isImageDataAddress(va_t Addr) const {
   if (!Seg || !Seg->isReadable())
     return false;
   // Instruction bytes are not data objects.  Read-only constants live in
-  // .rdata / .rodata (readable, not writable, not executable).
+  // .rdata / .rodata (readable, not writable, not executable), and where
+  // the debug information places data among the code.
   if (Seg->isExecutable() && !Seg->isWritable())
-    return false;
+    return isCodeSectionData(Opts.Image, Addr);
   return true;
 }
 
@@ -5229,7 +5387,7 @@ HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
   const std::optional<va_t> Owner = anchoredOwner(Const);
   if (!Owner)
     return std::nullopt;
-  std::optional<std::string> Object = imageStringLiteral(Opts.Image, *Owner);
+  std::optional<std::string> Object = stringLiteralAt(Opts.Image, Dbg, *Owner);
   if (!Object)
     Object = imageBackingAddress(*Owner);
   if (!Object)
@@ -5244,6 +5402,37 @@ HighCWriter::anchoredOwnerAddress(const HighExpr &Const) const {
          std::to_string(*Owner - Const.ConstVal) + ")";
 }
 
+HighCWriter::ImageSymbolName HighCWriter::imageSymbolName(va_t Addr) const {
+  ImageSymbolName Named;
+  if (Opts.UserNames)
+    if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
+      Named.Raw = It->second;
+  // A literal's symbol spells its text, not a name (MSVC's `??_C@`).
+  if (Named.Raw.empty() && Dbg) {
+    if (auto Data = Dbg->resolveDataObject(Addr);
+        Data && !Data->Name.empty() && !isStringLiteralName(Data->Name))
+      Named.Raw = Data->Name;
+  }
+  if (Named.Raw.empty() && Opts.Image) {
+    if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
+        Sym && !Sym->IsFunc && !Sym->Name.empty() &&
+        llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
+      // A mangled name keeps the underscores its scheme starts with
+      // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
+      // identifier is spelled from: `vtable for QDomNode`, Go's
+      // `main.Flags`.
+      const llvm::StringRef CName =
+          cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
+      Named.Raw = symbolScheme(CName) != SymbolScheme::None
+                      ? CName.str()
+                      : stripLeadingUnderscores(Sym->Name).str();
+      Named.Readable = demangledComment(CName);
+      Named.Symbol = Sym->Name;
+    }
+  }
+  return Named;
+}
+
 void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
                                   bool MemoryAccess) {
   if (!isImageDataAddress(Addr))
@@ -5252,35 +5441,15 @@ void HighCWriter::noteImageObject(va_t Addr, const TypeRef &Ty, bool Written,
   if (MemoryAccess && Ty)
     Obj.MemoryWidths.insert(Ty->Size);
   if (Obj.Name.empty()) {
-    std::string Raw;
-    if (Opts.UserNames)
-      if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
-        Raw = It->second;
-    if (Raw.empty() && Dbg) {
-      if (auto Data = Dbg->resolveDataObject(Addr); Data && !Data->Name.empty())
-        Raw = Data->Name;
-    }
-    if (Raw.empty() && Opts.Image) {
-      if (const Symbol *Sym = Opts.Image->findSymbolAt(Addr);
-          Sym && !Sym->IsFunc && !Sym->Name.empty() &&
-          llvm::StringRef(Sym->Name).find(kAutoFuncPrefix) != 0) {
-        // A mangled name keeps the underscores its scheme starts with
-        // (`_ZTV8QDomNode` is `QDomNode_vtable`).  A comment reads a name the
-        // identifier is spelled from: `vtable for QDomNode`, Go's
-        // `main.Flags`.
-        const llvm::StringRef CName =
-            cNameOfSymbol(Sym->Name, Opts.Format, Opts.TheArch);
-        Raw = symbolScheme(CName) != SymbolScheme::None
-                  ? CName.str()
-                  : stripLeadingUnderscores(Sym->Name).str();
-        Obj.Readable = demangledComment(CName);
-        Obj.Symbol = Sym->Name;
-      }
-    }
-    if (!Raw.empty())
-      Obj.Name = GlobalIdentifierAllocator.allocate(Raw, "g");
+    const ImageSymbolName Named = imageSymbolName(Addr);
+    if (!Named.Raw.empty())
+      Obj.Name = GlobalIdentifierAllocator.allocate(Named.Raw, "g");
+    if (!Named.Readable.empty())
+      Obj.Readable = Named.Readable;
+    if (!Named.Symbol.empty())
+      Obj.Symbol = Named.Symbol;
     if (Obj.Symbol.empty())
-      Obj.Symbol = Raw;
+      Obj.Symbol = Named.Raw;
   }
   auto NamedDisplayPointer = [](const TypeRef &Type) {
     return Type && Type->Kind == NdTypeKind::Ptr && Type->Pointee &&
@@ -5310,14 +5479,33 @@ void HighCWriter::noteImageAddress(va_t Addr) {
       It != ImageObjects.end() && It->second.Type)
     return;
   // The address alone stands in with an integer as wide as the object its
-  // symbol sizes, which the type of any access replaces.
-  const uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  // symbol sizes, else as the accesses that name it, or the pointer a
+  // relocated slot holds, which the type of any access replaces.
+  uint64_t Size = Opts.Image ? Opts.Image->dataObjectSizeAt(Addr) : 0;
+  if (!Size && Opts.AccessWidths)
+    Size = Opts.AccessWidths->at(Addr).value_or(0);
+  if (!Size && Opts.Image &&
+      (Opts.Image->CodePtrRelocSlots.count(Addr) ||
+       Opts.Image->DataPtrRelocSlots.count(Addr)))
+    Size = Opts.Image->getPointerSize();
   noteImageObject(
       Addr,
       NdType::makeInt(Size == 1 || Size == 2 || Size == 4 || Size == 8 ? Size
                                                                        : 2),
       false);
   ImageObjects[Addr].WeakType = true;
+}
+
+std::optional<uint64_t>
+HighCWriter::dataNameWidth(va_t Addr, const ImageObject &Obj) const {
+  if (Opts.AccessWidths) {
+    if (const auto Width = Opts.AccessWidths->at(Addr); Width && *Width)
+      return *Width;
+    return std::nullopt;
+  }
+  if (Obj.MemoryWidths.size() == 1)
+    return *Obj.MemoryWidths.begin();
+  return std::nullopt;
 }
 
 bool HighCWriter::isParamCopy(const HighExpr &E) const {
@@ -5472,8 +5660,7 @@ std::string HighCWriter::condStr(const HighExpr &E) {
 }
 
 std::string HighCWriter::condStrImpl(const HighExpr &E) {
-  const HighExpr *Cur = forwardedExpr(&E);
-  Cur = unwrapIntegerView(Cur);
+  const HighExpr *Cur = truthTestedValue(&E);
   auto IsZeroLike = [this](const ExprPtr &Op) {
     if (!Op)
       return false;
@@ -5491,22 +5678,16 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
       Cur->Operands[0] && Cur->Operands[1] && Cur->Op == NdOp::INT_EQUAL) {
     const HighExpr *X = nullptr;
     if (IsZeroLike(Cur->Operands[1]))
-      X = forwardedExpr(Cur->Operands[0].get());
+      X = truthTestedValue(Cur->Operands[0].get());
     else if (IsZeroLike(Cur->Operands[0]))
-      X = forwardedExpr(Cur->Operands[1].get());
+      X = truthTestedValue(Cur->Operands[1].get());
     if (X) {
       if (const HighExpr *Call = typedCallResult(X))
         return "!" + exprStr(*Call, 99);
-      X = unwrapIntegerView(X);
-      if (X && X->Kind == ExprKind::Call)
+      if (X->Kind == ExprKind::Call)
         return "!" + exprStr(*X, 99);
     }
   }
-  if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Op == NdOp::SUBBYTES &&
-      Cur->Operands.size() == 2 && Cur->Operands[0] && Cur->Operands[1] &&
-      Cur->Operands[1]->Kind == ExprKind::Const &&
-      Cur->Operands[1]->ConstVal == 0)
-    return condStr(*Cur->Operands[0]);
   if (Cur && Cur->Kind == ExprKind::BinOp && Cur->Operands.size() == 2 &&
       Cur->Operands[0] && Cur->Operands[1] &&
       (Cur->Op == NdOp::BOOL_AND || Cur->Op == NdOp::BOOL_OR)) {
@@ -5589,8 +5770,8 @@ std::string HighCWriter::condStrImpl(const HighExpr &E) {
     }
     return L + " || " + R;
   }
-  // Boolean context: a leftover narrowing cast of a scalar / call is
-  // `test eax`, not a sanitizer wrap. Keep wraps on add/sub/mul.
+  // Boolean context: a view the test keeps whether it reads zero through is
+  // no sanitizer wrap. Keep wraps on add/sub/mul.
   if (Cur && Cur != &E &&
       (Cur->Kind == ExprKind::Var || Cur->Kind == ExprKind::Phi ||
        Cur->Kind == ExprKind::Call))

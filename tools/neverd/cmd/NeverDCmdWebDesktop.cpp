@@ -39,14 +39,23 @@ std::string field(const llvm::json::Value &V, const char *Name) {
 } // namespace
 
 int runWebDesktop() {
-  if ((WebArguments.size() != 3 && WebArguments.size() != 4) ||
-      (WebArguments[2] != "nwjs" && WebArguments[2] != "vsix")) {
-    llvm::errs() << "usage: neverd web desktop-manifest <file-or-root> "
-                    "<nwjs|vsix> [artifact-index]\n";
+  const bool Export = WebArguments[0] == "desktop-export";
+  const bool Resources =
+      WebArguments.size() >= 3 &&
+      (WebArguments[2] == "cef-assets" || WebArguments[2] == "webview-assets");
+  if ((Export ? WebArguments.size() != 5
+              : WebArguments.size() != 3 && WebArguments.size() != 4) ||
+      (WebArguments[2] != "nwjs" && WebArguments[2] != "vsix" && !Resources) ||
+      (Export && !Resources)) {
+    llvm::errs()
+        << "usage: neverd web desktop-manifest <file-or-root> "
+           "<nwjs|vsix|cef-assets|webview-assets> [artifact-index]\n"
+           "       neverd web desktop-export <root> "
+           "<cef-assets|webview-assets> <artifact-index> <new-directory>\n";
     return 2;
   }
   uint64_t Index = 0;
-  if (WebArguments.size() == 4) {
+  if (WebArguments.size() >= 4) {
     const llvm::StringRef Text = WebArguments[3];
     if (Text.empty() || Text.getAsInteger(10, Index) ||
         Text != std::to_string(Index))
@@ -75,9 +84,19 @@ int runWebDesktop() {
   if (!Items || Items->size() != 1)
     return 1;
   const auto ID = field(Items->front(), "artifact_id");
-  return reply(neverd_web_desktop_manifest_analyze_json(
-                   G.S, Revision.data(), Revision.size(), ID.data(), ID.size(),
-                   Kind.data(), Kind.size()),
+  const auto A = reply(neverd_web_desktop_manifest_analyze_json(
+                           G.S, Revision.data(), Revision.size(), ID.data(),
+                           ID.size(), Kind.data(), Kind.size()),
+                       true);
+  if (!A)
+    return 1;
+  if (!Export)
+    return 0;
+  const auto ManifestID = field(*A, "manifest_id");
+  const auto &Destination = WebArguments[4];
+  return reply(neverd_web_desktop_resources_export_json(
+                   G.S, Revision.data(), Revision.size(), ManifestID.data(),
+                   ManifestID.size(), Destination.data(), Destination.size()),
                true)
              ? 0
              : 1;

@@ -62,6 +62,12 @@ policy, signature matching and feature changes between selections. Run these
 with `NeverDPipelineOutcomeTests` and `NeverDSessionCAPITests`; the no-return,
 x87 and jump-table suites cover their shared proof consumers.
 
+`SessionCAPITest.DataAccessWidths*` compares retained navigation facts with
+fresh native decoding, preserves renamed source, and checks changed function
+addresses, extents and inventories. It also covers edits, policy/signature
+changes, feature changes between selections, failed loads and same-address
+image replacement. Width changes discard source using the preceding data names.
+
 With the optional Qt desktop targets enabled, `NeverDGuiController` exercises
 the production views against the deterministic worker. Its chooser regressions
 replace queued filters and scroll a 20,000-function fixture across more pages
@@ -191,6 +197,46 @@ separately from decompilation. Report algorithmic and parallel gains separately;
 thread count alone does not establish faster loading on every input.
 
 ## Scalar x86 floating-point state
+
+`NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
+with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Raw binary80
+values, complete output guards, control words and defined C1 cover all RC,
+defined PC and exception-mask combinations. Concrete checks execute every
+16-bit input and wide power-of-two boundaries; pure conversions preserve FP
+state and padding. Pending/unknown waiting state, exact memory extents,
+malformed metadata, and all-path empty-destination admission receive negative
+controls, including branches, balanced/unbalanced loops and unknown calls.
+A function entry starts from the calling convention's empty register
+stack with undefined slot values; an unknown or occupied FILD destination
+elsewhere rejects complete function publication. Native oracles require x64
+GCC/Clang. These checks do not certify complete x87 TOP/tags/status delivery,
+stack-overflow emulation, native exception/memory-fault priority, or native
+Linux/macOS/x86-32 execution. `NeverDLLVMCIntrinsicSemanticTests` additionally
+executes scalar `llvm.abs` projections through 64 bits at C O0/O2 with undefined
+behavior traps, including the defined signed minimum and single evaluation.
+
+```sh
+cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
+ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
+```
+
+`NeverDX86X87SignAccuracyTests` compares original FABS/FCHS byte sequences
+with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Full binary80
+images and guards cover precision/range beyond binary64, signed zeros,
+subnormals, infinities, NaN payloads and noncanonical encodings. FXAM seeds
+C1 before sign changes; observers retain only the subsequently defined C1.
+The concrete matrix compares every sign/exponent word against original
+instructions with zero/full significands. Contract checks cover physical
+slots/padding, malformed and unknown pure values, pending waiting boundaries,
+and all-path tag admission across branches and loops in ELF/Mach-O/COFF.
+Native checks require x64 and GCC/Clang. This does not certify complete x87
+TOP/tags/status delivery, general arithmetic precision, memory-fault priority,
+or native Linux/macOS/x86-32 execution.
+
+```sh
+cmake --build build-release --target NeverDX86X87SignAccuracyTests
+ctest --test-dir build-release -L '^NeverDX86X87SignAccuracyTests$' --output-on-failure
+```
 
 `NeverDX86MaskCompareStateTests` compares twenty legacy/VEX scalar/packed
 register/memory forms with original bytes, Codegen, HighC and LLVMC at
@@ -716,6 +762,19 @@ explicit unavailable window; journals/models still work. Run the existing GUI
 unit/controller/language and smoke suites when modifying workbench commands.
 See the [journal/desktop profile](web-package-review-journal.md).
 
+`WebPassiveReport.*` verifies independently counted observed JSON types,
+malformed/encoded/missing bodies, aggregate node work, explicit selections and
+record refusal. `WebPassiveSource.*` verifies exact transformation/message
+syntax, deferred/computed/alias exclusions, all five client domains and selected
+MCP method candidates without protocol inference. SDK cases qualify commit
+gates, paging, revocation, reports and resource directory/ZIP/native consumers.
+CLI cases run with an unusable external-tool PATH; worker/MCP compare the same
+backend. `WebDesktopManifest.*` qualifies supplied CEF/WebView descriptor
+versions, exact scope, opaque/missing files and list budgets. Run owning Web,
+worker/MCP and parser/backend omission when changing these boundaries, then
+restore the enabled build. See the [report](web-passive-report-profile.md) and
+[resource](web-desktop-resource-profile.md) profiles.
+
 `WebNodeBehavior.*` checks exact builtin import/member forms, aliases, primitive
 Buffer overloads, overload-neutral argument anchors, uncertainty and budgets.
 `WebPackageBehavior.*` checks direct file membership, unknown ownership, bounded
@@ -993,6 +1052,30 @@ compare direct and framed results, reject caller-supplied table descriptors
 and check canaries. The archive consumer/CLI fixtures also cover both uniform
 old-GNU tar and old-GNU tar/gzip, including Bun/source/native consumers.
 
+`WebDesktopBridge.*` checks exact direct Tauri/Wails shapes, optional syntax,
+shadowed/dynamic roots, spread/getter/duplicate/computed/arity limitations,
+record-budget atomic refusal and call/child agreement. Its optional captured
+case uses `NEVERD_TAURI_CHATGPT_110_X64_JS` for the fixed decoded member 6.
+`WebSDK.*DesktopBridge*` checks private values, paging, anchors, import revocation
+and the actual CLI with an unusable PATH. `WebTauriSDK` additionally joins the
+real decoded IPC call range to its exact compressed frame and old-GNU parent.
+Worker/MCP compare the same bridge pages and reject extra execution fields.
+Run the complete owning Web directory and affected transports, then parser
+omission and restore both Web/JS options ON. These checks qualify source syntax,
+not native command registration or runtime activation. See the
+[desktop bridge profile](web-desktop-bridge-profile.md).
+
+`WebConfigurationOrder.*` checks source loading/merge relationships, exact
+unknown-key barriers, duplicate/accessor/computed definitions, redeclarations,
+reassignment, dynamic scope and independent object/term exhaustion. Optional
+fixed units use `NEVERD_CLAUDE_CODE_21296_CONFIG_JS` (module 1676) and
+`NEVERD_CLAUDE_CODE_21296_CONFIG_UNKNOWN_JS` (module 6); the existing whole
+Claude client corpus adds order-object/term/unknown-field coverage receipts.
+`WebSDK.ConfigurationOrder*`, the offline navigation CLI and worker/MCP tests
+check private values, shared anchors, cached/paged identity and import revocation.
+Run the complete owning Web directory and affected transports, then parser
+omission and restoration. See the [profile](web-configuration-order-profile.md).
+
 `WebSourceRewrite` separately checks closed primitive substitutions, UTF-16
 surrogates, signed zero/NaN/infinities, BigInt, distinct passes, comment and
 directive preservation, tagged-template refusal, ASI outer-tree mismatches,
@@ -1265,8 +1348,18 @@ Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
 
+`SymMBAMinimumTests` checks proved binary-leaf minima with only traversal work,
+exhausts cheaper functions at small widths, and covers wide words, resource
+refusals and related or opaque inputs that still require full simplification.
+
 Build the symbolic engine, LLVM safety guards, HighIR bridge tests, and source
 roundtrips together when changing shared bitvector simplification:
+
+`HighSymSimplify.ParallelSegments*` compares serial and parallel rewriting
+over shared DAGs with distinct branch, switch and exception-body definitions.
+Independent arithmetic oracles check the rewritten results. Calls, labels,
+exception continuations, PHI copies, address escapes and ordered effects must
+still kill definitions; ordinary stores must retain them.
 
 ```sh
 cmake --build build-release --target NeverDSymbolicTests NeverDSolverTests \
@@ -1502,6 +1595,16 @@ absolute-table HighC, optimized LLVMC and unoptimized LLVMC execute zero,
 all bit positions and deterministic mixed inputs at O0/O2 with UB traps.
 The existing deep-arithmetic narrow guards must retain their exact-definition
 proof before the batched extension-range fallback is considered.
+
+`ResolverGuardPredicates.*` checks compound entry/backedge predicates on x86,
+x64, ARM32 and AArch64, including changed lanes, independent roots, unrelated
+flags, wide indices and exhausted evidence. Query-mode changes must retain
+separate caches, and a logical union cannot claim CFG predecessor ownership.
+`JumpTableJoinedGuard.*` checks separate inclusive/exclusive loop guards in
+ELF, COFF and Mach-O. Its ELF source
+roundtrips execute HighC and both LLVMC modes at O0/O2 against an independent
+selection oracle. Small joined domains reuse the finite-coordinate proof;
+unchecked paths and sparse or incomplete domains cannot grant a dense table.
 
 `NeverDJumpTableTests` groups the existing enhanced and proposal fixed-point
 regressions with independent AArch64 and x64 finite-selector fixtures. The new
@@ -4492,7 +4595,7 @@ The KVM gate requires real non-exiting vCPU cancellation and 48 state-transfer o
 
 With `native_cpu_only=true`, `native_driver_tests=true` enables `NeverDNativeDriverTests` without Unicorn. Before configuring, `build_wdk_driver_fixtures.py` verifies the complete SHA-256 of the official Microsoft WDK/SDK 10.0.26100.6584 packages and rebuilds 48 original normal/CFG/DBG driver images. `WDKDriverFixtures.def` owns package identities, compiler/linker arguments and fixture bindings. Unmodified Microsoft inputs and their licenses remain in the local build/cache directories; CI uploads only build metadata and logs. The manifest records tool versions, commands, source/header hashes and output image hashes.
 
-`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 22 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 9 pool captures = 5498`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
+`NativeDriverTests.def` requires 230 WHP outcomes from all 115 workloads in `DriverBuiltinImages.def` and `DriverBackendParityCases.def`: 27 built-in images, 48 WDK images and 40 request scenarios, each at original and rebased addresses. The complete mandatory inventory is `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`. The 30 wait-set checks comprise sixteen portable model cases and fourteen original native driver cases. `run_native_cpu_ci.py --with-drivers` retains exact inventory/JUnit evidence with Unicorn disabled. Missing or skipped required fixtures fail the opt-in gate; ordinary builds keep external fixtures optional. Fixed images retain their expected rebase rejection. ARM64 native guest execution remains unverified.
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` injects deadline, stop and combined interruptions before two different startup instructions. It checks the exact phase diagnostic, owned message lifetime, preserved error type and cause bits, one unchanged deadline across steps and released memory ownership. Existing real transport failures and state mismatches remain distinct. The native x64 startup validation budget is `5 s`; ordinary guest deadlines and single-step allowances are unchanged.
 
@@ -4558,6 +4661,8 @@ Capture regressions: `NeverDUnicornStateTransferTests`, `NeverDUnicornMachineCon
 `NeverDRunControlTests` includes portable `NativeEntryTests.cpp` and Windows WHP-enabled `WhpEntryControlTests.cpp`. In-memory host callbacks check rejected entry, retry, late cancellation, retained failures, completion priority and acknowledged callback lifetime without requiring Hyper-V. `NeverDKvmRunTests` checks caller-thread completion, error priority and reentry rejection. Real `NeverDKvmStateTransferTests` executes `KvmStateTransferCases.def` instructions; `ActualCPUExceptionOutranksStopDuringCapture` and `PublicCPUExceptionOutranksStopDuringCapture` stop after actual register/XSAVE reads and preserve divide exceptions, original context, RAM and explicit recovery. Portable tests executed with the Windows ABI under Wine are threading/control evidence only; they do not establish native WHP execution. Unavailable native transports remain explicit skips.
 
 `NeverDInstructionFetchTests` executes x64/ARM64 checked programs through Unicorn, KVM and WHP at supervisor and user privilege. `InstructionFetchCases.def` covers changing operand forms and relative branches, guest and host writes through code aliases, context restoration, permission revocation, separate page backing, page-tail lookahead, invalid/truncated encodings and recursive entry rejection. Native Windows CI requires every x64 WHP case to pass. Unavailable host/ISA pairs are explicit skips; portable ARM64 execution does not establish native ARM64 support.
+
+`RepeatedOperandsSurviveCodeWorkingSetEviction` repeats operand, memory-hook and relative-branch checks before and after a larger code working set. Checked execution retains bounded, owned Capstone metadata only while the current instruction bytes match; every step still fetches current bytes and checks execute permissions. Full operand details and decoder aliases remain available on cache hits.
 
 `WhpStateTransferTests.cpp` checks both XSAVE API generations with injected register transfers: exact changed groups, complete capture, ignored padding, partial failures, cancellation, exception priority and partition replacement. `ContinuedStepsReuseCapturedRegistersAndFP` counts avoided installs; `PartialTransferFailuresPreserveStateAndForceFullRetry` requires complete restoration. These are protocol checks, not native execution evidence; existing native FP, state-transition, driver and ring3 suites remain required.
 
@@ -5209,6 +5314,14 @@ The bulk-attributes workload checks whole groups, name/type membership, guarded 
 
 `NeverDUnpackDriverTests` covers packed DriverEntry recovery, static/dynamic kernel imports, retained kernel resources, entry ABI/control state, malformed exports, scheduling, request/unload lifecycle, C API/CLI parity and PE checksums. The native driver inventory requires matching KVM/WHP cases; Windows also checks ImageHlp. This does not certify a native kernel load. See [unpacking](unpack.md).
 
+`DriverEntryCaller.*` checks nonzero incoming values for all eight nonvolatile
+GPRs, both halves of XMM6–15, volatile MXCSR status versus preserved controls,
+FPCSR and the returned direction flag. The independent machine-code control
+`UnpackDriver.CheckedDriverEntryRejectsAClobberedCallerBeforePublishingStatus`
+keeps a balanced stack and STATUS_SUCCESS while corrupting R13; its companion
+restores R13. Checked execution must reject the corruption before publishing
+NTSTATUS or scheduling lifecycle work. Matching KVM/WHP cases are required.
+
 `NeverDKernelSnapshotTests` checks diagnostic object snapshots after terminal memory faults and unsupported instructions. Committed device and dispatch state remains observable without clearing the first fault or permitting further CPU access. Corrupted ownership, cyclic device lists, invalid driver extensions and partial dispatch pointers still fail. Native KVM/WHP acceptance requires the matching backend cases.
 
 `KernelUnpackStateTests.cpp` adds nine portable cases to `NeverDKernelSnapshotTests` covering pool allocation contracts, copied contents, released lifetimes, missing backing and remaining dependencies. Terminal-fault cases also capture live pools. `UnpackDriver.StoppedViewOwnsLivePoolContentsAndContracts` verifies the public observer state after session destruction. These cases are mandatory in the native driver gate and do not certify native kernel restoration.
@@ -5236,11 +5349,15 @@ The committed-write observer regressions verify visibility before the next instr
 `NeverDSourcePatchMatrixTests` compiles and links real fixtures, installs source
 or supplied IR, reloads the result and invokes the patched original entry in
 Unicorn. Four architectures (x86, x64, ARM32, ARM64) and three formats (ELF,
-PE, Mach-O) require exact results or the documented explicit admission refusal.
-The positive native-object case also executes its installed bytes. Every
+PE, Mach-O) require successful source, supplied-IR and native-object installation,
+reload and exact execution. The 143-case inventory includes both ARMv7k watchOS
+and ARMv7 iOS, mutable/readonly state, original floating-point and stack-argument
+bindings, and source/object entries at two nonzero image-base slides. Every
 invocation must reach the return address within a finite instruction/time budget.
 This CPU matrix does not certify operating-system loaders or C++ unwinders.
-The synthetic legacy Mach-O 32-bit images are refusal inputs, not OS profiles.
+Legacy Mach-O 32-bit containers retain compiler-produced instructions,
+relocated CFI and genuine symbols; their CPU execution is not an OS runtime
+qualification. Native object ranges never receive synthetic MC identities.
 On Apple Silicon, `NEVERD_TEST_DARWIN_ARCH=x86_64` runs the C API/CLI and
 seven exception scenarios through Rosetta 2 using x64 originals. Intel fixtures
 reserve file/virtual padding with `-Wl,-segalign,0x4000` independently of header
@@ -5308,3 +5425,11 @@ establish operating-system unwind behavior.
 MSVC unit test targets use `/bigobj` to allow the larger COFF section counts produced by GoogleTest and LLVM template instantiations. Other compiler profiles are unchanged. Configuration checks verify the generated test compile command; native Windows CI still verifies compilation and execution.
 
 Checked double-shift rejection reports the masked count and operand width when its destination and flags are undefined. `X64DoubleShift` verifies that typed exits and the legacy error API retain the reason without register or RAM changes or memory observations; the driver fixture verifies that the same reason survives before scenario dispatch.
+
+`OriginalBinaryUndefinedIndependence.KernelPackedFlags*` checks CPL0 IF clear/set against a CPL3 countercontrol, profile matching and digest separation, TF/AC/IOPL refusals, mandatory final IF dependence even with ordinary observations disabled, restoration and exact/one-short work limits. `InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` also checks that this native kernel profile cannot silently select the user source ABI. The production undefined-instruction admission and driver recovery guards are unchanged.
+
+Driver write-watch controls independently encode changed-value and repeated same-value stores with raw write tracing disabled. Both legacy and checked x64 contracts must suspend after each watched commit, withdraw the unchanged-memory guarantee, and restore it at a later pure execution watch. Lifecycle observation verifies that new invocations and kernel export callbacks withdraw that guarantee. The same-value case is mandatory in native KVM/WHP inventory.
+
+`KernelUnpackState.TypedPoolsCannotHideOtherRetainedObjects` checks mixed pool/device ownership before and after freeing the pool. Legacy and modern pool controls require the exact pool-only dependency inventory. The mixed-object case is mandatory in native driver CI; typed pool capture still requires runtime reconstruction.
+
+Checked KVM x64 execution delegates the complete instruction loop through `withExecutionOwner` to its private vCPU thread. Admission, RAM transactions, hooks and budgets stay in that loop; individual native entries retain their controls and exception priority. The caller monitors active entries and acknowledges cancellation before returning. CPU hooks execute on this private owner, so they must not require the caller’s thread-local state. Standalone native-entry completion still runs on its caller. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` and `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` cover ownership and real cancellation; this transport change does not certify a recovered driver.

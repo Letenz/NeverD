@@ -597,6 +597,43 @@ int main(void) {
     compileAndRun(Source + Main, Optimization);
 }
 
+TEST(LLVMCValues, ACallWhoseNarrowedResultMeetsItselfRunsOnce) {
+  // `call f; test eax, eax; js` narrows the result and ands it with itself.
+  // The narrowed value has two uses, so the call that feeds it runs once.
+  llvm::LLVMContext Context;
+  llvm::Module Module("call-anded-with-itself", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Half = llvm::Type::getInt32Ty(Context);
+  auto *Probe = llvm::Function::Create(llvm::FunctionType::get(Word, false),
+                                       llvm::GlobalValue::ExternalLinkage,
+                                       "probe", Module);
+  auto *Function = llvm::Function::Create(llvm::FunctionType::get(Half, false),
+                                          llvm::GlobalValue::ExternalLinkage,
+                                          "check", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  auto *Yes = llvm::BasicBlock::Create(Context, "yes", Function);
+  auto *No = llvm::BasicBlock::Create(Context, "no", Function);
+  llvm::IRBuilder<llvm::NoFolder> B(Entry);
+  auto *Status = B.CreateTrunc(B.CreateCall(Probe), Half, "status");
+  B.CreateCondBr(B.CreateICmpSGE(B.CreateAnd(Status, Status), B.getInt32(0)),
+                 Yes, No);
+  B.SetInsertPoint(Yes);
+  B.CreateRet(B.getInt32(1));
+  B.SetInsertPoint(No);
+  B.CreateRet(B.getInt32(0));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"(
+static unsigned calls;
+uint64_t probe(void) { return ++calls == 1 ? 5 : 0x80000000u; }
+int main(void) { return check() == 1 && calls == 1 ? 0 : 1; }
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization);
+}
+
 TEST(LLVMCValues, MutableHomesKeepBranchValuesAndEarlierReads) {
   llvm::LLVMContext Context;
   llvm::Module Module("mutable-home-joins", Context);

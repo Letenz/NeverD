@@ -270,12 +270,20 @@ class WDKDriverFixtureTests(unittest.TestCase):
         }
         self.assertTrue(pool_required)
         self.assertTrue(pool_required <= required)
+        caller_source = (source.parent / "DriverEntryABITests.cpp").read_text()
+        caller_required = {
+            f"Backends/DriverEntryCaller.{name}/Whp"
+            for name in re.findall(r"TEST_P\(DriverEntryCaller,\s*(\w+)\)",
+                                   caller_source)
+        }
+        self.assertTrue(caller_required)
+        self.assertTrue(caller_required <= required)
         self.assertEqual(len(required), len(cpu_required) + 2 * len(names)
                          + len(seh_required) + len(scheduling_required)
                          + len(wait_required) + len(unpack_required)
                          + len(timestamp_required) + len(image_required)
                          + len(cpuid_required) + len(snapshot_required)
-                         + len(pool_required))
+                         + len(pool_required) + len(caller_required))
         formula = (f"{len(cpu_required)} CPU + {2 * len(names)} WHP + "
                    f"{len(seh_required)} SEH + {len(scheduling_required)} scheduling "
                    f"+ {len(wait_required)} wait sets "
@@ -284,7 +292,8 @@ class WDKDriverFixtureTests(unittest.TestCase):
                    f"+ {len(image_required)} image memory checks "
                    f"+ {len(cpuid_required)} CPUID "
                    f"+ {len(snapshot_required)} kernel snapshots "
-                   f"+ {len(pool_required)} pool captures = {len(required)}")
+                   f"+ {len(pool_required)} pool captures "
+                   f"+ {len(caller_required)} DriverEntry caller checks = {len(required)}")
         definitions = (fixtures.ROOT / "scripts/EmulationDocumentation.def")
         tokens = i18n.emulation_document_tokens(definitions.read_text(encoding="utf-8"))
         self.assertIn(formula, tokens["NativeDriverCI"])

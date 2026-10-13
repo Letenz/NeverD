@@ -148,6 +148,19 @@ public:
                        bool MemoryAccess = false);
   /// Notes an object the code reaches only by its address so far.
   void noteImageAddress(va_t Addr);
+  /// The name the user, the debug information or a data symbol gives the
+  /// object at an address; with a symbol's, the symbol and the comment that
+  /// reads it as its language spells it.
+  struct ImageSymbolName {
+    std::string Raw;
+    std::string Symbol;
+    std::string Readable;
+  };
+  ImageSymbolName imageSymbolName(va_t Addr) const;
+  /// The listing's name for the data a relocated pointer slot at \p Slot
+  /// holds the address of, as `&name`, where the slot's initializer is a
+  /// number (no symbol sizes the target, so C declares no object for it).
+  std::string relocatedTargetNote(va_t Slot) const;
   std::string memoryTypeName(const TypeRef &Ty) const;
   void writeIncludes(const std::vector<HighFunc> &Funcs);
   void writeMemoryHelpers();
@@ -405,6 +418,16 @@ public:
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr);
   const HighExpr *unwrapIntegerView(const HighExpr *E) const;
+  /// Whether every byte of \p E from \p Bytes up is zero, as far as its
+  /// form and forwarded values show: a comparison, a constant, a zero
+  /// extension or a mask that fits.
+  bool valueFitsInBytes(const HighExpr &E, uint16_t Bytes,
+                        unsigned Depth = 0) const;
+  /// \p E as a truth test reads it: forwarded values followed, and integer
+  /// views dropped while they keep whether it is zero (a widening one, or a
+  /// narrowing one of a value that fits).  A narrowing view that may drop a
+  /// nonzero byte stays: `test %al, %al` reads one byte of EAX.
+  const HighExpr *truthTestedValue(const HighExpr *E) const;
   /// The variable \p E converts between integer or pointer types of one
   /// width, or null when a step changes the width or converts a float: a
   /// narrowed or extended view is another value than the variable it reads
@@ -1022,6 +1045,12 @@ public:
     uint16_t AtomicBytes = 0;
   };
   std::map<va_t, ImageObject> ImageObjects;
+  /// The access width that names the unnamed object \p Obj at \p Addr, as
+  /// the listing names it: the width every access the image's code states
+  /// there shares (CEmitterOptions::AccessWidths), else, without those, the
+  /// one width the emitted code accesses it with.  None names it unknown.
+  std::optional<uint64_t> dataNameWidth(va_t Addr,
+                                        const ImageObject &Obj) const;
   std::map<va_t, DataSymbolBinding> DataSymbolBindings;
   std::set<va_t> UsedDataBindings;
   std::map<std::string, std::string> ExternalDataNames;

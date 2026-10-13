@@ -1155,8 +1155,17 @@ Json Engine::restoreAnalysis(const Json &snapshot) {
   if (inputHash() != snapshot.at("input_sha256").get<std::string>())
     throw Error("input_changed",
                 "The analysis input differs from the open project");
-  const auto actual = userState();
-  const auto &expected = snapshot.at("state");
+  auto actual = userState();
+  auto expected = snapshot.at("state");
+  // A rename's original spelling is derived from the names the image has, and
+  // the owner's PDB and signatures are applied below, after this check. As in
+  // ProjectHistory::verifyLoadedState, only the user's values identify edits.
+  for (auto *state : {&actual, &expected})
+    if (auto renames = state->find("renames");
+        renames != state->end() && renames->is_array())
+      for (auto &row : *renames)
+        if (row.is_object())
+          row.erase("original");
   // Committed edits have one writer. Loading them is safe only when they
   // still match the version exported by that writer. A racing edit causes
   // rejection; the GUI retires this replica on the new owner revision.
@@ -1439,7 +1448,19 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     if (p.contains("pdb")) {
       if (!p.at("pdb").is_object())
         throw Error("invalid_request", "PDB selection must be an object");
-      execute("pdb_load", p.at("pdb"));
+      // A saved selection names a file outside the project: one that no
+      // longer loads leaves the project open without it, and says why.  A
+      // matching PDB proves itself again by its GUID and age; only a PDB the
+      // user confirmed without that identity stays bound to its file stamp.
+      auto selection = p.at("pdb");
+      if (selection.value("mode", Json("verified")) == "verified")
+        selection.erase("stamp");
+      try {
+        execute("pdb_load", selection);
+      } catch (const std::exception &failure) {
+        warnings.push_back(std::string("The project's PDB was not loaded: ") +
+                           failure.what());
+      }
     }
     auto result = metadata();
     for (const auto &diagnostic : result.at("loader_diagnostics"))

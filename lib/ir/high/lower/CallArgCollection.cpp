@@ -402,6 +402,50 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   const auto &Ops = CurBlock.Ops;
   if (auto Registration = collectRegistrationCallArgs(CurBlock, CallIdx))
     return std::move(*Registration);
+  // A value this function sets: a constant, a parameter, or a definition
+  // other than a register's incoming value.  A join is set when every value
+  // reaching it is: a loop's running value is, but not one whose entry edge
+  // brings the register's incoming value.
+  auto JoinOf = [&](const MedVar &Arg) -> const PhiNode * {
+    if (!CurMed)
+      return nullptr;
+    for (const MedBlock &Block : CurMed->Blocks)
+      for (const PhiNode &Phi : Block.Phis)
+        if (varKey(Phi.Output) == varKey(Arg))
+          return &Phi;
+    return nullptr;
+  };
+  auto ParameterRegister = [&](const MedVar &Arg) {
+    return Arg.Kind == MedVar::Reg && CurMed &&
+           llvm::any_of(CurMed->Params, [&](const MedVar &P) {
+             return P.RegOff == Arg.RegOff;
+           });
+  };
+  VarKeySet JoinsSeen;
+  std::function<bool(const MedVar &)> SetInFunction =
+      [&](const MedVar &Arg) -> bool {
+    if (Arg.isConst() || Arg.Kind == MedVar::Param)
+      return true;
+    if (PhiOutputVars.count(varKey(Arg))) {
+      if (!JoinsSeen.insert(varKey(Arg)).second)
+        return true;
+      const PhiNode *Join = JoinOf(Arg);
+      return !Join || llvm::all_of(Join->Args, [&](const auto &Incoming) {
+        // A register's version zero reaching its own join is the value it
+        // holds at entry; any other version is the loop around again.
+        if (varKey(Incoming.second) == varKey(Arg))
+          return Arg.Kind != MedVar::Reg || Arg.SSAVer != 0 ||
+                 ParameterRegister(Arg);
+        return SetInFunction(Incoming.second);
+      });
+    }
+    if (const MedOp *Def = uniqueMedDefinition(Arg);
+        Def && !(Def->Opcode == NdOp::COPY && Def->NumInputs >= 1 &&
+                 Def->Inputs[0] == Def->Output))
+      return true;
+    return ParameterRegister(Arg);
+  };
+
   // A call whose inputs are every argument it passes (a formatted call)
   // passes exactly those: a floating one as its bits' value, an integer one
   // that carries an address as that address.
@@ -628,11 +672,17 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       return exprFromWindowValue(LiveIn, Pred->Ops, DefIdx - 1);
     return E;
   };
+  // A join that brings the register's incoming value on some path carries
+  // nothing the function passes.
+  auto EntryJoin = [&](const MedVar &LiveIn) {
+    JoinsSeen.clear();
+    return PhiOutputVars.count(varKey(LiveIn)) && !SetInFunction(LiveIn);
+  };
   auto tryPredSetupArg = [&](int K) -> bool {
     MedVar LiveIn;
     if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
       return false;
-    if (!isCallArgSetupDef(CurBlock, LiveIn, ParamRegs[K]))
+    if (!isCallArgSetupDef(CurBlock, LiveIn, ParamRegs[K]) || EntryJoin(LiveIn))
       return false;
     ExprPtr E = predSetupExpr(LiveIn);
     if (!E || E->Kind == ExprKind::Undef)
@@ -767,8 +817,14 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
       if (Found[K])
         continue;
       MedVar LiveIn;
-      if (reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
-        Found[K] = medvarToExpr(LiveIn);
+      if (!reachingRegAtBlockEntry(CurBlock, ParamRegs[K], LiveIn))
+        continue;
+      // The arguments end before such a join.
+      if (EntryJoin(LiveIn)) {
+        std::fill(Found.begin() + K, Found.end(), nullptr);
+        break;
+      }
+      Found[K] = medvarToExpr(LiveIn);
     }
   }
 
@@ -1211,16 +1267,34 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     if (const MedCallInfo *CI =
             CurMed->findCall(CurBlock.Id, static_cast<int>(CallIdx))) {
       // Where call-setup recovery gives a call its arguments, it gives a
-      // direct call all of them, none included.  The scan below bounds an
-      // indirect call's by the setup its own block writes, since nothing
-      // bounds them by the callee's signature.
+      // direct call all of them, none included.  Nothing bounds an indirect
+      // call's by its callee, so it takes those this function sets, up to
+      // the first it does not: a register's entry value where no parameter
+      // arrives, or what an earlier call left there, is no argument.  A
+      // value that reaches the call through a join is one (a loop's running
+      // value left in x0), though the call's block writes no register.  The
+      // scan below adds what the block writes past them.  Where only direct
+      // calls take register arguments (regparm), the scan alone gives an
+      // indirect call its stack arguments.
       const bool SetupConvention =
           Convention && Convention->ArgumentsFromCallSetup;
       const bool CompleteSetup = SetupConvention && !CI->IsIndirect;
-      if (SetupConvention ? CompleteSetup : !CI->Args.empty()) {
+      size_t Recovered = CI->Args.size();
+      if (SetupConvention && CI->IsIndirect) {
+        if (Convention->RegparmOnlyForInternalCalls)
+          Recovered = 0;
+        for (size_t K = 0; K < Recovered; ++K) {
+          JoinsSeen.clear();
+          if (!SetInFunction(CI->Args[K])) {
+            Recovered = K;
+            break;
+          }
+        }
+      }
+      if (SetupConvention ? CompleteSetup || Recovered : !CI->Args.empty()) {
         std::vector<ExprPtr> FromABI;
-        FromABI.reserve(CI->Args.size());
-        for (size_t K = 0; K < CI->Args.size(); ++K) {
+        FromABI.reserve(Recovered);
+        for (size_t K = 0; K < Recovered; ++K) {
           ExprPtr Arg = medvarToExpr(CI->Args[K]);
           // The callee reads only the low lane's scalar.
           if (const uint16_t Read =
@@ -1401,8 +1475,8 @@ MedToHighConverter::untouchedParamRegister(uint64_t RegOff) const {
 bool MedToHighConverter::reachingRegAtBlockEntry(const MedBlock &B,
                                                  uint64_t RegOff,
                                                  MedVar &Out) const {
-  return CurMed &&
-         detail::reachingRegisterAtBlockEntry(*CurMed, B, RegOff, Out);
+  return CurMed && detail::reachingRegisterAtBlockEntry(
+                       *CurMed, B, RegOff, getTargetRegInfo(TargetArch), Out);
 }
 
 bool MedToHighConverter::isCallArgSetupDef(const MedBlock &CallBlk,

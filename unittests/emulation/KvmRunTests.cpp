@@ -246,6 +246,130 @@ TEST_F(KvmRun, StateTransfersUseTheEntryThreadAndPrepareOnceAcrossRetries) {
   EXPECT_NE(EntryThread, std::this_thread::get_id());
 }
 
+TEST_F(KvmRun, ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread) {
+  const auto Caller = std::this_thread::get_id();
+  std::thread::id Owner;
+  unsigned Prepared = 0, Captured = 0, Completed = 0;
+  auto E = VM.withExecutionOwner([&]() -> llvm::Error {
+    Owner = std::this_thread::get_id();
+    for (unsigned I = 0; I < TransferEntries; ++I) {
+      auto Entry = VM.runUntilExit(
+          {std::chrono::steady_clock::now() +
+               std::chrono::microseconds(TimeoutMicroseconds),
+           &Stop},
+          [&] {
+            EXPECT_EQ(std::this_thread::get_id(), Owner);
+            ++Prepared;
+            return llvm::Error::success();
+          },
+          [&] {
+            EXPECT_EQ(std::this_thread::get_id(), Owner);
+            EXPECT_EQ(EntryThread, Owner);
+            ++Captured;
+            return llvm::Error::success();
+          },
+          [&] {
+            EXPECT_EQ(std::this_thread::get_id(), Owner);
+            EXPECT_EQ(Captured, I + 1);
+            ++Completed;
+            return llvm::Error::success();
+          });
+      if (Entry)
+        return Entry;
+    }
+    return llvm::Error::success();
+  });
+  EXPECT_EQ(llvm::toString(std::move(E)), "");
+  EXPECT_NE(Owner, Caller);
+  EXPECT_EQ(Prepared, TransferEntries);
+  EXPECT_EQ(Captured, TransferEntries);
+  EXPECT_EQ(Completed, TransferEntries);
+  EXPECT_EQ(Calls, TransferEntries + TransientInterruptions);
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Completed, TransferEntries);
+}
+
+TEST_F(KvmRun, OwnedNativeDeadlineIsAcknowledgedBeforeTheLoopRetires) {
+  Result = RunResult::UntilKick;
+  unsigned Captured = 0;
+  auto E = VM.withExecutionOwner([&] {
+    return VM.runUntilExit({std::chrono::steady_clock::now() +
+                                std::chrono::microseconds(TimeoutMicroseconds),
+                            &Stop},
+                           {}, [&] {
+                             ++Captured;
+                             return llvm::Error::success();
+                           });
+  });
+  EXPECT_TRUE(E.isA<MachineInterruptedError>());
+  EXPECT_EQ(llvm::toString(std::move(E)), diagnostic::KvmRun);
+  EXPECT_TRUE(Entered);
+  EXPECT_EQ(Calls, 1u);
+  EXPECT_EQ(Captured, 0u);
+  Result = RunResult::Transient;
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+  EXPECT_EQ(Captured, 0u);
+}
+
+TEST_F(KvmRun, OwnedNativeStopPreservesCompletionFailureAndNextRun) {
+  unsigned Completed = 0;
+  auto E = VM.withExecutionOwner([&] {
+    return VM.runUntilExit(
+        {std::chrono::steady_clock::now() +
+             std::chrono::microseconds(TimeoutMicroseconds),
+         &Stop},
+        {},
+        [&] {
+          Stop = true;
+          return llvm::Error::success();
+        },
+        [&] {
+          ++Completed;
+          return diagnostic::error(CaptureFailure);
+        });
+  });
+  EXPECT_EQ(llvm::toString(std::move(E)), CaptureFailure);
+  EXPECT_EQ(Completed, 1u);
+  Stop = false;
+  EXPECT_EQ(llvm::toString(VM.withExecutionOwner(
+                [&] { return run(TimeoutMicroseconds); })),
+            "");
+  EXPECT_EQ(Completed, 1u);
+}
+
+TEST_F(KvmRun, OwnedLoopAndNativeCompletionRejectRecursiveOwners) {
+  auto E = VM.withExecutionOwner([&] {
+    EXPECT_EQ(llvm::toString(
+                  VM.withExecutionOwner([] { return llvm::Error::success(); })),
+              diagnostic::KvmRunActive);
+    return VM.runUntilExit({std::chrono::steady_clock::now() +
+                                std::chrono::microseconds(TimeoutMicroseconds),
+                            &Stop},
+                           {}, {}, [&] {
+                             EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)),
+                                       diagnostic::KvmRunActive);
+                             return llvm::Error::success();
+                           });
+  });
+  EXPECT_EQ(llvm::toString(std::move(E)), "");
+  EXPECT_EQ(Calls, TransientInterruptions + 1);
+}
+
+TEST_F(KvmRun, ThrowingOwnedLoopReleasesItsBorrowedCallback) {
+  EXPECT_EQ(llvm::toString(VM.withExecutionOwner([]() -> llvm::Error {
+              throw std::runtime_error("owned loop");
+            })),
+            diagnostic::Callback);
+  EXPECT_EQ(Calls, 0u);
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+}
+
+TEST_F(KvmRun, MissingOwnedLoopRejectsBeforeNativeEntry) {
+  EXPECT_EQ(llvm::toString(VM.withExecutionOwner({})), diagnostic::Callback);
+  EXPECT_EQ(Calls, 0u);
+  EXPECT_EQ(llvm::toString(run(TimeoutMicroseconds)), "");
+}
+
 TEST_F(KvmRun, FailedPreparationDoesNotEnterOrCaptureOrPoisonTheNextRun) {
   unsigned Prepared = 0, Captured = 0;
   auto E = VM.runUntilExit(

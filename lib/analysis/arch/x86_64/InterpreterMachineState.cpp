@@ -6,7 +6,7 @@
 
 #include "neverd/analysis/arch/x86_64/InterpreterMachineState.h"
 
-#include "X64UserFlags.h"
+#include "X64MachineFlags.h"
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -33,7 +33,7 @@ constexpr uint64_t SystemFlags = GuestBase + 264;
 constexpr uint64_t ProfileStatus = GuestBase + 272;
 constexpr uint64_t ScratchBase = uint64_t{1} << 61;
 constexpr uint64_t ScratchEnd = uint64_t{1} << 62;
-using FlagProfile = detail::X64UserFlags;
+using FlagProfile = detail::X64MachineFlags;
 constexpr auto &Flags = FlagProfile::Flags;
 
 llvm::Error invalid(const llvm::Twine &Message) {
@@ -565,7 +565,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
           HasReturn = true;
           break;
         case NdOp::INTRINSIC: {
-          auto Transition = detail::lowerX64UserFlags(
+          auto Transition = detail::lowerX64MachineFlags(
               Op, NdVar::reg(SystemFlags, 8),
               [&](uint16_t Size) { return Writer.temporary(Size); });
           if (!Transition)
@@ -573,7 +573,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                 "machine source supports only canonical x64 flag intrinsics");
           if (Transition->Rejected) {
             if (Op.Inputs[1].isConst() &&
-                (Op.Inputs[1].Offset & FlagProfile::RejectedWriteMask) != 0)
+                (Op.Inputs[1].Offset & FlagProfile::UserRejectedWriteMask) != 0)
               return invalid(
                   "POPFQ image violates the nonfaulting source profile");
           }

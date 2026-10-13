@@ -112,6 +112,27 @@ TEST(StringScan, FindsWideStringsAtTheirAlignment) {
     EXPECT_NE(String.Kind, Encoding::UTF16LE);
 }
 
+TEST(StringScan, FindsWideTextAfterACharacterOfOtherData) {
+  // ntoskrnl's .rdata: the 0x40 that ends the object before L"HashDigest..."
+  // reads, with the zero byte before it, as U+4000.  The run is no text, and
+  // the string begins at its first ASCII character.
+  ScanOptions Options;
+  Options.Encodings = encodingBit(Encoding::UTF16LE);
+  std::vector<uint8_t> Data = {0x00, 0x40};
+  const auto Text = wide(U"HashDigestLength", 2, false);
+  Data.insert(Data.end(), Text.begin(), Text.end());
+  const auto Found = scanAll(Data, Options);
+  ASSERT_EQ(Found.size(), 1u);
+  EXPECT_EQ(Found[0].Offset, 2u);
+  EXPECT_EQ(Found[0].Text, "HashDigestLength");
+  // What follows such a character is text only when it is ASCII: a tab and
+  // two ideographs after it are the rest of other data.
+  std::vector<uint8_t> Mixed = {0x00, 0x40};
+  const auto Rest = wide(U"\t刊瀆\"", 2, false);
+  Mixed.insert(Mixed.end(), Rest.begin(), Rest.end());
+  EXPECT_TRUE(scanAll(Mixed, Options).empty());
+}
+
 TEST(StringScan, AsksIdeographicWideTextForMoreEvidence) {
   ScanOptions Options;
   Options.Encodings = encodingBit(Encoding::UTF16LE);

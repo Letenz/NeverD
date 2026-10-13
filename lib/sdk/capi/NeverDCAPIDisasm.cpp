@@ -256,7 +256,7 @@ const char *neverd_code_refs_json(neverd_session_t Sess, neverd_va_t FirstEntry,
   // Each function's references, merged in entry order.
   std::vector<std::vector<Ref>> Slots(Page.Functions.size());
   const bool Decoded = decodeFunctions(
-      *S, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
+      S->Img, Page, [&](size_t Index, Decoder &Dec, const DecodedInsn &DI) {
         auto &Out = Slots[Index];
         const InstructionFlow Flow = summarizeInstructionFlow(S->Img, Dec, DI);
         if (Flow.Target != InvalidVA && !Flow.Kind.empty() &&

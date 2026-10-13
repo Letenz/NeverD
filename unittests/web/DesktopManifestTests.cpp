@@ -50,6 +50,56 @@ std::string declaration(std::string_view Key, std::string_view Path) {
       .str();
 }
 
+TEST(WebDesktopManifest, SuppliedResourceDescriptorsKeepExactAndOpaqueFiles) {
+  const auto JSON =
+      R"({"schema_version":1,"profile":"cef-webview-local-resource-descriptor-v1",
+    "runtime":{"file":"libcef.dll","version":"PRIVATE_VERSION"},
+    "assets":["index.html","app.js","data.pak","missing.js","../escape.js"],
+    "native_helpers":["helper.exe"]})";
+  auto S = input(JSON, "neverd-resources.json");
+  for (const auto *Name :
+       {"libcef.dll", "index.html", "app.js", "data.pak", "helper.exe"})
+    member(S, Name, Name);
+  const auto C = analyzeDesktopManifest(S, "manifest", JSON, "cef-assets");
+  const auto W = analyzeDesktopManifest(S, "manifest", JSON, "webview-assets");
+  EXPECT_NE(C.ID, W.ID);
+  EXPECT_EQ(C.Profile, DesktopResourceProfile);
+  EXPECT_EQ(C.Layout, "supplied_local_resource_index");
+  ASSERT_EQ(C.Entries.size(), 7u);
+  EXPECT_EQ(C.Entries[0].ContentKind, "native_filename_candidate");
+  EXPECT_EQ(C.Entries[1].ArtifactID, "index.html");
+  EXPECT_EQ(C.Entries[2].ContentKind, "javascript_filename_candidate");
+  EXPECT_EQ(C.Entries[3].ContentKind, "opaque_resource_filename_candidate");
+  EXPECT_EQ(C.Entries[4].LinkStatus, "no_exact_admitted_file");
+  EXPECT_EQ(C.Entries[5].LinkStatus, "unsafe_entry_path");
+  EXPECT_NE(C.Entries[1].ID, C.Entries[2].ID);
+}
+
+TEST(WebDesktopManifest, ResourceDescriptorVersionsShapesAndBoundsRefuse) {
+  for (
+      const auto *JSON :
+      {R"({"schema_version":2,"profile":"cef-webview-local-resource-descriptor-v1","runtime":{},"assets":[]})",
+       R"({"schema_version":1,"profile":"unknown","runtime":{},"assets":[]})",
+       R"({"schema_version":1,"profile":"cef-webview-local-resource-descriptor-v1","runtime":{},"assets":{},"execute":true})"}) {
+    const auto S = input(JSON, "neverd-resources.json");
+    EXPECT_THROW(analyzeDesktopManifest(S, "manifest", JSON, "cef-assets"),
+                 Error);
+  }
+  llvm::json::Array Assets;
+  for (unsigned I = 0; I < 513; ++I)
+    Assets.emplace_back("asset.js");
+  const auto JSON =
+      llvm::formatv("{0}", llvm::json::Value(llvm::json::Object{
+                               {"schema_version", 1},
+                               {"profile", std::string(DesktopResourceProfile)},
+                               {"runtime", llvm::json::Object{}},
+                               {"assets", std::move(Assets)}}))
+          .str();
+  EXPECT_THROW(analyzeDesktopManifest(input(JSON, "neverd-resources.json"),
+                                      "manifest", JSON, "webview-assets"),
+               Error);
+}
+
 TEST(WebDesktopManifest, ProfilesHaveIndependentIdentitiesAndExactParentScope) {
   const auto JSON = R"({"name":"secret","version":"1","publisher":"secret",
     "engines":{"vscode":"^1"},"main":"./out/main.js","browser":"web.js"})";

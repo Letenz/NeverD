@@ -480,10 +480,24 @@ int neverd_session_is_loaded(neverd_session_t Sess) {
 // ===--------------------------------------------------------------------===//
 
 void neverd_session_set_pdb_path(neverd_session_t Sess, const char *Path) {
-  if (auto *S = toSession(Sess)) {
-    S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
-    S->DbgRequest.AllowMissingPDBIdentity = false;
+  (void)neverd_session_set_pdb_path_ex(Sess, Path, 0);
+}
+
+int neverd_session_set_pdb_path_ex(neverd_session_t Sess, const char *Path,
+                                   int UseWithoutIdentity) {
+  auto *S = toSession(Sess);
+  if (!S)
+    return 0;
+  S->clearError();
+  if (UseWithoutIdentity != 0 && UseWithoutIdentity != 1) {
+    S->setError("UseWithoutIdentity must be 0 or 1");
+    return 0;
   }
+  S->DbgRequest.PDBPath = Path ? std::filesystem::u8path(Path) : "";
+  // Only a named PDB carries the user's choice; discovery stays strict.
+  S->DbgRequest.AllowMissingPDBIdentity =
+      UseWithoutIdentity == 1 && !S->DbgRequest.PDBPath.empty();
+  return 1;
 }
 
 const char *neverd_session_inspect_pdb_json(neverd_session_t Sess,
@@ -578,6 +592,7 @@ int neverd_session_load_pdb_ex(neverd_session_t Sess, const char *Path,
       Image.ExactDataObjects, [](const ExactDataObjectExtent &Object) {
         return Object.Evidence == ExactDataObjectEvidence::AuthenticatedDebug;
       });
+  Image.DataInCode.clear();
   applyDebugSymbols(Image, *Found.Context);
   const auto CurrentSize = std::filesystem::file_size(Request.PDBPath, EC);
   const auto CurrentTime =
@@ -788,6 +803,13 @@ int neverd_func_find_by_name(neverd_session_t Sess, const char *Name) {
   for (size_t I = 0; I < S->Functions.size(); ++I)
     if (S->Functions[I].Name == Name)
       return static_cast<int>(I);
+  // Every name the image exports a function under finds it: a linker that
+  // folds identical functions exports several names for one entry.
+  for (const Export &Exp : S->Img.Exports)
+    if (Exp.Name == Name)
+      for (size_t I = 0; I < S->Functions.size(); ++I)
+        if (S->Functions[I].Entry == Exp.Addr)
+          return static_cast<int>(I);
   return -1;
 }
 
