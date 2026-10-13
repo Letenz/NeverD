@@ -280,9 +280,13 @@ void WindowFrame::updateMargins() {
     platform::setShadowMargins(handle_, margins);
     window_.update();
   }
-  insets_ = !frameless_ && states_ & Qt::WindowMaximized
-                ? platform::maximizedInsets(handle_)
-                : QMargins();
+  // A window made full screen from maximized is both; full screen has no
+  // system border past the screen's edge.
+  insets_ =
+      !frameless_ && (states_ & (Qt::WindowMaximized | Qt::WindowFullScreen)) ==
+                         Qt::WindowMaximized
+          ? platform::maximizedInsets(handle_)
+          : QMargins();
   const int titleHeight = titleBar_ ? titleBar_->sizeHint().height() : 0;
   const QMargins contents =
       content_ + margins + insets_ + QMargins(0, titleHeight, 0, 0);
