@@ -588,6 +588,25 @@ linker map that belongs to the input. Projects, recent files and files opened
 from the command line skip the dialog. The command line lists the same rows with
 `neverd identify <input>` (`--json` for the engine's `neverd_identify_json`).
 
+When debug-information loading is enabled and a PE has no loaded PDB, the
+workbench offers **Download debug symbols** if its CodeView record supplies a
+unique valid PDB name and build identity. **Download** tries the Microsoft public
+symbol server; **Not now** continues without a network request. The request sends
+only the PDB basename and identity, not the binary. A valid PE is not necessarily
+a Microsoft product, and Microsoft may have no symbols for its build.
+
+Downloads run in the background with a cancel button. The engine verifies the
+PDB against the current image before applying it; failed downloads or mismatches
+leave analysis intact and report the reason in Output. Closing or switching
+files, or starting a manual PDB selection, cancels the pending download. Verified
+files are cached under the application's cache directory in
+`symbols/microsoft/<pdb-name>/<build-key>/` and verified again before reuse.
+Direct HTTPS PDB downloads are supported on every desktop platform; Windows
+also tries the compressed `.pd_` variant. Symbol-store `file.ptr` indirection is
+not followed. Transfers have a 2 GiB limit, a 30-second inactivity timeout and a
+10-minute overall deadline. See Microsoft's
+[public symbol server documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/microsoft-public-symbols).
+
 **File → Load file → PDB file...** selects a PDB anywhere on disk for the
 currently loaded PE. A matching CodeView identity applies its debug symbols and
 refreshes function names, the listing and open code views while preserving

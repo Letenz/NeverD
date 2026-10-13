@@ -368,9 +368,13 @@ llvm::Error CheckedBackend::executeDirect() {
 
 llvm::Error CheckedBackend::runImpl(uint64_t PC, bool &Started,
                                     bool &BackendFailed) {
+  // Free execution does not declare every guest store. Write-watch callbacks
+  // locate selected changes, but cannot preserve physical write histories for
+  // other bytes, including identical-value stores and interrupted execution.
   if (auto E = Memory->parallelEnabled()
                    ? Memory->beginParallelRun({Deadline, &StopRequested})
-                   : Memory->beginRun(RAMWriteTracking::Declared))
+                   : Memory->beginRun(Direct ? RAMWriteTracking::Opaque
+                                             : RAMWriteTracking::Declared))
     return E;
   auto Release = llvm::scope_exit([&] { Memory->endRun(); });
   {

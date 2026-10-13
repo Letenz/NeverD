@@ -15,6 +15,7 @@
 #include "Language.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
+#include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
 #include "ProjectDatabase.h"
@@ -238,6 +239,7 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   buildDocks();
   buildStatusBar();
   connectSession();
+  microsoftSymbols_ = new MicrosoftSymbols(session_, this);
   connectActions();
   statusTimer_.setInterval(StatusRefreshMs);
   connect(&statusTimer_, &QTimer::timeout, this, &MainWindow::updateStatusBar);
@@ -1562,6 +1564,7 @@ void MainWindow::reloadInput() {
 void MainWindow::loadPdb() {
   if (!session_.loaded() || !session_.loadsPdbFiles())
     return;
+  microsoftSymbols_->cancel();
   const auto epoch = session_.epoch();
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Load PDB file"),
@@ -1787,16 +1790,18 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
     showReferencesDialog(address, to, nullptr);
     return;
   }
-  if (view->text()->loading()) {
-    output_->append(
-        tr("Wait for the function to finish loading before finding references"),
-        1);
-    return;
-  }
   if (!to) {
     const auto position = view->text()->currentAddress();
     showReferencesDialog(position ? position : view->text()->function(), false,
                          view);
+    return;
+  }
+  // A local's identity comes from the complete document; until then its
+  // name could resolve as an unrelated image symbol.
+  if (view->text()->loading()) {
+    output_->append(
+        tr("Wait for the function to finish loading before finding references"),
+        1);
     return;
   }
   // A source name can denote a different function from both its source row
