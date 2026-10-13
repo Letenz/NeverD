@@ -239,6 +239,9 @@ struct MedOp {
   /// value into prologue storage (markCalleeSavePrologueSaves), so source
   /// emitters leave it out.  Binary lifting and patching never set it.
   bool PrologueSave = false;
+  /// Source views only: this LOAD reads the return address the call pushed,
+  /// in a function that never overwrites it (markReturnAddressReads).
+  bool ReturnAddressRead = false;
   bool PreservesCallerSaved = false;
   /// GPR families (see CallRegisterEffects.h) the direct callee provably
   /// never writes, so SSA keeps their pre-call values across this call.

@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -31,6 +32,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -840,6 +842,16 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
   }
   case NdOp::LOAD: {
     auto *ValTy = sizeToType(Op.Output.Size);
+    // The return address the call pushed, which the function never
+    // overwrites: read it as the function's own, not from the frame copy.
+    if (Op.ReturnAddressRead) {
+      auto *RA = Builder.CreateIntrinsic(
+          llvm::Intrinsic::returnaddress, {llvm::PointerType::getUnqual(*Ctx)},
+          {llvm::ConstantInt::get(llvm::Type::getInt32Ty(*Ctx), 0)});
+      llvm_value_provenance::markSemanticProducer(*RA);
+      Result = Builder.CreatePtrToInt(RA, ValTy, "retaddr");
+      break;
+    }
     if (CurMedFunc && CurMedFunc->SkippedSSA) {
       auto *Ptr =
           Builder.CreateIntToPtr(GetInput(0), llvm::PointerType::get(*Ctx, 0));

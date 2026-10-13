@@ -1352,7 +1352,13 @@ store out, as a C function leaves its caller's registers alone, so the
 prologue neither prints the caller's register as a stale value nor keeps a
 frame in byte storage. The MedIR text view shows the mark. Operations keep
 their positions, because call records index them. A save read for anything
-else stays a store, and binary lift and patch never mark one.
+else stays a store, and binary lift and patch never mark one. On x86 the
+projection also marks a pointer-width load of the slot at the entry stack
+pointer, in a called function whose stores never write that slot: it reads
+the return address the call pushed. HighC prints it as
+`__builtin_return_address(0)` and the LLVM route as `llvm.returnaddress(0)`.
+Neither view gives the frame a slot holding that address, so the read would
+otherwise print as an unassigned local or a zero.
 
 The HighIR `HighSourceFlow` analysis owns emitted statement edges, local identities,
 and definite assignment. Both source validation and dead PHI copy elimination
