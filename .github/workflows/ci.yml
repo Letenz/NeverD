@@ -48,6 +48,11 @@ on:
         required: true
         type: boolean
         default: false
+      windows_eh_protocol_only:
+        description: 'Run original MSVC finally guards and the experimental x64 CRT resume protocol without rebuilding NeverD'
+        required: true
+        type: boolean
+        default: false
       native_cpu_backend:
         description: 'Native x64 transport for the native_cpu_only profile'
         required: true
@@ -66,7 +71,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.windows_eh_cxx_frame_only && '-cxx-frame' || '' }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ inputs.windows_eh_cxx_frame_only && '-cxx-frame' || '' }}${{ inputs.windows_eh_protocol_only && '-seh-protocol' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -159,7 +164,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install --yes clang cmake lld ninja-build
+          sudo apt-get install --yes clang cmake lld ninja-build gcc-multilib
           # Ubuntu 24.04 exposes the unversioned Mach-O linker here.
           printf '%s\n' /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
 
@@ -2150,7 +2155,7 @@ jobs:
 
   windows-eh-cxx-fixtures:
     name: Windows EH (MSVC source runtime fixtures)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && inputs.windows_eh_llvm_artifact_run != '' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_protocol_only || inputs.windows_eh_llvm_artifact_run != '') }}
     runs-on: windows-2025
     timeout-minutes: 25
     steps:
@@ -2192,10 +2197,39 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  windows-eh-native-resume-protocol:
+    name: Windows EH (experimental x64 CRT continuation protocol)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_protocol_only || inputs.windows_eh_llvm_artifact_run != '') }}
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Select the native x64 MSVC compiler
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+      - name: Check native resume protocol observation admission
+        run: python -m unittest scripts.tests.test_check_windows_native_seh_resume -v
+      - name: Test experimental x64 CRT continuation protocol
+        run: python scripts/check_windows_native_seh_resume.py --output build-windows-eh/native-seh-resume
+      - name: Preserve native resume protocol evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-eh-native-seh-resume-protocol
+          path: build-windows-eh/native-seh-resume/
+          if-no-files-found: warn
+          retention-days: 14
+
   windows-eh-focused:
     name: Windows EH (x86 Wine and ARM32 PE contracts)
     needs: windows-eh-cxx-fixtures
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_llvm_artifact_run == '' || needs.windows-eh-cxx-fixtures.result == 'success') }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && !inputs.windows_eh_protocol_only && inputs.windows_eh_replay_artifact_run == '' && (inputs.windows_eh_llvm_artifact_run == '' || needs.windows-eh-cxx-fixtures.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     env:
@@ -2218,7 +2252,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=40 \
-            install --yes --no-install-recommends lld wine wine32:i386
+            install --yes --no-install-recommends lld wine wine32:i386 gcc-multilib
       - name: Verify runtime evidence admission
         run: python -m unittest scripts.tests.test_check_windows_registration_eh scripts.tests.test_check_windows_registration_frame scripts.tests.test_check_windows_registration_cookie scripts.tests.test_check_windows_registration_cxx_rewrite scripts.tests.test_check_windows_registration_realigned scripts.tests.test_check_windows_registration_realigned_rewrite scripts.tests.test_check_windows_registration_multiple_catch scripts.tests.test_check_windows_registration_nested_try scripts.tests.test_check_windows_registration_entry scripts.tests.test_check_windows_registration_relift scripts.tests.test_windows_registration_cleanup_relift scripts.tests.test_windows_registration_objects scripts.tests.test_windows_registration_libraries scripts.tests.test_windows_registration_runtime -v
       - name: Fetch genuine MSVC C++ source inputs
@@ -2522,7 +2556,7 @@ jobs:
   windows-eh-native-replay:
     name: Windows EH (native PE32 replay)
     needs: windows-eh-focused
-    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && (inputs.windows_eh_replay_artifact_run != '' || (needs.windows-eh-focused.result == 'success' && inputs.windows_eh_llvm_artifact_run != '')) }}
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.windows_eh_only && !inputs.windows_eh_protocol_only && (inputs.windows_eh_replay_artifact_run != '' || (needs.windows-eh-focused.result == 'success' && inputs.windows_eh_llvm_artifact_run != '')) }}
     runs-on: windows-2025
     timeout-minutes: 25
     permissions:

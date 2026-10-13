@@ -339,6 +339,9 @@ NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "CommittedWriteStopsBeforeTheFollowingInstruction/"
     "{backend}")
 NEVERD_NATIVE_CPU_REQUIRED_TEST(
+    "Transports/DirectX64.UnobservedStoresInvalidatePhysicalWriteWitnesses/"
+    "{backend}")
+NEVERD_NATIVE_CPU_REQUIRED_TEST(
     "Transports/DirectX64."
     "WriteInAResumedFetchWatchIsCommittedExactlyOnce/"
     "{backend}")

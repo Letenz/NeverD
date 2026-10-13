@@ -144,6 +144,39 @@ std::optional<int32_t> findSeededTryLevel(const Segment &Seg, size_t Offset) {
   return Level;
 }
 
+/// A direct MSVC install can introduce a frame inside a range guessed from
+/// symbols or padding. Observe its own entry before deduplicating by owner;
+/// the layout and lifted-state proofs still authenticate the registration.
+std::optional<va_t> directInstallEntry(const BinaryImage &Img,
+                                       const InstallSite &Site) {
+  const bool IsCxx = Site.Identity.CxxFuncInfoVA != 0;
+  const unsigned Prefix = IsCxx ? 10 : 15;
+  if (Site.InstallVA < Prefix || !Site.TryLevel)
+    return std::nullopt;
+  const va_t Entry = Site.InstallVA - Prefix;
+  const auto *Code = Img.readVA(Entry, Prefix + 14);
+  if (!Code || !isExecutableAddress(Img, Entry) || Code[0] != 0x55 ||
+      !((Code[1] == 0x8b && Code[2] == 0xec) ||
+        (Code[1] == 0x89 && Code[2] == 0xe5)) ||
+      Code[3] != 0x6a || int8_t(Code[4]) != *Site.TryLevel)
+    return std::nullopt;
+  unsigned Cursor = 5;
+  if (!IsCxx) {
+    if (!Site.TableVA || Code[Cursor] != 0x68 ||
+        readLE<uint32_t>(Code + Cursor + 1) != Site.TableVA)
+      return std::nullopt;
+    Cursor += 5;
+  }
+  if (Code[Cursor] != 0x68 ||
+      readLE<uint32_t>(Code + Cursor + 1) != Site.HandlerVA ||
+      Code[Prefix] != 0x64 || Code[Prefix + 1] != 0xa1 ||
+      readLE<uint32_t>(Code + Prefix + 2) != 0 || Code[Prefix + 6] != 0x50 ||
+      Code[Prefix + 7] != 0x64 || Code[Prefix + 8] != 0x89 ||
+      Code[Prefix + 9] != 0x25 || readLE<uint32_t>(Code + Prefix + 10) != 0)
+    return std::nullopt;
+  return Entry;
+}
+
 /// Resolve the frames served by a shared prologue helper.
 ///
 /// At `/O1` and `/O2` MSVC stops inlining the SEH prologue and calls
@@ -311,8 +344,12 @@ std::vector<InstallSite> findInstallSites(const BinaryImage &Img,
           Site.TableVA = Candidate.Value;
         }
 
-      // A function installs one record; a second hit inside the same body is
-      // the same frame being re-established, not a new one.
+      // A second complete direct prologue owns a separate frame even when
+      // entry discovery placed both installs in one tentative range.
+      if (const auto Entry = directInstallEntry(Img, Site);
+          Entry && Range->contains(*Entry))
+        Range->Begin = *Entry;
+      // Other hits inside one body describe the same re-established frame.
       if (std::find(CoveredFunctions.begin(), CoveredFunctions.end(),
                     Range->Begin) != CoveredFunctions.end())
         continue;

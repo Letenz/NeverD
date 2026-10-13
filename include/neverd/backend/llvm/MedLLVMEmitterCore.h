@@ -1866,6 +1866,12 @@ private:
   mutable std::map<
       std::tuple<AddressProvenanceVarKey, bool, AddressProvenanceVarKey>, bool>
       StableOffsetCache;
+  // Only completed default-budget, unbound top-level frame-slot queries.
+  // Nested path assumptions and externally shared budgets remain query-local.
+  mutable const MedFunc *ClosedFrameSlotCacheFor = nullptr;
+  mutable std::map<std::pair<AddressProvenanceVarKey, bool>,
+                   std::optional<med_llvm::SlotKey>>
+      ClosedFrameSlotCache;
   // A failed select/PHI table audit has no LLVM value to cache, but its
   // MedIR result is independent of the current IRBuilder.
   mutable const MedFunc *SelectMergeFailureCacheFor = nullptr;

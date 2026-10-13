@@ -594,6 +594,55 @@ TEST_F(WebInterfaceSDK, PassiveReportsRequireCommitAndKeepEvidenceClasses) {
   EXPECT_EQ(code(Read(ID)), "unknown_passive_report");
 }
 
+TEST_F(WebInterfaceSDK, PassiveStructureRetainsFieldsAcrossSingleRowPages) {
+  std::ofstream(Root / "a0.har") << R"({"log":{"version":"1.2","entries":[{
+        "request":{"method":"POST","url":"https://CANARY/a",
+          "postData":{"mimeType":"application/json",
+                      "text":"{\"CANARY_PARENT\":{\"CANARY_CHILD\":null}}"}},
+        "response":{"status":200}}]}})";
+  open();
+  const auto Capture = admit();
+  const auto Selection =
+      "{\"schema_version\":1,\"har_capture_id\":\"" + Capture + "\"}";
+  const auto Report = take(neverd_web_passive_report_create_json(
+      S, Revision.data(), Revision.size(), Selection.data(), Selection.size()));
+  ASSERT_EQ(field(Report, "status"), "ok");
+  EXPECT_EQ(field(Report, "profile"), "passive-evidence-shape-report-v2");
+  EXPECT_EQ(field(Report, "schema_meaning"), "observed_structure_and_presence");
+  const auto ID = field(Report, "passive_report_id");
+  std::set<std::string> Nodes, Parents, IDs;
+  uint64_t Values = 0, Schemas = 0, Rows = 0;
+  for (;;) {
+    const auto Page = take(neverd_web_passive_report_records_json(
+        S, Revision.data(), Revision.size(), ID.data(), ID.size(), Rows, 1));
+    ASSERT_EQ(field(Page, "status"), "ok");
+    const auto *Items = Page.getAsObject()->getArray("items");
+    ASSERT_NE(Items, nullptr);
+    ASSERT_EQ(Items->size(), 1u);
+    const auto &R = (*Items)[0];
+    EXPECT_TRUE(IDs.insert(field(R, "record_id")).second);
+    Values += field(R, "kind") == "observed_json_value_node";
+    Schemas += field(R, "kind") == "observed_json_schema_node";
+    if (const auto *S = R.getAsObject()->getObject("structure")) {
+      const auto Node = S->getString("node_id").value_or("").str();
+      const auto Parent = S->getString("parent_node_id").value_or("").str();
+      if (!Node.empty())
+        EXPECT_TRUE(Nodes.insert(Node).second);
+      if (!Parent.empty())
+        Parents.insert(Parent);
+    }
+    ++Rows;
+    if (Page.getAsObject()->getBoolean("page_complete").value_or(false))
+      break;
+    ASSERT_LT(Rows, 20u);
+  }
+  EXPECT_EQ(Values, 3u);
+  EXPECT_EQ(Schemas, 3u);
+  EXPECT_EQ(Rows, 9u);
+  for (const auto &P : Parents)
+    EXPECT_TRUE(Nodes.count(P));
+}
+
 TEST_F(WebInterfaceSDK,
        PassiveStreamSelectionPreservesSourceAndProtocolLimits) {
   std::ofstream(Root / "bad.har")
@@ -670,7 +719,7 @@ TEST_F(WebInterfaceSDK, CLIRequiresMatchingPreviewHashAndPolicyWithoutTools) {
   ASSERT_EQ(Run({"har-import", Path, "1", Policy, Hash}), 0);
   EXPECT_NE(Output.find("observation_id"), std::string::npos);
   ASSERT_EQ(Run({"report-har", Path, "1", Policy, Hash}), 0);
-  EXPECT_NE(Output.find("passive-evidence-shape-report-v1"), std::string::npos);
+  EXPECT_NE(Output.find("passive-evidence-shape-report-v2"), std::string::npos);
 #if NEVERD_TEST_WEB_JAVASCRIPT
   std::ofstream(Root / "b0.js", std::ios::app)
       << "const CANARY_XHR=new XMLHttpRequest();"

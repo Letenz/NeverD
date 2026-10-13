@@ -40,6 +40,7 @@ add_neverd_component_library(NeverDWeb
   SessionPassiveReport.cpp
   interfaces/report/Compose.cpp
   interfaces/report/Shapes.cpp
+  interfaces/report/ObservedStructure.cpp
   interfaces/report/Publication.cpp
   streams/Framing.cpp
   streams/Records.cpp
@@ -206,6 +207,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     interfaces/TransformationLinks.cpp
     interfaces/SourceRelations.cpp
     interfaces/report/Source.cpp
+    interfaces/report/SourceStructure.cpp
+    interfaces/report/URLStructure.cpp
     SourceRecovery.cpp
     rewrite/Plan.cpp
     rewrite/Rename.cpp

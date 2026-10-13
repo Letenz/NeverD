@@ -74,7 +74,7 @@ std::optional<size_t> directEH4Publication(const BinaryImage &Img,
     return std::nullopt;
   if (!Subtract)
     Allocation = -Allocation;
-  if (Allocation < 8 || Allocation > limits::kMaxRegistrationEHStateWork)
+  if (Allocation < 8 || Allocation > limits::kMaxSourceCallBorrowedBytes)
     return std::nullopt;
   int64_t SP = -16 - Allocation;
   unsigned Saved = 0;

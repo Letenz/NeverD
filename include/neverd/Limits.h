@@ -457,6 +457,9 @@ constexpr int64_t kMaxFrameSize = 16 * 1024 * 1024; // 16 MiB
 /// indirect-tail frame guard. Exhaustion retains the original indirect branch.
 constexpr size_t kMaxIndirectTailFrameWork = 262144;
 
+/// Cumulative decoded-prologue and protected-prefix work for one SEH query.
+constexpr size_t kMaxSEHEstablisherFrameWork = 1048576;
+
 /// Joins at one block after which a stack-offset bound that is still moving
 /// (a stack pointer that drifts around a loop) becomes unbounded.
 constexpr unsigned kStackOffsetWideningJoins = 8;
@@ -763,7 +766,9 @@ constexpr uint32_t kMaxRegistrationEHRecords = 4096;
 
 /// Total registration-state propagation work, including state/edge pairs.
 /// Exhaustion invalidates the whole result rather than truncating a domain.
-constexpr size_t kMaxRegistrationEHStateWork = 1048576;
+/// Includes the shared decoded-callee closure; large nested EH3 functions
+/// need more than one million operations even after all transfers are exact.
+constexpr size_t kMaxRegistrationEHStateWork = 4194304;
 
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;

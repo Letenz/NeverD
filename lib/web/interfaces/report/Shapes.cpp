@@ -10,25 +10,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "../../JsonReader.h"
+#include "ObservedStructure.h"
 
 #include "neverd/web/Error.h"
 #include "neverd/web/PassiveReport.h"
 
 namespace neverd::web {
 namespace {
-std::string kind(const llvm::json::Value &V) {
-  if (V.getAsObject())
-    return "object";
-  if (V.getAsArray())
-    return "array";
-  if (V.getAsString())
-    return "string";
-  if (V.getAsBoolean())
-    return "boolean";
-  if (V.getAsNumber())
-    return "number";
-  return "null";
-}
 bool jsonMIME(llvm::StringRef MIME) {
   const auto End = MIME.find(';');
   MIME = MIME.take_front(End).trim();
@@ -36,25 +24,17 @@ bool jsonMIME(llvm::StringRef MIME) {
          (MIME.starts_with_insensitive("application/") &&
           MIME.ends_with_insensitive("+json"));
 }
-void countTypes(const llvm::json::Value &V, PassiveReportRecord &R) {
-  ++R.Types[kind(V)];
-  if (const auto *O = V.getAsObject())
-    for (const auto &KV : *O)
-      countTypes(KV.second, R);
-  else if (const auto *A = V.getAsArray())
-    for (const auto &Item : *A)
-      countTypes(Item, R);
-}
-
 PassiveReportRecord body(const HARCapture &C, const HARObservation &O,
                          const llvm::json::Object *Body, bool Response,
-                         uint64_t &Nodes) {
+                         uint64_t &Nodes,
+                         passive_report::ObservedStructure &Structure) {
   PassiveReportRecord R;
   R.Kind = Response ? "observed_response_shape" : "observed_request_shape";
   R.EvidenceClass = "imported_observation";
   R.AnchorID = Response ? O.ResponseID : O.RequestID;
   R.ParentID = O.ID;
   R.ArtifactID = C.ArtifactID;
+  R.Direction = Response ? "server_to_client" : "client_to_server";
   R.ShapeStatus = "body_not_available";
   if (!Body)
     return R;
@@ -79,20 +59,13 @@ PassiveReportRecord body(const HARCapture &C, const HARObservation &O,
     return R;
   }
   uint64_t Used = 0;
+  std::optional<llvm::json::Value> V;
   try {
-    const auto V =
-        parseBoundedJSON(*Text,
+    V = parseBoundedJSON(*Text,
                          {MaxPassiveShapeBytes, 16,
                           MaxPassiveShapeNodes - Nodes, MaxPassiveShapeBytes},
                          &Used);
     Nodes += Used;
-    R.ShapeStatus = "observed_json_types";
-    R.ShapeKind = kind(V);
-    if (const auto *Object = V.getAsObject())
-      R.Members = Object->size();
-    else if (const auto *Array = V.getAsArray())
-      R.Members = Array->size();
-    countTypes(V, R);
   } catch (const Error &E) {
     Nodes += Used;
     const auto Code = std::string_view(E.what());
@@ -101,6 +74,16 @@ PassiveReportRecord body(const HARCapture &C, const HARObservation &O,
     R.ShapeStatus = Code.find("budget_exceeded") != std::string_view::npos
                         ? "body_shape_budget_exceeded"
                         : "invalid_json_body";
+  }
+  if (V) {
+    R.ShapeStatus = "observed_json_types";
+    R.ShapeKind = passive_report::jsonKind(*V);
+    if (const auto *Object = V->getAsObject())
+      R.Members = Object->size();
+    else if (const auto *Array = V->getAsArray())
+      R.Members = Array->size();
+    // Structural exhaustion must abort the report, not become a body status.
+    Structure.inspect(*V, O, Response, R);
   }
   return R;
 }
@@ -120,18 +103,29 @@ inspectPassiveHARShapes(const HARCapture &C, std::string_view Bytes) {
   if (!Entries || Entries->size() != C.Observations.size())
     throw Error("passive_report_capture_model_mismatch");
   std::vector<PassiveReportRecord> Result;
+  passive_report::ObservedStructure Structure(C, Result);
   uint64_t Nodes = 0;
   for (uint32_t I = 0; I < Entries->size(); ++I) {
     const auto *Entry = (*Entries)[I].getAsObject();
     const auto *Request = Entry ? Entry->getObject("request") : nullptr;
     const auto *Response = Entry ? Entry->getObject("response") : nullptr;
-    Result.push_back(body(C, C.Observations[I],
-                          Request ? Request->getObject("postData") : nullptr,
-                          false, Nodes));
-    Result.push_back(body(C, C.Observations[I],
-                          Response ? Response->getObject("content") : nullptr,
-                          true, Nodes));
+    if (Result.size() + 2 > MaxPassiveReportRecords)
+      throw Error("passive_report_record_budget_exceeded");
+    // Reserve both summary slots so the original request/response roots precede
+    // their detailed tree. Inspection may append records and reallocate.
+    const auto At = Result.size();
+    Result.resize(At + 2);
+    auto RequestShape = body(C, C.Observations[I],
+                             Request ? Request->getObject("postData") : nullptr,
+                             false, Nodes, Structure);
+    Result[At] = std::move(RequestShape);
+    auto ResponseShape =
+        body(C, C.Observations[I],
+             Response ? Response->getObject("content") : nullptr, true, Nodes,
+             Structure);
+    Result[At + 1] = std::move(ResponseShape);
   }
+  Structure.finish();
   return Result;
 }
 } // namespace neverd::web
