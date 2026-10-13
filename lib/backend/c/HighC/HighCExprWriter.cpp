@@ -3785,7 +3785,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
     return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
   // Slot load of `*(vtbl + imm)` where `vtbl` is `*obj` (MSVC vfptr at 0).
   // Keep the inner vfptr load; `obj + imm` would name a field, not a method.
-  if (Depth >= 1 && Base) {
+  // Only one load reads the slot: under a second (`**(p + imm)`, a call
+  // through a field's pointer to a function pointer) the sum is the field.
+  if (Depth == 1 && Base) {
     const HighExpr *Addr = peelIntegerViewOps(Base);
     if (Addr && Addr->Kind == ExprKind::BinOp && Addr->Op == NdOp::INT_ADD &&
         Addr->Operands.size() == 2 && Addr->Operands[0] && Addr->Operands[1]) {
