@@ -1790,16 +1790,18 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
     showReferencesDialog(address, to, nullptr);
     return;
   }
-  if (view->text()->loading()) {
-    output_->append(
-        tr("Wait for the function to finish loading before finding references"),
-        1);
-    return;
-  }
   if (!to) {
     const auto position = view->text()->currentAddress();
     showReferencesDialog(position ? position : view->text()->function(), false,
                          view);
+    return;
+  }
+  // A local's identity comes from the complete document; until then its
+  // name could resolve as an unrelated image symbol.
+  if (view->text()->loading()) {
+    output_->append(
+        tr("Wait for the function to finish loading before finding references"),
+        1);
     return;
   }
   // A source name can denote a different function from both its source row
