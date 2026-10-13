@@ -18,6 +18,7 @@
 #include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
+#include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Resolve.h"
@@ -240,6 +241,12 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   buildStatusBar();
   connectSession();
   microsoftSymbols_ = new MicrosoftSymbols(session_, this);
+  connect(&session_, &Session::stateChanged, this, [this] {
+    if (pdbPromptPending_ && session_.connected()) {
+      auto [path, options] = *std::exchange(pdbPromptPending_, std::nullopt);
+      openAskingForPdb(path, options);
+    }
+  });
   connectActions();
   statusTimer_.setInterval(StatusRefreshMs);
   connect(&statusTimer_, &QTimer::timeout, this, &MainWindow::updateStatusBar);
@@ -1483,7 +1490,48 @@ void MainWindow::updateStatusBar() {
 
 void MainWindow::openFile(const QString &path) {
   startupQuickStartPending_ = false;
-  session_.open(path);
+  if (ProjectDatabase::hasState(path))
+    session_.open(path);
+  else
+    openAskingForPdb(path, {});
+}
+
+void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
+  // Whether the worker finds PDBs is known once it has started; a file named
+  // on the command line can come first.
+  if (!session_.connected()) {
+    pdbPromptPending_ = {path, options};
+    return;
+  }
+  // IDA asks as it makes a database, so a project keeps the answer, and
+  // the user's own choice of debug information or PDB stands.
+  if (!options.debugInfo || !options.pdb.isEmpty() ||
+      !session_.findsPdbFiles() || ProjectDatabase::hasState(path)) {
+    session_.open(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("pdb_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("pdb").toObject();
+        if (reference.isEmpty()) {
+          session_.open(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          PdbPromptDialog dialog(session_, path, reference, nullptr, this);
+          dialog.exec();
+          auto chosen = options;
+          chosen.pdb = dialog.choice();
+          session_.open(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(
+            tr("Could not tell which PDB %1 names: %2").arg(path, message), 1);
+        session_.open(path, options);
+      });
 }
 
 void MainWindow::openDialog() {
@@ -1525,7 +1573,7 @@ void MainWindow::chooseLoader(const QString &path) {
             !processor.isEmpty() && processor != QLatin1String("auto"))
           QSettings().setValue(BinaryProcessorKey, processor);
         applyIndicator();
-        session_.open(path, dialog.options());
+        openAskingForPdb(path, dialog.options());
       },
       [this, path](const QString &, const QString &message) {
         output_->append(

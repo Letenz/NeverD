@@ -574,6 +574,36 @@ readReferencedProcedure(const llvm::pdb::ModuleDebugStreamRef &Module,
 
 } // namespace
 
+llvm::Expected<PDBBuildIdentity>
+readPDBBuildIdentity(const std::filesystem::path &PdbPath) {
+  std::unique_ptr<llvm::pdb::IPDBSession> Session;
+  if (auto Err = llvm::pdb::loadDataForPDB(llvm::pdb::PDB_ReaderType::Native,
+                                           llvm::StringRef(pathToUTF8(PdbPath)),
+                                           Session))
+    return llvm::createFileError(pathToUTF8(PdbPath), std::move(Err));
+  auto &File =
+      static_cast<llvm::pdb::NativeSession *>(Session.get())->getPDBFile();
+  auto InfoOr = File.getPDBInfoStream();
+  if (!InfoOr)
+    return pdbLoadError("cannot read PDB Info stream: " +
+                        llvm::toString(InfoOr.takeError()));
+  PDBBuildIdentity Identity;
+  if (File.isPdb20()) {
+    Identity.Kind = PDBIdentityKind::NB10;
+    Identity.Signature = InfoOr->getSignature();
+    Identity.Age = InfoOr->getAge();
+  } else {
+    auto DbiOr = File.getPDBDbiStream();
+    if (!DbiOr)
+      return pdbLoadError("cannot read DBI stream: " +
+                          llvm::toString(DbiOr.takeError()));
+    Identity = pdbIdentity(*InfoOr, *DbiOr);
+  }
+  if (!Identity.isValid())
+    return pdbLoadError("PDB Info stream has an invalid identity");
+  return Identity;
+}
+
 std::optional<pdb_loader_detail::ProcedureStart>
 pdb_loader_detail::parseReferencedProcedure(llvm::ArrayRef<uint8_t> Record,
                                             llvm::StringRef Name) {
