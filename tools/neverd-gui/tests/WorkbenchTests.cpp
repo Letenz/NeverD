@@ -1818,6 +1818,30 @@ private slots:
     QVERIFY(view);
     QTRY_VERIFY(!view->text()->loading() &&
                 view->text()->allText().contains("return value"));
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(view->text()->status().contains("O2"));
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *defaultLevel = choices.findChild<QAction *>("sourceLLVM_O2");
+      auto *basic = choices.findChild<QAction *>("sourceLLVM_basic");
+      auto *recovery = choices.findChild<QAction *>("sourceLLVMControlFlow");
+      QVERIFY(defaultLevel && defaultLevel->isChecked());
+      QVERIFY(basic && !basic->isChecked());
+      QVERIFY(recovery && recovery->isChecked());
+      basic->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+      QCOMPARE(
+          view->text()->sourceOptions().value("llvm_optimization").toString(),
+          QStringLiteral("basic"));
+      defaultLevel->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+      QVERIFY(view->text()->sourceOptions().isEmpty());
+      recovery->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+      QCOMPARE(view->text()->sourceOptions().value("llvm_control_flow"),
+               QJsonValue(false));
+    }
     for (const QString name :
          {QStringLiteral("sourceLLVM_O3"), QStringLiteral("sourceSymbolic")}) {
       QMenu choices;
@@ -1831,8 +1855,23 @@ private slots:
         view->text()->sourceOptions().value("llvm_optimization").toString(),
         QStringLiteral("O3"));
     QVERIFY(view->text()->sourceOptions().value("symbolic").toBool());
+    QCOMPARE(view->text()->sourceOptions().value("llvm_control_flow"),
+             QJsonValue(false));
     QVERIFY(diagnostics.join('\n').contains("\"llvm_optimization\":\"O3\""));
     QVERIFY(diagnostics.join('\n').contains("\"symbolic\":true"));
+    QMenu defaults;
+    view->addSourceActions(defaults);
+    defaults.findChild<QAction *>("sourceDefault")->trigger();
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    {
+      QMenu choices;
+      view->addSourceActions(choices);
+      QVERIFY(choices.findChild<QAction *>("sourceLLVM_O2")->isChecked());
+      QVERIFY(!choices.findChild<QAction *>("sourceSymbolic")->isChecked());
+      QVERIFY(
+          choices.findChild<QAction *>("sourceLLVMControlFlow")->isChecked());
+    }
     if (const auto capture =
             qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
         !capture.isEmpty()) {
@@ -1850,20 +1889,23 @@ private slots:
         QTRY_VERIFY(choices.isVisible());
         QVERIFY(choices.grab().save(capture + "/source-options-menu-" + suffix +
                                     ".png"));
+        auto *levels = qobject_cast<QMenu *>(
+            choices.findChild<QAction *>("sourceLLVM_O2")->parent());
+        QVERIFY(levels);
+        levels->popup(choices.mapToGlobal(QPoint(choices.width(), 0)));
+        QTRY_VERIFY(levels->isVisible());
+        QVERIFY(levels->grab().save(capture + "/source-options-levels-" +
+                                    suffix + ".png"));
       }
       Theme::instance().setMode(previous);
     }
-    QMenu defaults;
-    view->addSourceActions(defaults);
-    defaults.findChild<QAction *>("sourceDefault")->trigger();
-    QTRY_VERIFY(!view->text()->loading());
-    QVERIFY(view->text()->sourceOptions().isEmpty());
     view->text()->setSourceOptions({{"symbolic", true}});
     QTRY_VERIFY(!view->text()->loading());
     view->text()->load(Base + 16, "llvmc");
     QTRY_VERIFY(!view->text()->loading() &&
                 view->text()->allText().contains("function_1"));
     QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(view->text()->status().contains("O2"));
   }
 
   void largePseudocodeKeepsProcessingEvents() {

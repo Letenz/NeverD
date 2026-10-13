@@ -598,8 +598,13 @@ cl::opt<bool> SourceSymbolic(
 cl::opt<std::string>
     SourceLLVMLevel("llvm-opt",
                     cl::desc("LLVM C optimization: basic, O0, O1, O2, O3 or "
-                             "custom (requires --func --llvm)"),
-                    cl::init("basic"), cl::sub(DecompileCmd));
+                             "custom (default O2; requires --func --llvm)"),
+                    cl::init("O2"), cl::sub(DecompileCmd));
+cl::opt<bool> SourceLLVMControlFlow(
+    "llvm-control-flow",
+    cl::desc("Recover LLVM source control flow (default true; requires --func "
+             "--llvm)"),
+    cl::init(true), cl::sub(DecompileCmd));
 cl::list<std::string> SourceLLVMPasses(
     "llvm-passes",
     cl::desc("Custom scalar passes: instcombine,early-cse,simplifycfg,dce"),
