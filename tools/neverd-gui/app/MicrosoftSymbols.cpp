@@ -203,12 +203,13 @@ void MicrosoftSymbols::download(quint64 serial, bool compressed) {
     return;
   const auto directory = QFileInfo(cachePath_).absolutePath();
   if (!QDir().mkpath(directory)) {
-    fail(tr("Cannot create the symbol cache directory."));
+    fail(tr("Cannot create the symbol cache directory: %1").arg(directory));
     return;
   }
   file_ = std::make_shared<QTemporaryFile>(directory + "/download-XXXXXX");
   if (!file_->open()) {
-    fail(tr("Cannot write to the symbol cache."));
+    fail(tr("Cannot open a temporary symbol file in %1: %2")
+             .arg(directory, file_->errorString()));
     return;
   }
   received_ = 0;
@@ -281,8 +282,13 @@ void MicrosoftSymbols::download(quint64 serial, bool compressed) {
       fail(tr("Symbol download failed: %1").arg(errorText));
       return;
     }
-    if (!received_ || !file_->flush()) {
-      fail(tr("The downloaded symbol file is empty or could not be saved."));
+    if (!received_) {
+      fail(tr("The downloaded symbol file is empty."));
+      return;
+    }
+    if (!file_->flush()) {
+      fail(tr("Cannot write the symbol file %1: %2")
+               .arg(file_->fileName(), file_->errorString()));
       return;
     }
     file_->close();
@@ -311,7 +317,8 @@ void MicrosoftSymbols::consume(quint64 serial) {
       return;
     }
     if (file_->write(data) != data.size()) {
-      fail(tr("Cannot write to the symbol cache."));
+      fail(tr("Cannot write the symbol file %1: %2")
+               .arg(file_->fileName(), file_->errorString()));
       return;
     }
   }
@@ -348,7 +355,9 @@ void MicrosoftSymbols::expand(quint64 serial) {
   expanded_ = std::make_shared<QTemporaryDir>(
       QFileInfo(cachePath_).absolutePath() + "/expanded-XXXXXX");
   if (!expanded_->isValid()) {
-    fail(tr("Cannot write to the symbol cache."));
+    fail(tr("Cannot create a temporary symbol directory in %1: %2")
+             .arg(QFileInfo(cachePath_).absolutePath(),
+                  expanded_->errorString()));
     return;
   }
   progress_->setLabelText(tr("Expanding compressed symbols…"));
@@ -400,7 +409,6 @@ void MicrosoftSymbols::inspect(const QString &path, quint64 serial,
       "pdb_inspect", {{"path", path}}, this,
       [this, serial, path, cached, file = file_,
        expanded = expanded_](const QJsonObject &result) {
-        Q_UNUSED(file);
         Q_UNUSED(expanded);
         if (!current(serial))
           return;
@@ -408,15 +416,27 @@ void MicrosoftSymbols::inspect(const QString &path, quint64 serial,
           fail(tr("The PDB does not match the loaded file."));
           return;
         }
-        if (!cached && !QFile::rename(path, cachePath_)) {
-          // Another window may have published the same cache entry.
-          // Validate its file too, rather than overwriting it.
-          if (QFileInfo(cachePath_).isFile()) {
-            inspect(cachePath_, serial, true);
+        if (!cached) {
+          QFile expandedFile(path);
+          // QTemporaryFile retains its native handle after close(). Rename
+          // through its owner so Windows can release that handle first.
+          const bool temporary = file && path == file->fileName();
+          const bool saved = temporary ? file->rename(cachePath_)
+                                       : expandedFile.rename(cachePath_);
+          if (!saved) {
+            // Another window may have published the same cache entry.
+            // Validate its file too, rather than overwriting it.
+            if (QFileInfo(cachePath_).isFile()) {
+              inspect(cachePath_, serial, true);
+              return;
+            }
+            fail(tr("Cannot save the verified PDB to %1: %2")
+                     .arg(cachePath_, temporary ? file->errorString()
+                                                : expandedFile.errorString()));
             return;
           }
-          fail(tr("Cannot write to the symbol cache."));
-          return;
+          if (temporary)
+            file->setAutoRemove(false);
         }
         const auto cache = cachePath_;
         QTimer::singleShot(0, this,

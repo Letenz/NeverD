@@ -2724,12 +2724,12 @@ PDB 파일 이름과 빌드 식별자만 전송하며 바이너리는 업로드�
         <translation>나중에</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>심볼 캐시 디렉터리를 만들 수 없습니다.</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>심볼 캐시 디렉터리를 만들 수 없습니다: %1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>심볼 캐시에 쓸 수 없습니다.</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>%1에서 임시 심볼 파일을 열 수 없습니다: %2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2756,12 +2756,20 @@ PDB 파일 이름과 빌드 식별자만 전송하며 바이너리는 업로드�
         <translation>심볼 다운로드 실패: %1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>다운로드한 심볼 파일이 비어 있거나 저장할 수 없습니다.</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>다운로드한 심볼 파일이 비어 있습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>심볼 파일 %1에 쓸 수 없습니다: %2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>압축된 심볼 파일이 유효하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>%1에 임시 심볼 디렉터리를 만들 수 없습니다: %2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2782,6 +2790,10 @@ PDB 파일 이름과 빌드 식별자만 전송하며 바이너리는 업로드�
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>PDB가 불러온 파일과 일치하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>검증된 PDB를 %1에 저장할 수 없습니다: %2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>

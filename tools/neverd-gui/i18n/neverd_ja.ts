@@ -2724,12 +2724,12 @@ PDB ファイル名とビルド識別子を送信します。バイナリはア�
         <translation>今はしない</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>シンボルキャッシュのディレクトリを作成できません。</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>シンボルキャッシュのディレクトリを作成できません: %1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>シンボルキャッシュに書き込めません。</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>%1 に一時シンボルファイルを開けません: %2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2756,12 +2756,20 @@ PDB ファイル名とビルド識別子を送信します。バイナリはア�
         <translation>シンボルのダウンロード失敗：%1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>ダウンロードしたシンボルファイルが空か、保存できませんでした。</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>ダウンロードしたシンボルファイルは空です。</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>シンボルファイル %1 に書き込めません: %2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>圧縮シンボルファイルが無効です。</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>%1 に一時シンボルディレクトリを作成できません: %2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2782,6 +2790,10 @@ PDB ファイル名とビルド識別子を送信します。バイナリはア�
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>PDB が読み込まれたファイルと一致しません。</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>検証済み PDB を %1 に保存できません: %2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>

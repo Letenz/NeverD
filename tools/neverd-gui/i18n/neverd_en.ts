@@ -2728,12 +2728,12 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>Not now</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>Cannot create the symbol cache directory.</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>Cannot create the symbol cache directory: %1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>Cannot write to the symbol cache.</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>Cannot open a temporary symbol file in %1: %2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2760,12 +2760,20 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>Symbol download failed: %1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>The downloaded symbol file is empty or could not be saved.</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>The downloaded symbol file is empty.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>Cannot write the symbol file %1: %2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>The compressed symbol file is invalid.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>Cannot create a temporary symbol directory in %1: %2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2786,6 +2794,10 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>The PDB does not match the loaded file.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>Cannot save the verified PDB to %1: %2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>

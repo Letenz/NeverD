@@ -2728,12 +2728,12 @@ Verranno inviati il nome del PDB e l’identificatore della build; il binario no
         <translation>Non ora</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>Impossibile creare la directory della cache dei simboli.</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>Impossibile creare la directory della cache dei simboli: %1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>Impossibile scrivere nella cache dei simboli.</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>Impossibile aprire un file temporaneo dei simboli in %1: %2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2760,12 +2760,20 @@ Verranno inviati il nome del PDB e l’identificatore della build; il binario no
         <translation>Download dei simboli non riuscito: %1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>Il file dei simboli scaricato è vuoto o non è stato possibile salvarlo.</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>Il file dei simboli scaricato è vuoto.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>Impossibile scrivere il file dei simboli %1: %2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>Il file dei simboli compresso non è valido.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>Impossibile creare una directory temporanea dei simboli in %1: %2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2786,6 +2794,10 @@ Verranno inviati il nome del PDB e l’identificatore della build; il binario no
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>Il PDB non corrisponde al file caricato.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>Impossibile salvare il PDB verificato in %1: %2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>

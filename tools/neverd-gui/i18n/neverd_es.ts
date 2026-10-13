@@ -2728,12 +2728,12 @@ Se enviarán el nombre del PDB y el identificador de compilación; no se subirá
         <translation>Ahora no</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>No se puede crear el directorio de caché de símbolos.</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>No se puede crear el directorio de caché de símbolos: %1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>No se puede escribir en la caché de símbolos.</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>No se puede abrir un archivo temporal de símbolos en %1: %2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2760,12 +2760,20 @@ Se enviarán el nombre del PDB y el identificador de compilación; no se subirá
         <translation>Error al descargar símbolos: %1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>El archivo de símbolos descargado está vacío o no se pudo guardar.</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>El archivo de símbolos descargado está vacío.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>No se puede escribir el archivo de símbolos %1: %2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>El archivo de símbolos comprimido no es válido.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>No se puede crear un directorio temporal de símbolos en %1: %2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2786,6 +2794,10 @@ Se enviarán el nombre del PDB y el identificador de compilación; no se subirá
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>El PDB no corresponde al archivo cargado.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>No se puede guardar el PDB verificado en %1: %2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>

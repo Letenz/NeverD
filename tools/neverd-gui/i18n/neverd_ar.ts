@@ -2744,12 +2744,12 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>ليس الآن</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>تعذر إنشاء مجلد التخزين المؤقت للرموز.</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>تعذر إنشاء مجلد التخزين المؤقت للرموز: %1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>تعذرت الكتابة في ذاكرة التخزين المؤقت للرموز.</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>تعذر فتح ملف رموز مؤقت في %1: %2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2776,12 +2776,20 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>فشل تنزيل الرموز: %1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>ملف الرموز الذي تم تنزيله فارغ أو تعذر حفظه.</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>ملف الرموز الذي تم تنزيله فارغ.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>تعذرت الكتابة إلى ملف الرموز %1: %2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>ملف الرموز المضغوط غير صالح.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>تعذر إنشاء مجلد رموز مؤقت في %1: %2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2802,6 +2810,10 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>لا يطابق ملف PDB الملف المحمّل.</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>تعذر حفظ ملف PDB الذي تم التحقق منه في %1: %2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>

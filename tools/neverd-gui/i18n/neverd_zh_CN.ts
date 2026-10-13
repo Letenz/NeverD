@@ -2724,12 +2724,12 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>暂不下载</translation>
     </message>
     <message>
-        <source>Cannot create the symbol cache directory.</source>
-        <translation>无法创建符号缓存目录。</translation>
+        <source>Cannot create the symbol cache directory: %1</source>
+        <translation>无法创建符号缓存目录：%1</translation>
     </message>
     <message>
-        <source>Cannot write to the symbol cache.</source>
-        <translation>无法写入符号缓存。</translation>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>无法在 %1 中打开临时符号文件：%2</translation>
     </message>
     <message>
         <source>Cancel</source>
@@ -2756,12 +2756,20 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
         <translation>符号下载失败：%1</translation>
     </message>
     <message>
-        <source>The downloaded symbol file is empty or could not be saved.</source>
-        <translation>下载的符号文件为空或无法保存。</translation>
+        <source>The downloaded symbol file is empty.</source>
+        <translation>下载的符号文件为空。</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>无法写入符号文件 %1：%2</translation>
     </message>
     <message>
         <source>The compressed symbol file is invalid.</source>
         <translation>压缩的符号文件无效。</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>无法在 %1 中创建临时符号目录：%2</translation>
     </message>
     <message>
         <source>Expanding compressed symbols…</source>
@@ -2782,6 +2790,10 @@ The PDB file name and build identifier will be sent; the binary is not uploaded.
     <message>
         <source>The PDB does not match the loaded file.</source>
         <translation>PDB 与已加载文件不匹配。</translation>
+    </message>
+    <message>
+        <source>Cannot save the verified PDB to %1: %2</source>
+        <translation>无法将已验证的 PDB 保存到 %1：%2</translation>
     </message>
     <message>
         <source>Symbol verification failed: %1</source>
