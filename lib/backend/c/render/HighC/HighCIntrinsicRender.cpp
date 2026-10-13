@@ -34,6 +34,12 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
                                 llvm::ArrayRef<uint16_t> OperandBytes) {
   std::string Result;
   if (TheArch == Arch::ARM || TheArch == Arch::AArch64) {
+    if (TheArch == Arch::AArch64 && GnuToolchain)
+      if (std::string Half = renderA64FixedHalfConversion(Id, Ops);
+          !Half.empty()) {
+        HasCIntrinsics = true;
+        return Half;
+      }
     Result = renderARMIntrinsicCall(Id, Ops, ResultBytes, HasCIntrinsics);
     if (Result.empty())
       Result = renderNeonVectorIntrinsic(Id, Ops, OperandBytes, ResultBytes,
@@ -47,6 +53,9 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
   }
 
   const char *CName = intrinsicCName(Id);
+  if (TheArch == Arch::X86 || TheArch == Arch::X64)
+    if (const char *Sized = x86SizedIntrinsicCName(Id, ResultBytes))
+      CName = Sized;
   if (CName) {
     std::string CallStr = std::string(CName) + "(";
     for (size_t I = 0; I < Ops.size(); ++I) {
@@ -60,8 +69,14 @@ std::string renderIntrinsicCall(Intrinsic Id, Arch TheArch,
 
   const char *AsmMn = intrinsicAsmMnemonic(Id);
   if (AsmMn) {
-    if (TheArch == Arch::X64 || TheArch == Arch::X86)
+    if (TheArch == Arch::X64 || TheArch == Arch::X86) {
+      if (GnuToolchain)
+        if (std::string Operand =
+                renderX86SystemRegisterOperand(Id, Ops, ResultBytes);
+            !Operand.empty())
+          return Operand;
       return renderX86AsmStatement(AsmMn, Ops);
+    }
     return renderARMAsmStatement(AsmMn, Ops);
   }
 

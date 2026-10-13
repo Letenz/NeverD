@@ -1455,6 +1455,8 @@ DarwinFiles 在 DarwinSelect.cpp 中匯入 Pselect 的 timespec 與訊號遮罩�
 
 `isCanonicalX87Wait` 為一般 registration 轉移和經驗證的 local-finally 返回提供相同的正常路徑框架保留規則。FWAIT 操作與例外分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。此規則不授予非區域 finally 退出或原生還原證明。
 
+受檢查的 KVM x64 執行透過 `withExecutionOwner` 將完整指令迴圈交給私有 vCPU 執行緒。准入、RAM 交易、回呼與預算仍由此迴圈處理；各次原生執行保留獨立控制和例外優先順序。呼叫端監控執行中的原生入口，確認取消完成後才返回。CPU 回呼在私有執行緒執行，不能依賴呼叫端的執行緒區域狀態；獨立原生入口的完成回呼仍在其呼叫執行緒執行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 與 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 驗證所有權及實際取消；此後端變更不代表恢復驅動已通過認證。
+
 `LLVMCStackAllocation` 在私有 C 複本統一管理帶數量和非入口堆疊配置，保留 DataLayout 配置步長、無號數量、對齊與執行位置。具副作用的私有呼叫在原指令處輸出一般 `__builtin_alloca`，檢查長度溢位並在額外位元組內對齊，因此 Clang/GCC 的配置存續到函式返回。入口單物件配置保留一般區域宣告。過寬數量、可伸縮儲存、非預設位址空間、inalloca/swifterror 和明確堆疊儲存/還原在正規化前拒絕；輸入 IR 的私有標記也拒絕，呼叫者 IR 不變。
 
 `LLVMCStorage` 統一保留區域物件、全域物件及其宣告的明確額外對齊。字串定義保留完整的 LLVM 陣列長度，包括尾端零位元組。LLVM 全域值在運算式和初始化器中代表位址；只有物件宣告和直接載入/儲存使用單純的 C 名稱。匯入資料綁定保留既有位址表示。

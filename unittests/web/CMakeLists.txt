@@ -9,6 +9,7 @@ add_neverd_unittest(NeverDWebArtifactTests
   PackageAssessmentTests.cpp
   PackageReviewTests.cpp
   InterfaceTests.cpp
+  PassiveReportTests.cpp
   StreamTests.cpp
   AsarTests.cpp
   ElectronManifestTests.cpp
@@ -78,6 +79,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceInterfaceTests.cpp
     SourceWrapperTests.cpp
     InterfaceRelationTests.cpp
+    PassiveSourceTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp

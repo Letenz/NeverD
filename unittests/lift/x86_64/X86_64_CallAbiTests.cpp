@@ -62,6 +62,55 @@ protected:
   }
 };
 
+// The callee's `setl al; setg cl` writes the low bytes of RAX and RCX and
+// keeps the rest of each, which nothing reads: RCX is no fourth parameter,
+// and the call passes the two arguments its caller sets.
+TEST_F(X86_64_CallAbi, AByteWriteMakesNoParameter) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static int c64(long long, long long) __attribute__((noinline));
+int cmpsum(int a) {
+  unsigned h = 0, s = (unsigned)a | 1u;
+  for (int i = 0; i < 12; i++) {
+    unsigned xl = s, xh = s ^ 0x1234u, yl = s * 7u, yh = s + (unsigned)i;
+    long long x = (long long)(((unsigned long long)xh << 32) | xl);
+    long long y = (long long)(((unsigned long long)yh << 32) | yl);
+    h = h * 131u + (unsigned)(c64(x, y) + 2);
+    s = s * 1103515245u + 12345u;
+  }
+  return (int)h;
+}
+static int c64(long long a, long long b) { return a < b ? -1 : (a > b ? 1 : 0); }
+)C",
+                            "cmpsum", {"cmpsum", "c64"}, {0x71, 0, 1, -3, 77});
+}
+
+// An AVX2 callee ends with `vzeroupper`, which keeps every XMM register's
+// low lanes: that reads no vector argument, so the callee takes only its
+// pointer and its callers pass no vector value.
+TEST_F(X86_64_CallAbi, VzeroupperReadsNoVectorArgument) {
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-mavx2"}, R"C(
+typedef int v8 __attribute__((vector_size(32)));
+static int sum8(const int *p) __attribute__((noinline));
+int avxsum(int a) {
+  int buf[8];
+  for (int i = 0; i < 8; i++)
+    buf[i] = (a * (i + 1)) ^ i;
+  return sum8(buf) + sum8(buf) * 3;
+}
+static int sum8(const int *p) {
+  v8 v;
+  __builtin_memcpy(&v, p, sizeof(v));
+  v = v * v + v;
+  int s = 0;
+  for (int i = 0; i < 8; i++)
+    s += v[i];
+  return s;
+}
+)C",
+                            "avxsum", {"avxsum", "sum8", "v8"},
+                            {0x71, 0, 1, -3, 77});
+}
+
 // Six register arguments and four pushed afresh on every iteration of a
 // loop, whose stack pointer is a PHI at the loop head.
 TEST_F(X86_64_CallAbi, StackArgumentsPushedInALoopReachTheCallee) {
@@ -113,6 +162,39 @@ static int pick_q(int x) {
 )C",
                             "pick", {"pick", "pick_p", "pick_q"},
                             {-3, 0, 1, 2, 77});
+}
+
+// At -O0 the loop leaves r >> 32 in rdx for the next indirect call and
+// computes x through rcx, but on the first iteration rdx holds what the
+// caller left there.  A register a join brings from entry is no argument:
+// passed, it was a C variable read before any assignment, which Clang
+// optimizes as it likes.
+TEST_F(X86_64_CallAbi, ARegisterAJoinBringsFromEntryIsNoArgument) {
+  KernelOptimization = "-O0";
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu"}, R"C(
+static long long td(long long x, int b) __attribute__((noinline));
+int retll(int a) {
+  unsigned w = (unsigned)a | 1u;
+  long long acc = (long long)(unsigned)a;
+  long long (*fp)(long long, int) = td;
+  __asm__("" : "+r"(fp));
+  for (int i = 0; i < 40; i++) {
+    w = w * 1103515245u + 12345u;
+    long long x = ((long long)w) | ((long long)(w >> 4) << 32);
+    long long r = fp(x, (int)(w >> 9));
+    acc = acc * 131 + (r ^ (r >> 32));
+    acc ^= acc >> 17;
+  }
+  return (int)(acc ^ (acc >> 32));
+}
+static long long td(long long x, int b) {
+  long long r = x * 131 + (long long)b;
+  r ^= (long long)(unsigned)((unsigned long long)x >> 32) << 28;
+  r += ((long long)b) << 33;
+  return r;
+}
+)C",
+                            "retll", {"retll", "td"}, {0, 1, -1, 0x4567, 77});
 }
 
 // `long f(long a) { return (signed char)a; }` sign-extends the low byte of

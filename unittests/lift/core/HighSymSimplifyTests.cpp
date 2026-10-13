@@ -21,6 +21,7 @@
 
 #include "neverd/backend/c/pass/HighC/HighCPasses.h"
 #include "neverd/ir/high/MedToHigh.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/APInt.h"
 
@@ -1229,6 +1230,175 @@ TEST(HighCDeadStoreAnalysis, WalksDeepExpressionGraphsOnAWorkerStack) {
     ExprPtr Next = std::move(Current->Operands[0]);
     Current->Operands.clear();
     Current = std::move(Next);
+  }
+}
+
+struct ScopedSemanticThreads {
+  unsigned Previous = workerThreadOverride().load();
+  ScopedSemanticThreads() { setWorkerThreadCount(4); }
+  ~ScopedSemanticThreads() { setWorkerThreadCount(Previous); }
+};
+
+std::vector<std::string>
+statementExpressions(const std::vector<HighStmt> &Body) {
+  std::vector<std::string> Text;
+  walkStmts(Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &E) { Text.push_back(E->str()); });
+  });
+  return Text;
+}
+
+TEST(HighSymSimplify,
+     ParallelSegmentsKeepSharedNodesAndScopeDefinitionsSeparate) {
+  ScopedSemanticThreads Threads;
+  const auto X = HighExpr::makeVar(tempOfSize(1, 4));
+  const auto Y = HighExpr::makeVar(tempOfSize(2, 4));
+  const auto T = HighExpr::makeVar(tempOfSize(3, 4));
+  const auto SharedUse = sharedMaskUse(X, Y, T);
+  const auto OriginalUse = SharedUse->str();
+  auto Arm = [&](NdOp Op) {
+    return std::vector<HighStmt>{assignValue(T, HighExpr::makeBinop(Op, X, Y)),
+                                 returnValue(SharedUse)};
+  };
+  std::vector<HighStmt> Serial;
+  for (unsigned I = 0; I < 256; ++I) {
+    HighStmt S;
+    switch (I % 3) {
+    case 0:
+      S.Kind = StmtKind::IfElse;
+      S.Cond = X;
+      S.Body = Arm(NdOp::INT_AND);
+      S.ElseBody = Arm(NdOp::INT_XOR);
+      break;
+    case 1:
+      S.Kind = StmtKind::Switch;
+      S.SwitchExpr = X;
+      S.Cases.push_back({0, Arm(NdOp::INT_AND)});
+      S.DefaultBody = Arm(NdOp::INT_XOR);
+      break;
+    default:
+      S.Kind = StmtKind::ItaniumTry;
+      S.Body = Arm(NdOp::INT_AND);
+      S.EHClauses.emplace_back();
+      S.EHClauses.back().Kind = HighEHClauseKind::ItaniumCatch;
+      S.EHClauseBodies.push_back(Arm(NdOp::INT_XOR));
+      break;
+    }
+    Serial.push_back(std::move(S));
+  }
+  // Statement vectors are independent, but both runs deliberately share all
+  // input expression DAGs. A parallel rewrite must replace roots privately.
+  auto Parallel = Serial;
+  simplifyExprSemantics(Serial);
+  simplifyExprSemantics(Parallel, 4);
+  EXPECT_EQ(statementExpressions(Parallel), statementExpressions(Serial));
+  EXPECT_EQ(SharedUse->str(), OriginalUse);
+  EXPECT_EQ(SharedUse->Operands[1]->Operands[0].get(), T.get());
+
+  auto CheckArm = [&](const std::vector<HighStmt> &Body, bool Xor) {
+    ASSERT_EQ(Body.size(), 2U);
+    if (!Xor)
+      EXPECT_EQ(Body.back().RetVal->str().find('|'), std::string::npos);
+    for (uint64_t A : {0ULL, 1ULL, 7ULL, 0x80000000ULL, 0xffffffffULL})
+      for (uint64_t B : {0ULL, 1ULL, 17ULL, 0xffffffffULL}) {
+        std::unordered_map<int, uint64_t> Values{{1, A}, {2, B}};
+        Values[3] =
+            integerValue(Body.front().Val, 0, 0, &Values).getZExtValue();
+        const uint64_t Expected =
+            (A + ((Xor ? A ^ B : A & B) | B)) & 0xffffffffU;
+        EXPECT_EQ(
+            integerValue(Body.back().RetVal, 0, 0, &Values).getZExtValue(),
+            Expected);
+      }
+  };
+  for (const auto &S : Parallel) {
+    if (S.Kind == StmtKind::IfElse) {
+      CheckArm(S.Body, false);
+      CheckArm(S.ElseBody, true);
+    } else if (S.Kind == StmtKind::Switch) {
+      CheckArm(S.Cases.front().Body, false);
+      CheckArm(S.DefaultBody, true);
+    } else {
+      CheckArm(S.Body, false);
+      CheckArm(S.EHClauseBodies.front(), true);
+    }
+  }
+}
+
+TEST(HighSymSimplify,
+     ParallelSegmentsPreserveDefinitionKillsAndOrdinaryStores) {
+  ScopedSemanticThreads Threads;
+  const auto X = HighExpr::makeVar(tempOfSize(1, 4));
+  const auto Y = HighExpr::makeVar(tempOfSize(2, 4));
+  std::vector<HighStmt> Serial;
+  for (unsigned I = 0; I < 512; ++I) {
+    const auto T = HighExpr::makeVar(tempOfSize(3 + I, 4));
+    auto Definition = assignValue(T, HighExpr::makeBinop(NdOp::INT_AND, X, Y));
+    auto Return = returnValue(sharedMaskUse(X, Y, T));
+    Return.Addr = kEntry + 16 * I;
+    HighStmt Scope;
+    Scope.Kind = StmtKind::Block;
+    HighStmt Boundary;
+    bool HasBoundary = true;
+    switch (I % 8) {
+    case 0:
+      HasBoundary = false;
+      break;
+    case 1:
+      Boundary.Kind = StmtKind::ExprStmt;
+      Boundary.CallExpr = std::make_shared<HighExpr>();
+      Boundary.CallExpr->Kind = ExprKind::Call;
+      Boundary.CallExpr->Type = NdType::makeInt(4);
+      Boundary.CallExpr->CallTarget = "update_state";
+      break;
+    case 2:
+      Boundary.Kind = StmtKind::Goto;
+      Boundary.GotoTarget = Return.Addr;
+      Scope.Body.push_back(Boundary);
+      HasBoundary = false;
+      break;
+    case 3:
+      Definition.IsPhiCopy = true;
+      HasBoundary = false;
+      break;
+    case 4:
+      Boundary.Kind = StmtKind::ExprStmt;
+      Boundary.Val = std::make_shared<HighExpr>();
+      Boundary.Val->Kind = ExprKind::Addr;
+      Boundary.Val->Type = NdType::makePtr();
+      Boundary.Val->Operands = {T};
+      break;
+    case 5:
+      Scope.Kind = StmtKind::ItaniumTry;
+      Scope.EHClauses.emplace_back();
+      Scope.EHClauses.back().Kind = HighEHClauseKind::ItaniumCatch;
+      Scope.EHClauses.back().ContinuationVAs.push_back(Return.Addr);
+      HasBoundary = false;
+      break;
+    case 6:
+      Definition.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+      HasBoundary = false;
+      break;
+    case 7:
+      Boundary.Kind = StmtKind::Store;
+      Boundary.StoreAddr = HighExpr::makeConst(0x700000, 8);
+      Boundary.StoreVal = X;
+      break;
+    }
+    Scope.Body.push_back(std::move(Definition));
+    if (HasBoundary)
+      Scope.Body.push_back(std::move(Boundary));
+    Scope.Body.push_back(std::move(Return));
+    Serial.push_back(std::move(Scope));
+  }
+  auto Parallel = Serial;
+  simplifyExprSemantics(Serial);
+  simplifyExprSemantics(Parallel, 4);
+  EXPECT_EQ(statementExpressions(Parallel), statementExpressions(Serial));
+  for (size_t I = 0; I < Parallel.size(); ++I) {
+    const auto Text = Parallel[I].Body.back().RetVal->str();
+    const bool Kill = I % 8 != 0 && I % 8 != 7;
+    EXPECT_EQ(Text.find('|') != std::string::npos, Kill) << I << ": " << Text;
   }
 }
 

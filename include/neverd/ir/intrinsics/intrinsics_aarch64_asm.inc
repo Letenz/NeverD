@@ -103,3 +103,7 @@ A(Intrinsic::A64_Ldsetpal,     "ldsetpal");
 A(Intrinsic::A64_Ldsetpl,      "ldsetpl");
 A(Intrinsic::A64_SveIndex,     "index");
 A(Intrinsic::A64LinuxSyscall,  "svc");
+A(Intrinsic::A64_ScvtfFixed,   "scvtf");
+A(Intrinsic::A64_UcvtfFixed,   "ucvtf");
+A(Intrinsic::A64_FcvtzsFixed,  "fcvtzs");
+A(Intrinsic::A64_FcvtzuFixed,  "fcvtzu");

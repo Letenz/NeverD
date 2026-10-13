@@ -1504,6 +1504,8 @@ DarwinFiles는 DarwinSelect.cpp에서 Pselect의 timespec과 신호 마스크를
 
 `isCanonicalX87Wait`는 일반 registration 전이와 검증된 local-finally 반환에 같은 정상 경로 프레임 보존 규칙을 제공합니다. FWAIT 연산과 예외 디스패치는 유지됩니다. 다른 intrinsic 및 잘못된 형식은 여전히 불투명하며, 이 규칙은 비지역 finally 종료나 네이티브 복원 증명을 제공하지 않습니다.
 
+검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
+
 `LLVMCStackAllocation`은 비진입 및 개수가 있는 스택 할당을 비공개 C 복제본에서 관리하며 DataLayout 할당 간격, 부호 없는 개수, 정렬과 실행 위치를 보존합니다. 부작용이 있는 비공개 호출은 원래 위치에서 일반 `__builtin_alloca`를 출력하고 크기 오버플로를 검사한 뒤 추가 바이트 안에서 정렬합니다. Clang/GCC에서 수명은 함수 반환까지 유지됩니다. 진입점의 단일 객체는 일반 지역 선언을 유지합니다. 너무 넓은 개수, 확장 가능한 저장소, 기본이 아닌 주소 공간, inalloca/swifterror, 명시적 stack save/restore 및 입력 IR의 비공개 표시는 정규화 전에 거부합니다. 원본 IR은 변경하지 않습니다.
 
 `LLVMCStorage`는 지역 및 전역 객체와 선언의 명시적 추가 정렬을 공유한다. 문자열 정의는 끝의 0 바이트를 포함한 전체 LLVM 배열 크기를 유지한다. LLVM 전역 값은 식과 초기화에서 주소를 나타내며 객체 선언과 직접 로드/저장만 C 이름을 그대로 사용한다. 가져온 데이터 바인딩은 기존 주소 표현을 유지한다.

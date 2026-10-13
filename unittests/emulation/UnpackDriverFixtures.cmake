@@ -22,6 +22,7 @@ add_neverd_unittest(NeverDUnpackDriverTests
   DriverEntryABITests.cpp
   UnpackDriverTests.cpp
   TIMEOUT 120
+  NO_PRETTY_VALUES
   LINK_COMPONENTS Unpack Emulation)
 target_include_directories(NeverDUnpackDriverTests PRIVATE
   "${CMAKE_SOURCE_DIR}/unittests/unpack")

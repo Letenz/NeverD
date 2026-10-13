@@ -1461,6 +1461,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>저장된 변수 이름은 다른 소스 렌더링에 속합니다</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>블록 펼치기 (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>블록 접기 (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2135,6 +2143,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>이 엔진은 검증되지 않은 PDB를 분석에 사용할 수 없습니다</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>행</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>열</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>코드</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>함수 불러오기가 완료된 후 참조를 찾으세요</translation>
     </message>
 </context>
 <context>

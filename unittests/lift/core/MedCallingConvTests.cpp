@@ -220,8 +220,16 @@ TEST(MedCallingConvValueFlow, VectorParameterBanksRespectTheImageABI) {
                    MedVar::makeConst(0x4000 + 16 * I, TRI.PointerSize), V));
       }
       detectXMMParams(F, B, TRI, Vars, A, Format);
-      const unsigned Expected =
-          A == Arch::X64 && Format == BinaryFormat::COFF ? 4 : 8;
+      // Win64 passes floating arguments in its four positional slots; i386
+      // in XMM0-XMM2 under System V, XMM0-XMM3 on Darwin and XMM0-XMM5 with
+      // __vectorcall.
+      unsigned Expected = 8;
+      if (A == Arch::X64 && Format == BinaryFormat::COFF)
+        Expected = 4;
+      else if (A == Arch::X86)
+        Expected = Format == BinaryFormat::ELF     ? 3
+                   : Format == BinaryFormat::MachO ? 4
+                                                   : 6;
       ASSERT_EQ(F.Params.size(), Expected);
       for (unsigned I = 0; I != Expected; ++I)
         EXPECT_EQ(F.Params[I].RegOff, TRI.VecRegBase + I * TRI.VecRegStride);
@@ -7497,6 +7505,108 @@ TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
   EXPECT_EQ(Summary(8, true), 8u);
   // A merge into another register reads all of R8.
   EXPECT_EQ(Summary(1, false), 8u);
+}
+
+TEST(CallRegisterEffects, ASyscallReadsOnlyItsOwnArguments) {
+  // `mov eax, N; syscall`: the lifter keeps all six argument registers live,
+  // packing RDX:RSI and R8:R10.  Linux exit (60) reads only RDI; a number
+  // the arity table does not list may read every argument register.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  auto Reads = [&](uint64_t Number) {
+    LowFunc Low = makeOneBlockLow(0x1000, "sys", [&](auto Push) {
+      Push(NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {NdVar::cst(Number, 8)});
+      Push(NdOp::CONCAT, NdVar::tmp(1, 16),
+           {NdVar::reg(x86reg::RDX, 8), NdVar::reg(x86reg::RSI, 8)});
+      Push(NdOp::CONCAT, NdVar::tmp(2, 16),
+           {NdVar::reg(x86reg::R8, 8), NdVar::reg(x86reg::R10, 8)});
+      Push(NdOp::INTRINSIC, NdVar::tmp(3, 16),
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::X64Syscall), 2),
+            NdVar::reg(x86reg::RAX, 8), NdVar::reg(x86reg::RDI, 8),
+            NdVar::tmp(1, 16), NdVar::tmp(2, 16), NdVar::reg(x86reg::R9, 8)});
+    });
+    LowBlock &Block = Low.Blocks.front();
+    for (const auto [First, Count] :
+         {std::pair<size_t, size_t>{0, 1}, {1, 3}, {4, 1}}) {
+      LowInstructionBoundary Boundary;
+      Boundary.Address = 0x1000 + First;
+      Boundary.Size = 1;
+      Boundary.FirstOp = First;
+      Boundary.OpCount = Count;
+      Block.InstructionBoundaries.push_back(Boundary);
+    }
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+        (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    return solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}},
+                                    Args, Args)
+        .EntryReads.at(0x1000);
+  };
+  const GPRReadWidths Exit = Reads(60);
+  EXPECT_EQ(Exit[x86reg::RDI / 8], 8u);
+  for (uint64_t Register :
+       {x86reg::RSI, x86reg::RDX, x86reg::R10, x86reg::R8, x86reg::R9})
+    EXPECT_EQ(Exit[Register / 8], 0u) << Register;
+  const GPRReadWidths Unlisted = Reads(0x7FFF);
+  for (uint64_t Register : {x86reg::RDI, x86reg::RSI, x86reg::RDX, x86reg::R10,
+                            x86reg::R8, x86reg::R9})
+    EXPECT_EQ(Unlisted[Register / 8], 8u) << Register;
+}
+
+TEST(CallRegisterEffects, AZeroIdiomReadsNothing) {
+  // `pxor xmm0, xmm0` lifts as a self-XOR.  LowToMed folds it to zero, so
+  // the summary takes it as no read of XMM0 either; otherwise every caller
+  // passes XMM0, and so do their callers.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  const NdVar Xmm0 = NdVar::reg(x86reg::VectorBase, 16);
+  LowFunc Low = makeOneBlockLow(0x1000, "zero", [&](auto Push) {
+    Push(NdOp::INT_XOR, Xmm0, {Xmm0, Xmm0});
+    Push(NdOp::STORE, NdVar(), {NdVar::reg(x86reg::RDI, 8), Xmm0});
+  });
+  const GPRFamilyMask Args =
+      (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+      (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+      (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+  const GPRReadWidths Reads =
+      solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}}, Args,
+                               Args)
+          .EntryReads.at(0x1000);
+  EXPECT_EQ(Reads[x86reg::RDI / 8], 8u);
+  EXPECT_EQ(Reads[kX64VectorFamilyBase], 0u);
+}
+
+TEST(CallRegisterEffects, VzeroupperKeepsTheLowLanesInPlace) {
+  // `vzeroupper` lifts as ZMMn = ZEXT(XMMn) for each register: it keeps the
+  // low lanes, which is no read of them; a later read of those lanes still
+  // reads the incoming value.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  const NdVar Xmm1 = NdVar::reg(x86reg::VectorBase + 64, 16);
+  const NdVar Zmm1 = NdVar::reg(x86reg::VectorBase + 64, 64);
+  auto Reads = [&](bool ReadAfter) {
+    LowFunc Low = makeOneBlockLow(0x1000, "vz", [&](auto Push) {
+      Push(NdOp::INT_ZEXT, Zmm1, {Xmm1});
+      if (ReadAfter)
+        Push(NdOp::STORE, NdVar(), {NdVar::reg(x86reg::RDI, 8), Xmm1});
+    });
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+        (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    return solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}},
+                                    Args, Args)
+        .EntryReads.at(0x1000)[kX64VectorFamilyBase + 1];
+  };
+  EXPECT_EQ(Reads(false), 0u);
+  EXPECT_EQ(Reads(true), 16u);
 }
 
 TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {

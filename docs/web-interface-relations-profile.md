@@ -1,6 +1,6 @@
 # Request source relationships
 
-`request-source-relations-v1` projects bounded syntax relationships from an
+`request-source-relations-v2` projects bounded syntax relationships from an
 explicit existing `fetch-websocket-xhr-wrappers-syntax-v4` analysis. It consumes the same
 source and lexical-binding models and the authoritative
 `javascript-source-navigation-v1` function/call index. It accepts only direct
@@ -19,6 +19,8 @@ result-relation profile does not consume those rows or compose wrapper chains.
 | `bound_result_member_call` | A non-computed fixed member call uses that exact lexical const binding | Consumer call, receiver, binding and request |
 | `awaited_result_member_call` | A non-computed fixed member call has the direct awaited request as its receiver | Consumer call, await receiver and request |
 | `then_callback_syntax` | A direct request call is the receiver of non-computed `.then(...)` call syntax | Call, request and first argument syntax when positional |
+| `request_body_transform_syntax` | Fixed transformation call syntax is contained in a directly admitted fetch body without crossing a function boundary | Transform, body, request and containment depth |
+| `result_transform_argument_syntax` | A direct first transform argument, optionally awaited, is a fixed result member call | Transform, input member call and original request |
 
 Fixed result-member spelling classes are `json`, `text`, `array_buffer`, `blob`,
 `form_data`, `bytes` and `clone`. The `arrayBuffer` and `formData` source spellings
@@ -50,7 +52,10 @@ inside a nested function is not proof it executes after initialization.
 `interfaces/RelationContext` owns shared-model admission, lexical indexes,
 fixed publication identities and budgets. `RequestLinks` owns direct return and
 const-initializer syntax; `ResultLinks` owns the fixed member-use grammar.
-`SourceRelations` coordinates them. Function containment stays owned by
+`TransformationLinks` owns fixed JSON/base64/URI, crypto.subtle and zlib call
+spellings. Their identities, arguments, effects and actual output stay unverified.
+Aliases, computed properties, callbacks and deferred body functions are not
+followed. `SourceRelations` coordinates these owners. Function containment stays owned by
 `SourceNavigation`, and unique declaration admission stays owned by
 `indexSourceDeclarations`. The relation layer never computes a replacement
 call graph, interprets private URL material or modifies request evidence.
@@ -109,4 +114,6 @@ flow inventory. Detailed receipts and omission/restoration results belong in
 Wrapper argument/dataflow, general response transformations, dynamic URL
 resolution, request ordering, source/stream joins, authenticated browser API
 identity and broader platform/framework qualification remain outside this
-profile. This increment does not complete #717 or the other JS epics.
+profile. Selected source/stream reports and observed type summaries are covered
+by the separate [report profile](web-passive-report-profile.md). The final
+[acceptance audit](web-epic-acceptance.md) owns epic completion claims.

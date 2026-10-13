@@ -1286,6 +1286,14 @@ const HighExpr *unwrapX86IntegerView(const HighExpr *E) {
 
 } // anonymous namespace
 
+const char *x86SizedIntrinsicCName(Intrinsic Id, uint16_t ResultBytes) {
+#define NEVERD_X86_SIZED_C_NAME(ID, Bytes, Name)                               \
+  if (Id == Intrinsic::ID && ResultBytes == (Bytes))                           \
+    return Name;
+#include "neverd/backend/c/render/HighC/X86SizedIntrinsicNames.def"
+  return nullptr;
+}
+
 bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   return isMovs(Id) || isStos(Id) || Id == Intrinsic::Lidt ||
          Id == Intrinsic::Sidt || Id == Intrinsic::Invlpg ||
@@ -1533,9 +1541,19 @@ renderX86VectorIntrinsic(Arch TheArch, const HighExpr &Call,
   if (Width != 16 && Callee.starts_with("_mm_"))
     Spelled =
         (Width == 32 ? "_mm256_" : "_mm512_") + Callee.drop_front(4).str();
+  // The lifted operand each argument of the C intrinsic is.
+  std::vector<size_t> Order(Call.Operands.size());
+  for (size_t I = 0; I < Order.size(); ++I)
+    Order[I] = I;
+#define NEVERD_X86_C_OPERAND_ORDER(ID, First, Second)                          \
+  if (Call.IntrinsicId == Intrinsic::ID && Order.size() >= 2) {                \
+    Order[0] = (First);                                                        \
+    Order[1] = (Second);                                                       \
+  }
+#include "neverd/backend/c/render/HighC/X86IntrinsicOperandOrder.def"
   std::string S = "__builtin_bit_cast(" + Raw + ", " + Spelled + "(";
   for (size_t I = 0; I < Call.Operands.size(); ++I) {
-    const HighExpr *Op = Call.Operands[I].get();
+    const HighExpr *Op = Call.Operands[Order[I]].get();
     if (I > 0)
       S += ", ";
     if (!Op) {
@@ -2032,6 +2050,38 @@ const char *hiloCollapseExpr(Intrinsic Id) {
     return "__rdtscp()";
   default:
     return nullptr;
+  }
+}
+
+std::string renderX86SystemRegisterOperand(Intrinsic Id,
+                                           const std::vector<std::string> &Ops,
+                                           uint16_t ResultBytes) {
+  using I = Intrinsic;
+  const char *Mnemonic = intrinsicAsmMnemonic(Id);
+  if (!Mnemonic)
+    return {};
+  switch (Id) {
+  case I::Sldt:
+  case I::Str:
+  case I::Smsw: {
+    // `str %eax` writes the selector zero extended, `str %ax` its low word:
+    // the instruction runs on a register of the destination's width.
+    if (!Ops.empty() ||
+        (ResultBytes != 2 && ResultBytes != 4 && ResultBytes != 8))
+      return {};
+    const std::string Type = "uint" + std::to_string(8 * ResultBytes) + "_t";
+    return "({ " + Type + " neverd_value; __asm__ volatile(\"" + Mnemonic +
+           " %0\" : \"=r\"(neverd_value)); neverd_value; })";
+  }
+  case I::Lldt:
+  case I::Ltr:
+  case I::Lmsw:
+    if (Ops.size() != 1)
+      return {};
+    return "__asm__ volatile(\"" + std::string(Mnemonic) +
+           " %0\" : : \"r\"((uint16_t)(" + Ops[0] + ")))";
+  default:
+    return {};
   }
 }
 

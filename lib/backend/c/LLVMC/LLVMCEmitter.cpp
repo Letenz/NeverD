@@ -71,9 +71,17 @@
 namespace neverd {
 
 namespace {
+/// Whether \p Global mirrors the image's pointer storage: one global for a
+/// whole run of sections, every pointer in it relocated.  Its bytes are the
+/// image's, which a single function's output declares rather than defines.
+bool mirrorsImageStorage(const llvm::GlobalValue &Global) {
+  return parseNdCodePtrSymbol(Global.getName()).has_value();
+}
+
 // A selected body also owns the constants it addresses, including globals
 // synthesized by LLVM and providers named only by their initializers. Do not
-// follow a referenced function into its body: that body is not being emitted.
+// follow a referenced function into its body: that body is not being emitted,
+// nor into the image's storage, which is declared.
 std::set<const llvm::GlobalValue *>
 referencedGlobals(const llvm::Function &Function) {
   std::set<const llvm::GlobalValue *> Globals;
@@ -91,7 +99,7 @@ referencedGlobals(const llvm::Function &Function) {
     if (const auto *Global = llvm::dyn_cast<llvm::GlobalValue>(Value)) {
       Globals.insert(Global);
       if (const auto *Object = llvm::dyn_cast<llvm::GlobalVariable>(Global);
-          Object && Object->hasInitializer())
+          Object && Object->hasInitializer() && !mirrorsImageStorage(*Object))
         Work.push_back(Object->getInitializer());
       continue;
     }
@@ -724,8 +732,11 @@ void LLVMCWriter::writeStructDefs(llvm::Module &Mod) {
     else
       Visit(Ty);
   };
+  // One function's output declares the image's storage as bytes, whose
+  // record of every pointer in a section it does not define.
   for (auto &Global : Mod.globals())
-    VisitStorage(Global.getValueType());
+    if (!OnlyFunction || !mirrorsImageStorage(Global))
+      VisitStorage(Global.getValueType());
   for (auto &Fn : Mod) {
     Visit(Fn.getFunctionType());
     if (OnlyFunction && &Fn != OnlyFunction)
@@ -772,7 +783,8 @@ void LLVMCWriter::writeImageByteArray(const llvm::GlobalVariable &Global,
 void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
   if (OnlyFunction)
     for (const auto &Global : Mod.globals()) {
-      if (!SelectedGlobals.count(&Global) || !Global.hasInitializer())
+      if (!SelectedGlobals.count(&Global) || !Global.hasInitializer() ||
+          mirrorsImageStorage(Global))
         continue;
       // Initializers can refer forward or form cycles. The declarations use
       // the same storage shape and linkage as the definitions below.
@@ -895,6 +907,15 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
 
     if (!GV.hasInitializer())
       continue;
+
+    // The image's storage stays the image's in one function's output, which
+    // reaches its objects by their own names.
+    if (OnlyFunction && mirrorsImageStorage(GV)) {
+      OS << "extern " << (GV.isConstant() ? "const " : "") << "unsigned char "
+         << Name << "[];\n";
+      EmittedGlobalNames.insert(Name);
+      continue;
+    }
 
     auto *Init = GV.getInitializer();
     EmittedGlobalNames.insert(Name);

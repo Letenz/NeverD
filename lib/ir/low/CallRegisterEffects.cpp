@@ -9,10 +9,13 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86FPState.h"
+#include "neverd/ir/intrinsics/X64Syscall.h"
+#include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/lift/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/ELF/ELFOperatingSystem.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -336,6 +339,45 @@ void findMaskedMerges(const LowBlock &Block, std::map<size_t, uint8_t> &Writes,
       Writes[Copy] = static_cast<uint8_t>(Low);
     }
   }
+}
+
+/// The argument registers each Linux syscall in \p Block names without
+/// reading them.  The lifter keeps all six live so that each consumer can
+/// choose; a syscall whose number the block sets before it, and whose arity
+/// LinuxSyscallArguments.def verifies, reads only its own arguments (`exit`
+/// reads RDI), as the emitters pass them.  Maps each op of such an
+/// instruction to the registers it names but does not read.
+std::map<size_t, llvm::ArrayRef<uint64_t>>
+unreadSyscallArguments(const BinaryImage &Img, const LowBlock &Block) {
+  std::map<size_t, llvm::ArrayRef<uint64_t>> Unread;
+  if (Img.Arch != Arch::X64 || !runsUnderLinux(Img))
+    return Unread;
+  for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
+    const size_t First = Boundary.FirstOp;
+    const size_t End =
+        std::min<size_t>(First + Boundary.OpCount, Block.Ops.size());
+    const bool Syscall =
+        std::any_of(Block.Ops.begin() + First, Block.Ops.begin() + End,
+                    [](const LowOp &Op) {
+                      return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs > 0 &&
+                             Op.Inputs[0].isConst() &&
+                             static_cast<Intrinsic>(Op.Inputs[0].Offset) ==
+                                 Intrinsic::X64Syscall;
+                    });
+    if (!Syscall)
+      continue;
+    const std::optional<uint64_t> Number =
+        blockRegisterConstant(Block.Ops, First, x86reg::RAX, 8);
+    const std::optional<unsigned> Count =
+        Number ? linuxX64SyscallArgumentCount(*Number) : std::nullopt;
+    if (!Count || *Count >= std::size(kLinuxX64SyscallArgumentRegisters))
+      continue;
+    const llvm::ArrayRef<uint64_t> Rest =
+        llvm::ArrayRef(kLinuxX64SyscallArgumentRegisters).drop_front(*Count);
+    for (size_t I = First; I < End; ++I)
+      Unread[I] = Rest;
+  }
+  return Unread;
 }
 
 /// The scalar writes in \p Block that keep a vector register's upper lanes:
@@ -861,6 +903,8 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
     std::set<size_t> MergeReads;
     findMaskedMerges(Block, MergeWrites, MergeReads);
     findLaneMerges(Img.Arch, Block, MergeWrites, MergeReads);
+    const std::map<size_t, llvm::ArrayRef<uint64_t>> UnreadArguments =
+        unreadSyscallArguments(Img, Block);
     auto ControlOf = [&](size_t OpIndex) {
       for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
         if (OpIndex >= Boundary.FirstOp &&
@@ -893,6 +937,17 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
           libc::stackProbeEffect(Img, Op.Inputs[0].Offset) ==
               libc::StackProbeEffect::Probe)
         continue;
+      // A vector register widened from its own low bytes (`vzeroupper`, or
+      // a VEX write clearing the upper lanes) keeps those bytes in place:
+      // it reads them no more than a RETURN that hands them back, and
+      // defines none of them.
+      if (Op.Opcode == NdOp::INT_ZEXT && Op.NumInputs == 1 &&
+          Op.Output.isReg() && Op.Inputs[0].isReg() &&
+          Op.Output.Offset == Op.Inputs[0].Offset &&
+          Op.Output.Size > Op.Inputs[0].Size)
+        if (const auto Family = registerFamilyOf(Img.Arch, Op.Output.Offset);
+            Family && Family->first >= kX64VectorFamilyBase)
+          continue;
       RegisterStep Step;
       // A slice of a vector register reads that slice's bytes only, and a
       // whole copy reads the source as wide as the copy is read.
@@ -917,6 +972,16 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
         if (!Op.Inputs[In].isReg() || (In == 0 && MergeReads.count(I)) ||
             (In == 1 && SaveAreaSpills.count({BI, I})) ||
             (In == 0 && Step.VectorCopy))
+          continue;
+        if (const auto Unread = UnreadArguments.find(I);
+            Unread != UnreadArguments.end() &&
+            llvm::any_of(Unread->second, [&](uint64_t Register) {
+              return Register / 8 == Op.Inputs[In].Offset / 8;
+            }))
+          continue;
+        // A zero idiom (`pxor xmm0, xmm0`) or an absorbing constant reads
+        // nothing of the register, as LowToMed folds it.
+        if (isLowSelfXor(Op) || lowAbsorbingConstant(Op))
           continue;
         if (In == 0 && SlicedVector)
           addRead(Img.Arch, Step.Reads,
