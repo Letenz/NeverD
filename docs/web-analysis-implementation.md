@@ -3820,3 +3820,15 @@ are preserved while fixed tools/inputs are prepared for reconstruction in a
 persistent directory. [Required corpus qualification](web-producer-corpus-qualification.md)
 records the release contract and remaining artifact-availability work. The
 measured #714 minified-loader/configuration-file follow-up remains separate.
+
+Integration commit `c22b3c756` and merge `46e35f050` retain upstream
+`a07acfadd`'s native function-edit/call-context changes. The resulting Release
+rebuild passed; owning Web passed **818 of 845** distinct cases with **27
+explicit skips** in 146.60 seconds. All 25 full Bun containers were rebuilt
+with the original input, compiler and template pins and individually matched
+their existing complete-file hashes. The full Linux/cross-container, six-target
+map and native-handoff cases now run from a persistent corpus. No old hash was
+changed. Worker/MCP/availability passed six of seven with its normal omission
+skip, and Qt Web review passed in 2.62 seconds. The 23-capability ledger and
+7,695-file source-provenance scan pass after the native merge. These receipts
+use `/tmp/neverd-js-gap-postmerge-*`.
