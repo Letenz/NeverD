@@ -185,5 +185,8 @@ if(TARGET NeverDWebSDKTests AND NEVERD_ENABLE_WEB_JAVASCRIPT)
     DEPENDS NeverDWebArtifactTests NeverDWebSourceMapTests
             NeverDWebNativeTests NeverDWebSDKTests
     USES_TERMINAL
+    # The label regex ends in `$`: without VERBATIM, Ninja on Windows reads
+    # it as a bad `$"` escape and rejects the whole build file.
+    VERBATIM
     COMMENT "Qualifying all pinned full producer containers without optional skips")
 endif()
