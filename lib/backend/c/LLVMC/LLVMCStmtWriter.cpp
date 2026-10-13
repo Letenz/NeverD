@@ -1621,7 +1621,8 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     if (!OnlyFunction && !Load->isAtomic())
       if (const auto *Global = llvm::dyn_cast<llvm::GlobalVariable>(
               llvm::getUnderlyingObject(Address));
-          Global && parseNdCodePtrSymbol(Global->getName())) {
+          Global && Global->hasInitializer() &&
+          parseNdCodePtrSymbol(Global->getName())) {
         // Relocated pointer mirrors have a packed byte layout. Keep one
         // volatile scalar access without claiming its original alignment or
         // a separate scalar object's C effective type.
