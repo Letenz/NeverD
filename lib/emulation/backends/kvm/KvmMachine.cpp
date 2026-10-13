@@ -93,6 +93,10 @@ public:
     Run->kvm_dirty_regs = 0;
   }
   bool requiresExceptionMonitor() const override { return true; }
+  llvm::Error
+  withExecutionOwner(llvm::function_ref<llvm::Error()> Loop) override {
+    return KvmVM::withExecutionOwner(Loop);
+  }
   llvm::Error step(X64MachineState &State, uint64_t Root,
                    MachineRunControl Control) override {
     return enter(State, Root, Control.forNativeStep(), true);

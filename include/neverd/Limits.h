@@ -768,6 +768,10 @@ constexpr size_t kMaxRegistrationEHStateWork = 1048576;
 /// Default MXCSR value (x86 SSE control/status register).
 constexpr uint64_t kDefaultMXCSR = 0x1F80;
 
+/// Renders of one function's LLVM C: one that prints a call it inlined other
+/// than once is rendered again with that call as a statement.
+constexpr unsigned kMaxLLVMCFunctionRenders = 3;
+
 } // namespace limits
 } // namespace neverd
 

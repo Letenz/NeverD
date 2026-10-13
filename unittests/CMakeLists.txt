@@ -264,6 +264,10 @@ if(NEVERD_ENABLE_SEMANTIC_TESTS)
       LINK_COMPONENTS Loader
       LINK_LIBS neverd_shared unicorn LLVMSupport
     )
+    if(WIN32)
+      # Target selection is a private C++ codegen API, not a DLL export.
+      target_link_libraries(NeverDSourcePatchMatrixTests PRIVATE NeverDCodeGen)
+    endif()
     target_include_directories(NeverDSourcePatchMatrixTests PRIVATE
       ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
     target_compile_definitions(NeverDSourcePatchMatrixTests PRIVATE

@@ -6,9 +6,7 @@
 
 #include "neverd/ir/med/MedSyscallConvention.h"
 
-#include "neverd/loader/BinaryImage.h"
-
-#include "llvm/BinaryFormat/ELF.h"
+#include "neverd/loader/ELF/ELFOperatingSystem.h"
 
 namespace neverd {
 
@@ -19,14 +17,6 @@ namespace {
 
 constexpr const SyscallConvention *LinuxSyscalls[] = {&LinuxAArch64Syscall,
                                                       &LinuxARMSyscall};
-
-/// Whether \p Image runs under Linux: an ELF image whose OS ABI byte is the
-/// System V default that Linux toolchains write, or GNU/Linux.
-bool runsUnderLinux(const BinaryImage &Image) {
-  return Image.isELF() && Image.ELFMetadata &&
-         (Image.ELFMetadata->OSABI == llvm::ELF::ELFOSABI_NONE ||
-          Image.ELFMetadata->OSABI == llvm::ELF::ELFOSABI_GNU);
-}
 
 } // namespace
 

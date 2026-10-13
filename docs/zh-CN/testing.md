@@ -1170,7 +1170,7 @@ KVM 验收要求真实的不主动退出 vCPU 取消，以及 `KvmStateTransferC
 
 在 `native_cpu_only=true` 时，设置 `native_driver_tests=true` 可启用不依赖 Unicorn 的 `NeverDNativeDriverTests`。配置前，`build_wdk_driver_fixtures.py` 校验微软官方 WDK/SDK 10.0.26100.6584 包的完整 SHA-256，并从原始源码重建 48 个普通、CFG 或 DBG 驱动映像。`WDKDriverFixtures.def` 统一声明包身份、编译和链接参数及样例绑定。未经修改的微软文件和许可证保留在本地构建或缓存目录；CI 仅上传构建元数据和日志。清单记录工具版本、命令、源码与头文件摘要以及输出映像摘要。
 
-`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5082 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5505`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
+`NativeDriverTests.def` 要求 `DriverBuiltinImages.def` 与 `DriverBackendParityCases.def` 中全部 115 个负载产生 230 项 WHP 结果：27 个内建映像、48 个 WDK 映像及 40 个请求场景，各覆盖原始和重定位地址。完整必测清单为 `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`。30 项等待集合检查包含十六项可移植模型测试及十四项原创原生驱动测试。`run_native_cpu_ci.py --with-drivers` 在禁用 Unicorn 时保留精确清单和 JUnit 证据；必需样例缺失或跳过会使此可选验收失败，普通构建仍可不提供外部样例。固定位址映像保留预期的重定位拒绝。ARM64 原生客体执行仍未验证。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` 在两条不同启动指令前注入超时、停止及二者同时发生的中断，检查精确阶段诊断、消息自身持有的生命周期、错误类型和原因位、步骤间不变的统一截止时间及内存占用释放。既有真实传输失败与状态不匹配仍分别处理。原生 x64 启动验证预算为 `5 s`；普通客体截止时间及单步宽限不变。
 
@@ -1236,6 +1236,8 @@ checked Unicorn 使用 `MachineRunControl`：ARM64 维护、来宾执行和完�
 `NeverDRunControlTests` 包含可移植的 `NativeEntryTests.cpp` 和 Windows 启用 WHP 时的 `WhpEntryControlTests.cpp`。内存宿主回调验证拒绝入口、重试、晚到取消、真实错误保留、完成结果优先级和已确认的回调生命周期，无需 Hyper-V。`NeverDKvmRunTests` 检查调用线程完成、错误优先级及重复进入拒绝。真实 `NeverDKvmStateTransferTests` 执行 `KvmStateTransferCases.def` 原始指令；`ActualCPUExceptionOutranksStopDuringCapture` 和 `PublicCPUExceptionOutranksStopDuringCapture` 在真实寄存器/XSAVE 读取后停止，并保留除零异常、原始上下文、RAM 和显式恢复。Wine 上采用 Windows ABI 执行的可移植测试仅提供线程及控制协议证据，不证明原生 WHP 执行。不可用的原生后端仍明确跳过。
 
 `NeverDInstructionFetchTests` 通过 Unicorn、KVM 和 WHP，在内核态和用户态执行 x64/ARM64 checked 程序。`InstructionFetchCases.def` 覆盖操作数形式切换、相对分支、客户机和宿主通过代码别名写入、上下文恢复、权限撤销、独立页面存储、页尾预读、非法或截断编码及递归执行拒绝。Windows 原生 CI 要求全部 x64 WHP 用例通过。不可用的宿主/ISA 组合明确跳过；可移植 ARM64 执行不构成原生 ARM64 支持证据。
+
+`RepeatedOperandsSurviveCodeWorkingSetEviction` 在执行较大的代码集前后，重复验证操作数、内存钩子和相对分支。受检执行仅在当前指令字节一致时复用有容量上限且自行持有的 Capstone 元数据；每一步仍读取当前字节并检查执行权限。缓存命中保留完整操作数详情和解码器别名。
 
 `WhpStateTransferTests.cpp` 对两代 XSAVE API 注入寄存器传输，检查精确变化组、完整捕获、填充忽略、部分失败、取消、异常优先级及分区重建。`ContinuedStepsReuseCapturedRegistersAndFP` 统计省略的安装；`PartialTransferFailuresPreserveStateAndForceFullRetry` 要求完整恢复。这些是协议检查，不是原生执行证据；既有原生 FP、状态转换、驱动和 ring3 测试仍为必要验证。
 
@@ -1632,9 +1634,11 @@ ctest --test-dir build-source -L \
 
 `OriginalBinaryUndefinedIndependence.KernelPackedFlags*` 检查 CPL0 IF 清除／设置与 CPL3 反向控制、profile 匹配和摘要区分、TF/AC/IOPL 拒绝、关闭普通观察后仍必须检查最终 IF 依赖、恢复及精确／少一操作预算。`InterpreterMachineStateModel.GenerationRefusesUnsupportedOrMalformedInput` 也检查该原生内核 profile 不能静默选择用户态源码 ABI。生产未定义指令 admission 与驱动恢复 guards 未改变。
 
-`NeverDX86X87IntegerLoadTests` 将原始 `FILD m16/m32/m64` 与 Codegen、HighC、LLVMC 的默认/NoOpt 和 C O0/O2 路径比较，观察完整 binary80、输出保护字节、控制字及定义的 C1，覆盖全部 RC、有效 PC 和异常掩码。具体执行检查遍历所有 16 位输入及宽整数的二次幂边界；纯转换保留浮点状态和填充字节。反例覆盖待处理/未知异常、精确内存范围、畸形元数据，以及分支、平衡/不平衡循环和未知调用后的全路径空槽证明。仅凭 ABI 入口不能证明空栈；目标槽未知或已占用时拒绝发布完整函数。原生 oracle 要求 x64 GCC/Clang；这些测试不认证完整 x87 TOP/标签/状态交付、栈溢出模拟、原生异常与内存故障优先级或 Linux/macOS/x86-32 原生执行。`NeverDLLVMCIntrinsicSemanticTests` 还以 C O0/O2 和未定义行为陷阱执行至 64 位的标量 `llvm.abs`，检查定义的最小有符号值与单次求值。
+`NeverDX86X87IntegerLoadTests` 将原始 `FILD m16/m32/m64` 与 Codegen、HighC、LLVMC 的默认/NoOpt 和 C O0/O2 路径比较，观察完整 binary80、输出保护字节、控制字及定义的 C1，覆盖全部 RC、有效 PC 和异常掩码。具体执行检查遍历所有 16 位输入及宽整数的二次幂边界；纯转换保留浮点状态和填充字节。反例覆盖待处理/未知异常、精确内存范围、畸形元数据，以及分支、平衡/不平衡循环和未知调用后的全路径空槽证明。函数入口按调用约定从空寄存器栈开始，槽内取值未定义；其他位置目标槽未知或已占用时拒绝发布完整函数。原生 oracle 要求 x64 GCC/Clang；这些测试不认证完整 x87 TOP/标签/状态交付、栈溢出模拟、原生异常与内存故障优先级或 Linux/macOS/x86-32 原生执行。`NeverDLLVMCIntrinsicSemanticTests` 还以 C O0/O2 和未定义行为陷阱执行至 64 位的标量 `llvm.abs`，检查定义的最小有符号值与单次求值。
 
 ```sh
 cmake --build build-release --target NeverDX86X87IntegerLoadTests NeverDLLVMCIntrinsicSemanticTests
 ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCIntrinsicSemanticTests)$' --output-on-failure
 ```
+
+受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。

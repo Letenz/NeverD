@@ -58,6 +58,12 @@ std::set<int> detectPtrParamIds(const MedFunc &Med);
 /// subexpressions.
 void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
 
+/// Allow independent scalar-definition segments of a large function to run
+/// concurrently. MaxThreads is bounded by the process-wide thread setting and
+/// four workers; zero or one keeps the serial path. The caller must reserve
+/// this allowance outside any enclosing parallel function batch.
+void simplifyExprSemantics(std::vector<HighStmt> &Stmts, unsigned MaxThreads);
+
 /// Fold shared branch continuations after dead assignments have been removed.
 /// Preserve external entries and require exact fallthrough destinations.
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med = nullptr);
@@ -249,6 +255,13 @@ public:
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
 
+  /// Reserve workers for semantic rewriting inside this conversion. Keep the
+  /// default serial setting when conversions themselves already run in
+  /// parallel.
+  void setSemanticThreadLimit(unsigned MaxThreads) {
+    SemanticThreadLimit = MaxThreads;
+  }
+
   /// Observe expression creation without adding metadata to either IR. The
   /// observer must keep weak references: later transformations can replace an
   /// expression, and an expired reference must not map a recycled address.
@@ -313,6 +326,21 @@ private:
 
   ExprPtr medOpToExpr(const MedOp &Op);
   ExprPtr medOpToExprImpl(const MedOp &Op);
+  /// \p Op as stack the function allocates at run time (MedDynamicStack.h):
+  /// `sp - size` that becomes the stack pointer is storage the C allocates,
+  /// and a later `old_sp - size` the variable holding it; null otherwise.
+  ExprPtr dynamicStackExpr(const MedOp &Op);
+  void indexDynamicStack();
+  const MedFunc *DynamicStackFor = nullptr;
+  /// Each allocation's size, and the place of every operation that may
+  /// allocate or compute an allocation's base again, in block order.
+  std::map<const MedOp *, MedVar> DynamicStackAllocations;
+  std::map<const MedOp *, size_t> DynamicStackPlaces;
+  /// The first allocation of each size root: its place and its result.
+  std::map<std::pair<int, int>, std::pair<size_t, MedVar>> DynamicStackBases;
+  std::map<std::tuple<int, int, int>, const PhiNode *> DynamicStackPhis;
+  /// The allocation result each later base computation reads.
+  std::map<const MedOp *, MedVar> DynamicStackBaseUses;
   ExprPtr medvarToExpr(const MedVar &V);
   /// i386 ELF PIC (I386PicAddresses.cpp): the values the CFG proved to be the
   /// GOT base of an unlinked object, at address zero, and the sums of the
@@ -502,6 +530,7 @@ private:
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
+  unsigned SemanticThreadLimit = 1;
 };
 
 } // namespace neverd

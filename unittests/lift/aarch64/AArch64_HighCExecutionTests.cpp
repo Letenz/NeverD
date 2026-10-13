@@ -11,6 +11,9 @@
 
 #include "HighCHostExecution.h"
 
+#include <fstream>
+#include <iterator>
+
 class AArch64_HighCExecution : public HighCHostExecutionTest {
 protected:
   void expectRunsLikeSource(const std::string &Kernel, const std::string &Entry,
@@ -239,4 +242,219 @@ int offptr(int a) {
 }
 )C",
                        "offptr", {"offptr", "W"});
+}
+
+// The vectorized sum keeps a byte in w0, then `fmov x0, d0` and the
+// remainder loop's `madd x0` write the whole register.  Where the paths join,
+// a phi of the w0 view still holds the byte; the result is the x0 phi.
+TEST_F(AArch64_HighCExecution, AJoinReturnsTheWholeRegisterNotAStaleView) {
+  expectRunsLikeSource(R"C(
+long runs(long a) __attribute__((noinline));
+int rle(int a) {
+  long s = runs(a);
+  return (int)(s ^ (s >> 32));
+}
+long runs(long a) {
+  unsigned char in[48], val[48], run[48];
+  for (int i = 0; i < 48; i++)
+    in[i] = (unsigned char)(((unsigned)a + i / 3 * 5) & 7);
+  int n = 0, i = 0;
+  while (i < 48) {
+    unsigned char c = in[i];
+    int cnt = 0;
+    while (i < 48 && in[i] == c && cnt < 255) {
+      cnt++;
+      i++;
+    }
+    val[n] = c;
+    run[n] = (unsigned char)cnt;
+    n++;
+  }
+  long s = n * 10000;
+  for (int k = 0; k < n; k++)
+    s += (long)val[k] * 256 + run[k] * (k + 1);
+  return s;
+}
+)C",
+                       "rle", {"rle", "runs"});
+}
+
+// `mov w13, #0xc0000001` is the ORR alias, whose bitmask immediate Capstone
+// gives sign-extended to 64 bits.  The W register receives its low 32, which
+// the unsigned compare with x reads; as 0xFFFFFFFFC0000001 the compare was
+// always true.
+TEST_F(AArch64_HighCExecution, AMovedBitmaskImmediateIsItsLow32Bits) {
+  expectRunsLikeSource(R"C(
+int boolsc(int a) {
+  unsigned w = (unsigned)a + 9u;
+  long long acc = 0;
+  for (int i = 0; i < 80; i++) {
+    w = w * 1664525u + 1013904223u;
+    int x = (int)w;
+    if ((x > 0 && (x & 3) == 0) || ((unsigned)x > 0xC0000000u && (x >> 5) != 0))
+      acc += (long long)x * 5;
+    else if (x < 0 && ((x ^ i) & 1))
+      acc -= x;
+    else
+      acc ^= (long long)x << 3;
+  }
+  return (int)(acc ^ (acc >> 32));
+}
+)C",
+                       "boolsc", {"boolsc"});
+}
+
+// LDADD adds to m and returns its old value; the load after it reads the
+// sum.  Folded into one expression, `*(m) + 31 * __atomic_fetch_add(...)`
+// leaves the load and the add unsequenced, so the C may read m first.
+TEST_F(AArch64_HighCExecution, AnAtomicAddStaysBeforeTheLoadAfterIt) {
+  expectHighCRunsLikeSource(
+      {"-target", "aarch64-linux-gnu", "-march=armv8.1-a"},
+      R"C(
+int ldadd(int a) {
+  long m = 10;
+  long o = __atomic_fetch_add(&m, (long)a, __ATOMIC_RELAXED);
+  return (int)(o * 31 + m);
+}
+)C",
+      "ldadd", {"ldadd"}, {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
+}
+
+// A table of pointers to arrays becomes a relative table whose entries point
+// back to the arrays before it.  The code keeps the table's address in a
+// register it indexes and adds each entry back to, so the table's object
+// spans from the first array through the table.
+TEST_F(AArch64_HighCExecution, ARelativeTableHeldInARegisterReachesItsArrays) {
+  expectRunsLikeSource(R"C(
+int ptab(int a) {
+  static const int A[8] = {11, 22, 33, 44, 55, 66, 77, 88};
+  static const int B[8] = {2, 3, 5, 7, 11, 13, 17, 19};
+  static const int C[8] = {101, 202, 303, 404, 505, 606, 707, 808};
+  static const int *const tabs[3] = {A, B, C};
+  unsigned acc = (unsigned)a;
+  for (int i = 0; i < 96; i++) {
+    const int *tp = tabs[acc % 3u];
+    acc = acc * 131u + (unsigned)tp[(acc >> 2) & 7u] + (unsigned)i;
+  }
+  return (int)acc;
+}
+)C",
+                       "ptab", {"ptab"});
+}
+
+// SCVTF converts v as a signed 64-bit value, but the C of `v` is unsigned
+// arithmetic: `(float)(0x123456789 ^ ...)` converted an unsigned value.  A
+// signed conversion now reads its operand as a signed integer of its width.
+TEST_F(AArch64_HighCExecution, ASignedConversionReadsItsOperandSigned) {
+  expectRunsLikeSource(R"C(
+int i64f(int a) {
+  unsigned long long acc = 1;
+  unsigned s = (unsigned)a | 1u;
+  for (int i = 0; i < 100; i++) {
+    s = s * 1103515245u + 12345u;
+    long long v = ((long long)(int)s << 9) ^ 0x123456789LL;
+    unsigned long long u = ((unsigned long long)s << 32) | (s ^ 0x55u);
+    float f = (float)v, g = (float)u;
+    long long bv = (long long)(f * 0.5f);
+    unsigned long long bu = (unsigned long long)(g * 0.25f);
+    acc = acc * 131 + (unsigned long long)bv + bu;
+    acc ^= acc >> 29;
+  }
+  return (int)(acc ^ (acc >> 32));
+}
+)C",
+                       "i64f", {"i64f"});
+}
+
+// `subs w8, w8, #8; b.lt` tests N != V of one subtraction: the loop runs
+// while i < 8.  Spelled as the sign of i - 8 against __builtin_sub_overflow,
+// such a condition crashed Clang 23's loop passes (c_crc8); it is the signed
+// compare.
+TEST_F(AArch64_HighCExecution, FlagsOfASubtractionCompareSigned) {
+  KernelOptimization = "-O0";
+  expectRunsLikeSource(R"C(
+int crc8(int a) {
+  unsigned char crc = 0, b = (unsigned char)a;
+  for (int i = 0; i < 8; i++) {
+    if ((crc ^ b) & 0x80)
+      crc = (unsigned char)((crc << 1) ^ 7);
+    else
+      crc = (unsigned char)(crc << 1);
+    b = (unsigned char)(b << 1);
+  }
+  return crc;
+}
+)C",
+                       "crc8", {"crc8"});
+  std::ifstream Input(tmpFile("decompiled_high.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_EQ(C.find("__builtin_sub_overflow"), std::string::npos) << C;
+}
+
+// `movi d0, #0` zeroes the whole D register.  Lifted as a 4-byte constant
+// copied into it, the accumulator's upper half was an unknown value, and
+// the C trapped.
+TEST_F(AArch64_HighCExecution, AScalarMoviWritesTheWholeRegister) {
+  // The C fuses as the kernel does; the host runs its fma inline.
+  HostFlags = {"-mfma"};
+  expectHighCRunsLikeSource({"-target", "aarch64-linux-gnu"},
+                            R"C(
+int dotp(int a) {
+  unsigned s = (unsigned)a;
+  double acc = 0;
+  for (int it = 0; it < 120; it++) {
+    s = s * 1103515245u + 12345u;
+    double u[6], v[6], du = 0, dv = 0, dot = 0;
+    for (int i = 0; i < 6; i++) {
+      s = s * 1103515245u + 12345u;
+      u[i] = ((double)((s >> 9) & 0xff)) - 128.0;
+      v[i] = ((double)((s >> 17) & 0xff)) - 128.0;
+      du += u[i] * u[i];
+      dv += v[i] * v[i];
+    }
+    for (int i = 0; i < 6; i++)
+      dot += u[i] * v[i];
+    double den = du * dv + 1.0;
+    acc += dot * dot / den;
+  }
+  return (int)(long long)(acc * 64.0);
+}
+)C",
+                            "dotp", {"dotp"},
+                            {0, 1, -1, 0x15, 0x27, 0x3F, 0x12345678});
+}
+
+// `ldr x18, [x11, xzr, lsl #3]` reads the first label of a computed goto's
+// table: the zero register is the index, and it reads as zero.
+TEST_F(AArch64_HighCExecution, AZeroRegisterIndexReadsTheFirstEntry) {
+  expectRunsLikeSource(R"C(
+int lex(int a) {
+  static const void *cls[4] = {&&DIG, &&ALP, &&SPC, &&OTH};
+  unsigned acc = (unsigned)a, tok = 0;
+  for (int i = 0; i < 96; i++) {
+    unsigned c = ((acc >> (i & 15)) ^ (unsigned)(i * 131)) & 0xFF;
+    int k = c < 64 ? 0 : c < 128 ? 1 : c < 192 ? 2 : 3;
+    goto *cls[k];
+  DIG:
+    tok = tok * 10u + (c & 7u);
+    acc += c;
+    continue;
+  ALP:
+    tok = (tok << 4) ^ (c | 0x20u);
+    acc ^= c << 1;
+    continue;
+  SPC:
+    tok += 0x9E37u;
+    acc = (acc << 1) | (acc >> 31);
+    continue;
+  OTH:
+    tok ^= c * 2654435761u;
+    acc -= c;
+    continue;
+  }
+  return (int)(tok ^ acc);
+}
+)C",
+                       "lex", {"lex"});
 }

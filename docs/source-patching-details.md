@@ -422,3 +422,38 @@ compiler instructions and relocated unwind metadata; these CPU checks do not
 certify unavailable legacy OS runtimes or additional C++ unwinders.
 
 GCC 13 C object replacements on ELF x86, ARM32 and ARM64 were loaded and executed through Linux QEMU user mode. ELF32 GNU property alignment and ARM driver instruction-state selection have dedicated corrections; x64 GCC/G++ retains the separately verified seven C++ cases.
+
+### Local integration checks at `170e3ad4c`
+
+The integrated build passed all 143 source/IR/object CPU checks, 379 native
+exception contracts, 37 COFF exception contracts and 16 native SDK checks.
+The source suite passed 45 of 47 cases on the Mac, including NeverC ordinary
+mode and the seven PE FH3 scenarios under Wine. Its two Linux-only C++ cases
+were checked separately: Clang IR and GCC object replacements each passed all
+seven scenarios through the Linux loader in Docker. The GCC default profile
+passed; an additional `-O0` probe correctly refused the new unresolved
+`__stack_chk_fail` import absent from that original binary.
+
+After updating two old EHABI assertions for the shared decoder, all 25 ARM
+EHABI patch checks passed. Valid complete programs can use the implicit finish
+specified by EHABI32; truncated opcode operands still fail without changing
+the input. The unchanged binary-repair route passed 84 checks across the twelve
+architecture/format combinations and six native Darwin runtime checks.
+Python SDK integration passed 110 of 165 checks, with 55 missing-platform or
+fixture skips; ABI and mypy audits passed.
+
+The wider 7,314-execution run passed 7,208 cases, skipped 51 and failed 55.
+Two of those failures were the EHABI assertions corrected above. The remaining
+53 are not counted as passing coverage: 52 report compilation, linking or
+other C-output/toolchain errors, while
+`NativePointerRelocationBoundary.ScalarSelectIndexCycleRemainsNumericTableOffset`
+also fails with the private CLI built before the all-architecture change.
+These broader results do not replace the source-specific qualification.
+
+The all-architecture Windows run
+[38289348605](https://github.com/NeverSight/NeverD/actions/runs/38289348605)
+completed compilation but failed to link the matrix test's private
+`sourcePatchTargetTriple` dependency. No runtime cases executed in that run.
+The matrix target now links the owning codegen library on Windows; internal
+C++ APIs remain outside the DLL's public C interface. Qualification must be
+repeated after that test-target correction.

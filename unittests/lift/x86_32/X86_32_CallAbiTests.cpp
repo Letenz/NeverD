@@ -127,6 +127,42 @@ int use2(int a) {
 // quotient in EDX and the first argument in ECX, as Clang leaves them in a
 // regparm caller.  The host cannot run i386 function pointers, so the test
 // counts the arguments of each call through the pointer.
+// `mov ecx, [esp+ebp+0Ch]; call [ecx]`: the call reads the method through
+// the object's table pointer, two loads under an address that adds a
+// constant; the C must not take the inner sum for a table slot.
+TEST_F(X86_32_CallAbi, ACallThroughAFieldsTableLoadsTwice) {
+  HostFlags = {"-m32", "-march=pentium4"};
+  expectRunsLikeSource(R"C(
+struct obj;
+typedef int (*method)(struct obj *, int);
+struct table { method m; int tag; };
+struct obj { const struct table *vt; int val; };
+static int addm(struct obj *, int) __attribute__((noinline));
+static int mulm(struct obj *, int) __attribute__((noinline));
+static const struct table va = {addm, 10};
+static const struct table vm = {mulm, 20};
+int vcall(int a) {
+  unsigned s = (unsigned)a | 1u;
+  struct obj o[4];
+  long acc = 0;
+  for (int i = 0; i < 4; i++) {
+    o[i].vt = (i & 1) ? &vm : &va;
+    o[i].val = (int)(s + (unsigned)i);
+  }
+  for (int i = 0; i < 64; i++) {
+    s = s * 1103515245u + 12345u;
+    struct obj *q = &o[(s >> 5) & 3u];
+    acc += q->vt->m(q, (int)(s >> 9)) + q->vt->tag;
+    acc ^= acc >> 6;
+  }
+  return (int)(acc + o[0].val + o[3].val);
+}
+static int addm(struct obj *o, int x) { o->val += x; return o->val; }
+static int mulm(struct obj *o, int x) { o->val *= (x | 1); return o->val; }
+)C",
+                       "vcall", {"vcall", "addm", "mulm", "va", "vm"});
+}
+
 TEST_F(X86_32_CallAbi, AFunctionPointerCallTakesItsStackArguments) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "cross-target compilation requires Clang";

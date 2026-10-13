@@ -7,304 +7,318 @@
 
 class AArch64_Intrinsics : public NeverDLiftTest {
 protected:
-    std::string readDecompiledFile(const std::string& fname) {
-        auto f = tmpFile(fname);
-        std::ifstream ifs(f);
-        std::ostringstream ss;
-        ss << ifs.rdbuf();
-        return ss.str();
-    }
+  std::string readDecompiledFile(const std::string &fname) {
+    auto f = tmpFile(fname);
+    std::ifstream ifs(f);
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    return ss.str();
+  }
 };
 
-static fs::path obj(const char* name) {
-    return fs::path(TEST_OBJ_DIR) / name;
-}
+static fs::path obj(const char *name) { return fs::path(TEST_OBJ_DIR) / name; }
 
-static neverd::HighFunc fixedConvertHighFunc(const char* name,
+static neverd::HighFunc fixedConvertHighFunc(const char *name,
                                              neverd::Intrinsic iid,
                                              uint16_t inputBytes,
                                              uint16_t outputBytes,
                                              uint64_t fbits) {
-    using namespace neverd;
-    HighFunc func;
-    func.Name = name;
-    func.ReturnType = NdType::makeInt(outputBytes, false);
-    func.Params.push_back({"arg0", NdType::makeInt(inputBytes, false)});
+  using namespace neverd;
+  HighFunc func;
+  func.Name = name;
+  func.ReturnType = NdType::makeInt(outputBytes, false);
+  func.Params.push_back({"arg0", NdType::makeInt(inputBytes, false)});
 
+  MedVar input;
+  input.Kind = MedVar::Param;
+  input.Id = 0;
+  input.Size = inputBytes;
+  input.TheArch = Arch::AArch64;
+
+  auto call = HighExpr::makeCall(
+      "", 0, {HighExpr::makeVar(input), HighExpr::makeConst(fbits, 4)});
+  call->IntrinsicId = iid;
+  call->Type = func.ReturnType;
+
+  HighStmt ret;
+  ret.Kind = StmtKind::Return;
+  ret.RetVal = std::move(call);
+  func.Body.push_back(std::move(ret));
+  return func;
+}
+
+// A binary16 fixed-point conversion runs as its instruction, at any number
+// of fraction bits, in a function taking the fp16 feature: no compiler
+// declares an Arm builtin for it, and ACLE's vcvth_n_* stop at 16 bits.
+TEST_F(AArch64_Intrinsics, FixedFP16ConversionsRunTheirInstruction) {
+  using namespace neverd;
+  std::vector<HighFunc> funcs;
+  funcs.push_back(
+      fixedConvertHighFunc("scvtf_w", Intrinsic::A64_ScvtfFixed, 4, 2, 16));
+  funcs.push_back(
+      fixedConvertHighFunc("ucvtf_x", Intrinsic::A64_UcvtfFixed, 8, 2, 64));
+  funcs.push_back(
+      fixedConvertHighFunc("fcvtzs_w", Intrinsic::A64_FcvtzsFixed, 2, 4, 16));
+  funcs.push_back(
+      fixedConvertHighFunc("fcvtzu_x", Intrinsic::A64_FcvtzuFixed, 2, 8, 64));
+
+  std::string c;
+  llvm::raw_string_ostream os(c);
+  CEmitterOptions opts;
+  opts.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit(funcs, os, opts));
+  os.flush();
+
+  for (const char *Text :
+       {"scvtf %h0, %w1, #16", "ucvtf %h0, %x1, #64", "fcvtzs %w0, %h1, #16",
+        "fcvtzu %x0, %h1, #64", "__attribute__((target(\"+fp16\")))"})
+    EXPECT_NE(c.find(Text), std::string::npos) << Text << "\n" << c;
+  EXPECT_EQ(c.find("__builtin_arm_"), std::string::npos) << c;
+  EXPECT_EQ(c.find("__neverd_a64_"), std::string::npos) << c;
+
+  auto cFile = tmpFile("fixed_fp16_high.c");
+  std::ofstream output(cFile);
+  ASSERT_TRUE(output.good());
+  output << c;
+  output.close();
+  auto compiled = checkHighCClangCompile(
+      cFile, {"-target", "aarch64-none-elf", "-ffreestanding", "-std=gnu11"});
+  EXPECT_EQ(compiled.exitCode, 0) << compiled.err << "\n" << c;
+}
+
+TEST_F(AArch64_Intrinsics, ScalarBitReverseUsesWidthMatchedBuiltins) {
+  using namespace neverd;
+  std::vector<HighFunc> funcs;
+  for (uint16_t bytes : {uint16_t{1}, uint16_t{2}, uint16_t{4}, uint16_t{8}}) {
+    HighFunc func;
+    func.Name = "rbit" + std::to_string(bytes * 8);
+    func.ReturnType = NdType::makeInt(bytes, false);
+    func.Params.push_back({"arg0", NdType::makeInt(bytes, false)});
     MedVar input;
     input.Kind = MedVar::Param;
     input.Id = 0;
-    input.Size = inputBytes;
+    input.Size = bytes;
     input.TheArch = Arch::AArch64;
-
-    auto call = HighExpr::makeCall(
-        "", 0, {HighExpr::makeVar(input), HighExpr::makeConst(fbits, 4)});
-    call->IntrinsicId = iid;
+    auto call = HighExpr::makeCall("", 0, {HighExpr::makeVar(input)});
+    call->IntrinsicId = Intrinsic::A64_Rbit;
     call->Type = func.ReturnType;
-
     HighStmt ret;
     ret.Kind = StmtKind::Return;
     ret.RetVal = std::move(call);
     func.Body.push_back(std::move(ret));
-    return func;
-}
+    funcs.push_back(std::move(func));
+  }
 
-TEST_F(AArch64_Intrinsics, FixedFP16ConversionsUseArmCompilerBuiltins) {
-    using namespace neverd;
-    std::vector<HighFunc> funcs;
-    funcs.push_back(fixedConvertHighFunc("scvtf_w", Intrinsic::A64_ScvtfFixed,
-                                         4, 2, 16));
-    funcs.push_back(fixedConvertHighFunc("ucvtf_x", Intrinsic::A64_UcvtfFixed,
-                                         8, 2, 64));
-    funcs.push_back(fixedConvertHighFunc("fcvtzs_w", Intrinsic::A64_FcvtzsFixed,
-                                         2, 4, 16));
-    funcs.push_back(fixedConvertHighFunc("fcvtzu_x", Intrinsic::A64_FcvtzuFixed,
-                                         2, 8, 64));
+  std::string c;
+  llvm::raw_string_ostream os(c);
+  CEmitterOptions opts;
+  opts.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit(funcs, os, opts));
+  os.flush();
+  for (unsigned bits : {8U, 16U, 32U, 64U})
+    EXPECT_NE(c.find("__builtin_bitreverse" + std::to_string(bits) + "(arg0)"),
+              std::string::npos)
+        << c;
+  EXPECT_EQ(c.find("vrbitq"), std::string::npos) << c;
 
-    std::string c;
-    llvm::raw_string_ostream os(c);
-    CEmitterOptions opts;
-    opts.TheArch = Arch::AArch64;
-    ASSERT_TRUE(HighCEmitter().emit(funcs, os, opts));
-    os.flush();
-
-    EXPECT_NE(c.find("__builtin_arm_scvtf_fixed(arg0, 16, 0)"),
-              std::string::npos) << c;
-    EXPECT_NE(c.find("__builtin_arm_ucvtf_fixed(arg0, 64, 1)"),
-              std::string::npos) << c;
-    EXPECT_NE(c.find("__builtin_arm_fcvtzs_fixed(arg0, 16, 0)"),
-              std::string::npos) << c;
-    EXPECT_NE(c.find("__builtin_arm_fcvtzu_fixed(arg0, 64, 1)"),
-              std::string::npos) << c;
-    EXPECT_EQ(c.find("__neverd_a64_"), std::string::npos) << c;
-
-    auto cFile = tmpFile("fixed_fp16_high.c");
-    std::ofstream output(cFile);
-    ASSERT_TRUE(output.good());
-    output << c;
-    output.close();
-    auto syntax = checkHighCClangSyntax(
-        cFile, {"-target", "aarch64-none-elf", "-ffreestanding",
-                "-march=armv8.2-a+fp16", "-std=gnu11"});
-    EXPECT_EQ(syntax.exitCode, 0) << syntax.err << "\n" << c;
-}
-
-TEST_F(AArch64_Intrinsics, ScalarBitReverseUsesWidthMatchedBuiltins) {
-    using namespace neverd;
-    std::vector<HighFunc> funcs;
-    for (uint16_t bytes : {uint16_t{1}, uint16_t{2}, uint16_t{4},
-                           uint16_t{8}}) {
-        HighFunc func;
-        func.Name = "rbit" + std::to_string(bytes * 8);
-        func.ReturnType = NdType::makeInt(bytes, false);
-        func.Params.push_back({"arg0", NdType::makeInt(bytes, false)});
-        MedVar input;
-        input.Kind = MedVar::Param;
-        input.Id = 0;
-        input.Size = bytes;
-        input.TheArch = Arch::AArch64;
-        auto call = HighExpr::makeCall("", 0, {HighExpr::makeVar(input)});
-        call->IntrinsicId = Intrinsic::A64_Rbit;
-        call->Type = func.ReturnType;
-        HighStmt ret;
-        ret.Kind = StmtKind::Return;
-        ret.RetVal = std::move(call);
-        func.Body.push_back(std::move(ret));
-        funcs.push_back(std::move(func));
-    }
-
-    std::string c;
-    llvm::raw_string_ostream os(c);
-    CEmitterOptions opts;
-    opts.TheArch = Arch::AArch64;
-    ASSERT_TRUE(HighCEmitter().emit(funcs, os, opts));
-    os.flush();
-    for (unsigned bits : {8U, 16U, 32U, 64U})
-        EXPECT_NE(c.find("__builtin_bitreverse" + std::to_string(bits) +
-                         "(arg0)"), std::string::npos) << c;
-    EXPECT_EQ(c.find("vrbitq"), std::string::npos) << c;
-
-    auto cFile = tmpFile("scalar_rbit_high.c");
-    std::ofstream output(cFile);
-    ASSERT_TRUE(output.good());
-    output << c;
-    output.close();
-    auto syntax = checkHighCClangSyntax(
-        cFile, {"-target", "aarch64-none-elf", "-ffreestanding",
-                "-std=gnu11"});
-    EXPECT_EQ(syntax.exitCode, 0) << syntax.err << "\n" << c;
+  auto cFile = tmpFile("scalar_rbit_high.c");
+  std::ofstream output(cFile);
+  ASSERT_TRUE(output.good());
+  output << c;
+  output.close();
+  auto syntax = checkHighCClangSyntax(
+      cFile, {"-target", "aarch64-none-elf", "-ffreestanding", "-std=gnu11"});
+  EXPECT_EQ(syntax.exitCode, 0) << syntax.err << "\n" << c;
 }
 
 TEST(AArch64_HighCIntrinsics, FPSRUsesClangSystemRegisterBuiltins) {
-    using namespace neverd;
+  using namespace neverd;
 
-    HighFunc read;
-    read.Name = "read_fpsr";
-    read.ReturnType = NdType::makeInt(8, false);
-    auto get = HighExpr::makeCall(intrinsicCName(Intrinsic::A64_GetFPSR), 0,
-                                  {});
-    get->IntrinsicId = Intrinsic::A64_GetFPSR;
-    get->Type = read.ReturnType;
-    HighStmt readRet;
-    readRet.Kind = StmtKind::Return;
-    readRet.RetVal = std::move(get);
-    read.Body.push_back(std::move(readRet));
+  HighFunc read;
+  read.Name = "read_fpsr";
+  read.ReturnType = NdType::makeInt(8, false);
+  auto get = HighExpr::makeCall(intrinsicCName(Intrinsic::A64_GetFPSR), 0, {});
+  get->IntrinsicId = Intrinsic::A64_GetFPSR;
+  get->Type = read.ReturnType;
+  HighStmt readRet;
+  readRet.Kind = StmtKind::Return;
+  readRet.RetVal = std::move(get);
+  read.Body.push_back(std::move(readRet));
 
-    HighFunc write;
-    write.Name = "write_fpsr";
-    write.ReturnType = NdType::makeVoid();
-    write.Params.push_back({"arg0", NdType::makeInt(8, false)});
-    MedVar input;
-    input.Kind = MedVar::Param;
-    input.Id = 0;
-    input.Size = 8;
-    input.TheArch = Arch::AArch64;
-    auto set = HighExpr::makeCall(intrinsicCName(Intrinsic::A64_SetFPSR), 0,
-                                  {HighExpr::makeVar(input)});
-    set->IntrinsicId = Intrinsic::A64_SetFPSR;
-    HighStmt setStmt;
-    setStmt.Kind = StmtKind::Call;
-    setStmt.CallExpr = std::move(set);
-    write.Body.push_back(std::move(setStmt));
+  HighFunc write;
+  write.Name = "write_fpsr";
+  write.ReturnType = NdType::makeVoid();
+  write.Params.push_back({"arg0", NdType::makeInt(8, false)});
+  MedVar input;
+  input.Kind = MedVar::Param;
+  input.Id = 0;
+  input.Size = 8;
+  input.TheArch = Arch::AArch64;
+  auto set = HighExpr::makeCall(intrinsicCName(Intrinsic::A64_SetFPSR), 0,
+                                {HighExpr::makeVar(input)});
+  set->IntrinsicId = Intrinsic::A64_SetFPSR;
+  HighStmt setStmt;
+  setStmt.Kind = StmtKind::Call;
+  setStmt.CallExpr = std::move(set);
+  write.Body.push_back(std::move(setStmt));
 
-    std::string c;
-    llvm::raw_string_ostream os(c);
-    CEmitterOptions opts;
-    opts.TheArch = Arch::AArch64;
-    ASSERT_TRUE(HighCEmitter().emit({read, write}, os, opts));
-    os.flush();
+  std::string c;
+  llvm::raw_string_ostream os(c);
+  CEmitterOptions opts;
+  opts.TheArch = Arch::AArch64;
+  ASSERT_TRUE(HighCEmitter().emit({read, write}, os, opts));
+  os.flush();
 
-    EXPECT_NE(c.find("__builtin_arm_rsr64(\"FPSR\")"), std::string::npos)
-        << c;
-    EXPECT_NE(c.find("__builtin_arm_wsr64(\"FPSR\", arg0)"),
-              std::string::npos)
-        << c;
+  EXPECT_NE(c.find("__builtin_arm_rsr64(\"FPSR\")"), std::string::npos) << c;
+  EXPECT_NE(c.find("__builtin_arm_wsr64(\"FPSR\", arg0)"), std::string::npos)
+      << c;
 }
 
 TEST_F(AArch64_Intrinsics, AllStages) {
-    verifyAllModesSucceed(obj("test_intrinsics_a64.o"));
+  verifyAllModesSucceed(obj("test_intrinsics_a64.o"));
 }
 
 TEST_F(AArch64_Intrinsics, OnlyBrkIsUnreachable) {
-    auto r = liftToLLVMIR(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM IR lift failed: " << r.err;
+  auto r = liftToLLVMIR(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM IR lift failed: " << r.err;
 
-    auto functionStart = r.out.find("@test_brk_intrinsic");
-    ASSERT_NE(functionStart, std::string::npos) << r.out.substr(0, 3000);
-    functionStart = r.out.rfind("define ", functionStart);
-    ASSERT_NE(functionStart, std::string::npos);
-    auto functionEnd = r.out.find("\n}", functionStart);
-    ASSERT_NE(functionEnd, std::string::npos);
-    functionEnd += 2;
+  auto functionStart = r.out.find("@test_brk_intrinsic");
+  ASSERT_NE(functionStart, std::string::npos) << r.out.substr(0, 3000);
+  functionStart = r.out.rfind("define ", functionStart);
+  ASSERT_NE(functionStart, std::string::npos);
+  auto functionEnd = r.out.find("\n}", functionStart);
+  ASSERT_NE(functionEnd, std::string::npos);
+  functionEnd += 2;
 
-    const std::string brkFunction =
-        r.out.substr(functionStart, functionEnd - functionStart);
-    EXPECT_NE(brkFunction.find("call void @llvm.trap()"), std::string::npos)
-        << brkFunction;
-    EXPECT_NE(brkFunction.find("unreachable"), std::string::npos)
-        << brkFunction;
+  const std::string brkFunction =
+      r.out.substr(functionStart, functionEnd - functionStart);
+  EXPECT_NE(brkFunction.find("call void @llvm.trap()"), std::string::npos)
+      << brkFunction;
+  EXPECT_NE(brkFunction.find("unreachable"), std::string::npos) << brkFunction;
 
-    std::string otherFunctions = r.out;
-    otherFunctions.erase(functionStart, functionEnd - functionStart);
-    EXPECT_EQ(otherFunctions.find("unreachable"), std::string::npos)
-        << "Only architectural traps may be unreachable:\n"
-        << otherFunctions.substr(0, 3000);
+  std::string otherFunctions = r.out;
+  otherFunctions.erase(functionStart, functionEnd - functionStart);
+  EXPECT_EQ(otherFunctions.find("unreachable"), std::string::npos)
+      << "Only architectural traps may be unreachable:\n"
+      << otherFunctions.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, LLVM_NoNdStubs) {
-    auto r = liftToLLVMIR(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM IR lift failed: " << r.err;
-    EXPECT_TRUE(r.out.find("__nd_") == std::string::npos)
-        << "Found __nd_ extern stub in LLVM IR:\n"
-        << r.out.substr(0, 3000);
+  auto r = liftToLLVMIR(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM IR lift failed: " << r.err;
+  EXPECT_TRUE(r.out.find("__nd_") == std::string::npos)
+      << "Found __nd_ extern stub in LLVM IR:\n"
+      << r.out.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, Decompile_NoNdStubs) {
-    auto r = decompileToHighC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
-    auto cfile = tmpFile("decompiled_high.c");
-    auto content = std::string{};
-    { std::ifstream ifs(cfile); std::ostringstream ss; ss << ifs.rdbuf(); content = ss.str(); }
-    EXPECT_FALSE(content.empty()) << "Decompiled C is empty";
-    EXPECT_TRUE(content.find("__nd_") == std::string::npos)
-        << "Found __nd_ in decompiled C:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToHighC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  auto cfile = tmpFile("decompiled_high.c");
+  auto content = std::string{};
+  {
+    std::ifstream ifs(cfile);
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    content = ss.str();
+  }
+  EXPECT_FALSE(content.empty()) << "Decompiled C is empty";
+  EXPECT_TRUE(content.find("__nd_") == std::string::npos)
+      << "Found __nd_ in decompiled C:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, Decompile_NoMsvcAsm) {
-    auto r = decompileToHighC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
-    auto cfile = tmpFile("decompiled_high.c");
-    auto content = std::string{};
-    { std::ifstream ifs(cfile); std::ostringstream ss; ss << ifs.rdbuf(); content = ss.str(); }
-    EXPECT_TRUE(content.find("__asm {") == std::string::npos)
-        << "Found MSVC __asm{} in AArch64 decompile — should use ACLE or GNU __asm__ volatile:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToHighC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  auto cfile = tmpFile("decompiled_high.c");
+  auto content = std::string{};
+  {
+    std::ifstream ifs(cfile);
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    content = ss.str();
+  }
+  EXPECT_TRUE(content.find("__asm {") == std::string::npos)
+      << "Found MSVC __asm{} in AArch64 decompile — should use ACLE or GNU "
+         "__asm__ volatile:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, LlvmC_NoNdStubs) {
-    auto r = decompileToC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
-    auto cfile = tmpFile("decompiled.c");
-    auto content = std::string{};
-    { std::ifstream ifs(cfile); std::ostringstream ss; ss << ifs.rdbuf(); content = ss.str(); }
-    EXPECT_FALSE(content.empty()) << "LLVM C decompiled output is empty";
-    EXPECT_TRUE(content.find("__nd_") == std::string::npos)
-        << "Found __nd_ in LLVM C decompile:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
+  auto cfile = tmpFile("decompiled.c");
+  auto content = std::string{};
+  {
+    std::ifstream ifs(cfile);
+    std::ostringstream ss;
+    ss << ifs.rdbuf();
+    content = ss.str();
+  }
+  EXPECT_FALSE(content.empty()) << "LLVM C decompiled output is empty";
+  EXPECT_TRUE(content.find("__nd_") == std::string::npos)
+      << "Found __nd_ in LLVM C decompile:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, LlvmC_NoMsvcAsm) {
-    auto r = decompileToC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
-    auto content = readDecompiledFile("decompiled.c");
-    EXPECT_TRUE(content.find("__asm {") == std::string::npos)
-        << "Found MSVC __asm{} in AArch64 LLVM C decompile — should use GNU __asm__ volatile:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
+  auto content = readDecompiledFile("decompiled.c");
+  EXPECT_TRUE(content.find("__asm {") == std::string::npos)
+      << "Found MSVC __asm{} in AArch64 LLVM C decompile — should use GNU "
+         "__asm__ volatile:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, Decompile_DmbUsesACLE) {
-    auto r = decompileToHighC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
-    auto content = readDecompiledFile("decompiled_high.c");
-    EXPECT_TRUE(content.find("__dmb(") != std::string::npos)
-        << "Expected __dmb() ACLE intrinsic in AArch64 decompile:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToHighC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "Decompile failed: " << r.err;
+  auto content = readDecompiledFile("decompiled_high.c");
+  EXPECT_TRUE(content.find("__dmb(") != std::string::npos)
+      << "Expected __dmb() ACLE intrinsic in AArch64 decompile:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, LlvmC_BarriersUseACLE) {
-    auto r = decompileToC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
-    auto content = readDecompiledFile("decompiled.c");
-    EXPECT_TRUE(content.find("__dmb(") != std::string::npos)
-        << "Expected __dmb() in LLVM C:\n" << content.substr(0, 3000);
-    EXPECT_TRUE(content.find("__dsb(") != std::string::npos)
-        << "Expected __dsb() in LLVM C:\n" << content.substr(0, 3000);
-    EXPECT_TRUE(content.find("__isb(") != std::string::npos)
-        << "Expected __isb() in LLVM C:\n" << content.substr(0, 3000);
+  auto r = decompileToC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
+  auto content = readDecompiledFile("decompiled.c");
+  EXPECT_TRUE(content.find("__dmb(") != std::string::npos)
+      << "Expected __dmb() in LLVM C:\n"
+      << content.substr(0, 3000);
+  EXPECT_TRUE(content.find("__dsb(") != std::string::npos)
+      << "Expected __dsb() in LLVM C:\n"
+      << content.substr(0, 3000);
+  EXPECT_TRUE(content.find("__isb(") != std::string::npos)
+      << "Expected __isb() in LLVM C:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, LlvmC_HintsUseACLE) {
-    auto r = decompileToC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
-    auto content = readDecompiledFile("decompiled.c");
-    EXPECT_TRUE(content.find("__yield()") != std::string::npos)
-        << "Expected __yield() in LLVM C:\n" << content.substr(0, 3000);
-    EXPECT_TRUE(content.find("__builtin_arm_clrex()") != std::string::npos)
-        << "Expected __builtin_arm_clrex() in LLVM C:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
+  auto content = readDecompiledFile("decompiled.c");
+  EXPECT_TRUE(content.find("__yield()") != std::string::npos)
+      << "Expected __yield() in LLVM C:\n"
+      << content.substr(0, 3000);
+  EXPECT_TRUE(content.find("__builtin_arm_clrex()") != std::string::npos)
+      << "Expected __builtin_arm_clrex() in LLVM C:\n"
+      << content.substr(0, 3000);
 }
 
 TEST_F(AArch64_Intrinsics, LlvmC_CleanOutput) {
-    auto r = decompileToC(obj("test_intrinsics_a64.o"));
-    ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
-    auto content = readDecompiledFile("decompiled.c");
-    size_t frame_count = 0;
-    size_t pos = 0;
-    while ((pos = content.find("frame", pos)) != std::string::npos) {
-        ++frame_count; pos += 5;
-    }
-    EXPECT_EQ(frame_count, 0u)
-        << "Found frame variables in clean ARM intrinsic functions:\n"
-        << content.substr(0, 3000);
+  auto r = decompileToC(obj("test_intrinsics_a64.o"));
+  ASSERT_EQ(r.exitCode, 0) << "LLVM C decompile failed: " << r.err;
+  auto content = readDecompiledFile("decompiled.c");
+  size_t frame_count = 0;
+  size_t pos = 0;
+  while ((pos = content.find("frame", pos)) != std::string::npos) {
+    ++frame_count;
+    pos += 5;
+  }
+  EXPECT_EQ(frame_count, 0u)
+      << "Found frame variables in clean ARM intrinsic functions:\n"
+      << content.substr(0, 3000);
 }

@@ -21,6 +21,7 @@
 #include "llvm/ADT/ArrayRef.h"
 
 #include <cstdint>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -436,6 +437,11 @@ struct TargetRegInfo {
   /// binary format, or null where every one does (floatingParamRegs).  Set
   /// by getTargetRegInfo().
   size_t (*FloatingParamRegCount)(BinaryFormat Format) = nullptr;
+
+  /// The register that reads as zero wherever an instruction names it
+  /// (AArch64 XZR, kept as a register in a table index's address); none on
+  /// targets without one.  Set by getTargetRegInfo().
+  std::optional<uint64_t> ZeroRegister;
 };
 
 /// Return the register info table for the given architecture.

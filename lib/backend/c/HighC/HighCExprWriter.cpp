@@ -272,6 +272,10 @@ std::string HighCWriter::constStr(uint64_t Val, TypeRef Type) {
     return "0";
   if (Val <= limits::kDecimalConstThreshold)
     return std::to_string(Val);
+  // A constant of a type wider than eight bytes is its value zero-extended:
+  // a negative literal would convert to that type sign-extended.
+  if (Type && Type->Kind == NdTypeKind::Int && Type->Size > 8)
+    return "0x" + llvm::utohexstr(Val);
 
   if (Val == 0xFFFFFFFFFFFFFFFFULL)
     return "-1";
@@ -560,6 +564,10 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         (E.Type->Size == 1 || E.Type->Size == 2))
       return "((" + typeToC(E.Type) + ")(~" + exprStr(*E.Operands[0], 99) +
              "))";
+    // Past eight bytes C complements an operand in its own narrower type;
+    // the machine complements every byte of the result.
+    if (E.Type && E.Type->Kind == NdTypeKind::Int && E.Type->Size > 8)
+      return "~(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
     return "~" + exprStr(*E.Operands[0], 99);
   case NdOp::INT_NEG2: {
     // Reuse the integer subtraction rule for -x, including signed-minimum
@@ -834,7 +842,22 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
   case NdOp::FLOAT_ISNAN:
     return "__builtin_isnan(" + exprStr(*E.Operands[0]) + ")";
   case NdOp::FLOAT_INT2FLOAT:
-  case NdOp::FLOAT_UINT2FLOAT:
+  case NdOp::FLOAT_UINT2FLOAT: {
+    // The conversion reads its operand as a signed or an unsigned integer of
+    // its width, whatever C type the operand's text has: `(float)(x ^ 9)` of
+    // an unsigned x converts an unsigned value.
+    const HighExpr &Source = *E.Operands[0];
+    if (isPlainInteger(Source.Type)) {
+      const bool Signed = E.Op == NdOp::FLOAT_INT2FLOAT;
+      const uint16_t Width = Source.Type->Size;
+      return "(" + typeToC(E.Type) + ")" +
+             (declaredLocalInteger(Source, Width, Signed)
+                  ? exprStr(Source, 99)
+                  : castOperandText(integerView(
+                        Source, NdType::makeInt(Width, Signed), 99)));
+    }
+    return "(" + typeToC(E.Type) + ")" + exprStr(Source, 99);
+  }
   case NdOp::FLOAT_FLOAT2FLOAT:
     return "(" + typeToC(E.Type) + ")" + exprStr(*E.Operands[0], 99);
   default:
@@ -1879,6 +1902,25 @@ std::string HighCWriter::intrinsicOperandStr(const HighExpr &E) {
   const HighExpr *P = peelIntegerViewOps(&E);
   if (!P)
     return exprStr(E);
+  // A view wider than its source extends it, with zeros or its sign.  The
+  // source's text says so only where C's own conversion to the wide type
+  // extends the same way: zeros for an unsigned source, its sign for a
+  // signed one.  A zero-extended signed source keeps the extension's text.
+  if (P->Type && E.Type && P->Type->Size < E.Type->Size) {
+    bool Zero = false, Sign = false;
+    for (const HighExpr *Cur = &E; Cur && Cur != P;
+         Cur = Cur->Operands.empty() ? nullptr : Cur->Operands[0].get())
+      if (Cur->Kind == ExprKind::UnaryOp &&
+          (Cur->Op == NdOp::INT_ZEXT || Cur->Op == NdOp::INT_SEXT) &&
+          Cur->Operands.size() == 1 && Cur->Operands[0] &&
+          Cur->Operands[0]->Type && Cur->Type &&
+          Cur->Operands[0]->Type->Size < Cur->Type->Size)
+        (Cur->Op == NdOp::INT_ZEXT ? Zero : Sign) = true;
+    const bool SourceSigned =
+        P->Type->Kind == NdTypeKind::Int && P->Type->IsSigned;
+    if ((Zero && Sign) || (Zero && SourceSigned) || (Sign && !SourceSigned))
+      return exprStr(E);
+  }
   if (P->Kind == ExprKind::Var || P->Kind == ExprKind::Phi ||
       P->Kind == ExprKind::Const || P->Kind == ExprKind::Load)
     return exprStr(*P);
@@ -3743,7 +3785,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
     return UntypedCallee("(uintptr_t)(" + exprStr(E) + ")");
   // Slot load of `*(vtbl + imm)` where `vtbl` is `*obj` (MSVC vfptr at 0).
   // Keep the inner vfptr load; `obj + imm` would name a field, not a method.
-  if (Depth >= 1 && Base) {
+  // Only one load reads the slot: under a second (`**(p + imm)`, a call
+  // through a field's pointer to a function pointer) the sum is the field.
+  if (Depth == 1 && Base) {
     const HighExpr *Addr = peelIntegerViewOps(Base);
     if (Addr && Addr->Kind == ExprKind::BinOp && Addr->Op == NdOp::INT_ADD &&
         Addr->Operands.size() == 2 && Addr->Operands[0] && Addr->Operands[1]) {

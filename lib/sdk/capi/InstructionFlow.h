@@ -143,10 +143,11 @@ FunctionPage functionPage(const Session &S, va_t FirstEntry, int MaxFunctions);
 /// Decodes each function of \p Page in \p Img with a decoder of its own,
 /// functions in parallel, and calls \p Visit(Index, Decoder, Instruction) for
 /// each of its instructions in order: up to the function's recorded size, or
-/// to its first terminator when it has none.  One function's visits run on
-/// one thread, so writing only to its own output keeps the result
-/// independent of the thread count.  False when a decoder could not be set
-/// up.
+/// to its first terminator when it has none, then the parts of it that lie
+/// apart from its body (ExceptionInfo::outlyingChunks).  One function's
+/// visits run on one thread, so writing only to its own output keeps the
+/// result independent of the thread count.  False when a decoder could not
+/// be set up.
 bool decodeFunctions(
     const BinaryImage &Img, const FunctionPage &Page,
     llvm::function_ref<void(size_t Index, Decoder &, const DecodedInsn &)>

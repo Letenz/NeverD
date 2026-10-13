@@ -7507,6 +7507,55 @@ TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
   EXPECT_EQ(Summary(1, false), 8u);
 }
 
+TEST(CallRegisterEffects, ASyscallReadsOnlyItsOwnArguments) {
+  // `mov eax, N; syscall`: the lifter keeps all six argument registers live,
+  // packing RDX:RSI and R8:R10.  Linux exit (60) reads only RDI; a number
+  // the arity table does not list may read every argument register.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  auto Reads = [&](uint64_t Number) {
+    LowFunc Low = makeOneBlockLow(0x1000, "sys", [&](auto Push) {
+      Push(NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {NdVar::cst(Number, 8)});
+      Push(NdOp::CONCAT, NdVar::tmp(1, 16),
+           {NdVar::reg(x86reg::RDX, 8), NdVar::reg(x86reg::RSI, 8)});
+      Push(NdOp::CONCAT, NdVar::tmp(2, 16),
+           {NdVar::reg(x86reg::R8, 8), NdVar::reg(x86reg::R10, 8)});
+      Push(NdOp::INTRINSIC, NdVar::tmp(3, 16),
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::X64Syscall), 2),
+            NdVar::reg(x86reg::RAX, 8), NdVar::reg(x86reg::RDI, 8),
+            NdVar::tmp(1, 16), NdVar::tmp(2, 16), NdVar::reg(x86reg::R9, 8)});
+    });
+    LowBlock &Block = Low.Blocks.front();
+    for (const auto [First, Count] :
+         {std::pair<size_t, size_t>{0, 1}, {1, 3}, {4, 1}}) {
+      LowInstructionBoundary Boundary;
+      Boundary.Address = 0x1000 + First;
+      Boundary.Size = 1;
+      Boundary.FirstOp = First;
+      Boundary.OpCount = Count;
+      Block.InstructionBoundaries.push_back(Boundary);
+    }
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+        (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    return solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}},
+                                    Args, Args)
+        .EntryReads.at(0x1000);
+  };
+  const GPRReadWidths Exit = Reads(60);
+  EXPECT_EQ(Exit[x86reg::RDI / 8], 8u);
+  for (uint64_t Register :
+       {x86reg::RSI, x86reg::RDX, x86reg::R10, x86reg::R8, x86reg::R9})
+    EXPECT_EQ(Exit[Register / 8], 0u) << Register;
+  const GPRReadWidths Unlisted = Reads(0x7FFF);
+  for (uint64_t Register : {x86reg::RDI, x86reg::RSI, x86reg::RDX, x86reg::R10,
+                            x86reg::R8, x86reg::R9})
+    EXPECT_EQ(Unlisted[Register / 8], 8u) << Register;
+}
+
 TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {
   const BinaryImage Img = win64Image();
   // [rsp+40h] after `sub rsp, 18h` is the first stack argument.

@@ -266,6 +266,8 @@ bool liftArith(AArch64Lifter &L, AArch64Lifter::LiftState &S,
     if (Insn->is_alias && ARM64.op_count == 2) {
       NdVar Dst = L.operandWrite(ARM64.operands[0]);
       NdVar Src = L.operandRead(S, ARM64.operands[1]);
+      if (ARM64.operands[1].type == AARCH64_OP_IMM)
+        Src = movedImmediate(S, Src, Dst);
       S.emit(NdOp::COPY, Dst, {Src});
       // W/X view sync is handled by the lift() zero-extension post-pass and
       // the table-driven sub-register fixup; an explicit narrow `COPY Wd, Ws`
