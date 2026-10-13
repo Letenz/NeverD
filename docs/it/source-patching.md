@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](source-patching.md) | [Русский](../ru/source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
+<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
 
 [← Documentation Index](README.md)
 
@@ -129,4 +129,4 @@ ctest --test-dir build-source -L \
 
 La copia LLVM corregge anche i riferimenti dati GOT Mach-O x64: la tabella catch tipizzata di Clang è relativa alla fine della parola di rilocazione di quattro byte. r3/r4 la sposta di quattro byte; la verifica prima della pubblicazione rifiuta il risultato. Sul Mac, x64 usa Rosetta 2 e ARM64 viene eseguito direttamente.
 
-La verifica nativa Windows x64 [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) ha superato tutti i 15 test mirati PE/oggetti/trampoline e i 48 test della matrice dei target, senza casi saltati. Il test FH3 ha eseguito sette scenari C++. Questa esecuzione ha usato Clang 22.1.6 con MSVC e Windows SDK nativi.
+La verifica nativa Windows x64 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) ha superato tutti i 16 test mirati PE/oggetti/trampoline e i 143 test della matrice dei target CPU, senza casi saltati. Il test FH3 ha eseguito sette scenari C++; la matrice usa Unicorn. Questa esecuzione ha usato Clang 22.1.6 con MSVC e Windows SDK nativi e LLVM integrato.

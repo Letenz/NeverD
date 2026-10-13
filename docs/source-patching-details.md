@@ -455,5 +455,33 @@ The all-architecture Windows run
 completed compilation but failed to link the matrix test's private
 `sourcePatchTargetTriple` dependency. No runtime cases executed in that run.
 The matrix target now links the owning codegen library on Windows; internal
-C++ APIs remain outside the DLL's public C interface. Qualification must be
-repeated after that test-target correction.
+C++ APIs remain outside the DLL's public C interface. The successful replay
+after that test-target correction is recorded below.
+
+### Native Windows replay and final integration (2026-10-13)
+
+[Windows run 38307461805](https://github.com/NeverSight/NeverD/actions/runs/38307461805)
+completed successfully at `2ed7e78fc8e2549cb9e7d0f7d81a4404cdfbc128`.
+The downloaded XML reports contain exactly 16 focused PE/object/trampoline
+checks and 143 CPU matrix checks, with no failures, errors, disabled cases or
+skips. The run built integrated LLVM with MSVC and used Clang 22.1.6 plus the
+native Windows SDK/CRT. The FH3 case executed all seven C++ runtime scenarios
+under Windows. The matrix uses Unicorn and retains the OS-runtime limits above.
+
+The same commit's freshly rebuilt Mac binaries passed 143 matrix checks,
+234 focused native exception contracts and 37 COFF exception contracts.
+The source suite passed 45 of 47 checks, including ordinary NeverC and all
+seven PE FH3 scenarios under Wine; its two Linux-only object exception cases
+were skipped on the Mac. These four binaries ran 461 checks: 459 passed and
+two skipped. This count is for these focused binaries, without duplicate
+contracts from the broader lift suite. The separate Linux runtime evidence and
+the broader unresolved failures remain as recorded above.
+
+After integrating `dev` through `40632e259`, the freshly rebuilt CLI and these
+four test binaries repeated the same 459 passes and two Linux-only skips.
+The final CLI's Clang IR and GCC object replacements each also passed all seven
+Linux C++ runtime scenarios through the Docker Linux loader. This local replay
+does not change the exact commit qualified by the Windows run above.
+
+English and all ten localized source guides now link this successful native
+Windows run and distinguish its native PE execution from the CPU matrix.
