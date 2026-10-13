@@ -51,6 +51,21 @@ bool RegistrationStateSolver::initializeOrder() {
   // and merge every reaching frame before a fixed point can be published.
   if (!Visit(Entries.at(Function.Entry)))
     return false;
+  if (SEHControls && !KnownCxx) {
+    // An except body is entered as parent code by the checked registration
+    // dispatcher. A filter or finally entry alone cannot authorize a parent
+    // continuation into an otherwise unreachable callback interior.
+    for (const auto &Scope : Chain.Scopes)
+      if (!Scope.IsFinally)
+        if (auto Handler = Entries.find(Scope.HandlerVA);
+            Handler != Entries.end() && !Visit(Handler->second))
+          return false;
+    if (!charge(Function.Blocks.size()))
+      return false;
+    for (size_t I = 0; I != Seen.size(); ++I)
+      if (Seen[I])
+        SEHParentEntries.insert(Function.Blocks[I].StartAddr);
+  }
   for (const auto &[Address, Index] : Entries)
     if (!Visit(Index))
       return false;

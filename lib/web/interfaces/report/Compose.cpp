@@ -43,7 +43,8 @@ composePassiveReport(const PassiveSourceEvidence *Source,
     if (Result.Records.size() >= MaxPassiveReportRecords)
       throw Error("passive_report_record_budget_exceeded");
     R.ID = identity("passive-report-record",
-                    {Result.ID, R.Kind, R.AnchorID, R.RelatedID});
+                    {Result.ID, R.Kind, R.AnchorID, R.RelatedID,
+                     R.Structure ? R.Structure->NodeID : ""});
     Result.StaticRecords += R.EvidenceClass == "static_inference";
     Result.ObservedRecords += R.EvidenceClass == "imported_observation";
     Result.Records.push_back(std::move(R));

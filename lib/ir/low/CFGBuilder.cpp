@@ -438,7 +438,8 @@ bool mayWriteOwnReturnSlot(const StackFrameModel &M, const LowOp &Op,
 /// still moving after limits::kStackOffsetWideningJoins joins at one block
 /// becomes unbounded; otherwise states only lose entries or grow, so it ends.
 void solveStackOffsets(const StackFrameModel &M, const LowFunc &Func,
-                       std::vector<std::optional<StackOffsetState>> &In) {
+                       std::vector<std::optional<StackOffsetState>> &In,
+                       const std::set<va_t> &Returns = {}) {
   const size_t N = Func.Blocks.size();
   std::vector<unsigned> Joins(N, 0);
   std::vector<int> Work;
@@ -451,6 +452,9 @@ void solveStackOffsets(const StackFrameModel &M, const LowFunc &Func,
     StackOffsetState Out = *In[B];
     for (const LowOp &Op : Func.Blocks[B].Ops)
       transferStackOffsets(M, Op, Out);
+    if (!Func.Blocks[B].Ops.empty() &&
+        Returns.count(Func.Blocks[B].Ops.back().Addr))
+      continue;
     for (int S : Func.Blocks[B].Succs) {
       if (S < 0 || static_cast<size_t>(S) >= N)
         continue;
@@ -526,7 +530,7 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     }
     return std::nullopt;
   };
-  auto Reach = [&](size_t From) {
+  auto Reach = [&](size_t From, const std::set<va_t> &Returns) {
     std::vector<bool> Reached(N, false);
     std::vector<int> Work{static_cast<int>(From)};
     while (!Work.empty()) {
@@ -535,6 +539,9 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
       if (Reached[B])
         continue;
       Reached[B] = true;
+      if (!Func.Blocks[B].Ops.empty() &&
+          Returns.count(Func.Blocks[B].Ops.back().Addr))
+        continue;
       for (int S : Func.Blocks[B].Succs)
         if (S >= 0 && static_cast<size_t>(S) < N)
           Work.push_back(S);
@@ -547,6 +554,7 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
   };
 
   std::vector<bool> ReachedByAny(N, false);
+  std::set<va_t> NonlocalReturns;
   for (const auto &[Target, Sites] : OwnInteriorCallSites) {
     auto TargetBlock = BlockAt.find(Target);
     if (TargetBlock == BlockAt.end())
@@ -591,12 +599,17 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     if (!Seed)
       continue;
 
-    const std::vector<bool> Reached = Reach(TargetBlock->second);
+    std::set<va_t> ReplayedReturns;
+    for (const auto &[Address, Return] : OwnInteriorReturns)
+      if (Return.Target == Target)
+        ReplayedReturns.insert(Address);
+    const std::vector<bool> Reached =
+        Reach(TargetBlock->second, ReplayedReturns);
     for (size_t B = 0; B < N; ++B)
       ReachedByAny[B] = ReachedByAny[B] || Reached[B];
     std::vector<std::optional<StackOffsetState>> FromSlot(N);
     FromSlot[TargetBlock->second] = *Seed;
-    solveStackOffsets(M, Func, FromSlot);
+    solveStackOffsets(M, Func, FromSlot, ReplayedReturns);
 
     // Where the slot-relative offset is lost, the entry stack pointer still
     // places the return above every slot the calls pushed when all of them
@@ -631,28 +644,42 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     bool ConsumesSlot = false, Discards = false;
     std::vector<bool> MayWriteSlot(N, false);
     std::vector<size_t> ConsumingReturns;
+    std::map<va_t, size_t> ConsumingSites;
+    std::set<va_t> DiscardingSites;
     std::optional<va_t> Unproven;
     for (size_t B = 0; B < N && !Unproven; ++B) {
       if (!Reached[B])
         continue;
       StackOffsetState S = FromSlot[B] ? *FromSlot[B] : StackOffsetState{};
+      StackOffsetState Parent =
+          FromEntry[B] ? *FromEntry[B] : StackOffsetState{};
       for (const LowOp &Op : Func.Blocks[B].Ops) {
-        if (Op.Opcode == NdOp::RETURN) {
+        const bool Replayed = Op.Seq == 0 && ReplayedReturns.count(Op.Addr);
+        if (Op.Opcode == NdOp::RETURN || Replayed) {
           auto SP = S.find(StackPointerKey);
           const bool Slot = SP != S.end() && SP->second.Base == 0;
           if (Slot && SP->second.Lo == 0 && SP->second.Hi == 0) {
             ConsumesSlot = true;
             ConsumingReturns.push_back(B);
+            ConsumingSites.emplace(Op.Addr, B);
           } else if ((Slot && SP->second.Lo > 0) || AboveEverySlot(Op.Addr)) {
             Discards = true;
+            DiscardingSites.insert(Op.Addr);
           } else {
             Unproven = Op.Addr;
             break;
           }
+          if (Replayed)
+            break;
           continue;
         }
-        MayWriteSlot[B] = MayWriteSlot[B] || mayWriteOwnReturnSlot(M, Op, S);
+        // Returning through an intact internal PC does not prove the
+        // enclosing invocation's PC survived. Both coordinate systems must
+        // exclude every write reaching an ordinary internal return.
+        MayWriteSlot[B] = MayWriteSlot[B] || mayWriteOwnReturnSlot(M, Op, S) ||
+                          mayWriteOwnReturnSlot(M, Op, Parent);
         transferStackOffsets(M, Op, S);
+        transferStackOffsets(M, Op, Parent);
       }
     }
     // A clobber matters only when it can flow to an ordinary return.
@@ -672,12 +699,128 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
         if (P >= 0 && size_t(P) < N)
           ConsumingReturns.push_back(size_t(P));
     }
-    if (!Unproven && ConsumesSlot && Discards)
-      Unproven = Target;
+    if (!Unproven && ConsumesSlot && Discards) {
+      // Resolve an invocation, not an arbitrary RET whose SP happens to
+      // match. There must be one call site, no independent entry reaching a
+      // consuming return, and no path back to the call before that return.
+      // Language EH activations require their own parent/callback bridge.
+      bool Valid = Sites.size() == 1 && Func.hasCompleteLiftCoverage();
+      const auto Call = Insns.find(*Sites.begin());
+      Valid &= Call != Insns.end();
+      const va_t Continuation =
+          Call == Insns.end() ? InvalidVA : Call->first + Call->second.Size;
+      const auto *Own = Img.ExceptionMetadata.findFunction(Func.Entry);
+      Valid &= Own && Own->CodeRange.contains(Continuation) &&
+               Own->ParseStatus == ExceptionParseStatus::Complete &&
+               !Own->hasLanguageTable() && !Own->Rust && !Own->ObjC &&
+               Own->Personality == ExceptionPersonality::None &&
+               Own->PersonalityVA == 0 && Own->PersonalityName.empty() &&
+               Own->HandlerDataVA == 0 &&
+               (!Own->Dwarf || Own->Dwarf->LSDAVA == 0);
+      std::optional<size_t> Caller;
+      for (size_t B = 0; B < N; ++B) {
+        if (Func.Blocks[B].StartAddr <= *Sites.begin() &&
+            *Sites.begin() < Func.Blocks[B].EndAddr)
+          Caller = B;
+        if (Reached[B] && llvm::any_of(Func.Blocks[B].Ops, [](const LowOp &Op) {
+              return Op.Opcode == NdOp::INDIR_BR;
+            }))
+          Valid = false;
+      }
+      Valid &= Caller && !Reached[*Caller];
+      std::vector<size_t> Pending;
+      for (const auto &[Address, Block] : ConsumingSites) {
+        const auto *Segment = Img.getSegmentFor(Address);
+        Valid &= Segment && Address >= Segment->VA &&
+                 Address - Segment->VA < Segment->Data.size() &&
+                 Segment->Data[Address - Segment->VA] == 0xc3 &&
+                 Func.Blocks[Block].EndAddr == Address + 1;
+        Pending.push_back(Block);
+      }
+      std::vector<bool> Seen(N, false);
+      while (Valid && !Pending.empty()) {
+        const size_t B = Pending.back();
+        Pending.pop_back();
+        if (Seen[B])
+          continue;
+        Seen[B] = true;
+        const auto &Block = Func.Blocks[B];
+        if (Block.Preds.empty() || !Block.ExceptionalPreds.empty() ||
+            Func.ModuleAnalysisRoots.count(Block.StartAddr) ||
+            Func.OrdinaryModuleAnalysisRoots.count(Block.StartAddr)) {
+          Valid = false;
+          break;
+        }
+        for (int P : Block.Preds) {
+          if (B == TargetBlock->second && size_t(P) == *Caller)
+            continue;
+          if (P < 0 || size_t(P) >= N || !Reached[P]) {
+            Valid = false;
+            break;
+          }
+          Pending.push_back(size_t(P));
+        }
+      }
+      if (Valid) {
+        NonlocalReturns.insert(DiscardingSites.begin(), DiscardingSites.end());
+        const OwnInteriorReturn Return{Target, *Sites.begin(), Continuation};
+        for (const auto &[Address, Block] : ConsumingSites) {
+          const auto [It, New] = Verdict.Returns.emplace(Address, Return);
+          if (!New && It->second != Return)
+            Unproven = Address;
+        }
+      } else
+        Unproven = Target;
+    }
     if (Unproven)
       NoteUnproven(*Unproven);
-    else if (ConsumesSlot)
+    else if (ConsumesSlot && !Discards)
       Verdict.Subroutines.insert(Target);
+  }
+
+  // Abandoning an internal PC does not authorize an arbitrary outer RET.
+  // The parent's physical PC must still occupy the entry slot and survive
+  // every reaching write. This is independent of the internal-slot proof:
+  // a write disjoint from that slot can corrupt the parent instead.
+  if (!NonlocalReturns.empty() && !Verdict.Unproven) {
+    std::vector<bool> MayWriteParentSlot(N, false), Seen(N, false);
+    std::vector<size_t> Pending;
+    for (size_t B = 0; B < N; ++B) {
+      StackOffsetState S = FromEntry[B] ? *FromEntry[B] : StackOffsetState{};
+      for (const LowOp &Op : Func.Blocks[B].Ops) {
+        if (Op.Opcode == NdOp::RETURN && NonlocalReturns.count(Op.Addr) &&
+            !Verdict.Returns.count(Op.Addr)) {
+          const auto SP = S.find(StackPointerKey);
+          if (SP == S.end() || SP->second != StackOffsetRange{0, 0, 0})
+            NoteUnproven(Op.Addr);
+          Pending.push_back(B);
+        }
+        MayWriteParentSlot[B] =
+            MayWriteParentSlot[B] || mayWriteOwnReturnSlot(M, Op, S);
+        transferStackOffsets(M, Op, S);
+      }
+    }
+    while (!Pending.empty() && !Verdict.Unproven) {
+      const size_t B = Pending.back();
+      Pending.pop_back();
+      if (Seen[B])
+        continue;
+      Seen[B] = true;
+      const auto &Block = Func.Blocks[B];
+      if (MayWriteParentSlot[B] || !Block.ExceptionalPreds.empty() ||
+          (Block.StartAddr != Func.Entry &&
+           (Block.Preds.empty() ||
+            Func.ModuleAnalysisRoots.count(Block.StartAddr) ||
+            Func.OrdinaryModuleAnalysisRoots.count(Block.StartAddr)))) {
+        NoteUnproven(Block.StartAddr);
+        break;
+      }
+      for (int P : Block.Preds)
+        if (P < 0 || size_t(P) >= N)
+          NoteUnproven(Block.StartAddr);
+        else
+          Pending.push_back(size_t(P));
+    }
   }
 
   // Whatever the targets do with their own slots, a return they lead to
@@ -688,6 +831,8 @@ CFGBuilder::classifyOwnInteriorCalls(const BinaryImage &Img,
     StackOffsetState S = *FromEntry[B];
     for (const LowOp &Op : Func.Blocks[B].Ops) {
       if (Op.Opcode == NdOp::RETURN) {
+        if (Verdict.Returns.count(Op.Addr))
+          continue;
         auto SP = S.find(StackPointerKey);
         if (SP != S.end() && SP->second.Base == 0 && SP->second.Hi < 0) {
           NoteUnproven(Op.Addr);
@@ -705,19 +850,30 @@ LowFunc CFGBuilder::build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                           const std::string &FuncName) {
   // A call into the function's own body starts as a push and a jump.  Each
   // target found to be a subroutine, one whose return pops that call's own
-  // return address, is lifted again as an ordinary call; anything else that
-  // cannot be proven makes the return that breaks the proof unsupported.
+  // return address, is lifted again as an ordinary call. A single invocation
+  // with separate normal and nonlocal exits can resume its proved RET at the
+  // exact continuation; decoding that continuation must revalidate the proof.
+  // Anything else makes the return that breaks the proof unsupported.
   KeptOwnInteriorCallTargets.clear();
+  OwnInteriorReturns.clear();
   RegistrationCallees.reset();
   X87CallEffects.reset();
   for (;;) {
     LowFunc Func = buildOnce(Img, Dec, EntryAddr, FuncName);
     if (OwnInteriorCallSites.empty())
       return Func;
-    const OwnInteriorCallVerdict Verdict = classifyOwnInteriorCalls(Img, Func);
+    OwnInteriorCallVerdict Verdict = classifyOwnInteriorCalls(Img, Func);
+    for (const auto &[Address, Return] : OwnInteriorReturns)
+      if (auto It = Verdict.Returns.find(Address);
+          It == Verdict.Returns.end() || It->second != Return)
+        Verdict.Unproven = Address;
     if (!Verdict.Subroutines.empty()) {
       KeptOwnInteriorCallTargets.insert(Verdict.Subroutines.begin(),
                                         Verdict.Subroutines.end());
+      continue;
+    }
+    if (!Verdict.Unproven && Verdict.Returns != OwnInteriorReturns) {
+      OwnInteriorReturns = std::move(Verdict.Returns);
       continue;
     }
     if (Verdict.Unproven) {
@@ -2200,6 +2356,7 @@ void CFGBuilder::explore(const BinaryImage &Img, Decoder &Dec, va_t Addr) {
         rewriteGetPcThunkCall(Img, Rec, Next);
       if (Rec.IsCall && !Rec.IsIndirect && Rec.Immediate)
         rewriteOwnInteriorCall(Img, Rec, Next);
+      rewriteOwnInteriorReturn(Img, Rec);
 
       // Keep recursive CFG exploration consistent with the decoder's
       // architecture-specific terminator classification.  Trap instructions

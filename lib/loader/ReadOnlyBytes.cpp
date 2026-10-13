@@ -268,8 +268,8 @@ bool isImagePointerBitPattern(const BinaryImage &Image, uint64_t Bits,
 
 bool isFileBackedWritableImageRange(const BinaryImage &Image, va_t Address,
                                     uint32_t Size) {
-  if (!supportedImage(Image) || !Size || Size > 1024 * 1024 ||
-      !mappedBytes(Image, Address, Size, false))
+  if ((!supportedImage(Image) && !supportedPEImage(Image)) || !Size ||
+      Size > 1024 * 1024 || !mappedBytes(Image, Address, Size, false))
     return false;
   const auto *Section = Image.getSectionFor(Address);
   const auto *Segment = Image.getSegmentFor(Address);
@@ -393,6 +393,30 @@ bool isImmutableImageImportSlot(const BinaryImage &Image, va_t Address) {
 
 bool isInitialImageImportSlot(const BinaryImage &Image, va_t Address) {
   return imageImportSlot(Image, Address, false, false);
+}
+
+bool isFileBackedPEImportSlot(const BinaryImage &Image, va_t Address) {
+  const auto Width = Image.getPointerSize();
+  if (!supportedPEImage(Image) || !Width || Address % Width ||
+      (Width == 4 && Address > uint64_t(UINT32_MAX) - (Width - 1)) ||
+      !mappedBytes(Image, Address, Width, false) ||
+      hasConflictingFixups(Image, Address, Width, false, true))
+    return false;
+  const auto *Imported = Image.findImportAt(Address);
+  if (!Imported || Imported->IATAddr != Address || Imported->IsDelayImport ||
+      Imported->Name.empty() || Imported->Module.empty() ||
+      !Image.isValidImportStorageSlot(Address, Imported->Name))
+    return false;
+  for (const auto &Other : Image.Imports)
+    if (Other.IATAddr == Address &&
+        (Other.Name != Imported->Name || Other.IsDelayImport ||
+         !llvm::StringRef(Other.Module).equals_insensitive(Imported->Module)))
+      return false;
+  const auto Storage = Image.collectImportStorageSlot(Address);
+  const auto Slot = Storage.Slots.find(Address);
+  return !Storage.Conflicts.count(Address) && Slot != Storage.Slots.end() &&
+         Slot->second.Name == Imported->Name && !Slot->second.Addend &&
+         Slot->second.Evidence == ImportStorageEvidence::ImportDirectory;
 }
 
 std::optional<uint64_t> readImmutableImageIvarOffset(const BinaryImage &Image,

@@ -1027,6 +1027,12 @@ Json Engine::metadata() const {
     if (parsed.is_array())
       diagnostics = parsed;
   }
+  const auto debug = headers.value("debug_info", Json::object());
+  const auto symbol =
+      headers.value("dynamic", Json::object()).value("pdb_symbol", Json());
+  const bool mayDownload = debug.value("enabled", false) &&
+                           debug.value("kind", "none") != "pdb" &&
+                           pdbInput_.is_null() && loadsPdbFiles();
   return {{"path", ownedString(neverd_session_file_path(session_))},
           {"architecture", arch},
           {"format", ownedString(neverd_session_format_name(session_))},
@@ -1036,6 +1042,7 @@ Json Engine::metadata() const {
           {"entry_address", hexAddress(neverd_session_entry_addr(session_))},
           {"loader_diagnostics", std::move(diagnostics)},
           {"pdb", pdbInput_},
+          {"pdb_download", mayDownload ? symbol : Json()},
           {"function_count",
            deferred ? Json(nullptr) : Json(neverd_func_count(session_))},
           {"segment_count", neverd_session_segment_count(session_)},
@@ -1470,6 +1477,18 @@ Json Engine::execute(const std::string &operation, const Json &p) {
   }
   requireLoaded();
   if (operation == "pdb_inspect" || operation == "pdb_load") {
+    if (operation == "pdb_load" && p.contains("download")) {
+      if (!p.at("download").is_object() ||
+          p.value("mode", "verified") != "verified")
+        throw Error("invalid_request",
+                    "Downloaded PDBs require strict verification");
+      // Another client may have loaded a PDB while the HTTP request was in
+      // flight. Do not replace its selection with the downloaded file.
+      if (metadata().at("pdb_download") != p.at("download"))
+        throw Error(
+            "input_changed",
+            "This symbol download no longer applies to the loaded file");
+    }
     using Inspect = const char *(*)(neverd_session_t, const char *);
     using Load = int (*)(neverd_session_t, const char *);
     using LoadEx = int (*)(neverd_session_t, const char *, int);

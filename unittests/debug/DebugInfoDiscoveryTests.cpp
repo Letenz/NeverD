@@ -40,6 +40,52 @@
 
 using namespace neverd;
 
+TEST(DebugInfoDiscovery, SymbolStoreKeyUsesUniqueCodeViewIdentity) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.DynInfo.PDBPath = "C:\\build\\Private\\NTKERNEL.PDB";
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  PDBBuildIdentity Identity;
+  Identity.Guid = {0x78, 0x56, 0x34, 0x12, 0xbc, 0x9a, 0xf0, 0xde,
+                   0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
+  Identity.Age = 0x2a;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  auto Request = pdbSymbolRequest(Img);
+  ASSERT_TRUE(Request);
+  EXPECT_EQ(Request->FileName, "ntkernel.pdb");
+  EXPECT_EQ(Request->Key, "123456789ABCDEF0123456789ABCDEF02a");
+  Identity.Kind = PDBIdentityKind::NB10;
+  Identity.Signature = 0x1234abcd;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  Request = pdbSymbolRequest(Img);
+  ASSERT_TRUE(Request);
+  EXPECT_EQ(Request->Key, "1234ABCD2a");
+  Img.Format = BinaryFormat::ELF;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+}
+
+TEST(DebugInfoDiscovery, MissingAmbiguousOrUnsafePdbCannotRequestSymbols) {
+  BinaryImage Img;
+  Img.Format = BinaryFormat::COFF;
+  Img.DynInfo.PDBPath = "kernel.pdb";
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+  PDBBuildIdentity Identity;
+  Identity.Guid[0] = 1;
+  Identity.Age = 1;
+  Img.DynInfo.CodeViewPDBIdentity = Identity;
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Ambiguous;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+  Img.DynInfo.CodeViewPDBIdentityState = PDBIdentityState::Unique;
+  for (const auto *Path : {"", ".pdb", "kernel.dll", "bad:stream.pdb",
+                           "bad?query.pdb", "bad\nname.pdb"}) {
+    Img.DynInfo.PDBPath = Path;
+    EXPECT_FALSE(pdbSymbolRequest(Img)) << Path;
+  }
+  Img.DynInfo.PDBPath = "kernel.pdb";
+  Img.DynInfo.CodeViewPDBIdentity->Age = 0;
+  EXPECT_FALSE(pdbSymbolRequest(Img));
+}
+
 namespace {
 
 /// A DebugContext holding exactly the functions a test hands it, so the

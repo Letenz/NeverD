@@ -18,6 +18,15 @@
 namespace neverd {
 struct BinaryImage;
 struct LowFunc;
+struct RegistrationStateAnalysis;
+class RegistrationCallCalleeIndex;
+
+RegistrationStateAnalysis analyzeCheckedX86SEHStates(
+    const BinaryImage &Image, const LowFunc &Function,
+    const std::vector<RegistrationCalleeStackContract> *Stacks,
+    const std::vector<RegistrationLocalUnwindContract> *LocalUnwinds,
+    const std::vector<RegistrationSEHControlContract> *Controls,
+    RegistrationCallCalleeIndex *Index = nullptr);
 
 /// Prove the entry ESP is restored at every ordinary near return and that
 /// all return-pop immediates agree. Unchecked calls invalidate ESP; an explicit
@@ -25,7 +34,9 @@ struct LowFunc;
 /// retain no memory values. SEH bodies also require complete current
 /// registration state/lifetime evidence to separate dispatcher returns and
 /// seed established EBP at except entries. Neither route infers saved-stack
-/// memory values or grants memory-effect authority.
+/// memory values or grants memory-effect authority. A termination-only SEH
+/// frame has no exceptional parent entry and uses the ordinary register-only
+/// proof, including a separate proof for every called finally.
 std::optional<uint32_t>
 getCheckedX86CalleeStackPop(const BinaryImage &Image, va_t Target,
                             size_t *CumulativeWork = nullptr);
@@ -142,6 +153,9 @@ public:
   RegistrationCallCalleeIndex &
   operator=(const RegistrationCallCalleeIndex &) = delete;
   bool ownsImage(const BinaryImage &Other) const { return &Image == &Other; }
+  /// Bill decoded state propagation, including unsuccessful helper analyses,
+  /// to this invocation closure's cumulative work budget.
+  bool chargeStateWork(size_t Amount);
   std::optional<uint32_t> stackPop(va_t Target);
   std::optional<std::vector<RegistrationCalleeFrameContract>>
   contracts(const LowFunc &Function);
@@ -151,6 +165,8 @@ public:
   stackContracts(const LowFunc &Function);
   std::optional<std::vector<RegistrationLocalUnwindContract>>
   localUnwindContracts(const LowFunc &Function);
+  std::optional<std::vector<RegistrationSEHControlContract>>
+  sehControlContracts(const LowFunc &Function);
 
 private:
   const BinaryImage &Image;
