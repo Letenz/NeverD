@@ -45,8 +45,13 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
   auto Mode = number<uint32_t>(Value, field::DeviceAccessMode);
   auto Error = number<uint32_t>(Value, field::DeviceOpenErrno);
   const auto *Ioctls = Value.getArray(field::DeviceIoctls);
-  if (Value.size() != 4 || !Value.getString(field::Path) || !Mode || !Error ||
-      !Ioctls || Ioctls->size() > linux_model::DeviceIoctlLimit - Transactions)
+  const bool HasMappings = Value.get(field::DeviceReadOnlyMappings);
+  const auto *Mappings = Value.getArray(field::DeviceReadOnlyMappings);
+  if (Value.size() != 4 + unsigned(HasMappings) ||
+      (HasMappings &&
+       (!Mappings || Mappings->size() > linux_model::DeviceMappingLimit)) ||
+      !Value.getString(field::Path) || !Mode || !Error || !Ioctls ||
+      Ioctls->size() > linux_model::DeviceIoctlLimit - Transactions)
     return invalid();
   Transactions += Ioctls->size();
   LinuxDeviceOptions Out{*Mode, *Error, {}};
@@ -85,6 +90,19 @@ linuxDeviceOptionsFromJSON(const llvm::json::Object &Value,
     }
     Out.Ioctls.push_back(std::move(Call));
   }
+  if (Mappings)
+    for (const auto &V : *Mappings) {
+      const auto *Object = V.getAsObject();
+      if (!Object || Object->size() != 2)
+        return invalid();
+      auto Offset = number<uint64_t>(*Object, field::DeviceOffset);
+      if (!Offset)
+        return invalid();
+      auto Data = bytes(*Object, field::Bytes, PayloadBytes);
+      if (!Data)
+        return Data.takeError();
+      Out.ReadOnlyMappings.push_back({*Offset, std::move(*Data)});
+    }
   return Out;
 }
 } // namespace neverd::emulation

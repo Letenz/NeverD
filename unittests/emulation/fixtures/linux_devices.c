@@ -10,30 +10,57 @@ typedef unsigned long U64;
 typedef long I64;
 typedef unsigned int U32;
 #if defined(__aarch64__)
-enum { OpenAt = 56, Close = 57, Ioctl = 29, Exit = 93, Protect = 226 };
+enum {
+  OpenAt = 56,
+  Close = 57,
+  Ioctl = 29,
+  Exit = 93,
+  Protect = 226,
+  Map = 222,
+  Unmap = 215
+};
 #else
-enum { OpenAt = 257, Close = 3, Ioctl = 16, Exit = 60, Protect = 10 };
+enum {
+  OpenAt = 257,
+  Close = 3,
+  Ioctl = 16,
+  Exit = 60,
+  Protect = 10,
+  Map = 9,
+  Unmap = 11
+};
 #endif
 
-static U64 raw(U64 Number, U64 A, U64 B, U64 C) {
+static U64 raw6(U64 Number, U64 A, U64 B, U64 C, U64 D, U64 E, U64 F) {
 #if defined(__aarch64__)
   register U64 N __asm__("x8") = Number;
   register U64 X0 __asm__("x0") = A;
   register U64 X1 __asm__("x1") = B;
   register U64 X2 __asm__("x2") = C;
+  register U64 X3 __asm__("x3") = D;
+  register U64 X4 __asm__("x4") = E;
+  register U64 X5 __asm__("x5") = F;
   __asm__ volatile("svc #0"
                    : "+r"(X0)
-                   : "r"(N), "r"(X1), "r"(X2)
+                   : "r"(N), "r"(X1), "r"(X2), "r"(X3), "r"(X4), "r"(X5)
                    : "memory", "cc");
   return X0;
 #else
   U64 Result;
+  register U64 R10 __asm__("r10") = D;
+  register U64 R8 __asm__("r8") = E;
+  register U64 R9 __asm__("r9") = F;
   __asm__ volatile("syscall"
                    : "=a"(Result)
-                   : "a"(Number), "D"(A), "S"(B), "d"(C)
+                   : "a"(Number), "D"(A), "S"(B), "d"(C), "r"(R10), "r"(R8),
+                     "r"(R9)
                    : "memory", "cc", "rcx", "r11");
   return Result;
 #endif
+}
+
+static U64 raw(U64 Number, U64 A, U64 B, U64 C) {
+  return raw6(Number, A, B, C, 0, 0, 0);
 }
 
 #ifdef __ANDROID__
@@ -44,6 +71,7 @@ extern int *__errno(void);
 extern void *dlopen(const char *, int);
 extern void *dlsym(void *, const char *);
 extern int dlclose(void *);
+extern void *mmap(void *, U64, int, int, int, I64);
 #endif
 
 static const char Path[] = "/fixture/control";
@@ -145,6 +173,69 @@ U64 devices_pending_readonly(U64 Route, U64 Buffer) {
   CHECK(raw(Protect, Buffer, 4096, 1), 0);
   return devices_pending(Route, Buffer);
 }
+
+static U64 mapping(U64 Route, U64 FD, U64 Length, U64 Offset, int Prot) {
+#ifdef __ANDROID__
+  if (Route == 1)
+    return (U64)mmap(0, Length, Prot, 1, (int)FD, (I64)Offset);
+  if (Route == 2)
+    return (U64)syscall(Map, 0UL, Length, (U64)Prot, 1UL, FD, Offset);
+  if (Route == 3) {
+    void *Provider = dlopen("libdevice.so", 2);
+    void *(*Call)(void *, U64, int, int, int, I64) = dlsym(Provider, "mmap");
+    if (!Provider || !Call)
+      return (U64)-99;
+    U64 Result = (U64)Call(0, Length, Prot, 1, (int)FD, (I64)Offset);
+    dlclose(Provider);
+    return Result;
+  }
+#endif
+  return raw6(Map, 0, Length, Prot, 1, FD | 0x1122334400000000UL, Offset);
+}
+
+U64 devices_mapping(U64 Route) {
+  U64 FD = raw(OpenAt, (U64)-100, (U64)Path, 2);
+  CHECK(FD, 3);
+  CHECK(mapping(Route, FD, 0, 4096, 1), Route ? -1 : -22);
+  CHECK(mapping(Route, FD, 4096, 4097, 1), Route ? -1 : -22);
+  CHECK(mapping(Route, FD, 4096, 4096, 3), Route ? -1 : -13);
+#ifdef __ANDROID__
+  CHECK(*__errno(), Route ? 13 : 0);
+  *__errno() = 22;
+#endif
+  U64 A = mapping(Route, FD, 3 * 4096 - 1, 4096, 1);
+  if (A >= (U64)-4095)
+    return __LINE__;
+  CHECK(raw(Close, FD, 0, 0), 0);
+  CHECK(*(volatile unsigned char *)A, 0x31);
+  CHECK(*(volatile unsigned char *)(A + 3 * 4096 - 1), 0x33);
+  CHECK(mapping(Route, FD, 4096, 4096, 1), Route ? -1 : -9);
+  CHECK(raw(OpenAt, (U64)-100, (U64)Path, 2), 3);
+  U64 B = mapping(Route, 3, 2 * 4096, 2 * 4096, 0);
+  if (B >= (U64)-4095 || A == B)
+    return __LINE__;
+  CHECK(raw(Close, 3, 0, 0), 0);
+  CHECK(raw(Protect, B, 2 * 4096, 3), -13);
+  CHECK(raw(Protect, B, 2 * 4096, 1), 0);
+  CHECK(raw(Unmap, A + 4096, 4096, 0), 0);
+  CHECK(*(volatile unsigned char *)B, 0x32);
+  CHECK(*(volatile unsigned char *)(B + 4096), 0x33);
+  CHECK(raw(Unmap, B, 2 * 4096, 0), 0);
+  CHECK(*(volatile unsigned char *)(A + 2 * 4096), 0x33);
+  CHECK(raw(Unmap, A, 3 * 4096, 0), 0);
+  return 0;
+}
+
+U64 devices_mapping_fault(U64 Mode) {
+  U64 FD = raw(OpenAt, (U64)-100, (U64)Path, 2);
+  U64 A = mapping(0, FD, 4096, 4096, Mode == 0 ? 0 : 1);
+  CHECK(raw(Close, FD, 0, 0), 0);
+  if (Mode == 1)
+    *(volatile unsigned char *)A = 0xff;
+  if (Mode == 2)
+    CHECK(raw(Unmap, A, 4096, 0), 0);
+  return *(volatile unsigned char *)A;
+}
 #ifdef __ANDROID__
 U64 devices_open_error(void) {
   *__errno() = 22;
@@ -157,6 +248,8 @@ U64 devices_open_error(void) {
 void process_main(U64 *Stack) {
   (void)Stack;
   U64 Status = devices_sequence(0);
+  if (!Status)
+    Status = devices_mapping(0);
   raw(Exit, Status, 0, 0);
   __builtin_trap();
 }

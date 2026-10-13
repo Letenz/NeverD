@@ -56,6 +56,15 @@ class ProcessIntegrationTests(unittest.TestCase):
                 self.assertTrue(any(c["result"] == "ffffffffffffffff" for c in calls))
                 if route == 3:
                     self.assertTrue(all(c["library"] == "libdevice.so" for c in calls))
+        device["read_only_mappings"] = [{"offset": 4096,
+                                         "bytes_hex": "31" * 4096 + "32" * 4096 + "33" * 4096}]
+        for route in range(4):
+            options["android"].update(entry_symbol="devices_mapping", arguments=[route],
+                                       libraries={"libdevice.so": ["ioctl", "mmap"]})
+            result = session.emulate_process(str(Path(fixtures) / "devices-O2-relr.so"),
+                                             "android-aarch64-api28-v1", json.dumps(options))
+            self.assertEqual(result["stop_reason"], "returned", result["diagnostic"])
+            self.assertEqual(result["return_value"], "0")
 
     def test_android_integer_scanning_preserves_provider_and_output(self) -> None:
         library = os.environ.get("NEVERD_TEST_LIBNEVERD")

@@ -309,7 +309,13 @@ and [KSM policy](https://github.com/torvalds/linux/blob/v6.8/mm/ksm.c). Other
 advice, including `MADV_DONTNEED` and `MADV_FREE`, stops as an unsupported
 service before changing state; discarding content is not modeled as a hint.
 
-File/shared/fixed mappings, grow-down, huge pages, memory locking, protection
+Explicit `linux_files.devices[].read_only_mappings` additionally admit
+read-only shared device RAM snapshots, with shared backing across opens,
+mapping lifetime independent of descriptor close and bounded permission
+changes. See [device contracts](linux-device-contracts.md) for the supplied
+page format and supported operations.
+
+Ordinary file, anonymous shared and fixed mappings, grow-down, huge pages, memory locking, protection
 keys, execute-only/write-only policy and other flags remain explicit unsupported
 service contracts. They stop before publishing effects or inventing a syscall
 return. Ordinary range/length/alignment errors within the admitted subset return
@@ -402,7 +408,7 @@ sleep and real device clocks remain unsupported.
 workloads. C++ uses `ProcessOptions::LinuxFiles`; C, Python and CLI share this
 strict JSON contract:
 
-Optional `devices` entries add [explicit descriptor-owned ioctl transactions](linux-device-contracts.md)
+Optional `devices` entries add [explicit descriptor-owned ioctl transactions and read-only mapping snapshots](linux-device-contracts.md)
 in the same namespace. Device responses are declared inputs; regular file
 bytes remain immutable and device mappings are not implied.
 

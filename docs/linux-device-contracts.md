@@ -70,8 +70,39 @@ request limit and execution budgets also apply. Both C++ and JSON inputs use
 the same validation. Unknown fields and malformed hex or numeric values fail
 before execution.
 
-Device `read`, `write`, seek, metadata, polling and memory mapping remain
-unsupported without their own semantics. A successful ioctl does not supply
-`mmap` backing bytes, create threads, execute callbacks or prove equivalence
-with an original device. Reports must retain the input contract alongside
-actual native/service events and the first remaining boundary.
+## Read-only shared mapping snapshots
+
+An optional `read_only_mappings` array supplies complete RAM pages, independently
+of ioctl transactions. Each entry has exactly `offset` (unsigned byte offset)
+and `bytes_hex`. Offsets and nonempty payload lengths must be multiples of
+4,096; their sum must fit a signed 64-bit offset. Entries cannot overlap.
+At most 16 entries per device are admitted, and their bytes count against the
+same 16 MiB catalogue budget. Omitting the array preserves the unsupported
+mapping boundary. No ioctl result creates a mapping input implicitly.
+
+The admitted operation is non-fixed `MAP_SHARED` with `PROT_READ` or `PROT_NONE`.
+The page-rounded request must fit wholly within one supplied interval. Missing
+pages, private/fixed mappings, unknown flags and other devices remain explicit
+unsupported boundaries. A matching read-only interval rejects writable or
+executable protection, and a write-only descriptor, with `EACCES`. Empty lengths
+and unaligned offsets return `EINVAL`; invalid descriptors return `EBADF`.
+Bionic alone converts raw errors to `MAP_FAILED` and errno. Address hints and
+allocation limits use the same Linux placement owner as anonymous mappings.
+
+All live mappings of a catalogue entry and offset share the same physical page,
+including mappings made through independent opens. Closing the descriptor leaves
+its mappings valid, consistent with the [Linux mmap contract](https://man7.org/linux/man-pages/man2/mmap.2.html).
+`mprotect` can switch between read and no access but cannot add write or execute
+permission. A permission change across adjacent mappings retains any successful
+prefix before reaching a denied interval. Partial `munmap` retires exactly the
+affected aliases and protection policy. Physical pages are released when the last
+alias or pinned observer releases them; a later fresh mapping starts with the
+declared snapshot again. Virtual aliases and physical pages retain their separate
+memory-budget charges.
+
+These are explicit static RAM snapshots. They do not implement register side
+effects, asynchronous device writes, cache coherency or a hardware producer.
+Device advice, read/write, seek, metadata and polling still require their own
+semantics. Reports must retain the inputs, actual native/service events and first
+remaining boundary; a supplied snapshot does not establish original-device
+equivalence or execute callbacks.

@@ -31,6 +31,12 @@ struct LinuxDeviceIoctl {
   std::vector<LinuxDeviceMemory> Memory;
 };
 
+struct LinuxDeviceMapping {
+  /// Page-aligned device offset and complete page bytes. No implicit padding.
+  uint64_t Offset = 0;
+  std::vector<uint8_t> Bytes;
+};
+
 struct LinuxDeviceOptions {
   /// Exact admitted O_ACCMODE (0, 1 or 2). No creation or truncation contract.
   uint32_t AccessMode = 0;
@@ -39,6 +45,10 @@ struct LinuxDeviceOptions {
   /// Ordered, single-use transactions for each independent open description.
   /// An absent/mismatched next transaction stops instead of inventing a reply.
   std::vector<LinuxDeviceIoctl> Ioctls;
+  /// Explicit immutable RAM snapshots for MAP_SHARED, PROT_READ or PROT_NONE.
+  /// All opens of this catalogue entry share live backing pages. These inputs
+  /// supply neither MMIO side effects nor an asynchronous device producer.
+  std::vector<LinuxDeviceMapping> ReadOnlyMappings;
 };
 } // namespace neverd::emulation
 #endif

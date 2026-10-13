@@ -2437,6 +2437,87 @@ TEST(ProcessReport, LinuxDeviceTransactionsAreExplicitLosslessAndBounded) {
   llvm::consumeError(Duplicate.takeError());
 }
 
+TEST(ProcessReport, LinuxDeviceMappingsRequireCompleteDisjointBoundedPages) {
+  auto Input = [] {
+    return llvm::json::Object{
+        {"path", "/fixture/control"},
+        {"access_mode", 2},
+        {"open_errno", 0},
+        {"ioctls", llvm::json::Array{}},
+        {"read_only_mappings",
+         llvm::json::Array{llvm::json::Object{
+             {"offset", "4096"}, {"bytes_hex", std::string(8192, 'a')}}}}};
+  };
+  auto Parse = [](llvm::json::Object Device) {
+    llvm::json::Value V = llvm::json::Object{
+        {"linux_files",
+         llvm::json::Object{
+             {"files", llvm::json::Array{}},
+             {"devices", llvm::json::Array{std::move(Device)}}}}};
+    return processOptionsFromJSON(llvm::formatv("{0}", V).str());
+  };
+  auto Valid = Parse(Input());
+  ASSERT_TRUE(bool(Valid)) << llvm::toString(Valid.takeError());
+  const auto &Mapping =
+      Valid->LinuxFiles->Devices.at("/fixture/control").ReadOnlyMappings;
+  ASSERT_EQ(Mapping.size(), 1u);
+  EXPECT_EQ(Mapping[0].Offset, 4096u);
+  EXPECT_EQ(Mapping[0].Bytes, std::vector<uint8_t>(4096, 0xaa));
+  for (unsigned Mode = 0; Mode != 11; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto D = Input();
+    auto &M = *D.getArray("read_only_mappings")->front().getAsObject();
+    if (Mode == 0)
+      M["offset"] = 1;
+    if (Mode == 1)
+      M["offset"] = "18446744073709547520";
+    if (Mode == 2)
+      M["bytes_hex"] = "";
+    if (Mode == 3)
+      M["bytes_hex"] = "aa";
+    if (Mode == 4)
+      M["bytes_hex"] = std::string(8192, 'g');
+    if (Mode == 5)
+      M["extra"] = true;
+    if (Mode == 6)
+      M.erase("offset");
+    if (Mode == 7)
+      D["read_only_mappings"] = nullptr;
+    if (Mode == 8)
+      D.getArray("read_only_mappings")->push_back(llvm::json::Object(M));
+    if (Mode == 9) {
+      llvm::json::Array TooMany;
+      for (unsigned I = 0; I < 17; ++I)
+        TooMany.push_back(llvm::json::Object(M));
+      D["read_only_mappings"] = std::move(TooMany);
+    }
+    if (Mode == 10)
+      M["offset"] = -4096;
+    auto R = Parse(std::move(D));
+    EXPECT_FALSE(bool(R));
+    llvm::consumeError(R.takeError());
+  }
+  for (unsigned Mode = 0; Mode != 5; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto O = *Valid;
+    auto &M = O.LinuxFiles->Devices.at("/fixture/control").ReadOnlyMappings;
+    if (Mode == 0)
+      M[0].Bytes.resize(4095);
+    if (Mode == 1)
+      M.push_back(M.front());
+    if (Mode == 2)
+      M.resize(17);
+    if (Mode == 3)
+      M[0].Bytes.resize(16 * 1024 * 1024);
+    if (Mode == 4)
+      M[0].Offset = UINT64_MAX - 4095;
+    auto R = emulateProcess("missing.elf", ProcessProfile::LinuxELF64, O);
+    ASSERT_FALSE(bool(R));
+    EXPECT_NE(llvm::toString(R.takeError()).find("linux_files"),
+              std::string::npos);
+  }
+}
+
 llvm::json::Value fileMetadata() {
   return llvm::cantFail(llvm::json::parse(R"({
     "device":4294967295,"inode":"18446744073709551615","mode":33279,

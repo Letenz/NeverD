@@ -3204,8 +3204,13 @@ namespace. `LinuxDeviceFiles` validates and applies per-open ioctl transactions:
 all guest pointer resolution and byte expectations precede output writes and
 sequence consumption. The process JSON adapter transports bounded inputs;
 Android imports and raw Linux traps use the same descriptor and transaction
-state. This is a caller-supplied observation contract, not driver execution or
-an inference from ioctl request encoding. Other device operations remain
+state. `LinuxDeviceMappings` admits explicit read-only RAM snapshots through
+the same `LinuxMemory` placement owner. The descriptor layer resolves catalogue
+identity; `AddressSpace` owns shared physical pages and live mappings. Weak page
+references preserve alias identity without retaining unmapped RAM, while Linux
+maximum-protection intervals retire with `munmap` and constrain `mprotect`.
+This is a caller-supplied observation contract, not driver execution or an
+inference from ioctl request encoding. Other device operations remain
 unsupported; see [the device contract](linux-device-contracts.md).
 
 | Component | Ownership |
@@ -3454,7 +3459,9 @@ coalesced, distinguishes RAM/devices and retains no allocation ownership.
 Anonymous mappings use page-sized physical owners for partial retirement.
 `mmap`, `mprotect`, `munmap` and raw `brk` run only at stopped service boundaries;
 next-entry projection/invalidation follows the ordinary mapping generation.
-File/shared/fixed mappings and other unimplemented policies fail explicitly.
+Explicit read-only device snapshots also use this placement and physical owner;
+their maximum-protection policy is not a second mapping table. Ordinary file,
+anonymous shared, private device and fixed mappings still fail explicitly.
 
 ```mermaid
 flowchart TD

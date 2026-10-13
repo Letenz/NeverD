@@ -31,6 +31,10 @@ public:
                     ProcessResult &Result);
   std::optional<uint64_t> outputError(uint32_t FD) const;
   bool isDevice(uint32_t FD) const;
+  /// Missing descriptor returns EBADF; another descriptor kind returns null.
+  /// The borrowed catalogue identity outlives every mapping in this process.
+  std::variant<const LinuxDeviceOptions *, uint64_t>
+  mappingDevice(uint32_t FD) const;
   std::optional<uint64_t>
   openProcessDescriptor(uint32_t PID, uint32_t Flags,
                         const LinuxKernelOptions &Kernel,

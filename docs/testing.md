@@ -4860,7 +4860,17 @@ outputs. `AndroidDeviceMemory.*` checks retry without sequence consumption.
 Linux x64/ARM64 callers use the same synthetic inputs and independent byte
 oracle. Process JSON and Python integration cover strict schema, shared limits
 and public API parity. These tests validate explicit device transactions, not
-real hardware, driver execution or device-backed mappings.
+real hardware or driver execution.
+
+`LinuxMemory.Device*` checks device snapshot alias identity, partial retirement,
+maximum permissions across coalesced ranges, refused requests and allocation
+budgets. `AndroidDevices.DeviceMapping*` executes raw, Bionic, variadic and dynamic
+callers at O0/O2 with each relocation packing, including access faults and mappings
+that survive descriptor close. The Linux device fixture runs the same lifecycle
+checks on x64 and ARM64. `ProcessReport.LinuxDeviceMappings*` checks strict JSON
+and C++ admission; the Python process integration test transports the same public
+contract through the C ABI. Run the shared Linux process, Android native,
+execution-session and process-public suites when changing this memory boundary.
 
 `AndroidResidencyTests.cpp` compares raw SVC, variadic and named `mincore`
 calls using independent O0/O2 fixtures with ordinary, APS2 and RELR relocations.

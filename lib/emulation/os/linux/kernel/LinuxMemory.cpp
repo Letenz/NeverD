@@ -127,6 +127,7 @@ llvm::Expected<bool> LinuxMemory::unmapPages(uint64_t Address, uint64_t Size) {
     if (auto E = Space.unmap(Begin, End - Begin))
       return std::move(E);
     setMergeable(Begin, End - Begin, false);
+    retireDeviceRanges(Begin, End - Begin);
     Removed = true;
   }
   return Removed;
@@ -202,25 +203,33 @@ llvm::Expected<uint64_t> LinuxMemory::map(const ProcessServiceEvent &Event) {
   auto Size = roundSize(Length);
   if (!Size || *Size > Limit)
     return errorValue(NoMemory);
+  auto Address = placement(Hint, *Size);
+  if (!Address)
+    return Address.takeError();
+  if (!*Address)
+    return errorValue(NoMemory);
+  auto Mapped = mapPages(**Address, *Size, permissions(Protection));
+  if (!Mapped)
+    return Mapped.takeError();
+  if (*Mapped)
+    setMergeable(**Address, *Size, false);
+  return *Mapped ? **Address : errorValue(NoMemory);
+}
+
+llvm::Expected<std::optional<uint64_t>>
+LinuxMemory::placement(uint64_t Hint, uint64_t Size) const {
   auto Ranges = reservedRanges();
   if (!Ranges)
     return Ranges.takeError();
   uint64_t Address = Hint & ~(PageSize - 1);
-  if (Address < MinimumAddress || !validRange(Address, *Size) ||
-      !freeRange(*Ranges, Address, *Size)) {
-    auto Gap = findGap(*Ranges, MmapBase, *Size);
+  if (Address < MinimumAddress || !validRange(Address, Size) ||
+      !freeRange(*Ranges, Address, Size)) {
+    auto Gap = findGap(*Ranges, MmapBase, Size);
     if (!Gap)
-      Gap = findGap(*Ranges, MinimumAddress, *Size);
-    if (!Gap)
-      return errorValue(NoMemory);
-    Address = *Gap;
+      Gap = findGap(*Ranges, MinimumAddress, Size);
+    return Gap;
   }
-  auto Mapped = mapPages(Address, *Size, permissions(Protection));
-  if (!Mapped)
-    return Mapped.takeError();
-  if (*Mapped)
-    setMergeable(Address, *Size, false);
-  return *Mapped ? Address : errorValue(NoMemory);
+  return std::optional<uint64_t>(Address);
 }
 
 llvm::Expected<uint64_t>
@@ -245,11 +254,21 @@ LinuxMemory::protect(const ProcessServiceEvent &Event) {
       continue;
     if (Range.Device)
       return failure(MemoryState);
-    const uint64_t Count =
+    uint64_t Count =
         std::min(End - Cursor, Range.Size - (Cursor - Range.Address));
+    // Mapping snapshots can coalesce adjacent VMAs. Split at the independent
+    // maximum-protection boundary to preserve any successfully changed prefix.
+    const auto Restricted = firstDeviceByte(Cursor, Cursor + Count);
+    const bool Denied = Restricted && (Event.Arguments[2] & ~ProtRead);
+    if (Denied && *Restricted == Cursor)
+      return errorValue(AccessDenied);
+    if (Denied)
+      Count = *Restricted - Cursor;
     if (auto E = Space.protect(Cursor, Count, permissions(Event.Arguments[2])))
       return std::move(E);
     Cursor += Count;
+    if (Denied)
+      return errorValue(AccessDenied);
     if (Cursor == End)
       return 0;
   }
@@ -330,6 +349,13 @@ LinuxMemory::handle(ServiceKind Kind, const ProcessServiceEvent &Event,
   case ServiceKind::Munmap:
     return Reply(unmap(Event));
   case ServiceKind::Madvise:
+    if (auto Size = roundSize(Event.Arguments[1]);
+        Size && validRange(Event.Arguments[0], *Size) &&
+        firstDeviceByte(Event.Arguments[0], Event.Arguments[0] + *Size)) {
+      Result.Stop = ProcessStopReason::UnsupportedService;
+      Result.Diagnostic = DeviceMappingAdvice;
+      return std::optional<uint64_t>();
+    }
     if (uint32_t(Event.Arguments[2]) != AdviceMergeable &&
         uint32_t(Event.Arguments[2]) != AdviceUnmergeable) {
       Result.Stop = ProcessStopReason::UnsupportedService;

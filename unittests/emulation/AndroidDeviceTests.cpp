@@ -14,6 +14,7 @@
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <tuple>
 
 namespace neverd::emulation {
@@ -41,7 +42,7 @@ protected:
       GTEST_SKIP() << Probe->Reason;
     Options.Android.emplace();
     Options.Android->Initialize = false;
-    Options.Android->Libraries["libdevice.so"] = {"ioctl"};
+    Options.Android->Libraries["libdevice.so"] = {"ioctl", "mmap"};
     Options.LinuxFiles.emplace().Devices["/fixture/control"] =
         deviceTestInput();
     Options.Limits.Instructions = 200000;
@@ -61,6 +62,35 @@ TEST_P(AndroidDevices, RawNamedVariadicAndDynamicCallsShareTransactions) {
     auto R = run("devices_sequence", {Route});
     ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
     EXPECT_EQ(R.ReturnValue, 0u);
+  }
+}
+
+TEST_P(AndroidDevices, DeviceMappingsOutliveDescriptorsAcrossEveryCallRoute) {
+  for (uint64_t Route = 0; Route != 4; ++Route) {
+    SCOPED_TRACE(Route);
+    auto R = run("devices_mapping", {Route});
+    ASSERT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
+    EXPECT_EQ(R.ReturnValue, 0u);
+  }
+}
+
+TEST_P(AndroidDevices, DeviceMappingAccessFaultsReachTheGuest) {
+  for (uint64_t Mode = 0; Mode != 3; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto R = run("devices_mapping_fault", {Mode});
+    EXPECT_EQ(R.Stop, ProcessStopReason::CPUFailure) << R.Diagnostic;
+    ASSERT_TRUE(R.LastCPUExit && R.LastCPUExit->Fault);
+    const auto &Fault = *R.LastCPUExit->Fault;
+    EXPECT_EQ(Fault.Kind, Mode == 2 ? BackendFaultKind::UnmappedMemory
+                                    : BackendFaultKind::Protection);
+    EXPECT_EQ(Fault.Access,
+              Mode == 1 ? BackendAccessKind::Write : BackendAccessKind::Read);
+    auto Map = std::find_if(R.Services.begin(), R.Services.end(),
+                            [](const auto &S) { return S.Number == 222; });
+    ASSERT_NE(Map, R.Services.end());
+    ASSERT_TRUE(Map->Result);
+    EXPECT_LT(*Map->Result, uint64_t(-4095));
+    EXPECT_EQ(Fault.Address, Map->Result);
   }
 }
 

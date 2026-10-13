@@ -20,6 +20,26 @@ llvm::Error validateDeviceOptions(const LinuxDeviceOptions &Options,
       Options.Ioctls.size() > DeviceIoctlLimit - Transactions)
     return failure(DeviceOptions);
   Transactions += Options.Ioctls.size();
+  if (Options.ReadOnlyMappings.size() > DeviceMappingLimit)
+    return failure(DeviceOptions);
+  std::vector<std::pair<uint64_t, uint64_t>> Ranges;
+  for (const auto &Mapping : Options.ReadOnlyMappings) {
+    const uint64_t Size = Mapping.Bytes.size();
+    // Both supported LP64 Linux profiles use 4 KiB pages. Complete supplied
+    // pages avoid invented trailing bytes or device-specific SIGBUS behavior.
+    if (!Size || Size % DeviceMappingPageSize ||
+        Mapping.Offset % DeviceMappingPageSize || Mapping.Offset > INT64_MAX ||
+        Size > uint64_t(INT64_MAX) - Mapping.Offset)
+      return failure(DeviceOptions);
+    if (Size > FileByteLimit - Bytes)
+      return failure(FileOptionsLimit);
+    Bytes += Size;
+    Ranges.emplace_back(Mapping.Offset, Mapping.Offset + Size);
+  }
+  std::sort(Ranges.begin(), Ranges.end());
+  for (size_t I = 1; I < Ranges.size(); ++I)
+    if (Ranges[I].first < Ranges[I - 1].second)
+      return failure(DeviceOptions);
   for (const auto &Call : Options.Ioctls) {
     if (Call.Result < -4095 || Call.Memory.size() > DeviceMemoryLimit)
       return failure(DeviceOptions);
@@ -43,6 +63,16 @@ bool LinuxFiles::isDevice(uint32_t FD) const {
   auto I = Descriptors.find(FD);
   return I != Descriptors.end() &&
          std::holds_alternative<OpenDevice>(I->second);
+}
+
+std::variant<const LinuxDeviceOptions *, uint64_t>
+LinuxFiles::mappingDevice(uint32_t FD) const {
+  auto I = Descriptors.find(FD);
+  if (I == Descriptors.end())
+    return uint64_t(0) - BadDescriptor;
+  if (const auto *Device = std::get_if<OpenDevice>(&I->second))
+    return Device->Options;
+  return static_cast<const LinuxDeviceOptions *>(nullptr);
 }
 
 llvm::Expected<std::optional<uint64_t>>
