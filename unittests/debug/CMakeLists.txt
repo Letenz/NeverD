@@ -1,6 +1,7 @@
 add_neverd_unittest(NeverDDebugInfoTests
   DebugInfoDiscoveryTests.cpp
   PDBIdentityTests.cpp
+  SymbolStoreTests.cpp
 
   LINK_COMPONENTS
   DebugInfo

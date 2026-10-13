@@ -1,0 +1,49 @@
+//===- SymbolStore.def - Constants of symbol stores -------------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+///
+/// \file
+/// The constants of SymbolStore: the variables that name a symbol search
+/// path, the syntax of that path, where NeverD keeps the PDBs it downloads,
+/// and the server it downloads them from.  Define the macro before including
+/// this file.
+///
+///   NEVERD_SYMBOL_STORE_STRING(Name, Value)  a string
+///
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_SYMBOL_STORE_STRING
+#define NEVERD_SYMBOL_STORE_STRING(Name, Value)
+#endif
+
+// The variables Microsoft's debuggers read the search path from.  The
+// alternate path is searched first.
+NEVERD_SYMBOL_STORE_STRING(PathVariable, "_NT_SYMBOL_PATH")
+NEVERD_SYMBOL_STORE_STRING(AlternatePathVariable, "_NT_ALT_SYMBOL_PATH")
+
+// A search path lists elements separated by semicolons.  An element that
+// starts with "srv*", or with "symsrv*" and the name of the library that
+// reads it, lists stores separated by asterisks; the last of them may be a
+// server.  An element that starts with "cache*" names the store that keeps
+// what the servers after it serve.  Any other element is a directory.
+NEVERD_SYMBOL_STORE_STRING(ElementSeparators, ";")
+NEVERD_SYMBOL_STORE_STRING(StoreSeparator, "*")
+NEVERD_SYMBOL_STORE_STRING(ServerPrefix, "srv")
+NEVERD_SYMBOL_STORE_STRING(SymsrvPrefix, "symsrv")
+NEVERD_SYMBOL_STORE_STRING(CachePrefix, "cache")
+NEVERD_SYMBOL_STORE_STRING(HTTPScheme, "http://")
+NEVERD_SYMBOL_STORE_STRING(HTTPSScheme, "https://")
+
+// The store that keeps downloads when the search path names none: these
+// directories in the user's cache directory (XDG_CACHE_HOME or ~/.cache,
+// ~/Library/Caches, %LOCALAPPDATA%).
+NEVERD_SYMBOL_STORE_STRING(VendorDirectory, "neverd")
+NEVERD_SYMBOL_STORE_STRING(CacheDirectory, "symbols")
+
+// Microsoft's public symbol server, which ends the default search path.
+NEVERD_SYMBOL_STORE_STRING(MicrosoftServer,
+                           "https://msdl.microsoft.com/download/symbols")
+
+#undef NEVERD_SYMBOL_STORE_STRING
