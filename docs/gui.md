@@ -299,6 +299,17 @@ in the image's language, EVM bytecode as Solidity and an SBF program as Rust.
 `neverd headers --json` lists the languages a program offers under
 `language.pseudocode`.
 
+Pseudocode, C and LLVM C also fold multiline brace blocks, including `if/else`,
+`while`, `do`, `for` and `switch`. Click the arrow beside the header's line number,
+or use Ctrl+Shift+[ to collapse the current block and Ctrl+Shift+] to expand it;
+Keypad -/+ work too. The header and closing line stay visible, so an `else`
+keeps its own arrow. Nested blocks retain their folding state when their parent
+is expanded. Line numbers remain the original source numbers, and copying or
+exporting includes the hidden code. Instruction and local-reference navigation
+and text search expand every fold hiding the target. Refreshing the same function
+preserves block folds while its brace structure is unchanged. Braces in comments
+and quoted strings do not define folding ranges; incomplete source stays expanded.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
@@ -321,17 +332,6 @@ each string's encoding in its Type column. Code pages decode by the WHATWG
 Encoding Standard, and a string reads as text only when its characters keep to
 one script. Settings from versions that searched one code page keep it as the
 preferred one.
-
-Pseudocode, C and LLVM C also fold multiline brace blocks, including `if/else`,
-`while`, `do`, `for` and `switch`. Click the arrow beside the header's line number,
-or use Ctrl+Shift+[ to collapse the current block and Ctrl+Shift+] to expand it;
-Keypad -/+ work too. The header and closing line stay visible, so an `else`
-keeps its own arrow. Nested blocks retain their folding state when their parent
-is expanded. Line numbers remain the original source numbers, and copying or
-exporting includes the hidden code. Instruction and local-reference navigation
-and text search expand every fold hiding the target. Refreshing the same function
-preserves block folds while its brace structure is unchanged. Braces in comments and
-quoted strings do not define folding ranges; incomplete source stays expanded.
 
 **Search → String references** (Ctrl+Shift+F12, or `strref [text]` on the
 command line) lists every instruction that refers to a string: directly, into
