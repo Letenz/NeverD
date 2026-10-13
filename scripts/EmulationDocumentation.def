@@ -945,7 +945,7 @@ NEVERD_EMULATION_DOC_PATH(InstructionFetch, "docs/{locale}/testing.md")
 NEVERD_EMULATION_DOC_TOKEN(InstructionFetch, "NeverDInstructionFetchTests")
 NEVERD_EMULATION_DOC_TOKEN(InstructionFetch, "InstructionFetchCases.def")
 NEVERD_EMULATION_DOC_TOKEN(InstructionFetch,
-                          "RepeatedOperandsSurviveCodeWorkingSetEviction")
+                           "RepeatedOperandsSurviveCodeWorkingSetEviction")
 
 NEVERD_EMULATION_DOC_PATH(KvmHandoff, "docs/architecture.md")
 NEVERD_EMULATION_DOC_PATH(KvmHandoff, "docs/testing.md")
@@ -1889,8 +1889,10 @@ NEVERD_EMULATION_DOC_PATH(KvmExecutionOwner, "docs/{locale}/testing.md")
 #endif
 #ifdef NEVERD_EMULATION_DOC_TOKEN
 NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "withExecutionOwner")
-NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
-NEVERD_EMULATION_DOC_TOKEN(KvmExecutionOwner, "OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
+NEVERD_EMULATION_DOC_TOKEN(
+    KvmExecutionOwner, "ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread")
+NEVERD_EMULATION_DOC_TOKEN(
+    KvmExecutionOwner, "OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU")
 #endif
 
 NEVERD_EMULATION_DOC_TOKEN(Darwin, "chmod15 / fchmod124 / fchmodat467")
@@ -2352,3 +2354,36 @@ NEVERD_EMULATION_DOC_TOKEN(Darwin,
 NEVERD_EMULATION_DOC_TOKEN(
     Darwin, "no dead unmount MAC refusal failed refresh asynchronous wait host "
             "query or complete Apple framework claim")
+
+NEVERD_EMULATION_DOC_TOKEN(Darwin,
+                           "directory mode: chmod15 fchmod124 fchmodat467 / "
+                           "ordinary initial regular or directory objects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "CreatedDirectoryObjects=false / created_directory_objects exact "
+            "Boolean / separate CreatedRegularObjects")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "created directory mode requires complete CreationPolicy.Namespace "
+            "/ resulting ctime uses Mutation.Time")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "DirectoryNode ModeTime separate from MutationTime / "
+            "CurrentMetadata never supplies namespace authority")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "directory nlink greater than1 valid / equal known Device-Inode "
+            "aliases rejected / ownership and timestamps regular-only")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "mode changes only permissions and ctime / independent namespace time "
+    "preserves mode / missing namespace time permanently invalidates stat")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "dup independent opens chdir fchdir direct rename exchange held "
+            "rmdir and reused names / no child grant inference")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "directory-mode-mutations59 services / created-directory-mode60 "
+            "services / 33 full guarded stat144 records / main53 stdout Q")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin, "five software profiles C CLI Python / three matching ARM64 HVF "
+            "required / native common74 mandatory89 ARM64267")
+NEVERD_EMULATION_DOC_TOKEN(
+    Darwin,
+    "60 native directory observations plus3 separate unexpanded-symlink "
+    "controls / ARM64 O0 O1 O2 / native5s guest5000000us quantum1024 public30s")

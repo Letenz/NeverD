@@ -7755,6 +7755,7 @@ static int directory_mode_status(u64 number, u64 object,
                                  const union mode_stat_guard *before,
                                  unsigned virtual_kind, u64 seconds,
                                  u64 nanoseconds) {
+#pragma clang loop unroll(full)
   for (unsigned i = 0; i != 20; ++i)
     record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
   if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
@@ -7764,11 +7765,18 @@ static int directory_mode_status(u64 number, u64 object,
       little_integer(record->bytes + 12, 2) != (0040000u | mode) ||
       little_integer(record->bytes + 80, 8) >= 1000000000UL)
     return 227;
-  if (before)
-    for (unsigned i = 8; i != 152; ++i)
-      if (!(i >= 12 && i < 14) && !(i >= 72 && i < 88) &&
-          record->bytes[i] != before->bytes[i])
+  if (before) {
+    // The same 144 bytes: permissions occupy word 1 bits 32..43 and ctime
+    // occupies words 9/10. Type and all other bits stay checked independently.
+#pragma clang loop unroll(full)
+    for (unsigned i = 1; i != 19; ++i) {
+      if (i == 9 || i == 10)
+        continue;
+      const u64 mask = i == 1 ? ~(07777UL << 32) : -1UL;
+      if ((record->words[i] ^ before->words[i]) & mask)
         return 228;
+    }
+  }
   if (virtual_kind) {
     const u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
                               7UL | ((u64)(0040000u | mode) << 32) |
@@ -7791,6 +7799,7 @@ static int directory_mode_status(u64 number, u64 object,
                               0,
                               0,
                               0xa5a5a5a5a5a5a5a5UL};
+#pragma clang loop unroll(full)
     for (unsigned i = 0; i != 20; ++i)
       if (record->words[i] != expected[i])
         return 229;
@@ -7847,6 +7856,7 @@ directory_mode_mutations(const char *path, unsigned virtual_kind) {
           directory_mode_status(339, other, &c, modes[h], &initial,
                                 virtual_kind, mode_seconds, mode_nanoseconds))
         return 237;
+#pragma clang loop unroll(full)
       for (unsigned i = 0; i != 20; ++i)
         if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
           return 238;
@@ -7864,6 +7874,7 @@ directory_mode_mutations(const char *path, unsigned virtual_kind) {
       directory_mode_status(338, (u64)moved, &c, 0755, &initial, virtual_kind,
                             mode_seconds, mode_nanoseconds))
     return 239;
+#pragma clang loop unroll(full)
   for (unsigned i = 0; i != 20; ++i)
     a.words[i] = c.words[i];
   if (mode_result(124, -1UL, 07000, 0, 0, 9) ||
@@ -7871,6 +7882,7 @@ directory_mode_mutations(const char *path, unsigned virtual_kind) {
       directory_mode_status(339, fd, &c, 0755, &initial, virtual_kind,
                             mode_seconds, mode_nanoseconds))
     return 240;
+#pragma clang loop unroll(full)
   for (unsigned i = 0; i != 20; ++i)
     if (a.words[i] != c.words[i])
       return 241;

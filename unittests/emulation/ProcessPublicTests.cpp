@@ -4631,7 +4631,7 @@ TEST_P(DarwinCreatedAttributesPublic, PreserveProvidersAcrossCAndCLI) {
                                          "provider is not configured")
                         : (Change == 3 ? "Darwin ordinary mode mutation "
                                          "environment is not configured"
-                                       : "Darwin regular-object mode "
+                                       : "Darwin object mode "
                                          "provider is not configured"));
       EXPECT_EQ(neverd_session_is_loaded(Session), 0);
       EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),

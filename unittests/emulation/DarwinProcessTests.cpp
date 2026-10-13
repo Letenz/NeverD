@@ -2828,9 +2828,13 @@ TEST_P(DarwinProcess,
     Options.DarwinFiles = darwin_test::directoryModeOptions(Created);
     const auto Wanted = darwin_test::directoryModeServices(Created);
     for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Repeat);
       auto R = run(Mode);
       ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
-      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited)
+          << R->Diagnostic << " instructions=" << R->Instructions
+          << " pc=" << R->PC << " services=" << R->Services.size();
       EXPECT_EQ(R->ExitStatus, 53);
       EXPECT_EQ(R->StandardOutput, "Q");
       EXPECT_TRUE(R->StandardError.empty());

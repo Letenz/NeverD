@@ -599,11 +599,15 @@ TEST_P(DarwinCreatedAttributeTest,
       ok(ServiceKind::Symlink, {path("target"), path("/link", Base + 128)}),
       0u);
   const auto D = open("/dir", 0x100000), L = open("/link", 0x200000);
+  const auto DirectoryBefore = status(D);
   for (auto FD : {D, L, uint64_t(0), uint64_t(1), uint64_t(2)}) {
-    refused(ServiceKind::Fchmod, {FD, 0600}, diagnostic::FileModeTarget);
+    refused(ServiceKind::Fchmod, {FD, 0600},
+            FD == D ? diagnostic::FileModeProvider
+                    : diagnostic::FileModeTarget);
     refused(ServiceKind::Fchown, {FD, UINT32_MAX, UINT32_MAX},
             diagnostic::FileOwnershipTarget);
   }
+  EXPECT_EQ(status(D), DirectoryBefore);
   refused(ServiceKind::FchmodAt, {UINT64_MAX, path("/link"), 0600, 0x20},
           diagnostic::FileModeTarget);
   refused(ServiceKind::FchownAt,
