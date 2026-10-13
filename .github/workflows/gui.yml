@@ -86,6 +86,20 @@ jobs:
             exit "$ctest_status"
           fi
           ctest --test-dir build-gui --output-on-failure
+      - name: Verify the native window frame
+        # Offscreen keeps the system frame; Windows and macOS frame the
+        # workbench natively, so maximize and full screen run there for real,
+        # whatever the earlier contract checks found.
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        shell: bash
+        run: |
+          set +e
+          build-gui/bin/neverd-gui-unit-tests nativeFrameKeepsTheTitleBarOnScreen \
+            -o native-frame.txt,txt -o -,txt 2>&1
+          status=$?
+          echo "neverd-gui-unit-tests exited with $status"
+          [ "$status" -eq 0 ] || cat native-frame.txt 2>/dev/null
+          exit "$status"
       - name: Retain Windows GUI contract diagnostics
         id: gui_diagnostics
         if: ${{ always() && runner.os == 'Windows' }}
