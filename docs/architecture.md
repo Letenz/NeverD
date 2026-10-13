@@ -183,15 +183,32 @@ entry; an unmapped instruction reports the missing source mapping.
 
 Native pseudocode defaults to the detected C++, Rust or Go dialect, with C as
 the fallback. Validated Itanium/MSVC names also identify C++ without an
-exception runtime. The C++ printer uses the shared symbol spelling rules for
-namespaces, STL aliases and qualified ATL types; non-default template arguments
-and explicit ABI arguments remain visible. DWARF record identities supply type
-spellings, not guessed layouts or implicit member-call conventions. The GUI
-offers a separate C choice for non-C images and omits it when only C is offered.
+exception runtime, and a function whose own exception personality is a C++
+runtime reads as C++ whatever its name. The C++ printer uses the shared symbol
+spelling rules for namespaces, STL aliases and qualified ATL types; non-default
+template arguments and explicit ABI arguments remain visible. DWARF record
+identities supply type spellings, not guessed layouts or implicit member-call
+conventions. The GUI offers a separate C choice for non-C images and omits it
+when only C is offered.
 Explicit C keeps native throw calls and separate handler entries with unwind
 metadata in comments; C++ keeps structured exception syntax. Their caches are
 separate. The C exception view depends on the image's original runtime and
 tables; it is not a portable implementation of that unwinder.
+
+C++ spells every exception construct in standard syntax. An object's unwind
+action (an MSVC state's cleanup, an Itanium pad's destructors) is a
+`try { … } catch (...) { cleanup; throw; }` scope over the IPs where the
+object is live, nested by the state tree, so a handler runs after the cleanups
+of the objects its try contained and only for objects that were constructed.
+This differs from the runtime only where no handler exists at all: the runtime
+may then terminate without running the cleanups. An Itanium region's clauses
+take their bodies from the landing pad, as the pad runs for each clause's
+selector (`attachItaniumHandlerBodies`); `__cxa_begin_catch` becomes the catch
+parameter and `__cxa_end_catch` the end of the catch. A pad whose code this
+cannot follow exactly, or that also dispatches an enclosing try's clause,
+keeps the region in its commented form with the pad in place. In C, every
+landing pad of the call-site table keeps its label, so a pad that only runs
+cleanups is not read as dead code after a return.
 
 DWARF subprogram extents are collected, sorted and swept once before publication
 instead of comparing every pair during ingestion. Duplicate entries, overlaps

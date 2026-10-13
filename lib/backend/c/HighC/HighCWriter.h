@@ -27,6 +27,8 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/DataSymbolBinding.h"
 
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdint>
@@ -177,6 +179,9 @@ public:
   bool isEmbeddedWindowsCallback(const HighStmt &Stmt, size_t I) const;
   void writeEmbeddedNativeCallbacks(const HighStmt &Stmt, int Indent);
   bool writeRegistrationCleanup(const HighStmt &Stmt, size_t I, int Indent);
+  /// Whether cleanup clause \p I is a PE32 relay writeRegistrationCleanup
+  /// prints as its native action.
+  bool isNativeRegistrationCleanup(const HighStmt &Stmt, size_t I) const;
   unsigned NativeExceptionRegionNumber = 0;
   struct MemoryLoadDestination {
     std::string Name;
@@ -239,6 +244,27 @@ public:
   void writeCxxThrowExpr(const HighStmt &Stmt, const HighExpr &ThrowCall);
   TypeRef cxxScalarThrowType(const HighExpr &ThrowCall) const;
   void writeCExceptionRegion(const HighStmt &Stmt, int Indent);
+  /// A C++ `try` around the body \p WriteBody prints at the indent it is
+  /// given, then its handlers.  A cleanup clause is an object's unwind
+  /// action, which standard C++ spells as `catch (...)` that runs it and
+  /// rethrows.  Next to typed handlers it is a try of its own inside them:
+  /// the object is destroyed before a handler runs.
+  void writeCxxTry(const HighStmt &Try, int Indent,
+                   llvm::function_ref<void(int)> WriteBody);
+  /// The unwind actions of cleanup clauses \p Cleanups, deepest object
+  /// first, then the rethrow that continues the unwind.
+  void writeCxxCleanupHandler(const HighStmt &Try,
+                              llvm::ArrayRef<size_t> Cleanups, int Indent);
+  /// Whether every clause of the Itanium region \p Stmt has the body
+  /// attachItaniumHandlerBodies gave it from the landing pad.
+  static bool hasItaniumHandlerBodies(const HighStmt &Stmt);
+  /// The catch parameter of the Itanium handler being written and whether it
+  /// is a pointer: the object `__cxa_begin_catch` hands the handler is its
+  /// address, or for a caught pointer its value.
+  std::optional<std::pair<std::string, bool>> ItaniumCatchParameter;
+  /// Landing pads no clause names: their labels say the unwinder enters
+  /// them, since nothing in the C jumps there.
+  std::set<va_t> LandingPadLabels;
   void writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
                   size_t End = static_cast<size_t>(-1));
   bool tryWriteCursorForLoop(const std::vector<HighStmt> &Stmts, size_t I,

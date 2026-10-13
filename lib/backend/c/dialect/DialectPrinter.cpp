@@ -311,8 +311,6 @@ bool anyStatement(const Stmt *S, bool StopAtSwitch, Fn &&Match) {
       if (anyStatement(H.Body, StopAtSwitch, Match))
         return true;
     return false;
-  case csyntax::StmtKind::PseudoBlock:
-    return anyStatement(S->Then, StopAtSwitch, Match);
   default:
     return false;
   }

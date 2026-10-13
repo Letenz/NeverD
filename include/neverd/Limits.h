@@ -698,6 +698,10 @@ constexpr unsigned kMaxFrameDisplacementDepth = 32;
 /// Fixed-point iterations when growing HighC frame aliases.
 constexpr unsigned kMaxFrameAliasFixedPoint = 64;
 
+/// Expression nodes visited while finding the frame address of a C++ object
+/// an unwind action destroys.  Exhaustion keeps the action as a note.
+constexpr size_t kMaxCxxObjectAddressWork = 1048576;
+
 /// (block, covered-byte mask) states explored while proving that every path to
 /// a frame reload initializes each of its bytes.  Exhaustion is unproved.
 constexpr size_t kMaxFrameInitializerStates = 4096;

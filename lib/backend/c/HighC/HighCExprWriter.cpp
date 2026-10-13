@@ -21,6 +21,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X87Context.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86ShadowStackShape.h"
 #include "neverd/ir/high/X87ConstantShape.h"
 #include "neverd/ir/intrinsics/X64Syscall.h"
@@ -1107,6 +1108,13 @@ std::string HighCWriter::resolvedCallTarget(const HighExpr &E) const {
 std::string HighCWriter::renderCallExpr(const HighExpr &E) {
   if (isX87ContextIntrinsic(E.IntrinsicId))
     return renderX87ContextCall(E);
+  // In an Itanium handler the exception the runtime took is the catch's
+  // parameter: its address, or for a caught pointer its value.  Both are the
+  // `void *` the call returns.
+  if (ItaniumCatchParameter && E.Operands.empty() &&
+      isItaniumRuntimeCall(E, "__cxa_begin_catch"))
+    return (ItaniumCatchParameter->second ? "" : "&") +
+           ItaniumCatchParameter->first;
   if (isX87ConstantControlIntrinsic(E.IntrinsicId)) {
     if (!x87ConstantControlShapeIsValid(
             E.IntrinsicId, x87ConstantControlHighShape(E, Opts.TheArch)))
@@ -2269,6 +2277,11 @@ bool HighCWriter::isUnknownCallOperand(const HighExpr *Op) const {
   if (Inner->Kind == ExprKind::Undef)
     return true;
   if (Inner->Kind != ExprKind::Var && Inner->Kind != ExprKind::Phi)
+    return false;
+  // The unwinder hands a landing pad its exception object and selector; no
+  // statement assigns them, but they are the pad's own values, not unknown.
+  if (Inner->Var.Kind == MedVar::EHException ||
+      Inner->Var.Kind == MedVar::EHSelector)
     return false;
   // The stack pointer the function was entered with is frame_base, which no
   // statement assigns: `_start` passes it to __libc_start_main as stack_end.

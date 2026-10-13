@@ -15,8 +15,8 @@
 
 namespace neverd {
 
-bool HighCWriter::writeRegistrationCleanup(const HighStmt &Stmt, size_t I,
-                                           int Indent) {
+bool HighCWriter::isNativeRegistrationCleanup(const HighStmt &Stmt,
+                                              size_t I) const {
   if (Opts.TheArch != Arch::X86 || !CurrentFunc ||
       !CurrentFunc->ExceptionMetadata ||
       !CurrentFunc->ExceptionMetadata->Registration ||
@@ -25,12 +25,19 @@ bool HighCWriter::writeRegistrationCleanup(const HighStmt &Stmt, size_t I,
     return false;
   const auto &Clause = Stmt.EHClauses[I];
   const auto &Actions = CurrentFunc->ExceptionMetadata->Cxx->UnwindMap;
-  if (Clause.Kind != HighEHClauseKind::CxxCleanup || Clause.State < 0 ||
-      size_t(Clause.State) >= Actions.size() || !Clause.FilterOrActionVA ||
-      Actions[Clause.State].ActionVA != Clause.FilterOrActionVA)
+  return Clause.Kind == HighEHClauseKind::CxxCleanup && Clause.State >= 0 &&
+         size_t(Clause.State) < Actions.size() && Clause.FilterOrActionVA &&
+         Actions[Clause.State].ActionVA == Clause.FilterOrActionVA;
+}
+
+bool HighCWriter::writeRegistrationCleanup(const HighStmt &Stmt, size_t I,
+                                           int Indent) {
+  if (!isNativeRegistrationCleanup(Stmt, I))
     return false;
-  // This out-of-line relay retains its native frame ABI. An empty lexical
-  // __unwind body would hide the executable action and invent source syntax.
+  const auto &Clause = Stmt.EHClauses[I];
+  const auto &Actions = CurrentFunc->ExceptionMetadata->Cxx->UnwindMap;
+  // This out-of-line relay retains its native frame ABI. An empty cleanup
+  // handler would hide the executable action and invent source syntax.
   OS << '\n';
   emitIndent(Indent);
   OS << "/* Native x86 cleanup @ 0x" << llvm::utohexstr(Clause.FilterOrActionVA)

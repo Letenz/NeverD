@@ -21503,8 +21503,10 @@ TEST(HighCPointerAddresses, CleanupCallResultIsNotDeclared) {
   const std::string Source = emitFunctions({Parent});
   EXPECT_NE(Source.find("CStringT_dtor("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v3_0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, CleanupScalarCopyForwardsIntoDtor) {
@@ -22810,7 +22812,7 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewBeforeCxxTryComposes) {
   EXPECT_EQ(FormatArgs.find("(int64_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t99_25"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t117"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AtlFormatIntegerViewIgnoresDtorClobber) {
@@ -24285,7 +24287,7 @@ TEST(HighCPointerAddresses, CleanupFuncletAssignDoesNotExposePrologueHome) {
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("v0 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m10 ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
   EXPECT_NE(Source.find("use("), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor("), std::string::npos) << Source;
 }
@@ -35494,6 +35496,22 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
   ASSERT_TRUE(static_cast<bool>(DiscoverImg))
       << llvm::toString(DiscoverImg.takeError());
 
+  // A typed handler whose body rethrows, not the rethrow that ends a cleanup
+  // scope's catch-all.
+  auto RethrowsInHandler = [](const std::string &Text) {
+    for (size_t At = Text.find("throw;"); At != std::string::npos;
+         At = Text.find("throw;", At + 1)) {
+      const size_t Catch = Text.rfind("catch (", At);
+      if (Catch == std::string::npos ||
+          Text.compare(Catch, 11, "catch (...)") == 0)
+        continue;
+      const size_t Open = Text.find('{', Catch);
+      if (Open != std::string::npos &&
+          Text.find_first_not_of(" \n", Open + 1) == At)
+        return true;
+    }
+    return false;
+  };
   va_t Entry = 0;
   std::string Source;
   for (const auto &Rec : DiscoverImg->COFFPDataRecords) {
@@ -35504,8 +35522,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
     if (!Img)
       continue;
     std::string Text = highcOnlyFunction(*Img, Begin);
-    if (Text.find("throw;") == std::string::npos ||
-        Text.find("catch") == std::string::npos)
+    if (!RethrowsInHandler(Text))
       continue;
     Entry = Begin;
     Source = std::move(Text);
