@@ -89,6 +89,12 @@ bool isImmutableImageImportSlot(const BinaryImage &Image, va_t Address);
 /// or permission to copy the imported object. Provider proof stays separate.
 bool isInitialImageImportSlot(const BinaryImage &Image, va_t Address);
 
+/// Authenticate an exact non-delay PE import-directory slot in unique,
+/// complete file-backed storage. Competing fixups or bindings refuse. The
+/// provider's behavior and preservation of the binding at a call remain the
+/// consumer's obligations; this does not make a writable IAT immutable.
+bool isFileBackedPEImportSlot(const BinaryImage &Image, va_t Address);
+
 /// Read an immutable scalar ivar-offset slot with its exact loader reference.
 /// All other overlapping fixups remain forbidden. The declaration consumer
 /// must separately match the referenced class, field, type and layout.

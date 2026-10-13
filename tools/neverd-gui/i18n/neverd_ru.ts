@@ -2168,6 +2168,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Wait for the function to finish loading before finding references</source>
         <translation>Дождитесь загрузки функции перед поиском ссылок</translation>
     </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>Не удалось определить, какой PDB указан в %1: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2449,6 +2453,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>PDB загружен для анализа: %1 (%2 имён, подтверждён пользователем, идентификатор не проверен)</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>Открыто без PDB, указанного во входном файле, как выбрано</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2699,6 +2707,164 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>Процесс анализа не может восстановить состояние анализа.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Загрузить файл PDB</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>Входной файл скомпонован с отладочной информацией, сохранённой здесь:</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>&amp;Обзор…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>Загрузка отменена.</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>По этому пути есть подходящая копия.</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>Рядом с входным файлом есть подходящая копия:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>В каталоге символов есть подходящая копия:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>В хранилище символов есть подходящая копия:</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>Загрузить её?</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 относится к другой сборке.</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>Не удаётся прочитать %1.</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>На этом компьютере нет подходящей копии, и сервер символов не настроен.</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>Найти файл PDB на диске?</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>На этом компьютере нет подходящей копии. Для поиска отправляются только имя и идентификатор сборки PDB.</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>Искать этот файл на сервере символов Microsoft?</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>Искать этот файл на сервере символов %1?</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>Загрузка %1 с %2…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 из %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>Проверка %1…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>Загруженный файл не является PDB этой сборки.</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>Не удалось найти файл PDB «%1».</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>Повторить попытку или найти файл PDB на диске?</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Файлы PDB (*.pdb);;Все файлы (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>Время загрузки символов истекло.</translation>
+    </message>
+    <message>
+        <source>No symbol server is configured.</source>
+        <translation>Сервер символов не настроен.</translation>
+    </message>
+    <message>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 не является HTTP-сервером символов.</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>Не удаётся создать каталог хранилища символов %1.</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>Не удалось открыть временный файл символов в %1: %2</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>Файл символов превышает ограничение загрузки в 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>Не удалось записать файл символов %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>На %1 нет подходящих символов для этой сборки.</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>Ошибка загрузки символов с %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 отправил пустой файл символов.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>Сжатый файл символов недействителен.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>Не удалось создать временный каталог символов в %1: %2</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>Не удалось распаковать файл символов.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>Для сжатых символов требуется Windows.</translation>
+    </message>
+    <message>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>Не удаётся сохранить файл символов в %1: %2</translation>
     </message>
 </context>
 </TS>

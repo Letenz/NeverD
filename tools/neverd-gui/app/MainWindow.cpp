@@ -15,8 +15,10 @@
 #include "Language.h"
 #include "ListingView.h"
 #include "LoadFileDialog.h"
+#include "MicrosoftSymbols.h"
 #include "NavigationBand.h"
 #include "OutputWindow.h"
+#include "PdbPromptDialog.h"
 #include "ProjectDatabase.h"
 #include "QuickStartDialog.h"
 #include "Resolve.h"
@@ -89,6 +91,8 @@ namespace {
 using KDDockWidgets::InitialOption;
 
 constexpr char LayoutFileName[] = "desktop.json";
+/// The level of a session message that reports an error.
+constexpr int ErrorMessageLevel = 2;
 constexpr char OpcodeBytesKey[] = "listing/opcodeBytes";
 constexpr char AnalysisIndicatorKey[] = "analysis/indicator";
 constexpr char BinaryProcessorKey[] = "load/binaryProcessor";
@@ -238,6 +242,24 @@ MainWindow::MainWindow(Session &session, McpConnectionManager &mcp,
   buildDocks();
   buildStatusBar();
   connectSession();
+  microsoftSymbols_ = new MicrosoftSymbols(session_, this);
+  connect(&session_, &Session::stateChanged, this, [this] {
+    if (pdbPromptPending_ && session_.connected()) {
+      auto [path, options] = *std::exchange(pdbPromptPending_, std::nullopt);
+      openAskingForPdb(path, options);
+    }
+  });
+  // A worker that cannot start leaves no question to ask; the workbench
+  // shows the error instead of staying hidden.
+  connect(&session_, &Session::message, this,
+          [this](const QString &, int level) {
+            if (level >= ErrorMessageLevel && pdbPromptPending_ &&
+                !session_.connected()) {
+              auto [path, options] =
+                  *std::exchange(pdbPromptPending_, std::nullopt);
+              openNow(path, options);
+            }
+          });
   connectActions();
   statusTimer_.setInterval(StatusRefreshMs);
   connect(&statusTimer_, &QTimer::timeout, this, &MainWindow::updateStatusBar);
@@ -949,12 +971,14 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name,
   const auto position = view->text()->currentAddress();
   const auto from = position ? position : source;
   const auto representation = view->representation();
+  const auto sourceOptions = view->text()->sourceOptions();
   session_.read(
       QStringLiteral("resolve"), {{"query", name}}, view,
-      [this, view, serial, epoch, source, from, representation, name,
-       selectSourceAddress](const QJsonObject &payload) {
+      [this, view, serial, epoch, source, from, representation, sourceOptions,
+       name, selectSourceAddress](const QJsonObject &payload) {
         if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
             view->text()->function() != source ||
+            view->text()->sourceOptions() != sourceOptions ||
             view->representation() != representation || !view->isVisible())
           return;
         const auto address = addressValue(payload.value("address"));
@@ -971,10 +995,11 @@ void MainWindow::activateCodeName(CodeView *view, const QString &name,
           navigateExpression(name);
         }
       },
-      [this, view, name, serial, epoch, source,
-       representation](const QString &, const QString &error) {
+      [this, view, name, serial, epoch, source, representation,
+       sourceOptions](const QString &, const QString &error) {
         if (serial == codeNavigationSerial_ && epoch == session_.epoch() &&
             view->text()->function() == source &&
+            view->text()->sourceOptions() == sourceOptions &&
             view->representation() == representation && view->isVisible())
           output_->append(tr("Cannot jump to %1: %2").arg(name, error), 2);
       });
@@ -1478,7 +1503,64 @@ void MainWindow::updateStatusBar() {
 
 void MainWindow::openFile(const QString &path) {
   startupQuickStartPending_ = false;
-  session_.open(path);
+  if (ProjectDatabase::hasState(path))
+    openNow(path, {});
+  else
+    openAskingForPdb(path, {});
+}
+
+void MainWindow::setAsksForPdb(bool asks) {
+  asksForPdb_ = asks;
+  microsoftSymbols_->setOffers(asks);
+}
+
+void MainWindow::openNow(const QString &path, const LoadOptions &options) {
+  // The workbench shows as the file starts to load, after any question
+  // asked before the load.
+  showWorkbench();
+  session_.open(path, options);
+}
+
+void MainWindow::openAskingForPdb(const QString &path, LoadOptions options) {
+  // Whether the worker finds PDBs is known once it has started; a file named
+  // on the command line can come first.
+  if (!session_.connected()) {
+    pdbPromptPending_ = {path, options};
+    return;
+  }
+  // IDA asks as it makes a database, so a project keeps the answer, and
+  // the user's own choice of debug information or PDB stands.
+  if (!asksForPdb_ || !options.debugInfo || !options.pdb.isEmpty() ||
+      !session_.findsPdbFiles() || ProjectDatabase::hasState(path)) {
+    openNow(path, options);
+    return;
+  }
+  session_.read(
+      QStringLiteral("pdb_reference"), {{"path", path}}, this,
+      [this, path, options](const QJsonObject &payload) {
+        const auto reference = payload.value("pdb").toObject();
+        if (reference.isEmpty()) {
+          openNow(path, options);
+          return;
+        }
+        // A modal must run after the query delivery barrier is released.
+        QTimer::singleShot(0, this, [this, path, options, reference] {
+          // Before the workbench shows, the question greets alone, as the
+          // quick start does; closing it answers no.
+          PdbPromptDialog dialog(session_, path, reference, nullptr,
+                                 isVisible() ? this : nullptr);
+          dialog.setAttribute(Qt::WA_QuitOnClose, false);
+          dialog.exec();
+          auto chosen = options;
+          chosen.pdb = dialog.choice();
+          openNow(path, chosen);
+        });
+      },
+      [this, path, options](const QString &, const QString &message) {
+        output_->append(
+            tr("Could not tell which PDB %1 names: %2").arg(path, message), 1);
+        openNow(path, options);
+      });
 }
 
 void MainWindow::openDialog() {
@@ -1507,20 +1589,27 @@ void MainWindow::chooseLoader(const QString &path) {
   session_.read(
       QStringLiteral("identify"), {{"path", path}}, this,
       [this, path](const QJsonObject &payload) {
-        LoadFileDialog dialog(path, payload.value("rows").toArray(), this);
+        // Before the workbench shows, the dialog greets alone, as IDA's
+        // does for a file named at startup.
+        LoadFileDialog dialog(path, payload.value("rows").toArray(),
+                              isVisible() ? this : nullptr);
+        dialog.setAttribute(Qt::WA_QuitOnClose, false);
         dialog.setIndicator(
             QSettings().value(AnalysisIndicatorKey, true).toBool());
         dialog.setBinaryProcessor(
             QSettings().value(BinaryProcessorKey).toString());
-        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0)
+        if (dialog.exec() != QDialog::Accepted || dialog.row() < 0) {
+          // Without a file to open, the workbench takes its place.
+          showWorkbench();
           return;
+        }
         QSettings().setValue(AnalysisIndicatorKey, dialog.indicator());
         // The processor the user picked, not one the bytes named.
         if (const auto processor = dialog.options().processor;
             !processor.isEmpty() && processor != QLatin1String("auto"))
           QSettings().setValue(BinaryProcessorKey, processor);
         applyIndicator();
-        session_.open(path, dialog.options());
+        openAskingForPdb(path, dialog.options());
       },
       [this, path](const QString &, const QString &message) {
         output_->append(
@@ -1562,6 +1651,7 @@ void MainWindow::reloadInput() {
 void MainWindow::loadPdb() {
   if (!session_.loaded() || !session_.loadsPdbFiles())
     return;
+  microsoftSymbols_->cancel();
   const auto epoch = session_.epoch();
   const auto path = QFileDialog::getOpenFileName(
       this, tr("Load PDB file"),
@@ -1622,14 +1712,17 @@ void MainWindow::rename() {
     }
     const QPointer<CodeView> view = code;
     const auto representation = code->representation();
+    const auto sourceOptions = code->text()->sourceOptions();
     const auto epoch = session_.epoch();
-    const auto valid = [this, view, function, representation, epoch] {
+    const auto valid = [this, view, function, representation, sourceOptions,
+                        epoch] {
       return view && session_.epoch() == epoch &&
              view->text()->function() == function &&
-             view->representation() == representation;
+             view->representation() == representation &&
+             view->text()->sourceOptions() == sourceOptions;
     };
     const auto edit = [this, view, target = *target, function = *function,
-                       representation, epoch,
+                       representation, sourceOptions, epoch,
                        valid](std::optional<Address> address) {
       if (!valid())
         return;
@@ -1651,6 +1744,7 @@ void MainWindow::rename() {
         const auto original = target.value("original").toString();
         session_.editCode({{"address", hexAddress(function)},
                            {"representation", representation},
+                           {"source_options", sourceOptions},
                            {"kind", "name"},
                            {"original", original},
                            {"name", name},
@@ -1712,12 +1806,15 @@ void MainWindow::comment() {
     }
     const QPointer<CodeView> view = code;
     const auto representation = code->representation();
+    const auto sourceOptions = code->text()->sourceOptions();
     const auto epoch = session_.epoch();
     const auto edit = [this, view, target = *target, function = *function,
-                       representation, epoch](const QString &current) {
+                       representation, sourceOptions,
+                       epoch](const QString &current) {
       if (!view || session_.epoch() != epoch ||
           view->text()->function() != function ||
-          view->representation() != representation)
+          view->representation() != representation ||
+          view->text()->sourceOptions() != sourceOptions)
         return;
       bool ok = false;
       const auto text = QInputDialog::getMultiLineText(
@@ -1729,7 +1826,8 @@ void MainWindow::comment() {
       }
       if (!ok || !view || session_.epoch() != epoch ||
           view->text()->function() != function ||
-          view->representation() != representation)
+          view->representation() != representation ||
+          view->text()->sourceOptions() != sourceOptions)
         return;
       if (const auto address = addressValue(target.value("mapped_address")))
         session_.setComment(*address, text, epoch);
@@ -1737,6 +1835,7 @@ void MainWindow::comment() {
         auto payload = target;
         payload["address"] = hexAddress(function);
         payload["representation"] = representation;
+        payload["source_options"] = sourceOptions;
         payload["kind"] = "comment";
         payload["text"] = text;
         session_.editCode(payload, epoch);
@@ -1787,16 +1886,18 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
     showReferencesDialog(address, to, nullptr);
     return;
   }
-  if (view->text()->loading()) {
-    output_->append(
-        tr("Wait for the function to finish loading before finding references"),
-        1);
-    return;
-  }
   if (!to) {
     const auto position = view->text()->currentAddress();
     showReferencesDialog(position ? position : view->text()->function(), false,
                          view);
+    return;
+  }
+  // A local's identity comes from the complete document; until then its
+  // name could resolve as an unrelated image symbol.
+  if (view->text()->loading()) {
+    output_->append(
+        tr("Wait for the function to finish loading before finding references"),
+        1);
     return;
   }
   // A source name can denote a different function from both its source row
@@ -1823,9 +1924,12 @@ void MainWindow::showCrossReferences(std::optional<Address> address, bool to) {
   const auto epoch = session_.epoch();
   const auto function = view->text()->function();
   const auto representation = view->representation();
-  const auto valid = [this, view, serial, epoch, function, representation] {
+  const auto sourceOptions = view->text()->sourceOptions();
+  const auto valid = [this, view, serial, epoch, function, representation,
+                      sourceOptions] {
     return serial == codeNavigationSerial_ && epoch == session_.epoch() &&
            view->text()->function() == function &&
+           view->text()->sourceOptions() == sourceOptions &&
            view->representation() == representation && view->isVisible();
   };
   session_.read(
@@ -1919,6 +2023,8 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   const auto serial = codeNavigationSerial_;
   const auto function = view ? view->text()->function() : std::nullopt;
   const auto representation = view ? view->representation() : QString();
+  const auto sourceOptions =
+      view ? view->text()->sourceOptions() : QJsonObject();
   const int digits = session_.bitness() == 64 ? 16 : 8;
   const QString title = (to ? tr("xrefs to %1") : tr("xrefs from %1"))
                             .arg(displayAddress(*address, digits));
@@ -1932,6 +2038,7 @@ void MainWindow::showReferencesDialog(std::optional<Address> address, bool to,
   if (const auto chosen = dialog.chosen()) {
     if (origin) {
       if (view && view->isVisible() && view->text()->function() == function &&
+          view->text()->sourceOptions() == sourceOptions &&
           view->representation() == representation)
         activateCodeName(view, hexAddress(*chosen), true);
     } else {
@@ -2534,6 +2641,7 @@ void MainWindow::contextMenu(const QPoint &globalPosition) {
   if (auto *code = focusedCodeView()) {
     CodeText *text = code->text();
     menu.addSeparator();
+    code->addSourceActions(menu);
     if (text->hasPrelude()) {
       const bool folded = text->preludeFolded();
       auto *declarations = menu.addAction(folded ? tr("Expand declarations")
@@ -2626,11 +2734,14 @@ void MainWindow::showQuickStart() {
       QCoreApplication::quit();
     return;
   }
-  showWorkbench();
+  // A chosen file shows the workbench as it starts to load, after the
+  // questions asked before the load greet alone too.
   if (start == QuickStartDialog::Start::New)
     chooseLoader(dialog.file());
   else if (start == QuickStartDialog::Start::Previous)
     openFile(dialog.file());
+  else
+    showWorkbench();
 }
 
 void MainWindow::showWorkbench() {

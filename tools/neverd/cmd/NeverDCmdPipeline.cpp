@@ -560,6 +560,37 @@ int runLift(neverd_session_t Sess) {
 }
 
 int runDecompile(neverd_session_t Sess) {
+  const bool SourceTransforms = SourceSymbolic.getNumOccurrences() ||
+                                SourceLLVMControlFlow.getNumOccurrences() ||
+                                SourceLLVMLevel.getNumOccurrences() ||
+                                SourceLLVMPasses.getNumOccurrences();
+  if (SourceTransforms && (ExportFunc.empty() || NoOpt || Devirtualize)) {
+    WithColor::error()
+        << "source optimization options require --func and cannot "
+           "combine with --no-opt or --devirtualize\n";
+    return 1;
+  }
+  if (!LlvmRoute && (SourceLLVMControlFlow.getNumOccurrences() ||
+                     SourceLLVMLevel.getNumOccurrences() ||
+                     SourceLLVMPasses.getNumOccurrences())) {
+    WithColor::error() << "LLVM source options require --llvm\n";
+    return 1;
+  }
+  json::Object ViewOptions;
+  if (SourceSymbolic.getNumOccurrences())
+    ViewOptions["symbolic"] = bool(SourceSymbolic);
+  if (SourceLLVMControlFlow.getNumOccurrences())
+    ViewOptions["llvm_control_flow"] = bool(SourceLLVMControlFlow);
+  if (SourceLLVMLevel.getNumOccurrences())
+    ViewOptions["llvm_optimization"] = SourceLLVMLevel.getValue();
+  if (SourceLLVMPasses.getNumOccurrences()) {
+    json::Array Passes;
+    for (const auto &Pass : SourceLLVMPasses)
+      Passes.push_back(Pass);
+    ViewOptions["llvm_passes"] = std::move(Passes);
+  }
+  std::string ViewOptionsText;
+  raw_string_ostream(ViewOptionsText) << json::Value(std::move(ViewOptions));
   const char *InPath = InputFile.getValue().c_str();
 
   const neverd_output_language_t Language = OutputLanguage.getValue();
@@ -723,13 +754,17 @@ int runDecompile(neverd_session_t Sess) {
     }
     const uint64_t Entry =
         FuncIdx >= 0 ? neverd_func_entry(Sess, FuncIdx) : DirectAddr;
-    if (JsonOutput || (SourceStage && !Devirtualize)) {
+    if (JsonOutput || SourceTransforms || (SourceStage && !Devirtualize)) {
       const char *Stage = SourceStage ? SourceStage : LlvmRoute ? "llvmc" : "c";
       json::Array Pages;
       std::string Text;
       size_t Offset = 0, Bytes = 0;
       for (;;) {
-        const char *Raw = neverd_ir_view_json(Sess, Entry, Stage, Offset, 2048);
+        const char *Raw =
+            SourceTransforms
+                ? neverd_ir_view_ex_json(Sess, Entry, Stage, Offset, 2048,
+                                         ViewOptionsText.c_str())
+                : neverd_ir_view_json(Sess, Entry, Stage, Offset, 2048);
         if (!Raw) {
           WithColor::error()
               << "source view failed: " << takeLastError(Sess) << "\n";

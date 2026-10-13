@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PipelineLowIRDetail.h"
+#include "PipelineSEHRuntimeMemory.h"
 #include "PipelineTrimStorage.h"
 
 #include "neverd/Limits.h"
@@ -18,6 +19,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/GuardedZeroSelect.h"
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/low/SEHFrameProof.h"
@@ -483,6 +485,10 @@ struct LocalUnwindContinuationEvidence {
 enum class ModuleAddressEdgeTraversal : uint8_t {
   OrdinaryAndExceptional,
   OrdinaryOnly,
+  // Inventory each declared activation separately, without forwarding values
+  // across a personality-defined exceptional edge. This mode never produces
+  // an ordinary returned-continuation certificate.
+  IndependentlyRootedOrdinaryOnly,
 };
 
 struct ModuleEvidenceBudget {
@@ -580,6 +586,7 @@ bool collectLowAddressUses(
   const TargetRegInfo &TRI = getTargetRegInfo(Img.Arch);
   const std::vector<TargetRegisterRange> PreservedRanges =
       TRI.callPreservedRanges(Img.abiFormat());
+  const auto SEHRuntimeMemory = collectLowSEHRuntimeMemory(Img, Funcs);
   std::map<va_t, const LowFunc *> SEHCallees;
   if (LocalUnwind)
     for (const auto &Func : Funcs)
@@ -1546,31 +1553,31 @@ bool collectLowAddressUses(
                       LocalUnwind->CompleteByFunction[FuncIndex] = false;
                     else {
                       LocalUnwind->TargetsByFunction[FuncIndex].insert(Target);
-                      const auto Frame = factsFor(
-                          NdVar::reg(TRI.Win64ParamRegs[0], TRI.PointerSize));
-                      const auto SP = factsFor(
-                          NdVar::reg(TRI.StackPointer, TRI.PointerSize));
                       const llvm::StringRef Module = Imported->Module;
                       const bool KnownRuntime =
                           Module.equals_insensitive("vcruntime140.dll") ||
                           Module.equals_insensitive("vcruntime140d.dll") ||
                           Module.equals_insensitive("msvcrt.dll") ||
                           Module.equals_insensitive("msvcrtd.dll");
-                      if (KnownRuntime && Frame.isPrivateFrameOnly() &&
-                          SP.isPrivateFrameOnly() &&
-                          Frame.FrameOffsets == SP.FrameOffsets) {
+                      if (KnownRuntime) {
+                        // The complete decoded LowIR proof owns equality of
+                        // the physical SP and the frame argument. The address
+                        // inventory owns only continuation identity and uses;
+                        // its independently rooted frame lattice cannot veto
+                        // or replace a checked runtime-activation coordinate.
                         if (!SEHFrameProof)
                           SEHFrameProof = proveLowSEHFrames(
-                              Func, TRI, SEHFrameWorkRemaining, &SEHCallees);
+                              Func, TRI, SEHFrameWorkRemaining, &SEHCallees,
+                              &SEHRuntimeMemory);
                         const auto Proof =
                             SEHFrameProof->Calls.find({Op.Addr, Op.Seq});
-                        if (Proof != SEHFrameProof->Calls.end() &&
-                            Proof->second == *Frame.FrameOffsets.begin())
+                        if (Proof != SEHFrameProof->Calls.end())
                           LocalUnwind->SameFrameCallsByFunction[FuncIndex]
                               .push_back({Target, Op.Addr, Op.Seq, CalleeVA,
                                           Proof->second,
                                           SEHFrameProof->DependencyDigest,
-                                          SEHFrameProof->CalleeDependencies});
+                                          SEHFrameProof->CalleeDependencies,
+                                          SEHFrameProof->UsesRuntimeMemory});
                       }
                     }
                   }
@@ -2248,15 +2255,25 @@ EHContinuationRootDiscovery collectWindowsEHContinuationRoots(
   std::vector<ModuleAddressUse> IgnoredUses;
   const std::vector<ModuleJumpTableOwner> NoTableOwners;
   ModuleEvidenceBudget Budget(TestBudget);
-  // An exceptional edge enters with personality-defined register/frame state;
-  // it is not a value-preserving predecessor of an ordinary machine RETURN.
-  // Catch funclets are independently rooted at their real entry, so following
-  // only ordinary edges proves the returned continuation without letting an
-  // unwind self-cycle grow a fictitious stack epoch until the budget expires.
-  if (!collectLowAddressUses(Img, Funcs, NoTableOwners, IgnoredUses, Budget,
-                             TestBudget, &CandidateTargets, &Returned,
-                             ModuleAddressEdgeTraversal::OrdinaryOnly,
-                             &LocalUnwind)) {
+  // Ordinary catch returns and local-unwind call uses have different entry
+  // domains. Preserve the ordinary-only returned-value proof. A separate
+  // address inventory visits runtime activation roots from unknown state and
+  // follows only ordinary edges; frame equality still comes from LowIR's
+  // decoded-frame authority, never from this inventory or the runtime name.
+  if (HasFH3CatchSource) {
+    std::vector<ModuleAddressUse> ReturnedUses;
+    if (!collectLowAddressUses(Img, Funcs, NoTableOwners, ReturnedUses, Budget,
+                               TestBudget, &CandidateTargets, &Returned,
+                               ModuleAddressEdgeTraversal::OrdinaryOnly)) {
+      Result.AnalysisComplete = false;
+      return Result;
+    }
+  }
+  if (!collectLowAddressUses(
+          Img, Funcs, NoTableOwners, IgnoredUses, Budget, TestBudget,
+          &CandidateTargets, nullptr,
+          ModuleAddressEdgeTraversal::IndependentlyRootedOrdinaryOnly,
+          &LocalUnwind)) {
     Result.AnalysisComplete = false;
     return Result;
   }
@@ -3909,6 +3926,9 @@ void Pipeline::buildLowIR(
       annotateDebugInfo(Low, *Dbg);
     if (Low.OriginalSize == 0)
       Low.OriginalSize = Low.computedSize();
+    // A `bsr` the code reaches only with a nonzero source writes its result:
+    // the kept destination is no read of it.
+    foldGuardedZeroSelects(Low);
 
     Result.LowFuncs.push_back(std::move(Low));
     if (AuditIt != Result.FunctionAudits.end())

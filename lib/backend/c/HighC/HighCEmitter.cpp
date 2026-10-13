@@ -2962,7 +2962,7 @@ void HighCWriter::writeImageObjects() {
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
-         << llvm::utohexstr(Backing.End) << " */\n";
+         << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     if (Backing.Align > 1)
       OS << "_Alignas(" << Backing.Align << ") ";
     OS << "unsigned char " << Backing.Name << "["
@@ -3056,6 +3056,15 @@ void HighCWriter::writeImageObjects() {
   OS << "\n";
 }
 
+std::string HighCWriter::backingReadable(const ImageBacking &Backing) const {
+  const auto First = ImageObjects.find(Backing.Base);
+  if (First == ImageObjects.end() || First->second.Readable.empty() ||
+      First->second.Name !=
+          (Backing.Words.empty() ? Backing.Name : Backing.Words))
+    return {};
+  return " " + First->second.Readable;
+}
+
 void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   // Slots that hold addresses come last: they name the objects above, and
   // each other by the declarations that come first.
@@ -3081,7 +3090,8 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
   for (const va_t Addr : Deferred) {
     const ImageObject &Obj = ImageObjects.at(Addr);
     if (Opts.EmitComments)
-      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr) << " */\n";
+      OS << "/* neverd.image: 0x" << llvm::utohexstr(Addr)
+         << (Obj.Readable.empty() ? "" : " ") << Obj.Readable << " */\n";
     OS << declarationToC(Obj.Type, Obj.Name) << " = "
        << *relocatedSlotInitializer(Addr, Obj) << ";\n";
   }
@@ -3090,7 +3100,7 @@ void HighCWriter::writePointerBackings(const std::vector<va_t> &Deferred) {
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"
-         << llvm::utohexstr(Backing.End) << " */\n";
+         << llvm::utohexstr(Backing.End) << backingReadable(Backing) << " */\n";
     OS << "union " << Backing.Words << "_words " << Backing.Words
        << " = { .w = {";
     // A long initializer takes a few words a line, so no line runs to the
@@ -3190,6 +3200,11 @@ std::string HighCWriter::relocatedTargetNote(va_t Slot) const {
   const va_t Target =
       PointerBytes == 8 ? readLE<uint64_t>(Bytes) : readLE<uint32_t>(Bytes);
   const ImageSymbolName Named = imageSymbolName(Target);
+  // The listing names it by its symbol as the image spells it: the
+  // underscore of `_IO_stdin_used` stays, though its C identifier drops it.
+  if (!Named.Symbol.empty() && isPlainSymbolText(Named.Symbol) &&
+      !llvm::StringRef(Named.Symbol).contains("*/"))
+    return "&" + Named.Symbol;
   return Named.Raw.empty() ? std::string() : "&" + Named.Raw;
 }
 

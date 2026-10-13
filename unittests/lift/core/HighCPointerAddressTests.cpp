@@ -1808,6 +1808,41 @@ TEST(LLVMCPointerAddresses, DataOnlyAddressedIsDeclared) {
       << Source;
 }
 
+/// Expect \p Source to be C a compiler accepts.
+void expectCSyntax(const std::string &Source) {
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror", "c",
+                                                  SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror",
+                                                  "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream File(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    File << Source;
+  }
+  llvm::SmallVector<llvm::StringRef, 4> Arguments{Compiler, "-std=c11",
+                                                  "-fsyntax-only", SourcePath};
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  std::string Error;
+  const int CompileStatus = llvm::sys::ExecuteAndWait(
+      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
+  EXPECT_EQ(CompileStatus, 0)
+      << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
+      << Source;
+}
+
 TEST(LLVMCPointerAddresses, OneFunctionDeclaresTheImagesPointerStorage) {
   // ntoskrnl's .data holds relocated pointers, so LLVM emission mirrors the
   // whole run as one global, its pointers relocated to what they reach.  A
@@ -1855,37 +1890,75 @@ TEST(LLVMCPointerAddresses, OneFunctionDeclaresTheImagesPointerStorage) {
   EXPECT_EQ(Source.find("_nd_codeptr_140C00000 ="), std::string::npos)
       << Source;
 
-#ifdef NEVERD_TEST_CLANG
-  const std::string Compiler = NEVERD_TEST_CLANG;
-#else
-  auto FoundCompiler = llvm::sys::findProgramByName("clang");
-  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
-  const std::string Compiler = *FoundCompiler;
-#endif
-  llvm::SmallString<128> SourcePath, ErrorPath;
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror", "c",
-                                                  SourcePath));
-  llvm::FileRemover RemoveSource(SourcePath);
-  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror",
-                                                  "err", ErrorPath));
-  llvm::FileRemover RemoveError(ErrorPath);
-  {
-    std::error_code EC;
-    llvm::raw_fd_ostream File(SourcePath, EC);
-    ASSERT_FALSE(EC) << EC.message();
-    File << Source;
-  }
-  llvm::SmallVector<llvm::StringRef, 4> Arguments{Compiler, "-std=c11",
-                                                  "-fsyntax-only", SourcePath};
-  const std::optional<llvm::StringRef> Redirects[] = {
-      std::nullopt, std::nullopt, ErrorPath.str()};
-  std::string Error;
-  const int CompileStatus = llvm::sys::ExecuteAndWait(
-      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
-  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
-  EXPECT_EQ(CompileStatus, 0)
-      << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
+  expectCSyntax(Source);
+}
+
+TEST(LLVMCPointerAddresses, AModuleNamesTheDataOfAMirrorItsEnvironmentHolds) {
+  // An i386 GOT run holds slots the loader fills, so LLVM emission declares
+  // the whole run rather than define it from the file's bytes, the data
+  // after the GOT included, and code reaches that data from the GOT base by
+  // offset: `&mirror + 8` as integer arithmetic, or as an element of it.
+  // The module's C names the data as the listing does and declares it, as
+  // one function's C does.  An anchor before the run (i386
+  // `table@GOTOFF - 1`) addresses no data, so it keeps the mirror, which C
+  // then declares.
+  BinaryImage Img =
+      makeImageObjectFixture(0x140C00000, std::vector<uint8_t>(16, 0), true);
+  Symbol Completed;
+  Completed.Name = "completed.0";
+  Completed.Addr = 0x140C00008;
+  Completed.Size = 1;
+  Img.Symbols.push_back(Completed);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-environment-mirror", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  auto *StorageTy = llvm::StructType::get(Context, {I64, I64}, true);
+  auto *Storage = new llvm::GlobalVariable(
+      Module, StorageTy, /*isConstant=*/false,
+      llvm::GlobalValue::ExternalLinkage, nullptr, "__nd_codeptr_140C00000");
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "read_flag", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  llvm::Constant *Offset = llvm::ConstantExpr::getIntToPtr(
+      llvm::ConstantExpr::getAdd(llvm::ConstantExpr::getPtrToInt(Storage, I64),
+                                 llvm::ConstantInt::get(I64, 8)),
+      llvm::PointerType::getUnqual(Context));
+  auto *Flag = Builder.CreateLoad(I8, Offset);
+  Flag->setVolatile(true);
+  Builder
+      .CreateStore(llvm::ConstantInt::get(I8, 1),
+                   llvm::ConstantExpr::getGetElementPtr(
+                       I8, Storage, llvm::ConstantInt::get(I64, 8)))
+      ->setVolatile(true);
+  Builder.CreateRet(Builder.CreateZExt(Flag, I64));
+  llvm::Function *Anchor = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "anchor", Module);
+  llvm::IRBuilder<> AnchorBuilder(
+      llvm::BasicBlock::Create(Context, "entry", Anchor));
+  AnchorBuilder.CreateRet(
+      llvm::ConstantExpr::getSub(llvm::ConstantExpr::getPtrToInt(Storage, I64),
+                                 llvm::ConstantInt::get(I64, 1)));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img));
+  OS.flush();
+  EXPECT_NE(Source.find("/* completed.0 */\nextern uint8_t completed_0;"),
+            std::string::npos)
       << Source;
+  EXPECT_NE(Source.find("completed_0 = 1;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(" __nd_codeptr_140C00000;\n"), std::string::npos)
+      << Source;
+  EXPECT_EQ(Source.find("140BFFFFF"), std::string::npos) << Source;
+  expectCSyntax(Source);
 }
 
 TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
@@ -44652,13 +44725,16 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 }
 
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
-/// C must hold its x87 values as \p Storage and return \p Expected.
+/// C must preserve the x87 value/storage result and return \p Expected.
 void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
-                     llvm::StringRef Storage = "long double") {
+                     llvm::StringRef Storage = {}) {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
+  // Raw binary80 constants may stay in integer storage until arithmetic
+  // needs a floating value. Executing the result checks both representations.
+  if (!Storage.empty())
+    EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +

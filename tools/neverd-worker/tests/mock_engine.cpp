@@ -69,6 +69,10 @@ struct MockSession {
   std::string path, error;
   /// Whether loading reads the debug information beside the input.
   bool debugInfo = true;
+  /// Whether a load searches for the fixture PDB, and whether it found one.
+  bool pdbSearch = true;
+  bool pdbFound = false;
+  bool pdbLoaded = false;
   int imageFunctions = ImageFunctions;
   /// Image functions the fixture does not list.
   std::set<std::uint64_t> absentFunctions;
@@ -145,6 +149,73 @@ void neverd_session_set_load_progress(neverd_session_t s,
     session(s)->progressUser = userData;
   }
 }
+namespace {
+constexpr char FixturePdb[] = "fixture.pdb";
+constexpr char FixturePdbKey[] = "123456789ABCDEF0123456789ABCDEF01";
+constexpr char FixturePdbBytes[] = "matching fixture PDB";
+
+bool symbolsFixture(const std::filesystem::path &input) {
+  const auto name = input.filename().string();
+  return name == "symbols-missing.bin" || name == "symbols-local.bin";
+}
+
+/// Where the fixture's symbol store keeps its PDB: beside the input, as
+/// <dir>/symbols/<pdb>/<key>/<pdb>.
+std::filesystem::path fixtureStorePdb(const std::filesystem::path &input) {
+  return input.parent_path() / "symbols" / FixturePdb / FixturePdbKey /
+         FixturePdb;
+}
+
+bool matchingFixturePdb(const std::filesystem::path &path) {
+  std::ifstream input(path, std::ios::binary);
+  const std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  return bytes == FixturePdbBytes;
+}
+} // namespace
+
+const char *neverd_pdb_reference_json(const char *path, const char *) {
+  const auto input = std::filesystem::u8path(path);
+  if (!symbolsFixture(input))
+    return copy(Json{{"pdb", nullptr}}.dump());
+  const auto utf8 = [](const std::filesystem::path &p) {
+    const auto text = p.u8string();
+    return std::string(text.begin(), text.end());
+  };
+  Json found = nullptr;
+  Json rejected = Json::array();
+  const std::pair<std::filesystem::path, const char *> candidates[] = {
+      {input.parent_path() / FixturePdb, "beside"},
+      {fixtureStorePdb(input), "store"}};
+  for (const auto &[candidate, location] : candidates) {
+    if (!std::filesystem::is_regular_file(candidate))
+      continue;
+    Json entry{{"path", utf8(candidate)}, {"location", location}};
+    if (matchingFixturePdb(candidate)) {
+      found = std::move(entry);
+      break;
+    }
+    entry["reason"] = "mismatch";
+    rejected.push_back(std::move(entry));
+  }
+  const std::string url = std::string("https://msdl.microsoft.com/download/"
+                                      "symbols/") +
+                          FixturePdb + "/" + FixturePdbKey + "/" + FixturePdb;
+  return copy(Json{
+      {"pdb",
+       {{"file", FixturePdb},
+        {"key", FixturePdbKey},
+        {"recorded", FixturePdb},
+        {"found", found},
+        {"rejected", rejected},
+        {"servers", Json::array({{{"url", url},
+                                  {"path", utf8(fixtureStorePdb(input))}}})}}}}
+                  .dump());
+}
+
+void neverd_session_set_pdb_search(neverd_session_t s, int enabled) {
+  session(s)->pdbSearch = enabled != 0;
+}
+
 int neverd_session_load(neverd_session_t s, const char *path) {
   const auto notify = [&](const char *phase, unsigned long long done) {
     if (session(s)->progress)
@@ -170,6 +241,13 @@ int neverd_session_load(neverd_session_t s, const char *path) {
                           : std::set<std::uint64_t>{};
   session(s)->functions = listedFunctions({}, session(s)->imageFunctions,
                                           session(s)->absentFunctions);
+  // The local fixture's PDB is beside it; the missing one's is found once a
+  // download put it in the store.
+  const auto input = std::filesystem::u8path(path);
+  session(s)->pdbFound =
+      session(s)->debugInfo && session(s)->pdbSearch &&
+      (input.filename() == "symbols-local.bin" ||
+       (symbolsFixture(input) && matchingFixturePdb(fixtureStorePdb(input))));
   notify("ready", 1);
   return 1;
 }
@@ -296,18 +374,51 @@ const char *neverd_headers_json(neverd_session_t s) {
       session(s)->path.ends_with("pseudocode-rust.bin") ? "rust"
       : session(s)->path.ends_with("pseudocode-go.bin") ? "go"
       : (session(s)->path.ends_with("pseudocode-cpp.bin") ||
-         session(s)->path.ends_with("code-edits-cpp.bin"))
+         session(s)->path.ends_with("code-edits-cpp.bin") ||
+         session(s)->path.ends_with("code-folding-cpp.bin") ||
+         session(s)->path.ends_with("local-references-cpp.bin"))
           ? "cpp"
           : "c";
   Json pseudocode = Json::array({"c"});
   if (runtime != "c")
     pseudocode.push_back(runtime);
-  return copy(Json{{"language",
-                    {{"runtime", runtime},
-                     {"secondary", Json::array()},
-                     {"evidence", Json::array()},
-                     {"pseudocode", pseudocode}}}}
-                  .dump());
+  Json result{{"language",
+               {{"runtime", runtime},
+                {"secondary", Json::array()},
+                {"evidence", Json::array()},
+                {"pseudocode", pseudocode}}}};
+  if (session(s)->path.ends_with("symbols-missing.bin") ||
+      session(s)->path.ends_with("symbols-local.bin")) {
+    result["debug_info"] = {
+        {"enabled", session(s)->debugInfo},
+        {"kind",
+         session(s)->pdbLoaded || session(s)->pdbFound ? "pdb" : "none"}};
+    result["dynamic"]["pdb_symbol"] = {
+        {"file", "fixture.pdb"}, {"key", "123456789ABCDEF0123456789ABCDEF01"}};
+  }
+  return copy(result.dump());
+}
+
+const char *neverd_session_inspect_pdb_json(neverd_session_t s,
+                                            const char *path) {
+  std::ifstream input(std::filesystem::u8path(path), std::ios::binary);
+  std::string bytes((std::istreambuf_iterator<char>(input)), {});
+  if (bytes != "matching fixture PDB") {
+    session(s)->error = "fixture PDB identity mismatch";
+    return nullptr;
+  }
+  return copy(
+      Json{{"verified", true}, {"names", Json::array()}, {"name_count", 1}}
+          .dump());
+}
+
+int neverd_session_load_pdb(neverd_session_t s, const char *path) {
+  const auto inspected = neverd_session_inspect_pdb_json(s, path);
+  if (!inspected)
+    return 0;
+  neverd_free_string(inspected);
+  session(s)->pdbLoaded = true;
+  return 1;
 }
 
 // Deterministic fixture-only identity. The real engine uses SHA-256; the
@@ -848,6 +959,41 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
 }
 } // namespace
 
+const char *neverd_ir_view_ex_json(neverd_session_t s, neverd_va_t address,
+                                   const char *representation,
+                                   std::size_t offset, std::size_t limit,
+                                   const char *options) {
+  const auto policy = Json::parse(options ? options : "{}", nullptr, false);
+  if (!policy.is_object() ||
+      (policy.contains("symbolic") && !policy["symbolic"].is_boolean())) {
+    session(s)->error = "invalid source options";
+    return nullptr;
+  }
+  if (!policy.empty()) {
+    std::fprintf(stderr, "fixture source options %s\n", policy.dump().c_str());
+    std::fflush(stderr);
+  }
+  if (session(s)->path.ends_with("source-options-fail.bin") &&
+      policy.value("symbolic", false)) {
+    session(s)->error = "fixture transformation refused";
+    return nullptr;
+  }
+  if (session(s)->path.ends_with("source-options-slow.bin") &&
+      policy.value("symbolic", false)) {
+    std::fprintf(stderr, "fixture symbolic transformation started\n");
+    std::fflush(stderr);
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+  }
+  const char *raw =
+      neverd_ir_view_json(s, address, representation, offset, limit);
+  if (!raw)
+    return nullptr;
+  auto page = Json::parse(raw);
+  neverd_free_string(raw);
+  page["fixture_source_options"] = policy;
+  return copy(page.dump());
+}
+
 const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
                                 const char *representation, std::size_t offset,
                                 std::size_t limit) {
@@ -970,11 +1116,15 @@ const char *neverd_ir_view_json(neverd_session_t s, neverd_va_t address,
       session(s)->path.ends_with("code-edits-cpp.bin") ||
       session(s)->path.ends_with("code-edits-mapped.bin") ||
       session(s)->path.ends_with("code-folding.bin") ||
+      session(s)->path.ends_with("code-folding-cpp.bin") ||
       session(s)->path.ends_with("local-references.bin") ||
+      session(s)->path.ends_with("local-references-cpp.bin") ||
       session(s)->path.ends_with("tab-sync-paged.bin")) {
     const bool localReferences =
-        session(s)->path.ends_with("local-references.bin");
-    const bool codeFolding = session(s)->path.ends_with("code-folding.bin");
+        session(s)->path.ends_with("local-references.bin") ||
+        session(s)->path.ends_with("local-references-cpp.bin");
+    const bool codeFolding = session(s)->path.ends_with("code-folding.bin") ||
+                             session(s)->path.ends_with("code-folding-cpp.bin");
     const bool paged =
         localReferences || session(s)->path.ends_with("tab-sync-paged.bin");
     std::string full = "#include <stdint.h>\n"

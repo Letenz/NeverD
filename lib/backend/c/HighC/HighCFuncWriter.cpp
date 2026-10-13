@@ -757,6 +757,8 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
   }
 
   std::set<std::string> DeclaredNames(ParamNames);
+  // The parameters are declared already; a blank line ends the locals.
+  const size_t Parameters = DeclaredNames.size();
   for (auto &Local : Func.Locals) {
     MedVar StackVar;
     StackVar.Kind = MedVar::Stack;
@@ -853,7 +855,7 @@ void HighCWriter::emitLocalDecls(const HighFunc &Func,
        << ";\n";
   }
   DeclaredCNames.insert(DeclaredNames.begin(), DeclaredNames.end());
-  if (!DeclaredNames.empty())
+  if (DeclaredNames.size() > Parameters)
     OS << "\n";
 }
 
@@ -1015,8 +1017,13 @@ void HighCWriter::writeExceptionAnnotation(const HighFunc &Func) {
 void HighCWriter::writeFunction(const HighFunc &Func) {
   if (Opts.Image && EmitFunctionWrapper)
     if (auto Reg = x86GetPcThunkRegister(*Opts.Image, Func.Entry)) {
-      c_stub::writeGetPcThunk(OS, functionIdentifier(Func),
-                              typeToC(Func.ReturnType), *Reg);
+      const std::string Identifier = functionIdentifier(Func);
+      std::string Symbol;
+      if (auto It = FunctionSymbolNames.find(&Func);
+          Opts.EmitComments && It != FunctionSymbolNames.end())
+        Symbol = symbolComment(It->second, Identifier);
+      c_stub::writeGetPcThunk(OS, Identifier, typeToC(Func.ReturnType), *Reg,
+                              Symbol);
       return;
     }
 
@@ -5916,15 +5923,15 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
 
   if (EmitFunctionWrapper && Func.Entry)
     OS << "/* neverd.entry: 0x" << llvm::utohexstr(Func.Entry) << " */\n";
-  // A definition whose identifier is spelled from its symbol names the symbol
-  // as its language does (`QDomNode::nodeType() const`, `main.main`), unless
-  // the debug name's comment below says the same.
+  // A definition whose identifier is not its symbol names the symbol as its
+  // language does (`QDomNode::nodeType() const`, `main.main`) or as the image
+  // spells it (`_fini`), unless the debug name's comment below says the same.
   const bool DebugNameComment =
       !Func.DebugName.empty() && Func.DebugName != Func.Name;
   if (Opts.EmitComments)
     if (auto Symbol = FunctionSymbolNames.find(&Func);
         Symbol != FunctionSymbolNames.end())
-      if (const std::string Demangled = demangledComment(Symbol->second);
+      if (const std::string Demangled = symbolComment(Symbol->second, FName);
           !Demangled.empty() &&
           !(DebugNameComment && Demangled == Func.DebugName)) {
         if (!EmitFunctionWrapper)

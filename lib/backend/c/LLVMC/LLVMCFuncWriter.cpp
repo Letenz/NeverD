@@ -14,6 +14,8 @@
 
 #include "../VariadicImportStub.h"
 #include "../X86GetPcThunk.h"
+#include "LLVMCStackAllocation.h"
+#include "LLVMCStorage.h"
 #include "LLVMCWriter.h"
 
 #include "neverd/Limits.h"
@@ -60,15 +62,10 @@ namespace neverd {
 
 namespace {
 
-std::string byteArrayAlignment(const llvm::AllocaInst &Alloca) {
-  const auto *Array =
-      llvm::dyn_cast<llvm::ArrayType>(Alloca.getAllocatedType());
-  // Byte backing storage has no natural alignment beyond one. Preserve its
-  // LLVM alignment for typed accesses and observable address-bit operations.
-  if (!Array || !Array->getElementType()->isIntegerTy(8) ||
-      Alloca.getAlign().value() == 1)
-    return {};
-  return "_Alignas(" + std::to_string(Alloca.getAlign().value()) + ") ";
+std::string allocaAlignment(const llvm::AllocaInst &Alloca) {
+  return llvmc::storageAlignment(Alloca.getAllocatedType(),
+                                 Alloca.getModule()->getDataLayout(),
+                                 Alloca.getAlign());
 }
 
 bool isLifetimeOrDbgUser(const llvm::User *U) {
@@ -669,6 +666,10 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
       auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
       if (!Call || Call->getType()->isVoidTy() || Call->use_empty() ||
           StatementCalls.count(Call))
+        continue;
+      // Allocation owns statement-local count/overflow/alignment operations
+      // and must execute at its original position, even with one printed use.
+      if (llvmc::cStackAllocation(*Call))
         continue;
       if (llvm::isa<llvm::IntrinsicInst>(Call) ||
           llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()) ||
@@ -8368,10 +8369,11 @@ void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
         // the statement walk never prints is not a live local.
         CallDeclNames.push_back(AllocName);
         emitIndent(1);
+        OS << allocaAlignment(*AI);
         auto *AllocTy = AI->getAllocatedType();
         if (auto *ArrTy = llvm::dyn_cast<llvm::ArrayType>(AllocTy)) {
-          OS << byteArrayAlignment(*AI) << typeToCLLVM(ArrTy->getElementType())
-             << " " << AllocName << "[" << ArrTy->getNumElements() << "];\n";
+          OS << typeToCLLVM(ArrTy->getElementType()) << " " << AllocName << "["
+             << ArrTy->getNumElements() << "];\n";
         } else {
           if (auto It = AllocaTypes.find(AI);
               It != AllocaTypes.end() && It->second &&
@@ -8576,10 +8578,15 @@ void LLVMCWriter::writeFunction(llvm::Function &Fn) {
         !llvm::isa<llvm::UnreachableInst>(Fn.front().back()))
       throw std::invalid_argument(
           "i386 get-PC helper body no longer matches its metadata");
+    const std::string Identifier = functionIdentifier(Fn);
+    std::string Symbol;
+    if (auto It = FunctionSymbolNames.find(&Fn);
+        Opts.EmitComments && It != FunctionSymbolNames.end())
+      Symbol = symbolComment(It->second, Identifier);
     std::string Text;
     llvm::raw_string_ostream Stream(Text);
-    c_stub::writeGetPcThunk(Stream, functionIdentifier(Fn),
-                            typeToCLLVM(Fn.getReturnType()), Reg);
+    c_stub::writeGetPcThunk(Stream, Identifier, typeToCLLVM(Fn.getReturnType()),
+                            Reg, Symbol);
     OS << Text;
     return;
   }
@@ -8705,12 +8712,13 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   OS.retarget(&BufOS);
 
   std::string FName = functionIdentifier(Fn);
-  // A C++ definition names its demangled signature: the C identifier keeps
-  // only its scopes and name.
+  // A definition whose identifier is not its symbol names the symbol: a C++
+  // one its demangled signature, as the C identifier keeps only its scopes
+  // and name, and a start-up function the C runtime defines its own name.
   if (Opts.EmitComments)
     if (auto Symbol = FunctionSymbolNames.find(&Fn);
         Symbol != FunctionSymbolNames.end())
-      if (const std::string Demangled = demangledComment(Symbol->second);
+      if (const std::string Demangled = symbolComment(Symbol->second, FName);
           !Demangled.empty())
         OS << "/* " << Demangled << " */\n";
   writeExceptionAnnotation(Fn);
@@ -9531,7 +9539,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         if (const auto *Array =
                 llvm::dyn_cast<llvm::ArrayType>(AI->getAllocatedType()))
           ArrayDeclarations[It->second] =
-              byteArrayAlignment(*AI) + typeToCLLVM(Array->getElementType()) +
+              allocaAlignment(*AI) + typeToCLLVM(Array->getElementType()) +
               " " + It->second + "[" + std::to_string(Array->getNumElements()) +
               "];";
       if (DeclaredNames.count(It->second))
@@ -9544,7 +9552,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (auto *AI = llvm::dyn_cast<llvm::AllocaInst>(&Inst)) {
         llvm::Type *Allocated = AI->getAllocatedType();
         if (auto *Array = llvm::dyn_cast<llvm::ArrayType>(Allocated)) {
-          Declaration = "    " + byteArrayAlignment(*AI) +
+          Declaration = "    " + allocaAlignment(*AI) +
                         typeToCLLVM(Array->getElementType()) + " " +
                         It->second + "[" +
                         std::to_string(Array->getNumElements()) + "];\n";
@@ -9560,7 +9568,8 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
             if (!Tag.empty())
               Type = Tag + "*";
           }
-          Declaration = "    " + Type + " " + It->second + ";\n";
+          Declaration =
+              "    " + allocaAlignment(*AI) + Type + " " + It->second + ";\n";
         }
       } else {
         Declaration =

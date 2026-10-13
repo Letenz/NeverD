@@ -2164,6 +2164,10 @@ Usare questo PDB per l’analisi? Simboli, tipi, firme delle funzioni e interval
         <source>Wait for the function to finish loading before finding references</source>
         <translation>Attendi il caricamento completo della funzione prima di cercare i riferimenti</translation>
     </message>
+    <message>
+        <source>Could not tell which PDB %1 names: %2</source>
+        <translation>Impossibile determinare il PDB indicato da %1: %2</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2445,6 +2449,10 @@ Usare questo PDB per l’analisi? Simboli, tipi, firme delle funzioni e interval
         <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
         <translation>PDB caricato per l’analisi: %1 (%2 nomi, confermato dall’utente, identità non verificata)</translation>
     </message>
+    <message>
+        <source>Opened without the PDB the input names, as chosen</source>
+        <translation>Aperto senza il PDB indicato dal file di input, come scelto</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2695,6 +2703,164 @@ Usare questo PDB per l’analisi? Simboli, tipi, firme delle funzioni e interval
     <message>
         <source>The worker cannot restore analysis state.</source>
         <translation>Il processo di analisi non può ripristinare lo stato dell'analisi.</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::PdbPromptDialog</name>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Carica file PDB</translation>
+    </message>
+    <message>
+        <source>The input file was linked with debug information stored here:</source>
+        <translation>Il file di input è stato collegato con informazioni di debug salvate qui:</translation>
+    </message>
+    <message>
+        <source>&amp;Browse…</source>
+        <translation>S&amp;foglia…</translation>
+    </message>
+    <message>
+        <source>The download was cancelled.</source>
+        <translation>Il download è stato annullato.</translation>
+    </message>
+    <message>
+        <source>A matching copy is at that path.</source>
+        <translation>In quel percorso c&apos;è una copia corrispondente.</translation>
+    </message>
+    <message>
+        <source>A matching copy is beside the input file:</source>
+        <translation>Accanto al file di input c&apos;è una copia corrispondente:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in a symbol directory:</source>
+        <translation>In una directory di simboli c&apos;è una copia corrispondente:</translation>
+    </message>
+    <message>
+        <source>A matching copy is in the symbol store:</source>
+        <translation>Nell&apos;archivio dei simboli c&apos;è una copia corrispondente:</translation>
+    </message>
+    <message>
+        <source>Do you want to load it?</source>
+        <translation>Caricarla?</translation>
+    </message>
+    <message>
+        <source>%1 belongs to another build.</source>
+        <translation>%1 appartiene a un&apos;altra build.</translation>
+    </message>
+    <message>
+        <source>%1 cannot be read.</source>
+        <translation>Impossibile leggere %1.</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer, and no symbol server is configured.</source>
+        <translation>Su questo computer non c&apos;è una copia corrispondente e non è configurato alcun server di simboli.</translation>
+    </message>
+    <message>
+        <source>Do you want to browse for the PDB file on disk?</source>
+        <translation>Cercare il file PDB sul disco?</translation>
+    </message>
+    <message>
+        <source>No matching copy is on this computer. Only the PDB&apos;s name and build identity are sent to look for it.</source>
+        <translation>Su questo computer non c&apos;è una copia corrispondente. Per cercarla vengono inviati solo il nome e l&apos;identità di build del PDB.</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the Microsoft Symbol Server?</source>
+        <translation>Cercare questo file sul server di simboli Microsoft?</translation>
+    </message>
+    <message>
+        <source>Do you want to look for this file on the symbol server %1?</source>
+        <translation>Cercare questo file sul server di simboli %1?</translation>
+    </message>
+    <message>
+        <source>Downloading %1 from %2…</source>
+        <translation>Download di %1 da %2…</translation>
+    </message>
+    <message>
+        <source>%1 of %2</source>
+        <translation>%1 di %2</translation>
+    </message>
+    <message>
+        <source>Verifying %1…</source>
+        <translation>Verifica di %1…</translation>
+    </message>
+    <message>
+        <source>The downloaded file is not the PDB of this build.</source>
+        <translation>Il file scaricato non è il PDB di questa build.</translation>
+    </message>
+    <message>
+        <source>Could not find PDB file &apos;%1&apos;.</source>
+        <translation>Impossibile trovare il file PDB «%1».</translation>
+    </message>
+    <message>
+        <source>Do you want to try again, or to browse for the PDB file on disk?</source>
+        <translation>Riprovare o cercare il file PDB sul disco?</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>File PDB (*.pdb);;Tutti i file (*)</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::SymbolDownload</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>Tempo scaduto per il download dei simboli.</translation>
+    </message>
+    <message>
+        <source>No symbol server is configured.</source>
+        <translation>Nessun server di simboli configurato.</translation>
+    </message>
+    <message>
+        <source>%1 is not an HTTP symbol server.</source>
+        <translation>%1 non è un server di simboli HTTP.</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol store directory %1.</source>
+        <translation>Impossibile creare la directory dell&apos;archivio dei simboli %1.</translation>
+    </message>
+    <message>
+        <source>Cannot open a temporary symbol file in %1: %2</source>
+        <translation>Impossibile aprire un file temporaneo dei simboli in %1: %2</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>Il file dei simboli supera il limite di download di 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Cannot write the symbol file %1: %2</source>
+        <translation>Impossibile scrivere il file dei simboli %1: %2</translation>
+    </message>
+    <message>
+        <source>%1 has no matching symbols for this build.</source>
+        <translation>%1 non dispone di simboli corrispondenti per questa build.</translation>
+    </message>
+    <message>
+        <source>The symbol download from %1 failed: %2</source>
+        <translation>Download dei simboli da %1 non riuscito: %2</translation>
+    </message>
+    <message>
+        <source>%1 sent an empty symbol file.</source>
+        <translation>%1 ha inviato un file di simboli vuoto.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>Il file dei simboli compresso non è valido.</translation>
+    </message>
+    <message>
+        <source>Cannot create a temporary symbol directory in %1: %2</source>
+        <translation>Impossibile creare una directory temporanea dei simboli in %1: %2</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>Impossibile decomprimere il file dei simboli.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>I simboli compressi richiedono Windows.</translation>
+    </message>
+    <message>
+        <source>Cannot save the symbol file to %1: %2</source>
+        <translation>Impossibile salvare il file di simboli in %1: %2</translation>
     </message>
 </context>
 </TS>

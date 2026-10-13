@@ -289,6 +289,12 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead` は、推定された必須レジスタ引数の末尾にある未知スロットが保持されることを検証します。未知の必須引数や条件を評価すると明示的にトラップし、省略・null・入れ子のオペランドを黙ってゼロに置き換えてはいけません。既知の値と、読み取られないことが証明された余分なオペランドは実行可能なままです。トラップは診断境界であり、復元動作の等価性の証明ではありません。
 
+## LLVM C のオブジェクト領域
+
+`NeverDLLVMCAllocaTests` は元の LLVM と生成 C を O0/O2、未定義動作トラップ付きで実行します。全動的範囲、パディングを含む要素幅、16/32/64 バイト整列、同時・ループ割り当ての独立性、要素数を返す呼び出しの一回評価を検証します。通常と型保持の C 経路を確認し、未対応・オーバーフローする割り当てと明示的 stack save/restore は DCE 前に拒否します。元のスタックアドレスや例外フレーム同一性は保証しません。
+
+同じターゲットで静的スカラー、ポインター、配列、パックされたレコードの最大 128 バイトのアラインメント、グローバルのアラインメント、ゼロ埋め文字列の全領域、および初期化子・戻り値・呼び出し・選択・ポインター整数変換でのグローバルアドレスの同一性を比較する。適用可能な通常/型保持および全体/選択関数出力を検証する。
+
 ## CPU 実行テスト
 
 `NeverDIntegerABITests` は Windows x64、Linux x64、Linux ARM64 向けの Clang original fixture をビルドします。10 引数の実関数で register/stack と call frame を検証します。Unicorn/KVM/WHP matrix で利用できない host/ISA 組み合わせは明示的に skip し、skip を成功扱いしません。`NeverDExecutionBudgetTests` は時間依存の sleep を使わず、共有 continuation budget、reservation、絶対 deadline を検査します。
@@ -1262,7 +1268,7 @@ KVM の判定には、実際に自発終了しない vCPU のキャンセルと�
 
 `native_cpu_only=true` と `native_driver_tests=true` を指定すると、Unicorn なしで `NeverDNativeDriverTests` を有効にします。構成前に `build_wdk_driver_fixtures.py` が Microsoft 公式 WDK/SDK 10.0.26100.6584 パッケージ全体の SHA-256 を検証し、元のソースから通常版・CFG 版・DBG 版のドライバーイメージを計 48 個構築します。`WDKDriverFixtures.def` がパッケージ識別子、コンパイラーとリンカーの引数、フィクスチャの対応を定義します。変更していない Microsoft のファイルとライセンスはローカルのビルド／キャッシュ内に保持し、CI はビルドメタデータとログだけをアップロードします。マニフェストにはツールのバージョン、コマンド、ソースとヘッダーのハッシュ、出力イメージのハッシュを記録します。
 
-`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5084 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5507`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
+`NativeDriverTests.def` は `DriverBuiltinImages.def` と `DriverBackendParityCases.def` の全 115 ワークロードから 230 件の WHP 結果を要求します。内訳は組み込み 27、WDK 48 イメージ、要求シナリオ 40 件で、それぞれ元と再配置先のアドレスを使います。必須項目全体は `5085 CPU + 230 WHP + 25 SEH + 77 scheduling + 30 wait sets + 24 driver UNPACK + 6 clock reads + 4 image memory checks + 6 CPUID + 7 kernel snapshots + 10 pool captures + 4 DriverEntry caller checks = 5508`。待機集合の 30 件は移植可能なモデル 16 件と独自ネイティブドライバー 14 件です。`run_native_cpu_ci.py --with-drivers` は Unicorn を無効にして正確な一覧と JUnit 証拠を保存します。必須フィクスチャの欠落やスキップは選択式ゲートを失敗させ、通常のビルドでは外部フィクスチャを省略できます。固定イメージの再配置拒否は期待結果のままです。ARM64 のネイティブゲスト実行は未検証です。
 
 `InterruptionRetainsPhaseCauseDeadlineAndLease` は起動中の異なる2命令の前で期限切れ、停止、両方の中断を注入します。正確な段階診断、メッセージの所有寿命、エラー型と原因ビット、手順間で変わらない単一の期限、メモリ所有権の解放を検査します。実際の転送失敗と状態不一致は引き続き区別します。ネイティブ x64 起動検証の予算は `5 s` で、通常のゲスト期限と単一ステップ猶予は変更しません。
 
@@ -1387,6 +1393,8 @@ Windows ring3 は独立したネイティブ観測に従い、checked x64 の `o
 
 `NeverDUnpackTests`、`NeverDUnpackExecutionTests`、`NeverDUnpackPublicTests` はパックされたイメージの復元を対象とします。[アンパック](unpack.md)を参照してください。`UnpackGeneratedTests.cpp` は、テスト自身がパックしたプログラムを使って、x86-64 と ARM64 でエントリの規則を検査します。`X64ReturnPrefixTests.cpp` は 2 バイトの近リターンをすべてのトランスポートで検査し、それ以外のプレフィックス付きリターンが拒否されたままであることを確認します。`WindowsDeferredTests.cpp` は不透明なエントリと停止したプロセスの観測を、`ExecutionSessionTests.cpp` は実行ウォッチを検査します。 `DirectX64Tests.cpp` は部分ページの監視、ページ境界の命令取得、一度だけの再開、サービス境界、無効命令とタイムアウト時の状態も検証します。
 
+`DirectX64.UnobservedStoresInvalidatePhysicalWriteWitnesses` は書き込み監視なしでの変更、同値書き込み、元の値への復元を検査します。直接実行は以前の物理書き込み履歴を保守的に無効化し、不正命令と期限切れの終了も同様です。停止後は新しい履歴を作成でき、実行監視とコミット済み書き込み通知の動作は維持されます。
+
 `LiveHeapReferencesCannotPublishAnOrdinaryRecoveredImage`、`ExplicitSnapshotsKeepExternalHeapDependenciesVisible`、`ReleasedHeapStateDoesNotBlockRecovery` は利用可能な逐次・直接実行バックエンドで独立コンパイルした起動と入口の動作を比較します。`HeapReferencesInCapturedTLSCannotBeDiscarded` は TLS のみの依存を検査します。公開 API テストは拒否時の既存出力保持と C API・CLI の明示的スナップショット一致を要求します。アドレス一致は保守的な証拠であり、ネイティブ実行の保証ではありません。
 
 `DirectServiceBindingsRequireAnExplicitSnapshot` は取得した入口の前後で初めて使う直接サービス番号を検証します。C API と CLI も拒否時の既存出力の保持を確認します。
@@ -1496,6 +1504,8 @@ build-release/bin/NeverDByteCellScalarizationTests
 `NeverDOwnInteriorCallTests` は、x86 と x86-64 の関数が自身の unwind 範囲内のラベルを直接 call する場合を、Microsoft x64 の `.pdata` エントリ、System V x86-64 の DWARF FDE、i386 の DWARF FDE のそれぞれで扱います。積んだ戻りアドレスのためだけの call はプッシュとジャンプとして持ち上げられ、x86-64 の直線とループの場合に生成された C は `-O0` と `-O2` で AddressSanitizer と未定義動作トラップの下で実行されます。戻りがその call 自身の戻りアドレスを取り出す対象は通常の呼び出しのままです。スタック切り替え後の戻りや入口スタックポインタより下での戻りは拒否されます。i386 の登録チェーンから復元した範囲は本体を区切らないため、その call は call のままです。
 
 通常のサブルーチンと判定する前に、戻りアドレス領域への重複書き込み、未知の書き込み、アトミック書き込み、および効果を証明できない呼び出し先の書き込みを拒否します。PE、ELF、Mach-O のケースは、戻りアドレスの一部破壊と i386 の拡張メモリアドレスを検証します。専用スタックへの書き込み、破棄される戻りアドレス、終了する分岐は引き続き許可されます。
+
+単一の内部呼び出し位置からの混合出口は両方の動作を保持します。検証された裸の近 RET は破壊されていない自身の戻り PC を取り出して正確な継続位置へ戻り、その PC を破棄する出口は元の制御フローを保ちます。`MixedExitsResumeOnlyTheMatchingInvocation` は PE/ELF/Mach-O x64 と ELF i386 を対象に、最適化あり・なしの LLVM を検証し、サニタイザー付きで x64 C を実行します。関連テストは反復呼び出しを扱い、RET を共有する複数の呼び出し位置、独立・例外入口、継続部から判明する新たな先行ブロック、未解決の間接出口、PC 破壊、即値付きスタック解放 RET、言語ランタイムのメタデータを拒否します。CFG の再構築ごとに呼び出しの帰属を再検証し、共有 SEH コールバックの戻りは許可しません。 非局所出口では親の戻りスロットも別途証明します。外側の RET は入口と正確に同じ SP で元の入口戻り PC を読み取る必要があります。過剰なスタック解放や、その PC を破壊または別名参照し得る書き込みは拒否し、重ならないプライベート書き込みは許可します。
 
 `NeverDSysVCallContractTests` は、QtXml の `QDomNode::save` と `QDomNode::isDocument` の形を使って x86-64 System V の呼び出し規約を検査します。サマリが引数レジスタを読む直接呼び出し先は、呼び出し元がそのまま渡す入力の `this` も含め、呼び出し元の値を受け取ります。仮想呼び出しは、支配するブロックが `RDI` に読み込んだオブジェクトを引数に取ります。ある経路では `RAX` を書かずに戻り、他の経路では呼び出し先の結果を渡すだけのメソッドは void になります。比較の連鎖の前に `AL` に書いたバイトは、どの経路でも戻り値です。出力したプログラムは `-O0` と `-O2` で AddressSanitizer と未定義動作トラップ付きで実行します。
 
@@ -1684,7 +1694,9 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 
 `X86PreservedState.*` は新しいスカラー形式、正確な別名、厳密リセット、古いバイト/操作列/バージョンの拒否を検査する。`OriginalBinaryUndefinedIndependence.*Opaque*` は分岐、内部呼び出し、完全な間接宛先、正確なプロファイル、独立デコードから算出したメタデータ予算の一致/1 不足を扱う。`BinaryLowIR*.*Opaque*` は証人と任意の未定義選択、複数の帰納ソース、後半の順位/予算失敗、真の入口スカラー保存、同一 LowIR の後続ソースバイト変更による実行ダイジェスト変更を検査する。`NativeUndefinedIndependence.*Opaque*` と `NativeStackControl.*FreshMemoryCall*` はグループ内部、切点前境界、古い記録、スタック変更前の宛先評価を扱う。`NeverDInterpreterLLVMRefinementTests` を含むメタデータ利用側を再ビルドし、sanitizer とコンパイル済み故障注入の結果は通常テストと分けて報告する。
 
-`scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。
+`scripts/check_windows_nonlocal_finally.py` は MSVC の x86/x64 プログラムを O0/O2、GS 有効・無効でコンパイルし、ネイティブ実行します。6 ケースで通常呼び出しと巻き戻し中の finally、親関数への条件付きジャンプ、巻き戻しを止める return を区別します。反復実行でローカル保護領域と x86 登録チェーンを確認し、変更したクリーンアップ順序を元の期待値で拒否します。Windows EH fixture ジョブはソースとイメージのハッシュ、コンパイラ出力、リンクマップ、実行結果を保存します。対応する MSVC 環境で `--arch x86` または `--arch x64` と `--output` を指定してください。これは元のランタイムの基準であり、NeverD が非局所遷移をサポートする証拠ではありません。 追加の4ケースは親関数の復帰直後に2回目の例外を発生させ、2ケースはガード付きの呼び出し元カウンターを検証します。x86 の登録チェーンは各呼び出し後と復帰先で確認します。スキーマ2が必須で、従来の最終チェーンだけの記録では不十分です。
+
+`scripts/check_windows_native_seh_resume.py` は実験的な Windows x64 LLVM/CRT プロトコルを O0/O2 で別途検証します。`_local_unwind` の物理 SP と親の復帰先はソースフレームと分離します。MASM は8個の保存 GPR、XMM6–XMM15、SP、ガード、通常経路の呼び出し後処理、非局所経路での処理スキップと2回目の例外を確認します。ツール情報とハッシュを保存します。成功は NeverD 再構築の許可ではなく、PE32、エスケープしたメモリ、任意の入れ子、両 C 経路は未解決です。ネイティブ x64 MSVC で `--output` を指定します。 ワークフロー入力 `windows_eh_protocol_only` は NeverD を再ビルドせずにこれらのネイティブ実験を実行します。エンジンの回帰検証とは別です。
 
 `RegistrationTryLevel.EH4Publication*` と `EH4CookieStoresMustOwnDistinctPrivateBytes` は、ADD/SUB による確保、レジスタ保存、cookie の PUSH、disp8/disp32 の cookie 格納を含む PE32 EH4 の直接フレームを検証します。変更された参照元やオフセット、cookie の重複、保存レジスタやランタイム管理領域への上書きは拒否し、共有 LowIR が値と寿命を独立して検証します。
 
@@ -1693,6 +1705,20 @@ bulk-attributes は完全なグループ、名前/型の集合、未使用バイ
 `RegistrationCallNoReturn` は変更された命令範囲、対象、演算範囲、条件付き呼び出し、異なるアーキテクチャや形式での使用を拒否します。整列スタックの PE32 テストは、独立に終端が証明された呼び出しと、現行の証拠で除去する通常の後続辺の両方を検証します。メモリー効果の証拠が無効でも、既に存在しない通常辺は復活しません。
 
 `SafeSEHReference.*` は不変の SafeSEH テーブルへの所属、不正または曖昧な格納領域、再配置、他のアーキテクチャと形式、分割間の宣言順序を検査します。`PipelineOutcome.NativeFinallyInputsRetainSourceLLVM` は `NEVERD_NONLOCAL_FINALLY_INPUTS` を使い、ネイティブ MSVC の x86/x64、O0/O2、GS とソース最適化の有無を組み合わせた 32 通りの LLVM 出力を検証します。LLVM と解決済み呼び出しシグネチャを検証し、未対応の x86 ネイティブ EH 再構築は拒否されることも確認します。Windows EH 専用ジョブはネイティブ fixture artifact を取得して実行し、入力ディレクトリがなければテストは明示的にスキップされます。
+
+`LocalUnwindInsideCheckedSEHHandlerCarriesTheParentFrame` は証明された Windows x64 SEH ハンドラーと通常・例外共有入口からのローカル巻き戻し呼び出しを検証します。反例は巻き戻し割り当ての不一致、不安定または部分幅の SP、独立入口、不完全な入力、欠落・偽造された例外辺、予算不足、不明なスタックメモリ、外部再配置、未認証ランタイムを含みます。LowIR 証明とモジュール証明書を SSA 検証へ渡し、通常の戻り継続テストは独立した入口規則を維持します。
+
+`OrdinaryInternalReturnsRetainTheParentsReturnPC` と `OrdinaryInternalWritesCanUseTheParentsPrivateAllocation` は、PE・ELF・Mach-O x64 と ELF i386 で親の戻りアドレス破壊と重ならない親ローカル書き込みを検査します。呼び出し先の戻りアドレス保持だけでは通常呼び出しを許可できません。
+
+`LLVMFrameSlotProof.RepeatedClosedQueriesDoNotRepeatProofWork` は x86、x64、ARM、AArch64 で肯定・否定照会の反復作業量を制限します。コンテキストのテストは束縛値、入口 SP、幅、予算ゼロの拒否を維持し、暫定・再構築された実行可能グラフや関数の変更後に古い回答を破棄します。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は境界より下での早期停止、番兵での終了、要求インデックスを飛ばす親リンク、異なる停止階層の結合も検証します。実際に通過する finally 本体が欠けている場合は引き続き拒否し、飛ばしたクリーンアップからフレーム書き込み効果を得ることはありません。
+
+`RegistrationState.LocalUnwindRetiresLevelsAfterCheckedFinallyEffects` は、表外の定数上限、符号なし値の上半分、-2 も検証します。反復なしの終了は元のレベルとフレームメモリの事実を保持し、動的な上限と無効な現在レベルは引き続き拒否します。
+
+`RegistrationState.MalformedSEHScopeGraphsPublishNoStateFacts` は解析完了後の誤った番兵、循環、前方・範囲外リンク、無効な初期レベルとハンドラー/フィルターの役割を検査します。初期有効スコープと空の表の対照例で EH3/EH4 の有効な番兵を保持します。 幅を超えるハンドラーとフィルターのアドレスも、事実を公開せず拒否します。
+
+ソースの登録状態ソルバーは、オブジェクトの借用、catch オブジェクトの構築、local-finally の書き込みに共通の管理領域境界チェックを使います。`RegistrationState.SEHObjectBorrowsExcludeSavedStackAndExceptionPointers` と `SEHObjectWritesCannotBorrowWholeOrPartialCookieCells` は、EH3/EH4 の SavedESP、例外ポインター、cookie スロットに対する読み取り、書き込み、部分的な重なりを検証します。`RegistrationCallback.RealignedCatchObjectsCannotReplaceRuntimeAnchors` は、後続の再読み取りに依存せず、保存された入口フレームを保護します。隣接する通常のオブジェクトは引き続き借用できます。
 
 `RAMReservationTests.cpp` は公開された書き込み証明について、同値・ABA 書き込み、保持範囲、アドレス再利用、共有マッピング、ロールバック、キャンセル、障害前に確定した書き込み、不透明な実行を検証します。`UnpackDriver.RelocationFactsRequireUninterruptedLoaderWrites` は優先・下方・カーネルのロードアドレスで所有された事実を検証し、バイトの復元では出所の証明が戻らないことを確認します。`DriverGuardExecution.SessionFixupsInvalidateOriginalLoaderFacts` は有効な CFG の修正と無効時のフォールバック保持を区別します。
 
@@ -1734,3 +1760,5 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。
+
+ソース patch の Windows ワークフローは `scripts/check_source_patch_pe_runtime.py` も実行します。x86/x64/ARM64 の元プログラム 3 個と置換結果 27 個を生成し、アーキテクチャごとにプロセス実行を 30 回観測します。x86/x64 は Windows x64、ARM64 は `windows-11-arm` で実行し、コミット、PE の種類、ファイルハッシュ、全ケースの一致を要求します。この C プロファイルは ARM64 C++ 例外を検証しません。`NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc` は通常モードの NeverC を選択します。3389.1.5 の 66 チェックは x64/ARM64 と ELF、PE、Mach-O を対象とし、x86/ARM32 は非対応です。コンパイラーは自動で切り替わりません。PE アダプターは `-fno-autolink` を使用し、外部の `.drectve` オブジェクトは引き続き拒否します。

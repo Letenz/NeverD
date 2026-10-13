@@ -57,7 +57,13 @@ judge each change in the real window.
 - Give popups room and a soft shape. Menus have a 4-pixel inset, item
   highlights with a 3-pixel radius, and separators inset from the menu's
   edges; tooltips pad their text. Keep radii small and consistent, and do not
-  round docks or views.
+  round docks or views. A combo box's list drops below it and reads as a menu
+  (`combobox-popup: 0`, and the styled item delegate `WorkbenchStyle` gives
+  every combo box so the style sheet's item rules apply).
+- Draw every glyph from `IconSet.def`. Arrows are its chevrons; message boxes,
+  file dialogs and their tool buttons take its icons through
+  `WorkbenchStyle::standardIcon` and `fileIcons()`, not the platform icon
+  theme's.
 - Keep categorical colors related. The navigation band's dark colors were
   harmonized in OKLCH: each category keeps its hue while lightness and chroma
   stay within one band, and the regular-function color no longer reuses the

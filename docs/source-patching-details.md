@@ -56,10 +56,10 @@ explicit mappings; native objects require explicit mappings.
 
 | Producer | Artifact | Target and language verified |
 |---|---|---|
-| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O ARM64 C/C++; PE x64 C/C++ FH3 |
-| Clang 22.1.6 | Native object | ELF x64 C/C++ |
+| Clang 22.1.6 | LLVM IR | ELF x64 C/C++; Mach-O x64/ARM64 C/C++; PE x86/x64/ARM64 C; PE x64 C++ FH3 |
+| Clang 22.1.6 | Native object | ELF x64 C/C++; PE x86/x64/ARM64 C |
 | GCC/G++ 13.3.0 | Native object | ELF x64 C/C++ with a matching Itanium ABI runtime |
-| NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O ARM64 C |
+| NeverC 3389.1.5 ordinary mode | LLVM IR | ELF x64 C; Mach-O x64/ARM64 C |
 | NeverC 3389.1.5 ordinary mode | Native object | ELF x64 C |
 
 These are fixed profiles, not compatibility promises for every compiler version,
@@ -485,3 +485,92 @@ does not change the exact commit qualified by the Windows run above.
 
 English and all ten localized source guides now link this successful native
 Windows run and distinguish its native PE execution from the CPU matrix.
+
+### Producer and process verification update (2026-10-13)
+
+The ordinary NeverC matrix at `a4a5ae3cb` uses Clang originals as independent
+ABI inputs. NeverC 3389.1.5 passed all 66 x64/ARM64 checks across ELF, PE and
+Mach-O, including IR and native objects, state, original FP/stack arguments,
+rebasing and refusal contracts. The default Clang matrix passed all 143 checks.
+NeverC's current frontend rejects x86 and ARM32. Those explicit producer errors
+do not reduce NeverD's installer coverage and never cause a fallback to Clang.
+
+NeverC automatically added `/DEFAULTLIB` directives to ordinary PE objects.
+The adapter now requests `-fno-autolink`, so source objects resolve against the
+original image without requesting another CRT. Independently supplied COFF
+objects with `.drectve` remain rejected. Their refusal is checked on all four
+PE architectures, with no publication or input modification.
+
+The new PE process checker prepares three independent originals and 27 patches
+for x86/x64/ARM64. Each architecture has nine replacements: nonleaf calls,
+writable pointer state and floating-point/stack arguments through source IR,
+source objects and supplied objects. Each original and patch executes three
+times, requiring 30 matching process results per architecture. Reports bind
+commit, file digest, machine and complete case inventory. Failed replay removes
+an earlier success report. Ten checker regressions validate these evidence
+rules, including independent expected results and native-host requirements.
+
+Clang-produced x64 images passed all 30 process observations under Wine 11.
+NeverC-produced x64 images separately passed all 30 observations through the
+same runner; ARM64 images were prepared and validated but were not executed by
+Wine. The container could not start even the original x86 image because its
+32-bit Windows prefix lacked `kernel32.dll`; no x86 Wine pass is claimed.
+The Windows workflow now requires x86/x64 execution on Windows x64 and ARM64
+execution on `windows-11-arm`, with the exact prepared image artifact. These C
+process cases do not qualify ARM64 C++ exceptions or an ARM64 engine build.
+Check the completed CI evidence before claiming these new native results.
+
+The broader old failures were investigated without weakening their assertions.
+An old scalar-index fixture discarded all loaded values, so optimization could
+remove the indexed loads it intended to inspect. The fixture now checks the
+independently computed checksum 536, preserves its nonvolatile register and
+executes rebuilt LLVM at both O0 and O2. This regression passed. The old
+AArch64 min/max test also passed with compatible Clang 22, instead of the
+system compiler lacking its builtins.
+
+A separate replay of 33 preserved generated-C inputs compiled and executed
+31 successfully with Linux Clang 22.1.8, multilib and explicit QEMU user-mode
+runners. Two packed-float struct-return inputs still fail with extra incoming
+vector parameters; these are genuine pre-existing C-recovery defects, not
+host-toolchain passes. A scalar-to-vector return experiment did not resolve the
+parameter contract and was reverted. The replay is historical artifact evidence,
+not a fresh pass of the entire lift suite. The broader unresolved results above
+remain separate from the source-patch qualification.
+
+### Native PE process completion (2026-10-13)
+
+[Windows run 38350079817](https://github.com/NeverSight/NeverD/actions/runs/38350079817)
+completed successfully at `a4a5ae3cb118d561fd814e1a6b48960760081b21`.
+Its Windows x64 job passed all 16 focused PE/object/trampoline tests and all
+143 Unicorn target-matrix tests without skips. The FH3 case executed its seven
+x64 C++ runtime scenarios with Clang 22.1.6, native MSVC/SDK inputs and integrated
+LLVM.
+
+The separate process profile passed all 90 observations, 30 per architecture.
+x86 and x64 programs executed on Windows x64; ARM64 programs executed on
+`windows-11-arm`. Each architecture used one independent original and nine
+replacements, each run three times. Replacements cover nonleaf calls, mutable
+pointer state and floating-point/stack arguments through source IR, compiled
+objects and supplied objects. Downloaded artifacts were independently checked
+for the exact commit, matching manifests, file SHA-256 and PE machine values,
+successful patch receipts, expected native hosts, the complete case inventory
+and all observed exit codes. The ARM64 job consumed the same hashed images
+prepared by the x64 job.
+
+This is native Windows process evidence for the three C profiles. PE ARM32
+retains CPU-matrix coverage; the new process profile does not certify ARM64
+C++ exceptions or an ARM64 NeverD engine build. NeverC's separate 66-check
+x64/ARM64 matrix remains CPU execution evidence, rather than this Clang-produced
+native Windows process result.
+
+At the local integration `fa6d21fd18be3cd8e044217aaf84c6d590134bd9`, fresh
+binaries passed all 143 Clang matrix checks, 66 NeverC matrix checks, 234 native
+exception contracts and 37 COFF exception contracts. The source suite passed
+45 of 47 cases with two Linux-only skips; 43 of 46 focused lifting checks passed
+with three Linux-only skips. Clang IR and GCC object replacements each passed
+all seven Linux C++ runtime scenarios through the actual Linux loader. Binary
+repair passed 84 cross-architecture checks and six native Darwin runtime
+checks, without skips. Python SDK validation passed 110 of 165 cases, with 55
+explicit platform or fixture skips; ABI auditing and mypy also passed. These
+focused results do not turn the historical broader C-recovery defects above
+into passing coverage.

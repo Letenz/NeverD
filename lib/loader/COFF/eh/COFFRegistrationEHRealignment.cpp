@@ -28,7 +28,7 @@ bool proveRealignedCxxRegistrationLayout(const BinaryImage &Img,
   const uint32_t Alignment = uint32_t(-int32_t(int8_t(P[8])));
   const uint32_t Allocation = readLE<uint32_t>(P + 11);
   if (Alignment < 4 || Alignment > 128 || (Alignment & (Alignment - 1)) ||
-      Allocation < 20 || Allocation > limits::kMaxRegistrationEHStateWork)
+      Allocation < 20 || Allocation > limits::kMaxSourceCallBorrowedBytes)
     return false;
 
   size_t Cursor = 17;

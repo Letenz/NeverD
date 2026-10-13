@@ -1,3 +1,18 @@
+add_neverd_unittest(NeverDSEHRuntimeMemoryTests
+  eh/SEHRuntimeMemoryTests.cpp
+  eh/X64CRTFrameTests.cpp
+  eh/RegistrationSEHControlTests.cpp
+  eh/RegistrationConditionalFrameTests.cpp
+  eh/RegistrationJumpRuntimeTests.cpp
+  eh/RegistrationJumpCaptureTests.cpp
+  LINK_COMPONENTS Pipeline)
+target_include_directories(NeverDSEHRuntimeMemoryTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/pipeline)
+if(NEVERD_ENABLE_BINARY_CORPUS_TESTS)
+  target_compile_definitions(NeverDSEHRuntimeMemoryTests PRIVATE
+    NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
+endif()
+
 add_neverd_unittest(NeverDPEProgramExportsTests
   format/PEProgramExportsTests.cpp
   LINK_COMPONENTS Loader
@@ -287,6 +302,8 @@ add_neverd_unittest(NeverDLiftTests
   core/ObjectExternTests.cpp
   core/HighCReturnJoinTests.cpp
   eh/RegistrationTryLevelTests.cpp
+  eh/SEHRuntimeMemoryTests.cpp
+  eh/X64CRTFrameTests.cpp
   format/COFFARMFormatTests.cpp
   format/COFFARMFormatFragmentTests.cpp
   format/COFFARMFormatMalformedTests.cpp
@@ -1322,6 +1339,10 @@ add_neverd_unittest(NeverDNoReturnTests
 
 add_neverd_unittest(NeverDRegistrationStateTests
   eh/RegistrationStateTests.cpp
+  eh/RegistrationOrdinaryFinallyTests.cpp
+  eh/RegistrationSEHInvocationTests.cpp
+  eh/RegistrationSEHExceptionTests.cpp
+  eh/RegistrationJumpStateTests.cpp
   eh/RegistrationStateTestUtils.cpp
   eh/RegistrationCxxContinuationTests.cpp
   eh/RegistrationCxxSearchTests.cpp
@@ -3655,6 +3676,15 @@ if(COFF_NATIVE_EH_TEST_OBJECTS)
                     DEPENDS ${COFF_NATIVE_EH_TEST_OBJECTS})
   add_dependencies(NeverDLiftTests lift-coff-native-eh-test-objects)
 endif()
+
+add_neverd_unittest(NeverDLLVMCAllocaTests
+  core/LLVMCAllocaTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDLLVMCAllocaTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
 
 add_neverd_unittest(NeverDLLVMCIntrinsicSemanticTests
   core/LLVMCIntrinsicSemanticTests.cpp

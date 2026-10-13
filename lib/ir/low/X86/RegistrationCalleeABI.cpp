@@ -44,6 +44,19 @@ checkedRegistrationImportStackPop(const BinaryImage &Image, va_t Target) {
   const auto *Named = Image.findImportAt(Target);
   const auto *Import =
       Named ? checkedImportSlot(Image, Named->IATAddr) : nullptr;
+  // These authenticated C-runtime math entries use caller cleanup on PE32.
+  // This is a returning ESP fact only: callbacks, errno and floating-point
+  // effects still prevent a private-memory or native replacement contract.
+  if (Import && !Import->IsDelayImport &&
+      (Import->Name == "log" || Import->Name == "exp") &&
+      isFileBackedPEImportSlot(Image, Import->IATAddr)) {
+    const llvm::StringRef Module = Import->Module;
+    if (Module.equals_insensitive("api-ms-win-crt-math-l1-1-0.dll") ||
+        Module.equals_insensitive("ucrtbase.dll") ||
+        Module.equals_insensitive("ucrtbased.dll") ||
+        Module.equals_insensitive("msvcrt.dll"))
+      return 0;
+  }
   if (!Import || Import->Name != "RaiseException" ||
       (!llvm::StringRef(Import->Module).equals_insensitive("kernel32.dll") &&
        !llvm::StringRef(Import->Module).equals_insensitive("kernelbase.dll")))

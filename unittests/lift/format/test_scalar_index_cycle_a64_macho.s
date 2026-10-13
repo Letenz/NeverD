@@ -6,7 +6,9 @@ _main:
     stp x29, x30, [sp, #-16]!
     mov w0, #0
     bl _probe
-    mov w0, #0
+    // Observe both loaded values on all three iterations: 256 + 168 + 112.
+    cmp w0, #536
+    cset w0, ne
     ldp x29, x30, [sp], #16
     ret
 
@@ -14,6 +16,7 @@ _main:
 _probe:
     stp x29, x30, [sp, #-16]!
     stp x22, x28, [sp, #-16]!
+    stp x20, xzr, [sp, #-16]!
     adrp x13, _table_a@PAGE
     add x13, x13, _table_a@PAGEOFF
     adrp x12, _table_b@PAGE
@@ -27,6 +30,8 @@ Lheader:
     csel x8, x13, x12, eq
     ldr x9, [x8, x22, lsl #3]
     ldr x10, [x8, x28, lsl #3]
+    add x0, x0, x9
+    add x0, x0, x10
     add x22, x22, #1
     add w20, w20, #1
     cmp w20, #1
@@ -53,9 +58,9 @@ Ljoin:
     b.ne Lheader
 
 Lexit:
+    ldp x20, xzr, [sp], #16
     ldp x22, x28, [sp], #16
     ldp x29, x30, [sp], #16
-    mov w0, #7
     ret
 
 .section __TEXT,__const

@@ -780,7 +780,6 @@ def localized_paths(locale: str) -> tuple[Path, ...]:
 LOCALIZED_DOCS = tuple(path for locale in LOCALES for path in localized_paths(locale))
 MARKDOWN_DOCS = ENGLISH_DOCS + LOCALIZED_DOCS + (
     Path("docs/source-patching-details.md"),
-    Path("docs/source-patching-details.md"),
     Path("docs/driver-scheduling.md"),
     *(Path(f"docs/{locale}/driver-scheduling.md") for locale in LOCALES),
     *(Path(f"docs/{stem}.md") for stem in EMULATION_GUIDE_STEMS),
@@ -2781,6 +2780,8 @@ GUIDE_SECTION_CONTRACTS = {
         "NEVERD_TEST_WINDOWS_CRT_LIB", "NEVERD_TEST_WINDOWS_UCRT_LIB",
         "NEVERD_TEST_WINDOWS_SDK_LIB", "NEVERD_TEST_WINDOWS_RUNNER",
         "NEVERD_TEST_REQUIRE_WINDOWS_RUNTIME=1",
+        "scripts/check_source_patch_pe_runtime.py", "windows-11-arm",
+        "NEVERD_TEST_MATRIX_NEVERC", "-fno-autolink", ".drectve",
     ),
     ("interpreter-recovery", "machine-state"): (
         "modelInterpreterMachineStateX64", "InterpreterMachineStateModel",

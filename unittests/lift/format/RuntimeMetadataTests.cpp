@@ -936,6 +936,36 @@ TEST(RuntimeMetadata, NamesAFunctionByItsFunctionSymbol) {
   EXPECT_EQ(Img.getFunctionNameAt(0x2000), "handler");
 }
 
+TEST(RuntimeMetadata, NumbersANameLowerFunctionsTakeAsIDANumbersIt) {
+  // Three files of a program each define a static helper, and a fourth
+  // function's own name is helper_0: the second helper takes the next
+  // number free.  An exported function lists its export, so the name stays
+  // its symbol's alone.
+  BinaryImage Img;
+  for (const auto &[Name, Addr] :
+       {std::pair{"helper", 0x1000}, std::pair{"helper", 0x2000},
+        std::pair{"helper", 0x3000}, std::pair{"helper_0", 0x4000},
+        std::pair{"run", 0x500}, std::pair{"run", 0x5000}}) {
+    Symbol Function;
+    Function.Name = Name;
+    Function.Addr = Addr;
+    Function.IsFunc = true;
+    Img.Symbols.push_back(Function);
+  }
+  Export Exp;
+  Exp.Name = "start";
+  Exp.Addr = 0x500;
+  Img.Exports.push_back(Exp);
+  Img.numberSharedFunctionNames();
+  EXPECT_EQ(Img.getFunctionNameAt(0x1000), "helper");
+  EXPECT_EQ(Img.getFunctionNameAt(0x2000), "helper_1");
+  EXPECT_EQ(Img.getFunctionNameAt(0x3000), "helper_2");
+  EXPECT_EQ(Img.getFunctionNameAt(0x4000), "helper_0");
+  EXPECT_EQ(Img.getFunctionNameAt(0x500), "start");
+  EXPECT_EQ(Img.getFunctionNameAt(0x5000), "run");
+  EXPECT_EQ(Img.functionListName(0x2000, "helper"), "helper_1");
+}
+
 TEST(RuntimeMetadata, ParsesRVADelayImportWithExactIATSlot) {
   DelayImportImage Fixture =
       makeDelayImportImage(/*Is64=*/false, /*LegacyVA=*/false,

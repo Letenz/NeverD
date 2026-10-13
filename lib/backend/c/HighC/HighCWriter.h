@@ -1156,6 +1156,10 @@ public:
     uint64_t Pad = 0;
   };
   std::vector<ImageBacking> ImageBackings;
+  /// The symbol the object a backing is named after has in its comment, as
+  /// the backing's `neverd.image` line names it; empty for a name the
+  /// emitter made.
+  std::string backingReadable(const ImageBacking &Backing) const;
   /// The C address a relocated pointer slot holds: the function or data it
   /// names, or none when no C object names it.
   std::optional<std::string> relocatedSlotTarget(va_t Slot) const;

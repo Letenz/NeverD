@@ -174,7 +174,8 @@ NEVERD_API const char *neverd_decompile(neverd_session_t Sess,
 /// LLVM-to-C for one native function (`neverd decompile --llvm`).  Only its
 /// body is emitted, with the other functions declared, so a function the
 /// emitter refuses fails alone.  EVM and SBF have dedicated backends and
-/// return empty.  Free with neverd_free_string.
+/// return empty. Defaults to O2 and control-flow recovery, with optional
+/// symbolic expression simplification off. Free with neverd_free_string.
 NEVERD_API const char *neverd_decompile_llvm(neverd_session_t Sess,
                                              neverd_va_t FuncEntry);
 
@@ -228,7 +229,10 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// "low", "med", "c", "llvmc", "cpp", "rust", "go" or "source"; dialects
 /// spell the HighC page in that language and "source" in the function's own
 /// (C++, Rust, Go or C), adding dialect, unread and source_names (where each
-/// source name such as core::fmt::write is). Dialects are offered for
+/// source name such as core::fmt::write is). Every C, LLVMC and dialect page
+/// lists identifier_symbols: the functions the emitted C names by another
+/// identifier than their symbol (fini for _fini, dotted_fn for dotted.fn),
+/// each as identifier, symbol and address. Dialects are offered for
 /// an image with that language's code (neverd_headers_json's
 /// language.pseudocode); for another the page is mapping_status
 /// "unsupported_representation" with the reason. Offset is an absolute
@@ -249,8 +253,8 @@ NEVERD_API const char *neverd_ir_llvm(neverd_session_t Sess,
 /// first row address belongs to the smallest intersecting statement span;
 /// declarations and synthetic/unbound statements have no guessed address. These
 /// anchors support navigation, not complete expression provenance. Pages retain
-/// provenance_complete:false and ordinary source byte for byte. Library regions add
-/// foldable and spans. Optional function_identity shares
+/// provenance_complete:false and ordinary source byte for byte. Library regions
+/// add foldable and spans. Optional function_identity shares
 /// raw/display/linkage names with neverd_resolve_addr; original direct-call
 /// regions add callee and callee_identity. Span begin_byte/end_byte are
 /// half-open UTF-8 byte offsets in the complete source; byte_offset locates
@@ -267,6 +271,24 @@ NEVERD_API const char *neverd_ir_view_json(neverd_session_t Sess,
                                            neverd_va_t FuncEntry,
                                            const char *Representation,
                                            size_t Offset, size_t Limit);
+
+/// Source page with request-local transformations. OptionsJSON is an object:
+/// `symbolic` (bool, default false); for llvmc, `llvm_optimization` is basic,
+/// O0, O1, O2 (default), O3 or custom. Custom requires `llvm_passes`, an array
+/// drawn from instcombine, early-cse, simplifycfg and dce, run in that order.
+/// `llvm_control_flow` (bool, default true) independently enables dispatcher
+/// recovery for llvmc, including its targeted constant proofs.
+/// Unknown fields, invalid combinations and non-source representations fail.
+/// Options never alter ordinary views, machine analysis, patching or project
+/// state. Ordinary LLVM source uses O2 and control-flow recovery with optional
+/// symbolic expression rewriting off.
+/// Return an owned UTF-8 string (neverd_free_string), or NULL with last_error
+/// set.
+NEVERD_API const char *neverd_ir_view_ex_json(neverd_session_t Sess,
+                                              neverd_va_t FuncEntry,
+                                              const char *Representation,
+                                              size_t Offset, size_t Limit,
+                                              const char *OptionsJSON);
 
 #ifdef __cplusplus
 }
