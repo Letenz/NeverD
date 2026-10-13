@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>選択した PDB ファイルからシンボルを読み込む</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>関数を編集(&amp;E)...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>現在の関数の名前と属性を変更します</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1469,6 +1477,14 @@ Double-click to go to the declaration.</source>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>ブロックを折りたたむ (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>シンボリック簡約</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>変換に失敗しました: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1483,6 +1499,54 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>逆アセンブルが移動してもこの関数を表示し続ける</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>最適化</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>現在の関数を変換します</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>この関数をシンボリックに簡約します</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>LLVM の制御フローを復元</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM 最適化</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>基本的なクリーンアップ</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (既定)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>パスを選択…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>この関数の LLVM パス</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>スカラーのクリーンアップパスを選択します。シンボリック簡約は別に制御します。</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>既定のソースに戻す</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>変換をキャンセル</translation>
     </message>
 </context>
 <context>
@@ -2449,6 +2513,10 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>選択どおり、入力ファイルが指定する PDB を読み込まずに開きました</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>%1 の関数を編集しました</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2857,6 +2925,129 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>シンボルファイルを %1 に保存できません：%2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>関数の編集</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD はこのフレームサイズを保持しません</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>関数名(&amp;N)</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>関数の終わりは解析が決定します</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>開始アドレス(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>終了アドレス(&amp;E)</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>選択(&amp;C)…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>関数の色</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>既定(&amp;D)</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>色(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>サイズ (バイト単位)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>ローカル変数領域(&amp;V)</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>保存レジスタ(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>引数をスタックから取り除くのは x86 の関数だけです</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>解放バイト数(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>フレームポインタの差分(&amp;D)</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD はこのフラグを保持しません</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>戻らない(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>解析はこの関数への呼び出しをすべて終端として扱います</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>far 関数(&amp;F)</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>far 関数があるのは 16 ビット x86 コードだけです</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>ライブラリ関数(&amp;L)</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>静的関数</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>BP ベースのフレーム(&amp;B)</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP は SP と等しい(&amp;Q)</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>あいまいな SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>アウトライン化されたコード</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>OK(&amp;K)</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>既定</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>キャンセル</translation>
     </message>
 </context>
 </TS>

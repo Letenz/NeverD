@@ -839,6 +839,14 @@
         <source>Load symbols from a selected PDB file</source>
         <translation>Symbole aus einer ausgewählten PDB-Datei laden</translation>
     </message>
+    <message>
+        <source>&amp;Edit function...</source>
+        <translation>Funktion &amp;bearbeiten...</translation>
+    </message>
+    <message>
+        <source>Change the name of the current function and what it is</source>
+        <translation>Den Namen der aktuellen Funktion und ihre Eigenschaften ändern</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1472,6 +1480,14 @@ Doppelklicken springt zur Deklaration.</translation>
         <source>Collapse block (Ctrl+Shift+[)</source>
         <translation>Block zuklappen (Ctrl+Shift+[)</translation>
     </message>
+    <message>
+        <source>Symbolic simplification</source>
+        <translation>Symbolische Vereinfachung</translation>
+    </message>
+    <message>
+        <source>Transformation failed: %1</source>
+        <translation>Umwandlung fehlgeschlagen: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -1486,6 +1502,54 @@ Doppelklicken springt zur Deklaration.</translation>
     <message>
         <source>Keep this function while the disassembly moves on</source>
         <translation>Diese Funktion beibehalten, während die Disassembly weiterwandert</translation>
+    </message>
+    <message>
+        <source>Optimization</source>
+        <translation>Optimierung</translation>
+    </message>
+    <message>
+        <source>Transform the current function</source>
+        <translation>Die aktuelle Funktion umwandeln</translation>
+    </message>
+    <message>
+        <source>Symbolically simplify this function</source>
+        <translation>Diese Funktion symbolisch vereinfachen</translation>
+    </message>
+    <message>
+        <source>Recover LLVM control flow</source>
+        <translation>LLVM-Kontrollfluss wiederherstellen</translation>
+    </message>
+    <message>
+        <source>LLVM optimization</source>
+        <translation>LLVM-Optimierung</translation>
+    </message>
+    <message>
+        <source>Basic cleanup</source>
+        <translation>Einfache Bereinigung</translation>
+    </message>
+    <message>
+        <source>O2 (default)</source>
+        <translation>O2 (Standard)</translation>
+    </message>
+    <message>
+        <source>Choose passes…</source>
+        <translation>Durchläufe auswählen…</translation>
+    </message>
+    <message>
+        <source>LLVM passes for this function</source>
+        <translation>LLVM-Durchläufe für diese Funktion</translation>
+    </message>
+    <message>
+        <source>Choose scalar cleanup passes. Symbolic simplification is controlled separately.</source>
+        <translation>Skalare Bereinigungsdurchläufe auswählen. Die symbolische Vereinfachung wird getrennt gesteuert.</translation>
+    </message>
+    <message>
+        <source>Restore default source</source>
+        <translation>Standardquelltext wiederherstellen</translation>
+    </message>
+    <message>
+        <source>Cancel transformation</source>
+        <translation>Umwandlung abbrechen</translation>
     </message>
 </context>
 <context>
@@ -2453,6 +2517,10 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
         <source>Opened without the PDB the input names, as chosen</source>
         <translation>Wie gewählt ohne die PDB geöffnet, die die Eingabedatei nennt</translation>
     </message>
+    <message>
+        <source>Edited the function at %1</source>
+        <translation>Funktion bei %1 bearbeitet</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LoadFileDialog</name>
@@ -2861,6 +2929,129 @@ Diese PDB zur Analyse verwenden? Ihre Symbole, Typen, Funktionssignaturen und Ad
     <message>
         <source>Cannot save the symbol file to %1: %2</source>
         <translation>Die Symboldatei kann nicht unter %1 gespeichert werden: %2</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::FunctionEditDialog</name>
+    <message>
+        <source>Edit function</source>
+        <translation>Funktion bearbeiten</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this frame size</source>
+        <translation>NeverD speichert diese Rahmengröße nicht</translation>
+    </message>
+    <message>
+        <source>&amp;Name of function</source>
+        <translation>&amp;Name der Funktion</translation>
+    </message>
+    <message>
+        <source>Analysis decodes where the function ends</source>
+        <translation>Die Analyse ermittelt, wo die Funktion endet</translation>
+    </message>
+    <message>
+        <source>&amp;Start address</source>
+        <translation>&amp;Startadresse</translation>
+    </message>
+    <message>
+        <source>&amp;End address</source>
+        <translation>&amp;Endadresse</translation>
+    </message>
+    <message>
+        <source>&amp;Choose…</source>
+        <translation>&amp;Auswählen…</translation>
+    </message>
+    <message>
+        <source>Function color</source>
+        <translation>Funktionsfarbe</translation>
+    </message>
+    <message>
+        <source>&amp;Default</source>
+        <translation>&amp;Standard</translation>
+    </message>
+    <message>
+        <source>&amp;Color</source>
+        <translation>&amp;Farbe</translation>
+    </message>
+    <message>
+        <source>Enter size of (in bytes)</source>
+        <translation>Größe angeben (in Bytes)</translation>
+    </message>
+    <message>
+        <source>Local &amp;variables area</source>
+        <translation>Bereich lokaler &amp;Variablen</translation>
+    </message>
+    <message>
+        <source>Saved &amp;registers</source>
+        <translation>Gesicherte &amp;Register</translation>
+    </message>
+    <message>
+        <source>Only x86 functions pop their arguments</source>
+        <translation>Nur x86-Funktionen entfernen ihre Argumente vom Stack</translation>
+    </message>
+    <message>
+        <source>&amp;Purged bytes</source>
+        <translation>Entfernte &amp;Bytes</translation>
+    </message>
+    <message>
+        <source>Frame pointer &amp;delta</source>
+        <translation>Rahmenzeiger-&amp;Delta</translation>
+    </message>
+    <message>
+        <source>NeverD does not keep this flag</source>
+        <translation>NeverD speichert dieses Merkmal nicht</translation>
+    </message>
+    <message>
+        <source>D&amp;oes not return</source>
+        <translation>Kehrt nicht &amp;zurück</translation>
+    </message>
+    <message>
+        <source>Analysis ends every call to the function</source>
+        <translation>Die Analyse beendet jeden Aufruf der Funktion</translation>
+    </message>
+    <message>
+        <source>&amp;Far function</source>
+        <translation>Fernfunk&amp;tion</translation>
+    </message>
+    <message>
+        <source>Only 16-bit x86 code has far functions</source>
+        <translation>Nur 16-Bit-x86-Code hat Fernfunktionen</translation>
+    </message>
+    <message>
+        <source>&amp;Library func</source>
+        <translation>Bib&amp;liotheksfunktion</translation>
+    </message>
+    <message>
+        <source>Static func</source>
+        <translation>Statische Funktion</translation>
+    </message>
+    <message>
+        <source>&amp;BP based frame</source>
+        <translation>BP-basierter Ra&amp;hmen</translation>
+    </message>
+    <message>
+        <source>BP e&amp;quals to SP</source>
+        <translation>BP &amp;gleich SP</translation>
+    </message>
+    <message>
+        <source>Fuzzy SP</source>
+        <translation>Unscharfer SP</translation>
+    </message>
+    <message>
+        <source>Outlined code</source>
+        <translation>Ausgelagerter Code</translation>
+    </message>
+    <message>
+        <source>O&amp;K</source>
+        <translation>O&amp;K</translation>
+    </message>
+    <message>
+        <source>DEFAULT</source>
+        <translation>STANDARD</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Abbrechen</translation>
     </message>
 </context>
 </TS>

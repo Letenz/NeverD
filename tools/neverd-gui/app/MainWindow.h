@@ -163,6 +163,10 @@ private:
   /// last chose.
   void applyIndicator();
   void rename();
+  /// IDA's Edit function dialog for the function at \p entry.
+  void editFunction(Address entry);
+  /// The Functions window's context menu for the row at \p position.
+  void functionsMenu(const QPoint &position);
   void comment();
   void jumpAnywhere();
   void showCrossReferences(std::optional<Address> address, bool to);

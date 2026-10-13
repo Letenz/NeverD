@@ -174,6 +174,15 @@ public:
   /// \p entry as one.  Each commits at once, like a rename.
   void createFunction(Address address, std::optional<quint64> epoch = {});
   void deleteFunction(Address entry, std::optional<quint64> epoch = {});
+  /// Whether the worker's engine keeps what the user states of a function.
+  bool statesFunctionAttributes() const {
+    return capabilities_.contains(QStringLiteral("function_edit"));
+  }
+  /// State what the function at \p entry is, as IDA's Edit function does:
+  /// each member of \p attributes one of FunctionAttributes.def's, null to
+  /// hand it back to analysis.  Commits at once, like a rename.
+  void editFunction(Address entry, const QJsonObject &attributes,
+                    std::optional<quint64> epoch = {});
   void rename(Address function, const QString &name,
               std::optional<quint64> epoch = {});
   void editCode(const QJsonObject &edit, quint64 epoch);

@@ -235,6 +235,9 @@ Json hello() {
   if (Engine::keepsFunctionEdits())
     for (const char *operation : {"function_create", "function_delete"})
       result["capabilities"].push_back(operation);
+  if (Engine::statesFunctionAttributes())
+    for (const char *operation : {"function_attributes", "function_edit"})
+      result["capabilities"].push_back(operation);
   if (Engine::keepsDataItems())
     result["capabilities"].push_back("item_define");
   if (Engine::keepsOperandFormats())
