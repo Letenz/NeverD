@@ -1069,6 +1069,13 @@ Intrinsic intrinsicFromName(const char *Name);
 bool isSideeffectIntrinsic(Intrinsic Id);
 uint8_t intrinsicOutputCount(Intrinsic Id);
 
+/// True when \p Id writes no register and no memory, so the arguments a call
+/// sets up before it still reach the call: the x87 wait for pending
+/// exceptions that FILD, FABS and FCHS also check.
+constexpr bool preservesCallSetup(Intrinsic Id) {
+  return Id == Intrinsic::X87Wait;
+}
+
 /// The control or debug register (`%cr8`, `%dr7`) that a ReadCr*/WriteCr*
 /// intrinsic names, or that ReadDr/WriteDr names by its constant first
 /// operand \p DebugIndex; nullopt for any other intrinsic.

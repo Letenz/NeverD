@@ -16,7 +16,6 @@
 
 #include "CallArgCollectionDetail.h"
 
-
 #include <algorithm>
 #include <functional>
 
@@ -60,8 +59,7 @@ void takePredecessorRegisters(CallArgContext &C, const MedBlock &Pred) {
   std::vector<ExprPtr> &Found = C.Found;
   for (int J = static_cast<int>(Pred.Ops.size()) - 1; J >= 0; --J) {
     const MedOp &Prev = Pred.Ops[static_cast<size_t>(J)];
-    if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-        Prev.Opcode == NdOp::INTRINSIC)
+    if (endsCallSetup(Prev))
       break;
     if (isNoopRegisterCopy(Prev))
       continue;
