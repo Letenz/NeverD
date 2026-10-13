@@ -292,6 +292,12 @@ SSA 構築の上限を超える大規模な復元関数は、`--llvm` で有界�
 ロジックは所有する IR または backend ライブラリに置き、pipeline はアルゴリズムを
 取り込むのではなく、それらのコンポーネントを調整してください。
 
+## LLVM C のオブジェクト領域
+
+`LLVMCStackAllocation` は非入口および要素数付きスタック割り当てを private C clone で管理し、DataLayout の割り当て幅、符号なし要素数、アラインメント、実行位置を保持します。副作用付きの private call は元の位置で通常の `__builtin_alloca` を出力し、サイズのオーバーフローを検査して追加バイト内で整列します。Clang/GCC で寿命は関数の復帰まで続きます。入口の単一オブジェクトは通常のローカル宣言を保持します。過大な整数幅、scalable storage、非既定アドレス空間、inalloca/swifterror、明示的 stack save/restore および入力 IR の private marker は正規化前に拒否します。元の IR は変更しません。
+
+`LLVMCStorage` はローカル・グローバルオブジェクトとその宣言の明示的な追加アラインメントを共有する。文字列定義は末尾のゼロバイトを含む LLVM 配列の全長を保持する。LLVM のグローバル値は式と初期化子ではアドレスを表し、オブジェクト宣言と直接のロード/ストアだけが C の名前をそのまま使う。インポートデータの束縛は既存のアドレス表現を保持する。
+
 ## クロスアーキテクチャ変換の契約
 
 `include/neverd/translate` が定義しているのは契約層であり、実行 backend
@@ -1528,7 +1534,3 @@ DarwinFiles は DarwinSelect.cpp で Pselect の timespec とシグナルマス�
 `isCanonicalX87Wait` は通常の registration 転送と検証済み local-finally の戻りで、正常経路のフレーム保持規則を共有します。FWAIT 操作と例外ディスパッチは保持されます。他の intrinsic と不正な形式は不透明なままで、この規則は非局所 finally 終了やネイティブ復元の証明を与えません。
 
 検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。
-
-`LLVMCStackAllocation` は非入口および要素数付きスタック割り当てを private C clone で管理し、DataLayout の割り当て幅、符号なし要素数、アラインメント、実行位置を保持します。副作用付きの private call は元の位置で通常の `__builtin_alloca` を出力し、サイズのオーバーフローを検査して追加バイト内で整列します。Clang/GCC で寿命は関数の復帰まで続きます。入口の単一オブジェクトは通常のローカル宣言を保持します。過大な整数幅、scalable storage、非既定アドレス空間、inalloca/swifterror、明示的 stack save/restore および入力 IR の private marker は正規化前に拒否します。元の IR は変更しません。
-
-`LLVMCStorage` はローカル・グローバルオブジェクトとその宣言の明示的な追加アラインメントを共有する。文字列定義は末尾のゼロバイトを含む LLVM 配列の全長を保持する。LLVM のグローバル値は式と初期化子ではアドレスを表し、オブジェクト宣言と直接のロード/ストアだけが C の名前をそのまま使う。インポートデータの束縛は既存のアドレス表現を保持する。

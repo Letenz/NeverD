@@ -288,6 +288,12 @@ build-release/bin/NeverDLowUndefinedDigestTests
 
 `HighCPointerAddresses.Required*` / `UnknownConditionsFailOnlyWhenRead`는 추론된 필수 레지스터 인수의 끝에 있는 알 수 없는 슬롯이 유지되는지 검사합니다. 알 수 없는 필수 인수나 조건을 평가하면 명시적으로 트랩해야 하며, 생략된 피연산자, null 피연산자 및 중첩 피연산자를 조용히 0으로 바꾸면 안 됩니다. 알려진 값과 읽히지 않음이 입증된 추가 피연산자는 계속 실행할 수 있습니다. 트랩은 진단 경계이며 복원된 동작의 동등성을 증명하지 않습니다.
 
+## LLVM C 객체 저장 공간
+
+`NeverDLLVMCAllocaTests`는 원래 LLVM과 생성 C를 O0/O2 및 정의되지 않은 동작 트랩으로 실행합니다. 전체 동적 범위, 패딩을 포함한 요소 간격, 16/32/64바이트 정렬, 동시·반복 할당의 독립성과 개수 생성 호출의 한 번 평가를 검증합니다. 일반 및 형식 보존 C 경로를 확인하며 지원하지 않거나 오버플로되는 할당과 명시적 stack save/restore는 DCE 전에 거부합니다. 원래 스택 주소나 예외 프레임의 동일성을 보증하지 않습니다.
+
+같은 대상은 정적 스칼라, 포인터, 배열, 압축 레코드의 최대 128바이트 정렬, 전역 정렬, 0으로 채운 문자열의 전체 저장 공간과 초기화·반환·호출·선택·포인터 정수 변환의 전역 주소 동일성도 비교한다. 적용 가능한 일반/타입 보존 및 전체/선택 함수 출력을 검증한다.
+
 ## CPU 실행 테스트
 
 `NeverDIntegerABITests`는 Windows x64, Linux x64, Linux ARM64용 원본 Clang fixture를 빌드합니다. 실제 10개 인자 함수로 레지스터/스택과 호출 프레임을 검사합니다. Unicorn/KVM/WHP 행렬에서 사용할 수 없는 호스트/ISA 조합은 명시적 skip이며 통과로 간주하지 않습니다. `NeverDExecutionBudgetTests`는 시간에 의존한 sleep 없이 공유 continuation 예산, reservation, 절대 deadline을 검사합니다.
@@ -1724,7 +1730,3 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 검증된 KVM x64 실행은 `withExecutionOwner`로 전체 명령 루프를 전용 vCPU 스레드에 위임합니다. 명령 승인, RAM 트랜잭션, 훅과 예산은 루프가 관리하며 각 네이티브 실행의 제어와 예외 우선순위를 유지합니다. 호출자는 활성 실행을 감시하고 취소 완료를 확인한 뒤 반환합니다. CPU 훅은 전용 스레드에서 실행되므로 호출자의 스레드 로컬 상태에 의존할 수 없습니다. 독립 네이티브 실행의 완료 콜백은 기존 호출자에서 실행됩니다. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread`과 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU`가 소유권과 실제 취소를 검증하며, 이 변경은 복원 드라이버 인증이 아닙니다.
-
-`NeverDLLVMCAllocaTests`는 원래 LLVM과 생성 C를 O0/O2 및 정의되지 않은 동작 트랩으로 실행합니다. 전체 동적 범위, 패딩을 포함한 요소 간격, 16/32/64바이트 정렬, 동시·반복 할당의 독립성과 개수 생성 호출의 한 번 평가를 검증합니다. 일반 및 형식 보존 C 경로를 확인하며 지원하지 않거나 오버플로되는 할당과 명시적 stack save/restore는 DCE 전에 거부합니다. 원래 스택 주소나 예외 프레임의 동일성을 보증하지 않습니다.
-
-같은 대상은 정적 스칼라, 포인터, 배열, 압축 레코드의 최대 128바이트 정렬, 전역 정렬, 0으로 채운 문자열의 전체 저장 공간과 초기화·반환·호출·선택·포인터 정수 변환의 전역 주소 동일성도 비교한다. 적용 가능한 일반/타입 보존 및 전체/선택 함수 출력을 검증한다.

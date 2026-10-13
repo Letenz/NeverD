@@ -302,6 +302,12 @@ Mantieni la logica specifica di una rappresentazione nella relativa libreria IR
 o backend; il pipeline deve orchestrare i componenti, non assorbirne gli
 algoritmi.
 
+## Memoria degli oggetti in LLVM C
+
+`LLVMCStackAllocation` gestisce allocazioni con conteggio o fuori dall’ingresso nel clone C privato. Conserva passo DataLayout, conteggio senza segno, allineamento e posizione. Una chiamata privata con effetti emette `__builtin_alloca` in quella posizione, verifica overflow e allinea nei byte aggiuntivi; la durata arriva al ritorno con Clang/GCC. Un oggetto all’ingresso mantiene la dichiarazione locale. Conteggi troppo larghi, memoria scalabile, altri spazi, inalloca/swifterror, stack save/restore espliciti e marcatori privati nell’ingresso sono rifiutati prima della normalizzazione. L’IR originale resta intatto.
+
+`LLVMCStorage` condivide il sovra-allineamento esplicito degli oggetti locali e globali e delle loro dichiarazioni. Le stringhe conservano l’intera dimensione dell’array LLVM, inclusi i byte zero finali. I valori globali LLVM indicano indirizzi nelle espressioni e negli inizializzatori; solo dichiarazioni e caricamenti/scritture diretti usano il semplice nome C. I dati importati mantengono la rappresentazione dell’indirizzo esistente.
+
 ## Contratto di traduzione tra architetture
 
 `include/neverd/translate` definisce un livello contrattuale, non un
@@ -1656,7 +1662,3 @@ Il caricatore dei driver lega i fatti di rilocazione a SHA-256 del file validato
 `isCanonicalX87Wait` definisce la stessa regola di conservazione del frame nel percorso normale per i trasferimenti registration ordinari e i ritorni local-finally verificati. L’operazione FWAIT e il dispatch delle eccezioni restano intatti. Gli altri intrinsic e le forme errate rimangono opachi; la regola non dimostra un’uscita finally non locale né un ripristino nativo.
 
 L’esecuzione KVM x64 verificata delega l’intero ciclo di istruzioni al thread vCPU privato tramite `withExecutionOwner`. Ammissione, transazioni RAM, hook e budget restano nel ciclo; ogni ingresso nativo mantiene i controlli e la priorità delle eccezioni. Il chiamante sorveglia gli ingressi attivi e attende la conferma della cancellazione. Gli hook CPU non devono dipendere dallo stato locale del thread chiamante. Il completamento di un ingresso nativo autonomo resta sul chiamante. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` e `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` verificano proprietà e cancellazione reale; la modifica non certifica un driver recuperato.
-
-`LLVMCStackAllocation` gestisce allocazioni con conteggio o fuori dall’ingresso nel clone C privato. Conserva passo DataLayout, conteggio senza segno, allineamento e posizione. Una chiamata privata con effetti emette `__builtin_alloca` in quella posizione, verifica overflow e allinea nei byte aggiuntivi; la durata arriva al ritorno con Clang/GCC. Un oggetto all’ingresso mantiene la dichiarazione locale. Conteggi troppo larghi, memoria scalabile, altri spazi, inalloca/swifterror, stack save/restore espliciti e marcatori privati nell’ingresso sono rifiutati prima della normalizzazione. L’IR originale resta intatto.
-
-`LLVMCStorage` condivide il sovra-allineamento esplicito degli oggetti locali e globali e delle loro dichiarazioni. Le stringhe conservano l’intera dimensione dell’array LLVM, inclusi i byte zero finali. I valori globali LLVM indicano indirizzi nelle espressioni e negli inizializzatori; solo dichiarazioni e caricamenti/scritture diretti usano il semplice nome C. I dati importati mantengono la rappresentazione dell’indirizzo esistente.

@@ -387,6 +387,12 @@ LLVM 模型负责验证 `initializes` 参数契约，复用状态指针投影，
 `lib/pipeline/Pipeline.cpp` 是路径选择的事实来源。特定表示的逻辑应留在其
 所属 IR 或 backend 库中；pipeline 应编排这些组件，而不是吸收它们的算法。
 
+## LLVM C 对象存储
+
+`LLVMCStackAllocation` 在私有 C 克隆中统一管理带数量和非入口栈分配，保留 DataLayout 分配步长、无符号数量、对齐和执行位置。带副作用的私有调用在原指令处输出普通 `__builtin_alloca`，检查长度溢出并在额外字节内对齐，因此 Clang/GCC 的分配寿命持续到函数返回。入口的单对象分配保留普通局部声明。过宽数量、可伸缩存储、非默认地址空间、inalloca/swifterror 和显式栈保存/恢复在归一化前拒绝；输入 IR 的私有标记也拒绝，调用者 IR 不变。
+
+`LLVMCStorage` 统一保留局部对象、全局对象及其声明的显式额外对齐。字符串定义保留完整的 LLVM 数组长度，包括尾部零字节。LLVM 全局值在表达式和初始化器中表示地址；只有对象声明和直接加载/存储使用裸 C 名称。导入数据绑定保留已有地址表示。
+
 ## 跨架构翻译契约
 
 `include/neverd/translate` 定义的是契约层，而不是执行后端。`GuestState`
@@ -1518,7 +1524,3 @@ DarwinFiles 在 DarwinSelect.cpp 中导入 Pselect 的 timespec 和信号掩码�
 `isCanonicalX87Wait` 为普通 registration 转移和经过验证的 local-finally 返回提供同一套正常路径帧保留规则。FWAIT 操作及异常分派保持完整；其他 intrinsic 和畸形形式仍是不透明操作。该规则不授予非局部 finally 退出或原生恢复证明。
 
 受校验的 KVM x64 执行通过 `withExecutionOwner` 将完整指令循环交给私有 vCPU 线程。准入、RAM 事务、回调和预算仍由该循环处理；各次原生执行保留独立控制和异常优先级。调用方监控正在执行的原生入口，确认取消完成后才返回。CPU 回调在私有执行线程运行，因此不能依赖调用方的线程局部状态；独立原生入口的完成回调仍在其调用线程运行。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` 和 `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` 验证线程所有权及真实取消；该后端改动不构成恢复驱动的认证。
-
-`LLVMCStackAllocation` 在私有 C 克隆中统一管理带数量和非入口栈分配，保留 DataLayout 分配步长、无符号数量、对齐和执行位置。带副作用的私有调用在原指令处输出普通 `__builtin_alloca`，检查长度溢出并在额外字节内对齐，因此 Clang/GCC 的分配寿命持续到函数返回。入口的单对象分配保留普通局部声明。过宽数量、可伸缩存储、非默认地址空间、inalloca/swifterror 和显式栈保存/恢复在归一化前拒绝；输入 IR 的私有标记也拒绝，调用者 IR 不变。
-
-`LLVMCStorage` 统一保留局部对象、全局对象及其声明的显式额外对齐。字符串定义保留完整的 LLVM 数组长度，包括尾部零字节。LLVM 全局值在表达式和初始化器中表示地址；只有对象声明和直接加载/存储使用裸 C 名称。导入数据绑定保留已有地址表示。

@@ -302,6 +302,12 @@ Darstellungsspezifische Logik gehört in die jeweilige IR- oder
 Backend-Bibliothek; die Pipeline soll Komponenten koordinieren, nicht deren
 Algorithmen übernehmen.
 
+## Objektspeicher in LLVM C
+
+`LLVMCStackAllocation` verwaltet gezählte und außerhalb des Eintritts liegende Stack-Allokationen im privaten C-Klon. DataLayout-Schrittweite, vorzeichenlose Anzahl, Ausrichtung und Ausführungsort bleiben erhalten. Ein privater Aufruf mit Seiteneffekten erzeugt dort `__builtin_alloca`, prüft Größenüberlauf und richtet innerhalb zusätzlicher Bytes aus; die Lebensdauer reicht unter Clang/GCC bis zur Rückkehr. Einzelobjekte am Eintritt behalten lokale Deklarationen. Zu breite Anzahlen, skalierbarer Speicher, andere Adressräume, inalloca/swifterror, explizites stack save/restore und private Marker im Eingabe-IR werden vor Normalisierung abgelehnt. Das ursprüngliche IR bleibt unverändert.
+
+`LLVMCStorage` vereinheitlicht die explizite erhöhte Ausrichtung lokaler und globaler Objekte und ihrer Deklarationen. Zeichenketten behalten die vollständige LLVM-Arraygröße einschließlich abschließender Nullbytes. Globale LLVM-Werte bezeichnen in Ausdrücken und Initialisierungen Adressen; nur Objektdeklarationen und direkte Lese-/Schreibzugriffe verwenden den bloßen C-Namen. Importierte Datenbindungen behalten ihre bisherige Adressdarstellung.
+
 ## Vertrag für architekturübergreifende Übersetzung
 
 `include/neverd/translate` definiert eine Vertragsschicht, kein
@@ -1661,7 +1667,3 @@ Der Treiber-Loader bindet Relokationsfakten an SHA-256 der geprüften Datei. Die
 `isCanonicalX87Wait` definiert dieselbe Regel zum Erhalt des Frames auf dem normalen Pfad für gewöhnliche registration-Transfers und geprüfte local-finally-Rückkehrpfade. Die FWAIT-Operation und die Ausnahmeverteilung bleiben erhalten. Andere intrinsic und fehlerhafte Formen bleiben undurchsichtig; die Regel beweist weder einen nichtlokalen finally-Austritt noch eine native Wiederherstellung.
 
 Die geprüfte KVM-x64-Ausführung übergibt die vollständige Befehlsschleife mit `withExecutionOwner` an den privaten vCPU-Thread. Zulassung, RAM-Transaktionen, Hooks und Budgets bleiben in dieser Schleife; jeder native Eintritt behält seine Kontrolle und Ausnahmepriorität. Der Aufrufer überwacht aktive Eintritte und wartet auf die bestätigte Abbruchbeendigung. CPU-Hooks dürfen nicht vom lokalen Zustand des aufrufenden Threads abhängen. Die Fertigstellung eines eigenständigen nativen Eintritts bleibt beim Aufrufer. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` und `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` prüfen Zuständigkeit und echten Abbruch; diese Änderung zertifiziert keinen wiederhergestellten Treiber.
-
-`LLVMCStackAllocation` verwaltet gezählte und außerhalb des Eintritts liegende Stack-Allokationen im privaten C-Klon. DataLayout-Schrittweite, vorzeichenlose Anzahl, Ausrichtung und Ausführungsort bleiben erhalten. Ein privater Aufruf mit Seiteneffekten erzeugt dort `__builtin_alloca`, prüft Größenüberlauf und richtet innerhalb zusätzlicher Bytes aus; die Lebensdauer reicht unter Clang/GCC bis zur Rückkehr. Einzelobjekte am Eintritt behalten lokale Deklarationen. Zu breite Anzahlen, skalierbarer Speicher, andere Adressräume, inalloca/swifterror, explizites stack save/restore und private Marker im Eingabe-IR werden vor Normalisierung abgelehnt. Das ursprüngliche IR bleibt unverändert.
-
-`LLVMCStorage` vereinheitlicht die explizite erhöhte Ausrichtung lokaler und globaler Objekte und ihrer Deklarationen. Zeichenketten behalten die vollständige LLVM-Arraygröße einschließlich abschließender Nullbytes. Globale LLVM-Werte bezeichnen in Ausdrücken und Initialisierungen Adressen; nur Objektdeklarationen und direkte Lese-/Schreibzugriffe verwenden den bloßen C-Namen. Importierte Datenbindungen behalten ihre bisherige Adressdarstellung.
