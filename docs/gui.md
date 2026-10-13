@@ -482,7 +482,16 @@ macOS, to do what the system setting for title bar double clicks asks). The
 title bar dims while the window is inactive, and full screen hides its icon
 and window buttons. Dialogs draw a title bar of their own: the dialog's title
 in the middle, Close, and Maximize for a dialog that offers it, such as the
-quick start.
+quick start. A dialog, a message box included, is wide enough to show its whole
+title.
+
+The controls are the workbench's own too. A combo box's list, such as the
+pseudocode view's representations, drops below it and reads as a menu: a
+4-pixel inset, highlights with rounded corners, the menu's colors. Submenus,
+tree branches, sorted columns and the arrows that scroll a tab bar take the
+workbench's chevrons, message boxes its icons, and Qt's file dialog, which the
+workbench uses on GNOME, its icons for folders, files, drives and its tool
+buttons.
 
 How the rest of the frame is drawn depends on the system:
 
