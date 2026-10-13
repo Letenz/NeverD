@@ -78,6 +78,28 @@ std::optional<Intrinsic> scalarStateImplementation(Intrinsic Id,
   }
 }
 
+// Only the three completed register conversions needed by the Double corpus.
+// The lifter owns VEX upper lanes; their completed numerical/state pair shares
+// the same helper key as the corresponding legacy register conversion.
+std::optional<unsigned> scalarDoubleConversionLayout(Intrinsic Id,
+                                                     unsigned Layout) {
+  if (Id != Intrinsic::X86FPScalarConvertState)
+    return std::nullopt;
+  const unsigned Control = x86FPArithStateControl(Layout) & ~8u;
+  if (Control != 4 && Control != 5 && Control != 7)
+    return std::nullopt;
+  return x86FPRoundStateLayout(x86FPStateSourceBytes(Layout), Control, 0,
+                               NdMemoryAddressSpace::Default);
+}
+
+std::string scalarDoubleConversionMnemonic(unsigned Layout) {
+  const unsigned Control = x86FPArithStateControl(Layout);
+  return std::string(x86FPScalarConvertIsInteger(Control) ? "signed"
+                                                          : "float") +
+         std::to_string(x86FPScalarConvertSourceBytes(Control) * 8) +
+         "ToDouble";
+}
+
 std::string uintType(unsigned Bits) {
   if (Bits > 64)
     throw Unsupported(
@@ -500,7 +522,28 @@ class Writer {
         "            var state = Swift.UInt32(truncatingIfNeeded: value)\n"
         "            " +
         MXCSRLoadName + "(&state)\n        }\n";
-    for (const auto &[Id, Bytes] : FPStateOperations) {
+    for (const auto &[Id, LayoutOrBytes] : FPStateOperations) {
+      if (Id == Intrinsic::X86FPScalarConvertState) {
+        const unsigned Control = x86FPArithStateControl(LayoutOrBytes);
+        const unsigned Bits = x86FPStateSourceBytes(LayoutOrBytes) * 8;
+        const std::string Input = x86FPScalarConvertIsInteger(Control)
+                                      ? signedValue("source", Bits)
+                                      : floatValue("source", Bits);
+        Text += Attributes + "        static func " +
+                scalarDoubleConversionMnemonic(LayoutOrBytes) +
+                "(_ source: Swift.UInt64, _ incoming: Swift.UInt64) -> " +
+                WideType +
+                " {\n"
+                "            write(incoming)\n"
+                "            let result = Swift.Double(" +
+                Input +
+                ").bitPattern\n"
+                "            let outgoing = read()\n"
+                "            return " +
+                WideType + "(lo: result, hi: outgoing)\n        }\n";
+        continue;
+      }
+      const unsigned Bytes = LayoutOrBytes;
       const unsigned Bits = Bytes * 8;
       const char *Operator = Id == Intrinsic::X86FPAddState   ? "+"
                              : Id == Intrinsic::X86FPSubState ? "-"
@@ -543,10 +586,12 @@ class Writer {
       const unsigned Layout = x86FPStateHelperLayout(E->IntrinsicId, Shape);
       const auto Implementation =
           scalarStateImplementation(E->IntrinsicId, Layout);
+      const auto Conversion =
+          scalarDoubleConversionLayout(E->IntrinsicId, Layout);
       if (E->IsIndirectCall || E->IndirectTarget || E->SourceCallHint ||
           E->DoesNotReturn || !x86FPStateShapeIsValid(E->IntrinsicId, Shape) ||
           isX86FPConversionStateIntrinsic(E->IntrinsicId) ||
-          isX86FPScalarConvertStateIntrinsic(E->IntrinsicId) ||
+          (isX86FPScalarConvertStateIntrinsic(E->IntrinsicId) && !Conversion) ||
           isX86F16CStateIntrinsic(E->IntrinsicId) ||
           isX86FPComiStateIntrinsic(E->IntrinsicId) ||
           isX86FPMaskCompareStateIntrinsic(E->IntrinsicId) ||
@@ -562,6 +607,16 @@ class Writer {
       if (E->IntrinsicId == Intrinsic::X86WriteMXCSR)
         return FPStateType + ".write(" + expression(E->Operands[0], Depth + 1) +
                ")";
+      if (Conversion) {
+        FPStateOperations.insert(
+            {Intrinsic::X86FPScalarConvertState, *Conversion});
+        UsesWide = true;
+        // The shared validator proves Source, literal Control, State. Only the
+        // control is consumed here; the source and complete state retain order.
+        return FPStateType + "." + scalarDoubleConversionMnemonic(*Conversion) +
+               "(" + expression(E->Operands[0], Depth + 1) + ", " +
+               expression(E->Operands[2], Depth + 1) + ")";
+      }
       const unsigned Bytes = x86FPStateSourceBytes(Layout);
       FPStateOperations.insert({*Implementation, Bytes});
       UsesWide |= Shape.OutputSize == 12;

@@ -2383,7 +2383,8 @@ exceptions, and unsuccessful completion leaves numerical output untouched.
 IEEE bit arithmetic supplements APFloat's narrowing status for directed finite
 overflow and SSE tininess before denormalization; FTZ remains per active lane.
 Unsigned, EVEX, F16C and x87 conversions retain their separate contracts.
-Swift refuses this completion surface until it has an equivalent lowering.
+Swift admits only register Float32/signed32/signed64 to Double completions
+with full MXCSR; other scalar conversions and memory forms remain refused.
 
 SSE/VEX CVTDQ2PS/PD, CVTPS2PD/CVTPD2PS and CVT(T)PS/PD2DQ share
 `X86FPPackedConvertState` and `X86FPPackedConvertMemoryState`. The packed control
@@ -5581,6 +5582,6 @@ DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fs
 
 ## Swift scalar instruction completion
 
-Recovered x86_64 Swift now supports exact scalar register ADD/SUB/MUL/DIV instruction completions as well as the earlier scalar forms. Both preserve numerical bits and complete incoming/outgoing MXCSR through the same helper. Memory, packed arithmetic, SQRT/MIN/MAX, FMA, conversion, rounding and approximate operations remain unsupported. This repairs the observed Swift stack-parameter recovery failures; full macOS/iOS runtime and framework support remains incomplete.
+Recovered x86_64 Swift supports scalar register ADD/SUB/MUL/DIV and Float32, signed32 and signed64 register conversions to Double, preserving numerical bits and complete input/output MXCSR. Other conversions, memory, packed arithmetic, SQRT/MIN/MAX, FMA, rounding and approximate operations remain unsupported. These repairs address observed Swift stack and mixed-function recovery failures; the full macOS/iOS runtime and framework environment remains incomplete.
 
-The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits only register X86FPArithState with scalar control16|optional8|kind and 4/8-byte elements for Add/Subtract/Multiply/Divide. It normalizes the intrinsic and element width to the existing scalar helper key, then removes only the proven literal control operand. Left, Right and State retain their order. A function mixing legacy and generic forms defines each helper once. Target guards, file-level module_preamble declarations, optimization-disabled arithmetic and complete state packing remain unchanged; no ARM64 MXCSR substitution or memory/packed lowering is inferred.
+The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits register X86FPArithState with scalar control16|optional8|kind for 4/8-byte Add/Subtract/Multiply/Divide, normalizing its intrinsic/width helper key and dropping only Control at operand0. X86FPScalarConvertState admits only controls4/5/7 and VEX variants12/13/15 for Float32/signed32/signed64 to Double. Its conversion-specific full-layout key removes only VEX bit8, keeps all three source kinds distinct, and drops only the literal Control at operand1. Source and State retain their order. Legacy/VEX and legacy/generic occurrences share one helper per numerical/state contract. Signed32 truncates and reinterprets its raw bits; signed64 reinterprets its full source, and Float32 preserves its low32 bit pattern. Target guards, file-level module_preamble, optimization-disabled numerical work and complete96-bit result/MXCSR packing remain required. The lifter still owns vector upper lanes. No ARM64 MXCSR substitution or memory/packed lowering is inferred.

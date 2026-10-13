@@ -64,6 +64,7 @@
           "neverd_ir_llvm",
           "neverd_ir_low",
           "neverd_ir_med",
+          "neverd_ir_view_ex_json",
           "neverd_item_clear",
           "neverd_item_set",
           "neverd_items_json",
@@ -470,6 +471,8 @@
           "neverd decompile --json",
           "neverd decompile --language",
           "neverd decompile --llvm",
+          "neverd decompile --llvm-opt",
+          "neverd decompile --llvm-passes",
           "neverd decompile --load-base",
           "neverd decompile --load-entry",
           "neverd decompile --load-offset",
@@ -494,6 +497,7 @@
           "neverd decompile --sig-base",
           "neverd decompile --sig-file",
           "neverd decompile --symbol-path",
+          "neverd decompile --symbolic-simplify",
           "neverd decompile --v",
           "neverd diff",
           "neverd diff --a",
@@ -1117,6 +1121,7 @@
           "neverd_identify_json",
           "neverd_import_slots_json",
           "neverd_imports_json",
+          "neverd_ir_view_ex_json",
           "neverd_items_json",
           "neverd_operand_formats_json",
           "neverd_pdb_reference_json",
@@ -4083,7 +4088,7 @@
         "Encrypted native slices are rejected. Unresolved metadata and pointer encodings reduce coverage. Swift source signatures use the built-in LLVM component and are checked against native symbol entries; metadata-only runs neither the native source exporter nor signature demangling. Signature inventory records demangler {name: llvm-swift-demangle, execution: builtin, version: 6.3.3}. No external demangler or toolchain-discovery process or logs are used; the former executable option and environment setting are removed.",
         "Overall success records output publication, not complete method recovery. Recovered coverage requires every inventoried callable to have its supported body or proven compiler projection; incomplete metadata can still make overall coverage partial or unknown. An exhaustive original-program inventory is not guaranteed.",
         "Metadata-only emits declarations, metadata and the selected binary, without native C, Objective-C bodies or method-body coverage. Full recovery analyzes one selected native artifact, and max-func can leave discovered methods unrecovered.",
-        "Recovered x86_64 Swift scalar register add/subtract/multiply/divide accepts both the legacy state forms and exact generic X86FPArithState completions, preserving typed numerical bits and complete incoming/outgoing MXCSR through the same normalized helper key and LLVM compiler pointer intrinsics. Output requires an x86_64 Swift target and file-level module_preamble declarations; shared SDK/mobile assembly preserves each distinct preamble once and exact method identities. Memory, packed/horizontal/alternating arithmetic, SQRT/MIN/MAX, FMA, conversion, rounding and approximate state operations remain unsupported. Independent masked execution compares generated Swift and original SSE against literal numerical/MXCSR cases at Onone/O. Native Intel unmasked-trap execution is a separate gate; Rosetta forces exception masks and cannot validate it. The four-variant858-check macOS Swift corpus does not complete physical iOS, macOS/iOS runtime or framework support."
+        "Recovered x86_64 Swift supports register scalar add/subtract/multiply/divide in legacy and exact X86FPArithState forms, plus Float32/signed32/signed64 register-to-Double X86FPScalarConvertState controls4/5/7 and VEX12/13/15. Helpers preserve typed numerical bits and complete incoming/outgoing MXCSR; conversion keys normalize only VEX identity and distinguish all three sources. Output requires an x86_64 Swift target and file-level module_preamble; SDK/mobile assembly preserves distinct preambles and method identities. Other conversions, memory, packed/horizontal/alternating arithmetic, SQRT/MIN/MAX, FMA, rounding and approximations remain unsupported. Independent masked Onone/O execution compares Swift and original SSE against literal numerical/MXCSR cases. Native Intel unmasked traps are a separate gate unavailable under Rosetta. Four-variant858-check macOS corpus evidence does not complete physical iOS or macOS/iOS runtime/framework support."
       ],
       "tests": [
         {
@@ -4316,6 +4321,46 @@
           "target": "NeverDLiftTests",
           "source": "unittests/backend/HighSwiftEmitterTests.cpp",
           "filter": "HighSwiftEmitter.MixedScalarCompletionDeduplicatesHelpersAndExecutesState",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.ScalarDoubleConversionsKeepDistinctSourcesAndOneHelper",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.ScalarDoubleConversionsRejectOtherEffectsAndLayouts",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.ScalarDoubleConversionSourceExecutesCompleteState",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.MixedScalarDoubleConversionsDeduplicateAndExecuteState",
           "platforms": [
             "darwin"
           ]
