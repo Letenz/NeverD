@@ -22,7 +22,9 @@
 #include "../render/X86FPStateHelpers.h"
 #include "HighCWriter.h"
 
+#include "neverd/ir/high/CxxObjectActions.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/X86FPStateShape.h"
 
 #define DEBUG_TYPE "neverd-highc-emitter"
@@ -3504,8 +3506,13 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
                                   "entries need a projection proof");
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder) {
     std::vector<HighFunc> Working = Funcs;
-    if (Opts.StructuredExceptionSyntax)
+    if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);
+      for (HighFunc &Func : Working) {
+        attachCxxObjectActionCalls(Func, Opts.TheArch);
+        attachItaniumHandlerBodies(Func);
+      }
+    }
     HighCWriter W(OS, Opts, Dbg, true,
                   Opts.Image && Opts.Image == PreparedImage
                       ? &PreparedImageFunctionNames

@@ -21503,8 +21503,10 @@ TEST(HighCPointerAddresses, CleanupCallResultIsNotDeclared) {
   const std::string Source = emitFunctions({Parent});
   EXPECT_NE(Source.find("CStringT_dtor("), std::string::npos) << Source;
   EXPECT_EQ(Source.find("v3_0"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("try {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("throw;"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("__wind"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, CleanupScalarCopyForwardsIntoDtor) {
@@ -22810,7 +22812,7 @@ TEST(HighCPointerAddresses, AtlFormatIntegerViewBeforeCxxTryComposes) {
   EXPECT_EQ(FormatArgs.find("(int64_t)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t99_25"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("t117"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
 }
 
 TEST(HighCPointerAddresses, AtlFormatIntegerViewIgnoresDtorClobber) {
@@ -24285,7 +24287,7 @@ TEST(HighCPointerAddresses, CleanupFuncletAssignDoesNotExposePrologueHome) {
   const std::string Source = emitFunctions({Func});
   EXPECT_EQ(Source.find("v0 ="), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m10 ="), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__wind {"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("} catch (...) {"), std::string::npos) << Source;
   EXPECT_NE(Source.find("use("), std::string::npos) << Source;
   EXPECT_NE(Source.find("dtor("), std::string::npos) << Source;
 }
@@ -35479,6 +35481,29 @@ TEST(HighCPointerAddresses, CorpusFuncLoadGsHandlerCheckReturnsOne) {
   EXPECT_EQ(Source.find("void sub_"), std::string::npos) << Source;
 }
 
+TEST(HighCPointerAddresses, CorpusCalleeSavesAreNotStoresOfLaterArguments) {
+  // `mov [rsp+18h], rsi` and `push rdi` save the caller's registers before
+  // `mov rsi, r8` and `mov rdi, r9` make them hold arg2 and arg3.  Those
+  // saves are prologue storage, not stores of the arguments.
+  if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
+    GTEST_SKIP() << "windows-eh corpus root is not configured";
+  const auto Path = std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                    "corpus/windows-eh/clang-cl/x86_64/fh3/gs/o0/abi-probe/"
+                    "cxx_eh_probe-clang-cl-x86_64-fh3-gs-o0.exe";
+  if (!std::filesystem::exists(Path))
+    GTEST_SKIP() << Path.string() << " is missing";
+  constexpr va_t Entry = 0x1400020CC;
+  BinaryLoadOptions Opts;
+  Opts.OnlyFunctionEntries.insert(Entry);
+  auto Img = loadBinary(Path, Opts);
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+  const std::string Source = highcOnlyFunction(*Img, Entry);
+  ASSERT_NE(Source.find("sub_140002C00()"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(frame_base - 8) ="), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("(frame_base + 24) ="), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("= arg3;"), std::string::npos) << Source;
+}
+
 TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
   if (NEVERD_BINARY_CORPUS_ROOT[0] == '\0')
     GTEST_SKIP() << "windows-eh corpus root is not configured";
@@ -35494,6 +35519,22 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
   ASSERT_TRUE(static_cast<bool>(DiscoverImg))
       << llvm::toString(DiscoverImg.takeError());
 
+  // A typed handler whose body rethrows, not the rethrow that ends a cleanup
+  // scope's catch-all.
+  auto RethrowsInHandler = [](const std::string &Text) {
+    for (size_t At = Text.find("throw;"); At != std::string::npos;
+         At = Text.find("throw;", At + 1)) {
+      const size_t Catch = Text.rfind("catch (", At);
+      if (Catch == std::string::npos ||
+          Text.compare(Catch, 11, "catch (...)") == 0)
+        continue;
+      const size_t Open = Text.find('{', Catch);
+      if (Open != std::string::npos &&
+          Text.find_first_not_of(" \n", Open + 1) == At)
+        return true;
+    }
+    return false;
+  };
   va_t Entry = 0;
   std::string Source;
   for (const auto &Rec : DiscoverImg->COFFPDataRecords) {
@@ -35504,8 +35545,7 @@ TEST(HighCPointerAddresses, CorpusFuncLoadCxxEhProbeCatchReturnsValue) {
     if (!Img)
       continue;
     std::string Text = highcOnlyFunction(*Img, Begin);
-    if (Text.find("throw;") == std::string::npos ||
-        Text.find("catch") == std::string::npos)
+    if (!RethrowsInHandler(Text))
       continue;
     Entry = Begin;
     Source = std::move(Text);
@@ -44296,6 +44336,54 @@ TEST(HighCPointerAddresses, HomeSpillNothingReadsBackIsNoArgument) {
   EXPECT_EQ(HighC.find("arg2"), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("arg3"), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("sub_140001030()"), std::string::npos) << HighC;
+}
+
+// The callee of the three tests below clears the local it is handed, so each
+// caller's frame escapes and stays byte storage.
+std::vector<uint8_t> withFrameClearingCallee(std::vector<uint8_t> Code) {
+  Code.resize(0x40, 0xcc);
+  Code.insert(Code.end(),
+              {0x48, 0xc7, 0x01, 0x00, 0x00, 0x00, 0x00, // mov [rcx], 0
+               0xc3});
+  return Code;
+}
+
+TEST(HighCPointerAddresses, CalleeSaveInAHomeSlotIsPrologueStorage) {
+  // MSVC saves nonvolatile registers in its own home slots: `mov [rsp+8],
+  // rbx` is the same save as a push, restored by `mov rbx, [rsp+38h]`.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = withFrameClearingCallee(
+      {0x48, 0x89, 0x5c, 0x24, 0x08, // mov [rsp+8], rbx
+       0x48, 0x83, 0xec, 0x30,       // sub rsp, 30h
+       0x48, 0x8b, 0xd9,             // mov rbx, rcx
+       0x48, 0x8d, 0x4c, 0x24, 0x20, // lea rcx, [rsp+20h]
+       0xe8, 0x2a, 0x00, 0x00, 0x00, // call callee
+       0x48, 0x8b, 0xc3,             // mov rax, rbx
+       0x48, 0x8b, 0x5c, 0x24, 0x38, // mov rbx, [rsp+38h]
+       0x48, 0x83, 0xc4, 0x30,       // add rsp, 30h
+       0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_EQ(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("sub_140001040("), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("return arg0"), std::string::npos) << HighC;
+}
+
+TEST(HighCPointerAddresses, AHomeSlotSaveReadForAnythingElseStays) {
+  // The function returns the rbx it saved: that home slot is read as a value,
+  // not restored, so its store stays.
+  constexpr va_t Entry = 0x140001000;
+  const std::vector<uint8_t> Code = withFrameClearingCallee(
+      {0x48, 0x89, 0x5c, 0x24, 0x08, // mov [rsp+8], rbx
+       0x48, 0x83, 0xec, 0x30,       // sub rsp, 30h
+       0x48, 0x8d, 0x4c, 0x24, 0x20, // lea rcx, [rsp+20h]
+       0xe8, 0x2d, 0x00, 0x00, 0x00, // call callee
+       0x48, 0x8b, 0x44, 0x24, 0x38, // mov rax, [rsp+38h]
+       0x48, 0x83, 0xc4, 0x30,       // add rsp, 30h
+       0xc3});
+  const std::string HighC =
+      highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
+  EXPECT_NE(HighC.find("(frame_base + 8) ="), std::string::npos) << HighC;
 }
 
 TEST(HighCPointerAddresses, PrototypeBoundsStackArgumentsOfACall) {

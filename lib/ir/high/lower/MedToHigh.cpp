@@ -559,7 +559,11 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
         // A COPY from a Temp is also a computed def: `mov eax, edx` then
         // `mov rax, [bins+i]` must not remap RAX.3 onto arg1.  That deleted
         // Typed map bucket walks.
-        if (Fallback < 0 && regToArgIdx(V.RegOff) < 0) {
+        // The value a callee-save holds at entry is the caller's, which the
+        // prologue saves: no copy inside this function made it a parameter
+        // (`push rbx` before `mov bl, r9b` saves the caller's rbx).
+        if (Fallback < 0 && regToArgIdx(V.RegOff) < 0 &&
+            !isEntryLiveInValue(*CurMed, V, V.RegOff)) {
           const bool Computed = PhiOutputVars.count(varKey(V)) ||
                                 ComputedVersions.count({V.Id, V.SSAVer});
           if (!Computed)

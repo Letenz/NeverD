@@ -97,6 +97,10 @@ add_neverd_unittest(NeverDSourceDialectTests
   backend/SourceDialectTests.cpp
   LINK_COMPONENTS BackendC
 )
+add_neverd_unittest(NeverDItaniumHandlerTests
+  lift/eh/ItaniumHandlerBodiesTests.cpp
+  LINK_COMPONENTS BackendC
+)
 add_neverd_unittest(NeverDSourceAnchorTests
   lift/core/CSourceAnchorTests.cpp
   lift/core/CSourceDefinitionTests.cpp

@@ -16,10 +16,12 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
+#include "neverd/ir/high/ItaniumHandlers.h"
 #include "neverd/ir/high/MsvcTypeName.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionInfo.h"
+#include "neverd/loader/SymbolSpelling.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -209,9 +211,47 @@ bool stmtsAlwaysExit(TryExitTest Hidden, TryExitTest LeftOut,
   return false;
 }
 
+/// The C++ type an Itanium clause catches, from its type-table name: the
+/// RTTI symbol (`_ZTISt13runtime_error`) or the type's own mangling as
+/// `std::type_info::name` spells it (`15CxxEhProbeError`).  Empty when it does
+/// not demangle.
+std::string itaniumCatchType(llvm::StringRef Name) {
+  for (const auto &[Mangled, Prefix] :
+       {std::pair<std::string, llvm::StringRef>{Name.str(), "typeinfo for "},
+        {"_ZTS" + Name.str(), "typeinfo name for "}}) {
+    if (Mangled != Name && Name.starts_with("_Z"))
+      continue;
+    llvm::StringRef Readable;
+    const std::string Demangled = readableSymbolName(Mangled);
+    Readable = Demangled;
+    if (Readable.consume_front(Prefix) && !Readable.empty())
+      return Readable.str();
+  }
+  return {};
+}
+
 void writeCxxCatchType(llvm::raw_ostream &OS, const HighEHClause &Clause) {
   if (Clause.TypeName.empty() && Clause.TypeDescriptorVA == 0) {
     OS << "...";
+    return;
+  }
+  // An Itanium handler receives the thrown object itself, or for a caught
+  // pointer the pointer: the table does not say whether the source took it
+  // by value, so the parameter is the reference every by-value copy reads.
+  if (Clause.Kind == HighEHClauseKind::ItaniumCatch) {
+    std::string Type = itaniumCatchType(Clause.TypeName);
+    if (Type.empty()) {
+      OS << "/* " << Clause.TypeName << "; type @ 0x"
+         << llvm::utohexstr(Clause.TypeDescriptorVA) << " */ &";
+      return;
+    }
+    if (llvm::StringRef(Type).ends_with("*")) {
+      const size_t Stars = Type.find_last_not_of('*') + 1;
+      OS << llvm::StringRef(Type).take_front(Stars).rtrim() << " "
+         << Type.substr(Stars);
+      return;
+    }
+    OS << Type << " &";
     return;
   }
   if ((Clause.Adjectives & kCxxCatchConst) != 0)
@@ -325,6 +365,157 @@ void HighCWriter::writeCExceptionRegion(const HighStmt &Stmt, int Indent) {
   writeEmbeddedNativeCallbacks(Stmt, Indent);
 }
 
+void HighCWriter::writeCxxCleanupHandler(const HighStmt &Try,
+                                         llvm::ArrayRef<size_t> Cleanups,
+                                         int Indent) {
+  // An exception leaving several objects destroys the most recently
+  // constructed first: the state whose unwind chain reaches the other's.
+  std::vector<size_t> Order(Cleanups.begin(), Cleanups.end());
+  const CxxExceptionInfo *Cxx =
+      CurrentFunc && CurrentFunc->ExceptionMetadata
+          ? (CurrentFunc->ExceptionMetadata->Cxx
+                 ? &*CurrentFunc->ExceptionMetadata->Cxx
+                 : nullptr)
+          : nullptr;
+  auto Reaches = [&](int32_t From, int32_t To) {
+    if (!Cxx)
+      return false;
+    for (size_t Step = 0; From >= 0 && Step <= Cxx->UnwindMap.size(); ++Step) {
+      if (static_cast<size_t>(From) >= Cxx->UnwindMap.size())
+        return false;
+      From = Cxx->UnwindMap[From].ToState;
+      if (From == To)
+        return true;
+    }
+    return false;
+  };
+  std::stable_sort(Order.begin(), Order.end(), [&](size_t A, size_t B) {
+    const int32_t SA = Try.EHClauses[A].State;
+    const int32_t SB = Try.EHClauses[B].State;
+    if (Reaches(SA, SB))
+      return true;
+    if (Reaches(SB, SA))
+      return false;
+    return SA > SB;
+  });
+  for (size_t C : Order) {
+    const HighEHClause &Clause = Try.EHClauses[C];
+    emitIndent(Indent);
+    // An MSVC action names its unwind state; an Itanium pad has none.
+    if (Clause.State >= 0)
+      OS << "/* unwind cleanup(state=" << Clause.State << ") */\n";
+    else
+      OS << "/* unwind cleanup */\n";
+    if (C < Try.EHClauseBodies.size() && !Try.EHClauseBodies[C].empty()) {
+      const bool SavedHandler = InEHClauseBody;
+      const bool SavedCleanup = InCxxCleanupBody;
+      InEHClauseBody = true;
+      InCxxCleanupBody = true;
+      writeStmtsIsolated(Try.EHClauseBodies[C], Indent);
+      InEHClauseBody = SavedHandler;
+      InCxxCleanupBody = SavedCleanup;
+    } else if (Clause.FilterOrActionVA) {
+      emitIndent(Indent);
+      OS << "/* cleanup @ 0x" << llvm::utohexstr(Clause.FilterOrActionVA)
+         << " */\n";
+    }
+  }
+  // The runtime continues the unwind once the actions return; a handler
+  // catching every exception has to rethrow to do the same.  (Only where no
+  // handler exists at all does the spelling differ: the runtime may then
+  // terminate without running the actions, while this catch runs them.)
+  emitIndent(Indent);
+  OS << "throw;\n";
+}
+
+bool HighCWriter::hasItaniumHandlerBodies(const HighStmt &Stmt) {
+  return Stmt.Kind == StmtKind::ItaniumTry && !Stmt.EHClauses.empty() &&
+         Stmt.EHClauseBodies.size() == Stmt.EHClauses.size() &&
+         llvm::all_of(Stmt.EHClauses,
+                      [](const HighEHClause &Clause) {
+                        return Clause.Kind == HighEHClauseKind::ItaniumCatch ||
+                               Clause.Kind == HighEHClauseKind::CxxCleanup;
+                      }) &&
+         llvm::none_of(Stmt.EHClauseBodies,
+                       [](const auto &Body) { return Body.empty(); });
+}
+
+void HighCWriter::writeCxxTry(const HighStmt &Try, int Indent,
+                              llvm::function_ref<void(int)> WriteBody) {
+  std::vector<size_t> Handlers;
+  std::vector<size_t> Cleanups;
+  std::vector<size_t> NativeCleanups;
+  for (size_t C = 0; C < Try.EHClauses.size(); ++C) {
+    if (Try.EHClauses[C].Kind != HighEHClauseKind::CxxCleanup)
+      Handlers.push_back(C);
+    else if (isNativeRegistrationCleanup(Try, C))
+      NativeCleanups.push_back(C);
+    else
+      Cleanups.push_back(C);
+  }
+  const bool Nested = !Handlers.empty() && !Cleanups.empty();
+  emitIndent(Indent);
+  OS << "try {\n";
+  if (Nested) {
+    emitIndent(Indent + 1);
+    OS << "try {\n";
+  }
+  WriteBody(Indent + (Nested ? 2 : 1));
+  if (!Cleanups.empty()) {
+    const int At = Indent + (Nested ? 1 : 0);
+    emitIndent(At);
+    OS << "} catch (...) {\n";
+    writeCxxCleanupHandler(Try, Cleanups, At + 1);
+    emitIndent(At);
+    OS << "}";
+    if (Nested) {
+      OS << "\n";
+      emitIndent(Indent);
+      OS << "}";
+    }
+  } else {
+    emitIndent(Indent);
+    OS << "}";
+  }
+  for (size_t C : Handlers) {
+    const HighEHClause &Clause = Try.EHClauses[C];
+    OS << " catch (";
+    writeCxxCatchType(OS, Clause);
+    const auto Named = CxxCatchNames.find(&Clause);
+    if (Named != CxxCatchNames.end())
+      OS << Named->second;
+    OS << ") {\n";
+    if (C < Try.EHClauseBodies.size()) {
+      const bool SavedHandler = InEHClauseBody;
+      InEHClauseBody = true;
+      const auto SavedParameter = ItaniumCatchParameter;
+      ItaniumCatchParameter.reset();
+      if (Clause.Kind == HighEHClauseKind::ItaniumCatch &&
+          Named != CxxCatchNames.end())
+        ItaniumCatchParameter = {
+            Named->second,
+            llvm::StringRef(itaniumCatchType(Clause.TypeName)).ends_with("*")};
+      else if (Named != CxxCatchNames.end())
+        OpenCatchObjects.push_back(Named->second);
+      writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
+      if (Named != CxxCatchNames.end() &&
+          Clause.Kind != HighEHClauseKind::ItaniumCatch)
+        OpenCatchObjects.pop_back();
+      ItaniumCatchParameter = SavedParameter;
+      InEHClauseBody = SavedHandler;
+      if (Try.EHClauseBodies[C].empty() && Clause.HandlerVA) {
+        emitIndent(Indent + 1);
+        OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA) << " */\n";
+      }
+    }
+    emitIndent(Indent);
+    OS << "}";
+  }
+  for (size_t C : NativeCleanups)
+    writeRegistrationCleanup(Try, C, Indent);
+  OS << "\n";
+}
+
 void HighCWriter::writeStmt(const HighStmt &Stmt, int Indent) {
   auto Event = SourceRecorder && CurrentFunc
                    ? SourceRecorder->statement(CurrentFunc->Entry, Stmt)
@@ -348,6 +539,19 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         (Stmt.Dst->Kind == ExprKind::Var || Stmt.Dst->Kind == ExprKind::Phi) &&
         AmbiguousFrameAliases.count(varName(Stmt.Dst->Var))))
     return;
+  // C++ spells the Itanium runtime's rethrow of the caught exception.
+  if (Opts.StructuredExceptionSyntax &&
+      (Stmt.Kind == StmtKind::Call || Stmt.Kind == StmtKind::ExprStmt ||
+       Stmt.Kind == StmtKind::Assign)) {
+    const HighExpr *Call =
+        Stmt.Kind == StmtKind::Call ? Stmt.CallExpr.get() : Stmt.Val.get();
+    if (Call && Call->Operands.empty() &&
+        isItaniumRuntimeCall(*Call, "__cxa_rethrow")) {
+      emitIndent(Indent);
+      OS << "throw;\n";
+      return;
+    }
+  }
   const bool HideEHRuntimeMemory = CurrentFunc &&
                                    CurrentFunc->ExceptionMetadata.has_value() &&
                                    !preservesRegistrationMemory(*CurrentFunc);
@@ -1327,65 +1531,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     NextTryLeaveTargets.clear();
     auto RestoreLeave =
         llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
-    emitIndent(Indent);
-    const bool CleanupOnly =
-        !Stmt.EHClauses.empty() &&
-        llvm::all_of(Stmt.EHClauses, [](const HighEHClause &Clause) {
-          return Clause.Kind == HighEHClauseKind::CxxCleanup;
-        });
-    OS << (CleanupOnly ? "__wind {\n" : "try {\n");
-    writeTryBody(Stmt.Body, Indent + 1);
-    emitIndent(Indent);
-    OS << "}";
-    for (size_t I = 0; I < Stmt.EHClauses.size(); ++I) {
-      const HighEHClause &Clause = Stmt.EHClauses[I];
-      if (Clause.Kind == HighEHClauseKind::CxxCleanup) {
-        if (writeRegistrationCleanup(Stmt, I, Indent))
-          continue;
-        OS << "\n";
-        emitIndent(Indent);
-        OS << "__unwind {\n";
-        emitIndent(Indent);
-        OS << "/* unwind cleanup(state=" << Clause.State << ") */\n";
-        if (I < Stmt.EHClauseBodies.size()) {
-          const bool SavedHandler = InEHClauseBody;
-          const bool SavedCleanup = InCxxCleanupBody;
-          InEHClauseBody = true;
-          InCxxCleanupBody = true;
-          writeStmtsIsolated(Stmt.EHClauseBodies[I], Indent + 1);
-          InEHClauseBody = SavedHandler;
-          InCxxCleanupBody = SavedCleanup;
-        }
-        emitIndent(Indent);
-        OS << "}\n";
-        continue;
-      }
-      OS << " catch (";
-      writeCxxCatchType(OS, Clause);
-      if (auto Named = CxxCatchNames.find(&Clause);
-          Named != CxxCatchNames.end())
-        OS << Named->second;
-      OS << ") {\n";
-      if (I < Stmt.EHClauseBodies.size()) {
-        const bool SavedHandler = InEHClauseBody;
-        InEHClauseBody = true;
-        const auto Named = CxxCatchNames.find(&Clause);
-        if (Named != CxxCatchNames.end())
-          OpenCatchObjects.push_back(Named->second);
-        writeStmtsIsolated(Stmt.EHClauseBodies[I], Indent + 1);
-        if (Named != CxxCatchNames.end())
-          OpenCatchObjects.pop_back();
-        InEHClauseBody = SavedHandler;
-        if (Stmt.EHClauseBodies[I].empty() && Clause.HandlerVA) {
-          emitIndent(Indent + 1);
-          OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)
-             << " */\n";
-        }
-      }
-      emitIndent(Indent);
-      OS << "}";
-    }
-    OS << "\n";
+    writeCxxTry(Stmt, Indent,
+                [&](int Inner) { writeTryBody(Stmt.Body, Inner); });
     break;
   }
 
@@ -1396,6 +1543,13 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     NextTryLeaveTargets.clear();
     auto RestoreLeave =
         llvm::make_scope_exit([&] { LeaveTargets = OuterLeave; });
+    // With its landing pad's code in the clauses (attachItaniumHandlerBodies)
+    // the region is a C++ try like any other.
+    if (Opts.StructuredExceptionSyntax && hasItaniumHandlerBodies(Stmt)) {
+      writeCxxTry(Stmt, Indent,
+                  [&](int Inner) { writeTryBody(Stmt.Body, Inner); });
+      break;
+    }
     emitIndent(Indent);
     OS << "/* Itanium try [0x" << llvm::utohexstr(Stmt.EHRange.Begin) << ", 0x"
        << llvm::utohexstr(Stmt.EHRange.End)
@@ -1719,65 +1873,7 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       const HighStmt &Try = Stmts[I + 1];
       const size_t NameIdx = FindAddr(Try.Body, NameAt);
       auto WriteCleanupTry = [&](auto &&WriteBody) {
-        emitIndent(Indent);
-        const bool CleanupOnly =
-            !Try.EHClauses.empty() &&
-            llvm::all_of(Try.EHClauses, [](const HighEHClause &Clause) {
-              return Clause.Kind == HighEHClauseKind::CxxCleanup;
-            });
-        OS << (CleanupOnly ? "__wind {\n" : "try {\n");
-        WriteBody(Indent + 1);
-        emitIndent(Indent);
-        OS << "}";
-        for (size_t C = 0; C < Try.EHClauses.size(); ++C) {
-          const HighEHClause &Clause = Try.EHClauses[C];
-          if (Clause.Kind == HighEHClauseKind::CxxCleanup) {
-            if (writeRegistrationCleanup(Try, C, Indent))
-              continue;
-            OS << "\n";
-            emitIndent(Indent);
-            OS << "__unwind {\n";
-            emitIndent(Indent);
-            OS << "/* unwind cleanup(state=" << Clause.State << ") */\n";
-            if (C < Try.EHClauseBodies.size()) {
-              const bool SavedHandler = InEHClauseBody;
-              const bool SavedCleanup = InCxxCleanupBody;
-              InEHClauseBody = true;
-              InCxxCleanupBody = true;
-              writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
-              InEHClauseBody = SavedHandler;
-              InCxxCleanupBody = SavedCleanup;
-            }
-            emitIndent(Indent);
-            OS << "}\n";
-            continue;
-          }
-          OS << " catch (";
-          writeCxxCatchType(OS, Clause);
-          if (auto Named = CxxCatchNames.find(&Clause);
-              Named != CxxCatchNames.end())
-            OS << Named->second;
-          OS << ") {\n";
-          if (C < Try.EHClauseBodies.size()) {
-            const bool SavedHandler = InEHClauseBody;
-            InEHClauseBody = true;
-            const auto Named = CxxCatchNames.find(&Clause);
-            if (Named != CxxCatchNames.end())
-              OpenCatchObjects.push_back(Named->second);
-            writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
-            if (Named != CxxCatchNames.end())
-              OpenCatchObjects.pop_back();
-            InEHClauseBody = SavedHandler;
-            if (Try.EHClauseBodies[C].empty() && Clause.HandlerVA) {
-              emitIndent(Indent + 1);
-              OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)
-                 << " */\n";
-            }
-          }
-          emitIndent(Indent);
-          OS << "}";
-        }
-        OS << "\n";
+        writeCxxTry(Try, Indent, WriteBody);
       };
       if (NameAt && NameIdx == SIZE_MAX) {
         std::function<bool(const std::vector<HighStmt> &)> HasAddr =
@@ -1849,108 +1945,51 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       if (LenReady && JoinAt &&
           TrailingLiveGoto(Try.Body[LenIdx].Body) == JoinAt) {
         const HighStmt &LenIf = Try.Body[LenIdx];
-        emitIndent(Indent);
-        const bool CleanupOnly =
-            !Try.EHClauses.empty() &&
-            llvm::all_of(Try.EHClauses, [](const HighEHClause &Clause) {
-              return Clause.Kind == HighEHClauseKind::CxxCleanup;
-            });
-        OS << (CleanupOnly ? "__wind {\n" : "try {\n");
-        const int Inner = Indent + 1;
         auto WriteVisible = [&](const HighStmt &N, int Ind) {
           if (stmtHiddenFromC(N))
             return;
           writeStmt(N, Ind);
         };
-        emitIndent(Inner);
-        OS << "if (" << invertCondStr(*S.Cond) << ") {\n";
-        for (size_t K = 0; K < LenIdx; ++K)
-          WriteVisible(Try.Body[K], Inner + 1);
-        emitIndent(Inner + 1);
-        OS << "if (" << condStr(*LenIf.Cond) << ") {\n";
-        for (const HighStmt &B : LenIf.Body) {
-          if (B.Kind == StmtKind::Goto && B.GotoTarget == JoinAt)
-            continue;
-          WriteVisible(B, Inner + 2);
-        }
-        emitIndent(Inner + 1);
-        OS << "} else {\n";
-        if (Try.Body[NameIdx].Kind == StmtKind::Block) {
-          for (const HighStmt &B : Try.Body[NameIdx].Body)
-            WriteVisible(B, Inner + 2);
-        } else {
-          WriteVisible(Try.Body[NameIdx], Inner + 2);
-        }
-        emitIndent(Inner + 1);
-        OS << "}\n";
-        emitIndent(Inner);
-        OS << "} else {\n";
-        if (Try.Body[NameIdx].Kind == StmtKind::Block) {
-          for (const HighStmt &B : Try.Body[NameIdx].Body)
-            WriteVisible(B, Inner + 1);
-        } else {
-          WriteVisible(Try.Body[NameIdx], Inner + 1);
-        }
-        emitIndent(Inner);
-        OS << "}\n";
-        for (size_t K = NameIdx + 1; K < Try.Body.size(); ++K) {
-          const HighStmt &N = Try.Body[K];
-          if (N.Addr && N.Addr != InvalidVA && N.Addr != NameAt &&
-              N.Addr != JoinAt && GotoTargets.count(N.Addr))
-            OS << "L_" + llvm::utohexstr(N.Addr) + ":\n";
-          WriteVisible(N, Inner);
-        }
-        emitIndent(Indent);
-        OS << "}";
-        for (size_t C = 0; C < Try.EHClauses.size(); ++C) {
-          const HighEHClause &Clause = Try.EHClauses[C];
-          if (Clause.Kind == HighEHClauseKind::CxxCleanup) {
-            if (writeRegistrationCleanup(Try, C, Indent))
+        writeCxxTry(Try, Indent, [&](int Inner) {
+          emitIndent(Inner);
+          OS << "if (" << invertCondStr(*S.Cond) << ") {\n";
+          for (size_t K = 0; K < LenIdx; ++K)
+            WriteVisible(Try.Body[K], Inner + 1);
+          emitIndent(Inner + 1);
+          OS << "if (" << condStr(*LenIf.Cond) << ") {\n";
+          for (const HighStmt &B : LenIf.Body) {
+            if (B.Kind == StmtKind::Goto && B.GotoTarget == JoinAt)
               continue;
-            OS << "\n";
-            emitIndent(Indent);
-            OS << "__unwind {\n";
-            emitIndent(Indent);
-            OS << "/* unwind cleanup(state=" << Clause.State << ") */\n";
-            if (C < Try.EHClauseBodies.size()) {
-              const bool SavedHandler = InEHClauseBody;
-              const bool SavedCleanup = InCxxCleanupBody;
-              InEHClauseBody = true;
-              InCxxCleanupBody = true;
-              writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
-              InEHClauseBody = SavedHandler;
-              InCxxCleanupBody = SavedCleanup;
-            }
-            emitIndent(Indent);
-            OS << "}\n";
-            continue;
+            WriteVisible(B, Inner + 2);
           }
-          OS << " catch (";
-          writeCxxCatchType(OS, Clause);
-          if (auto Named = CxxCatchNames.find(&Clause);
-              Named != CxxCatchNames.end())
-            OS << Named->second;
-          OS << ") {\n";
-          if (C < Try.EHClauseBodies.size()) {
-            const bool SavedHandler = InEHClauseBody;
-            InEHClauseBody = true;
-            const auto Named = CxxCatchNames.find(&Clause);
-            if (Named != CxxCatchNames.end())
-              OpenCatchObjects.push_back(Named->second);
-            writeStmtsIsolated(Try.EHClauseBodies[C], Indent + 1);
-            if (Named != CxxCatchNames.end())
-              OpenCatchObjects.pop_back();
-            InEHClauseBody = SavedHandler;
-            if (Try.EHClauseBodies[C].empty() && Clause.HandlerVA) {
-              emitIndent(Indent + 1);
-              OS << "/* handler @ 0x" << llvm::utohexstr(Clause.HandlerVA)
-                 << " */\n";
-            }
+          emitIndent(Inner + 1);
+          OS << "} else {\n";
+          if (Try.Body[NameIdx].Kind == StmtKind::Block) {
+            for (const HighStmt &B : Try.Body[NameIdx].Body)
+              WriteVisible(B, Inner + 2);
+          } else {
+            WriteVisible(Try.Body[NameIdx], Inner + 2);
           }
-          emitIndent(Indent);
-          OS << "}";
-        }
-        OS << "\n";
+          emitIndent(Inner + 1);
+          OS << "}\n";
+          emitIndent(Inner);
+          OS << "} else {\n";
+          if (Try.Body[NameIdx].Kind == StmtKind::Block) {
+            for (const HighStmt &B : Try.Body[NameIdx].Body)
+              WriteVisible(B, Inner + 1);
+          } else {
+            WriteVisible(Try.Body[NameIdx], Inner + 1);
+          }
+          emitIndent(Inner);
+          OS << "}\n";
+          for (size_t K = NameIdx + 1; K < Try.Body.size(); ++K) {
+            const HighStmt &N = Try.Body[K];
+            if (N.Addr && N.Addr != InvalidVA && N.Addr != NameAt &&
+                N.Addr != JoinAt && GotoTargets.count(N.Addr))
+              OS << "L_" + llvm::utohexstr(N.Addr) + ":\n";
+            WriteVisible(N, Inner);
+          }
+        });
         I = I + 1;
         continue;
       }
@@ -2148,7 +2187,10 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       if (!IsGotoTarget(Addr) || Addr == LastLabel ||
           !EmittedLabels.insert(Addr).second)
         return;
-      OS << "L_" + llvm::utohexstr(Addr) + ":\n";
+      OS << "L_" + llvm::utohexstr(Addr) + ":";
+      if (LandingPadLabels.count(Addr))
+        OS << " /* landing pad: the unwinder enters here */";
+      OS << "\n";
       LastLabel = Addr;
       EmittedLabel = true;
     };
