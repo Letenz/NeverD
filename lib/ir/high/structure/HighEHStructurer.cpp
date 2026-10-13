@@ -452,6 +452,11 @@ struct RegionCandidate {
   int32_t TryLow = 0;
   int32_t TryHigh = 0;
   bool HasTryStates = false;
+  /// A C++ object's lifetime: the cleanup that runs while an exception
+  /// leaves it.  TryLow is the object's state and TryHigh the deepest state
+  /// beneath it, so on one IP interval the scope sorts outside every try and
+  /// cleanup the object outlives.
+  bool CleanupScope = false;
 };
 
 bool cxxStateOnUnwindChain(const CxxExceptionInfo &Cxx, int32_t Current,
@@ -517,6 +522,18 @@ codeRangesForStates(const ExceptionFunction &EH, const CxxExceptionInfo &Cxx,
         return SegmentState >= LowState && SegmentState <= HighState;
       },
       Registration);
+}
+
+/// The deepest state whose unwind chain passes through \p State: the states
+/// an object constructed at \p State outlives are numbered after it, so this
+/// bounds the subtree the object's cleanup scope encloses.
+int32_t deepestStateBeneath(const CxxExceptionInfo &Cxx, int32_t State) {
+  int32_t Deepest = State;
+  for (int32_t Other = State + 1;
+       Other < static_cast<int32_t>(Cxx.UnwindMap.size()); ++Other)
+    if (cxxStateOnUnwindChain(Cxx, Other, State))
+      Deepest = Other;
+  return Deepest;
 }
 
 /// IPs that would run this cleanup, including child states.  A parent
@@ -695,7 +712,13 @@ void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
             Clause.ContinuationVAs.push_back(Entry.Target);
       Candidate.Clauses.push_back(std::move(Clause));
     }
-    for (int32_t State = Try.TryLow; State <= Try.TryHigh; ++State) {
+    // An object constructed inside the try is destroyed before a handler
+    // runs, but only once it exists: its cleanup is a scope of its own
+    // within the try body (addCxxCleanupOnlyCandidates).  PE32 registration
+    // frames keep it as a clause of the try, which their nested-try and
+    // callback proofs read.
+    for (int32_t State = Try.TryLow; EH.Registration && State <= Try.TryHigh;
+         ++State) {
       if (!cxxTryOwnsCleanup(Cxx, TryIndex, State))
         continue;
       const CxxUnwindAction &Action = Cxx.UnwindMap[State];
@@ -715,10 +738,14 @@ void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
   }
 }
 
-/// FH3/FH4 frames that only construct locals still have an UnwindMap and IP
-/// states, but no TryBlock.  That is a destructor scope, not SEH.  Hex-Rays
-/// prints `__wind`/`__unwind`; HighC keeps `try` + `/* unwind cleanup */`
-/// plus the attached funclet body, which is already the catch-with-dtor shape.
+/// Every object an FH3/FH4 frame constructs has an unwind action: the
+/// cleanup that runs while an exception leaves the object's lifetime.  Each
+/// becomes a scope of its own over the IPs where the object is live, which
+/// C++ spells `try { … } catch (...) { cleanup; throw; }`.  Objects of a
+/// try body are no different: the scope sits inside the try, so the handler
+/// runs after the cleanup and only for objects the throw found constructed.
+/// PE32 registration frames keep an object of a try body as a clause of
+/// that try (addCxxCandidates).
 void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
                                  const RegistrationStateAnalysis *Registration,
                                  std::vector<RegionCandidate> &Candidates,
@@ -737,7 +764,7 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
   for (int32_t State = 0; State < static_cast<int32_t>(Cxx.UnwindMap.size());
        ++State) {
     const CxxUnwindAction &Action = Cxx.UnwindMap[State];
-    if (Action.ActionVA == 0 || coveredByTry(State))
+    if (Action.ActionVA == 0 || (EH.Registration && coveredByTry(State)))
       continue;
     // A cleanup needs its own entry/return ABI proof before it can supply a
     // callback clause body. Catch projection does not establish that ABI.
@@ -745,8 +772,15 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
       ++Rejected;
       continue;
     }
-    std::vector<ExceptionAddressRange> Ranges =
-        codeRangesForStates(EH, Cxx, State, State, Registration);
+    // The scope must hold every IP the cleanup runs from: those of the
+    // objects constructed after this one as well as its own.  An exact
+    // interval of the state alone would let a throw from a nested object's
+    // IPs leave without this cleanup.
+    std::vector<ExceptionAddressRange> Ranges;
+    if (!EH.Registration)
+      Ranges = codeRangesWhereStateIsLive(EH, Cxx, State, Registration);
+    if (Ranges.size() != 1 || !Ranges.front().isValid())
+      Ranges = codeRangesForStates(EH, Cxx, State, State, Registration);
     if (Ranges.size() != 1 || !Ranges.front().isValid()) {
       std::vector<ExceptionAddressRange> Live =
           codeRangesWhereStateIsLive(EH, Cxx, State, Registration);
@@ -791,8 +825,12 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
     Clause.UnwindActionKind = Action.Kind;
     Clause.UnwindObjectOffset = Action.ObjectOffset;
 
+    // Two objects whose lifetimes cover the same IPs are still two scopes
+    // when a try sits between them in the state tree, so only a PE32 frame,
+    // whose cleanups are clauses rather than scopes, shares one region.
     const auto Key = std::make_pair(Ranges.front().Begin, Ranges.front().End);
-    if (const auto It = ByRange.find(Key); It != ByRange.end()) {
+    if (const auto It = ByRange.find(Key);
+        EH.Registration && It != ByRange.end()) {
       Candidates[It->second].Clauses.push_back(std::move(Clause));
       Candidates[It->second].TryHigh = State;
       ++Candidates[It->second].NativeRegionCount;
@@ -805,8 +843,10 @@ void addCxxCleanupOnlyCandidates(const ExceptionFunction &EH,
     Candidate.Cover = std::move(Cover);
     Candidate.NativeRegionCount = 1;
     Candidate.TryLow = State;
-    Candidate.TryHigh = State;
+    Candidate.TryHigh =
+        EH.Registration ? State : deepestStateBeneath(Cxx, State);
     Candidate.HasTryStates = true;
+    Candidate.CleanupScope = !EH.Registration;
     Candidate.Clauses.push_back(std::move(Clause));
     ByRange.emplace(Key, Candidates.size());
     Candidates.push_back(std::move(Candidate));
@@ -1573,17 +1613,20 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
   // Inner-first makes a nested structured node an indivisible statement when
   // its enclosing range is processed.  The address classifier understands the
   // explicit EHRange, so nesting never relies on incidental statement order.
-  std::stable_sort(Candidates.begin(), Candidates.end(),
-                   [](const RegionCandidate &A, const RegionCandidate &B) {
-                     const auto Span = [](const RegionCandidate &C) {
-                       return C.HasTryStates ? (C.TryHigh - C.TryLow) : 0;
-                     };
-                     return std::make_tuple(A.Range.size(), Span(A),
-                                            A.Range.Begin, A.Range.End,
-                                            A.Kind) <
-                            std::make_tuple(B.Range.size(), Span(B),
-                                            B.Range.Begin, B.Range.End, B.Kind);
-                   });
+  // On one interval the state tree decides: a try or object holding fewer
+  // states nests inside, and a try entered with an object already live sits
+  // inside that object's scope.
+  std::stable_sort(
+      Candidates.begin(), Candidates.end(),
+      [](const RegionCandidate &A, const RegionCandidate &B) {
+        const auto Span = [](const RegionCandidate &C) {
+          return C.HasTryStates ? (C.TryHigh - C.TryLow) : 0;
+        };
+        return std::make_tuple(A.Range.size(), Span(A), A.CleanupScope,
+                               A.Range.Begin, A.Range.End, A.Kind) <
+               std::make_tuple(B.Range.size(), Span(B), B.CleanupScope,
+                               B.Range.Begin, B.Range.End, B.Kind);
+      });
 
   // Several native try-map records may share one code interval (for example,
   // distinct ordered catch clauses).  Keep one HighIR try node and retain the
@@ -1597,6 +1640,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
       const bool DistinctCxxTries =
           Candidate.Kind == StmtKind::CxxTry &&
           (Merged.back().HasTryStates != Candidate.HasTryStates ||
+           Merged.back().CleanupScope || Candidate.CleanupScope ||
            Merged.back().TryLow != Candidate.TryLow ||
            Merged.back().TryHigh != Candidate.TryHigh);
       if (!DistinctCxxTries) {

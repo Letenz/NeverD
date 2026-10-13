@@ -74,7 +74,10 @@ neverd::offeredSourceDialects(const LanguageRuntimeInfo &Language) {
 
 SourceDialect
 neverd::sourceDialectOfFunction(llvm::StringRef Symbol, bool Named,
-                                const LanguageRuntimeInfo &Language) {
+                                const LanguageRuntimeInfo &Language,
+                                SourceLanguageRuntime HandlerRuntime) {
+  if (dialectOfRuntime(HandlerRuntime) == SourceDialect::Cpp)
+    return SourceDialect::Cpp;
   const SourceDialect Image =
       dialectOfRuntime(Language.Runtime).value_or(SourceDialect::C);
   SourceDialect Chosen = SourceDialect::C;
