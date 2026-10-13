@@ -12,6 +12,8 @@
 
 #include "llvm/ADT/StringExtras.h"
 
+#include <type_traits>
+
 namespace neverd::emulation {
 namespace {
 namespace field = process_report;
@@ -327,7 +329,16 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
         Environment
             ? Environment->get(field::FileSynchronizationCreatedRegularObjects)
             : nullptr;
-    if (!Environment || Environment->size() != 1 + unsigned(bool(Created)) ||
+    const llvm::json::Value *CreatedDirectories = nullptr;
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(*Options)>,
+                                 DarwinModeMutationOptions>) {
+      if (Environment)
+        CreatedDirectories =
+            Environment->get(field::FileModeCreatedDirectoryObjects);
+    }
+    if (!Environment ||
+        Environment->size() !=
+            1 + unsigned(bool(Created)) + unsigned(bool(CreatedDirectories)) ||
         !Objects || Objects->size() > darwin_file_limits::Files)
       return invalid(Name);
     auto &Provider = Options.emplace();
@@ -336,6 +347,15 @@ darwinFileOptionsFromJSON(const llvm::json::Value &Value) {
       if (!Enabled)
         return invalid(Name);
       Provider.CreatedRegularObjects = *Enabled;
+    }
+    if constexpr (std::is_same_v<std::remove_cvref_t<decltype(Provider)>,
+                                 DarwinModeMutationOptions>) {
+      if (CreatedDirectories) {
+        const auto Enabled = CreatedDirectories->getAsBoolean();
+        if (!Enabled)
+          return invalid(Name);
+        Provider.CreatedDirectoryObjects = *Enabled;
+      }
     }
     return Objects;
   };

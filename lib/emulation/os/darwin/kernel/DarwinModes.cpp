@@ -1,4 +1,4 @@
-//===- DarwinModes.cpp - Explicit ordinary regular mode mutations --------===//
+//===- DarwinModes.cpp - Explicit ordinary object mode mutations ---------===//
 //
 // NeverD Decompiler
 //
@@ -52,7 +52,7 @@ DarwinFiles::changeMode(ServiceKind Service, const ProcessServiceEvent &Event,
       return unsupported(Result, *Reason);
     File = std::get<Description>(std::move(*Resolved));
   }
-  if (File.Type != Kind::File)
+  if (File.Type != Kind::File && File.Type != Kind::Directory)
     return unsupported(Result, diagnostic::FileModeTarget);
   auto Current = statusMetadata(File);
   if (auto *Reason = std::get_if<const char *>(&Current))
@@ -64,13 +64,15 @@ DarwinFiles::changeMode(ServiceKind Service, const ProcessServiceEvent &Event,
     return returned(*Error, true);
   if (auto *Reason = std::get_if<const char *>(&Authority))
     return unsupported(Result, *Reason);
-  auto &Node = *File.File;
-  if (!Node.ModeTime)
+  const auto *Time =
+      File.Type == Kind::File ? File.File->ModeTime : File.Directory->ModeTime;
+  if (!Time)
     return unsupported(Result, diagnostic::FileModeProvider);
-  Node.CurrentMetadata = *Metadata;
-  Node.CurrentMetadata->Mode =
-      (Metadata->Mode & ~FilePermissionMask) | Requested;
-  Node.CurrentMetadata->ChangeTime = *Node.ModeTime;
+  auto &Updated = File.Type == Kind::File ? File.File->CurrentMetadata
+                                          : File.Directory->CurrentMetadata;
+  Updated = *Metadata;
+  Updated->Mode = (Metadata->Mode & ~FilePermissionMask) | Requested;
+  Updated->ChangeTime = *Time;
   return returned(0);
 }
 } // namespace neverd::emulation::darwin_model

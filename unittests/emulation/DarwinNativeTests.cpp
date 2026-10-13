@@ -1115,6 +1115,41 @@ TEST(DarwinNative, DirectoryRecordsMatchHostSDKAndCapturedFilesystemBytes) {
   EXPECT_EQ((**Seek).Value, uint64_t(Terminal));
 #endif
 }
+TEST(DarwinNative, DirectoryModeWorkloadMatchesOwnedNativeObjectLifetime) {
+#ifndef NEVERD_DARWIN_NATIVE_ORACLE
+  GTEST_SKIP() << "native Darwin reference requires a macOS build host";
+#else
+  llvm::SmallString<128> Temporary;
+  ASSERT_FALSE(
+      llvm::sys::fs::createUniqueDirectory("neverd-directory-mode", Temporary));
+  const std::filesystem::path Root(Temporary.str().str());
+  auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
+  const auto Input = (Root / "dir").string();
+  ASSERT_TRUE(std::filesystem::create_directory(Input));
+  std::filesystem::permissions(Input, std::filesystem::perms::owner_all);
+  const std::string Program = NEVERD_DARWIN_NATIVE_ORACLE;
+  const auto Output = (Root / "stdout").string(),
+             Error = (Root / "stderr").string();
+  const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                      Error};
+  std::string LaunchError;
+  bool ExecutionFailed = false;
+  const auto Status = llvm::sys::ExecuteAndWait(
+      Program, {Program, "directory-mode-mutations", Input}, std::nullopt,
+      Redirects, 5, 0, &LaunchError, &ExecutionFailed);
+  ASSERT_FALSE(ExecutionFailed) << LaunchError;
+  auto Out = llvm::MemoryBuffer::getFile(Output),
+       Err = llvm::MemoryBuffer::getFile(Error);
+  ASSERT_TRUE(bool(Out));
+  ASSERT_TRUE(bool(Err));
+  EXPECT_EQ(Status, 53) << LaunchError << (*Err)->getBuffer().str();
+  EXPECT_EQ((*Out)->getBuffer(), "Q");
+  EXPECT_TRUE((*Err)->getBuffer().empty());
+  EXPECT_FALSE(std::filesystem::exists(Input));
+  EXPECT_TRUE(std::filesystem::is_directory(Input + ".moved"));
+#endif
+}
+
 TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
 #if defined(__APPLE__)
   static_assert(sizeof(struct iovec) == 16);
@@ -1248,7 +1283,12 @@ TEST(DarwinNative, OriginalMemoryAndWriteContractsMatchHostKernel) {
         std::filesystem::create_symlink(Target, Catalogue / "static" / Name);
       CaseInput = (Catalogue / "work" / "data").string();
     }
-    {
+    if (llvm::StringRef(Test.Mode) == "directory-mode-mutations") {
+      CaseInput = (Root / Test.Mode / "dir").string();
+      ASSERT_TRUE(std::filesystem::create_directories(CaseInput));
+      std::filesystem::permissions(CaseInput,
+                                   std::filesystem::perms::owner_all);
+    } else {
       std::ofstream File(CaseInput, std::ios::binary | std::ios::trunc);
       File << "0123456789";
       ASSERT_TRUE(File.good());

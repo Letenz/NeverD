@@ -8,6 +8,7 @@
 #include "DarwinCreatedAttributeTestData.h"
 #include "DarwinCreatedSynchronizationTestData.h"
 #include "DarwinDataSynchronizationTestData.h"
+#include "DarwinDirectoryModeTestData.h"
 #include "DarwinEntropyTestData.h"
 #include "DarwinFileSystemTestData.h"
 #include "DarwinFileTestData.h"
@@ -2806,11 +2807,57 @@ TEST_P(DarwinProcess, OrdinaryModesKeepCurrentMetadataAuthorityAndObjectState) {
   ASSERT_TRUE(bool(Unknown)) << llvm::toString(Unknown.takeError());
   EXPECT_EQ(Unknown->Stop, ProcessStopReason::UnsupportedService);
   EXPECT_EQ(Unknown->Diagnostic,
-            "Darwin regular-object mode provider is not configured");
+            "Darwin object mode provider is not configured");
   ASSERT_EQ(Unknown->Services.size(), 5u);
   EXPECT_EQ(Unknown->Services.back().Number, Class | 15);
   EXPECT_FALSE(Unknown->Services.back().Result);
   EXPECT_FALSE(Unknown->Services.back().Error);
+}
+
+TEST_P(DarwinProcess,
+       DirectoryModesPreserveIndependentObjectAndNamespaceState) {
+  Options.InstructionQuantum = 1024;
+  Options.Limits.TimeoutMicroseconds = 5000000;
+  Options.DarwinSystem.emplace().Credentials = darwin_test::modeCredentials();
+  const uint64_t Class =
+      GetParam().ISA == GuestArchitecture::X64 ? 0x2000000 : 0;
+  for (const char *Mode : {"directory-mode-mutations", "virtual-directory-mode",
+                           "created-directory-mode"}) {
+    const bool Created = llvm::StringRef(Mode) == "created-directory-mode";
+    Options.Arguments[2] = Created ? "/child" : "/dir";
+    Options.DarwinFiles = darwin_test::directoryModeOptions(Created);
+    const auto Wanted = darwin_test::directoryModeServices(Created);
+    for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+      auto R = run(Mode);
+      ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+      ASSERT_EQ(R->Stop, ProcessStopReason::Exited) << R->Diagnostic;
+      EXPECT_EQ(R->ExitStatus, 53);
+      EXPECT_EQ(R->StandardOutput, "Q");
+      EXPECT_TRUE(R->StandardError.empty());
+      EXPECT_EQ(R->SelectedBackend, GetParam().Backend);
+      ASSERT_EQ(R->Services.size(), Wanted.size());
+      for (unsigned I = 0; I != Wanted.size(); ++I) {
+        SCOPED_TRACE(I);
+        EXPECT_EQ(R->Services[I].Number, Class | Wanted[I].Number);
+        EXPECT_EQ(R->Services[I].Result, Wanted[I].Value);
+        EXPECT_EQ(R->Services[I].Error, Wanted[I].Error);
+      }
+      EXPECT_EQ(R->ReturnValue, 53u);
+      EXPECT_EQ(Options.DarwinFiles->Metadata.at("/").Mode, 0040700);
+      EXPECT_EQ(Options.DarwinFiles->ModeMutations->CreatedRegularObjects,
+                false);
+    }
+    Options.DarwinFiles->ModeMutations->Objects.clear();
+    Options.DarwinFiles->ModeMutations->CreatedDirectoryObjects = false;
+    auto R = run(Mode);
+    ASSERT_TRUE(bool(R)) << llvm::toString(R.takeError());
+    EXPECT_EQ(R->Stop, ProcessStopReason::UnsupportedService);
+    EXPECT_EQ(R->Diagnostic, "Darwin object mode provider is not configured");
+    ASSERT_EQ(R->Services.size(), Created ? 6u : 5u);
+    EXPECT_EQ(R->Services.back().Number, Class | 15);
+    EXPECT_FALSE(R->Services.back().Result);
+    EXPECT_FALSE(R->Services.back().Error);
+  }
 }
 
 TEST_P(DarwinProcess,
@@ -3309,7 +3356,7 @@ TEST_P(DarwinProcess,
                                           "provider is not configured")
                         : (Variant == 1 ? "Darwin ordinary mode mutation "
                                           "environment is not configured"
-                                        : "Darwin regular-object mode provider "
+                                        : "Darwin object mode provider "
                                           "is not configured"));
         EXPECT_TRUE(R->StandardOutput.empty());
         EXPECT_TRUE(R->StandardError.empty());

@@ -147,7 +147,12 @@ def _execute_cases(program: Path, cases: list[tuple[str, int, bytes]], input_fil
             case_input = catalogue / "work" / "data"
         if mode == "hard-links":
             (case_input.parent / "attributes").write_bytes(b"x")
-        case_input.write_bytes(b"0123456789")
+        if mode == "directory-mode-mutations":
+            case_input = initial_root / mode / "dir"
+            case_input.mkdir(parents=True, mode=0o700)
+            case_input.chmod(0o700)
+        else:
+            case_input.write_bytes(b"0123456789")
         if mode == "extended-attributes":
             try:
                 for name, value in (("user.neverd.beta", b"\x00\xffA\x00\x80B\n"),

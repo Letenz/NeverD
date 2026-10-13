@@ -144,6 +144,8 @@ NEVERD_PROCESS_REPORT_FIELD(FileSynchronization, "synchronization")
 NEVERD_PROCESS_REPORT_FIELD(FileSynchronizationObjects, "objects")
 NEVERD_PROCESS_REPORT_FIELD(FileSynchronizationCreatedRegularObjects,
                             "created_regular_objects")
+NEVERD_PROCESS_REPORT_FIELD(FileModeCreatedDirectoryObjects,
+                            "created_directory_objects")
 NEVERD_PROCESS_REPORT_FIELD(FileAdvisoryLocks, "advisory_locks")
 NEVERD_PROCESS_REPORT_FIELD(FileAdvisoryLockObjects, "objects")
 NEVERD_PROCESS_REPORT_FIELD(FileTimestampMutations, "timestamp_mutations")

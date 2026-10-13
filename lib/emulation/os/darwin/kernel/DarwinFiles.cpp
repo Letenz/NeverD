@@ -357,14 +357,18 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     }
     return false;
   };
-  const auto AdmitOrdinaryObject = [&](const std::string &Path,
-                                       const char *Reason) -> llvm::Error {
+  const auto AdmitOrdinaryObject =
+      [&](const std::string &Path, const char *Reason,
+          bool AllowDirectories = false) -> llvm::Error {
+    const bool Directory =
+        AllowDirectories && pathKind(Options, Path) == PathKind::Directory;
     const auto M = Options.Metadata.find(Path);
-    if (!Options.Files.contains(Path) || M == Options.Metadata.end() ||
-        M->second.Flags || (M->second.Mode & 07000) ||
-        M->second.LinkCount != 1 || HasAlias(Path))
+    if ((!Directory && !Options.Files.contains(Path)) ||
+        M == Options.Metadata.end() || M->second.Flags ||
+        (M->second.Mode & 07000) || (!Directory && M->second.LinkCount != 1) ||
+        HasAlias(Path))
       return failure(Reason);
-    return PathInput(Path, false);
+    return PathInput(Path, Directory);
   };
   const auto AdmitCreatedRegularProvider =
       [&](const auto &Environment) -> llvm::Error {
@@ -373,8 +377,9 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
       return failure(diagnostic::FileCreationPolicy);
     return llvm::Error::success();
   };
-  const auto AdmitOrdinaryGrants = [&](const auto &Environment,
-                                       const char *Reason) -> llvm::Error {
+  const auto AdmitOrdinaryGrants =
+      [&](const auto &Environment, const char *Reason,
+          bool AllowDirectories = false) -> llvm::Error {
     if (auto E = AdmitCreatedRegularProvider(Environment))
       return E;
     if (!Environment)
@@ -382,13 +387,16 @@ fileOptionsFootprint(const DarwinFileOptions &Options) {
     for (const auto &[Path, Time] : Environment->Objects) {
       if (!validTime(Time))
         return failure(Reason);
-      if (auto E = AdmitOrdinaryObject(Path, Reason))
+      if (auto E = AdmitOrdinaryObject(Path, Reason, AllowDirectories))
         return E;
     }
     return llvm::Error::success();
   };
+  if (Options.ModeMutations && Options.ModeMutations->CreatedDirectoryObjects &&
+      (!Options.CreationPolicy || !Options.CreationPolicy->Namespace))
+    return failure(diagnostic::FileCreationPolicy);
   if (auto E = AdmitOrdinaryGrants(Options.ModeMutations,
-                                   diagnostic::FileModeOption))
+                                   diagnostic::FileModeOption, true))
     return E;
   if (auto E = AdmitOrdinaryGrants(Options.OwnershipMutations,
                                    diagnostic::FileOwnershipOption))
@@ -861,6 +869,11 @@ DarwinFiles::initialDirectoryNode(const std::string &Path) {
     return nullptr;
   auto Node = std::make_shared<DirectoryNode>();
   Node->Path = Path;
+  if (Options->ModeMutations) {
+    const auto I = Options->ModeMutations->Objects.find(Path);
+    if (I != Options->ModeMutations->Objects.end())
+      Node->ModeTime = &I->second;
+  }
   if (Options->FileSystemObservations) {
     const auto I = Options->FileSystemObservations->Objects.find(Path);
     if (I != Options->FileSystemObservations->Objects.end())
@@ -1837,6 +1850,9 @@ DarwinFiles::makeDirectory(uint64_t Path, uint32_t DirectoryFD, uint32_t Mode,
         *ParentIdentity, FileDirectoryMode | (Mode & 0777 & ~CurrentUmask), 2,
         uint64_t(2) * Node->DirectoryEntrySize,
         Policy->Namespace->DirectoryBlocks);
+    if (Options->ModeMutations &&
+        Options->ModeMutations->CreatedDirectoryObjects)
+      Node->ModeTime = &Policy->Mutation.Time;
   }
   Directories.emplace(File.Path, std::move(Node));
   *StorageUsed += Charge;
@@ -2097,10 +2113,17 @@ void DarwinFiles::updateDirectoryMetadata(DirectoryNode &Node,
   // observed record. Copying its scalar fields allocates nothing after commit.
   if (Node.MetadataInvalidated)
     return;
-  if (!Node.CurrentMetadata && Node.DirectoryEntrySize)
-    Node.CurrentMetadata = *Node.Metadata;
-  if (!Node.CurrentMetadata)
+  // Mode-created current metadata supplies no namespace update authority.
+  // A complete namespace policy must keep this record independently; otherwise
+  // invalidate it permanently, including a record published by chmod.
+  if (!Node.MutationTime || !Node.DirectoryEntrySize ||
+      (!Node.CurrentMetadata && !Node.Metadata)) {
+    Node.MetadataInvalidated = true;
+    Node.CurrentMetadata.reset();
     return;
+  }
+  if (!Node.CurrentMetadata)
+    Node.CurrentMetadata = *Node.Metadata;
   auto &M = *Node.CurrentMetadata;
   M.ChangeTime = *Node.MutationTime;
   if (!ContentsChanged)

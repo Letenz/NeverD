@@ -130,6 +130,7 @@ private:
     const DarwinFileMetadata *Metadata = nullptr;
     AttributeState ExtendedAttributes;
     std::optional<DarwinFileMetadata> CurrentMetadata;
+    const DarwinFileTime *ModeTime = nullptr;
     uint32_t DirectoryEntrySize = 0;
     const DarwinFileTime *MutationTime = nullptr;
     const DarwinDirectoryContents *Snapshot = nullptr;

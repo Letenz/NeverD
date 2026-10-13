@@ -498,7 +498,7 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(FileInputs, "Darwin file catalogue is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileModeOption,
-    "Darwin mode grants require unique initial ordinary regular metadata and "
+    "Darwin mode grants require unique initial ordinary object metadata and "
     "a valid fixed ctime")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileModeEnvironment,
@@ -509,9 +509,10 @@ NEVERD_DARWIN_DIAGNOSTIC(
 NEVERD_DARWIN_DIAGNOSTIC(FileModePermissions,
                          "Darwin special mode mutation is not implemented")
 NEVERD_DARWIN_DIAGNOSTIC(
-    FileModeTarget, "Darwin mode mutation requires an ordinary regular vnode")
-NEVERD_DARWIN_DIAGNOSTIC(
-    FileModeProvider, "Darwin regular-object mode provider is not configured")
+    FileModeTarget,
+    "Darwin mode mutation requires an ordinary regular or directory vnode")
+NEVERD_DARWIN_DIAGNOSTIC(FileModeProvider,
+                         "Darwin object mode provider is not configured")
 NEVERD_DARWIN_DIAGNOSTIC(
     FileOwnershipOption,
     "Darwin ownership grants require complete ordinary initial regular objects")

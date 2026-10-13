@@ -195,7 +195,7 @@ enum class DarwinFileAuthorization {
 /// Other virtual mutations retain their independent contracts; this does not
 /// grant general DAC enforcement, data writes or namespace authority.
 struct DarwinModeMutationOptions {
-  /// Initial regular-object provider grants and fixed resulting ctime. Empty
+  /// Initial ordinary regular/directory grants and fixed resulting ctime. Empty
   /// declares the environment without an initial provider grant. Objects retain
   /// grants through dup, rename and runtime links; created/reused names do not
   /// inherit initial grants. Success changes only ordinary permission bits and
@@ -208,6 +208,10 @@ struct DarwinModeMutationOptions {
   /// as resulting ctime. Existing objects and directory/link creation receive
   /// no grant from this. False preserves the initial-only default.
   bool CreatedRegularObjects = false;
+  /// Independent provider for successfully created ordinary directory objects.
+  /// True requires complete CreationPolicy with Namespace and uses its explicit
+  /// Mutation.Time as ctime. It grants no namespace or child-object authority.
+  bool CreatedDirectoryObjects = false;
 };
 
 /// Operation-specific ordinary ownership environment: writable nonopaque mount

@@ -35,12 +35,16 @@ protected:
     Credentials = darwin_test::modeCredentials();
     reset();
   }
-  void reset() {
-    if (Options)
-      ASSERT_FALSE(bool(validateFileOptions(*Options)));
+  void reset(uint32_t ObservedCreationUID = 777) {
+    if (Options) {
+      auto Error = validateFileOptions(*Options);
+      ASSERT_FALSE(bool(Error))
+          << (Error ? llvm::toString(std::move(Error)) : "");
+    }
     // A legacy scalar observation never establishes mode authority.
-    Files = std::make_unique<DarwinFiles>(
-        *Space, Options, process_defaults::Output, 777, Credentials);
+    Files =
+        std::make_unique<DarwinFiles>(*Space, Options, process_defaults::Output,
+                                      ObservedCreationUID, Credentials);
   }
   uint64_t path(llvm::StringRef Text, uint64_t Address = Base) {
     const auto Bytes = Text.str() + '\0';
@@ -132,6 +136,7 @@ TEST(DarwinModeOptions, RequiresCompleteInitialRegularUniqueGrants) {
       O.ModeMutations->Objects["/missing"] = {1, 2};
       break;
     case 1:
+      O.Metadata.erase("/");
       O.ModeMutations->Objects["/"] = {1, 2};
       break;
     case 2:
@@ -406,8 +411,8 @@ TEST_P(DarwinModeTest, LinksFollowActualSearchAndFinalUnsupportedKinds) {
   EXPECT_EQ(
       ok(ServiceKind::FchmodAt, {UINT64_MAX, path("/via/data"), 0600, 0x20}),
       0u);
-  refused(ServiceKind::Chmod, {path("/"), 0604}, diagnostic::FileModeTarget);
-  refused(ServiceKind::Fchmod, {open("/"), 0604}, diagnostic::FileModeTarget);
+  refused(ServiceKind::Chmod, {path("/"), 0604}, diagnostic::FileModeProvider);
+  refused(ServiceKind::Fchmod, {open("/"), 0604}, diagnostic::FileModeProvider);
   refused(ServiceKind::Fchmod, {1, 0604}, diagnostic::FileModeTarget);
 }
 
@@ -549,6 +554,308 @@ TEST_P(DarwinModeTest, BothStaticQueryClosuresPrecedeEveryModePreflight) {
                   : diagnostic::FileOrdinaryAuthorizationScope);
   }
 }
+// Independent LP64 stat offsets and declared virtual fixture values. Native
+// observations are separate and supply no UID/GID/inode/time constants here.
+TEST_P(DarwinModeTest, DirectoryRoutesPreserveTheCompleteIndependentRecord) {
+  Options->ModeMutations->Objects["/"] = {71, 72};
+  reset();
+  const auto FD = open("/");
+  Record Expected;
+  Expected.fill(0);
+  for (unsigned I = 0; I != 8; ++I)
+    Expected[I] = Expected[152 + I] = 0xa5;
+  llvm::support::endian::write32le(Expected.data() + 8, 7);
+  llvm::support::endian::write16le(Expected.data() + 12, 0040700);
+  llvm::support::endian::write16le(Expected.data() + 14, 2);
+  llvm::support::endian::write64le(Expected.data() + 16, 1);
+  llvm::support::endian::write32le(Expected.data() + 24, 501);
+  llvm::support::endian::write32le(Expected.data() + 28, 20);
+  for (unsigned I = 0; I != 8; ++I)
+    llvm::support::endian::write64le(Expected.data() + 40 + I * 8, I + 1);
+  llvm::support::endian::write32le(Expected.data() + 120, 512);
+  llvm::support::endian::write32le(Expected.data() + 128, 9);
+  ASSERT_EQ(status(FD), Expected);
+  const auto Allocated = Space->physicalMemory()->allocatedBytes();
+  for (auto K :
+       {ServiceKind::Chmod, ServiceKind::Fchmod, ServiceKind::FchmodAt})
+    for (uint64_t High : {0ULL, 0xaabbccdd00000000ULL})
+      for (uint16_t Mode : {0755, 0750, 0700, 0000}) {
+        EXPECT_EQ(ok(K, operands(K, High | FD, High | Mode, "/")), 0u);
+        EXPECT_EQ(status(FD), changed(Expected, 0040000 | Mode));
+      }
+  EXPECT_EQ(Space->physicalMemory()->allocatedBytes(), Allocated);
+  EXPECT_EQ(Options->Metadata.at("/").Mode, 0040700);
+  EXPECT_EQ(Options->Metadata.at("/").ChangeTime.Seconds, 5);
+}
+
+TEST_P(DarwinModeTest, DirectoryGrantsAndNonownerEqualRequestsAreIndependent) {
+  const auto FD = open("/");
+  const auto Original = status(FD);
+  refused(ServiceKind::Fchmod, {FD, 0750}, diagnostic::FileModeProvider);
+  EXPECT_EQ(status(FD), Original);
+  Options->ModeMutations->Objects["/"] = {71, 72};
+  Options->Metadata["/"].UID = 700;
+  reset();
+  const auto Other = open("/");
+  const auto Before = status(Other);
+  error(ServiceKind::Fchmod, {Other, 0750}, 1);
+  EXPECT_EQ(status(Other), Before);
+  EXPECT_EQ(ok(ServiceKind::Fchmod, {Other, 0700}), 0u);
+  EXPECT_EQ(status(Other), changed(Before, 0040700));
+  refused(ServiceKind::Fchmod, {Other, 04700}, diagnostic::FileModePermissions);
+}
+
+TEST_P(DarwinModeTest, NamespaceWithoutItsOwnTimeInvalidatesBothModeOrders) {
+  for (bool ModeFirst : {false, true}) {
+    Options = darwin_test::modeOptions();
+    Options->ModeMutations->Objects["/"] = {71, 72};
+    Options->MutableDirectories.insert("/");
+    reset();
+    const auto FD = open("/");
+    if (ModeFirst)
+      EXPECT_EQ(ok(ServiceKind::Fchmod, {FD, 0750}), 0u);
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/child"), 0700}), 0u);
+    refused(ServiceKind::Fstat64, {FD, Base + Page + 8},
+            diagnostic::DirectoryMutated);
+    refused(ServiceKind::Fchmod, {FD, 0700}, diagnostic::DirectoryMutated);
+    EXPECT_EQ(ok(ServiceKind::Rmdir, {path("/child")}), 0u);
+    refused(ServiceKind::Fchmod, {FD, 0700}, diagnostic::DirectoryMutated);
+    refused(ServiceKind::Fstat64, {FD, Base + Page + 8},
+            diagnostic::DirectoryMutated);
+  }
+}
+
+TEST_P(DarwinModeTest, IndependentNamespaceTimePreservesModeInBothOrders) {
+  for (bool ModeFirst : {false, true}) {
+    Options = darwin_test::modeOptions();
+    Options->ModeMutations->Objects["/"] = {71, 72};
+    mutationPolicies();
+    const auto FD = open("/");
+    auto Expected = status(FD);
+    if (ModeFirst) {
+      EXPECT_EQ(ok(ServiceKind::Fchmod, {FD, 0750}), 0u);
+      Expected = changed(Expected, 0040750);
+    }
+    EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/child"), 0700}), 0u);
+    Expected = changed(Expected, ModeFirst ? 0040750 : 0040700, 91, 92);
+    llvm::support::endian::write16le(Expected.data() + 14, 4);
+    llvm::support::endian::write64le(Expected.data() + 104, 64);
+    llvm::support::endian::write64le(Expected.data() + 56, 91);
+    llvm::support::endian::write64le(Expected.data() + 64, 92);
+    EXPECT_EQ(status(FD), Expected);
+    if (!ModeFirst) {
+      EXPECT_EQ(ok(ServiceKind::Fchmod, {FD, 0750}), 0u);
+      Expected = changed(Expected, 0040750);
+      EXPECT_EQ(status(FD), Expected);
+    }
+    EXPECT_EQ(ok(ServiceKind::Rmdir, {path("/child")}), 0u);
+    Expected = changed(Expected, 0040750, 91, 92);
+    llvm::support::endian::write16le(Expected.data() + 14, 3);
+    llvm::support::endian::write64le(Expected.data() + 104, 48);
+    EXPECT_EQ(status(FD), Expected);
+    EXPECT_EQ(ok(ServiceKind::Fchmod, {FD, 0700}), 0u);
+    EXPECT_EQ(status(FD), changed(Expected, 0040700));
+  }
+}
+
+TEST_P(DarwinModeTest, CreatedDirectoriesNeedTheirSeparateModeGrant) {
+  for (bool Regular : {false, true})
+    for (bool Directory : {false, true}) {
+      Options = darwin_test::modeOptions();
+      mutationPolicies();
+      Options->CreationPolicy->Namespace =
+          DarwinNamespaceCreationPolicy{512, 16, 0};
+      Options->ModeMutations->CreatedRegularObjects = Regular;
+      Options->ModeMutations->CreatedDirectoryObjects = Directory;
+      // This creation fixture declares matching observation and explicit actor
+      // IDs. Other mode tests retain the mismatching scalar777 authority check.
+      reset(501);
+      EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/child"), 0700}), 0u);
+      const auto FD = open("/child");
+      const auto Before = status(FD);
+      if (Directory) {
+        EXPECT_EQ(ok(ServiceKind::Fchmod, {FD, 0750}), 0u);
+        EXPECT_EQ(status(FD), changed(Before, 0040750, 81, 82));
+      } else {
+        refused(ServiceKind::Fchmod, {FD, 0750}, diagnostic::FileModeProvider);
+        EXPECT_EQ(status(FD), Before);
+      }
+      // Namespace mutability and the creation flag authorize no initial parent.
+      refused(ServiceKind::Fchmod, {open("/"), 0750},
+              diagnostic::FileModeProvider);
+    }
+}
+
+TEST(DarwinModeOptions,
+     DirectoryLinksAreNotAliasesAndKnownAliasesStayRejected) {
+  auto O = darwin_test::modeOptions();
+  O.Directories.insert("/dir");
+  O.Metadata["/dir"] = darwin_test::modeMetadata(0040700, 3);
+  O.Metadata["/dir"].LinkCount = 7;
+  O.ModeMutations->Objects["/dir"] = {71, 72};
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.Directories.insert("/alias");
+  O.Metadata["/alias"] = O.Metadata["/dir"];
+  auto Error = validateFileOptions(O);
+  EXPECT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+  O.Metadata["/alias"].Device = 8;
+  EXPECT_FALSE(bool(validateFileOptions(O)));
+  O.OwnershipMutations.emplace().Objects["/dir"] = {71, 72};
+  Error = validateFileOptions(O);
+  EXPECT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+}
+
+TEST_P(DarwinModeTest, DirectoryDescriptionsKeepCursorsAndChildGrantsSeparate) {
+  Options->Directories.insert("/dir");
+  Options->Metadata["/dir"] = darwin_test::modeMetadata(0040700, 3, 96);
+  Options->Files["/dir/leaf"] = {'x'};
+  Options->Metadata["/dir/leaf"] = darwin_test::modeMetadata(0100600, 4, 1);
+  Options->Directories.insert("/dir/sub");
+  Options->Metadata["/dir/sub"] = darwin_test::modeMetadata(0040700, 5);
+  Options->DirectoryContents["/dir"] = {{{".", 3, 4, 11, 0},
+                                         {"..", 1, 4, 22, 0},
+                                         {"leaf", 4, 8, 33, 0},
+                                         {"sub", 5, 4, 44, 0}},
+                                        1};
+  Options->ModeMutations->Objects["/dir"] = {71, 72};
+  reset();
+  const auto FD = open("/dir"), Independent = open("/dir");
+  const auto Copy = ok(ServiceKind::Dup, {FD});
+  const auto Before = status(FD);
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {FD, Base + Page * 2, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(ok(ServiceKind::Fchmod, {Copy, 0750}), 0u);
+  EXPECT_EQ(status(Independent), changed(Before, 0040750));
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Copy, 0, 1}), 11u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {Independent, 0, 1}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Fchdir, {Copy}), 0u);
+  EXPECT_EQ(ok(ServiceKind::Chmod, {path("."), 0700}), 0u);
+  EXPECT_EQ(ok(ServiceKind::FchmodAt, {Independent, path("."), 0755, 0}), 0u);
+  EXPECT_EQ(status(open(".")), changed(Before, 0040755));
+  const auto Child = open("leaf");
+  const auto ChildBefore = status(Child);
+  refused(ServiceKind::Fchmod, {Child, 0640}, diagnostic::FileModeProvider);
+  EXPECT_EQ(status(Child), ChildBefore);
+  const auto Subdirectory = open("sub");
+  const auto SubdirectoryBefore = status(Subdirectory);
+  refused(ServiceKind::Fchmod, {Subdirectory, 0750},
+          diagnostic::FileModeProvider);
+  EXPECT_EQ(status(Subdirectory), SubdirectoryBefore);
+  refused(ServiceKind::Fchmod, {open("/"), 0750}, diagnostic::FileModeProvider);
+  EXPECT_EQ(ok(ServiceKind::Chdir, {path("/")}), 0u);
+  EXPECT_EQ(status(Copy), changed(Before, 0040755));
+  EXPECT_EQ(
+      ok(ServiceKind::GetDirEntries64, {Copy, Base + Page * 2, 32, Base + 512}),
+      32u);
+  EXPECT_EQ(llvm::cantFail(Space->readInteger(Base + Page * 2, 8)), 1u);
+  EXPECT_EQ(ok(ServiceKind::Lseek, {FD, 0, 1}), 22u);
+}
+
+TEST_P(DarwinModeTest, DirectMoveAndExchangeNeedIndependentNamespaceTime) {
+  for (bool Swap : {false, true})
+    for (bool NamespaceTime : {false, true})
+      for (bool ModeFirst : {false, true}) {
+        Options = darwin_test::modeOptions();
+        Options->Directories = {"/", "/a", "/b"};
+        Options->Metadata["/a"] = darwin_test::modeMetadata(0040700, 3);
+        Options->Metadata["/b"] = darwin_test::modeMetadata(0040700, 4);
+        Options->MutableDirectories.insert("/");
+        Options->DirectoryMutationPolicies["/"] = {16, {91, 92}};
+        Options->MovableDirectories.insert("/a");
+        Options->SwapRenameDirectories.insert("/");
+        Options->ExchangeableDirectories = {"/a", "/b"};
+        Options->ModeMutations->Objects["/a"] = {71, 72};
+        if (NamespaceTime) {
+          Options->DirectoryMutationPolicies["/a"] = {16, {81, 82}};
+          Options->DirectoryMutationPolicies["/b"] = {16, {101, 102}};
+        }
+        reset();
+        const auto A = open("/a"), B = open("/b");
+        const auto Copy = ok(ServiceKind::Dup, {A});
+        const auto Before = status(A), Other = status(B);
+        if (ModeFirst)
+          EXPECT_EQ(ok(ServiceKind::Fchmod, {A, 0750}), 0u);
+        const auto From = path("/a"),
+                   To = path(Swap ? "/b" : "/moved", Base + 128);
+        if (Swap)
+          EXPECT_EQ(ok(ServiceKind::RenameAtX, {UINT64_MAX, From, UINT64_MAX,
+                                                To, 0x1234567800000002ULL}),
+                    0u);
+        else
+          EXPECT_EQ(ok(ServiceKind::Rename, {From, To}), 0u);
+        if (!NamespaceTime) {
+          refused(ServiceKind::Fstat64, {A, Base + Page + 8},
+                  diagnostic::DirectoryMutated);
+          refused(ServiceKind::Fchmod, {Copy, 0700},
+                  diagnostic::DirectoryMutated);
+          continue;
+        }
+        auto Expected = changed(Before, ModeFirst ? 0040750 : 0040700, 81, 82);
+        EXPECT_EQ(status(Copy), Expected);
+        EXPECT_EQ(ok(ServiceKind::Fchmod, {Copy, 0755}), 0u);
+        Expected = changed(Expected, 0040755);
+        EXPECT_EQ(status(open(Swap ? "/b" : "/moved")), Expected);
+        EXPECT_EQ(status(A), Expected);
+        EXPECT_EQ(status(B), Swap ? changed(Other, 0040700, 101, 102) : Other);
+        // The other object receives no grant merely because its new name used
+        // to name the granted object, or because both roots can be exchanged.
+        refused(ServiceKind::Fchmod, {B, 0750}, diagnostic::FileModeProvider);
+        EXPECT_EQ(Options->ModeMutations->Objects.at("/a").Seconds, 71);
+      }
+}
+
+TEST_P(DarwinModeTest, HeldRemovedDirectoryAndReusedNameKeepDifferentGrants) {
+  Options->Directories.insert("/dir");
+  Options->Metadata["/dir"] = darwin_test::modeMetadata(0040700, 3);
+  Options->ModeMutations->Objects["/dir"] = {71, 72};
+  Options->RemovableDirectories.insert("/dir");
+  mutationPolicies();
+  Options->DirectoryMutationPolicies["/dir"] = {16, {91, 92}};
+  Options->CreationPolicy->Namespace =
+      DarwinNamespaceCreationPolicy{512, 16, 0};
+  reset(501);
+  const auto FD = open("/dir");
+  const auto Before = status(FD);
+  EXPECT_EQ(ok(ServiceKind::Rmdir, {path("/dir")}), 0u);
+  auto Expected = changed(Before, 0040700, 91, 92);
+  EXPECT_EQ(status(FD), Expected);
+  EXPECT_EQ(ok(ServiceKind::Mkdir, {path("/dir"), 0700}), 0u);
+  const auto New = open("/dir");
+  const auto NewBefore = status(New);
+  refused(ServiceKind::Fchmod, {New, 0750}, diagnostic::FileModeProvider);
+  EXPECT_EQ(status(New), NewBefore);
+  EXPECT_EQ(ok(ServiceKind::Fchmod, {FD, 0750}), 0u);
+  EXPECT_EQ(status(FD), changed(Expected, 0040750));
+  EXPECT_EQ(status(New), NewBefore);
+  EXPECT_EQ(ok(ServiceKind::Close, {FD}), 0u);
+  error(ServiceKind::Fchmod, {FD, 0700}, 9);
+}
+
+TEST(DarwinModeOptions, CreatedDirectoryGrantRequiresCompleteNamespacePolicy) {
+  auto O = darwin_test::modeOptions();
+  O.ModeMutations->CreatedDirectoryObjects = true;
+  auto Error = validateFileOptions(O);
+  EXPECT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+  DarwinFileCreationPolicy P;
+  P.FirstInode = 100;
+  P.BlockSize = 512;
+  P.Time = {41, 42};
+  P.Mutation = {512, {81, 82}};
+  O.CreationPolicy = P;
+  O.InitialUmask = 022;
+  O.MutableDirectories.insert("/");
+  Error = validateFileOptions(O);
+  EXPECT_TRUE(bool(Error));
+  llvm::consumeError(std::move(Error));
+  O.CreationPolicy->Namespace = DarwinNamespaceCreationPolicy{512, 16, 0};
+  Error = validateFileOptions(O);
+  EXPECT_FALSE(bool(Error)) << (Error ? llvm::toString(std::move(Error)) : "");
+}
+
 INSTANTIATE_TEST_SUITE_P(Pages, DarwinModeTest,
                          testing::Values(4096ULL, 16384ULL));
 } // namespace

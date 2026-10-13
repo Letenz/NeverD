@@ -7747,6 +7747,146 @@ static int ordinary_mode_mutations(const char *path) {
   return 0;
 }
 
+/* Original directory controls: compare all 144 stat bytes and both guards.
+ * Native times are observations. Virtual variants also check an independently
+ * authored complete record, including independent mode and namespace ctimes. */
+static int directory_mode_status(u64 number, u64 object,
+                                 union mode_stat_guard *record, unsigned mode,
+                                 const union mode_stat_guard *before,
+                                 unsigned virtual_kind, u64 seconds,
+                                 u64 nanoseconds) {
+  for (unsigned i = 0; i != 20; ++i)
+    record->words[i] = 0xa5a5a5a5a5a5a5a5UL;
+  if (mode_result(number, object, (u64)(record->bytes + 8), 0, 0, 0))
+    return 226;
+  if (record->words[0] != 0xa5a5a5a5a5a5a5a5UL ||
+      record->words[19] != 0xa5a5a5a5a5a5a5a5UL ||
+      little_integer(record->bytes + 12, 2) != (0040000u | mode) ||
+      little_integer(record->bytes + 80, 8) >= 1000000000UL)
+    return 227;
+  if (before)
+    for (unsigned i = 8; i != 152; ++i)
+      if (!(i >= 12 && i < 14) && !(i >= 72 && i < 88) &&
+          record->bytes[i] != before->bytes[i])
+        return 228;
+  if (virtual_kind) {
+    const u64 expected[20] = {0xa5a5a5a5a5a5a5a5UL,
+                              7UL | ((u64)(0040000u | mode) << 32) |
+                                  (2UL << 48),
+                              virtual_kind == 2 ? 100UL : 3UL,
+                              501UL | (20UL << 32),
+                              0,
+                              virtual_kind == 2 ? 41UL : 1UL,
+                              virtual_kind == 2 ? 42UL : 2UL,
+                              virtual_kind == 2 ? 41UL : 3UL,
+                              virtual_kind == 2 ? 42UL : 4UL,
+                              seconds,
+                              nanoseconds,
+                              virtual_kind == 2 ? 41UL : 7UL,
+                              virtual_kind == 2 ? 42UL : 8UL,
+                              virtual_kind == 2 ? 64UL : 32UL,
+                              7,
+                              512,
+                              9,
+                              0,
+                              0,
+                              0xa5a5a5a5a5a5a5a5UL};
+    for (unsigned i = 0; i != 20; ++i)
+      if (record->words[i] != expected[i])
+        return 229;
+  }
+  return 0;
+}
+static __attribute__((noinline)) int
+directory_mode_mutations(const char *path, unsigned virtual_kind) {
+  unsigned error;
+  char moved[1024];
+  unsigned length = 0;
+  while (path[length] && length < 1017) {
+    moved[length] = path[length];
+    ++length;
+  }
+  if (path[length])
+    return 230;
+  const char suffix[] = ".moved";
+  for (unsigned i = 0; i != sizeof(suffix); ++i)
+    moved[length + i] = suffix[i];
+  if (virtual_kind == 2 && mode_result(136, (u64)path, 0700, 0, 0, 0))
+    return 231;
+  const u64 fd = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary)
+    return 232;
+  const u64 copy = call(41, fd, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || copy == fd)
+    return 233;
+  const u64 other = call(5, (u64)path, 0, 0, 0, 0, 0, &error);
+  if (error || secondary || other == fd || other == copy)
+    return 234;
+  union mode_stat_guard initial, a, b, c;
+  const u64 initial_seconds = virtual_kind == 2 ? 41 : 5;
+  const u64 initial_nanoseconds = virtual_kind == 2 ? 42 : 6;
+  if (directory_mode_status(339, fd, &initial, 0700, 0, virtual_kind,
+                            initial_seconds, initial_nanoseconds))
+    return 235;
+  const u64 numbers[] = {15, 124, 467};
+  const u64 high[] = {0, 0x1234567800000000UL, 0xffffffff00000000UL};
+  const unsigned modes[] = {0750, 0755, 0700};
+  const u64 mode_seconds = virtual_kind == 2 ? 101 : 71;
+  const u64 mode_nanoseconds = virtual_kind == 2 ? 102 : 72;
+  for (unsigned api = 0; api != 3; ++api)
+    for (unsigned h = 0; h != 3; ++h) {
+      const u64 object = api == 0 ? (u64)path : api == 1 ? high[h] | fd : -1UL;
+      const u64 mode = high[h] | modes[h];
+      if (mode_result(high[h] | numbers[api], object,
+                      api == 2 ? (u64)path : mode, api == 2 ? mode : 0, 0, 0))
+        return 236;
+      if (directory_mode_status(339, copy, &a, modes[h], &initial, virtual_kind,
+                                mode_seconds, mode_nanoseconds) ||
+          directory_mode_status(338, (u64)path, &b, modes[h], &initial,
+                                virtual_kind, mode_seconds, mode_nanoseconds) ||
+          directory_mode_status(339, other, &c, modes[h], &initial,
+                                virtual_kind, mode_seconds, mode_nanoseconds))
+        return 237;
+      for (unsigned i = 0; i != 20; ++i)
+        if (a.words[i] != b.words[i] || a.words[i] != c.words[i])
+          return 238;
+    }
+  if (mode_result(13, copy, 0, 0, 0, 0) ||
+      mode_result(15, (u64) ".", 0750, 0, 0, 0) ||
+      mode_result(467, other, (u64) ".", 0700, 0x20, 0) ||
+      directory_mode_status(339, fd, &a, 0700, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds) ||
+      mode_result(128, (u64)path, (u64)moved, 0, 0, 0) ||
+      directory_mode_status(339, copy, &b, 0700, &initial, virtual_kind,
+                            virtual_kind == 2 ? 101 : 81,
+                            virtual_kind == 2 ? 102 : 82) ||
+      mode_result(124, copy, 0755, 0, 0, 0) ||
+      directory_mode_status(338, (u64)moved, &c, 0755, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds))
+    return 239;
+  for (unsigned i = 0; i != 20; ++i)
+    a.words[i] = c.words[i];
+  if (mode_result(124, -1UL, 07000, 0, 0, 9) ||
+      mode_result(467, -1UL, -1UL, 07000, 8, 22) ||
+      directory_mode_status(339, fd, &c, 0755, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds))
+    return 240;
+  for (unsigned i = 0; i != 20; ++i)
+    if (a.words[i] != c.words[i])
+      return 241;
+  if (mode_result(12, (u64) "/", 0, 0, 0, 0) ||
+      mode_result(6, fd, 0, 0, 0, 0) || mode_result(124, fd, 0700, 0, 0, 9) ||
+      mode_result(124, copy, 0755, 0, 0, 0) ||
+      directory_mode_status(339, other, &b, 0755, &initial, virtual_kind,
+                            mode_seconds, mode_nanoseconds) ||
+      mode_result(6, copy, 0, 0, 0, 0) || mode_result(6, other, 0, 0, 0, 0))
+    return 242;
+  const char mark = 'Q';
+  if (call(4, 1, (u64)&mark, 1, 0, 0, 0, &error) != 1 || error || secondary)
+    return 243;
+  return 0;
+}
+
 /* Original SDK-free ordinary ownership controls. Native ctime remains a
  * captured provider result; both-inactive calls compare the complete record. */
 union ownership_stat_guard {
@@ -9150,6 +9290,15 @@ int main(int argc, char **argv, char **envp, char **apple) {
   if (equal(argv[1], "ordinary-mode-mutations")) {
     const int status = argc < 3 ? 209 : ordinary_mode_mutations(argv[2]);
     return status ? status : 37;
+  }
+  if (equal(argv[1], "directory-mode-mutations") ||
+      equal(argv[1], "virtual-directory-mode") ||
+      equal(argv[1], "created-directory-mode")) {
+    const unsigned kind = equal(argv[1], "created-directory-mode")   ? 2
+                          : equal(argv[1], "virtual-directory-mode") ? 1
+                                                                     : 0;
+    const int status = argc < 3 ? 209 : directory_mode_mutations(argv[2], kind);
+    return status ? status : 53;
   }
   if (equal(argv[1], "immediate-pselect")) {
     const int status = immediate_pselect(argc < 3 ? "/data" : argv[2]);
