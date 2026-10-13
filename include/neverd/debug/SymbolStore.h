@@ -96,10 +96,10 @@ struct PDBCandidate {
 };
 
 /// The files that may hold the PDB \p Img names, in the order to try them,
-/// whether they exist or not: the recorded path, beside the image under the
-/// recorded name and the image's own, then the directories and stores of
-/// \p Path.  Stores are searched only for an identity pdbSymbolRequest
-/// accepts.
+/// whether they exist or not: the recorded path when it is absolute, beside
+/// the image under the recorded name and the image's own, then the
+/// directories and stores of \p Path.  Stores are searched only for an
+/// identity pdbSymbolRequest accepts.
 std::vector<PDBCandidate> pdbCandidates(const std::filesystem::path &BinaryPath,
                                         const BinaryImage &Img,
                                         const SymbolPath &Path);

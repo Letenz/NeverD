@@ -108,22 +108,27 @@ TEST(SymbolStore, CandidatesFollowTheSearchOrder) {
   SymbolPath Path;
   Path.Directories = {"/dir"};
   Path.Stores = {"/store"};
-  const BinaryImage Img = pe("C:\\build\\Kernel.pdb", PDBIdentityState::Unique);
-  const auto Candidates = pdbCandidates("/in/app.exe", Img, Path);
+  const std::filesystem::path Recorded =
+      std::filesystem::temp_directory_path() / "build" / "Kernel.pdb";
+  const BinaryImage Img =
+      pe(Recorded.string().c_str(), PDBIdentityState::Unique);
   std::vector<std::pair<std::string, PDBLocation>> Seen;
-  for (const PDBCandidate &C : Candidates)
+  for (const PDBCandidate &C : pdbCandidates("/in/app.exe", Img, Path))
     Seen.emplace_back(C.Path.generic_string(), C.Location);
-  // A path recorded for another machine is kept as the linker spelled it.
-  const std::string Recorded =
-      std::filesystem::u8path("C:\\build\\Kernel.pdb").generic_string();
   const std::vector<std::pair<std::string, PDBLocation>> Expected{
-      {Recorded, PDBLocation::Recorded},
+      {Recorded.generic_string(), PDBLocation::Recorded},
       {"/in/Kernel.pdb", PDBLocation::Beside},
       {"/in/app.pdb", PDBLocation::Beside},
       {"/dir/Kernel.pdb", PDBLocation::Directory},
       {"/store/kernel.pdb/123456789ABCDEF0123456789ABCDEF01/kernel.pdb",
        PDBLocation::Store}};
   EXPECT_EQ(Seen, Expected);
+
+  // A bare name is looked for beside the image, not in the working
+  // directory.
+  for (const PDBCandidate &C : pdbCandidates(
+           "/in/app.exe", pe("Kernel.pdb", PDBIdentityState::Unique), Path))
+    EXPECT_NE(C.Location, PDBLocation::Recorded) << C.Path.generic_string();
 
   // Without a unique identity no store can key the PDB.
   const auto Ambiguous = pdbCandidates(

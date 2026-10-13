@@ -398,8 +398,11 @@ const char *neverd_pdb_reference_json(const char *Path,
     std::error_code EC;
     if (!std::filesystem::is_regular_file(Candidate.Path, EC))
       continue;
-    llvm::json::Object Copy{{"path", pathToUTF8(Candidate.Path)},
-                            {"location", pdbLocationName(Candidate.Location)}};
+    // A frontend keeps the path it loads, so it must not depend on the
+    // working directory the input was named against.
+    llvm::json::Object Copy{
+        {"path", pathToUTF8(std::filesystem::absolute(Candidate.Path, EC))},
+        {"location", pdbLocationName(Candidate.Location)}};
     auto Identity = readPDBBuildIdentity(Candidate.Path);
     if (Identity && *Identity == Expected) {
       Found = std::move(Copy);

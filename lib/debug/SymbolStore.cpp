@@ -238,7 +238,11 @@ std::vector<PDBCandidate> pdbCandidates(const std::filesystem::path &BinaryPath,
     Recorded = {};
   const llvm::StringRef Name = recordedFileName(Recorded);
   if (!Recorded.empty()) {
-    addCandidate(Out, pathOf(Recorded), PDBLocation::Recorded);
+    // A bare name, as Microsoft's builds record, names no place of its own:
+    // read against the working directory it would find whatever happens to
+    // be there.
+    if (const std::filesystem::path Path = pathOf(Recorded); Path.is_absolute())
+      addCandidate(Out, Path, PDBLocation::Recorded);
     addCandidate(Out, Dir / pathOf(Name), PDBLocation::Beside);
   }
   auto Companion = BinaryPath;
