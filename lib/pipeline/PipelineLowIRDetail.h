@@ -79,6 +79,9 @@ WindowsEHContinuationRootTestResult collectWindowsEHContinuationRootsForTesting(
 /// in a register lists them (CallArgumentConvention::FormattedCallArguments).
 void collectFormattedCalls(const BinaryImage &Img, const LowFunc &F,
                            std::map<va_t, FormattedCall> &Calls);
+void collectFormattedCalls(const BinaryImage &Img,
+                           llvm::ArrayRef<LowBlock> Blocks,
+                           std::map<va_t, FormattedCall> &Calls);
 
 } // namespace neverd::pipeline_detail
 

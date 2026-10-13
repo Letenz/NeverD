@@ -241,6 +241,10 @@ Json hello() {
     result["capabilities"].push_back("operand_format");
   if (Engine::identifiesFiles())
     result["capabilities"].push_back("identify");
+  if (Engine::loadsPdbFiles()) {
+    result["capabilities"].push_back("pdb_inspect");
+    result["capabilities"].push_back("pdb_load");
+  }
   result["web"] = WebEngine::capabilities();
   return result;
 }

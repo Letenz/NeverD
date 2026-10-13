@@ -14,7 +14,8 @@
 
 namespace neverd::registration_state {
 
-void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before) {
+void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before,
+                                            const BlockFacts &Facts) {
   const LowBlock &Block = Function.Blocks[I];
   // A filter is a searching callback, while a finally is an unwind callback
   // at its enclosing state. Lexical callback exclusion must not erase an
@@ -22,7 +23,7 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before) {
   if (!Before.CanDispatch || !Before.Installed)
     return;
   const std::set<int32_t> &DispatchLevels =
-      Before.Unknown || Facts[I].Invalid ? AllLevels : Before.Levels;
+      Before.Unknown || Facts.Invalid ? AllLevels : Before.Levels;
   for (int32_t Level : DispatchLevels) {
     if (!charge(1))
       break;
@@ -32,8 +33,8 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before) {
           static_cast<size_t>(Walk) >= Chain.Scopes.size())
         break;
       const RegistrationScopeRecord &Scope = Chain.Scopes[Walk];
-      dispatch(Scope.FilterVA, Level, Before, Facts[I].Invalid, true, true);
-      dispatch(Scope.HandlerVA, Scope.EnclosingLevel, Before, Facts[I].Invalid,
+      dispatch(Scope.FilterVA, Level, Before, Facts.Invalid, true, true);
+      dispatch(Scope.HandlerVA, Scope.EnclosingLevel, Before, Facts.Invalid,
                Scope.IsFinally);
       Walk = Scope.EnclosingLevel;
     }
@@ -50,12 +51,8 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before) {
       if (CheckCleanups && Action.ActionVA) {
         const CleanupKey Identity{Block.Id, Level, uint32_t(Walk)};
         const auto Contract = CleanupIndices.find(uint32_t(Walk));
-        auto SP = Before.Frame.Registers[x86reg::RSP / x86reg::GeneralRegStride]
-                      .Offset;
-        if (!Before.Parent && Before.Callback && !Before.OtherCallback &&
-            !Before.CxxCatchStacks.empty())
-          SP = Before.Frame.load(*Chain.RegistrationOffset - 4, 4).Offset;
-        bool Valid = !Before.Unknown && !Facts[I].Invalid &&
+        const auto SP = parentStackOffset(Before);
+        bool Valid = !Before.Unknown && !Facts.Invalid &&
                      Contract != CleanupIndices.end() && SP;
         RegistrationCleanupFrameEffect Effect;
         if (Valid) {
@@ -66,17 +63,22 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before) {
           Effect.ActionState = uint32_t(Walk);
           Effect.CleanupIndex = Contract->second;
           Effect.StackOffset = *SP;
-          const auto Offset = Chain.cxxSourceFrameOffset(C.ObjectFrameOffset);
-          Valid &= Offset &&
-                   projectFrameObject(Before, *Offset, SP, C.Leaf.ECXReads,
-                                      Effect.FrameReads, true) &&
-                   projectFrameObject(Before, *Offset, SP, C.Leaf.ECXWrites,
-                                      Effect.FrameWrites, false);
-          if (Valid && charge(C.Leaf.ImageReads.size()))
-            for (const auto &Read : C.Leaf.ImageReads)
+          for (const auto &Call : C.Calls) {
+            const auto Offset =
+                Chain.cxxSourceFrameOffset(Call.ObjectFrameOffset);
+            Valid &=
+                charge(1) && Offset &&
+                projectFrameObject(Before, *Offset, SP, Call.Leaf.ECXReads,
+                                   Effect.FrameReads, true) &&
+                projectFrameObject(Before, *Offset, SP, Call.Leaf.ECXWrites,
+                                   Effect.FrameWrites, false);
+            if (!Valid || !charge(Call.Leaf.ImageReads.size())) {
+              Valid = false;
+              break;
+            }
+            for (const auto &Read : Call.Leaf.ImageReads)
               ImageReads.emplace(Read.Begin, Read.End);
-          else
-            Valid = false;
+          }
         }
         if (Valid && !InvalidCleanups.count(Identity)) {
           auto [It, Inserted] = CleanupEffects.emplace(Identity, Effect);
@@ -94,14 +96,14 @@ void RegistrationStateSolver::dispatchBlock(size_t I, const Domain &Before) {
       Walk = Action.ToState;
     }
   }
-  for (const auto &Search : cxxSearches(I, Before)) {
+  for (const auto &Search : cxxSearches(Before, Facts.Invalid)) {
     const auto &Try = EH.Cxx->TryBlocks[Search.TryIndex];
     for (uint32_t CatchIndex = 0; CatchIndex < Try.Handlers.size();
          ++CatchIndex) {
       if (!charge(1))
         return;
       dispatch(Try.Handlers[CatchIndex].HandlerVA, Try.TryHigh + 1, Before,
-               Facts[I].Invalid, true, false,
+               Facts.Invalid, true, false,
                std::make_pair(Search.TryIndex, CatchIndex));
     }
   }

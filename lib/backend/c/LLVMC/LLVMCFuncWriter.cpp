@@ -16,6 +16,7 @@
 #include "../X86GetPcThunk.h"
 #include "LLVMCWriter.h"
 
+#include "neverd/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -494,12 +495,13 @@ void LLVMCWriter::markInlinable(llvm::Function &Fn) {
       // Freeze materializes one stable, defined choice before any folding.
       if (llvm::isa<llvm::FreezeInst>(&Inst))
         continue;
-      // Bit counts need source-width normalization and one captured operand.
-      // Their C statement lowering also owns the zero guard where needed.
+      // Bit counts and integer abs normalize source width and capture one
+      // operand. Their statement lowering owns zero guards/unsigned negation.
       if (const auto *II = llvm::dyn_cast<llvm::IntrinsicInst>(&Inst);
           II && (II->getIntrinsicID() == llvm::Intrinsic::ctpop ||
                  II->getIntrinsicID() == llvm::Intrinsic::ctlz ||
-                 II->getIntrinsicID() == llvm::Intrinsic::cttz))
+                 II->getIntrinsicID() == llvm::Intrinsic::cttz ||
+                 II->getIntrinsicID() == llvm::Intrinsic::abs))
         continue;
       // Updating one vector lane requires a copy followed by an assignment.
       if (llvm::isa<llvm::InsertElementInst, llvm::InsertValueInst>(&Inst))
@@ -665,7 +667,8 @@ void LLVMCWriter::markSinglePrintedUseCalls(llvm::Function &Fn) {
   for (llvm::BasicBlock &BB : Fn) {
     for (llvm::Instruction &Inst : BB) {
       auto *Call = llvm::dyn_cast<llvm::CallInst>(&Inst);
-      if (!Call || Call->getType()->isVoidTy() || Call->use_empty())
+      if (!Call || Call->getType()->isVoidTy() || Call->use_empty() ||
+          StatementCalls.count(Call))
         continue;
       if (llvm::isa<llvm::IntrinsicInst>(Call) ||
           llvm::isa<llvm::InlineAsm>(Call->getCalledOperand()) ||
@@ -2404,18 +2407,23 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
       }
     }
   }
-  if (DebugFn) {
+  {
+    // Analyses cache rendered parameter views before the signature is printed.
+    // Allocate their final identifiers once, before any expression can use
+    // them.
     const bool Indirect =
+        !Opts.PreserveLLVMFunctionTypes && DebugFn &&
         isMsvcIndirectReturn(DebugFn->ReturnType, Opts.TheArch, Opts.Format);
     const bool Member = Indirect && !DebugFn->Params.empty() &&
                         DebugFn->Params[0].first == "this";
     const int Sret = !Indirect ? -1 : (Member ? 1 : 0);
+    CProjectionIdentifierAllocator ParameterIdentifiers;
     unsigned ParamIdx = 0;
     for (llvm::Argument &Arg : Fn.args()) {
       std::string Raw;
       if (Sret >= 0 && static_cast<int>(ParamIdx) == Sret)
         Raw = "result";
-      else {
+      else if (DebugFn) {
         size_t DebugIdx = ParamIdx;
         if (Sret >= 0 && static_cast<int>(ParamIdx) > Sret)
           DebugIdx = static_cast<size_t>(ParamIdx - 1);
@@ -2423,8 +2431,13 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
             !DebugFn->Params[DebugIdx].first.empty())
           Raw = DebugFn->Params[DebugIdx].first;
       }
-      if (!Raw.empty())
-        ValNames[&Arg] = std::move(Raw);
+      if (Raw.empty() && Arg.hasName())
+        Raw = Arg.getName().str();
+      if (Raw.empty())
+        Raw = "arg" + std::to_string(ParamIdx);
+      auto Name = ParameterIdentifiers.allocate(Raw, "nd_arg");
+      ValNames[&Arg] = Name;
+      UsedNames.insert(Name);
       ++ParamIdx;
     }
   }
@@ -2433,6 +2446,18 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
 
   scanReferencedBlocks(Fn);
   analyzeIntrinsicStructs(Analysis, Fn);
+  // The dedicated CPU arrays and their extract users share the same identity
+  // as all other locals. Bind it before analysis can cache an indexed view.
+  for (auto &BB : Fn)
+    for (auto &Inst : BB)
+      if (auto Entry = Analysis.IntrinsicStructNames.find(&Inst);
+          Entry != Analysis.IntrinsicStructNames.end()) {
+        auto Name = Entry->second;
+        if (!UsedNames.insert(Name).second)
+          Name = freshVar(Name);
+        ValNames[&Inst] = Name;
+        Entry->second = std::move(Name);
+      }
   markInlinable(Fn);
   analyzeDeadFrameStores(Analysis, Fn);
   analyzeStoreForwarding(Analysis, Fn);
@@ -2720,7 +2745,7 @@ unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
   };
   if (Msvc && Msvc->Kind == MsvcCalleeKind::Format && Have >= 2) {
     if (auto VA = imageDataVA(Call.getArgOperand(1))) {
-      if (auto Lit = imageStringLiteral(Img, *VA, /*AllowEmpty=*/false)) {
+      if (auto Lit = stringLiteralAt(Img, Dbg, *VA, /*AllowEmpty=*/false)) {
         llvm::StringRef Body = *Lit;
         if (Body.consume_front("L"))
           Body.consume_front("\"");
@@ -8164,6 +8189,18 @@ bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
 }
 
 void LLVMCWriter::emitFunctionDecls(llvm::Function &Fn) {
+  // A query in a nested region can feed an extract in a later block. Declare
+  // its array at function scope rather than at the effect's execution point.
+  for (auto &BB : Fn)
+    for (auto &Inst : BB)
+      if (Analysis.IntrinsicStructVals.count(&Inst)) {
+        const auto Name = getName(&Inst);
+        CallDeclNames.push_back(Name);
+        emitIndent(1);
+        OS << "uint32_t " << Name << "["
+           << llvm::cast<llvm::StructType>(Inst.getType())->getNumElements()
+           << "];\n";
+      }
   for (auto &BB : Fn) {
     for (auto &Inst : BB) {
       const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
@@ -8587,7 +8624,71 @@ void LLVMCWriter::writeAnalysisOnlyFunction(llvm::Function &Fn) {
   writeFunctionProjection(Fn);
 }
 
+namespace {
+/// How often \p Text prints \p Call, whole: a longer name that ends in its
+/// name is another call.
+size_t printedOccurrences(llvm::StringRef Text, llvm::StringRef Call) {
+  const auto Identifier = [](char C) { return llvm::isAlnum(C) || C == '_'; };
+  size_t Count = 0;
+  for (size_t At = Text.find(Call); At != llvm::StringRef::npos;
+       At = Text.find(Call, At + 1))
+    if (At == 0 || !Identifier(Text[At - 1]))
+      ++Count;
+  return Count;
+}
+} // namespace
+
 void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
+  // A call the analysis sinks into the one use that needs it must print
+  // there exactly once: text that prints the use twice (`(c) & (c)` for
+  // `test eax, eax`) runs it twice, and text that drops the use loses it.
+  // The text decides, so a function whose text prints such a call other than
+  // once is rendered again with those calls as statements.  Both of a source
+  // map's renders count the same plain text.
+  StatementCalls.clear();
+  for (unsigned Render = 1;; ++Render) {
+    std::string Text;
+    llvm::raw_string_ostream TextOS(Text);
+    {
+      struct Restore {
+        LLVMCOut &Out;
+        llvm::raw_ostream *Primary;
+        ~Restore() { Out.retarget(Primary); }
+      } Guard{OS, &OS.stream()};
+      OS.retarget(&TextOS);
+      renderFunctionProjection(Fn);
+    }
+    TextOS.flush();
+    bool Misprinted = false;
+    if (Render < limits::kMaxLLVMCFunctionRenders) {
+      std::string Storage;
+      const llvm::StringRef Plain = SourceRecorder
+                                        ? SourceRecorder->plain(Text, Storage)
+                                        : llvm::StringRef(Text);
+      for (const llvm::Value *Value : Analysis.Inlinable) {
+        const auto *Call = llvm::dyn_cast<llvm::CallBase>(Value);
+        if (!Call || llvm::isa<llvm::IntrinsicInst>(Call) ||
+            Call->getFunction() != &Fn)
+          continue;
+        const auto Printed = InlineCache.find(Call);
+        std::string CallStorage;
+        const llvm::StringRef CallText =
+            Printed == InlineCache.end() ? llvm::StringRef()
+            : SourceRecorder
+                ? SourceRecorder->plain(Printed->second, CallStorage)
+                : llvm::StringRef(Printed->second);
+        if (CallText.empty() || printedOccurrences(Plain, CallText) != 1)
+          Misprinted |= StatementCalls.insert(Call).second;
+      }
+    }
+    if (!Misprinted) {
+      OS << Text;
+      return;
+    }
+  }
+}
+
+void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   setupFunction(Fn);
   CallDeclNames.clear();
   std::string Buffered;
@@ -8637,28 +8738,7 @@ void LLVMCWriter::writeFunctionProjection(llvm::Function &Fn) {
     return Tag + "*";
   };
 
-  CProjectionIdentifierAllocator ParameterIdentifiers;
-  auto BindParam = [&](llvm::Argument &Arg, unsigned ParamIdx) {
-    std::string Raw;
-    if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) == SretParamIdx)
-      Raw = "result";
-    else if (DebugFn) {
-      size_t DebugIdx = ParamIdx;
-      if (SretParamIdx >= 0 && static_cast<int>(ParamIdx) > SretParamIdx)
-        DebugIdx = static_cast<size_t>(static_cast<int>(ParamIdx) - 1);
-      if (DebugIdx < DebugFn->Params.size() &&
-          !DebugFn->Params[DebugIdx].first.empty())
-        Raw = DebugFn->Params[DebugIdx].first;
-    }
-    if (Raw.empty() && Arg.hasName())
-      Raw = Arg.getName().str();
-    if (Raw.empty())
-      Raw = "arg" + std::to_string(ParamIdx);
-    std::string ParamName = ParameterIdentifiers.allocate(Raw, "nd_arg");
-    ValNames[&Arg] = ParamName;
-    UsedNames.insert(ParamName);
-    return ParamName;
-  };
+  auto BindParam = [&](llvm::Argument &Arg, unsigned) { return getName(&Arg); };
   auto ParamTypeStr = [&](llvm::Argument &Arg, unsigned ParamIdx) {
     if (Opts.PreserveLLVMFunctionTypes)
       return typeToCLLVM(Arg.getType());

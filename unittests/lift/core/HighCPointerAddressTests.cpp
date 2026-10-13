@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
+#include "neverd/DataAccessWidths.h"
 #include "neverd/backend/ExceptionRewriteContract.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
@@ -14,6 +15,7 @@
 #include "neverd/backend/c/MsvcCallee.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/debug/DebugInfoDiscovery.h"
 #include "neverd/debug/PDBLoader.h"
 #include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -31,6 +33,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/IRBuilder.h"
@@ -40,6 +43,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
+#include "llvm/Object/COFF.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FileUtilities.h"
@@ -47,6 +51,7 @@
 #include "llvm/Support/ModRef.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Support/Win64EH.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
@@ -1198,6 +1203,70 @@ int main(void) {
 )c");
 }
 
+TEST(HighCPointerAddresses, DebugSymbolsBoundAnUnsizedIndexedTable) {
+  // An eight-byte table no symbol sizes, with other data after it in its
+  // section.  Without debug information the table the code indexes runs to
+  // the section's end; with a data symbol right after it, as a PDB public
+  // names the next object without sizing it, the table ends there.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140003700, {1, 10, 10, 10, 11, 11, 11, 11, 7, 7, 7, 7, 7, 7, 7, 7,
+                    7, 7,  7,  7,  7,  7,  7,  7,  7, 7, 7, 7, 7, 7, 7, 7},
+      false);
+  Section Sec;
+  Sec.Name = ".rdata";
+  Sec.VA = 0x140003700;
+  Sec.Size = 32;
+  Sec.Flags = SegmentFlags::Readable;
+  Img.Sections.push_back(Sec);
+  class NextPublicDbg : public NullDebugContext {
+  public:
+    std::pair<std::optional<va_t>, std::optional<va_t>>
+    dataSymbolsAround(va_t Addr) const override {
+      if (Addr >= 0x140003700 && Addr < 0x140003708)
+        return {va_t{0x140003700}, va_t{0x140003708}};
+      return {};
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+
+  const auto Word = NdType::makeInt(8, false);
+  HighFunc Func;
+  Func.Name = "pick";
+  Func.ReturnType = NdType::makeInt(4, false);
+  Func.Params = {{"arg0", Word}};
+  auto Index = HighExpr::makeBinop(NdOp::INT_AND, parameter(0, Word),
+                                   HighExpr::makeConst(7, 8));
+  auto Element = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD, HighExpr::makeConst(0x140003700, 8),
+                          std::move(Index)),
+      NdType::makeInt(1, false));
+  auto Value = HighExpr::makeUnary(NdOp::INT_ZEXT, std::move(Element));
+  Value->Type = Func.ReturnType;
+  returnValue(Func, std::move(Value));
+
+  const auto Emit = [&](DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Img;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
+    OS.flush();
+    return Source;
+  };
+  const std::string Section = Emit(nullptr);
+  EXPECT_NE(Section.find("[32]"), std::string::npos) << Section;
+  const std::string Bounded = Emit(&Dbg);
+  EXPECT_NE(Bounded.find("[8]"), std::string::npos) << Bounded;
+  EXPECT_EQ(Bounded.find("[32]"), std::string::npos) << Bounded;
+  compileAndRunCallOrdering(Bounded + R"c(
+int main(void) {
+  return pick(0) == 1 && pick(4) == 11 && pick(9) == 10 ? 0 : 1;
+}
+)c");
+}
+
 TEST(HighCPointerAddresses, StringLiteralInIntegerMaskUsesItsAddress) {
   // A branchless select masks two string addresses. The literal is an array
   // in C; the mask needs its address. A call argument keeps the literal.
@@ -1351,6 +1420,91 @@ TEST(HighCPointerAddresses, ReadonlyNarrowImageStringPrintsLiteral) {
   OS.flush();
   EXPECT_NE(Source.find("\"hi\""), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L\"hi\""), std::string::npos) << Source;
+}
+
+/// An image whose executable PAGE section keeps, after its code, the
+/// literal L"SA" and a two-byte table, as a kernel keeps data among its
+/// code; its .rdata keeps an empty literal.
+BinaryImage makeDataAmongCodeFixture() {
+  BinaryImage Img =
+      makeImageObjectFixture(0x140005000,
+                             {0xC3, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+                              'S', 0, 'A', 0, 0, 0, 0, 0, 0x34, 0x12},
+                             false);
+  Img.Segments[0].Name = "PAGE";
+  Img.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Segment Rdata;
+  Rdata.Name = ".rdata";
+  Rdata.VA = 0x140006000;
+  Rdata.Size = 1;
+  Rdata.Flags = SegmentFlags::Readable;
+  Rdata.Data = {0};
+  Img.Segments.push_back(std::move(Rdata));
+  return Img;
+}
+
+/// The PDB of that image: MSVC's names for its literals, and the table's.
+class DataAmongCodeDbg : public NullDebugContext {
+public:
+  std::vector<DataObjectSym> allDataObjects() const override {
+    const auto Object = [](const char *Name, va_t Addr, uint64_t Size) {
+      DataObjectSym Sym;
+      Sym.Name = Name;
+      Sym.Addr = Addr;
+      Sym.Size = Size;
+      return Sym;
+    };
+    return {Object("??_C@_15OHIPBLFN@?$AAS?$AAA@", 0x140005008, 6),
+            Object("KeyTable", 0x140005010, 2),
+            Object("??_C@_00CNPNBAHC@@", 0x140006000, 1)};
+  }
+  bool hasInfo() const override { return true; }
+};
+
+TEST(HighCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
+  // The literals print as their text and the table by its name, as the
+  // listing shows them; without the PDB the bytes among the code are code.
+  const BinaryImage Img = makeDataAmongCodeFixture();
+  DataAmongCodeDbg Dbg;
+  BinaryImage Debugged = Img;
+  applyDebugSymbols(Debugged, Dbg);
+  HighFunc Func;
+  Func.Name = "page_data";
+  Func.ReturnType = NdType::makeInt(8, false);
+  HighStmt Wide;
+  Wide.Kind = StmtKind::Call;
+  Wide.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                     {HighExpr::makeConst(0x140005008, 8)});
+  HighStmt Empty;
+  Empty.Kind = StmtKind::Call;
+  Empty.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                      {HighExpr::makeConst(0x140006000, 8)});
+  HighStmt Return;
+  Return.Kind = StmtKind::Return;
+  Return.RetVal =
+      HighExpr::makeConst(0x140005010, 8, ConstantAddressProvenance::Address);
+  Func.Body = {Wide, Empty, Return};
+  const DataAccessWidths Widths;
+  const auto Emit = [&](const BinaryImage &Image, DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.Image = &Image;
+    Options.AccessWidths = &Widths;
+    EXPECT_TRUE(HighCEmitter().emit({Func}, OS, Options, Debug));
+    OS.flush();
+    return Source;
+  };
+  const std::string Named = Emit(Debugged, &Dbg);
+  EXPECT_NE(Named.find("Format(L\"SA\")"), std::string::npos) << Named;
+  EXPECT_NE(Named.find("Format(\"\")"), std::string::npos) << Named;
+  EXPECT_NE(Named.find("&KeyTable"), std::string::npos) << Named;
+  const std::string Bare = Emit(Img, nullptr);
+  EXPECT_NE(Bare.find("0x140005008"), std::string::npos) << Bare;
+  EXPECT_NE(Bare.find("0x140005010"), std::string::npos) << Bare;
+  EXPECT_EQ(Bare.find("KeyTable"), std::string::npos) << Bare;
 }
 
 TEST(HighCPointerAddresses, ScalarCollidingWithImageStringStaysNumeric) {
@@ -1508,6 +1662,230 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   OS.flush();
   EXPECT_NE(Source.find("L\"%s\""), std::string::npos) << Source;
   EXPECT_EQ(Source.find("0x140003400"), std::string::npos) << Source;
+}
+
+TEST(HighCPointerAddresses, StatedLiteralsKeepEveryCharacterAndTheirZeros) {
+  // ntoskrnl's console literals hold escapes (PAGEHDLS's "\x1b[0m"), and a
+  // literal's zeros past its terminator are its own (`L"%04d\0"`): a literal
+  // a symbol states prints whole, its other characters escaped, rather than
+  // as a name or a shorter literal.
+  BinaryImage Img = makeImageObjectFixture(
+      0x140005000, {0x1b, '[',  '0', 'm',  0,   0, 0,   0, // "\033[0m"
+                    '?',  '?',  ')', 0xe9, 0,   0, 0,   0, // "??)\351"
+                    '%',  0,    '0', 0,    '4', 0, 'd', 0, // L"%04d\0"
+                    0,    0,    0,   0,    0,   0, 0,   0, //
+                    0x3d, 0xd8, 0,   0xde, 0,   0},        // L"\U0001F600"
+      false);
+  Img.Segments[0].Name = "PAGEHDLS";
+  Img.Segments[0].Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  const auto State = [&](const char *Name, va_t Addr) {
+    Symbol Sym;
+    Sym.Name = Name;
+    Sym.Addr = Addr;
+    Img.Symbols.push_back(Sym);
+  };
+  State("??_C@_04ABCDEFGH@?$BL?$FL0m@", 0x140005000);
+  State("??_C@_04ABCDEFGH@?$DP?$DP?$CJ?i@", 0x140005008);
+  State("??_C@_1M@ABCDEFGH@?$AA?$CF?$AA0?$AA4?$AAd@", 0x140005010);
+  State("??_C@_15ABCDEFGH@?$NI?$DN?$NO?$AA@", 0x140005020);
+  HighFunc Func;
+  Func.Name = "console";
+  Func.ReturnType = NdType::makeVoid();
+  for (const va_t Addr : {0x140005000, 0x140005008, 0x140005010, 0x140005020}) {
+    HighStmt Call;
+    Call.Kind = StmtKind::Call;
+    Call.CallExpr = HighExpr::makeCall("Format", 0x140002000,
+                                       {HighExpr::makeConst(Addr, 8)});
+    Func.Body.push_back(std::move(Call));
+  }
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.Image = &Img;
+  ASSERT_TRUE(HighCEmitter().emit({Func}, OS, Options));
+  OS.flush();
+  // An octal escape is three digits, so no character after it joins it, and
+  // `??)` would be the trigraph for `]`.
+  EXPECT_NE(Source.find(R"(Format("\033[0m"))"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(R"(Format("?\?)\351"))"), std::string::npos) << Source;
+  EXPECT_NE(Source.find(R"(Format(L"%04d\0"))"), std::string::npos) << Source;
+  // A UTF-16 pair is one character.
+  EXPECT_NE(Source.find(R"(Format(L"\U0001F600"))"), std::string::npos)
+      << Source;
+}
+
+TEST(LLVMCPointerAddresses, DebugNamedDataAmongCodeKeepsItsNames) {
+  // The LLVM module keeps addresses among the code as numbers; they print as
+  // HighC prints them, and the table is declared.
+  const BinaryImage Img = makeDataAmongCodeFixture();
+  DataAmongCodeDbg Dbg;
+  BinaryImage Debugged = Img;
+  applyDebugSymbols(Debugged, Dbg);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-page-data", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::FunctionType *FormatTy =
+      llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
+                              {llvm::PointerType::getUnqual(I8)}, false);
+  llvm::Function *Format = llvm::Function::Create(
+      FormatTy, llvm::GlobalValue::ExternalLinkage, "Format", Module);
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "page_data", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateCall(Format, {llvm::ConstantExpr::getIntToPtr(
+                                 llvm::ConstantInt::get(I64, 0x140005008),
+                                 llvm::PointerType::getUnqual(I8))});
+  Builder.CreateRet(llvm::ConstantInt::get(I64, 0x140005010));
+
+  const auto Emit = [&](const BinaryImage &Image, DebugContext *Debug) {
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    Options.Format = BinaryFormat::COFF;
+    Options.EmitIncludes = false;
+    EXPECT_TRUE(
+        LLVMCEmitter().emit(Module, OS, Options, Debug, &Image, Function));
+    OS.flush();
+    return Source;
+  };
+  const std::string Named = Emit(Debugged, &Dbg);
+  EXPECT_NE(Named.find("L\"SA\""), std::string::npos) << Named;
+  EXPECT_NE(Named.find("(uintptr_t)&KeyTable"), std::string::npos) << Named;
+  EXPECT_NE(Named.find("extern uint8_t KeyTable;"), std::string::npos) << Named;
+  const std::string Bare = Emit(Img, nullptr);
+  EXPECT_EQ(Bare.find("KeyTable"), std::string::npos) << Bare;
+  EXPECT_EQ(Bare.find("L\"SA\""), std::string::npos) << Bare;
+}
+
+TEST(LLVMCPointerAddresses, DataOnlyAddressedIsDeclared) {
+  // The module mirrors the image's data section, and the function only
+  // returns the address of an object inside it: the C declares the object
+  // as the listing names it, by the width of the accesses there.
+  BinaryImage Img =
+      makeImageObjectFixture(0x140003000, std::vector<uint8_t>(32, 1),
+                             /*Writable=*/true);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-address-only", Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  auto *SectionTy = llvm::ArrayType::get(llvm::Type::getInt8Ty(Context), 32);
+  auto *Section =
+      new llvm::GlobalVariable(Module, SectionTy, /*isConstant=*/false,
+                               llvm::GlobalValue::ExternalLinkage,
+                               llvm::ConstantAggregateZero::get(SectionTy),
+                               makeNdDataSymbol(0x140003000));
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "data_address", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  Builder.CreateRet(llvm::ConstantExpr::getPtrToInt(
+      llvm::ConstantExpr::getInBoundsGetElementPtr(
+          SectionTy, Section,
+          llvm::ArrayRef<llvm::Constant *>{llvm::ConstantInt::get(I64, 0),
+                                           llvm::ConstantInt::get(I64, 0x10)}),
+      I64));
+
+  DataAccessWidths Widths;
+  Widths.add(0x140003010, 8);
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  Options.EmitIncludes = false;
+  Options.AccessWidths = &Widths;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
+  OS.flush();
+  EXPECT_NE(Source.find("&qword_140003010"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("extern uint64_t qword_140003010;"), std::string::npos)
+      << Source;
+}
+
+TEST(LLVMCPointerAddresses, OneFunctionDeclaresTheImagesPointerStorage) {
+  // ntoskrnl's .data holds relocated pointers, so LLVM emission mirrors the
+  // whole run as one global, its pointers relocated to what they reach.  A
+  // function that reads a byte of it does not own the run: its C declares
+  // the storage rather than printing every pointer of a section, and the
+  // names those reach, which it never declared (19 MB, and no C).
+  BinaryImage Img =
+      makeImageObjectFixture(0x140C00000, std::vector<uint8_t>(16, 0), true);
+  llvm::LLVMContext Context;
+  llvm::Module Module("llvm-c-storage-mirror", Context);
+  llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
+  llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
+  llvm::Function *Elsewhere = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "elsewhere", Module);
+  auto *StorageTy = llvm::StructType::get(Context, {I64, I64});
+  auto *Storage = new llvm::GlobalVariable(
+      Module, StorageTy, /*isConstant=*/false,
+      llvm::GlobalValue::InternalLinkage,
+      llvm::ConstantStruct::get(
+          StorageTy, {llvm::ConstantExpr::getPtrToInt(Elsewhere, I64),
+                      llvm::ConstantInt::get(I64, 7)}),
+      "__nd_codeptr_140C00000");
+  llvm::Function *Function = llvm::Function::Create(
+      llvm::FunctionType::get(I64, false), llvm::GlobalValue::ExternalLinkage,
+      "read_flag", Module);
+  llvm::IRBuilder<> Builder(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Flag =
+      Builder.CreateLoad(I8, llvm::ConstantExpr::getGetElementPtr(
+                                 I8, Storage, llvm::ConstantInt::get(I64, 8)));
+  Flag->setVolatile(true);
+  Builder.CreateRet(Builder.CreateZExt(Flag, I64));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  Options.Format = BinaryFormat::COFF;
+  ASSERT_TRUE(
+      LLVMCEmitter().emit(Module, OS, Options, nullptr, &Img, Function));
+  OS.flush();
+  EXPECT_EQ(Source.find("elsewhere"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("_nd_codeptr_140C00000 ="), std::string::npos)
+      << Source;
+
+#ifdef NEVERD_TEST_CLANG
+  const std::string Compiler = NEVERD_TEST_CLANG;
+#else
+  auto FoundCompiler = llvm::sys::findProgramByName("clang");
+  ASSERT_TRUE(static_cast<bool>(FoundCompiler)) << "clang is required";
+  const std::string Compiler = *FoundCompiler;
+#endif
+  llvm::SmallString<128> SourcePath, ErrorPath;
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror", "c",
+                                                  SourcePath));
+  llvm::FileRemover RemoveSource(SourcePath);
+  ASSERT_FALSE(llvm::sys::fs::createTemporaryFile("neverd-storage-mirror",
+                                                  "err", ErrorPath));
+  llvm::FileRemover RemoveError(ErrorPath);
+  {
+    std::error_code EC;
+    llvm::raw_fd_ostream File(SourcePath, EC);
+    ASSERT_FALSE(EC) << EC.message();
+    File << Source;
+  }
+  llvm::SmallVector<llvm::StringRef, 4> Arguments{Compiler, "-std=c11",
+                                                  "-fsyntax-only", SourcePath};
+  const std::optional<llvm::StringRef> Redirects[] = {
+      std::nullopt, std::nullopt, ErrorPath.str()};
+  std::string Error;
+  const int CompileStatus = llvm::sys::ExecuteAndWait(
+      Compiler, Arguments, std::nullopt, Redirects, 30, 0, &Error);
+  auto ErrorBuffer = llvm::MemoryBuffer::getFile(ErrorPath);
+  EXPECT_EQ(CompileStatus, 0)
+      << Error << (ErrorBuffer ? (*ErrorBuffer)->getBuffer().str() : "") << "\n"
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, FormatLiteralDropsTrailingClobber) {
@@ -1993,7 +2371,10 @@ TEST(LLVMCPointerAddresses, CtorReturnPrintsObjectAddress) {
   OS.flush();
   EXPECT_NE(Source.find("CStringT_ctor(&key0"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("= CStringT_ctor("), std::string::npos) << Source;
-  EXPECT_NE(Source.find("use_key(&key0)"), std::string::npos) << Source;
+  // use_key is declared to take an integer, which C converts no address to.
+  EXPECT_NE(Source.find("use_key((uint64_t)(uintptr_t)(&key0))"),
+            std::string::npos)
+      << Source;
 }
 
 TEST(LLVMCPointerAddresses, UnreadCtorInReturningFunctionIsStatement) {
@@ -34645,14 +35026,15 @@ std::string dumpMedBlockRanges(const std::vector<MedFunc> &Funcs) {
   return Out;
 }
 
-std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true) {
+std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true,
+                              DebugContext *Dbg = nullptr) {
   llvm::LLVMContext Ctx;
   PipelineOptions Opts;
   Opts.EmitDumpOutput = false;
   Opts.NoOpt = NoOpt;
   Opts.LiftMode = true;
   Opts.OnlyFunctionEntries.insert(Entry);
-  auto Result = Pipeline().run(Img, Ctx, Opts);
+  auto Result = Pipeline().run(Img, Ctx, Opts, Dbg);
   if (!Result.Success || !Result.LlvmModule)
     return Result.Error;
   llvm::Function *Keep = nullptr;
@@ -34678,8 +35060,7 @@ std::string llvmcOnlyFunction(BinaryImage Img, va_t Entry, bool NoOpt = true) {
   Options.TheArch = Img.Arch;
   Options.Format = Img.Format;
   Options.Image = &Img;
-  if (!LLVMCEmitter().emit(*Result.LlvmModule, OS, Options, nullptr, &Img,
-                           Keep))
+  if (!LLVMCEmitter().emit(*Result.LlvmModule, OS, Options, Dbg, &Img, Keep))
     return {};
   OS.flush();
   return Source;
@@ -42623,7 +43004,13 @@ TEST(HighCPointerAddresses, MergedXmm0ResultIsTheDoubleReturnValue) {
   EXPECT_NE(HighC.find("double sub_140001000("), std::string::npos) << HighC;
   EXPECT_NE(HighC.find("__builtin_bit_cast(double, "), std::string::npos)
       << HighC;
-  EXPECT_TRUE(std::regex_search(HighC, std::regex(R"(\(double\)\(int64_t\))")))
+  // Both conversions complete MXCSR state, so the rounding path prints as
+  // the state helpers rather than as a bare C cast.
+  const auto ToInteger =
+      HighC.find("neverd_x86_fp_cvt_to_int_state_f64_i64(arg0, ");
+  ASSERT_NE(ToInteger, std::string::npos) << HighC;
+  EXPECT_NE(HighC.find("neverd_x86_cvtsi2sd_source64(", ToInteger),
+            std::string::npos)
       << HighC;
   EXPECT_TRUE(std::regex_search(
       HighC, std::regex(R"(return __builtin_bit_cast\(double)")))
@@ -43233,6 +43620,169 @@ TEST(HighCPointerAddresses, ColdFragmentScopeStructuresItsTry) {
   const std::string Unchained = highcOnlyFunction(Build(false), Entry);
   EXPECT_NE(Unchained.find("unstructured SEH region"), std::string::npos)
       << Unchained;
+}
+
+/// An x64 PE laid out as MSVC lays out a kernel's code: the function at
+/// 0x140001000 jumps to a cold part at 0x140001100, which passes the function
+/// at 0x140001180 the literal "Cold path\n" at 0x140001080, between the two.
+/// The cold part's unwind record chains to the function's.
+std::vector<uint8_t> makeColdPartLiteralPE() {
+  constexpr uint32_t Function = 0x1000, Literal = 0x1080, Cold = 0x1100,
+                     Print = 0x1180, UnwindInfo = 0x2000, Chained = 0x2010,
+                     Records = 0x3000;
+  constexpr size_t PE = 0x80, FileHeader = PE + 4,
+                   Optional =
+                       FileHeader + sizeof(llvm::object::coff_file_header),
+                   Directories =
+                       Optional + sizeof(llvm::object::pe32plus_header),
+                   DirectoryCount = 16,
+                   SectionHeaders =
+                       Directories +
+                       DirectoryCount * sizeof(llvm::object::data_directory);
+  std::vector<uint8_t> Bytes(0x800, 0);
+  const auto Write = [&](size_t Offset, const auto &Object) {
+    std::memcpy(Bytes.data() + Offset, &Object, sizeof(Object));
+  };
+  // Each section is 0x200 bytes, at RVA 0x1000 * (I + 1) and file offset
+  // 0x200 * (I + 1).
+  const auto FileOffset = [](uint32_t RVA) {
+    return 0x200 * (RVA / 0x1000) + RVA % 0x1000;
+  };
+  const auto Code = [&](uint32_t RVA, std::initializer_list<uint8_t> Values) {
+    std::copy(Values.begin(), Values.end(), Bytes.begin() + FileOffset(RVA));
+  };
+  const auto Rel32 = [&](uint32_t At, uint32_t Target) {
+    // The displacement ends its instruction.
+    Write(FileOffset(At), llvm::support::ulittle32_t(Target - (At + 4)));
+  };
+
+  llvm::object::dos_header DOS{};
+  DOS.Magic[0] = 'M';
+  DOS.Magic[1] = 'Z';
+  DOS.AddressOfNewExeHeader = PE;
+  Write(0, DOS);
+  std::memcpy(Bytes.data() + PE, "PE\0\0", 4);
+  llvm::object::coff_file_header File{};
+  File.Machine = llvm::COFF::IMAGE_FILE_MACHINE_AMD64;
+  File.NumberOfSections = 3;
+  File.SizeOfOptionalHeader =
+      sizeof(llvm::object::pe32plus_header) +
+      DirectoryCount * sizeof(llvm::object::data_directory);
+  File.Characteristics = llvm::COFF::IMAGE_FILE_EXECUTABLE_IMAGE |
+                         llvm::COFF::IMAGE_FILE_LARGE_ADDRESS_AWARE;
+  Write(FileHeader, File);
+  llvm::object::pe32plus_header Header{};
+  Header.Magic = llvm::COFF::PE32Header::PE32_PLUS;
+  Header.AddressOfEntryPoint = Function;
+  Header.ImageBase = 0x140000000;
+  Header.SectionAlignment = 0x1000;
+  Header.FileAlignment = 0x200;
+  Header.SizeOfImage = 0x4000;
+  Header.SizeOfHeaders = 0x200;
+  Header.Subsystem = llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_CUI;
+  Header.NumberOfRvaAndSize = DirectoryCount;
+  Write(Optional, Header);
+  llvm::object::data_directory Exceptions{};
+  Exceptions.RelativeVirtualAddress = Records;
+  Exceptions.Size = 2 * sizeof(llvm::Win64EH::RuntimeFunction);
+  Write(Directories +
+            llvm::COFF::EXCEPTION_TABLE * sizeof(llvm::object::data_directory),
+        Exceptions);
+  const std::pair<llvm::StringLiteral, uint32_t> Sections[] = {
+      {".text", llvm::COFF::IMAGE_SCN_CNT_CODE |
+                    llvm::COFF::IMAGE_SCN_MEM_READ |
+                    llvm::COFF::IMAGE_SCN_MEM_EXECUTE},
+      {".rdata", llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                     llvm::COFF::IMAGE_SCN_MEM_READ},
+      {".pdata", llvm::COFF::IMAGE_SCN_CNT_INITIALIZED_DATA |
+                     llvm::COFF::IMAGE_SCN_MEM_READ}};
+  for (size_t I = 0; I < std::size(Sections); ++I) {
+    llvm::object::coff_section Section{};
+    std::memcpy(Section.Name, Sections[I].first.data(),
+                Sections[I].first.size());
+    Section.VirtualSize = 0x200;
+    Section.VirtualAddress = 0x1000 * (I + 1);
+    Section.SizeOfRawData = 0x200;
+    Section.PointerToRawData = 0x200 * (I + 1);
+    Section.Characteristics = Sections[I].second;
+    Write(SectionHeaders + I * sizeof(Section), Section);
+  }
+
+  std::fill_n(Bytes.begin() + FileOffset(Function), 0x200, 0xcc);
+  Code(Function, {0x48, 0x83, 0xec, 0x28, // sub rsp, 28h
+                  0x85, 0xc9,             // test ecx, ecx
+                  0x0f, 0x85});           // jne cold
+  Rel32(Function + 8, Cold);
+  Code(Function + 12, {0x31, 0xc0,             // xor eax, eax
+                       0x48, 0x83, 0xc4, 0x28, // add rsp, 28h
+                       0xc3});                 // ret
+  std::memcpy(Bytes.data() + FileOffset(Literal), "Cold path\n", 11);
+  Code(Cold, {0x48, 0x8d, 0x0d}); // lea rcx, [rip + literal]
+  Rel32(Cold + 3, Literal);
+  Code(Cold + 7, {0xe8}); // call print
+  Rel32(Cold + 8, Print);
+  Code(Cold + 12, {0x48, 0x83, 0xc4, 0x28, // add rsp, 28h
+                   0xc3});                 // ret
+  Code(Print, {0x0f, 0xb6, 0x01,           // movzx eax, byte [rcx]
+               0xc3});                     // ret
+
+  // The function's unwind information: version 1, a four-byte prologue and
+  // its one code, `sub rsp, 28h` at offset 4.  The cold part's has no codes
+  // of its own and chains to the function's record.
+  const llvm::Win64EH::RuntimeFunction Body{
+      llvm::support::ulittle32_t(Function),
+      llvm::support::ulittle32_t(Function + 0x13),
+      llvm::support::ulittle32_t(UnwindInfo)};
+  const llvm::Win64EH::RuntimeFunction Part{
+      llvm::support::ulittle32_t(Cold), llvm::support::ulittle32_t(Cold + 17),
+      llvm::support::ulittle32_t(Chained)};
+  Code(UnwindInfo, {0x01, 0x04, 0x01, 0x00, 0x04,
+                    llvm::Win64EH::UOP_AllocSmall | (0x28 / 8 - 1) << 4});
+  Code(Chained, {0x01 | llvm::Win64EH::UNW_ChainInfo << 3, 0x00, 0x00, 0x00});
+  Write(FileOffset(Chained) + 4, Body);
+  Write(FileOffset(Records), Body);
+  Write(FileOffset(Records) + sizeof(Body), Part);
+  return Bytes;
+}
+
+TEST(LLVMCPointerAddresses, ALiteralBetweenAFunctionsPartsIsNoPartOfIt) {
+  // CcInsertIntoCleanSharedCacheMapList's shape: a cold part far below the
+  // function's body passes DbgPrint a literal MSVC placed between the two.
+  // The function's blocks run on to its cold part, but what lies between its
+  // parts is none of its code: the address is the literal the PDB names, and
+  // with no name LLVM emission refuses it rather than take it for a label of
+  // the function (`(uintptr_t)(sub_140001000) + 0x80`).
+  constexpr va_t Entry = 0x140001000, Literal = 0x140001080;
+  const std::vector<uint8_t> Bytes = makeColdPartLiteralPE();
+  auto Img = loadBinaryBuffer(llvm::MemoryBufferRef(
+      llvm::StringRef(reinterpret_cast<const char *>(Bytes.data()),
+                      Bytes.size()),
+      "cold-part-literal.exe"));
+  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+
+  const std::string Unnamed = llvmcOnlyFunction(*Img, Entry);
+  EXPECT_EQ(Unnamed.find("(sub_140001000) +"), std::string::npos) << Unnamed;
+  EXPECT_EQ(Unnamed.find("sub_140001000(uint32_t arg0) {"), std::string::npos)
+      << Unnamed;
+
+  // ntoskrnl's PDB keeps its publics apart, and names one only when asked
+  // about its address, as `--func` asks.
+  class PublicsDbg : public NullDebugContext {
+  public:
+    std::optional<DataObjectSym> resolveDataObject(va_t Addr) const override {
+      if (Addr != Literal)
+        return std::nullopt;
+      DataObjectSym Text;
+      Text.Name = "??_C@_0L@ABCDEFGH@Cold?5path?6@";
+      Text.Addr = Literal;
+      return Text;
+    }
+    bool hasInfo() const override { return true; }
+  } Dbg;
+  const std::string Named =
+      llvmcOnlyFunction(std::move(*Img), Entry, /*NoOpt=*/true, &Dbg);
+  EXPECT_NE(Named.find("\"Cold path\\n\""), std::string::npos) << Named;
+  EXPECT_EQ(Named.find("(sub_140001000) +"), std::string::npos) << Named;
 }
 
 TEST(HighCPointerAddresses, SplitScopeRangesFormOneTry) {
@@ -44102,12 +44652,13 @@ int main(void) { return sum_to_ten(5) != 60 || sum_to_ten(-55) != 0; }
 }
 
 /// Decompile x64 \p Code at 0x140001000 and run it as `sub_140001000`; the
-/// C must compute in `long double` and return \p Expected.
-void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected) {
+/// C must hold its x87 values as \p Storage and return \p Expected.
+void expectX87Result(const std::vector<uint8_t> &Code, uint64_t Expected,
+                     llvm::StringRef Storage = "long double") {
   constexpr va_t Entry = 0x140001000;
   const std::string HighC =
       highcOnlyFunction(makeCodeFixture(Entry, Code), Entry);
-  EXPECT_NE(HighC.find("long double"), std::string::npos) << HighC;
+  EXPECT_NE(HighC.find(Storage), std::string::npos) << HighC;
   // The unit is written without includes; its ten-byte accesses copy
   // through memcpy.
   compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
@@ -44143,7 +44694,9 @@ TEST(HighCPointerAddresses, X87ArithmeticComputesInLongDouble) {
 TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
   // The extended value fills ten bytes; the qword after it survives, and
   // the stored exponent word reads back.  A store of a whole C object of
-  // 12 or 16 bytes would overwrite the neighbor.
+  // 12 or 16 bytes would overwrite the neighbor.  The value comes straight
+  // from the constant ROM, which executes into raw eighty-bit storage, so
+  // nothing here computes in long double.
   expectX87Result({0x48, 0xc7, 0x44, 0x24, 0xea,
                    0x2a, 0,    0,    0,          // mov qword [rsp-16h], 42
                    0xd9, 0xe8,                   // fld1
@@ -44152,7 +44705,7 @@ TEST(HighCPointerAddresses, AnX87StoreWritesItsTenBytes) {
                    0x0f, 0xb7, 0x4c, 0x24, 0xe8, // movzx ecx, word [rsp-18h]
                    0x48, 0x01, 0xc8,             // add rax, rcx
                    0xc3},
-                  42 + 0x3FFF);
+                  42 + 0x3FFF, "_BitInt(80)");
 }
 
 TEST(HighCPointerAddresses, AScalarFloatArgumentIsADoubleParameter) {

@@ -3,9 +3,36 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+#include "KernelAPIKind.h"
 #include "KernelModel.h"
+#include "WindowsKernelLayout.h"
 
 namespace neverd::emulation {
+void KernelModel::recordUnpackEnvironmentRead() {
+  // Observed CPU identity and time cannot be rebound to a fresh kernel.
+  // API and instruction reads share this dependency independently of storage.
+  UnpackOpaqueEffects = true;
+}
+
+bool KernelModel::unpackImageMDLCall(KernelAPIKind Kind,
+                                     llvm::ArrayRef<uint64_t> A) const {
+  if (Kind == KernelAPIKind::IoAllocateMdl)
+    return !A[4] && imageOwnerForRange(A[0], uint32_t(A[1])).has_value();
+  const auto It =
+      MDLs.find(A[Kind == KernelAPIKind::MmUnmapLockedPages ? 1 : 0]);
+  if (It == MDLs.end() ||
+      (It->second.Owner != LockedMdl::Ownership::Driver &&
+       It->second.Owner != LockedMdl::Ownership::KernelLocked) ||
+      !imageOwnerForRange(It->second.OriginalAddress, It->second.ByteCount))
+    return false;
+  if (Kind == KernelAPIKind::MmProbeAndLockPages)
+    return uint8_t(A[1]) == windows::KernelMode;
+  if (Kind == KernelAPIKind::MmMapLockedPagesSpecifyCache)
+    return uint8_t(A[1]) == windows::KernelMode &&
+           uint32_t(A[2]) == windows::MmCached && !A[3];
+  return true;
+}
+
 llvm::Error KernelModel::captureUnpackBaseline() {
   if (!DriverObject || UnpackBaseline)
     return llvm::createStringError("kernel recovery baseline is not fresh");
@@ -53,24 +80,75 @@ std::map<uint64_t, uint64_t> KernelModel::unpackAllocations() const {
   return Out;
 }
 
-llvm::Expected<bool> KernelModel::hasUnpackDependencies() const {
+llvm::Expected<std::vector<std::string>>
+KernelModel::unpackDependencies() const {
   if (!UnpackBaseline)
     return llvm::createStringError("kernel recovery has no ownership baseline");
-  if (UnpackOpaqueEffects || !Allocations.empty() || EntryFinished ||
-      CurrentIRQL || Unloading)
-    return true;
+  std::vector<std::string> Reasons;
+  if (UnpackOpaqueEffects)
+    Reasons.emplace_back("unreconstructed kernel or environment effects");
+  if (UnpackMDLIdentityRead)
+    Reasons.emplace_back("observed kernel MDL physical identity");
+  if (!MDLs.empty())
+    Reasons.emplace_back("live kernel MDLs");
+  if (!Allocations.empty())
+    Reasons.emplace_back("live kernel pool allocations");
+  if (EntryFinished)
+    Reasons.emplace_back("DriverEntry has already returned");
+  if (CurrentIRQL)
+    Reasons.emplace_back("raised kernel IRQL");
+  if (Unloading)
+    Reasons.emplace_back("driver unload is in progress");
   for (const auto &[Address, Size] : ArenaAllocations)
-    if (!UnpackBaseline->count(Address) && !FreedRanges.count(Address))
-      return true;
+    if (!UnpackBaseline->count(Address) && !FreedRanges.count(Address)) {
+      // The live pool owner already captures this exact allocation's API,
+      // lifetime and extent. Only that identity can exclude an arena object
+      // from the untyped inventory; unrelated objects remain dependencies.
+      const auto Pool = Allocations.find(Address);
+      if (Pool != Allocations.end() && Pool->second.Size == Size)
+        continue;
+      Reasons.emplace_back("retained kernel object allocations");
+      break;
+    }
+  bool Released = false, Changed = false;
   for (const auto &[Address, Before] : *UnpackBaseline) {
-    if (FreedRanges.count(Address))
-      return true;
+    if (FreedRanges.count(Address)) {
+      Released = true;
+      continue;
+    }
     std::vector<uint8_t> Now(Before.size());
     if (auto E = Memory.snapshotBacking(Address, Now))
       return std::move(E);
     if (Now != Before)
-      return true;
+      Changed = true;
   }
-  return false;
+  if (Released)
+    Reasons.emplace_back("released kernel loader objects");
+  if (Changed)
+    Reasons.emplace_back("changed kernel loader objects");
+  return Reasons;
+}
+
+llvm::Expected<WindowsDriverState>
+KernelModel::captureUnpackRuntime(bool IncludeBacking) const {
+  auto Reasons = unpackDependencies();
+  if (!Reasons)
+    return Reasons.takeError();
+  WindowsDriverState State;
+  State.Reasons = std::move(*Reasons);
+  for (const auto &[Address, Allocation] : Allocations) {
+    WindowsDriverState::PoolAllocation Pool{
+        Address,        Allocation.Size, Allocation.API, Allocation.TypeOrFlags,
+        Allocation.Tag, std::nullopt};
+    if (IncludeBacking) {
+      // The allocation owner bounds the total retained payload by its arena.
+      // Keep exact live contents, independently of image integer references.
+      Pool.Bytes.emplace(Allocation.Size);
+      if (auto E = Memory.snapshotBacking(Address, *Pool.Bytes))
+        return std::move(E);
+    }
+    State.Pools.push_back(std::move(Pool));
+  }
+  return State;
 }
 } // namespace neverd::emulation

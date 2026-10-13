@@ -24,6 +24,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -1055,6 +1056,23 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   FrameAliases.clear();
   AmbiguousFrameAliases.clear();
   const bool SavedHandler = InEHClauseBody;
+  // Names this walk assigns a value that is no frame address: one derived
+  // from an alias a later assignment proved ambiguous no longer is one.
+  std::set<std::string> NotFrameAddresses;
+  std::function<bool(const HighExpr &, unsigned)> ReadsNotFrame =
+      [&](const HighExpr &E, unsigned Depth) {
+        if (NotFrameAddresses.empty() ||
+            Depth > limits::kMaxIntegerViewUnwrapDepth * 4)
+          return Depth > limits::kMaxIntegerViewUnwrapDepth * 4;
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            NotFrameAddresses.count(varName(E.Var)))
+          return true;
+        bool Reads = false;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          Reads = Reads || (Child && ReadsNotFrame(*Child, Depth + 1));
+        });
+        return Reads;
+      };
   std::function<void(const std::vector<HighStmt> &, bool, bool)> WalkAliases;
   WalkAliases = [&](const std::vector<HighStmt> &Stmts, bool InHandler,
                     bool InCleanup) {
@@ -1066,8 +1084,17 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
           (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
           S.Dst->Var.Kind != MedVar::Param) {
         const std::string Name = varName(S.Dst->Var);
+        // A value read from a name assigned a non-frame value anywhere is no
+        // frame address either, though the alias that name had when first
+        // seen still gives it a displacement (`v10 = v9 - 4` with v9 a loop
+        // cursor whose first value is `frame_base - 20`).
+        const bool FromNotFrame =
+            NotFrameAddresses.count(Name) || ReadsNotFrame(*S.Val, 0);
         if (!Name.empty() && !InCleanup) {
-          if (const auto Disp = frameDisplacement(*S.Val)) {
+          if (FromNotFrame) {
+            FrameAliases.erase(Name);
+            NotFrameAddresses.insert(Name);
+          } else if (const auto Disp = frameDisplacement(*S.Val)) {
             if (AmbiguousFrameAliases.count(Name)) {
               FrameAliases.erase(Name);
             } else if (auto It = FrameAliases.find(Name);
@@ -1080,6 +1107,9 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
           } else if (typedMemberAccess(*S.Val)) {
             FrameAliases.erase(Name);
             AmbiguousFrameAliases.insert(Name);
+          } else {
+            FrameAliases.erase(Name);
+            NotFrameAddresses.insert(Name);
           }
         }
       }
@@ -1100,12 +1130,16 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   auto CollectAliases = [&]() {
     FrameAliases.clear();
     AmbiguousFrameAliases.clear();
+    NotFrameAddresses.clear();
     bool Grew = true;
     unsigned Guard = 0;
     while (Grew && Guard++ < limits::kMaxFrameAliasFixedPoint) {
       const auto Before = FrameAliases;
+      const size_t NotBefore = NotFrameAddresses.size();
       WalkAliases(Func.Body, false, false);
-      Grew = FrameAliases != Before;
+      for (const std::string &Name : NotFrameAddresses)
+        FrameAliases.erase(Name);
+      Grew = FrameAliases != Before || NotFrameAddresses.size() != NotBefore;
     }
   };
   CollectAliases();
@@ -1150,18 +1184,30 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   };
   // A frame displacement used as a value prints as `&var_N`. Mark it
   // address-taken so copy-forward/DeadVars cannot drop the declaration.
-  std::function<void(const HighExpr &, bool)> Walk = [&](const HighExpr &E,
-                                                         bool AsAddress) {
+  // The width of the access whose address Walk is in, and each slot a
+  // run-time choice picks as such an address, with that width.
+  uint16_t AccessBytes = 0;
+  std::vector<std::pair<int64_t, uint16_t>> ChosenAccesses;
+  std::function<void(const HighExpr &, bool)> Walk;
+  const auto WalkAccessAddress = [&](const HighExpr &Address,
+                                     const TypeRef &Access) {
+    const uint16_t Saved = AccessBytes;
+    AccessBytes = Access ? Access->Size : 0;
+    Walk(Address, true);
+    AccessBytes = Saved;
+  };
+  Walk = [&](const HighExpr &E, bool AsAddress) {
     if (E.Kind == ExprKind::Load && !E.Operands.empty() && E.Operands[0]) {
       Note(E.Operands[0].get(), E.Type);
-      Walk(*E.Operands[0], true);
+      WalkAccessAddress(*E.Operands[0], E.Type);
       return;
     }
     if (E.Kind == ExprKind::Store && E.Operands.size() >= 2) {
       Note(E.Operands[0].get(), E.Operands[1] ? E.Operands[1]->Type : nullptr,
            /*AddressTaken=*/false, /*IsStore=*/true);
       if (E.Operands[0])
-        Walk(*E.Operands[0], true);
+        WalkAccessAddress(*E.Operands[0],
+                          E.Operands[1] ? E.Operands[1]->Type : nullptr);
       if (E.Operands[1])
         Walk(*E.Operands[1], false);
       return;
@@ -1177,6 +1223,24 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
     }
     if (!AsAddress && frameDisplacement(E)) {
       Note(&E, E.Type, /*AddressTaken=*/true);
+      return;
+    }
+    // A run-time choice of an access's address (`(p & m) | (&slot & ~m)`,
+    // `csel` between slots) picks a whole slot or other frame bytes; which
+    // one is settled once the slots have their types.
+    if (AsAddress && E.Kind == ExprKind::BinOp &&
+        (E.Op == NdOp::INT_AND || E.Op == NdOp::INT_OR ||
+         E.Op == NdOp::INT_XOR || E.Op == NdOp::SELECT)) {
+      for (const ExprPtr &Op : E.Operands) {
+        if (!Op)
+          continue;
+        if (const auto Disp = frameDisplacement(*Op)) {
+          Note(Op.get(), nullptr);
+          ChosenAccesses.push_back({*Disp, AccessBytes});
+        } else {
+          Walk(*Op, true);
+        }
+      }
       return;
     }
     for (const ExprPtr &Op : E.Operands)
@@ -1201,7 +1265,8 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
           Note(S.Dst->Operands[0].get(), S.Dst->Type, /*AddressTaken=*/false,
                /*IsStore=*/true);
         if (S.StoreAddr)
-          Walk(*S.StoreAddr, true);
+          WalkAccessAddress(*S.StoreAddr,
+                            S.StoreVal ? S.StoreVal->Type : nullptr);
         if (S.StoreVal)
           Walk(*S.StoreVal, false);
         if (S.Dst)
@@ -1270,6 +1335,16 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   for (auto &[Disp, Slot] : FrameSlots)
     if (!Slot.Type)
       Slot.Type = NdType::makeInt(4);
+  // A choice that picks a whole slot for an access of its width leaves the
+  // slot a named local; another access through it reaches bytes no single
+  // local holds.
+  for (const auto &[Disp, Bytes] : ChosenAccesses)
+    if (const auto It = FrameSlots.find(Disp); It != FrameSlots.end()) {
+      if (Bytes && It->second.Type->Size == Bytes)
+        It->second.Chosen = true;
+      else
+        It->second.AddressTaken = true;
+    }
 
   // Slots that share bytes are one object, not separate variables: a byte
   // stored at -0x82 changes what a later read of the eight bytes at -0x84
@@ -1333,9 +1408,10 @@ void HighCWriter::invalidateJoinPhiFrameAliases(const HighFunc &Func) {
           const bool Frame = frameDisplacement(*S.Val).has_value();
           if (Frame)
             HasFrame.insert(Name);
-          if (typedMemberAccess(*S.Val) ||
-              (!Frame && S.Val->Kind == ExprKind::BinOp &&
-               (S.Val->Op == NdOp::INT_ADD || S.Val->Op == NdOp::INT_SUB)))
+          // Any other value the name takes moves it off the slot, not only
+          // address arithmetic: a copy of the pointer a loop advances
+          // (`lo = t89`) is neither a member access nor an addition.
+          if (typedMemberAccess(*S.Val) || !Frame)
             HasOtherAddr.insert(Name);
         }
       }
@@ -3692,6 +3768,42 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
       // changes memory. This also checks loads reached through candidates.
       if (EffectfulLoadAddress)
         continue;
+      // A folded atomic read-modify-write runs at its use: no other memory
+      // access may run between, or sit unsequenced beside it in the use,
+      // including one another fold brings there.
+      const bool WritesMemory = ExprWrites(*C.Stmt->Val, ExprWrites);
+      std::set<std::string> AccessSeen{C.Name};
+      std::function<bool(const HighExpr &, unsigned)> AccessesMemory =
+          [&](const HighExpr &E, unsigned Depth) -> bool {
+        if (Depth > 64 || E.Kind == ExprKind::Load ||
+            E.Kind == ExprKind::Call || E.Kind == ExprKind::Store ||
+            E.MemoryOrdering != NdMemoryOrdering::None)
+          return true;
+        if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
+            AccessSeen.insert(varName(E.Var)).second) {
+          const std::string Read = varName(E.Var);
+          if (auto It = ValueForward.find(Read);
+              It != ValueForward.end() && It->second &&
+              AccessesMemory(*It->second, Depth + 1))
+            return true;
+          if (auto It = CandidateDefs.find(Read);
+              It != CandidateDefs.end() && It->second->Val &&
+              AccessesMemory(*It->second->Val, Depth + 1))
+            return true;
+        }
+        bool Hit = false;
+        E.forEachChildExpr([&](const ExprPtr &Child) {
+          Hit = Hit || AccessesMemory(*Child, Depth + 1);
+        });
+        return Hit;
+      };
+      auto StmtAccessesMemory = [&](const HighStmt &S) {
+        bool Hit = false;
+        forEachExpr(S, [&](const ExprPtr &E) {
+          Hit = Hit || (E && AccessesMemory(*E, 0));
+        });
+        return Hit;
+      };
       const HighExpr *Load = peelIntegerViewOps(C.Stmt->Val.get());
       if (!Load || Load->Kind != ExprKind::Load || Load->Operands.empty() ||
           !Load->Operands[0])
@@ -3712,6 +3824,9 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           [&](const HighStmt &S) -> bool {
         if (Analysis.DeadStmts.count(&S))
           return false;
+        if (WritesMemory &&
+            (S.Kind == StmtKind::Store || StmtAccessesMemory(S)))
+          return true;
         if (S.Kind == StmtKind::Assign && S.Dst &&
             (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
             Reads.count(varName(S.Dst->Var)))
@@ -3808,6 +3923,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           Changed = Changed || (OtherEffect && Escapes) ||
                     (OtherEffect && US->Kind == StmtKind::Store);
         }
+        if (WritesMemory)
+          Changed = Changed || StmtAccessesMemory(*US);
         if (const auto Join = JoinAfterTry.find(C.Region);
             Join != JoinAfterTry.end() && Join->second == UIt->second.Region) {
           const auto TryIt = TryForBody.find(C.Region);
@@ -4600,6 +4717,13 @@ TypeRef HighCWriter::emittedParamType(const HighFunc &Func,
   return EmittedParamTypes[Index];
 }
 
+TypeRef HighCWriter::emittedParamTypeAt(const HighFunc &Func,
+                                        size_t Position) const {
+  const std::vector<size_t> Indices = emittedParamIndices(Func);
+  return Position < Indices.size() ? emittedParamType(Func, Indices[Position])
+                                   : nullptr;
+}
+
 size_t HighCWriter::emittedParamCount(const HighFunc &Func) const {
   return emittedParamIndices(Func).size();
 }
@@ -4621,11 +4745,23 @@ HighCWriter::emittedParamIndices(const HighFunc &Func) const {
       It != EmittedParamIndices.end() && It->second.size() <= N)
     return It->second;
   std::set<int> Used;
-  // An indirect call's target is a use too.
+  ParamIndicesInProgress.insert(&Func);
+  const auto Done =
+      llvm::make_scope_exit([&] { ParamIndicesInProgress.erase(&Func); });
+  // An indirect call's target is a use too.  A call's operand that its
+  // callee's definition does not declare is none: the call does not pass it.
   std::function<void(const HighExpr &)> Walk = [&](const HighExpr &E) {
     if ((E.Kind == ExprKind::Var || E.Kind == ExprKind::Phi) &&
         E.Var.Kind == MedVar::Param)
       Used.insert(E.Var.Id);
+    if (E.Kind == ExprKind::Call)
+      if (const std::vector<size_t> Passed = printedCallOperands(E);
+          !Passed.empty()) {
+        for (size_t I : Passed)
+          if (I < E.Operands.size() && E.Operands[I])
+            Walk(*E.Operands[I]);
+        return;
+      }
     E.forEachChildExpr([&](const ExprPtr &Child) { Walk(*Child); });
   };
   walkStmts(Func.Body, [&](const HighStmt &S) {
@@ -5052,6 +5188,8 @@ void HighCWriter::foldCxxThrowConstructors(const HighFunc &Func) {
       if (!Call)
         continue;
       if (isMsvcCxxThrowCallName(Call->CallTarget)) {
+        if (cxxScalarThrowType(*Call))
+          continue;
         if (Call->Operands.size() < 2 || !Call->Operands[0] ||
             !Call->Operands[1])
           continue;
@@ -5067,6 +5205,8 @@ void HighCWriter::foldCxxThrowConstructors(const HighFunc &Func) {
         if (!ThrowInfo)
           continue;
         std::string Type = readMsvcThrowInfoFirstType(*Opts.Image, *ThrowInfo);
+        if (Type.empty())
+          continue;
         Type = cNamedTypeSpelling(Type);
         if (Type.empty() || !isCxxThrowTypeIdent(Type))
           continue;
@@ -5479,18 +5619,12 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   auto CheckDynamicFrameIndex = [&](auto &&Self, const HighExpr &Expr) -> void {
     if (HasDynamicFrameIndex)
       return;
-    if (Expr.Kind == ExprKind::BinOp &&
-        (Expr.Op == NdOp::INT_ADD || Expr.Op == NdOp::INT_SUB) &&
-        Expr.Operands.size() == 2 && Expr.Operands[0] && Expr.Operands[1] &&
-        !certifiedFrameStorageDisplacement(Expr) &&
-        (certifiedFrameStorageDisplacement(*Expr.Operands[0]) ||
-         certifiedFrameStorageDisplacement(*Expr.Operands[1]))) {
+    if (reachesFrameThroughIndex(Expr)) {
       HasDynamicFrameIndex = true;
       return;
     }
-    for (const ExprPtr &Operand : Expr.Operands)
-      if (Operand)
-        Self(Self, *Operand);
+    // An indirect callee loaded through such an address reads the frame too.
+    Expr.forEachChildExpr([&](const ExprPtr &Child) { Self(Self, *Child); });
   };
   walkStmts(Func.Body, [&](const HighStmt &Stmt) {
     if (Stmt.Dst)
@@ -5506,7 +5640,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // no named load reads them. Indexed and escaped frames keep their stores.
   const bool PreserveFrameStores =
       HasDynamicFrameIndex || llvm::any_of(FrameSlots, [](const auto &Entry) {
-        return Entry.second.AddressTaken;
+        return Entry.second.AddressTaken || Entry.second.Chosen;
       });
   // Copy propagation belongs to the HighIR passes, which prove reaching
   // definitions. A function-wide textual alias map cannot represent loop
@@ -5588,12 +5722,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     // A frame alias plus a run-time index cannot be a standalone C local.
     // Fixed slot accesses must share its backing bytes, including across a
     // catch funclet where Param 1 is the parent's establisher frame.
-    if (Expr.Kind == ExprKind::BinOp &&
-        (Expr.Op == NdOp::INT_ADD || Expr.Op == NdOp::INT_SUB) &&
-        Expr.Operands.size() == 2 && Expr.Operands[0] && Expr.Operands[1] &&
-        !certifiedFrameStorageDisplacement(Expr) &&
-        (certifiedFrameStorageDisplacement(*Expr.Operands[0]) ||
-         certifiedFrameStorageDisplacement(*Expr.Operands[1]))) {
+    if (reachesFrameThroughIndex(Expr)) {
       NeedsFrameStorage = true;
       ProjectFrameAliasesIntoStorage = true;
       return;
@@ -6286,6 +6415,11 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
           "uint8_t " + Slot.Name + "[" + std::to_string(Slot.RegionBytes) + "]";
     else
       Decl.Type = cDisplayType(Slot.Type);
+    // A slot's name has its declared type, as a local's has, whether it is
+    // declared here or after the body: `var_m24 < 0` is no signed test of a
+    // uint32_t slot.
+    if (Decl.Type && Decl.Type->Kind == NdTypeKind::Int && !Decl.Type->IsEnum)
+      DeclaredCTypes.emplace(Slot.Name, Decl.Type);
     const bool Printed = PrintedAddrSlots.count(Slot.Name) ||
                          PrintedSlotStores.count(Slot.Name) ||
                          PrintedSlotLoads.count(Slot.Name);
@@ -6323,6 +6457,8 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
   // Render the body first: a name the declaration pass expected to be
   // forwarded or dead may still be printed, and it must be declared.
   std::string Body;
+  const size_t FirstBodyAnchor =
+      SourceRecorder ? SourceRecorder->positionBuffer() : 0;
   {
     llvm::raw_string_ostream BodyOS(Body);
     llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
@@ -6361,6 +6497,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     emitIndent(1);
     OS << Type << " " << Name << ";\n";
   }
+  if (SourceRecorder && SourceRecorder->recordsPositions())
+    SourceRecorder->appendPositionBuffer(FirstBodyAnchor, Body.size(),
+                                         OS.tell());
   OS << Body;
   if (EmitFunctionWrapper && !IndirectReturnName.empty() &&
       !PrintedIndirectReturn) {

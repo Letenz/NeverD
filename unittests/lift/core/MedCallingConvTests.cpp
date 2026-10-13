@@ -220,8 +220,16 @@ TEST(MedCallingConvValueFlow, VectorParameterBanksRespectTheImageABI) {
                    MedVar::makeConst(0x4000 + 16 * I, TRI.PointerSize), V));
       }
       detectXMMParams(F, B, TRI, Vars, A, Format);
-      const unsigned Expected =
-          A == Arch::X64 && Format == BinaryFormat::COFF ? 4 : 8;
+      // Win64 passes floating arguments in its four positional slots; i386
+      // in XMM0-XMM2 under System V, XMM0-XMM3 on Darwin and XMM0-XMM5 with
+      // __vectorcall.
+      unsigned Expected = 8;
+      if (A == Arch::X64 && Format == BinaryFormat::COFF)
+        Expected = 4;
+      else if (A == Arch::X86)
+        Expected = Format == BinaryFormat::ELF     ? 3
+                   : Format == BinaryFormat::MachO ? 4
+                                                   : 6;
       ASSERT_EQ(F.Params.size(), Expected);
       for (unsigned I = 0; I != Expected; ++I)
         EXPECT_EQ(F.Params[I].RegOff, TRI.VecRegBase + I * TRI.VecRegStride);
@@ -364,6 +372,247 @@ TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
                                      : int(Layout.Registers.size()));
           }
         }
+}
+
+TEST(MedCallingConvFPStack,
+     ScalarConversionUsesSourceExtentAndPreservesControl) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 16; ++Control) {
+      if (!x86FPScalarConvertControlIsValid(Control))
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      constexpr auto Architecture = Arch::X64;
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Architecture);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Architecture);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86FPScalarConvertDestinationBytes(Control) + 4,
+                         Architecture);
+      Read.addInput(MedVar::makeConst(
+          unsigned(Intrinsic::X86FPScalarConvertMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0x9fa5, 4));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Architecture, Format);
+      ASSERT_FALSE(F.Params.empty());
+      EXPECT_TRUE(F.MutableStackParamHomes.empty());
+      const auto &ValueRead = F.Blocks[0].Ops.back();
+      EXPECT_EQ(ValueRead.Inputs[0].ConstVal,
+                unsigned(Intrinsic::X86FPScalarConvertState));
+      EXPECT_TRUE(
+          x86FPStateShapeIsValid(Intrinsic::X86FPScalarConvertState,
+                                 x86FPStateMedShape(ValueRead, Architecture)));
+      EXPECT_EQ(ValueRead.Output, Read.Output);
+      EXPECT_EQ(ValueRead.Inputs[2], Read.Inputs[2]);
+      EXPECT_EQ(ValueRead.Inputs[3], Read.Inputs[3]);
+      EXPECT_EQ(ValueRead.Inputs[1].Size,
+                x86FPScalarConvertSourceBytes(Control));
+      EXPECT_EQ(ValueRead.Inputs[1].Kind, MedVar::Param);
+      EXPECT_EQ(ValueRead.Inputs[1].Id, int(Layout.Registers.size()));
+    }
+}
+
+TEST(MedCallingConvFPStack,
+     PackedConversionRetainsEverySourceHomeAndMemoryContract) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 32; ++Control) {
+      if (!x86FPPackedConvertControlIsValid(Control))
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86FPPackedConvertDestinationBytes(Control) + 4,
+                         Arch::X64);
+      Read.addInput(MedVar::makeConst(
+          unsigned(Intrinsic::X86FPPackedConvertMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0x1f80, 4));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      EXPECT_EQ(F.Blocks[0].Ops.back().Inputs[0].ConstVal,
+                Read.Inputs[0].ConstVal);
+      const unsigned Slots = x86FPPackedConvertSourceBytes(Control) / 8;
+      ASSERT_EQ(F.MutableStackParamHomes.size(), Slots);
+      for (unsigned Slot = 0; Slot < Slots; ++Slot) {
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].first,
+                  int(Layout.Registers.size() + Slot));
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].second,
+                  Layout.EntryStackBase + int64_t(Slot * 8));
+      }
+    }
+}
+
+TEST(MedCallingConvFPStack, F16CReadsRetainSourceHomesAndStoresAreNotReads) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 4; ++Control) {
+      if (Control & 1)
+        continue;
+      SCOPED_TRACE(testing::Message() << int(Format) << ':' << Control);
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, x86F16CDestinationBytes(Control) + 4, Arch::X64);
+      Read.addInput(
+          MedVar::makeConst(unsigned(Intrinsic::X86F16CReadState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      Read.addInput(MedVar::makeConst(0, 1));
+      Read.addInput(MedVar::makeConst(0x1f80, 4));
+      const auto Descriptor = med_calling_conv_detail::stackMemoryRead(Read);
+      ASSERT_TRUE(Descriptor);
+      EXPECT_EQ(Descriptor->Bytes, x86F16CSourceBytes(Control));
+      EXPECT_FALSE(Descriptor->ScalarFP);
+      MedOp Store;
+      Store.Opcode = NdOp::INTRINSIC;
+      Store.Output = temp(9, 0, 4, Arch::X64);
+      Store.addInput(
+          MedVar::makeConst(unsigned(Intrinsic::X86F16CStoreState), 2));
+      Store.addInput(Address);
+      Store.addInput(MedVar::makeConst(0, x86F16CSourceBytes(Control | 1)));
+      Store.addInput(MedVar::makeConst(Control | 1, 1));
+      Store.addInput(MedVar::makeConst(0, 1));
+      Store.addInput(MedVar::makeConst(0x1f80, 4));
+      EXPECT_TRUE(x86FPStateShapeIsValid(Intrinsic::X86F16CStoreState,
+                                         x86FPStateMedShape(Store)));
+      EXPECT_FALSE(med_calling_conv_detail::stackMemoryRead(Store));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      EXPECT_EQ(F.Blocks[0].Ops.back().Inputs[0].ConstVal,
+                Read.Inputs[0].ConstVal);
+      const unsigned Slots = x86F16CSourceBytes(Control) / 8;
+      ASSERT_EQ(F.MutableStackParamHomes.size(), Slots);
+      for (unsigned Slot = 0; Slot < Slots; ++Slot) {
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].first,
+                  int(Layout.Registers.size() + Slot));
+        EXPECT_EQ(F.MutableStackParamHomes[Slot].second,
+                  Layout.EntryStackBase + int64_t(Slot * 8));
+      }
+    }
+}
+
+TEST(MedCallingConvFPStack, ScalarFlagComparisonRetainsBothValuesAndMxcsr) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control = 0; Control < 8; ++Control) {
+      const auto &TRI = getTargetRegInfo(Arch::X64);
+      const auto Layout = TRI.integerArgumentLayout(Format);
+      MedFunc F;
+      F.Blocks.resize(1);
+      auto &B = F.Blocks[0];
+      const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+      addLiveIn(B, SP);
+      const auto Address = temp(2, 0, 8, Arch::X64);
+      B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                             MedVar::makeConst(Layout.EntryStackBase, 8)));
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Output = temp(3, 0, 8, Arch::X64);
+      Read.addInput(
+          MedVar::makeConst(unsigned(Intrinsic::X86FPComiMemoryState), 2));
+      Read.addInput(Address);
+      Read.addInput(MedVar::makeConst(Control, 1));
+      const auto Left = MedVar::makeConst(0, x86FPComiElementBytes(Control));
+      const auto State = MedVar::makeConst(0x1fa5, 4);
+      Read.addInput(Left);
+      Read.addInput(State);
+      const auto Descriptor = med_calling_conv_detail::stackMemoryRead(Read);
+      ASSERT_TRUE(Descriptor);
+      EXPECT_TRUE(Descriptor->ScalarFP);
+      EXPECT_EQ(Descriptor->Bytes, x86FPComiElementBytes(Control));
+      B.Ops.push_back(Read);
+      med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+      const auto &Value = F.Blocks[0].Ops.back();
+      EXPECT_EQ(Value.Inputs[0].ConstVal, unsigned(Intrinsic::X86FPComiState));
+      EXPECT_EQ(Value.Inputs[1].ConstVal, Control);
+      EXPECT_EQ(Value.Inputs[2], Left);
+      EXPECT_EQ(Value.Inputs[3].Size, x86FPComiElementBytes(Control));
+      EXPECT_EQ(Value.Inputs[4], State);
+      EXPECT_TRUE(x86FPStateShapeIsValid(Intrinsic::X86FPComiState,
+                                         x86FPStateMedShape(Value, Arch::X64)));
+      EXPECT_TRUE(F.MutableStackParamHomes.empty());
+    }
+}
+
+TEST(MedCallingConvFPStack,
+     ScalarMaskComparisonRetainsPredicateBothValuesAndMxcsr) {
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+    for (unsigned Control : {2U, 3U, 6U, 7U})
+      for (unsigned Immediate : {8U, 16U, 0xe8U, 255U}) {
+        const auto &TRI = getTargetRegInfo(Arch::X64);
+        const auto Layout = TRI.integerArgumentLayout(Format);
+        MedFunc F;
+        F.Blocks.resize(1);
+        auto &B = F.Blocks[0];
+        const auto SP = reg(1, 0, 8, TRI.StackPointer, Arch::X64);
+        addLiveIn(B, SP);
+        const auto Address = temp(2, 0, 8, Arch::X64);
+        B.Ops.push_back(binary(NdOp::INT_ADD, Address, SP,
+                               MedVar::makeConst(Layout.EntryStackBase, 8)));
+        const unsigned Bytes = x86FPMaskCompareElementBytes(Control);
+        MedOp Read;
+        Read.Opcode = NdOp::INTRINSIC;
+        Read.Output = temp(3, 0, Bytes + 4, Arch::X64);
+        Read.addInput(MedVar::makeConst(
+            unsigned(Intrinsic::X86FPMaskCompareMemoryState), 2));
+        Read.addInput(Address);
+        Read.addInput(MedVar::makeConst(Control, 1));
+        Read.addInput(MedVar::makeConst(Immediate, 1));
+        const auto Left = MedVar::makeConst(0, Bytes),
+                   State = MedVar::makeConst(0x1fa5, 4);
+        Read.addInput(Left);
+        Read.addInput(State);
+        const auto Descriptor = med_calling_conv_detail::stackMemoryRead(Read);
+        ASSERT_TRUE(Descriptor);
+        EXPECT_TRUE(Descriptor->ScalarFP);
+        EXPECT_EQ(Descriptor->Bytes, Bytes);
+        B.Ops.push_back(Read);
+        med_calling_conv_detail::detectStackParams(F, Arch::X64, Format);
+        const auto &Value = F.Blocks[0].Ops.back();
+        EXPECT_EQ(Value.Inputs[0].ConstVal,
+                  unsigned(Intrinsic::X86FPMaskCompareState));
+        EXPECT_EQ(Value.Inputs[1].ConstVal, Control);
+        EXPECT_EQ(Value.Inputs[2].ConstVal, Immediate);
+        EXPECT_EQ(Value.Inputs[3], Left);
+        EXPECT_EQ(Value.Inputs[4].Size, Bytes);
+        EXPECT_EQ(Value.Inputs[5], State);
+        EXPECT_TRUE(
+            x86FPStateShapeIsValid(Intrinsic::X86FPMaskCompareState,
+                                   x86FPStateMedShape(Value, Arch::X64)));
+        EXPECT_TRUE(F.MutableStackParamHomes.empty());
+      }
 }
 
 TEST(MedCallingConvFPStack, MemoryOwnershipAndMalformedReadsAreConservative) {
@@ -7196,6 +7445,28 @@ TEST(CallRegisterEffects, StackProbeIsNoCall) {
   }
 }
 
+// A summary tracks the general registers whole and each of xmm0..xmm7 by its
+// low sixteen bytes: a call to a callee that never writes a family keeps
+// exactly those bytes.
+TEST(CallRegisterEffects, APreservedFamilyKeepsTheBytesItTracks) {
+  const uint64_t XMM1 = x86reg::VectorBase + x86reg::VectorRegStride;
+  const uint32_t KeepsRAXAndXMM1 =
+      (uint32_t(1) << *gprFamilyOf(Arch::X64, x86reg::RAX)) |
+      (uint32_t(1) << registerFamilyOf(Arch::X64, XMM1)->first);
+  EXPECT_TRUE(
+      callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, x86reg::RAX, 8));
+  EXPECT_TRUE(callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, XMM1, 16));
+  EXPECT_TRUE(
+      callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, XMM1 + 8, 8));
+  // The upper half of ymm1 is no part of the family (vzeroupper writes it).
+  EXPECT_FALSE(
+      callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1, XMM1, 32));
+  EXPECT_FALSE(callPreservesRegisterBytes(Arch::X64, KeepsRAXAndXMM1,
+                                          x86reg::VectorBase, 16));
+  EXPECT_FALSE(callPreservesRegisterBytes(Arch::X64, 0, XMM1, 16));
+  EXPECT_FALSE(callPreservesRegisterBytes(Arch::AArch64, ~uint32_t(0), 0, 8));
+}
+
 TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
   // `setbe r8b` lifts as `t = r8 & ~0xFF; u = t | flag; r8 = u` in one
   // instruction.  The old R8 reaches only bytes no later `test r8b, r8b`
@@ -7234,6 +7505,108 @@ TEST(CallRegisterEffects, MaskedByteMergeIsALowWrite) {
   EXPECT_EQ(Summary(8, true), 8u);
   // A merge into another register reads all of R8.
   EXPECT_EQ(Summary(1, false), 8u);
+}
+
+TEST(CallRegisterEffects, ASyscallReadsOnlyItsOwnArguments) {
+  // `mov eax, N; syscall`: the lifter keeps all six argument registers live,
+  // packing RDX:RSI and R8:R10.  Linux exit (60) reads only RDI; a number
+  // the arity table does not list may read every argument register.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  auto Reads = [&](uint64_t Number) {
+    LowFunc Low = makeOneBlockLow(0x1000, "sys", [&](auto Push) {
+      Push(NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {NdVar::cst(Number, 8)});
+      Push(NdOp::CONCAT, NdVar::tmp(1, 16),
+           {NdVar::reg(x86reg::RDX, 8), NdVar::reg(x86reg::RSI, 8)});
+      Push(NdOp::CONCAT, NdVar::tmp(2, 16),
+           {NdVar::reg(x86reg::R8, 8), NdVar::reg(x86reg::R10, 8)});
+      Push(NdOp::INTRINSIC, NdVar::tmp(3, 16),
+           {NdVar::cst(static_cast<uint64_t>(Intrinsic::X64Syscall), 2),
+            NdVar::reg(x86reg::RAX, 8), NdVar::reg(x86reg::RDI, 8),
+            NdVar::tmp(1, 16), NdVar::tmp(2, 16), NdVar::reg(x86reg::R9, 8)});
+    });
+    LowBlock &Block = Low.Blocks.front();
+    for (const auto [First, Count] :
+         {std::pair<size_t, size_t>{0, 1}, {1, 3}, {4, 1}}) {
+      LowInstructionBoundary Boundary;
+      Boundary.Address = 0x1000 + First;
+      Boundary.Size = 1;
+      Boundary.FirstOp = First;
+      Boundary.OpCount = Count;
+      Block.InstructionBoundaries.push_back(Boundary);
+    }
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+        (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    return solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}},
+                                    Args, Args)
+        .EntryReads.at(0x1000);
+  };
+  const GPRReadWidths Exit = Reads(60);
+  EXPECT_EQ(Exit[x86reg::RDI / 8], 8u);
+  for (uint64_t Register :
+       {x86reg::RSI, x86reg::RDX, x86reg::R10, x86reg::R8, x86reg::R9})
+    EXPECT_EQ(Exit[Register / 8], 0u) << Register;
+  const GPRReadWidths Unlisted = Reads(0x7FFF);
+  for (uint64_t Register : {x86reg::RDI, x86reg::RSI, x86reg::RDX, x86reg::R10,
+                            x86reg::R8, x86reg::R9})
+    EXPECT_EQ(Unlisted[Register / 8], 8u) << Register;
+}
+
+TEST(CallRegisterEffects, AZeroIdiomReadsNothing) {
+  // `pxor xmm0, xmm0` lifts as a self-XOR.  LowToMed folds it to zero, so
+  // the summary takes it as no read of XMM0 either; otherwise every caller
+  // passes XMM0, and so do their callers.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  const NdVar Xmm0 = NdVar::reg(x86reg::VectorBase, 16);
+  LowFunc Low = makeOneBlockLow(0x1000, "zero", [&](auto Push) {
+    Push(NdOp::INT_XOR, Xmm0, {Xmm0, Xmm0});
+    Push(NdOp::STORE, NdVar(), {NdVar::reg(x86reg::RDI, 8), Xmm0});
+  });
+  const GPRFamilyMask Args =
+      (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+      (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+      (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+  const GPRReadWidths Reads =
+      solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}}, Args,
+                               Args)
+          .EntryReads.at(0x1000);
+  EXPECT_EQ(Reads[x86reg::RDI / 8], 8u);
+  EXPECT_EQ(Reads[kX64VectorFamilyBase], 0u);
+}
+
+TEST(CallRegisterEffects, VzeroupperKeepsTheLowLanesInPlace) {
+  // `vzeroupper` lifts as ZMMn = ZEXT(XMMn) for each register: it keeps the
+  // low lanes, which is no read of them; a later read of those lanes still
+  // reads the incoming value.
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Format = BinaryFormat::ELF;
+  Img.ELFMetadata.emplace();
+  const NdVar Xmm1 = NdVar::reg(x86reg::VectorBase + 64, 16);
+  const NdVar Zmm1 = NdVar::reg(x86reg::VectorBase + 64, 64);
+  auto Reads = [&](bool ReadAfter) {
+    LowFunc Low = makeOneBlockLow(0x1000, "vz", [&](auto Push) {
+      Push(NdOp::INT_ZEXT, Zmm1, {Xmm1});
+      if (ReadAfter)
+        Push(NdOp::STORE, NdVar(), {NdVar::reg(x86reg::RDI, 8), Xmm1});
+    });
+    const GPRFamilyMask Args =
+        (1u << (x86reg::RDI / 8)) | (1u << (x86reg::RSI / 8)) |
+        (1u << (x86reg::RDX / 8)) | (1u << (x86reg::RCX / 8)) |
+        (1u << (x86reg::R8 / 8)) | (1u << (x86reg::R9 / 8));
+    return solveCallRegisterEffects({{0x1000, localRegisterEffect(Img, Low)}},
+                                    Args, Args)
+        .EntryReads.at(0x1000)[kX64VectorFamilyBase + 1];
+  };
+  EXPECT_EQ(Reads(false), 0u);
+  EXPECT_EQ(Reads(true), 16u);
 }
 
 TEST(CallRegisterEffects, BoundsTheIncomingStackSlotsABodyReads) {

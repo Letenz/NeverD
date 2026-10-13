@@ -1,6 +1,6 @@
 **Idiomas**: [English](../README.md) | [简体中文](../zh-CN/README.md) | [繁體中文](../zh-TW/README.md) | [日本語](../ja/README.md) | [한국어](../ko/README.md) | [Français](../fr/README.md) | [Deutsch](../de/README.md) | [Español](README.md) | [Italiano](../it/README.md) | [Русский](../ru/README.md) | [العربية](../ar/README.md)
 
-<!-- i18n-source: 1766702e8951abac4d159f4230a7fdc40434e0db718f1e57e80410dbf7cdf9b3 -->
+<!-- i18n-source: 1af6ecd5944b90deebffd661bc746dba46c505fcb5c57991ad0de2f45c50968e -->
 
 [← Proyecto NeverD](project.md)
 
@@ -17,6 +17,7 @@ Las guías en inglés se encuentran directamente en `docs/`. Las traducciones se
 | [README (español)](project.md) | Resumen, inicio rápido, compilación, SDK, CLI |
 | [Contribución](CONTRIBUTING.md) | Entorno, perfiles de compilación, flujo, estilo y requisitos de PR |
 | [Arquitectura](architecture.md) | Rutas IR, límites de componentes, lifting estricto, profundidad de soporte y puntos de edición |
+| [Parches de código fuente y objetos nativos](source-patching.md) | Compiladores, objetos nativos, enlaces, excepciones, transacciones y perfiles verificados |
 | [Análisis web sin conexión (inglés)](../web-analysis.md) | Inspección C++ de artefactos, fuentes, enlaces y mapas, política de metadatos, SDK y validación actual |
 | [Reescrituras primitivas de JavaScript (inglés)](../web-source-rewrite-profile.md) | Pasadas explícitas, comprobaciones de sustitución local, inversa exacta y exportación local vinculada al comprobante |
 | [Perfil de Bun autónomo (inglés)](../web-bun-profile.md) | Extracción delimitada de ELF, Mach-O de una arquitectura y PE para x64/ARM64, rangos originales y procedencia de muestras fijadas |

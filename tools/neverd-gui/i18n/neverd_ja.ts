@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>オペランドの数値をビット反転して表示します</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>コード(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>現在のアドレスから命令を定義します</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>オフラインのパッケージレビュー(&amp;R)...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>ローカルのパッケージの証拠とアナリストのレビューを調べます</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>PDB ファイル(&amp;P)...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>選択した PDB ファイルからシンボルを読み込む</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1428,6 +1452,14 @@ Double-click to go to the declaration.</source>
         <translation>
             <numerusform>C で表示した宣言 %n 個</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>キャンセル済み</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>保存された変数名は別のソース表示のものです</translation>
     </message>
 </context>
 <context>
@@ -2048,6 +2080,62 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>%1 の読み込み方法が不明です: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>このソース行へのコメント：</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>新しい名前：</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>名前の変更</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>名前を変更する宣言済みの変数またはイメージ内の名前を選択してください</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>ソース行を選択してください。折りたたまれたコードは展開してからコメントしてください</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>選択した名前にはイメージ内のアドレスがありません</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>この命令にはソース行へのアドレス対応がありません。</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>このソース行には命令アドレスへの対応がありません。関数の入口を表示します</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>PDB ファイルを読み込む</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>PDB ファイル (*.pdb);;すべてのファイル (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>未検証の PDB を解析に使用</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>この PE には PDB の照合識別情報（GUID/age）がありません。選択した PDB のアーキテクチャとセクション配置は一致しますが、同じビルドのものか確認できません。
+
+この PDB を解析に使用しますか？シンボル、型、関数シグネチャ、アドレス範囲を解析の入力として使用します。誤った PDB を選ぶと解析結果が不正確になる可能性があります。</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>このエンジンは未検証の PDB による解析に対応していません</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2186,6 +2274,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>開いたファイルがここに表示されます。[新規] を選ぶか、このウィンドウにファイルをドロップしてください。</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>最終オープン：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2308,6 +2400,22 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>プラットフォーム: %1（コードから判定: %2）</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>%1 にはすでに命令が定義されています</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB を読み込みました: %1（%2 個の名前、識別情報を検証済み）</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>PDB の表示名をインポートしました: %1（%2 個の名前、未検証）</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>解析用 PDB を読み込みました: %1（%2 個の名前、ユーザー確認済み、識別情報は未検証）</translation>
     </message>
 </context>
 <context>
@@ -2525,6 +2633,40 @@ Signed: %4</source>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>最小化</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>最大化</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>元に戻す</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>閉じる</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>解析プロセスが停止しました。</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>解析の読み取りのみが許可されています。</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>解析プロセスは解析状態を復元できません。</translation>
     </message>
 </context>
 </TS>

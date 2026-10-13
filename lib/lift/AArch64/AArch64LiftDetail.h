@@ -50,6 +50,17 @@ inline bool isFPLaneSize(unsigned LaneSz) {
 /// non-FP/unknown.  Defined in AArch64LiftSIMDExt.cpp.
 unsigned complexElemSize(AArch64Layout_VectorLayout Vas);
 
+/// The immediate `mov Rd, #imm` writes to \p Dst.  Capstone gives the
+/// bitmask immediate of the ORR alias sign-extended to 64 bits; a W register
+/// receives its low 32.
+inline NdVar movedImmediate(const AArch64Lifter::LiftState &S, NdVar Imm,
+                            const NdVar &Dst) {
+  if (!Imm.isConst() || Dst.Size == 0 || Dst.Size >= Imm.Size)
+    return Imm;
+  return S.wideImmediate(Imm.Offset & ((uint64_t(1) << (8 * Dst.Size)) - 1),
+                         Dst.Size);
+}
+
 /// Broadcast a SIMD logical immediate across every lane and OR / AND-NOT
 /// it into the destination register (`orr vD.<T>, #imm` / `bic vD.<T>,
 /// #imm`).  Defined in AArch64LiftCore.cpp.

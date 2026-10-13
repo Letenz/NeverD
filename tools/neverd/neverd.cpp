@@ -132,6 +132,11 @@ static int realMain(int Argc, char *Argv[]) {
     return 1;
   }
 
+  if (PdbUnverified && PdbFile.getValue().empty()) {
+    WithColor::error() << "--pdb-unverified needs the PDB named by --pdb\n";
+    return 1;
+  }
+
   neverd_session_t Sess = neverd_session_create();
   SessionGuard SessGuard(Sess);
 
@@ -139,7 +144,8 @@ static int realMain(int Argc, char *Argv[]) {
   // place before the load rather than adjusted afterwards.
   neverd_session_set_debug_info_enabled(Sess, NoDebug ? 0 : 1);
   if (!PdbFile.getValue().empty())
-    neverd_session_set_pdb_path(Sess, PdbFile.getValue().c_str());
+    neverd_session_set_pdb_path_ex(Sess, PdbFile.getValue().c_str(),
+                                   PdbUnverified ? 1 : 0);
   if (!MapFile.getValue().empty())
     neverd_session_set_map_path(Sess, MapFile.getValue().c_str());
   std::set<neverd_va_t> SeenARMEntries;
@@ -285,7 +291,8 @@ static int realMain(int Argc, char *Argv[]) {
     }
   }
 
-  if (!JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd) {
+  if (!JsonOutput && !SymbolicCmd && !AuditCmd && !HuntCmd &&
+      !(PatchCmd && PatchReport)) {
     const char *ArchStr = neverd_session_arch_name(Sess);
     outs() << "=== " << ProjectName << " v" << VersionString << " (" << Command
            << ") ===\n";

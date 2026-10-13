@@ -29,7 +29,7 @@
     </message>
     <message>
         <source>Signature &amp;directory...</source>
-        <translation>Ré&amp;pertoire de signatures...</translation>
+        <translation>Répertoire de &amp;signatures...</translation>
     </message>
     <message>
         <source>Apply every matching pack from a signature tree</source>
@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Afficher le nombre de l&apos;opérande avec ses bits inversés</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>Cod&amp;e</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Définir des instructions à partir de l'adresse courante</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>Examen hors ligne des &amp;paquets...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Inspecter les preuves locales des paquets et les examens des analystes</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>Fichier &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Charger les symboles depuis un fichier PDB sélectionné</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1431,6 +1455,14 @@ Double-cliquez pour aller à la déclaration.</translation>
             <numerusform>%n déclaration affichée en C</numerusform>
             <numerusform>%n déclarations affichées en C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Annulé</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Les noms de variables enregistrés appartiennent à un autre rendu du source</translation>
     </message>
 </context>
 <context>
@@ -2052,6 +2084,62 @@ Signé : %4</translation>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>La façon de charger %1 est inconnue : %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Commentaire de cette ligne source :</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Nouveau nom :</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Renommer</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Sélectionnez une variable déclarée ou un nom de l'image à renommer</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Sélectionnez une ligne source ; dépliez le code replié avant de le commenter</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>Le nom sélectionné n'a pas d'adresse dans l'image</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Cette instruction n'a pas de correspondance d'adresse avec une ligne source.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Cette ligne source n'a pas de correspondance avec l'adresse d'une instruction ; affichage de l'entrée de la fonction</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Charger un fichier PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Fichiers PDB (*.pdb);;Tous les fichiers (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Utiliser une PDB non vérifiée pour l’analyse</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>Ce PE ne contient pas d’identité PDB (GUID/age). L’architecture et la disposition des sections du PDB sélectionné correspondent, mais sa compilation ne peut pas être vérifiée.
+
+Utiliser cette PDB pour l’analyse ? Ses symboles, types, signatures de fonctions et plages d’adresses seront utilisés comme données d’analyse. Une PDB incorrecte peut produire des résultats erronés.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Ce moteur ne peut pas utiliser une PDB non vérifiée pour l’analyse</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2190,6 +2278,10 @@ Signé : %4</translation>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Les fichiers que vous ouvrez apparaissent ici. Choisissez Nouveau ou déposez un fichier sur cette fenêtre.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Dernière ouverture : %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2312,6 +2404,22 @@ Signé : %4</translation>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Plate-forme : %1, détectée d&apos;après le code : %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>Une instruction est déjà définie à %1</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB chargé : %1 (%2 noms, identité vérifiée)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Noms d’affichage PDB importés : %1 (%2 noms, non vérifiés)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB chargée pour l’analyse : %1 (%2 noms, confirmation utilisateur, identité non vérifiée)</translation>
     </message>
 </context>
 <context>
@@ -2529,6 +2637,40 @@ Signé : %4</translation>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Réduire</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Agrandir</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Restaurer</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Fermer</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Le processus d'analyse s'est arrêté.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Seules les lectures de l'analyse sont autorisées.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>Le processus d'analyse ne peut pas restaurer l'état de l'analyse.</translation>
     </message>
 </context>
 </TS>

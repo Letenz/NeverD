@@ -211,6 +211,18 @@ void MedLLVMEmitter::emitReturnOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
             V = Builder.CreatePtrToInt(Sym, llvm::Type::getInt64Ty(*Ctx));
         if (!V)
           V = GetReturnValue(*RV);
+      } else {
+        // No write reaches the field: it returns the register's incoming
+        // value, the argument a caller passed there when recoverCallAbi made
+        // the register a parameter.
+        MedVar LiveIn;
+        LiveIn.Kind = MedVar::Reg;
+        LiveIn.RegOff = RR.RegOff;
+        LiveIn.Size = RR.Size;
+        LiveIn.SSAVer = 0;
+        LiveIn.Id = -1;
+        LiveIn.TheArch = TargetArch;
+        V = GetReturnValue(LiveIn);
       }
       V = V ? coerce(V, FT) : llvm::Constant::getNullValue(FT);
       Agg = Builder.CreateInsertValue(Agg, V, I);

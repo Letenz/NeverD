@@ -124,10 +124,10 @@ struct ExceptionFunction {
   /// without re-walking already finished frames.
   bool LanguageTablesResolved = false;
 
-  /// Code ranges of the chained records whose unwind chain ends at this
-  /// primary record, in address order: the cold parts of the function.
-  /// Unwinding a fault in one follows the chain to this record, so its
-  /// handler and scope table govern that code too.
+  /// Disjoint code chunks governed by this function, in address order.
+  /// These are chained cold records for table-driven EH, or table-owned
+  /// callbacks for x86 registration EH. Intervening functions and cleanup
+  /// relays retain their own calling contracts.
   std::vector<ExceptionAddressRange> FragmentRanges;
 
   ExceptionModel model() const { return getExceptionEncodingModel(Encoding); }
@@ -147,6 +147,19 @@ struct ExceptionFunction {
   /// True when \p Range lies in one part of this function's code.
   bool ownsCode(const ExceptionAddressRange &Range) const {
     return codeChunkContaining(Range).has_value();
+  }
+
+  /// Where the function's body ends: after \ref CodeRange and the fragments
+  /// that follow it without a gap.  MSVC splits a function's pdata wherever
+  /// its unwind state changes and only the first record names the function,
+  /// so a disassembler shows those records as one body; a fragment past a
+  /// gap stays an outlying chunk.
+  va_t contiguousEnd() const {
+    va_t End = CodeRange.End;
+    for (const ExceptionAddressRange &Fragment : FragmentRanges)
+      if (Fragment.Begin == End)
+        End = Fragment.End;
+    return End;
   }
 
   /// True when \p Address is in this function's code.

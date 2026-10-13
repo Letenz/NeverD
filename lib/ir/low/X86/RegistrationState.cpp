@@ -31,23 +31,32 @@ RegistrationStateSolver::RegistrationStateSolver(
       CheckCalls(Callees != nullptr),
       CheckRuntimeObjects(KnownCxx && CheckCalls),
       CheckCleanups(KnownCxx && Cleanups != nullptr),
-      Facts(Function.Blocks.size()), Incoming(Function.Blocks.size()),
-      Queued(Function.Blocks.size()), CompleteCalls(CheckCalls),
-      CompleteCleanups(CheckCleanups),
+      InvalidBlocks(Function.Blocks.size()), States(Function.Blocks.size()),
+      CompleteCalls(CheckCalls), CompleteCleanups(CheckCleanups),
       CompleteCatchObjects(CheckRuntimeObjects),
       CompleteRuntimeObjects(CheckRuntimeObjects) {}
 
 RegistrationStateAnalysis RegistrationStateSolver::run() {
-  if (!initialize() || !initializeContracts())
+  if (!initialize())
+    return std::move(Result);
+  if (!initializeOrder()) {
+    Result.Diagnostics.push_back(
+        "registration-state ordering budget exhausted");
+    return std::move(Result);
+  }
+  if (!initializeContracts())
     return std::move(Result);
   initializeCookies();
   collectOccurrences();
   seedEntries();
   while (!Work.empty() && !Exhausted) {
-    const size_t I = Work.front();
-    Work.pop_front();
-    Queued[I] = false;
-    if (!transferBlock(I))
+    const auto [Priority, I, Activation] = *Work.begin();
+    Work.erase(Work.begin());
+    auto &State = States[I].at(Activation);
+    // Transfers can merge back into this node. Keep the input snapshot stable
+    // while ordinary and exceptional successors update their own activations.
+    const Domain Before = State.Incoming;
+    if (!transferBlock(I, Before, State.Facts))
       return std::move(Result);
   }
   return finish();
@@ -153,7 +162,7 @@ bool RegistrationStateSolver::initialize() {
     if (!ValidImmediate || Store.EndVA != Block.EndAddr ||
         Boundary == Block.InstructionBoundaries.end() ||
         !Stores.emplace(Store.StoreVA, Store).second)
-      Facts[I].Invalid = true;
+      InvalidBlocks[I] = true;
   }
   bool HasInstallBoundary = false;
   for (const LowBlock &Block : Function.Blocks)
@@ -161,7 +170,9 @@ bool RegistrationStateSolver::initialize() {
          Block.InstructionBoundaries)
       HasInstallBoundary |=
           Instruction.Address == Chain.ChainInstallVA &&
-          Instruction.Size == Chain.chainInstallInstructionSize() &&
+          Instruction.Size != 0 &&
+          Instruction.Control == LowInstructionControl::None &&
+          Instruction.Address <= InvalidVA - Instruction.Size &&
           Instruction.Address + Instruction.Size == Block.EndAddr;
   if (!HasInstallBoundary) {
     Result.Diagnostics.push_back(

@@ -7,16 +7,22 @@ add_custom_command(OUTPUT "${_unpack_driver_image}" "${_unpack_driver_object}"
     "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/driver_unpack.c"
     -o "${_unpack_driver_object}"
   COMMAND "${NEVERD_DRIVER_LLD_LINK}" /machine:x64 /entry:DriverEntry
-    /subsystem:native /driver /nodefaultlib /fixed /base:0x180000000
-    /noimplib /timestamp:0 /release /section:.prog,ERW
+    /subsystem:native /driver /dll /nodefaultlib /fixed:no /dynamicbase
+    /base:0x180000000
+    /noimplib /timestamp:0 /release /section:.prog,ERW /merge:.data=.drvstat
     "/out:${_unpack_driver_image}" "${_unpack_driver_object}"
     "${_driver_import_lib}"
   DEPENDS fixtures/driver_unpack.c fixtures/driver_io.c "${_driver_import_lib}"
   VERBATIM)
+# Use the full eight-byte state-section name: zero-padded ".data" followed by
+# a 0x70-byte BSS extent spells an unaligned modeled object address in the PE
+# header. The positive fixture must not trigger that conservative state guard.
 add_custom_target(NeverDUnpackDriverFixtures DEPENDS "${_unpack_driver_image}")
 add_neverd_unittest(NeverDUnpackDriverTests
+  DriverEntryABITests.cpp
   UnpackDriverTests.cpp
   TIMEOUT 120
+  NO_PRETTY_VALUES
   LINK_COMPONENTS Unpack Emulation)
 target_include_directories(NeverDUnpackDriverTests PRIVATE
   "${CMAKE_SOURCE_DIR}/unittests/unpack")

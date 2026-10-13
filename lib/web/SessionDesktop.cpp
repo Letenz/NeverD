@@ -64,6 +64,13 @@ std::string Session::analyzeDesktopManifest(std::string_view Revision,
         {"artifact_id", E.ArtifactID.empty() ? llvm::json::Value(nullptr)
                                              : llvm::json::Value(E.ArtifactID)},
         {"content_kind", E.ContentKind},
+        {"blob_sha256", E.BlobHash.empty() ? llvm::json::Value(nullptr)
+                                           : llvm::json::Value(E.BlobHash)},
+        {"byte_length", E.ArtifactID.empty()
+                            ? llvm::json::Value(nullptr)
+                            : llvm::json::Value(std::to_string(E.ByteLength))},
+        {"ordinal", E.Ordinal == UINT32_MAX ? llvm::json::Value(nullptr)
+                                            : llvm::json::Value(E.Ordinal)},
         {"runtime_entry_verified", false}});
   auto Reply =
       json(llvm::json::Object{{"schema_version", 1},

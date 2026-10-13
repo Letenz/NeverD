@@ -782,7 +782,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     for (size_t I = 0; I != Funcs.size(); ++I) {
       const auto &Func = Funcs[I];
       if (!Func.ExceptionMetadata || !Func.RegistrationStates ||
-          Func.SkippedSSA || !Func.RegistrationCallerCleanupABIComplete)
+          Func.SkippedSSA || !Func.RegistrationCxxEntryPopBytes)
         continue;
       const auto Classification =
           classifyWindowsEHNativeSource(*Func.ExceptionMetadata, TheArch, Fmt,
@@ -828,7 +828,8 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
       for (const auto &Contract : States.CalleeContracts)
         Complete &= Preserve(Contract);
       for (const auto &Contract : States.CleanupContracts)
-        Complete &= Preserve(Contract.Leaf);
+        for (const auto &Call : Contract.Calls)
+          Complete &= Preserve(Call.Leaf);
       if (!Complete) {
         llvm::WithColor::error() << "med_llvm_emitter: malformed preserved "
                                     "registration image footprint\n";
@@ -873,11 +874,12 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         }
     }
   SegmentDataGlobals.clear();
+  SegmentDataBases.clear();
   WritableSegmentGlobals.clear();
   CodePtrTableGlobals.clear();
   PreparedFuncBlocks.clear();
   LiftedCodeBlocks.clear();
-  EmittedFuncCodeEnds.clear();
+  EmittedFuncCodeRanges.clear();
   SEHCallbackKinds.clear();
   ConflictingLiftedCodeBlocks.clear();
   CxxContinuationPlans.clear();
@@ -1140,16 +1142,38 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     // addresses cannot be reconstructed from the declaration alone.
     if (BodyMask && !(*BodyMask)[FuncIndex])
       continue;
-    va_t End = Func.Entry;
-    if (Func.OriginalSize)
-      End = Func.Entry + Func.OriginalSize;
-    if (Func.ExceptionMetadata && Func.ExceptionMetadata->CodeRange.End > End)
-      End = Func.ExceptionMetadata->CodeRange.End;
+    std::vector<std::pair<va_t, va_t>> Ranges;
+    const auto Add = [&](va_t Begin, va_t End) {
+      if (End > Begin)
+        Ranges.emplace_back(Begin, End);
+    };
+    // A sized body runs on from its entry; where unwind records describe
+    // it, only as far as they do without a gap, since its size then reaches
+    // its farthest part across other functions' code.
+    if (Func.OriginalSize) {
+      va_t End = Func.Entry + Func.OriginalSize;
+      if (Func.ExceptionMetadata)
+        End = std::min(End, Func.ExceptionMetadata->contiguousEnd());
+      Add(Func.Entry, End);
+    }
+    if (Func.ExceptionMetadata) {
+      Add(Func.ExceptionMetadata->CodeRange.Begin,
+          Func.ExceptionMetadata->CodeRange.End);
+      for (const ExceptionAddressRange &Fragment :
+           Func.ExceptionMetadata->FragmentRanges)
+        Add(Fragment.Begin, Fragment.End);
+    }
     for (const MedBlock &Block : Func.Blocks)
-      if (Block.EndAddr > End)
-        End = Block.EndAddr;
-    if (End > Func.Entry)
-      EmittedFuncCodeEnds[Func.Entry] = End;
+      Add(Block.StartAddr, Block.EndAddr);
+    llvm::sort(Ranges);
+    std::vector<std::pair<va_t, va_t>> Merged;
+    for (const auto &Range : Ranges)
+      if (!Merged.empty() && Range.first <= Merged.back().second)
+        Merged.back().second = std::max(Merged.back().second, Range.second);
+      else
+        Merged.push_back(Range);
+    if (!Merged.empty())
+      EmittedFuncCodeRanges[Func.Entry] = std::move(Merged);
   }
   initializeCxxContinuationPlans(Funcs, BodyMask);
 
@@ -1179,25 +1203,14 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
         EmittedFuncNames[Address] = Name;
     }
 
+  // Authenticate retained entries before body emission, including omitted
+  // shard bodies. This identity does not grant a native parent EH contract.
   if (Img && TheArch == Arch::X86 && Fmt == BinaryFormat::COFF)
     for (const auto &Func : Funcs) {
-      if (!Func.ExceptionMetadata ||
-          !coff_loader::getCheckedX86CxxPersonalityABI(*Img,
-                                                       *Func.ExceptionMetadata))
+      if (!Func.ExceptionMetadata || !Func.ExceptionMetadata->Registration)
         continue;
-      const auto Address = Func.ExceptionMetadata->PersonalityVA;
-      if (EmittedFuncNames.count(Address))
-        continue;
-      const auto Name = "__nd_registration_handler_" + llvm::utohexstr(Address);
-      auto *Type =
-          llvm::FunctionType::get(llvm::Type::getInt32Ty(*Ctx), {}, true);
-      if (Mod_->getNamedValue(Name))
-        continue;
-      auto *Declaration = llvm::cast<llvm::Function>(
-          Mod_->getOrInsertFunction(Name, Type).getCallee());
-      rewrite_source::setOriginalVA(*Declaration, Address);
-      EmittedFuncNames[Address] = Name;
-      FuncNames[Address] = Name;
+      resolveX86RegistrationHandlerReference(
+          Func.ExceptionMetadata->PersonalityVA);
     }
 
   // Build every ordinary block skeleton before emitting the first operation.

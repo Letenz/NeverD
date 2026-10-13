@@ -815,6 +815,30 @@
         <source>Show the operand&apos;s number with its bits inverted</source>
         <translation>Показать число операнда с инвертированными битами</translation>
     </message>
+    <message>
+        <source>C&amp;ode</source>
+        <translation>Ма&amp;шинный код</translation>
+    </message>
+    <message>
+        <source>Define instructions from the current address</source>
+        <translation>Определить инструкции, начиная с текущего адреса</translation>
+    </message>
+    <message>
+        <source>Offline package &amp;review...</source>
+        <translation>&amp;Проверка пакетов офлайн...</translation>
+    </message>
+    <message>
+        <source>Inspect local package evidence and analyst reviews</source>
+        <translation>Просмотреть локальные свидетельства о пакетах и отзывы аналитиков</translation>
+    </message>
+    <message>
+        <source>&amp;PDB file...</source>
+        <translation>Файл &amp;PDB...</translation>
+    </message>
+    <message>
+        <source>Load symbols from a selected PDB file</source>
+        <translation>Загрузить символы из выбранного файла PDB</translation>
+    </message>
 </context>
 <context>
     <name>Choosers</name>
@@ -1434,6 +1458,14 @@ Double-click to go to the declaration.</source>
             <numerusform>%n объявления показаны на C</numerusform>
             <numerusform>%n объявлений показано на C</numerusform>
         </translation>
+    </message>
+    <message>
+        <source>Cancelled</source>
+        <translation>Отменено</translation>
+    </message>
+    <message>
+        <source>Saved variable names belong to a different source rendering</source>
+        <translation>Сохранённые имена переменных относятся к другому представлению исходного кода</translation>
     </message>
 </context>
 <context>
@@ -2056,6 +2088,62 @@ Signed: %4</source>
         <source>The ways to load %1 are unknown: %2</source>
         <translation>Неизвестно, как загрузить %1: %2</translation>
     </message>
+    <message>
+        <source>Comment this source line:</source>
+        <translation>Комментарий к этой строке исходного кода:</translation>
+    </message>
+    <message>
+        <source>New name:</source>
+        <translation>Новое имя:</translation>
+    </message>
+    <message>
+        <source>Rename</source>
+        <translation>Переименовать</translation>
+    </message>
+    <message>
+        <source>Select a declared variable or an image name to rename</source>
+        <translation>Выберите объявленную переменную или имя в образе, чтобы переименовать</translation>
+    </message>
+    <message>
+        <source>Select a source line; expand folded code before commenting it</source>
+        <translation>Выберите строку исходного кода; перед комментированием разверните свёрнутый код</translation>
+    </message>
+    <message>
+        <source>The selected name has no image address</source>
+        <translation>У выбранного имени нет адреса в образе</translation>
+    </message>
+    <message>
+        <source>This instruction has no source-line address mapping.</source>
+        <translation>Для этой инструкции нет сопоставления адреса со строкой исходного кода.</translation>
+    </message>
+    <message>
+        <source>This source line has no instruction address mapping; showing the function entry</source>
+        <translation>Для этой строки исходного кода нет сопоставления с адресом инструкции; показана точка входа функции</translation>
+    </message>
+    <message>
+        <source>Load PDB file</source>
+        <translation>Загрузить файл PDB</translation>
+    </message>
+    <message>
+        <source>PDB files (*.pdb);;All files (*)</source>
+        <translation>Файлы PDB (*.pdb);;Все файлы (*)</translation>
+    </message>
+    <message>
+        <source>Use unverified PDB for analysis</source>
+        <translation>Использовать непроверенный PDB для анализа</translation>
+    </message>
+    <message>
+        <source>This PE has no PDB matching identity (GUID/age). The selected PDB's machine and section layout match, but its build cannot be verified.
+
+Use this PDB for analysis? Its symbols, types, function signatures and address ranges will be used as analysis input. Choosing the wrong PDB can produce incorrect results.</source>
+        <translation>В этом PE отсутствует идентификатор PDB (GUID/age). Архитектура и расположение секций выбранного PDB совпадают, но его сборку нельзя проверить.
+
+Использовать этот PDB для анализа? Его символы, типы, сигнатуры функций и диапазоны адресов будут входными данными анализа. Неверный PDB может привести к ошибочным результатам.</translation>
+    </message>
+    <message>
+        <source>This engine cannot use an unverified PDB for analysis</source>
+        <translation>Этот движок не может использовать непроверенный PDB для анализа</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::OutputWindow</name>
@@ -2194,6 +2282,10 @@ Signed: %4</source>
         <source>The files you open appear here. Choose New, or drop a file on this window.</source>
         <translation>Здесь появляются открытые вами файлы. Выберите «Новый» или перетащите файл в это окно.</translation>
     </message>
+    <message>
+        <source>Last opened: %1</source>
+        <translation>Последнее открытие: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::Session</name>
@@ -2316,6 +2408,22 @@ Signed: %4</source>
     <message>
         <source>Platform: %1, read from the code: %2</source>
         <translation>Платформа: %1, определена по коду: %2</translation>
+    </message>
+    <message>
+        <source>An instruction is already defined at %1</source>
+        <translation>По адресу %1 уже определена инструкция</translation>
+    </message>
+    <message>
+        <source>PDB loaded: %1 (%2 names, identity verified)</source>
+        <translation>PDB загружен: %1 (%2 имён, идентификатор проверен)</translation>
+    </message>
+    <message>
+        <source>PDB display names imported: %1 (%2 names, unverified)</source>
+        <translation>Имена PDB для отображения импортированы: %1 (%2 имён, не проверены)</translation>
+    </message>
+    <message>
+        <source>PDB loaded for analysis: %1 (%2 names, user confirmed, identity unverified)</source>
+        <translation>PDB загружен для анализа: %1 (%2 имён, подтверждён пользователем, идентификатор не проверен)</translation>
     </message>
 </context>
 <context>
@@ -2533,6 +2641,40 @@ Signed: %4</source>
     <message>
         <source>Windows</source>
         <translation>Windows</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::TitleBar</name>
+    <message>
+        <source>Minimize</source>
+        <translation>Свернуть</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Развернуть</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Восстановить</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Закрыть</translation>
+    </message>
+</context>
+<context>
+    <name>neverd::gui::AnalysisService</name>
+    <message>
+        <source>Analysis worker stopped.</source>
+        <translation>Процесс анализа остановлен.</translation>
+    </message>
+    <message>
+        <source>Only analysis reads are allowed.</source>
+        <translation>Разрешено только чтение результатов анализа.</translation>
+    </message>
+    <message>
+        <source>The worker cannot restore analysis state.</source>
+        <translation>Процесс анализа не может восстановить состояние анализа.</translation>
     </message>
 </context>
 </TS>

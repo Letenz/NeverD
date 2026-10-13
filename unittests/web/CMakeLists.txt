@@ -4,7 +4,12 @@ add_neverd_unittest(NeverDWebArtifactTests
   PackageArchiveTests.cpp
   ZipTests.cpp
   PackageIntegrityTests.cpp
+  PackageAdvisoryTests.cpp
+  PackageAttestationTests.cpp
+  PackageAssessmentTests.cpp
+  PackageReviewTests.cpp
   InterfaceTests.cpp
+  PassiveReportTests.cpp
   StreamTests.cpp
   AsarTests.cpp
   ElectronManifestTests.cpp
@@ -13,7 +18,12 @@ add_neverd_unittest(NeverDWebArtifactTests
   ImportMapTests.cpp
   BlobStoreTests.cpp
   BunTests.cpp
+  ClaudeDistributionTests.cpp
   SEATests.cpp
+  NexeTests.cpp
+  PkgTests.cpp
+  WailsTests.cpp
+  TauriTests.cpp
   JsonReaderTests.cpp
   LINK_COMPONENTS Web
 )
@@ -28,9 +38,22 @@ add_neverd_unittest(NeverDWebZipWithoutDeflateTests
   LINK_COMPONENTS Web
 )
 target_include_directories(NeverDWebZipWithoutDeflateTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
+add_neverd_unittest(NeverDWebBrotliWithoutDecoderTests
+  BrotliNoDecoderTests.cpp
+  ../../lib/web/compression/Brotli.cpp
+  LINK_COMPONENTS Web)
+target_include_directories(NeverDWebBrotliWithoutDecoderTests PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/web")
 # Manual, development-only recorder; no production or test dependency on it.
 add_executable(neverd-web-bun-fixture-record EXCLUDE_FROM_ALL fixtures/bun/Record.cpp)
+add_executable(neverd-web-tauri-fixture-record EXCLUDE_FROM_ALL fixtures/tauri/Record.cpp)
+target_include_directories(neverd-web-tauri-fixture-record PRIVATE
+  "${CMAKE_SOURCE_DIR}/lib/web")
+target_link_libraries(neverd-web-tauri-fixture-record PRIVATE NeverDWeb)
 add_executable(neverd-web-sea-fixture-record EXCLUDE_FROM_ALL fixtures/sea/Record.cpp)
+add_executable(neverd-web-nexe-fixture-inputs EXCLUDE_FROM_ALL fixtures/nexe/WriteInputs.cpp)
+target_include_directories(neverd-web-nexe-fixture-inputs PRIVATE ${LLVM_INCLUDE_DIRS})
+target_link_libraries(neverd-web-nexe-fixture-inputs PRIVATE LLVMSupport)
 target_include_directories(neverd-web-sea-fixture-record PRIVATE ${LLVM_INCLUDE_DIRS})
 target_link_libraries(neverd-web-sea-fixture-record PRIVATE LLVMSupport)
 target_include_directories(neverd-web-bun-fixture-record PRIVATE ${LLVM_INCLUDE_DIRS})
@@ -41,6 +64,7 @@ target_link_libraries(neverd-web-html-reference-record PRIVATE LLVMSupport)
 add_neverd_unittest(NeverDWebSourceMapTests
   SourceMapTests.cpp
   BunSourceMapTests.cpp
+  BunSourceMapCorpusTests.cpp
   LINK_COMPONENTS Web
 )
 target_include_directories(NeverDWebSourceMapTests PRIVATE "${CMAKE_SOURCE_DIR}/lib/web")
@@ -50,7 +74,12 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   add_neverd_unittest(NeverDWebSourceTests
     NodeBehaviorTests.cpp
     PackageBehaviorTests.cpp
+    PackageBehaviorDiffTests.cpp
+    PackageInstallTests.cpp
     SourceInterfaceTests.cpp
+    SourceWrapperTests.cpp
+    InterfaceRelationTests.cpp
+    PassiveSourceTests.cpp
     SourceXHRTests.cpp
     HTMLModuleTests.cpp
     ElectronIPCTests.cpp
@@ -59,6 +88,8 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceTests.cpp
     SourceRecoveryTests.cpp
     SourceRewriteTests.cpp
+    SourceRenameTests.cpp
+    SourceBranchTests.cpp
     RewriteExportTests.cpp
     SourceBindingTests.cpp
     SourceDeclarationIndexTests.cpp
@@ -68,6 +99,10 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     SourceBundleTests.cpp
     SourceViewTests.cpp
     SourceNavigationTests.cpp
+    SourceFeatureTests.cpp
+    DesktopBridgeTests.cpp
+    ConfigurationOrderTests.cpp
+    ClientFeatureCorpusTests.cpp
     LINK_COMPONENTS Web
   )
   target_compile_definitions(NeverDWebSourceTests PRIVATE
@@ -85,14 +120,25 @@ if(TARGET neverd_shared)
     "${CMAKE_SOURCE_DIR}/include" ${LLVM_INCLUDE_DIRS})
   add_neverd_unittest(NeverDWebSDKTests
     SDKTests.cpp
+    ReadableExportSDKTests.cpp
     RewriteSDKTests.cpp
+    RenameSDKTests.cpp
+    BranchSDKTests.cpp
     NodeBehaviorSDKTests.cpp
+    PackageBehaviorDiffSDKTests.cpp
     PackageSDKTests.cpp
     PackageArchiveSDKTests.cpp
     PackageIntegritySDKTests.cpp
+    PackageAdvisorySDKTests.cpp
+    PackageAttestationSDKTests.cpp
+    PackageAssessmentSDKTests.cpp
     InterfaceSDKTests.cpp
     StreamSDKTests.cpp
     SEASDKTests.cpp
+    NexeSDKTests.cpp
+    PkgSDKTests.cpp
+    WailsSDKTests.cpp
+    TauriSDKTests.cpp
     AsarSDKTests.cpp
     ElectronSDKTests.cpp
     DesktopSDKTests.cpp

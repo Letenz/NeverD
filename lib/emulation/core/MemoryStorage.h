@@ -16,6 +16,7 @@
 #include <thread>
 
 namespace neverd::emulation {
+class RAMInitializationWatch;
 /// A retained physical interval and its write witness. All validity changes
 /// are serialized by the physical owner's execution mutex. Keeping the view
 /// alive prevents allocation reuse from making an old reservation match.
@@ -43,6 +44,10 @@ struct PhysicalMemory::Impl {
   const MemoryProjection *Writer = nullptr;
   std::condition_variable_any Changed;
   std::vector<std::weak_ptr<RAMReservation>> Reservations;
+  std::vector<std::weak_ptr<RAMInitializationWatch>> InitializationWatches;
+  // Positive initialization is distinct from conservative invalidation.
+  // Called after committed bytes, never for opaque or pre-write observations.
+  void recordInitialization(uint64_t Physical, uint64_t Size);
   // Called only for committed guest writes, including identical-value stores.
   // Neither invalidation operation allocates or invokes observers.
   void invalidateReservations(uint64_t Physical, uint64_t Size);

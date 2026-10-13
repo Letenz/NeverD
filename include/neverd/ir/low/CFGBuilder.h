@@ -62,6 +62,7 @@ public:
 namespace detail {
 struct ResolverGraphCacheTestAccess;
 struct X87CallGraphCacheTestAccess;
+struct NoReturnProofTestAccess;
 using JumpTableProofPoint = std::pair<va_t, int>;
 using JumpTableProofLocation = std::pair<int, int>;
 using I386GOTOFFAmbiguityReplayKey = std::tuple<va_t, va_t, int, int, va_t>;
@@ -648,6 +649,7 @@ private:
 
 class X87CallEffectIndex;
 class X87CallGraphCache;
+struct CallRegisterBody;
 /// Share bounded immutable x87 graph facts during one unchanged-image
 /// operation, including explicit projection exclusions of complete CFGs.
 /// Replace the cache when image bytes/metadata or borrowed analysis indexes
@@ -662,15 +664,50 @@ std::shared_ptr<X87CallGraphCache> createX87CallGraphCache();
 std::shared_ptr<X87CallGraphCache> createX87CallGraphCache(
     const NoReturnCalleeProver *NonReentrantProver,
     const libc::NoReturnTargetIndex *NonReentrantTargets = nullptr);
+/// Additionally retain up to 32 MiB of machine bodies and function metadata.
+/// This is opt-in: ordinary x87 users keep the compact graph-only cache.
+std::shared_ptr<X87CallGraphCache>
+createX87CallGraphCache(const NoReturnCalleeProver *NonReentrantProver,
+                        const libc::NoReturnTargetIndex *NonReentrantTargets,
+                        bool RetainCallRegisterBodies);
 
 class CFGBuilder {
   friend class X87CallEffectIndex;
   friend class X87CallGraphCache;
+  friend class InternalNoReturnIndex;
 
 public:
   /// Build CFG for a single function starting at EntryAddr.
   LowFunc build(const BinaryImage &Img, Decoder &Dec, va_t EntryAddr,
                 const std::string &FuncName = "");
+
+  /// Reuse only the inputs to an ordinary x64 call-register summary, under
+  /// these exact immutable-image indexes and default CFG proof limits.
+  /// No-return decisions are replayed at depth zero and every skipped x87
+  /// normalization must be proved to make no change. Null requests the usual
+  /// independent build. This cannot supply a normalized/output LowFunc.
+  static std::shared_ptr<const CallRegisterBody> cachedCallRegisterBody(
+      const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+      va_t Entry, const std::set<va_t> *Entries,
+      const libc::NoReturnTargetIndex *NoReturnTargets,
+      const NoReturnCalleeProver *NoReturnCallees,
+      const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+      const ExecutableCodeOwnerIndex *CodeOwners);
+
+  /// Reconstruct a complete default x64 CFG from retained machine facts after
+  /// the same no-return and normalization checks as cachedCallRegisterBody.
+  /// All CFG metadata is preserved; exception records are copied from the
+  /// unchanged image, which must outlive the cache. The result is independently
+  /// owned. A miss requires the ordinary build. This is only for initial,
+  /// default-policy construction: protected tables, continuation roots, test
+  /// budgets and other nondefault settings still require their own build.
+  static std::optional<LowFunc> cachedDefaultFunction(
+      const std::shared_ptr<X87CallGraphCache> &Cache, const BinaryImage &Img,
+      va_t Entry, const std::string &Name, const std::set<va_t> *Entries,
+      const libc::NoReturnTargetIndex *NoReturnTargets,
+      const NoReturnCalleeProver *NoReturnCallees,
+      const detail::AbsoluteRelocationRootIndex *RelocationRoots,
+      const ExecutableCodeOwnerIndex *CodeOwners);
 
   size_t relativeRelocationRootSourceCacheBuildCountForTesting() const {
     return RelativeRelocationRootSourceCacheBuildCountForTesting;
@@ -745,6 +782,12 @@ public:
   /// graph.
   void setX87CallGraphCache(std::shared_ptr<X87CallGraphCache> Cache) {
     SharedX87CallGraphs = std::move(Cache);
+  }
+  /// Allow independent x87 call proofs to use this many worker threads.
+  /// The caller must reserve this quota outside any parallel CFG batch and
+  /// provide thread-safe, registered no-return indexes. Defaults to serial.
+  void setX87CallProofThreads(unsigned Threads) {
+    X87CallProofThreads = Threads;
   }
   /// Provide exception-metadata-proven continuation addresses owned by the
   /// function passed to build().  These are intentionally owner-scoped rather
@@ -1024,9 +1067,11 @@ public:
 private:
   friend struct detail::ResolverGraphCacheTestAccess;
   friend struct detail::X87CallGraphCacheTestAccess;
+  friend struct detail::NoReturnProofTestAccess;
   std::array<size_t, 3> x87CallGraphCacheStatsForTesting() const;
   std::array<size_t, 5> x87CallGraphFlightStatsForTesting() const;
   bool waitForX87CallGraphWaitersForTesting(size_t Count) const;
+  std::array<size_t, 2> callRegisterBodyCacheStatsForTesting() const;
   std::optional<int> x87CallEffectForTesting(const BinaryImage &Image,
                                              va_t Entry, size_t &Remaining,
                                              unsigned Depth = 0);
@@ -1035,6 +1080,19 @@ private:
   // implementation and arena ownership inside the resolver translation unit.
   mutable std::shared_ptr<const ResolverGraphCache> CachedResolverGraph;
   std::array<size_t, 3> resolverValueQueryCacheStatsForTesting() const;
+
+  struct ResolverQueryState;
+  // Local to a read-only resolver invocation. The owner, instruction map,
+  // block starts and storage owners must remain unchanged until destruction.
+  // Roots and effective edge overrides are still compared by value per query.
+  // Never retain this scope across proposal publication, rollback or decoding.
+  struct ResolverQueryScope {
+    const CFGBuilder &Owner;
+    std::shared_ptr<const ResolverQueryState> State;
+    explicit ResolverQueryScope(const CFGBuilder &Owner) : Owner(Owner) {}
+    ResolverQueryScope(const ResolverQueryScope &) = delete;
+    ResolverQueryScope &operator=(const ResolverQueryScope &) = delete;
+  };
 
   struct InsnRecord {
     va_t Addr;
@@ -1102,7 +1160,27 @@ private:
   /// offset 0) for straight-line / stack-balanced code, so only the mistracked
   /// cases move.
   void fixupFpuStack(LowFunc &Func);
+  /// Prove termination without computing unused floating return values.
+  /// Local x87 state consumers retain the ordinary normalized CFG build.
+  /// Only the internal no-return index may consume this reduced projection.
+  bool buildNoReturnProof(const BinaryImage &Img, Decoder &Dec, va_t Entry,
+                          const std::string &Name);
   bool SkipX87StackFixup = false;
+  // Optional evidence across *all* raw-build normalization stages, including
+  // speculative CFGs and own-interior-call retries. It never escapes a build.
+  struct CallRegisterBodyWitness {
+    static constexpr size_t MaxDependencies = 4096;
+    bool Complete = true;
+    std::set<va_t> Calls;
+    std::vector<std::pair<va_t, bool>> NoReturnAnswers;
+    // build() copies this unchanged image record into its LowFunc. Retained
+    // bodies borrow the original instead of duplicating unbounded language
+    // metadata; image mutation must retire the enclosing cache.
+    const ExceptionFunction *Exception = nullptr;
+  };
+  CallRegisterBodyWitness *CollectCallRegisterBody = nullptr;
+  void recordSkippedFpuFixup(const LowFunc &Func);
+  unsigned X87CallProofThreads = 1;
   std::shared_ptr<X87CallEffectIndex> X87CallEffects;
   std::shared_ptr<X87CallGraphCache> SharedX87CallGraphs;
 
@@ -1297,6 +1375,11 @@ private:
     /// of Alternatives.  This is used to bind i386 outgoing stack arguments to
     /// the current CALL epoch rather than a lexical historical STORE.
     FrameMemoryMatches,
+    /// Prove a finite set for an actual CFG predecessor join, retaining
+    /// compound edge predicates on each incoming value. This guard fallback
+    /// does not replace ordinary mask/group domain ownership or treat a
+    /// logical predicate union as a control-flow join.
+    JoinedUnsignedFeasibleSet,
   };
 
   struct JumpTableValueQuery {
@@ -2222,7 +2305,8 @@ private:
       std::vector<uint64_t> *QueryUnsignedFeasibleMasks = nullptr,
       uint32_t ResolverDepthLimit = 0,
       const std::map<va_t, std::vector<va_t>> *CertifiedEdgeOverrides = nullptr,
-      bool UseGroupContext = true) const;
+      bool UseGroupContext = true,
+      ResolverQueryScope *ReadOnlyScope = nullptr) const;
   /// Prove that the actual INDIR_BR input is derived from the strategy's exact
   /// TargetLoad occurrence on every feasible path.  Mere address co-occurrence
   /// in static scans or emulation is not sufficient.

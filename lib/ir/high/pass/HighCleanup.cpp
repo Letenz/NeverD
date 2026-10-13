@@ -137,6 +137,16 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
     return V.Kind == MedVar::Reg && TRI.isLinkRegister(V.RegOff);
   };
   size_t FrameBudget = 100000;
+  // A register's entry value is a version no statement assigns.  A view's
+  // first definition is version 0 as well (`BX = (uint16_t)EBX` before a
+  // `movw %bx` store into a local), and that value is the function's own.
+  VarKeyMap<bool> Assigned;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.Dst &&
+        (S.Dst->Kind == ExprKind::Var || S.Dst->Kind == ExprKind::Phi) &&
+        !(S.Val && S.Val->Kind == ExprKind::Var && S.Val->Var == S.Dst->Var))
+      Assigned[varKey(S.Dst->Var)] = true;
+  });
   auto IsCalleeSaveStore = [&](const HighStmt &S) -> bool {
     if (S.Kind != StmtKind::Store || !S.StoreVal)
       return false;
@@ -150,7 +160,8 @@ void MedToHighConverter::stripPrologueEpilogue(HighFunc &Func) {
     // A register's ABI role does not make its computed values disposable.
     // Only the unchanged entry value saved into this function's own frame is
     // prologue storage; writes through arguments/globals remain observable.
-    if (V.SSAVer != 0 || V.RenameTag >= 0 || Func.FrameSize <= 0 || !V.Size)
+    if (V.SSAVer != 0 || V.RenameTag >= 0 || Func.FrameSize <= 0 || !V.Size ||
+        Assigned.count(varKey(V)))
       return false;
     const auto Offset = high_detail::frameAddressOffset(
         forceInlineExpr(S.StoreAddr), Func, TargetArch, FrameBudget);
@@ -298,8 +309,7 @@ void MedToHighConverter::ensureTrailingReturn(HighFunc &Func,
   // lowerReturn: append a bare source return instead of searching X0/RAX and
   // reviving an undefined machine carrier as a synthetic result.
   if (Med.SourceParametersBound && Func.SourceTypeHint &&
-      Func.SourceTypeHint->HasExplicitABI &&
-      Func.SourceTypeHint->ReturnType &&
+      Func.SourceTypeHint->HasExplicitABI && Func.SourceTypeHint->ReturnType &&
       Func.SourceTypeHint->ReturnType->Kind == NdTypeKind::Void &&
       Func.ReturnType && Func.ReturnType->Kind == NdTypeKind::Void) {
     HighStmt RetStmt;

@@ -77,6 +77,10 @@ struct PackageBehaviorInput {
 };
 struct PackageBehaviorSource {
   std::string SourceID, ArtifactID, BehaviorID, Status, Reason;
+  // Retained original-owner coverage, internal to comparison consumers.
+  // Older publication and identity remain unchanged.
+  std::string SourceType, SourceHash, OriginStatus, ValueStatus;
+  uint64_t SourceBytes = 0;
   std::string FileID, DeliveryArtifactID, PackageID, Relation;
   std::vector<std::string> OriginIDs, EntryIDs;
   uint64_t EntryCount = 0;

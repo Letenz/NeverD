@@ -17,6 +17,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/high/HighIR.h"
+#include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
 #include <functional>
@@ -56,6 +57,12 @@ std::set<int> detectPtrParamIds(const MedFunc &Med);
 /// replacing a compact shared form with text that repeats one of its
 /// subexpressions.
 void simplifyExprSemantics(std::vector<HighStmt> &Stmts);
+
+/// Allow independent scalar-definition segments of a large function to run
+/// concurrently. MaxThreads is bounded by the process-wide thread setting and
+/// four workers; zero or one keeps the serial path. The caller must reserve
+/// this allowance outside any enclosing parallel function batch.
+void simplifyExprSemantics(std::vector<HighStmt> &Stmts, unsigned MaxThreads);
 
 /// Fold shared branch continuations after dead assignments have been removed.
 /// Preserve external entries and require exact fallthrough destinations.
@@ -230,6 +237,14 @@ std::vector<int> highBlockLayout(const MedFunc &Med,
 /// an empty HighFunc that HighC can only trap.
 void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 
+/// Gives each variadic function whose register save area holds the vector
+/// argument registers (System V) one trailing stack parameter per slot its
+/// widest direct call stores from the call's stack pointer up, which MedToHigh
+/// seeds where its va_arg walk reads its overflow.  For a convention whose
+/// calls take their arguments from callee summaries, which recover no call
+/// arguments for finalizeVariadicCallees to count.
+void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch);
+
 class MedToHighConverter {
 public:
   /// Convert \p Med.  A frame with only Windows SEH scopes is laid out in
@@ -239,6 +254,13 @@ public:
   HighFunc convert(const MedFunc &Med, Arch TheArch = Arch::Unknown);
 
   void setBinaryImage(const BinaryImage *Img) { Image = Img; }
+
+  /// Reserve workers for semantic rewriting inside this conversion. Keep the
+  /// default serial setting when conversions themselves already run in
+  /// parallel.
+  void setSemanticThreadLimit(unsigned MaxThreads) {
+    SemanticThreadLimit = MaxThreads;
+  }
 
   /// Observe expression creation without adding metadata to either IR. The
   /// observer must keep weak references: later transformations can replace an
@@ -265,6 +287,13 @@ public:
                           std::map<va_t, std::string> &Names) const;
   void setResolvedCalleeNames(const std::map<va_t, std::string> *Names) {
     ResolvedCalleeNames = Names;
+  }
+  /// The variadic functions whose register save area holds the vector
+  /// argument registers too (MedFunc::VariadicFirstVectorRegister), each
+  /// with its overflow parameter count: a call passes each of them every
+  /// argument register, then that many stack slots.
+  void setVariadicVectorCallees(const std::map<va_t, int> *Entries) {
+    VariadicVectorCallees = Entries;
   }
   void setJumpTables(const std::vector<JumpTable> &JTs) { JumpTables = JTs; }
 
@@ -297,6 +326,21 @@ private:
 
   ExprPtr medOpToExpr(const MedOp &Op);
   ExprPtr medOpToExprImpl(const MedOp &Op);
+  /// \p Op as stack the function allocates at run time (MedDynamicStack.h):
+  /// `sp - size` that becomes the stack pointer is storage the C allocates,
+  /// and a later `old_sp - size` the variable holding it; null otherwise.
+  ExprPtr dynamicStackExpr(const MedOp &Op);
+  void indexDynamicStack();
+  const MedFunc *DynamicStackFor = nullptr;
+  /// Each allocation's size, and the place of every operation that may
+  /// allocate or compute an allocation's base again, in block order.
+  std::map<const MedOp *, MedVar> DynamicStackAllocations;
+  std::map<const MedOp *, size_t> DynamicStackPlaces;
+  /// The first allocation of each size root: its place and its result.
+  std::map<std::pair<int, int>, std::pair<size_t, MedVar>> DynamicStackBases;
+  std::map<std::tuple<int, int, int>, const PhiNode *> DynamicStackPhis;
+  /// The allocation result each later base computation reads.
+  std::map<const MedOp *, MedVar> DynamicStackBaseUses;
   ExprPtr medvarToExpr(const MedVar &V);
   /// i386 ELF PIC (I386PicAddresses.cpp): the values the CFG proved to be the
   /// GOT base of an unlinked object, at address zero, and the sums of the
@@ -393,6 +437,20 @@ private:
   bool lowerSwitchFromJumpTable(HighFunc &Func, const MedBlock &CurBlock,
                                 const MedOp &CurOp, const MedFunc &Med,
                                 const JumpTable &JT);
+  /// The definitions and image the shared dispatch selector recovery
+  /// (MedDispatchSlots.h) reads of \p Med.
+  MedDispatchContext dispatchContext(const MedFunc &Med);
+  /// Give every shared dispatch whose predecessors each select their own
+  /// entry one selector variable, which each predecessor sets on its edge:
+  /// an exact edge-merged plan, or the -O0 spill of each site's target.
+  void planDispatchSelectors(const MedFunc &Med);
+  /// Per shared dispatch (jump address, block): its selector variable.
+  std::map<std::pair<va_t, int>, MedVar> DispatchSelectorVars;
+  /// Per CFG edge into a shared dispatch: the selector assignment.
+  std::map<std::pair<int, int>, std::vector<HighStmt>> DispatchSelectorCopies;
+  /// Definition index for dispatchContext, built per function.
+  std::map<std::tuple<int, int, int>, const MedOp *> DispatchDefs;
+  const MedFunc *DispatchDefsFor = nullptr;
   bool lowerX86RegistrationCatchReturn(HighFunc &Func, const MedBlock &CurBlock,
                                        const MedOp &CurOp, const MedFunc &Med);
   void lowerReturn(HighFunc &Func, const MedBlock &CurBlock, const MedOp &CurOp,
@@ -466,11 +524,13 @@ private:
   Arch TargetArch = Arch::Unknown;
   const std::map<va_t, std::string> *FuncNames = nullptr;
   const std::map<va_t, std::string> *ResolvedCalleeNames = nullptr;
+  const std::map<va_t, int> *VariadicVectorCallees = nullptr;
   std::vector<JumpTable> JumpTables;
   int NextHighTempId = 0;
   std::optional<MedVar> SwiftErrorEntryInput;
   int ExprRecurseDepth = 0;
   static constexpr int kMaxExprDepth = limits::kMaxExprDepth;
+  unsigned SemanticThreadLimit = 1;
 };
 
 } // namespace neverd

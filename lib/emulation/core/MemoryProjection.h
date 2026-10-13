@@ -97,6 +97,10 @@ public:
   /// Publish an already validated physical write under the execution lease.
   /// Do not call for temporary processor writes or transaction rollback.
   void recordRAMWrite(uint64_t Physical, uint64_t Size);
+  /// Mark initialized bytes only after a successful physical RAM commit.
+  /// Conservative invalidation and pre-write observers never call this.
+  void recordRAMInitialization(uint64_t Physical, uint64_t Size);
+  bool hasInitializationWatches() const;
   bool setWriteWatches(const std::vector<MemoryWriteWatch> &Watches);
   /// Tests physical bytes, so writes through an unobserved alias still match.
   bool writeWatched(uint64_t Physical, uint64_t Size);

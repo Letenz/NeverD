@@ -72,9 +72,20 @@ Domain labels and field order are defined in
 | Syntax node | Source ID, syntax kind, original byte start/length, traversal ordinal |
 | Primitive value analysis | Source ID and fixed primitive-evaluator profile |
 | Effect analysis | Source ID, binding/value analysis IDs and fixed effect profile |
+| Source rewrite | Source ID, explicitly selected pass/profile and binding/value/effect identities; lexical renaming has no value/effect identities |
+| Rename occurrence | Rewrite ID, original binding ID, node ID, declaration/reference role and fixed status/reason; no standalone name hash |
+| Boolean branch occurrence | Rewrite ID, original expression/condition/retained node identities and indices, selected operand, fixed status/reason; no operand bytes or individual value hashes |
 | Module inventory | Source ID, binding analysis ID and module-evidence profile |
 | Module occurrence | Module inventory ID, fixed kind, syntax node ID and traversal ordinal |
 | Admitted module-file comparison | Module inventory ID, snapshot ID and file-comparison profile |
+| Node module-file comparison | Module inventory, origin model, snapshot and separate Node candidate profile |
+| Package installation trace | Install profile, package analysis, exact namespace, optional package-behavior selection ID (empty means no selection) and shared binding/module/origin/Node-link profiles |
+| Selected package behavior diff | Comparison profile, base package diff, optional before/after package-behavior IDs (empty means no selection) and Node behavior profile; source mode and semantic profiles remain transitively bound by selected source behavior IDs |
+| Package assessment | Assessment profile, exact package analysis and namespace, immediate retained archive ID or empty, original snapshot ID or empty, then sorted explicit owner selection IDs |
+| Package finding | Assessment ID, finding ordinal, fixed kind, owner/record IDs, evidence status and binding |
+| Package review root / decision | Root binds assessment profile and ID; each decision binds profile, assessment, parent head, finding, fixed disposition and canonical event index |
+| Install declaration / presence | Trace ID plus original script ID and status, or package ID for lock-only presence |
+| Install request / association | Trace, module-link, original request and fixed selection status; associations bind script trace, behavior record and ordered request trace IDs |
 | Bundle analysis | Source ID, binding analysis ID and structural bundle profile |
 | Bundle/partition/dependency/region occurrence | Bundle analysis ID, fixed record kind, original node ID and ordinal |
 | Source map | Artifact occurrence, map blob hash, decoder profile |
@@ -231,6 +242,26 @@ Function containment and declaration/initializer links are source relationships;
 `runtime_call_graph: not_analyzed` and `runtime_target: not_proven` prohibit treating
 them as resolved runtime calls. Failed navigation publishes no records. Partial
 navigation may retain complete syntax with unavailable lexical evidence.
+
+Desktop bridge analysis has its own identity binding source, bindings,
+navigation and `tauri-1-wails-2-direct-bridge-syntax-v1`. Its record identities
+add the call's syntax node and selected form. Navigation summary includes
+`desktop_bridges`; the existing records operation admits this additional kind.
+Candidates retain source/call/reference IDs and private argument/target-name
+node anchors. Fixed confidence, root resolution, unresolved shapes and
+`native_target: not_resolved` prevent promotion to authenticated APIs or native
+registrations. A failed bridge analysis clears only bridge records, preserving
+independent navigation. See the [profile](web-desktop-bridge-profile.md).
+
+Configuration-order identity binds source, bindings, navigation, client-feature analysis
+and `javascript-configuration-object-order-v1`. Object IDs add the containing
+object node; term IDs add their syntax node and ordinal. `configuration_order`
+summary and `config_merges` pages preserve independent budgets, source-only
+confidence, fixed field roles and possible later unknown-key barriers. Lexical
+initializer/feature links do not prove current values, loader identity, file
+precedence or effective policy. Failed order analysis clears only its records;
+generic navigation IDs remain unchanged. See the
+[profile](web-configuration-order-profile.md).
 
 `source-storage-anchor-v1` identities bind the source and requested UTF-8 span.
 `start/end` use zero-based line/UTF-16 coordinates; `source_parse_status` does not
@@ -433,6 +464,69 @@ identity and direct or expanded byte coordinates; compressed frames remain
 distinct from source byte offsets. Asset keys are not paths, and a selected
 package document supplies no neighboring-file inventory. Import revokes all
 extractions and selectors. See the [SEA contract](web-sea-profile.md).
+
+## Captured signature and provenance declarations
+
+Captured attestation metadata uses `package_attestation_import` with
+`artifact_id`, `descriptor_artifact_id` and explicit `input_kind`
+(`registry-dist`, `intoto-statement`, `dsse-intoto`).
+`package_attestation_records` pages `signatures`, `subjects` or `digests` for
+the returned `package_attestation_id`. Original subject/signature ordinals and
+canonical digest indices remain distinguishable. Private names, URIs, keys,
+signatures, payloads and declared digest values are omitted.
+`package_attestation_digest_match` selects that attestation, `digest_id` and
+one original `artifact_id`; the receipt is subsequently readable through
+`package_attestation_digest_result` and `package_attestation_digest_match_id`.
+It retains both original hashes and the existing integrity result ID without
+authenticating a publisher or binding a package inventory. See the
+[attestation profile](web-package-attestation-profile.md) for exact boundaries.
+
+## Captured npm advisory matching
+
+`package_advisory_import` selects `artifact_id` and `descriptor_artifact_id`
+in the current revision. The result binds both original hashes and returns
+`package_advisory_id`, source/time validation, severity coverage and declared
+timestamps. `package_advisory_records` selects `affected` or `severities`,
+preserving original array indices and opaque anchors without private strings.
+
+`package_advisories_match` takes `package_analysis_id` and optional
+`advisory_ids` (0..16). `package_advisories_match_records` pages the resulting
+`package_advisory_matches_id`. Original package and affected-entry IDs resolve
+through their retained owners. Empty selection is `not_supplied`; unknown
+coverage is not a negative match. Every result remains partial with no
+freshness, feed completeness, publisher, installed-content or exploitability
+verification. Existing package snapshots are not rewritten by this consumer.
+See the [profile](web-package-advisory-profile.md) for exact statuses, identity,
+source/time declarations, atomic budgets and reset semantics.
+
+## Selected package assessment and analyst review
+
+`package_assessment_create` composes current `package_analysis_id` and explicitly
+selected integrity, advisory, attestation, behavior, installation and comparison
+results. It returns immutable `package_assessment_id`, `namespace_id`,
+`selection_ids`, `finding_count`, feed descriptor/time metadata and
+`review_root_id`/`review_head_id`. Missing evidence has explicit `not_selected`
+coverage. A foreign registry declaration, wrong package owner or incompatible
+archive relationship refuses composition; digest equality alone never proves
+installed-tree content or publisher identity.
+
+`package_review_append` appends one fixed caller disposition under
+`expected_review_head`. Findings retain their original confidence and status.
+Only the last exact request replays without another event. Other old-head
+requests refuse. `package_assessment_findings`, `package_review_decisions` and
+`package_assessment_report` require the current `review_head` on every page.
+Pages use `offset`, `next_offset` and `page_complete`, capped at 512 records.
+Unreviewed findings show `disposition_source: not_reviewed`; explicit decisions
+show `caller_assertion`, including a decision to return to `unreviewed`.
+
+Findings publish fixed categories, original/declaration/source/node/related
+anchors, nullable original UTF-8 byte spans and selected pattern counts. Digest
+algorithms retain a separate `legacy_sha1` declaration signal. Report pages add
+`report_format: markdown` and bounded `report_markdown`, omitting raw source,
+names, paths, URLs, arguments, signatures and arbitrary notes. Two immutable
+assessments share one 256-event/256-KiB review allowance per revision; reimport
+revokes both. See the [assessment profile](web-package-assessment-profile.md)
+for closed selection fields, relationships, atomic publication and limits.
 
 ## Package archives and original integrity
 

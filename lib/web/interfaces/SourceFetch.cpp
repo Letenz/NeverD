@@ -1,19 +1,18 @@
-//===- SourceFetch.cpp - Direct fetch and WebSocket syntax evidence ----===//
+//===- SourceFetch.cpp - Fetch-spelling and WebSocket syntax evidence ----===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Direct lexical fetch/WebSocket candidates, never runtime API claims.
+/// Direct and member-spelling candidates, never runtime API claims.
 ///
 //===----------------------------------------------------------------------===//
 
 #include "SourceContext.h"
 
 namespace neverd::web::interfaces {
-namespace {
-void options(SourceContext &C, SourceInterface &R) {
+void inspectFetchOptions(SourceContext &C, SourceInterface &R) {
   if (R.OptionsNode == None) {
     R.Method = "GET";
     R.MethodStatus = "omitted_init_default_candidate";
@@ -68,33 +67,66 @@ void options(SourceContext &C, SourceInterface &R) {
       R.MethodStatus = "fetch_forbidden_method";
   }
 }
-} // namespace
-
-void inspectDirectRequest(SourceContext &C, uint32_t I) {
+void inspectRequestSyntax(SourceContext &C, uint32_t I) {
   const auto &N = C.S.Nodes[I];
   if (N.Kind != "CallExpression" && N.Kind != "OptionalCallExpression" &&
       N.Kind != "NewExpression")
     return;
   const auto Callee = C.child(I, "callee");
-  if (Callee == None || C.S.Nodes[Callee].Kind != "Identifier")
+  if (Callee == None)
     return;
-  const auto *Name = C.S.Nodes[Callee].text("name");
-  if (!Name || !((*Name == u"fetch" && N.Kind != "NewExpression") ||
-                 (*Name == u"WebSocket" && N.Kind == "NewExpression")))
-    return;
-  if (!C.external(Callee, *Name)) {
-    ++C.A.ExcludedDispatches;
+  SourceInterface R;
+  const auto *Property = C.member(Callee);
+  if (N.Kind != "NewExpression" && Property && *Property == u"fetch") {
+    // A property spelling is useful navigation evidence, not a platform API
+    // or wrapper implementation. Do not apply Fetch option/method semantics.
+    R.Kind = "fetch_member_call";
+    R.ReceiverStatus = "member_spelling_syntax_only";
+    R.ReceiverNode = C.child(Callee, "object");
+    R.ReceiverBinding = C.binding(R.ReceiverNode);
+    R.MethodStatus = "member_dispatch_unresolved";
+    R.OptionsStatus = "wrapper_options_not_interpreted";
+    R.Optional = C.S.Nodes[Callee].Kind == "OptionalMemberExpression" ||
+                 C.S.Nodes[Callee].flag("optional");
+  } else {
+    if (C.S.Nodes[Callee].Kind != "Identifier")
+      return;
+    const auto *Name = C.S.Nodes[Callee].text("name");
+    if (!Name || !((*Name == u"fetch" && N.Kind != "NewExpression") ||
+                   (*Name == u"WebSocket" && N.Kind == "NewExpression")))
+      return;
+    if (!C.external(Callee, *Name)) {
+      ++C.A.ExcludedDispatches;
+      return;
+    }
+    R.Kind = *Name == u"fetch" ? "fetch" : "websocket";
+  }
+  R.Node = I;
+  R.Optional =
+      R.Optional || N.Kind == "OptionalCallExpression" || N.flag("optional");
+  R.ArgumentsStatus = "positional";
+  if (C.spreadArguments(I)) {
+    R.ArgumentsStatus = "spread_unresolved";
+    R.MethodStatus = "spread_unresolved";
+    R.URLStatus = "spread_unresolved";
+    R.Endpoint.Status = "spread_unresolved";
+    R.OptionsStatus = "spread_unresolved";
+    R.BodyStatus = "spread_unresolved";
+    C.publish(std::move(R));
     return;
   }
-  SourceInterface R;
-  R.Kind = *Name == u"fetch" ? "fetch" : "websocket";
-  R.Node = I;
+  if (R.Kind == "fetch_member_call") {
+    // The property spelling cannot establish even a URL argument role.
+    R.URLStatus = "wrapper_arguments_not_interpreted";
+    R.Endpoint.Status = "member_dispatch_unresolved";
+    C.publish(std::move(R));
+    return;
+  }
   R.URLNode = C.child(I, "arguments");
   R.OptionsNode = C.child(I, "arguments", 1);
-  R.Optional = N.Kind == "OptionalCallExpression" || N.flag("optional");
   if (R.Kind == "fetch")
-    options(C, R);
-  else
+    inspectFetchOptions(C, R);
+  else if (R.Kind == "websocket")
     R.MethodStatus = "websocket_not_http_evidence";
   C.url(R);
   C.publish(std::move(R));

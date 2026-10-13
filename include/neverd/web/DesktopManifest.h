@@ -21,11 +21,16 @@ inline constexpr std::string_view NWManifestProfile =
     "nwjs-manifest-file-candidates-v1";
 inline constexpr std::string_view VSIXManifestProfile =
     "vscode-extension-manifest-file-candidates-v1";
+inline constexpr std::string_view DesktopResourceProfile =
+    "cef-webview-local-resource-descriptor-v1";
 inline constexpr uint64_t MaxDesktopManifestBytes = 1024 * 1024;
 
 struct DesktopEntry {
   std::string ID, Field, ValueStatus, LinkStatus, ArtifactID;
   std::string ContentKind = "unknown";
+  std::string BlobHash;
+  uint64_t ByteLength = 0;
+  uint32_t Ordinal = UINT32_MAX;
 };
 
 struct DesktopManifest {
@@ -35,7 +40,8 @@ struct DesktopManifest {
   std::vector<DesktopEntry> Entries;
 };
 
-/// Select nwjs or vsix explicitly. Namespace must contain only admitted bytes
+/// Select nwjs, vsix, cef-assets or webview-assets explicitly. Namespace must
+/// contain only admitted bytes
 /// belonging to the same captured root/container. No runtime resolution,
 /// installation, framework/version authentication or remote access occurs.
 DesktopManifest analyzeDesktopManifest(const Snapshot &Namespace,

@@ -1,5 +1,220 @@
 # NeverD Daily Progress
 
+## Current snapshot — 2026-10-13
+
+- Cutoff: **2026-10-13 01:51 UTC / 09:51 Asia/Shanghai**. Detailed source review was pinned at [41141c57](https://github.com/NeverSight/NeverD/commit/41141c57c4c5eaddacc68b53f145d7534e5e6f52); five later commits through current dev [587227e5](https://github.com/NeverSight/NeverD/commit/587227e57dcf7855d317e62e264dd343edb5cfd2) received patch-level inspection.
+- Incoming range: [c3df0112…587227e5](https://github.com/NeverSight/NeverD/compare/c3df0112296b75feed71917ef01c51342762a03b...587227e57dcf7855d317e62e264dd343edb5cfd2), **347 commits / 646 changed file paths** (151 added, 494 modified, 1 removed). Both endpoint trees were complete. Commit subjects were enumerated in 100 + 100 + 100 + 42, then 5 later commits; the initial comparison's 300-file cap was replaced by full-tree path accounting.
+- **No new statically proven source defect in this bounded sample; no source or test change by this review.** Counts include merges and documentation and are inventory, not business completion. Report-only commit e5b77246 and merge e9f78f8b are excluded from implementation claims. Documentation-only work is not credited as product progress.
+- Method: source/diff/caller/interface/configuration and existing-CI reads only. **No build, test, benchmark, project execution, repository script, dynamic analysis, manual CI trigger or rerun.** Static fixture inspection and author-reported results are not checks performed here.
+- Root AGENTS.md, CONTRIBUTING.md, architecture/testing and roadmap guidance were read. The complete tree contains no nested AGENTS.md. The static-only instruction overrides execution guidance. Contribution guidance calls for a topic branch and a PR against dev; this report follows that route. No issue fields, dependencies, security settings, merge or deployment were changed.
+
+## Activity and review queue
+
+**28 ordinary open issues / 16 pre-existing open PRs**, versus 26 / 10 in the October 12 snapshot. New ordinary issues [#858](https://github.com/NeverSight/NeverD/issues/858) and [#859](https://github.com/NeverSight/NeverD/issues/859) report x64 local-unwind and PE32 registration-state limitations. No ordinary issue closed. Issue [#825](https://github.com/NeverSight/NeverD/issues/825) remains planned triage work.
+
+Since October 12 01:01 UTC: **59 PRs opened / 53 merged / 0 closed without merge**, including report [#856](https://github.com/NeverSight/NeverD/pull/856), now merged. Previously pending #849 and #841 merged; eight new open PRs (#855, #866, #882, #889, #895, #906, #910, #912) account for the net increase. These totals include documentation PRs and are not a count of delivered product features. Today's report is excluded.
+
+The open issue collection was exhausted at 44 records (28 issues plus 16 PRs) with an empty second page; the open PR collection has 16 plus an empty second page. Updated-since issues returned 64 plus an empty page. The latest 100 all-state PR records extend back before the prior cutoff, fully covering the activity interval. A fresh 01:50–01:51 read retained those counts.
+
+All sixteen PRs returned no submitted reviews, inline comments or discussion comments at 01:02 UTC and have no requested reviewers. PR descriptions are author reports, not this review's validation. Exact heads remained unchanged at the final inventory. The Darwin progression continues through created-file providers, timestamps and filesystem snapshots. #910 (x87 context) and #912 (LLVM C allocation lifetime/count) are pending source proposals, not merged fixes.
+
+## Bounded static coverage
+
+### HighC navigation position recording
+
+Read complete CSourceRecorder.cpp/.h, every production and fixture hunk of [1def6b36](https://github.com/NeverSight/NeverD/commit/1def6b36), and the current caller bodies in HighCEmitter.cpp (lines 3447–3580), HighCFuncWriter.cpp (6455–6514) and HighCStmtWriter.cpp (327–348).
+
+Traced no-library-evidence admission, ordinary-output byte positions, nested/body buffer relocation, deferred declarations, suppressed statements, overflow and bounds refusal, and fallback to the independent marker proof. An ordinary render/output failure is not retried as an optional mapping failure. Library recognitions continue through independent recordings. Fixture sources exercise nested spans, marker-like user text, empty evidence, invalid offsets and render/output exceptions; none were executed. No measured performance claim is made.
+
+### Access-width cache ownership
+
+Read complete include/neverd/DataAccessWidths.h and lib/sdk/capi/InstructionFlow.cpp, SessionImpl.h's reset/navigation/invalidation owners (409–623), and all source/fixture changes in [c8559240](https://github.com/NeverSight/NeverD/commit/c8559240).
+
+The cache compares exact function entry/size pairs instead of a hash. Navigation retains immutable image facts but discards emitted sources; changed extents force a rescan and source retirement. Edits, reload/policy and signature-generation changes use the invalidation path. Collection sorts decoded accesses before the width model, preserves disagreement as unknown, and includes authenticated outlying chunks. Read source cases for navigation, changed extents, conflicting widths, edits and same-address image replacement. Exhaustive mutation-path and all-architecture decoding proof remains outside this sample.
+
+### Passive report and local readable export
+
+Read complete SessionPassiveReport.cpp, interfaces/report/{Compose,Publication,Shapes,Source}.cpp and PassiveReportTests.cpp. Traced explicit committed selections, source/binding/navigation identity, imported-byte hash checks, aggregate parse/work/record/metadata limits, serialization before cache insertion and bounded pagination. Publication distinguishes static inference, imported observations and candidate correlation; type summaries do not expose field names/values or claim server schema, optionality, permission enforcement or authenticated protocol identity.
+
+Read complete SessionReadableExport.cpp and ExportDirectory.h, plus selected ReadableExportSDKTests.cpp assertions. Export uses retained immutable bytes, a selected source goal and hash verification; readable text is emitted only for the same-parser-tree outcome. The writer uses a new private destination, fixed filenames, exclusive/no-follow file creation, read-back hashes and no-clobber manifest publication. Windows export remains unavailable; partial files may remain after I/O failure. Did not fully audit RecoveryParser, every filesystem race/durability case, or all GUI/CLI consumers.
+
+### Late five-commit delta
+
+Read all 16 changed-file patches from 41141c57 to 587227e5: first-written mask definitions, System V entry-read parameter selection, bounded known Linux syscall arity, ELF GOT inclusion in fixture images and double-load indirect-call spelling. The shared constant-register and ELF-OS helpers plus added fixture assertions were inspected. This was patch-level coverage, not a complete proof of the affected call-graph/ABI/emitter subsystems.
+
+**Uncovered:** most of the 646 changed paths; full x87/native recovery, source patching, debug/PDB persistence, parallel HighIR/KVM ownership, desktop bridge extraction, every platform, packaging and regression execution. New web acceptance documents record substantial Tauri/Wails and passive-workflow implementation; the older “wholly pending” description is stale, but their qualification receipts remain author evidence unless separately verified. Open #714–#718 is not by itself evidence that nothing is implemented or that every acceptance gate is complete. No speculative repair was made.
+
+## Existing CI, with exact revisions
+
+At **01:50 UTC**, current dev **587227e5** has **4 workflows: 1 success, 1 in progress, 1 queued, 1 skipped**; **24 checks: 5 success, 4 in progress, 2 queued, 13 skipped**. Legacy status contexts are empty. Pages fit their 100-entry limits.
+
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/38333135382): in progress
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/38333135349): queued
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/38333135346): success
+- [Mobile Real Applications](https://github.com/NeverSight/NeverD/actions/runs/38333150649): skipped
+
+Earlier reviewed **41141c57** had a confirmed failing [macOS mobile job](https://github.com/NeverSight/NeverD/actions/runs/38324681111/job/115060795895). Existing logs show conditional/mutating preprocessor directives refused in native export, unsupported Swift x86 floating-point state shapes, and incomplete single-session qualification (8/12). Native C++ build/readers passed in that job, while Objective-C scalar, Swift and parity gates failed. Those are prior-head CI observations, not an established cause or a failure attached to 587227e5. Current-head queued/running checks do not prove the failures resolved. The October 12 c3df0112 baseline ended with three cancelled workflows and one skipped workflow.
+
+PR exact-head check snapshot at **01:02 UTC**:
+
+| PR | Exact head | Existing checks |
+|---|---|---|
+| [#912](https://github.com/NeverSight/NeverD/pull/912) | `8dfd0aef0e5fde42827da7e34d717886d9bef2e6` | 4 skipped, 6 success, 4 failure, 1 cancelled |
+| [#910](https://github.com/NeverSight/NeverD/pull/910) | `734e77023330897af58c3a7ce1e914cfe6465cf4` | 4 skipped, 4 failure, 7 success |
+| [#906](https://github.com/NeverSight/NeverD/pull/906) | `f6460d703c391375027a3702361d3c04e73d8ef3` | 5 skipped, 12 success, 4 failure, 1 cancelled |
+| [#895](https://github.com/NeverSight/NeverD/pull/895) | `42c039454fd5721cd3fa30337849ae564f6222d4` | 5 skipped, 13 success, 4 failure |
+| [#889](https://github.com/NeverSight/NeverD/pull/889) | `00e232132b474cadbfd0e1c96c5e0854a82adca6` | 5 skipped, 12 success, 4 failure, 1 cancelled |
+| [#882](https://github.com/NeverSight/NeverD/pull/882) | `014da8476c9806806cf2d70dcc42de60fbf5f3e7` | 5 skipped, 12 success, 4 failure, 1 cancelled |
+| [#866](https://github.com/NeverSight/NeverD/pull/866) | `29429abb8d6c9e988eb4ecb909320c01cadb142d` | 5 skipped, 12 success, 5 failure |
+| [#855](https://github.com/NeverSight/NeverD/pull/855) | `639f2c4fa2a3f7db745d0147ece5a933b48e684c` | 5 skipped, 12 success, 5 failure |
+| [#850](https://github.com/NeverSight/NeverD/pull/850) | `6916e39381529576ac6deb667e2ed0219d2ecc4f` | 5 skipped, 12 success, 5 failure |
+| [#847](https://github.com/NeverSight/NeverD/pull/847) | `eedb586ddbea23661eb56e5e474de14ac25b2754` | 5 skipped, 12 success, 5 failure |
+| [#845](https://github.com/NeverSight/NeverD/pull/845) | `e1026072f9dc4f89ee2eee969c8ad32433d473f6` | 5 skipped, 12 success, 5 failure |
+| [#842](https://github.com/NeverSight/NeverD/pull/842) | `31af683a3e2ebb08ddf8abbc2c171688ddff140b` | 5 skipped, 12 success, 5 failure |
+| [#839](https://github.com/NeverSight/NeverD/pull/839) | `2d33959271e3a2c4379e67d6b850cfc483b6e09e` | 5 skipped, 12 success, 5 failure |
+| [#838](https://github.com/NeverSight/NeverD/pull/838) | `e5272285f87bc37692c26727b33f7aff55b8793b` | No exact-head checks returned |
+| [#834](https://github.com/NeverSight/NeverD/pull/834) | `895037760df5cb5f6c2a4ce2a4e6728b1e05a113` | 4 skipped, 4 failure, 6 success, 1 cancelled |
+| [#829](https://github.com/NeverSight/NeverD/pull/829) | `64dd74afcbec93c50427e985a497ffb2a993381f` | 9 skipped, 6 failure, 8 success |
+
+No-check #838 is missing evidence, not green. All other sampled PR heads have failed checks; not every cause was diagnosed. Automatically created documentation checks belong to this later report commit, not source qualification.
+
+## Suggested priorities
+
+1. **Establish an integrated exact-head platform result.** Dependency: existing dev CI/mobile runs and diagnosis of the earlier native-export/Swift failures. Acceptance: explicit terminal results for required stages on one integrated SHA, with skipped native-host gates retained; no green claim from style or setup jobs.
+2. **Review the sixteen-PR queue by dependency and evidence.** Dependency: independent Darwin-stack review, x87/LLVM-C lifetime review and current-head failure diagnosis; #838 needs exact-head checks. Acceptance: each proposed change has a reviewed bounded contract and relevant platform evidence before any merge decision.
+3. **Resolve the two new EH acceptance gaps without widening unproven behavior.** Dependency: source-bound frame/registration facts for #858/#859 and the related #829/#838 proposals. Acceptance: exact failing input/ownership condition maps to a minimal reviewed fix or explicit supported-boundary decision. Issue status is not changed by this report.
+
+## Daily log — 2026-10-13
+
+- Inventoried the incoming 347 commits and 646 paths; documentation activity is not counted as product delivery.
+- Reviewed navigation recording, access-width cache ownership, selected passive report/export boundaries and the late five-commit patch set.
+- No newly proven source defect or source/test patch in this repository.
+- Reconciled the merged prior report, two new issues, sixteen-PR queue and exact-head CI evidence.
+- Added this English snapshot and daily record; preserved all prior history and human text verbatim below.
+
+<details>
+<summary>Previous snapshots (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
+Last verified: **2026-10-12 09:01 Asia/Shanghai (UTC+08:00) / 01:01 UTC**.
+
+Bounded static review and existing GitHub evidence only. This report is proposed against dev on a topic branch; no merge or release readiness is asserted. Priorities are suggestions.
+
+## Snapshot and changes
+
+- Pinned dev: [c3df0112](https://github.com/NeverSight/NeverD/commit/c3df0112296b75feed71917ef01c51342762a03b); previous reviewed source: [e4236cb9](https://github.com/NeverSight/NeverD/commit/e4236cb903f87f0a6e4a63a13dfc578193f5bafa).
+- [Comparison](https://github.com/NeverSight/NeverD/compare/e4236cb903f87f0a6e4a63a13dfc578193f5bafa...c3df0112296b75feed71917ef01c51342762a03b): **347 commits / 1,119 changed file paths** (467 added, 651 modified, 1 removed). Excluding report commit 2ce39a98, its merge e442f57e and PROGRESS.md gives **345 non-report commits / 1,118 paths**. Merge commits, fixtures and documentation are included; these are not completion metrics.
+- Activity window: October 11 01:04 through October 12 01:01 UTC. **26 ordinary open issues**, up one: [#825](https://github.com/NeverSight/NeverD/issues/825) mixed-ISA triage/entropy exploration. No ordinary issue closed. An issue publication is not implementation.
+- **10 pre-existing open PRs**, down from 17. **34 PRs opened / 39 merged / 2 closed without merge** in the interval. Report #820 contributes one opening/merge; product counts are **33 opened / 38 merged / 2 closed without merge**. Today's report is excluded.
+- All 17 PRs pending in the previous report and report [#820](https://github.com/NeverSight/NeverD/pull/820) have merged. Closed without merge: [#832](https://github.com/NeverSight/NeverD/pull/832) and [#851](https://github.com/NeverSight/NeverD/pull/851); closure alone is not delivery.
+- No new statically proven defect in the sample below; no speculative source patch.
+
+## Static review and evidence
+
+Read root AGENTS.md and CONTRIBUTING.md, architecture/testing guidance relevant to source-map and package-review ownership, and roadmap context. The complete current tree has only the root AGENTS.md. Static-only instructions override build/test/formatter guidance: no code, build, test, benchmark, repository script or dynamic analysis was executed, and no CI was manually triggered or rerun.
+
+### Offline advisory matching
+
+Read complete current files:
+- lib/web/packages/advisories/SemVer.cpp, Match.cpp and Reader.cpp
+- lib/web/SessionPackageAdvisories.cpp
+- lib/web/packages/evidence/Admission.h
+- unittests/web/PackageAdvisoryTests.cpp
+
+Traced strict SemVer grammar, arbitrary-width decimal ordering, prerelease precedence, ignored build metadata for precedence versus exact enumerated-version matching, sorted introduced/fixed/last-affected events, limit unions, unsupported selector coverage and matching declared npm identities. Work, retained metadata, selector and result ceilings are charged before publication. Session imports construct and serialize privately; descriptor insertion is rolled back if advisory insertion fails.
+
+Unsupported selectors prevent a negative coverage conclusion. Missing package declarations, conflicting identities and malformed versions remain unknown. Withdrawal, source/as-of times and supplied severity are separate declaration fields; a version match deliberately does not prove current vulnerability or exploitability. The fixture source covers those distinctions, malformed/colliding ranges, large components, aggregate work and private-output canaries; it was not executed.
+
+Limits: no whole-OSV/schema compatibility, live feed freshness, publisher authentication, installed dependency identity or reachability claim. Did not exhaustively audit every declaration reader or package resolver.
+
+### Immutable analyst decisions and journal restoration
+
+Read complete:
+- include/neverd/web/PackageAssessment.h
+- lib/web/packages/assessment/Disposition.cpp and Metadata.cpp
+- lib/web/SessionPackageAssessments.cpp and SessionPackageReviewRestore.cpp
+- unittests/web/PackageReviewTests.cpp
+- journal restore/tampering/reset cases in PackageAssessmentSDKTests.cpp
+- docs/web-package-review-journal.md
+
+The authoritative disposition owner validates the complete identity/parent/index/finding chain. Restoration requires the retained history as an exact prefix, computes charges rather than trusting imported sizes, and checks the current expected head. Only a valid suffix consumes the shared 256-event/256-KiB capacity; exact current-head replay consumes none. Unlike append's last-request replay, restore does not accept an old parent head.
+
+The session holds its mutex, checks revision and owner, constructs a candidate and serializes its response before replacing state and charging counters. The parser uses a fixed bounded schema with no arbitrary notes or paths. Source fixtures cover a late altered decision, foreign assessment, invalid disposition, duplicate keys, oversized input, shortened history and reset/replay. These are inspected tests, not passing runs.
+
+The metadata composer keeps selected advisory/version relationships, feed times and unauthenticated attestation/digest declarations separate from analyst assertions. Hash-chain consistency does not authenticate an analyst or make an accepted-risk/false-positive assertion correct. Qt filesystem persistence, every GUI transition and every composer input combination were outside detailed review.
+
+### HighC source recording optimization
+
+Read all production/interface changes and added fixture source in [c3aef8bc](https://github.com/NeverSight/NeverD/commit/c3aef8bc810eb5a1660145253355cb6261acb9bd), complete CSourceRecorder.cpp/.h, and HighCEmitter.cpp lines 3070–3230.
+
+When library recognitions are absent, definition and instruction anchors can share one private render. The constructor refuses combined mode with actual library evidence before clearing existing maps. Publication still requires removing markers to reproduce ordinary text exactly. A failed combined render falls back to the existing independent recordings. Output publication remains outside the mapping exception handler, so a failed output is not retried as a mapping failure. LLVM C retains its independent route.
+
+Added fixtures cover marker-like UTF-8 text, empty versus actual recognition catalogs, changed/throwing private renders and single-attempt output failure. No execution or performance measurement was performed. This does not establish global emitter correctness or measured speedup.
+
+### Prior Windows collision
+
+[#818](https://github.com/NeverSight/NeverD/pull/818) is merged. Current cmake/hermes-parser/llvh/CMakeLists.txt gives LLVHSupport a Windows-private HandleAbort name. The previously pending fix is now integrated, but today's exact-dev Windows build is queued at sampling: no successful link/build is inferred from the source change. No duplicate repair was created.
+
+## Existing CI and review snapshot
+
+Sampled **00:59–01:00 UTC**, exact dev **c3df0112**:
+- [CI](https://github.com/NeverSight/NeverD/actions/runs/38189647328): queued.
+- [LLVM Style](https://github.com/NeverSight/NeverD/actions/runs/38189647348): queued.
+- [Mobile Decompilation](https://github.com/NeverSight/NeverD/actions/runs/38189647352): queued.
+- [Mobile Real Applications](https://github.com/NeverSight/NeverD/actions/runs/38189650851): skipped.
+- Exact-head checks: **2 success, 1 in progress, 8 queued, 13 skipped**. The two successful jobs are individual backend/caller-context checks, not an overall build pass.
+
+Pre-existing PRs, sampled around 01:00 UTC:
+
+| PR | Exact head | Check snapshot |
+|---|---|---|
+| [#850](https://github.com/NeverSight/NeverD/pull/850) | `6916e39381529576ac6deb667e2ed0219d2ecc4f` | 4 skipped, 6 success, 1 failure, 2 in_progress, 7 queued |
+| [#849](https://github.com/NeverSight/NeverD/pull/849) | `3447781f71608628a4527a39b57c448dec7c0cc9` | 4 skipped, 2 queued, 5 success, 3 failure, 1 in_progress |
+| [#847](https://github.com/NeverSight/NeverD/pull/847) | `eedb586ddbea23661eb56e5e474de14ac25b2754` | 4 skipped, 10 success, 2 queued, 3 in_progress, 1 failure |
+| [#845](https://github.com/NeverSight/NeverD/pull/845) | `e1026072f9dc4f89ee2eee969c8ad32433d473f6` | 5 skipped, 12 success, 2 in_progress, 3 failure |
+| [#842](https://github.com/NeverSight/NeverD/pull/842) | `31af683a3e2ebb08ddf8abbc2c171688ddff140b` | 5 skipped, 12 success, 5 failure |
+| [#841](https://github.com/NeverSight/NeverD/pull/841) | `01b3372ac244456dde0f4209a2d9c9a0b84c0717` | 8 skipped, 9 queued, 4 success, 3 in_progress |
+| [#839](https://github.com/NeverSight/NeverD/pull/839) | `2d33959271e3a2c4379e67d6b850cfc483b6e09e` | 5 skipped, 12 success, 5 failure |
+| [#838](https://github.com/NeverSight/NeverD/pull/838) | `70fcda5f18dd4da20542384a492a640be5e95ae3` | 11 skipped, 2 failure, 4 success, 6 queued, 1 in_progress |
+| [#834](https://github.com/NeverSight/NeverD/pull/834) | `895037760df5cb5f6c2a4ce2a4e6728b1e05a113` | 4 skipped, 4 failure, 6 success, 1 cancelled |
+| [#829](https://github.com/NeverSight/NeverD/pull/829) | `64dd74afcbec93c50427e985a497ffb2a993381f` | 1 in_progress, 8 skipped, 6 success, 7 queued |
+
+All ten returned empty review-submission, inline-comment and conversation-comment collections and no requested reviewers. They need independent review; not every failing check has a diagnosed cause. PR body validation remains author-reported, often tied to earlier local revisions, and does not replace current-head results.
+
+Darwin #839 → #842 → #845 → #847 → #850 is an explicitly stacked progression through mode, ownership, advisory locks, file synchronization and data synchronization. #829 PE32 objects and #838 SEH frame work need their own runtime-evidence gates; #841 is a separate driver-write observation track. These relationships do not authorize merging.
+
+## Capability changes and limits
+
+The current [web support matrix](docs/web-support-matrix.md) documents substantial source progress beyond yesterday: Node SEA/nexe/pkg profiles, ZIP/NW.js/VSIX metadata, bounded reversible primitive/rename/Boolean transforms, native C++ MCP, advisory/attestation/assessment records and a Qt package-review workflow.
+
+It also records eight captured Claude Code 2.1.296 packages across six target layouts and supplied Linux libc variants. Those are **author-recorded local qualification results**, not runs reproduced here; host qualification remains distinct from target artifact extraction. Windows input capture, Tauri/Wails, full runtime module resolution, publisher authentication and complete #714–#718 acceptance remain gaps. Do not carry yesterday's “MCP/SEA/pkg/nexe wholly pending” description forward.
+
+## Suggested priorities
+
+1. **Qualify the integrated dev baseline, including the Windows link repair.** Dependency: completion and diagnosis of exact-head platform checks. Acceptance: explicit successful required build/test stages on the integrated SHA, with skipped/native-host gaps preserved. No current whole-dev green result.
+2. **Review the ten-PR queue by dependency and evidence.** Dependency: independent review of the Darwin stack, PE32/SEH and driver tracks, plus exact-current-head failures. Acceptance: each proposed change has a reviewed scope and corresponding platform evidence; stale local validation and closed-without-merge PRs are not counted as completion.
+3. **Close bounded web acceptance gaps before broad support claims.** Dependency: host input/runtime packaging, explicit profile/version fixtures, and remaining GUI selections. Acceptance: map #714–#718 criteria to exact implemented/qualified slices; retain Tauri/Wails, runtime semantics and trust/authentication limits. #825 stays a separate planned triage workstream.
+
+## Daily log — 2026-10-12
+
+- Inventoried 347 commits and 1,119 paths; excluded report-only activity from product counts.
+- Reviewed advisory matching, immutable decision/journal restoration and the HighC combined-source recording change.
+- Found no new statically proven bug in this sample; no source fix or test was authored.
+- Updated the prior Windows blocker and PR queue to their actual merged/current states.
+- Preserved prior snapshots and manual content verbatim. No issue, label, assignee, dependency, security setting, workflow, merge or deployment was changed.
+
+## Coverage and counting limits
+
+Compare pages were 100 + 100 + 100 + 47 + 0 commits. The capped 300-file comparison was supplemented with complete recursive trees (7,395 and 7,891 entries, neither truncated); only non-tree paths were counted, with renames represented by removed/added paths. Open issue/PR and updated-issue second pages were empty. The latest 100 closed PRs reach October 9, before this interval; merged_at distinguishes merge from closure. Dev CI/check second pages were empty; each PR check response matched its returned total.
+
+Most changed native CPU/EH/emulation, patching, GUI, JS/container and symbolic paths were not deeply reviewed. No whole-repository audit, reproduced qualification, build/test pass, benchmark, or release-readiness claim. GitHub metadata can change after the snapshot.
+
+<details>
+<summary>Previous snapshots and manual content (preserved verbatim)</summary>
+
+# NeverD Daily Progress
+
 Last verified: **2026-10-11 09:04 Asia/Shanghai (UTC+08:00) / 01:04 UTC**.
 
 Bounded static review and point-in-time GitHub evidence only. This report is proposed on a topic branch against dev, not merged. Priorities are suggestions, not delivery commitments.
@@ -1782,6 +1997,10 @@ them are author reports unless separately confirmed by linked workflow results.
 - GitHub search and Actions may change after this timestamp. This document is a
   point-in-time record, not a claim of continuous monitoring or a committed
   delivery schedule
+
+</details>
+
+</details>
 
 </details>
 

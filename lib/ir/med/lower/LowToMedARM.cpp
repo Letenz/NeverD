@@ -14,6 +14,7 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/lift/ARMRegs.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
@@ -686,46 +687,86 @@ bool LowToMedConverter::redirectWideSubpieceToNarrowARM(
 LowToMedConverter::RelativeLiteralOutputs
 LowToMedConverter::armRelativeLiteralOutputs(const LowFunc &Low, Arch TheArch,
                                              BinaryFormat Fmt) const {
-  // CFGBuilder proves the complete value of an ARM PC + R_ARM_REL32 literal
-  // at the exact ADD output. Preserve that occurrence proof across the LowIR
-  // to MedIR boundary: the literal word is a relative fragment, and treating
-  // its old-image integer as an independent table base loses relocation.
+  // CFGBuilder proves the complete value of an ARM PC + literal at the exact
+  // ADD output, for an R_ARM_REL32 literal and for an object's literal that no
+  // relocation writes. Preserve that occurrence proof across the LowIR to
+  // MedIR boundary: the literal word is a relative fragment, and treating its
+  // old-image integer as an independent table base loses relocation.
   RelativeLiteralOutputs Outputs;
   if (TheArch != Arch::ARM || Fmt != BinaryFormat::ELF || !Image ||
-      Image->Arch != Arch::ARM || !Image->isELF())
+      Image->Arch != Arch::ARM || !Image->isELF() ||
+      Low.RelocatedInstructionAddressOccurrences.empty())
     return Outputs;
+  // The instruction set and width of each instruction an occurrence names.
+  std::map<va_t, const LowInstructionBoundary *> Instructions;
+  for (const LowBlock &Block : Low.Blocks)
+    for (const LowInstructionBoundary &Boundary : Block.InstructionBoundaries)
+      Instructions.emplace(Boundary.Address, &Boundary);
+  auto instruction = [&](va_t Addr) -> const LowInstructionBoundary * {
+    const auto It = Instructions.find(Addr);
+    return It != Instructions.end() && isSingleInstructionMode(It->second->Mode)
+               ? It->second
+               : nullptr;
+  };
   for (const auto &Occurrence : Low.RelocatedInstructionAddressOccurrences) {
     const std::pair<va_t, int> Key{Occurrence.InstructionAddr,
                                    Occurrence.OpSeq};
     if (Occurrence.DefinesOutput && Occurrence.OutputMayDepend)
       Outputs.Ambiguous.insert(Key);
     if (!Occurrence.DefinesOutput || Occurrence.OutputMayDepend ||
-        Occurrence.Authority !=
-            RelocatedInstructionAddressProofKind::LoaderField ||
         Occurrence.OutputOpcode != NdOp::INT_ADD || Occurrence.Width != 4 ||
         Occurrence.OutputWitness.Size != 4 ||
         (!Occurrence.OutputWitness.isReg() &&
          !Occurrence.OutputWitness.isTemp()) ||
         (Occurrence.Provenance != ConstantAddressProvenance::DataAddress &&
-         Occurrence.Provenance != ConstantAddressProvenance::CodeAddress))
-      continue;
-    const auto Field = Image->ARMRelativeLiteralFields.find(Occurrence.FieldVA);
-    if (Field == Image->ARMRelativeLiteralFields.end() ||
-        Field->second.TargetVA != Occurrence.TargetVA ||
-        Field->second.TargetOwnerVA != Occurrence.TargetOwnerVA ||
-        static_cast<uint32_t>(Occurrence.InstructionAddr + 8) +
-                Field->second.EncodedValue !=
-            static_cast<uint32_t>(Occurrence.TargetVA) ||
+         Occurrence.Provenance != ConstantAddressProvenance::CodeAddress) ||
         !Image->relocatedTargetBelongsToOwner(Occurrence.TargetVA,
                                               Occurrence.TargetOwnerVA))
       continue;
-    const Segment *Slot = Image->getSegmentFor(Occurrence.FieldVA);
-    const uint8_t *Bytes = Image->readVA(Occurrence.FieldVA, 4);
-    if (!Slot || !Slot->isReadable() || Slot->isWritable() || !Bytes ||
-        (uint32_t(Bytes[0]) | (uint32_t(Bytes[1]) << 8) |
-         (uint32_t(Bytes[2]) << 16) | (uint32_t(Bytes[3]) << 24)) !=
-            Field->second.EncodedValue)
+    const bool RelocationFree =
+        Occurrence.Authority ==
+        RelocatedInstructionAddressProofKind::ARMRelocationFreeLiteral;
+    if (!RelocationFree &&
+        Occurrence.Authority !=
+            RelocatedInstructionAddressProofKind::LoaderField)
       continue;
+    const va_t SlotVA =
+        RelocationFree ? Occurrence.LiteralVA : Occurrence.FieldVA;
+    const Segment *Slot = Image->getSegmentFor(SlotVA);
+    const uint8_t *Bytes = Image->readVA(SlotVA, 4);
+    if (!Slot || !Slot->isReadable() || Slot->isWritable() || !Bytes)
+      continue;
+    const uint32_t Encoded = uint32_t(Bytes[0]) | (uint32_t(Bytes[1]) << 8) |
+                             (uint32_t(Bytes[2]) << 16) |
+                             (uint32_t(Bytes[3]) << 24);
+    const LowInstructionBoundary *Add = instruction(Occurrence.InstructionAddr);
+    if (!Add ||
+        armreg::pcReadValue(Occurrence.InstructionAddr, Add->Mode) + Encoded !=
+            static_cast<uint32_t>(Occurrence.TargetVA))
+      continue;
+    if (RelocationFree) {
+      // The assembler resolved the literal, so it can only reach into the
+      // ADD's own section.
+      const Section *Anchor = Image->getSectionFor(Occurrence.InstructionAddr);
+      const LowInstructionBoundary *Load =
+          instruction(Occurrence.SeedInstructionAddr);
+      if (Occurrence.FieldVA != InvalidVA ||
+          Occurrence.Provenance != ConstantAddressProvenance::CodeAddress ||
+          !Anchor || !Anchor->isExecutable() ||
+          Anchor->VA != Occurrence.TargetOwnerVA || !Load ||
+          !Image->isUnrelocatedObjectField(SlotVA, 4) ||
+          !Image->isUnrelocatedObjectField(Load->Address, Load->Size) ||
+          !Image->isUnrelocatedObjectField(Add->Address, Add->Size))
+        continue;
+    } else {
+      const auto Field =
+          Image->ARMRelativeLiteralFields.find(Occurrence.FieldVA);
+      if (Field == Image->ARMRelativeLiteralFields.end() ||
+          Field->second.TargetVA != Occurrence.TargetVA ||
+          Field->second.TargetOwnerVA != Occurrence.TargetOwnerVA ||
+          Field->second.EncodedValue != Encoded)
+        continue;
+    }
     auto [It, Inserted] = Outputs.Exact.emplace(Key, &Occurrence);
     if (!Inserted && (It->second->TargetVA != Occurrence.TargetVA ||
                       It->second->TargetOwnerVA != Occurrence.TargetOwnerVA ||
