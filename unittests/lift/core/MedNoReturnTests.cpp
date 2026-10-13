@@ -88,6 +88,33 @@ TEST(MedNoReturn, PropagatesOnlyFromExplicitTerminatingFacts) {
   EXPECT_TRUE(Funcs[1].Blocks[1].Ops[0].DoesNotReturn);
 }
 
+TEST(MedNoReturn, WhatTheUserStatesDecidesHowCallsEnd) {
+  constexpr va_t ReturningEntry = 0x1000;
+  constexpr va_t TrapEntry = 0x2000;
+  constexpr va_t FirstCaller = 0x3000;
+  constexpr va_t SecondCaller = 0x4000;
+
+  std::vector<MedFunc> Funcs;
+  Funcs.push_back(function(ReturningEntry, {block(0, {returnOp()})}));
+  Funcs.push_back(function(TrapEntry, {block(0, {trapOp()})}));
+  Funcs.push_back(function(FirstCaller, {block(0, {callOp(ReturningEntry)})}));
+  Funcs.push_back(
+      function(SecondCaller, {block(0, {callOp(TrapEntry), returnOp()})}));
+
+  // A returning function stated never to return ends its calls, and its
+  // caller never returns; a trapping one stated to return ends none.  Each
+  // function's own flag stays what its body proves.
+  propagateInternalNoReturn(Funcs, Arch::AArch64,
+                            {{ReturningEntry, true}, {TrapEntry, false}});
+
+  EXPECT_FALSE(Funcs[0].DoesNotReturn);
+  EXPECT_TRUE(Funcs[1].DoesNotReturn);
+  EXPECT_TRUE(Funcs[2].DoesNotReturn);
+  EXPECT_TRUE(Funcs[2].Blocks[0].Ops[0].DoesNotReturn);
+  EXPECT_FALSE(Funcs[3].DoesNotReturn);
+  EXPECT_FALSE(Funcs[3].Blocks[0].Ops[0].DoesNotReturn);
+}
+
 TEST(MedNoReturn, NativeSourceEffectsFollowCurrentProofWithoutSharedMutation) {
   auto Call = callOp(0x2000);
   auto Hint = std::make_shared<SourceCallTypeHint>();

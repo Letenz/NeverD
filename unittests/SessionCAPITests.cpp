@@ -20,6 +20,7 @@
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SHA256.h"
@@ -5538,6 +5539,177 @@ TEST_F(SessionCAPITest, UserFunctionEditsShapeTheListAnalysisAndSidecar) {
   ASSERT_GE(Restored, 0);
   EXPECT_EQ(takeString(neverd_func_name(Session, Restored)), EntryName);
   EXPECT_LT(neverd_func_find_by_addr(Session, Second), 0);
+}
+
+TEST_F(SessionCAPITest, UserFunctionAttributesDecideHowCallsEndAndPersist) {
+  // entry: call helper; mov eax, 7; ret.  helper: xor eax, eax; ret.
+  const auto Input =
+      write("attributes.elf",
+            makeNativeELF(false, 0x400000, {},
+                          std::string_view("\xe8\x06\0\0\0\xb8\x07\0\0\0\xc3"
+                                           "\x31\xc0\xc3",
+                                           14)));
+  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1);
+  ASSERT_EQ(neverd_session_analyze(Session), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Helper = Entry + 11;
+  const std::string HelperHex = "0x" + llvm::utohexstr(Helper);
+  // No symbol names the helper; the user makes it a function first.
+  ASSERT_EQ(neverd_func_create(Session, Helper), 0)
+      << takeString(neverd_last_error(Session));
+  const auto analyzeAll = [&](neverd_session_t In) {
+    neverd_session_restrict_function(In, 0);
+    return neverd_session_analyze(In);
+  };
+  const auto entryReturnsSeven = [&](neverd_session_t In) {
+    EXPECT_EQ(analyzeAll(In), 1) << takeString(neverd_last_error(In));
+    const std::string Code = takeString(neverd_decompile(In, Entry));
+    EXPECT_FALSE(Code.empty()) << takeString(neverd_last_error(In));
+    return Code.find("return 7;") != std::string::npos;
+  };
+  const auto attributes = [&](neverd_session_t In) {
+    auto Parsed =
+        llvm::json::parse(takeString(neverd_func_attributes_json(In, Helper)));
+    EXPECT_TRUE(static_cast<bool>(Parsed)) << takeString(neverd_last_error(In));
+    if (!Parsed) {
+      llvm::consumeError(Parsed.takeError());
+      return llvm::json::Object();
+    }
+    return *Parsed->getAsObject();
+  };
+  const auto stated = [&](neverd_session_t In) {
+    const llvm::json::Object Row = attributes(In);
+    const auto *Stated = Row.getObject("stated");
+    return Stated ? std::string(llvm::formatv(
+                        "{0}", llvm::json::Value(llvm::json::Object(*Stated))))
+                  : std::string();
+  };
+  const auto lastError = [&] { return takeString(neverd_last_error(Session)); };
+
+  // What the dialog shows: analysis' answers, none stated.
+  EXPECT_TRUE(entryReturnsSeven(Session));
+  {
+    const llvm::json::Object Row = attributes(Session);
+    EXPECT_EQ(Row.getString("start"), HelperHex);
+    EXPECT_EQ(Row.getString("name"), "sub_" + llvm::utohexstr(Helper));
+    EXPECT_EQ(Row.getBoolean("noreturn"), false);
+    EXPECT_EQ(Row.getBoolean("library"), false);
+    EXPECT_EQ(Row.getInteger("purged_bytes"), 0);
+    EXPECT_EQ(Row.get("static")->kind(), llvm::json::Value::Null);
+    EXPECT_EQ(Row.get("color")->kind(), llvm::json::Value::Null);
+  }
+  EXPECT_EQ(stated(Session), "{}");
+  EXPECT_EQ(neverd_func_attributes_json(Session, Entry + 5), nullptr);
+  EXPECT_NE(lastError().find("no function starts at"), std::string::npos);
+
+  // Stated never to return, a call to it ends its block, as in IDA, in the
+  // session's analysis and in a whole program decompiled from its input.
+  ASSERT_EQ(neverd_func_edit(Session, Helper, "{\"noreturn\":true}"), 0)
+      << lastError();
+  EXPECT_FALSE(entryReturnsSeven(Session));
+  {
+    const std::string Program = takeString(
+        neverd_decompile_all(Session, Input.c_str(), /*UseLlvmRoute=*/0,
+                             /*NoOpt=*/0, /*MaxFunctions=*/0));
+    ASSERT_NE(Program.find("sub_" + llvm::utohexstr(Helper)), std::string::npos)
+        << lastError();
+    EXPECT_EQ(Program.find("return 7;"), std::string::npos) << Program;
+  }
+  EXPECT_EQ(attributes(Session).getBoolean("noreturn"), true);
+  EXPECT_EQ(stated(Session), "{\"noreturn\":true}");
+
+  // The notes analysis does not read; a key or value no table names is
+  // refused and changes nothing.
+  ASSERT_EQ(neverd_func_edit(Session, Helper,
+                             "{\"library\":true,\"static\":false,"
+                             "\"color\":\"#20A0ff\"}"),
+            0)
+      << lastError();
+  const std::string Rows =
+      "[{\"addr\":\"" + HelperHex +
+      "\",\"color\":\"#20A0FF\",\"library\":true,\"noreturn\":true,"
+      "\"state\":\"created\",\"static\":false}]";
+  EXPECT_EQ(takeString(neverd_functions_json(Session)), Rows);
+  EXPECT_EQ(neverd_func_edit(Session, Helper, "{\"noreturn\":\"yes\"}"), -1);
+  EXPECT_NE(lastError().find("\"noreturn\" is true, false or null"),
+            std::string::npos);
+  EXPECT_EQ(neverd_func_edit(Session, Helper, "{\"colour\":\"#000000\"}"), -1);
+  EXPECT_NE(lastError().find("unknown function attribute \"colour\""),
+            std::string::npos);
+  EXPECT_EQ(neverd_func_edit(Session, Helper, "{\"color\":\"red\"}"), -1);
+  EXPECT_EQ(neverd_func_edit(Session, Helper, "[]"), -1);
+  EXPECT_EQ(neverd_func_edit(Session, Entry + 5, "{\"library\":true}"), -1);
+  EXPECT_NE(lastError().find("no function starts at"), std::string::npos);
+  EXPECT_EQ(takeString(neverd_functions_json(Session)), Rows);
+
+  // Saved, the statements come back with the input and decide again.
+  ASSERT_EQ(neverd_functions_save(Session), 0) << lastError();
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_FALSE(entryReturnsSeven(Reopened));
+    EXPECT_EQ(attributes(Reopened).getString("color"), "#20A0FF");
+    neverd_session_destroy(Reopened);
+  }
+
+  // Null hands an attribute back to analysis.
+  ASSERT_EQ(neverd_func_edit(Session, Helper, "{\"noreturn\":null}"), 0)
+      << lastError();
+  EXPECT_TRUE(entryReturnsSeven(Session));
+  EXPECT_EQ(attributes(Session).getBoolean("noreturn"), false);
+
+  // The statements go with a deleted function; one made again states anew,
+  // and its row holds both edits.
+  ASSERT_EQ(neverd_func_delete(Session, Helper), 0) << lastError();
+  EXPECT_EQ(takeString(neverd_functions_json(Session)),
+            "[{\"addr\":\"" + HelperHex + "\",\"state\":\"deleted\"}]");
+  ASSERT_EQ(neverd_func_create(Session, Helper), 0) << lastError();
+  ASSERT_EQ(neverd_func_edit(Session, Helper, "{\"noreturn\":true}"), 0)
+      << lastError();
+  EXPECT_EQ(takeString(neverd_functions_json(Session)),
+            "[{\"addr\":\"" + HelperHex +
+                "\",\"noreturn\":true,\"state\":\"created\"}]");
+  ASSERT_EQ(neverd_functions_save(Session), 0) << lastError();
+  {
+    neverd_session_t Reopened = neverd_session_create();
+    ASSERT_EQ(neverd_session_load(Reopened, Input.c_str()), 1);
+    EXPECT_FALSE(entryReturnsSeven(Reopened));
+    EXPECT_EQ(stated(Reopened), "{\"noreturn\":true}");
+    neverd_session_destroy(Reopened);
+  }
+}
+
+TEST_F(SessionCAPITest, AStatedNoReturnCalleeKeepsItsArguments) {
+  // A statement decides whether a call returns, never what its callee reads:
+  // one function's C still passes argc, as a whole program's does.
+  const std::string Binary =
+      buildProgram("stated-noreturn",
+                   "#include <stdio.h>\n"
+                   "__attribute__((noinline)) void stop(int c) { if (c > 100) "
+                   "puts(\"big\"); }\n"
+                   "int main(int argc, char **argv) { (void)argv; stop(argc); "
+                   "return 7; }\n");
+  if (Binary.empty())
+    GTEST_SKIP() << "the host compiler builds no program";
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1);
+  const int Stop = neverd_func_find_by_name(Session, "stop");
+  const int Main = neverd_func_find_by_name(Session, "main");
+  ASSERT_GE(Stop, 0);
+  ASSERT_GE(Main, 0);
+  const auto Entry = neverd_func_entry(Session, Main);
+  ASSERT_EQ(neverd_func_edit(Session, neverd_func_entry(Session, Stop),
+                             "{\"noreturn\":true}"),
+            0)
+      << takeString(neverd_last_error(Session));
+  const std::string One = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(One.find("stop(arg0);"), std::string::npos) << One;
+  EXPECT_NE(One.find("main(int32_t arg0)"), std::string::npos) << One;
+  EXPECT_EQ(One.find("return 7;"), std::string::npos) << One;
+  neverd_session_restrict_function(Session, 0);
+  ASSERT_EQ(neverd_session_analyze(Session), 1);
+  const std::string Whole = takeString(neverd_decompile(Session, Entry));
+  EXPECT_NE(Whole.find("stop(arg0);"), std::string::npos) << Whole;
+  EXPECT_EQ(Whole.find("return 7;"), std::string::npos) << Whole;
 }
 
 TEST_F(SessionCAPITest, UserDataItemsDefineBytesAndPersist) {

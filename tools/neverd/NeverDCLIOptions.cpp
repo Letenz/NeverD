@@ -1159,6 +1159,26 @@ cl::opt<std::string>
                    cl::init(""), cl::value_desc("address"),
                    cl::sub(FunctionEditsCmd));
 
+cl::opt<std::string>
+    FunctionEdit("edit",
+                 cl::desc("State what the function at this address (hex) "
+                          "is, by --set"),
+                 cl::init(""), cl::value_desc("address"),
+                 cl::sub(FunctionEditsCmd));
+
+cl::list<std::string> FunctionSet(
+    "set",
+    cl::desc("An attribute --edit states: noreturn, library or static "
+             "=true|false, color=#RRGGBB; =default hands it back to analysis"),
+    cl::value_desc("key=value"), cl::sub(FunctionEditsCmd));
+
+cl::opt<std::string>
+    FunctionShow("show",
+                 cl::desc("Show what the function at this address (hex) is, "
+                          "as the Edit function dialog does"),
+                 cl::init(""), cl::value_desc("address"),
+                 cl::sub(FunctionEditsCmd));
+
 cl::opt<bool> FunctionEditsList("list",
                                 cl::desc("List the function edits (default)"),
                                 cl::sub(FunctionEditsCmd));

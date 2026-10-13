@@ -1062,6 +1062,8 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
           // can observe, and an unconditional one ends this path.
           if (!EntersNoReturnFunction)
             Effect.Callees.insert(Op.Inputs[0].Offset);
+          else if (Img.userNoReturnAt(Op.Inputs[0].Offset))
+            Effect.NoReturnCallees.insert(Op.Inputs[0].Offset);
           Step.Callee = Op.Inputs[0].Offset;
           Step.TailCallee = true;
           Step.Exits = EntersNoReturnFunction && Op.Opcode == NdOp::BRANCH;
@@ -1082,7 +1084,8 @@ localRegisterEffect(const BinaryImage &Img, CallRegisterBodyView F,
           Step.TailCallee = TailCall;
           if (!NoReturnCall)
             Effect.Callees.insert(Op.Inputs[0].Offset);
-          else if (!EntersNoReturnFunction)
+          else if (!EntersNoReturnFunction ||
+                   Img.userNoReturnAt(Op.Inputs[0].Offset))
             Effect.NoReturnCallees.insert(Op.Inputs[0].Offset);
         }
         break;

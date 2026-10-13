@@ -370,6 +370,9 @@ bool CFGBuilder::isNoReturnCall(const InsnRecord &Rec) const {
   }
   if (Target == InvalidVA)
     return false;
+  // What the user states of the callee decides over its name and a proof.
+  if (const auto Stated = CurrentImg->userNoReturnAt(Target))
+    return *Stated;
   if (libc::isNoReturnTarget(*CurrentImg, Target, NoReturnTargets))
     return true;
   // An internal callee needs a proof, which lifts it.  Padding after the call

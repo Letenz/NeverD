@@ -366,6 +366,39 @@ TEST(InternalNoReturn, CalleeEndingInAKnownNoReturnCallEndsItsBlock) {
   EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
 }
 
+TEST(InternalNoReturn, WhatTheUserStatesOfACalleeDecides) {
+  // As IDA's Edit function does, a statement decides over the callee's name
+  // and its body, in either direction.
+  {
+    SCOPED_TRACE("a returning callee stated never to return");
+    auto Image =
+        imageWith(callerThen({0xc3}), {{Base, "caller"}, {0x1010, "b"}});
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+    Image.UserNoReturn[0x1010] = true;
+    EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+    EXPECT_TRUE(libc::isNoReturnTarget(Image, 0x1010));
+    EXPECT_TRUE(libc::NoReturnTargetIndex(Image).contains(Image, 0x1010));
+  }
+  {
+    SCOPED_TRACE("abort stated to return");
+    auto Image =
+        imageWith(callerThen({0xc3}), {{Base, "caller"}, {0x1010, "abort"}});
+    EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+    Image.UserNoReturn[0x1010] = false;
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+    EXPECT_FALSE(libc::isNoReturnTarget(Image, 0x1010));
+    EXPECT_FALSE(libc::NoReturnTargetIndex(Image).contains(Image, 0x1010));
+  }
+  {
+    SCOPED_TRACE("a fast-failing callee stated to return");
+    auto Image =
+        imageWith(callerThen({0xcd, 0x29}), {{Base, "caller"}, {0x1010, "b"}});
+    EXPECT_TRUE(callAtBaseEndsItsBlock(Image));
+    Image.UserNoReturn[0x1010] = false;
+    EXPECT_FALSE(callAtBaseEndsItsBlock(Image));
+  }
+}
+
 TEST(InternalNoReturn, MutualRecursionWithoutATrapProvesNothing) {
   // callee: call caller; int3 -- a cycle with no terminating fact.
   std::vector<uint8_t> Callee(0x10, 0xcc);
