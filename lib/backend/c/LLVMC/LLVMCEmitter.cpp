@@ -42,6 +42,7 @@
 #include "neverd/backend/llvm/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
@@ -418,7 +419,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
       writeImportCalleeDecls(Mod);
       WriteFunctions();
     }
-    writeReferencedImageObjects(*OnlyFunction, Tail);
+    writeReferencedImageObjects({OnlyFunction}, Tail);
     OS << Tail;
     recordSourceNames(Mod);
     return;
@@ -436,6 +437,13 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   }
   writeForwardDecls(Mod);
   writeGlobals(Mod);
+  // Code that reaches image data through a mirror the environment holds
+  // names the data itself, as one function's output does.
+  std::vector<const llvm::Function *> Defined;
+  for (const auto &Fn : Mod)
+    if (!Fn.isDeclaration())
+      Defined.push_back(&Fn);
+  writeReferencedImageObjects(Defined, Functions);
   writeImportCalleeDecls(Mod);
   OS << "\n" << Functions;
   recordSourceNames(Mod);
@@ -636,10 +644,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     for (const char *Hdr : getArchIntrinsicHeaders(Opts.TheArch))
       Headers.insert(Hdr);
 
+  IncludedHeaders.clear();
   if (Opts.EmitIncludes) {
     for (auto &H : Headers)
       OS << "#include <" << H << ">\n";
     OS << "\n";
+    IncludedHeaders.insert(Headers.begin(), Headers.end());
   }
   if (HasFloatingArithmetic)
     c_float::writeContractionPolicy(OS.stream());
@@ -945,11 +955,12 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
         CTy = "uint32_t";
       else if (VTy->isIntegerTy(64))
         CTy = "uint64_t";
-      OS << imageObjectSymbolLine(Name)
-         << llvmc::storageAlignment(GV.getValueType(), Mod.getDataLayout(),
-                                    GV.getAlign().valueOrOne())
-         << "extern " << CTy << " " << Name << "; /* 0x"
-         << llvm::utohexstr(*parseNdDataSymbol(RawName)) << " */\n";
+      if (!headerDeclaresObject(Name))
+        OS << imageObjectSymbolLine(Name)
+           << llvmc::storageAlignment(GV.getValueType(), Mod.getDataLayout(),
+                                      GV.getAlign().valueOrOne())
+           << "extern " << CTy << " " << Name << "; /* 0x"
+           << llvm::utohexstr(*parseNdDataSymbol(RawName)) << " */\n";
       EmittedGlobalNames.insert(Name);
       continue;
     }
@@ -1034,8 +1045,10 @@ void LLVMCWriter::writeGlobals(llvm::Module &Mod) {
   }
 }
 
-void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
-                                              llvm::StringRef Text) {
+void LLVMCWriter::writeReferencedImageObjects(
+    llvm::ArrayRef<const llvm::Function *> Fns, llvm::StringRef Text) {
+  if (Fns.empty())
+    return;
   std::map<std::string, llvm::Type *> Objs;
   std::map<va_t, const llvm::GlobalVariable *> ByteArrays;
   // An object the function names keeps the type its accesses give it; one
@@ -1044,7 +1057,8 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
     llvm::StringRef Raw = Name;
     if (Raw.empty() || EmittedGlobalNames.count(Name) ||
         Raw.starts_with("__imp_") || Raw.starts_with("_imp_") ||
-        Raw.starts_with("??") || Raw.starts_with("ord_") || Raw.contains("??"))
+        Raw.starts_with("??") || Raw.starts_with("ord_") ||
+        Raw.contains("??") || headerDeclaresObject(Raw))
       return;
     auto It = Objs.find(Name);
     if (It == Objs.end())
@@ -1059,7 +1073,7 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
       if (const auto Width = Opts.AccessWidths->at(VA);
           Width && (*Width == 2 || *Width == 4 || *Width == 8))
         Bytes = *Width;
-    return llvm::Type::getIntNTy(Fn.getContext(), Bytes * 8);
+    return llvm::Type::getIntNTy(Fns.front()->getContext(), Bytes * 8);
   };
   auto Note = [&](const llvm::Value *Ptr, llvm::Type *Ty, bool MayFold) {
     if (!Ty)
@@ -1081,26 +1095,37 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
     }
     Declare(Name, Ty, /*Widen=*/true);
   };
-  for (const auto &BB : Fn) {
-    for (const auto &Inst : BB) {
-      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst))
-        Note(LI->getPointerOperand(), LI->getType(), LI->isSimple());
-      else if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
-        Note(SI->getPointerOperand(), SI->getValueOperand()->getType(), false);
-    }
-  }
+  for (const llvm::Function *Fn : Fns)
+    for (const auto &BB : *Fn)
+      for (const auto &Inst : BB) {
+        if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(&Inst))
+          Note(LI->getPointerOperand(), LI->getType(), LI->isSimple());
+        else if (auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst))
+          Note(SI->getPointerOperand(), SI->getValueOperand()->getType(),
+               false);
+      }
   // The objects whose addresses the function's constants spell and its text
   // names: a literal shows its text, and a constant the text folds away
   // names nothing.
+  // The identifiers the text spells, read once: a whole program's text runs
+  // to megabytes, and every address constant asks.
+  std::optional<llvm::DenseSet<llvm::StringRef>> Identifiers;
   const auto Spelled = [&](llvm::StringRef Name) {
-    const auto Identifier = [](char C) { return llvm::isAlnum(C) || C == '_'; };
-    for (size_t At = Text.find(Name); At != llvm::StringRef::npos;
-         At = Text.find(Name, At + 1))
-      if ((At == 0 || !Identifier(Text[At - 1])) &&
-          (At + Name.size() == Text.size() ||
-           !Identifier(Text[At + Name.size()])))
-        return true;
-    return false;
+    if (!Identifiers) {
+      Identifiers.emplace();
+      const auto Part = [](char C) { return llvm::isAlnum(C) || C == '_'; };
+      for (size_t At = 0; At < Text.size();) {
+        if (!Part(Text[At])) {
+          ++At;
+          continue;
+        }
+        const size_t Begin = At;
+        while (At < Text.size() && Part(Text[At]))
+          ++At;
+        Identifiers->insert(Text.slice(Begin, At));
+      }
+    }
+    return Identifiers->contains(Name);
   };
   const auto DeclareAddressed = [&](va_t Addr, const std::string &Name) {
     if (!Name.empty() &&
@@ -1129,10 +1154,24 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
       for (const llvm::Use &Op : C->operands())
         Self(Self, Op.get());
   };
-  for (const auto &BB : Fn)
-    for (const auto &Inst : BB)
-      for (const llvm::Use &Op : Inst.operands())
-        NoteAddresses(NoteAddresses, Op.get());
+  for (const llvm::Function *Fn : Fns)
+    for (const auto &BB : *Fn)
+      for (const auto &Inst : BB)
+        for (const llvm::Use &Op : Inst.operands())
+          NoteAddresses(NoteAddresses, Op.get());
+  // A pointer mirror the environment holds (runtime-filled slots) is no
+  // module's to define, but code that reaches it by offset still names it.
+  bool Declared = false;
+  if (!OnlyFunction && CurMod)
+    for (const auto &Global : CurMod->globals())
+      if (!Global.hasInitializer() && mirrorsImageStorage(Global))
+        if (const std::string Name = globalNameStr(&Global);
+            !EmittedGlobalNames.count(Name) && Spelled(Name)) {
+          OS << "extern " << typeToCLLVM(Global.getValueType()) << " " << Name
+             << ";\n";
+          EmittedGlobalNames.insert(Name);
+          Declared = true;
+        }
   for (const auto &[Name, Ty] : Objs) {
     OS << imageObjectSymbolLine(Name) << "extern " << typeToCLLVM(Ty) << " "
        << Name << ";\n";
@@ -1142,7 +1181,7 @@ void LLVMCWriter::writeReferencedImageObjects(const llvm::Function &Fn,
     OS << imageObjectSymbolLine(Name);
     writeImageByteArray(*GV, Name);
   }
-  if (!Objs.empty() || !ByteArrays.empty())
+  if (Declared || !Objs.empty() || !ByteArrays.empty())
     OS << "\n";
 }
 

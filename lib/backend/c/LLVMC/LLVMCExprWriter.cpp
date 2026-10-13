@@ -482,6 +482,29 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
     case llvm::Instruction::IntToPtr:
     case llvm::Instruction::PtrToInt:
       return imageDataVA(CE->getOperand(0));
+    case llvm::Instruction::Add:
+    case llvm::Instruction::Sub: {
+      // A symbol-relative integer address, as an i386 GOT-relative access
+      // folds `&mirror + 268`: the image address plus or less its offset.
+      const auto *Offset = llvm::dyn_cast<llvm::ConstantInt>(CE->getOperand(1));
+      if (!Offset || Offset->getBitWidth() > 64)
+        return std::nullopt;
+      const auto Base = imageDataVA(CE->getOperand(0));
+      if (!Base)
+        return std::nullopt;
+      const int64_t Delta = Offset->getSExtValue();
+      const va_t Addr =
+          CE->getOpcode() == llvm::Instruction::Add
+              ? static_cast<va_t>(static_cast<int64_t>(*Base) + Delta)
+              : static_cast<va_t>(static_cast<int64_t>(*Base) - Delta);
+      // The integer is as wide as the image's addresses.  An anchor before a
+      // section (i386 `table@GOTOFF - 1`) addresses no data.
+      const unsigned Bits = CE->getType()->getIntegerBitWidth();
+      const va_t Wrapped = Bits >= 64 ? Addr : Addr & ((va_t{1} << Bits) - 1);
+      if (!isImageDataAddress(Wrapped))
+        return std::nullopt;
+      return Wrapped;
+    }
     default:
       return std::nullopt;
     }
@@ -582,13 +605,17 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
 }
 
 std::string LLVMCWriter::imageDataCName(const llvm::Value *V) const {
-  // Full-module output owns these bytes in a pointer mirror. Its interior
-  // fields are offsets into that object, not separate globals at the original
-  // VAs. Single-function output instead declares the referenced image objects.
+  // Full-module output owns the bytes of a pointer mirror it defines. Its
+  // interior fields are offsets into that object, not separate globals at the
+  // original VAs. Single-function output instead declares the referenced
+  // image objects, and so does a module for a mirror its environment holds
+  // (one with runtime-filled slots, such as an i386 GOT run and the data
+  // after it), which it does not define.
   if (!OnlyFunction && V->getType()->isPointerTy())
     if (const auto *Global =
             llvm::dyn_cast<llvm::GlobalVariable>(llvm::getUnderlyingObject(V));
-        Global && parseNdCodePtrSymbol(Global->getName()))
+        Global && Global->hasInitializer() &&
+        parseNdCodePtrSymbol(Global->getName()))
       return {};
   const auto VA = imageDataVA(V);
   if (!VA)

@@ -177,6 +177,10 @@ const LibCPrototype *libcPrototype(std::string_view Name, BinaryFormat Format);
 std::optional<bool> libcReturnsValue(std::string_view Name,
                                      BinaryFormat Format);
 
+/// The C library header that declares the data object C name \p Name
+/// (LibCDataObjects.def): "stdio.h" for `stdout`; null for any other name.
+const char *headerOfDataObject(std::string_view Name);
+
 /// Whether the compiler runtime routine C name \p Name returns a double-word
 /// integer in a register pair (CompilerRuntimeDoubleWord.def): `__udivdi3`
 /// on a 32-bit target.
