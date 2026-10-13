@@ -283,6 +283,10 @@ build-release/bin/NeverDLowUndefinedDigestTests
 `NarrowArithmeticShiftCarrySurvivesBothSourceBackends` は未定義動作のトラップを有効にし、O0/O2 で両方の復元 C 経路を実行し、すべてのバイト値と生のシフト回数を網羅します。
 `NeverDLLVMCIntrinsicSemanticTests` は i1/8/16/32/64/128 の符号付き・符号なし整数 min/max も O0/O2 で実行し、代入とインラインの結果、生成処理の順序、単一評価を検査します。未対応のスカラー幅と不正なオペランドは明示的に失敗する必要があります。
 
+## x64 x87 コンテキストの所有権
+
+`NeverDX86X87ConvertStateTests` は元のバイト列と LLVM、HighC、LLVMC の実行を default/NoOpt、C O0/O2 で比較します。変換、八種の算術形式、フラグ、MMX/EMMS、満杯・空スタック、呼び出し、ラッパー、入口ループ、独立入口を検証します。四種の FLDENV/FRSTOR 形式で保留例外、タグ、保持データを確認し、適用可能な場合は四種の RC、三種の有効 PC、64 種の例外マスクを使用します。Low/Med/High 契約は不正な形状、偽造ハンドル、切り詰められたセレクターを拒否します。狭い戻り値は呼び出し効果を保持し、必要な不明ビットを拒否します。ネイティブ比較には x64 と Clang が必要で、全命令、プラットフォーム、CPU、障害順序、型付き浮動小数点インポート ABI の網羅は主張しません。
+
 ## 構造化 C の制御フローと呼び出しの検証
 
 `HighControlFlowSemantics.*` は、ループの出口や末尾を移動しても、他のジャンプが参照するラベルが保持されることを検証します。先頭・末尾の出口への直接ジャンプと break の置換を対象に、生成 C を O0/O2 で実行し、独立した期待戻り値と比較します。
@@ -1734,7 +1738,3 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 検証付き KVM x64 実行では、`withExecutionOwner` により命令ループ全体を専用 vCPU スレッドへ委譲します。命令の許可、RAM トランザクション、フック、予算はループが管理し、各ネイティブ実行の制御と例外優先順位を維持します。呼び出し元は実行中の入口を監視し、キャンセル完了を確認してから戻ります。CPU フックは専用スレッドで実行されるため、呼び出し元のスレッドローカル状態に依存できません。単独入口の完了処理は従来どおりその呼び出し元で実行します。`ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` と `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` が所有権と実際のキャンセルを検証します。この変更は復元ドライバーの認証ではありません。
-
-## x64 x87 コンテキストの所有権
-
-`NeverDX86X87ConvertStateTests` は元のバイト列と LLVM、HighC、LLVMC の実行を default/NoOpt、C O0/O2 で比較します。変換、八種の算術形式、フラグ、MMX/EMMS、満杯・空スタック、呼び出し、ラッパー、入口ループ、独立入口を検証します。四種の FLDENV/FRSTOR 形式で保留例外、タグ、保持データを確認し、適用可能な場合は四種の RC、三種の有効 PC、64 種の例外マスクを使用します。Low/Med/High 契約は不正な形状、偽造ハンドル、切り詰められたセレクターを拒否します。狭い戻り値は呼び出し効果を保持し、必要な不明ビットを拒否します。ネイティブ比較には x64 と Clang が必要で、全命令、プラットフォーム、CPU、障害順序、型付き浮動小数点インポート ABI の網羅は主張しません。

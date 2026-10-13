@@ -292,6 +292,10 @@ non signés i1/8/16/32/64/128 à O0/O2 : résultats affectés ou intégrés, ord
 producteurs et évaluation unique. Les largeurs scalaires non prises en charge
 et les opérandes mal formés doivent échouer explicitement.
 
+## Contexte x87 détenu par les fonctions x64
+
+`NeverDX86X87ConvertStateTests` compare les octets originaux à LLVM natif, HighC et LLVMC avec default/NoOpt et C O0/O2. Il couvre les conversions, huit formes arithmétiques, flags, MMX/EMMS, piles pleines/vides, appels, wrappers, boucles et entrées indépendantes. Quatre formats FLDENV/FRSTOR vérifient exceptions en attente, tags et données conservées. Selon le cas : quatre RC, trois PC définis et 64 masques. Les contrats Low/Med/High refusent les formes incorrectes, handles forgés et sélecteurs tronqués. Les retours étroits conservent les effets d’appel et refusent les bits inconnus demandés. L’oracle exige x64 et Clang ; il ne certifie pas toutes les instructions, plateformes, CPU, priorités de faute ou ABI des imports flottants typés.
+
 ## Vérification du contrôle et des appels en C structuré
 
 `HighControlFlowSemantics.*` vérifie que déplacer une sortie ou une fin de boucle conserve les étiquettes visées par d’autres sauts. Les entrées directes dans les sorties en tête ou en fin de boucle et le remplacement de break sont exécutés en C généré à O0/O2, avec des valeurs de retour attendues indépendantes.
@@ -1849,7 +1853,3 @@ ctest --test-dir build-release -L '^(NeverDX86X87IntegerLoadTests|NeverDLLVMCInt
 ```
 
 L’exécution KVM x64 vérifiée confie toute la boucle d’instructions au thread vCPU privé via `withExecutionOwner`. La boucle conserve l’admission, les transactions RAM, les hooks et les budgets ; chaque entrée native garde ses contrôles et la priorité des exceptions. L’appelant surveille les entrées actives et attend l’acquittement de l’annulation. Les hooks CPU exécutés sur ce thread ne doivent pas dépendre de l’état local du thread appelant. Une entrée native autonome conserve sa finalisation sur son appelant. `ExecutionOwnerKeepsAdmissionAndTransfersOnOneThread` et `OwnedLoopDeadlineAcknowledgesAnActualNonExitingVCPU` vérifient la propriété et l’annulation réelle ; ce changement ne certifie pas un pilote récupéré.
-
-## Contexte x87 détenu par les fonctions x64
-
-`NeverDX86X87ConvertStateTests` compare les octets originaux à LLVM natif, HighC et LLVMC avec default/NoOpt et C O0/O2. Il couvre les conversions, huit formes arithmétiques, flags, MMX/EMMS, piles pleines/vides, appels, wrappers, boucles et entrées indépendantes. Quatre formats FLDENV/FRSTOR vérifient exceptions en attente, tags et données conservées. Selon le cas : quatre RC, trois PC définis et 64 masques. Les contrats Low/Med/High refusent les formes incorrectes, handles forgés et sélecteurs tronqués. Les retours étroits conservent les effets d’appel et refusent les bits inconnus demandés. L’oracle exige x64 et Clang ; il ne certifie pas toutes les instructions, plateformes, CPU, priorités de faute ou ABI des imports flottants typés.
