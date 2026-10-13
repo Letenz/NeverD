@@ -511,6 +511,26 @@ protected:
     return Path;
   }
 
+  /// Build the C files \p Texts as one position-independent executable
+  /// named \p Name with the host compiler; empty if it does not build.
+  std::string buildProgramFrom(const std::string &Name,
+                               const std::vector<std::string_view> &Texts) {
+    std::vector<std::string> Sources;
+    for (size_t I = 0; I < Texts.size(); ++I)
+      Sources.push_back(write(Name + std::to_string(I) + ".c", Texts[I]));
+    const std::string Binary = (Directory / Name).string();
+    std::vector<llvm::StringRef> Arguments = {NEVERD_RUNTIME_FIXTURE_COMPILER,
+                                              "-O1", "-fPIE", "-pie"};
+    Arguments.insert(Arguments.end(), Sources.begin(), Sources.end());
+    Arguments.insert(Arguments.end(), {"-o", Binary});
+    std::string Message;
+    const int Built =
+        llvm::sys::ExecuteAndWait(NEVERD_RUNTIME_FIXTURE_COMPILER, Arguments,
+                                  std::nullopt, {}, 60, 0, &Message);
+    EXPECT_EQ(Built, 0) << Message;
+    return Built == 0 ? Binary : std::string();
+  }
+
   /// Build the C program \p Text as a position-independent executable named
   /// \p Name with the host compiler; empty if it does not build.
   std::string buildProgram(const std::string &Name, std::string_view Text) {
@@ -5113,6 +5133,51 @@ TEST_F(SessionCAPITest, SourcePagesNameTheSymbolsOfRenamedFunctions) {
         Named = true;
       }
     EXPECT_TRUE(Named) << Text->str();
+  }
+#endif
+}
+
+TEST_F(SessionCAPITest, FunctionsThatShareANameAreNumberedAsIDANumbersThem) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "builds a glibc program";
+#else
+  if (llvm::StringRef(NEVERD_RUNTIME_FIXTURE_COMPILER).empty())
+    GTEST_SKIP() << "needs a GNU-style host C compiler";
+  // Two files of the program each define a static helper.
+  const std::string Binary = buildProgramFrom(
+      "shared_names",
+      {"__attribute__((noinline)) static int helper(int x) { return x * 3; }\n"
+       "int use_a(int x) { return helper(x); }\n",
+       "__attribute__((noinline)) static int helper(int x) { return x - 7; }\n"
+       "int use_b(int x) { return helper(x) * 2; }\n",
+       "int use_a(int);\nint use_b(int);\n"
+       "int main(int argc, char **argv) {\n"
+       "  (void)argv;\n  return use_a(argc) + use_b(argc);\n}\n"});
+  ASSERT_FALSE(Binary.empty());
+  ASSERT_EQ(neverd_session_load(Session, Binary.c_str()), 1)
+      << takeString(neverd_last_error(Session));
+  const int First = neverd_func_find_by_name(Session, "helper");
+  const int Second = neverd_func_find_by_name(Session, "helper_0");
+  ASSERT_GE(First, 0);
+  ASSERT_GE(Second, 0);
+  EXPECT_LT(neverd_func_entry(Session, First),
+            neverd_func_entry(Session, Second));
+  // Each caller's pseudocode calls its own file's helper, by the name the
+  // listing gives it.
+  for (const auto &[Caller, Callee] :
+       {std::pair{"use_a", "helper("}, std::pair{"use_b", "helper_0("}}) {
+    SCOPED_TRACE(Caller);
+    const int Index = neverd_func_find_by_name(Session, Caller);
+    ASSERT_GE(Index, 0);
+    const neverd_va_t Entry = neverd_func_entry(Session, Index);
+    for (const std::string &Source :
+         {takeString(neverd_decompile(Session, Entry)),
+          takeString(neverd_decompile_llvm(Session, Entry))}) {
+      ASSERT_FALSE(Source.empty()) << takeString(neverd_last_error(Session));
+      EXPECT_NE(Source.find(Callee), std::string::npos) << Source;
+      if (llvm::StringRef(Callee) == "helper_0(")
+        EXPECT_EQ(Source.find("helper("), std::string::npos) << Source;
+    }
   }
 #endif
 }

@@ -241,6 +241,12 @@ a routine returns keeps the integer the machine reads,
 converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
 void *, const void *))compare)`.
 
+Functions that share a symbol name, such as the static `helper` of two
+files, are numbered as IDA numbers them: the one at the lowest address keeps
+the name, and the others read `helper_0`, `helper_1` and so on in the
+listing, the Functions window, Jump and the pseudocode, skipping a number
+another symbol already holds.
+
 Mangled names read as their language spells them: the listing keeps the
 linkage name an instruction uses and adds the readable form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
