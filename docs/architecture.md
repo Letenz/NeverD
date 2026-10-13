@@ -50,6 +50,15 @@ loads opens the project without it, with a warning. Older display-only
 selections remain presentation aliases until the user selects the PDB again
 for analysis.
 
+`pdbSymbolRequest` derives symbol-store path components from the loader's unique,
+validated CodeView identity. The existing headers JSON exposes those components
+and the current debug-information status; worker metadata advertises a download
+candidate only when debug loading is enabled and no PDB is loaded. The GUI owns
+user consent, HTTPS transport and its private cache. It never reparses PE records
+or treats a network response as analysis evidence: inspection and transactional
+application use the existing strict PDB APIs. Epoch and request guards retire
+downloads on document changes, and network errors do not change the image.
+
 ## System boundary
 
 The Qt workbench keeps project writes and browsing in one `neverd-worker` and

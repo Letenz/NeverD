@@ -22,6 +22,7 @@
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/support/FilePath.h"
 
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -224,6 +225,37 @@ DebugInfoResult loadMap(const std::filesystem::path &P,
 }
 
 } // anonymous namespace
+
+std::optional<PDBSymbolRequest> pdbSymbolRequest(const BinaryImage &Img) {
+  const auto &DI = Img.DynInfo;
+  if (!Img.isCOFF() ||
+      DI.CodeViewPDBIdentityState != PDBIdentityState::Unique ||
+      !DI.CodeViewPDBIdentity || !DI.CodeViewPDBIdentity->isValid())
+    return std::nullopt;
+  const auto Name = recordedFileName(DI.PDBPath);
+  // The recorded directory is never a network or cache destination. Restrict
+  // the basename to portable file characters before publishing it to clients.
+  if (Name.empty() || Name.size() > 240 || Name.front() == '.' ||
+      !Name.ends_with_insensitive(".pdb"))
+    return std::nullopt;
+  for (unsigned char C : Name)
+    if (C < 0x20 || C >= 0x7f || llvm::StringRef("<>:\"/\\|?*").contains(C))
+      return std::nullopt;
+  const auto &Identity = *DI.CodeViewPDBIdentity;
+  std::string Key;
+  if (Identity.Kind == PDBIdentityKind::RSDS) {
+    // CodeView serializes GUID's first three fields little-endian. Symbol
+    // stores spell those fields as a GUID, without braces or separators.
+    constexpr unsigned Order[] = {3, 2, 1,  0,  5,  4,  7,  6,
+                                  8, 9, 10, 11, 12, 13, 14, 15};
+    for (unsigned I : Order)
+      Key += llvm::utohexstr(Identity.Guid[I], false, 2);
+  } else {
+    Key = llvm::utohexstr(Identity.Signature, false, 8);
+  }
+  Key += llvm::utohexstr(Identity.Age, true);
+  return PDBSymbolRequest{Name.lower(), std::move(Key)};
+}
 
 const char *debugInfoKindName(DebugInfoKind Kind) {
   switch (Kind) {

@@ -2697,4 +2697,99 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>The worker cannot restore analysis state.</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>The symbol download timed out.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>Download debug symbols</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>Download</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>Not now</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory.</source>
+        <translation>Cannot create the symbol cache directory.</translation>
+    </message>
+    <message>
+        <source>Cannot write to the symbol cache.</source>
+        <translation>Cannot write to the symbol cache.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancel</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>Symbol download cancelled.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>Downloading %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>The symbol file exceeds the 2 GiB download limit.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft has no matching symbols for this build.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>Symbol download failed: %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty or could not be saved.</source>
+        <translation>The downloaded symbol file is empty or could not be saved.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>The compressed symbol file is invalid.</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>Expanding compressed symbols…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>Could not expand the compressed symbol file.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>Compressed symbols require Windows.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>Verifying downloaded symbols…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>The PDB does not match the loaded file.</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>Symbol verification failed: %1</translation>
+    </message>
+</context>
 </TS>

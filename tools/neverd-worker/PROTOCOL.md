@@ -110,6 +110,19 @@ selection as `pdb`: a `verified` one is checked again by its identity, an
 `analysis` one by its stamp, and one that no longer loads leaves the file open
 without it, with a warning.
 
+`open` and `metadata` also return `pdb_download`: either null or `{file,key}`
+derived by the SDK from a unique valid PE CodeView record. A candidate is offered
+only with debug loading enabled, no loaded/selected PDB and PDB-loading support.
+It grants no network permission. The GUI may ask for consent to query Microsoft's
+symbol server, then use `pdb_inspect` and strict `pdb_load` (`mode:"verified"`).
+For a freshly downloaded file, `stamp` may be omitted on `pdb_load`; the worker
+inspects that final path and returns its stamp. The GUI saves this returned
+selection for project reopening. SDK headers JSON supplies `dynamic.pdb_symbol`
+and `debug_info:{enabled,kind,path}`; clients using older engines see no candidate.
+The GUI includes the original `{file,key}` as `download` on `pdb_load`. The worker
+rejects the command if it is no longer the current missing-symbol candidate,
+including when another client has loaded a PDB while the download was running.
+
 Unless stated otherwise, operations require an open binary. Standard table pages
 take `{offset:0,limit:128,filter:""}`, with limit 1–512, and return
 `{items,total,offset,next_offset:integer|null,complete:boolean}`. `complete` means

@@ -2697,4 +2697,99 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>El proceso de análisis no puede restaurar el estado del análisis.</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>Se agotó el tiempo de descarga de los símbolos.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>Descargar símbolos de depuración</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>No se cargó un PDB local compatible con %1.
+
+¿Intentar descargar %2 del servidor de símbolos de Microsoft? Solo funcionará si Microsoft publica símbolos para esta compilación.
+
+Se enviarán el nombre del PDB y el identificador de compilación; no se subirá el binario. Los símbolos compatibles se almacenarán en caché y cargarán automáticamente.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>Descargar</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>Ahora no</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory.</source>
+        <translation>No se puede crear el directorio de caché de símbolos.</translation>
+    </message>
+    <message>
+        <source>Cannot write to the symbol cache.</source>
+        <translation>No se puede escribir en la caché de símbolos.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>Descarga de símbolos cancelada.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>Descargando %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>El archivo de símbolos supera el límite de descarga de 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft no tiene símbolos compatibles para esta compilación.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>Error al descargar símbolos: %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty or could not be saved.</source>
+        <translation>El archivo de símbolos descargado está vacío o no se pudo guardar.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>El archivo de símbolos comprimido no es válido.</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>Descomprimiendo símbolos…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>No se pudo descomprimir el archivo de símbolos.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>Los símbolos comprimidos requieren Windows.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>Verificando los símbolos descargados…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>El PDB no corresponde al archivo cargado.</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>Error al verificar símbolos: %1</translation>
+    </message>
+</context>
 </TS>

@@ -46,6 +46,13 @@ prebuilt-LLVM guidance.
 
 ## GUI function lists and navigation
 
+`NeverDGuiMicrosoftSymbols` uses an in-memory network reply and the fixture SDK
+to check download consent, local/disabled/absent-identity gating, strict PDB
+application, cache reuse, 404/mismatch failure and cancellation on file changes.
+It never contacts a real symbol server. `DebugInfoDiscovery.SymbolStoreKey*` and
+`DebugInfoDiscovery.MissingAmbiguousOrUnsafePdb*` cover GUID byte order, hexadecimal
+age, NB10 keys and refusal of unusable identities or unsafe path components.
+
 `SessionCAPITest.PrepareFunction*` checks analysis without source emission,
 restricted and whole-image scope, repeated and switched entries, address zero,
 unloaded sessions and unknown ARM mode. `NeverDWorkerSourceCache` verifies

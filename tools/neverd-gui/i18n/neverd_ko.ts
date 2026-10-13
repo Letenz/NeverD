@@ -2693,4 +2693,99 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
         <translation>분석 프로세스가 분석 상태를 복원할 수 없습니다.</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>심볼 다운로드 시간이 초과되었습니다.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>디버그 심볼 다운로드</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>%1에 맞는 로컬 PDB를 불러오지 못했습니다.
+
+Microsoft 심볼 서버에서 %2 다운로드를 시도하시겠습니까? Microsoft가 이 빌드의 심볼을 제공하는 경우에만 다운로드할 수 있습니다.
+
+PDB 파일 이름과 빌드 식별자만 전송하며 바이너리는 업로드하지 않습니다. 일치하는 심볼은 자동으로 캐시하고 불러옵니다.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>다운로드</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>나중에</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory.</source>
+        <translation>심볼 캐시 디렉터리를 만들 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Cannot write to the symbol cache.</source>
+        <translation>심볼 캐시에 쓸 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>취소</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>심볼 다운로드가 취소되었습니다.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>%1 다운로드 중…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>심볼 파일이 2 GiB 다운로드 제한을 초과합니다.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft에 이 빌드와 일치하는 심볼이 없습니다.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>심볼 다운로드 실패: %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty or could not be saved.</source>
+        <translation>다운로드한 심볼 파일이 비어 있거나 저장할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>압축된 심볼 파일이 유효하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>심볼 압축 해제 중…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>심볼 파일의 압축을 해제할 수 없습니다.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>압축된 심볼은 Windows가 필요합니다.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>다운로드한 심볼 검증 중…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>PDB가 불러온 파일과 일치하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>심볼 검증 실패: %1</translation>
+    </message>
+</context>
 </TS>

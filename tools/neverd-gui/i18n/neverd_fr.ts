@@ -2697,4 +2697,99 @@ Utiliser cette PDB pour l’analyse ? Ses symboles, types, signatures de fonctio
         <translation>Le processus d'analyse ne peut pas restaurer l'état de l'analyse.</translation>
     </message>
 </context>
+<context>
+    <name>neverd::gui::MicrosoftSymbols</name>
+    <message>
+        <source>The symbol download timed out.</source>
+        <translation>Le téléchargement des symboles a expiré.</translation>
+    </message>
+    <message>
+        <source>Download debug symbols</source>
+        <translation>Télécharger les symboles de débogage</translation>
+    </message>
+    <message>
+        <source>No matching local PDB was loaded for %1.
+
+Try downloading %2 from the Microsoft Symbol Server? This only succeeds if Microsoft publishes symbols for this build.
+
+The PDB file name and build identifier will be sent; the binary is not uploaded. Matching symbols will be cached and loaded automatically.</source>
+        <translation>Aucun PDB local correspondant à %1 n’a été chargé.
+
+Essayer de télécharger %2 depuis le serveur de symboles Microsoft ? Cela ne réussira que si Microsoft publie les symboles de cette version.
+
+Seuls le nom du PDB et l’identifiant de compilation seront envoyés ; le binaire ne sera pas transféré. Les symboles correspondants seront mis en cache et chargés automatiquement.</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>Télécharger</translation>
+    </message>
+    <message>
+        <source>Not now</source>
+        <translation>Pas maintenant</translation>
+    </message>
+    <message>
+        <source>Cannot create the symbol cache directory.</source>
+        <translation>Impossible de créer le dossier de cache des symboles.</translation>
+    </message>
+    <message>
+        <source>Cannot write to the symbol cache.</source>
+        <translation>Impossible d’écrire dans le cache des symboles.</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Symbol download cancelled.</source>
+        <translation>Téléchargement des symboles annulé.</translation>
+    </message>
+    <message>
+        <source>Downloading %1…</source>
+        <translation>Téléchargement de %1…</translation>
+    </message>
+    <message>
+        <source>The symbol file exceeds the 2 GiB download limit.</source>
+        <translation>Le fichier de symboles dépasse la limite de téléchargement de 2 GiB.</translation>
+    </message>
+    <message>
+        <source>Microsoft has no matching symbols for this build.</source>
+        <translation>Microsoft ne propose pas de symboles correspondants pour cette version.</translation>
+    </message>
+    <message>
+        <source>Symbol download failed: %1</source>
+        <translation>Échec du téléchargement des symboles : %1</translation>
+    </message>
+    <message>
+        <source>The downloaded symbol file is empty or could not be saved.</source>
+        <translation>Le fichier de symboles téléchargé est vide ou n’a pas pu être enregistré.</translation>
+    </message>
+    <message>
+        <source>The compressed symbol file is invalid.</source>
+        <translation>Le fichier de symboles compressé est invalide.</translation>
+    </message>
+    <message>
+        <source>Expanding compressed symbols…</source>
+        <translation>Décompression des symboles…</translation>
+    </message>
+    <message>
+        <source>Could not expand the compressed symbol file.</source>
+        <translation>Impossible de décompresser le fichier de symboles.</translation>
+    </message>
+    <message>
+        <source>Compressed symbols require Windows.</source>
+        <translation>Les symboles compressés nécessitent Windows.</translation>
+    </message>
+    <message>
+        <source>Verifying downloaded symbols…</source>
+        <translation>Vérification des symboles téléchargés…</translation>
+    </message>
+    <message>
+        <source>The PDB does not match the loaded file.</source>
+        <translation>Le PDB ne correspond pas au fichier chargé.</translation>
+    </message>
+    <message>
+        <source>Symbol verification failed: %1</source>
+        <translation>Échec de la vérification des symboles : %1</translation>
+    </message>
+</context>
 </TS>
