@@ -16,6 +16,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QLabel>
 #include <QNetworkAccessManager>
@@ -130,6 +131,13 @@ QJsonObject reference(Session &session, const QString &input) {
   return result;
 }
 
+/// Whether \p choice loads \p path, however the engine spelled its
+/// separators.
+bool loads(const QJsonObject &choice, const QString &path) {
+  return choice.value("mode").toString() == QLatin1String("verified") &&
+         QFileInfo(choice.value("path").toString()) == QFileInfo(path);
+}
+
 QPushButton *button(QWidget &dialog, const char *name) {
   return dialog.findChild<QPushButton *>(QLatin1String(name));
 }
@@ -179,8 +187,7 @@ private slots:
              QDir::toNativeSeparators(beside));
     button(dialog, "yes")->click();
     QCOMPARE(dialog.result(), int(QDialog::Accepted));
-    QCOMPARE(dialog.choice(),
-             (QJsonObject{{"path", beside}, {"mode", "verified"}}));
+    QVERIFY(loads(dialog.choice(), beside));
     QVERIFY(network.requests.isEmpty());
   }
 
@@ -217,8 +224,7 @@ private slots:
              QStringLiteral("https://msdl.microsoft.com/download/symbols/"
                             "fixture.pdb/%1/fixture.pdb")
                  .arg(FixtureKey));
-    QCOMPARE(dialog.choice(),
-             (QJsonObject{{"path", storePdb(input)}, {"mode", "verified"}}));
+    QVERIFY(loads(dialog.choice(), storePdb(input)));
     QFile stored(storePdb(input));
     QVERIFY(stored.open(QIODevice::ReadOnly));
     QCOMPARE(stored.readAll(), QByteArray(MatchingPdb));
@@ -309,7 +315,7 @@ private slots:
     QCOMPARE(network.requests.size(), 1);
     const auto selected = session.metadata().value("pdb").toObject();
     QCOMPARE(selected.value("mode").toString(), QStringLiteral("verified"));
-    QCOMPARE(selected.value("path").toString(), storePdb(input));
+    QVERIFY(loads(selected, storePdb(input)));
     QVERIFY(selected.value("stamp").isObject());
     session.closeFile();
     // The store is where the next load finds it, without asking.
