@@ -9,6 +9,7 @@
 #include "neverd/Limits.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/COFF/COFFRegistrationEH.h"
+#include "neverd/loader/RegistrationScopeGraph.h"
 #include "neverd/support/BinaryEncoding.h"
 
 #include <algorithm>
@@ -19,15 +20,6 @@
 
 namespace neverd::coff_loader::registration_detail {
 namespace {
-
-/// True when a scope-table entry names a level that already exists.  Levels
-/// are indices into the same table, so a forward or out-of-range reference
-/// would make the nesting graph cyclic or dangling.
-bool isValidEnclosingLevel(int32_t Level, uint32_t Index, bool IsEH4) {
-  if (Level == (IsEH4 ? -2 : -1))
-    return true;
-  return Level >= 0 && static_cast<uint32_t>(Level) < Index;
-}
 
 /// One immediate byte, word or dword store relative to a checked base. A narrow
 /// immediate is an observation of written bits, not a complete runtime state.
@@ -129,7 +121,7 @@ uint32_t decodeScopeRecords(const BinaryImage &Img, va_t ArrayVA, va_t Limit,
     int32_t Level = readLE<int32_t>(Entry);
     uint32_t Filter = readLE<uint32_t>(Entry + 4);
     uint32_t Handler = readLE<uint32_t>(Entry + 8);
-    if (!isValidEnclosingLevel(Level, Index, IsEH4))
+    if (!isValidRegistrationScopeLevel(Level, Index, IsEH4))
       break;
     // A `__finally` has no filter; an `__except` has both.  An entry with no
     // handler at all describes nothing and marks the end of the array.

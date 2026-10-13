@@ -377,6 +377,9 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   if (auto It = ImageObjectNames.find(Addr); It != ImageObjectNames.end())
     return It->second;
   std::string Raw;
+  // The name the identifier is spelled from, which a comment beside its
+  // declaration names where the identifier is not that name.
+  std::string Spelling;
   if (Opts.UserNames)
     if (auto It = Opts.UserNames->find(Addr); It != Opts.UserNames->end())
       Raw = It->second;
@@ -385,6 +388,7 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
         Data && !Data->Name.empty() && !isStringLiteralName(Data->Name))
       Raw = Data->Name;
   }
+  Spelling = Raw;
   if (Raw.empty() && Img) {
     if (const Symbol *Sym = Img->findSymbolAt(Addr);
         Sym && !Sym->IsFunc && !Sym->Name.empty() &&
@@ -396,6 +400,7 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
       Raw = symbolScheme(CName) != SymbolScheme::None
                 ? CName.str()
                 : stripLeadingUnderscores(Sym->Name).str();
+      Spelling = CName.str();
     }
   }
   if (Raw.empty()) {
@@ -419,7 +424,18 @@ std::string LLVMCWriter::namedImageObject(va_t Addr) const {
   }
   std::string Name = ImageIdentifierAllocator.allocate(Raw, "g");
   ImageObjectNames[Addr] = Name;
+  if (!Spelling.empty())
+    if (std::string Comment = symbolComment(Spelling, Name); !Comment.empty())
+      ImageObjectSymbols[Name] = std::move(Comment);
   return Name;
+}
+
+std::string LLVMCWriter::imageObjectSymbolLine(llvm::StringRef Name) const {
+  if (!Opts.EmitComments)
+    return {};
+  const auto It = ImageObjectSymbols.find(Name.str());
+  return It == ImageObjectSymbols.end() ? std::string()
+                                        : "/* " + It->second + " */\n";
 }
 
 std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {

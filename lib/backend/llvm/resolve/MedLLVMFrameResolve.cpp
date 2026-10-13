@@ -281,6 +281,25 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
   if (!CurMedFunc || V.isConst())
     return std::nullopt;
 
+  const bool Cacheable = !Bindings && !SharedProofBudget &&
+                         !FrameProofBudgetForTesting &&
+                         FeasibleEdgeState != FeasibleEdgeCacheState::Building;
+  const auto QueryKey =
+      std::make_pair(addressProvenanceVarKey(V), RequireEntryStackPointer);
+  if (Cacheable) {
+    if (ClosedFrameSlotCacheFor != CurMedFunc) {
+      ClosedFrameSlotCacheFor = CurMedFunc;
+      ClosedFrameSlotCache.clear();
+    }
+    if (auto It = ClosedFrameSlotCache.find(QueryKey);
+        It != ClosedFrameSlotCache.end()) {
+      ++AddressProvenanceWork.FrameSlotCacheHits;
+      return It->second;
+    }
+  }
+  // Building/publishing feasible edges invalidates dependent proofs, including
+  // queries already in progress. Do not publish a result from that generation.
+  const uint64_t Generation = FrameReloadCacheGeneration;
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
   const uint64_t SpOff = TRI.StackPointer;
   const uint64_t FpOff = TRI.FramePointer;
@@ -595,7 +614,12 @@ std::optional<med_llvm::SlotKey> MedLLVMEmitter::canonicalFrameSlotKey(
       ProvenSlots.emplace(Key, *Proof);
     return Proof;
   };
-  return rec(V, 0);
+  auto Result = rec(V, 0);
+  if (Cacheable && ClosedFrameSlotCacheFor == CurMedFunc &&
+      Generation == FrameReloadCacheGeneration &&
+      FeasibleEdgeState != FeasibleEdgeCacheState::Building)
+    ClosedFrameSlotCache.emplace(QueryKey, Result);
+  return Result;
 }
 
 bool MedLLVMEmitter::varIsReloadedStackPtr(const MedVar &V, int Depth) const {

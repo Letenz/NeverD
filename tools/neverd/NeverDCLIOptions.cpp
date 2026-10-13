@@ -591,6 +591,19 @@ cl::opt<bool> Devirtualize(
     "devirtualize",
     cl::desc("Recover an x64 interpreter (experimental; requires --func)"),
     cl::sub(DecompileCmd));
+cl::opt<bool> SourceSymbolic(
+    "symbolic-simplify",
+    cl::desc("Symbolically simplify the selected source function"),
+    cl::sub(DecompileCmd));
+cl::opt<std::string>
+    SourceLLVMLevel("llvm-opt",
+                    cl::desc("LLVM C optimization: basic, O0, O1, O2, O3 or "
+                             "custom (requires --func --llvm)"),
+                    cl::init("basic"), cl::sub(DecompileCmd));
+cl::list<std::string> SourceLLVMPasses(
+    "llvm-passes",
+    cl::desc("Custom scalar passes: instcombine,early-cse,simplifycfg,dce"),
+    cl::CommaSeparated, cl::sub(DecompileCmd));
 cl::opt<bool> VMMachineState(
     "vm-machine-state",
     cl::desc(

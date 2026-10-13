@@ -25,6 +25,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialogButtonBox>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
@@ -41,6 +42,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -227,8 +229,11 @@ private slots:
     QTemporaryDir directory;
     Workbench bench;
     LoadDialogAcceptor loadDialogs;
+    // An explicit C view is offered beside another language only.
     bench.window->openFile(
-        writeFixture(directory, QStringLiteral("code-folding.bin")));
+        writeFixture(directory, representation == QLatin1String("c")
+                                    ? QStringLiteral("code-folding-cpp.bin")
+                                    : QStringLiteral("code-folding.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x140);
@@ -244,6 +249,7 @@ private slots:
                                     : QStringLiteral("source"));
     QVERIFY(view);
     view->setRepresentation(representation);
+    QCOMPARE(view->representation(), representation);
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->lineCount() == 19);
     const QString original = code->allText();
@@ -260,6 +266,19 @@ private slots:
                            height / 2);
     QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, arrow);
     QCOMPARE(code->lineCount(), 18);
+    // The header stays visible: finding its text or clicking past the end of
+    // its row neither expands the block nor offers a fold control there.
+    code->setCursorLine(1);
+    QVERIFY(code->findText(QStringLiteral("while (v7)"), true));
+    QCOMPARE(code->lineCount(), 18);
+    const QPoint pastHeader(code->viewport()->width() - 4, arrow.y());
+    QTest::mouseMove(code->viewport(), arrow);
+    QCOMPARE(code->viewport()->cursor().shape(), Qt::PointingHandCursor);
+    QTest::mouseMove(code->viewport(), pastHeader);
+    QCOMPARE(code->viewport()->cursor().shape(), Qt::IBeamCursor);
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      pastHeader);
+    QCOMPARE(code->lineCount(), 18);
     code->setCursorLine(3);
     QTest::keyClick(code, Qt::Key_BracketLeft,
                     Qt::ControlModifier | Qt::ShiftModifier);
@@ -269,6 +288,8 @@ private slots:
     QCOMPARE(code->lineCount(), 18);
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
 
+    // Folding restored the cursor to the if header; search starts below it.
+    code->setCursorLine(1);
     QVERIFY(code->findText(QStringLiteral("v7 = v0"), true));
     const auto target = code->renameTarget();
     QVERIFY(target);
@@ -329,7 +350,9 @@ private slots:
     Workbench bench;
     LoadDialogAcceptor loadDialogs;
     bench.window->openFile(
-        writeFixture(directory, QStringLiteral("local-references.bin")));
+        writeFixture(directory, representation == QLatin1String("c")
+                                    ? QStringLiteral("local-references-cpp.bin")
+                                    : QStringLiteral("local-references.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     auto *assembly = bench.window->disassembly();
     assembly->navigate(Base + 0x140);
@@ -345,6 +368,7 @@ private slots:
                                     : QStringLiteral("source"));
     QVERIFY(view);
     view->setRepresentation(representation);
+    QCOMPARE(view->representation(), representation);
     auto *code = view->text();
     QTRY_VERIFY(!code->loading() && code->allText().contains("return v7 + v7"));
     for (auto *button : view->findChildren<QToolButton *>())
@@ -353,6 +377,8 @@ private slots:
     QVERIFY(view->locked());
     assembly->navigate(Base + 0x180);
     QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x180));
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x180));
     QVERIFY(code->findText(QStringLiteral("v7 = 0"), true));
     if (renamed) {
       const auto target = code->renameTarget();
@@ -360,7 +386,7 @@ private slots:
       auto edit = *target;
       edit["address"] = hexAddress(Base + 0x140);
       edit["representation"] = representation;
-      edit["kind"] = "rename";
+      edit["kind"] = "name";
       edit["name"] = "counter";
       bench.session.editCode(edit, bench.session.epoch());
       QTRY_VERIFY(!code->loading() &&
@@ -368,6 +394,8 @@ private slots:
     }
     const auto name =
         renamed ? QStringLiteral("counter") : QStringLiteral("v7");
+    // Search continues below the cursor, which is on the earlier match.
+    code->setCursorLine(0);
     QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
     const auto target = code->renameTarget();
     QVERIFY(target);
@@ -386,6 +414,7 @@ private slots:
     QVERIFY(references[3].column < references[4].column);
     code->setFolded(true);
     QVERIFY(code->libraryFolded());
+    code->setCursorLine(0);
     QVERIFY(code->findText(name + QStringLiteral(" = 0"), true));
     code->setFocus();
     bool sawDialog = false, correctRows = false;
@@ -395,7 +424,8 @@ private slots:
       auto *table = dialog ? dialog->findChild<QTableView *>(
                                  QStringLiteral("localReferencesTable"))
                            : nullptr;
-      if (!table)
+      // The rows are ready at once; keys reach them once the dialog is active.
+      if (!table || !dialog->isActiveWindow() || !table->hasFocus())
         return;
       chooser.stop();
       sawDialog = dialog->windowTitle().contains(name);
@@ -404,7 +434,9 @@ private slots:
                     model->index(2, 0).data().toInt() == 551 &&
                     model->index(2, 1).data().toInt() == 3;
       table->setCurrentIndex(model->index(2, 0));
-      QTest::keyClick(table, Qt::Key_Return);
+      auto *buttons = dialog->findChild<QDialogButtonBox *>();
+      QVERIFY(buttons);
+      QTest::mouseClick(buttons->button(QDialogButtonBox::Ok), Qt::LeftButton);
     });
     chooser.start(10);
     QTimer::singleShot(OpenTimeoutMs, &bench.session, [] {
@@ -1689,6 +1721,151 @@ private slots:
     QCOMPARE(diagnostics.join('\n').count("fixture slow decompile started"), 1);
   }
 
+  void sourceTransformationCancelsWithoutBlockingBrowsingOrLosingSource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(writeFixture(directory, "source-options-slow.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    const auto original = view->text()->allText();
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QVERIFY(!diagnostics.join('\n').contains(
+        "fixture symbolic transformation started"));
+    auto *button = view->findChild<QToolButton *>("sourceOptimization");
+    QVERIFY(button && button->isVisible() && button->isEnabled());
+    auto *menu = button->menu();
+    menu->popup(button->mapToGlobal(QPoint(0, button->height())));
+    QTRY_VERIFY(menu->isVisible());
+    auto *symbolic = menu->findChild<QAction *>("sourceSymbolic");
+    QVERIFY(symbolic);
+    QVERIFY(!symbolic->isChecked());
+    menu->setActiveAction(symbolic);
+    QTest::keyClick(menu, Qt::Key_Return);
+    QTRY_VERIFY_WITH_TIMEOUT(diagnostics.join('\n').contains(
+                                 "fixture symbolic transformation started"),
+                             5000);
+    QVERIFY(view->text()->loading());
+    QCOMPARE(view->text()->allText(), original);
+    bool functions = false, listing = false;
+    bench.session.read("functions", {{"offset", 512}, {"limit", 32}}, this,
+                       [&](const QJsonObject &p) {
+                         functions = !p.value("items").toArray().isEmpty();
+                       });
+    bench.session.read("listing",
+                       {{"address", hexAddress(Base + 16)}, {"after", 16}},
+                       this, [&](const QJsonObject &) { listing = true; });
+    QTRY_VERIFY_WITH_TIMEOUT(functions && listing, 1500);
+    QMenu cancellation;
+    view->addSourceActions(cancellation);
+    auto *cancel = cancellation.findChild<QAction *>("sourceCancel");
+    QVERIFY(cancel && cancel->isEnabled());
+    cancel->trigger();
+    QVERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QCOMPARE(view->text()->allText(), original);
+    // A fresh request after retiring the blocked replica still succeeds.
+    view->text()->load(Base + 16, "source");
+    QTRY_VERIFY_WITH_TIMEOUT(!view->text()->loading() &&
+                                 !view->text()->allText().isEmpty(),
+                             OpenTimeoutMs);
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+  }
+
+  void sourceTransformationFailureKeepsThePrecedingSource() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "source-options-fail.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *view = bench.codeView("source");
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() && !view->text()->allText().isEmpty());
+    const auto original = view->text()->allText();
+    view->text()->setSourceOptions({{"symbolic", true}});
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    QCOMPARE(view->text()->allText(), original);
+    QVERIFY(view->text()->status().contains("Transformation failed"));
+  }
+
+  void sourceTransformationProfilesAreIndependentAndResetOnNavigation() {
+    QTemporaryDir directory;
+    Workbench bench;
+    QStringList diagnostics;
+    connect(&bench.session, &Session::message, this,
+            [&](const QString &text, int) { diagnostics.append(text); });
+    bench.window->openFile(writeFixture(directory, "source-cache.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    bench.action(ActionId::ViewLLVMC)->trigger();
+    auto *view = bench.codeView("llvmc");
+    QVERIFY(view);
+    QTRY_VERIFY(!view->text()->loading() &&
+                view->text()->allText().contains("return value"));
+    for (const QString name :
+         {QStringLiteral("sourceLLVM_O3"), QStringLiteral("sourceSymbolic")}) {
+      QMenu choices;
+      view->addSourceActions(choices);
+      auto *action = choices.findChild<QAction *>(name);
+      QVERIFY(action);
+      action->trigger();
+      QTRY_VERIFY(!view->text()->loading());
+    }
+    QCOMPARE(
+        view->text()->sourceOptions().value("llvm_optimization").toString(),
+        QStringLiteral("O3"));
+    QVERIFY(view->text()->sourceOptions().value("symbolic").toBool());
+    QVERIFY(diagnostics.join('\n').contains("\"llvm_optimization\":\"O3\""));
+    QVERIFY(diagnostics.join('\n').contains("\"symbolic\":true"));
+    if (const auto capture =
+            qEnvironmentVariable("NEVERD_CODE_NAV_CAPTURE_DIR");
+        !capture.isEmpty()) {
+      QDir().mkpath(capture);
+      const auto previous = Theme::instance().mode();
+      for (const auto mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(mode);
+        QTest::qWait(30);
+        const auto suffix = mode == Theme::Mode::Light ? "light" : "dark";
+        QVERIFY(bench.window->grab().save(capture + "/source-options-" +
+                                          suffix + ".png"));
+        QMenu choices;
+        view->addSourceActions(choices);
+        choices.popup(view->mapToGlobal(QPoint(10, 50)));
+        QTRY_VERIFY(choices.isVisible());
+        QVERIFY(choices.grab().save(capture + "/source-options-menu-" + suffix +
+                                    ".png"));
+      }
+      Theme::instance().setMode(previous);
+    }
+    QMenu defaults;
+    view->addSourceActions(defaults);
+    defaults.findChild<QAction *>("sourceDefault")->trigger();
+    QTRY_VERIFY(!view->text()->loading());
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+    view->text()->setSourceOptions({{"symbolic", true}});
+    QTRY_VERIFY(!view->text()->loading());
+    view->text()->load(Base + 16, "llvmc");
+    QTRY_VERIFY(!view->text()->loading() &&
+                view->text()->allText().contains("function_1"));
+    QVERIFY(view->text()->sourceOptions().isEmpty());
+  }
+
   void largePseudocodeKeepsProcessingEvents() {
     QTemporaryDir directory;
     Workbench bench;
@@ -1917,6 +2094,8 @@ private slots:
     const QString link = representation == QLatin1String("source")
                              ? QStringLiteral("function_22")
                              : QStringLiteral("Bar_ctor");
+    if (representation == QLatin1String("llvmc"))
+      QVERIFY(code->findText(QStringLiteral("caller(void)"), true));
     QVERIFY(code->findText(link, true));
     QCOMPARE(code->currentToken(), link);
     QSignalSpy activation(code, &CodeText::nameActivated);

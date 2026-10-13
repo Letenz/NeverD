@@ -175,6 +175,18 @@ back to its function entry with a message; an unmapped instruction reports that
 no source row is available and keeps the existing source cursor. Closing or
 hiding a pane stops its requests; showing it again resumes its own function.
 
+Native HighC keeps ordinary cleanup but skips optional symbolic expression
+simplification by default. Use the source window's **Optimization** menu or
+right-click **Symbolically simplify this function** to enable it. C through LLVM
+offers basic scalar cleanup by default, separate O0–O3 compiler pipelines, and a
+custom selection of InstCombine, EarlyCSE, SimplifyCFG and DCE. Symbolic
+simplification is a separate choice for every LLVM profile. These choices apply
+to the current function; navigating to another function restores the defaults.
+An enhancement runs in the analysis worker while the previous source remains
+visible. **Cancel transformation** stops that request, and **Restore default
+source** returns to the ordinary view. Failed enhancements retain the preceding
+source. Required machine control-flow, ABI and exception recovery still run.
+
 **Pseudocode** and **IR** windows show pseudocode in the function's
 own language, C, Rust, Go, C through LLVM, LowIR, MedIR, HighIR or LLVM IR of
 the requested function. F5 or Tab pressed while a jump is loading decompiles the
@@ -241,6 +253,12 @@ a routine returns keeps the integer the machine reads,
 converts to the type its header declares: `qsort(base, n, 4, (int (*)(const
 void *, const void *))compare)`.
 
+Functions that share a symbol name, such as the static `helper` of two
+files, are numbered as IDA numbers them: the one at the lowest address keeps
+the name, and the others read `helper_0`, `helper_1` and so on in the
+listing, the Functions window, Jump and the pseudocode, skipping a number
+another symbol already holds.
+
 Mangled names read as their language spells them: the listing keeps the
 linkage name an instruction uses and adds the readable form as a comment
 (`call _ZN8QDomNodeC1Ev ; QDomNode::QDomNode()`), a function with a mangled
@@ -271,10 +289,15 @@ numbered (`QDomNodeList_ctor_2`), except MSVC C++ stems, which the MSVC rules
 share between overloads. An imported function whose identifier is not its
 symbol keeps the symbol in an `__asm__` label so that the code still links.
 Other names keep every byte of their symbol (`__libc_start_main`), apart from
-the underscore Mach-O and 32-bit Windows add to C names and the start-up
-functions the C runtime defines itself (`_start` reads `start`). A name an
-image spells with control characters, and that no scheme reads, is never
-copied into a comment.
+the underscore Mach-O and 32-bit Windows add to C names, the start-up
+functions the C runtime defines itself (`_start` reads `start`) and the
+leading underscores of globals (`__dso_handle` reads `dso_handle`). Wherever
+an identifier is not its symbol, the comment above the definition or on the
+global's `neverd.image` line names the symbol as the listing does
+(`/* _fini */` above `fini`, or above `fini_2` in a program that defines a
+`fini` of its own); hovering a renamed function shows its symbol, and
+double-clicking it goes to the function. A name an image spells with control
+characters, and that no scheme reads, is never copied into a comment.
 
 **Pseudocode** reads in the language the function was written in: a Rust
 function as Rust, a Go function as Go and any other as C. The choice is made

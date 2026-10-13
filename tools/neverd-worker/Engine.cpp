@@ -173,6 +173,14 @@ IRViewFunction irViewFunction() {
       engineSymbol<IRViewFunction>("neverd_ir_view_json");
   return function;
 }
+using IRViewExFunction = const char *(*)(neverd_session_t, neverd_va_t,
+                                         const char *, size_t, size_t,
+                                         const char *);
+IRViewExFunction irViewExFunction() {
+  static const auto function =
+      engineSymbol<IRViewExFunction>("neverd_ir_view_ex_json");
+  return function;
+}
 SessionJsonFunction headersFunction() {
   static const auto function =
       engineSymbol<SessionJsonFunction>("neverd_headers_json");
@@ -629,14 +637,23 @@ void Engine::forgetNamedViews() {
 }
 
 std::shared_ptr<const Engine::NamedView>
-Engine::namedView(std::uint64_t address, const std::string &representation) {
+Engine::namedView(std::uint64_t address, const std::string &representation,
+                  const Json &options) {
   const auto view = irViewFunction();
+  const auto extended = irViewExFunction();
+  if (!options.is_object() || options.dump().size() > 4096)
+    throw Error("invalid_request", "source_options must be a bounded object");
+  if (!options.empty() && !extended)
+    throw Error("unsupported", "This engine does not support source options");
   if (!view)
     return nullptr;
   const bool sourceView = representation == "c" || representation == "llvmc" ||
                           representation == "source" ||
                           representation == "cpp" || representation == "rust" ||
                           representation == "go";
+  if (!sourceView && !options.empty())
+    throw Error("invalid_request", "Source options require a source view");
+  const auto optionText = options.dump();
   (void)listing().functionAliases();
   const auto cacheKey = [&] {
     const auto generation = listing().generation();
@@ -647,7 +664,8 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
       namedViewsListingGeneration_ = generation;
     }
     return hexAddress(address) + ":" + representation + ":" +
-           std::to_string(revision_) + ":" + std::to_string(generation);
+           std::to_string(revision_) + ":" + std::to_string(generation) + ":" +
+           optionText;
   };
   const auto lookupKey = cacheKey();
   for (auto it = namedViews_.begin(); it != namedViews_.end(); ++it)
@@ -674,14 +692,17 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     Json full;
     auto backendRepresentation = representation;
     for (std::size_t next = 0;;) {
-      auto page =
-          backendJson(view(session_, address, backendRepresentation.c_str(),
-                           next, EnginePageLines),
-                      true);
+      auto page = backendJson(
+          sourceView && extended && !options.empty()
+              ? extended(session_, address, backendRepresentation.c_str(), next,
+                         EnginePageLines, optionText.c_str())
+              : view(session_, address, backendRepresentation.c_str(), next,
+                     EnginePageLines),
+          true);
       // Older page APIs offer HighC but not the automatic source dialect.
       // Keep the Pseudocode action useful, with the actual dialect reported.
-      if (next == 0 && representation == "source" && page.is_object() &&
-          !page.contains("text") &&
+      if (next == 0 && options.empty() && representation == "source" &&
+          page.is_object() && !page.contains("text") &&
           page.value("mapping_status", std::string()) ==
               "unsupported_representation") {
         backendRepresentation = "c";
@@ -721,8 +742,11 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
     full["complete"] = true;
     full["next_offset"] = nullptr;
     full["representation"] = representation;
+    full["source_options"] = options;
     if (representation == "source" && backendRepresentation == "c")
       full["dialect"] = "c";
+    if (sourceView)
+      CodeEdits::spellIdentifierSymbols(full);
     // The resolver below runs other operations, so the decoration names
     // functions from a copy of the listing's display names.
     auto displayNames = CodeEdits::FunctionAliases(listing().functionAliases());
@@ -828,9 +852,9 @@ Engine::namedView(std::uint64_t address, const std::string &representation) {
 
 std::optional<Json> Engine::namedViewPage(std::uint64_t address,
                                           const std::string &representation,
-                                          std::size_t offset,
-                                          std::size_t limit) {
-  const auto document = namedView(address, representation);
+                                          std::size_t offset, std::size_t limit,
+                                          const Json &options) {
+  const auto document = namedView(address, representation, options);
   if (!document)
     return std::nullopt;
   const auto &namedView_ = document->value;
@@ -1978,7 +2002,8 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     auto &store = history();
     const auto before = codeEditRow(address);
     const auto after = CodeEdits::change(before, p);
-    const auto document = namedView(address, stringField(p, "representation"));
+    const auto document = namedView(address, stringField(p, "representation"),
+                                    p.value("source_options", Json::object()));
     if (!document)
       throw Error("unsupported",
                   "The engine does not expose editable source targets");
@@ -2526,6 +2551,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
         representation != "low" && representation != "med" &&
         representation != "high" && representation != "llvm" && !spelled)
       throw Error("unsupported", "Unknown code representation");
+    const auto options = p.value("source_options", Json::object());
+    if (!options.is_object() || options.dump().size() > 4096 ||
+        (!options.empty() && representation != "c" &&
+         representation != "llvmc" && !spelled))
+      throw Error("invalid_request",
+                  "Invalid source_options for this representation");
     const auto offset =
         sizeField(p, "offset", 0, std::numeric_limits<std::size_t>::max());
     const auto limit = sizeField(p, "limit", 512, 2048);
@@ -2536,8 +2567,12 @@ Json Engine::execute(const std::string &operation, const Json &p) {
     std::string reason;
     if (representation == "low" || representation == "med" ||
         representation == "c" || representation == "llvmc" || spelled) {
-      if (auto named = namedViewPage(address, representation, offset, limit))
+      if (auto named =
+              namedViewPage(address, representation, offset, limit, options))
         return *named;
+      if (!options.empty())
+        throw Error("unavailable",
+                    error().empty() ? "Source transformation failed" : error());
       prepareFunction(address);
       if (const auto view = irViewFunction()) {
         auto result = backendJson(
