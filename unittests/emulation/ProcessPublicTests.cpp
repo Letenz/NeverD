@@ -38,6 +38,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <filesystem>
 
 namespace {
@@ -4306,8 +4307,17 @@ TEST_F(ProcessPublic,
 #endif
 }
 
-TEST_F(ProcessPublic,
-       DarwinCreatedRegularAttributesPreserveProvidersAcrossCAndCLI) {
+struct DarwinAttributeProfile {
+  const char *File, *Profile;
+};
+void PrintTo(const DarwinAttributeProfile &Case, std::ostream *OS) {
+  *OS << Case.File;
+}
+class DarwinCreatedAttributesPublic
+    : public ProcessPublic,
+      public testing::WithParamInterface<DarwinAttributeProfile> {};
+
+TEST_P(DarwinCreatedAttributesPublic, PreserveProvidersAcrossCAndCLI) {
 #ifndef NEVERD_DARWIN_FIXTURE_DIR
   GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
 #else
@@ -4316,116 +4326,132 @@ TEST_F(ProcessPublic,
   const std::filesystem::path Root(Directory.str().str());
   auto Cleanup = llvm::scope_exit([&] { std::filesystem::remove_all(Root); });
   const auto Output = (Root / OutputFile).string();
-  for (const auto &[File, Profile] :
-       {std::pair{"macos-arm64", MacOSMachO64},
-        std::pair{"macos-x86_64", MacOSMachO64},
-        std::pair{"ios-arm64", IOSMachO64},
-        std::pair{"ios-simulator-arm64", IOSSimulatorMachO64},
-        std::pair{"ios-simulator-x86_64", IOSSimulatorMachO64}}) {
-    Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
-    const uint64_t Class =
-        llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
-    for (bool Virtual : {false, true})
-      for (unsigned Variant = 0; Variant != 9; ++Variant) {
-        const bool Owner = Variant > 4;
-        const unsigned Change = Owner ? Variant - 4 : Variant;
-        const char *Purpose = Owner ? "ownership_mutations" : "mode_mutations";
-        auto Files = llvm::cantFail(llvm::json::parse(
-            emulation::darwin_test::CreatedAttributeFilesJSON));
-        if (Variant) {
-          auto &Provider = *Files.getAsObject()->getObject(Purpose);
-          if (Change == 1 || Change == 4)
-            Provider["created_regular_objects"] = false;
-          if (Change == 2)
-            Provider.erase("created_regular_objects");
-          if (Change == 3)
-            Files.getAsObject()->erase(Purpose);
-          if (Change == 4)
-            Provider["objects"] = llvm::json::Array{llvm::json::Object{
-                {"path", "/data"},
-                {"time",
-                 llvm::json::Object{{"seconds", 71}, {"nanoseconds", 72}}}}};
-        }
-        llvm::json::Value Input = llvm::json::Object{
-            {"backend", "unicorn"},
-            {"instruction_quantum", 1024},
-            {"timeout_microseconds", 5000000},
-            {"arguments",
-             llvm::json::Array{"guest",
-                               Virtual ? "virtual-created-regular-attributes"
-                                       : "created-regular-attributes",
-                               "/data"}},
-            {"darwin_files", std::move(Files)},
-            {"darwin_system",
-             llvm::cantFail(llvm::json::parse(
-                 emulation::darwin_test::CreatedAttributeCredentialsJSON))}};
-        const auto Options = llvm::formatv("{0}", Input).str();
-        auto Text = takeString(neverd_emulate_process_json(
-            Session, Path.c_str(), Profile, Options.c_str()));
-        ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
-        auto Report = llvm::json::parse(Text);
-        ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
-        const auto *Object = Report->getAsObject();
-        ASSERT_NE(Object, nullptr);
-        EXPECT_EQ(Object->getString(field::Stop),
-                  Variant ? "unsupported_service" : "exited");
-        EXPECT_EQ(Object->getString(field::Stdout),
-                  Variant ? ""
-                  : Virtual
-                      ? emulation::darwin_test::VirtualCreatedAttributeStdoutHex
-                      : "41");
-        EXPECT_EQ(Object->getString(field::Stderr), "");
-        const auto *Calls = Object->getArray(field::Services);
-        ASSERT_NE(Calls, nullptr);
-        const auto Wanted =
-            Virtual
-                ? llvm::ArrayRef(
-                      emulation::darwin_test::VirtualCreatedAttributeServices)
-                : llvm::ArrayRef(
-                      emulation::darwin_test::CreatedAttributeServices);
-        const unsigned Count =
-            Variant ? (Virtual ? (Owner ? 4 : 3) : (Owner ? 52 : 12))
-                    : Wanted.size();
-        ASSERT_EQ(Calls->size(), Count);
-        for (unsigned I = 0; I != Count; ++I) {
-          const auto *E = (*Calls)[I].getAsObject();
-          ASSERT_NE(E, nullptr);
-          EXPECT_EQ(E->getString(field::Number),
-                    llvm::utohexstr(Class | Wanted[I].Number, true));
-          if (Variant && I + 1 == Count) {
-            EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
-            EXPECT_EQ(E->get(field::Error), nullptr);
-          } else {
-            EXPECT_EQ(E->getString(field::Result),
-                      llvm::utohexstr(Wanted[I].Value, true));
-            EXPECT_EQ(E->getBoolean(field::Error), Wanted[I].Error);
-            if (Wanted[I].FD) {
-              const auto *Args = E->getArray(field::Arguments);
-              ASSERT_NE(Args, nullptr);
-              EXPECT_EQ((*Args)[0].getAsString(),
-                        llvm::utohexstr(*Wanted[I].FD, true));
-            }
+  const auto &[File, Profile] = GetParam();
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) / File).string();
+  const uint64_t Class =
+      llvm::StringRef(File).ends_with("x86_64") ? 0x2000000 : 0;
+  for (bool Virtual : {false, true})
+    for (unsigned Variant = 0; Variant != 9; ++Variant) {
+      const bool Owner = Variant > 4;
+      const unsigned Change = Owner ? Variant - 4 : Variant;
+      const char *Purpose = Owner ? "ownership_mutations" : "mode_mutations";
+      auto Files = llvm::cantFail(
+          llvm::json::parse(emulation::darwin_test::CreatedAttributeFilesJSON));
+      if (Variant) {
+        auto &Provider = *Files.getAsObject()->getObject(Purpose);
+        if (Change == 1 || Change == 4)
+          Provider["created_regular_objects"] = false;
+        if (Change == 2)
+          Provider.erase("created_regular_objects");
+        if (Change == 3)
+          Files.getAsObject()->erase(Purpose);
+        if (Change == 4)
+          Provider["objects"] = llvm::json::Array{llvm::json::Object{
+              {"path", "/data"},
+              {"time",
+               llvm::json::Object{{"seconds", 71}, {"nanoseconds", 72}}}}};
+      }
+      llvm::json::Value Input = llvm::json::Object{
+          {"backend", "unicorn"},
+          {"instruction_quantum", 1024},
+          {"timeout_microseconds", 5000000},
+          {"arguments",
+           llvm::json::Array{"guest",
+                             Virtual ? "virtual-created-regular-attributes"
+                                     : "created-regular-attributes",
+                             "/data"}},
+          {"darwin_files", std::move(Files)},
+          {"darwin_system",
+           llvm::cantFail(llvm::json::parse(
+               emulation::darwin_test::CreatedAttributeCredentialsJSON))}};
+      const auto Options = llvm::formatv("{0}", Input).str();
+      auto Text = takeString(neverd_emulate_process_json(
+          Session, Path.c_str(), Profile, Options.c_str()));
+      ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+      auto Report = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Report)) << llvm::toString(Report.takeError());
+      const auto *Object = Report->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getString(field::Stop),
+                Variant ? "unsupported_service" : "exited");
+      EXPECT_EQ(Object->getString(field::Stdout),
+                Variant ? ""
+                : Virtual
+                    ? emulation::darwin_test::VirtualCreatedAttributeStdoutHex
+                    : "41");
+      EXPECT_EQ(Object->getString(field::Stderr), "");
+      const auto *Calls = Object->getArray(field::Services);
+      ASSERT_NE(Calls, nullptr);
+      const auto Wanted =
+          Virtual ? llvm::ArrayRef(
+                        emulation::darwin_test::VirtualCreatedAttributeServices)
+                  : llvm::ArrayRef(
+                        emulation::darwin_test::CreatedAttributeServices);
+      const unsigned Count =
+          Variant ? (Virtual ? (Owner ? 4 : 3) : (Owner ? 52 : 12))
+                  : Wanted.size();
+      ASSERT_EQ(Calls->size(), Count);
+      for (unsigned I = 0; I != Count; ++I) {
+        const auto *E = (*Calls)[I].getAsObject();
+        ASSERT_NE(E, nullptr);
+        EXPECT_EQ(E->getString(field::Number),
+                  llvm::utohexstr(Class | Wanted[I].Number, true));
+        if (Variant && I + 1 == Count) {
+          EXPECT_EQ(*E->get(field::Result), llvm::json::Value(nullptr));
+          EXPECT_EQ(E->get(field::Error), nullptr);
+        } else {
+          EXPECT_EQ(E->getString(field::Result),
+                    llvm::utohexstr(Wanted[I].Value, true));
+          EXPECT_EQ(E->getBoolean(field::Error), Wanted[I].Error);
+          if (Wanted[I].FD) {
+            const auto *Args = E->getArray(field::Arguments);
+            ASSERT_NE(Args, nullptr);
+            EXPECT_EQ((*Args)[0].getAsString(),
+                      llvm::utohexstr(*Wanted[I].FD, true));
           }
         }
-        if (!Variant)
-          EXPECT_EQ(Object->getInteger(field::ExitStatus), Virtual ? 45 : 44);
-        else
-          EXPECT_EQ(Object->getString(field::Diagnostic),
-                    Owner ? (Change == 3 ? "Darwin ordinary ownership "
-                                           "environment is not configured"
-                                         : "Darwin regular-object ownership "
-                                           "provider is not configured")
-                          : (Change == 3 ? "Darwin ordinary mode mutation "
-                                           "environment is not configured"
-                                         : "Darwin regular-object mode "
-                                           "provider is not configured"));
-        EXPECT_EQ(neverd_session_is_loaded(Session), 0);
-        EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
-                  Variant ? process_cli::Incomplete
-                          : process_cli::GuestFailure);
-        ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
       }
-  }
+      if (!Variant)
+        EXPECT_EQ(Object->getInteger(field::ExitStatus), Virtual ? 45 : 44);
+      else
+        EXPECT_EQ(Object->getString(field::Diagnostic),
+                  Owner ? (Change == 3 ? "Darwin ordinary ownership "
+                                         "environment is not configured"
+                                       : "Darwin regular-object ownership "
+                                         "provider is not configured")
+                        : (Change == 3 ? "Darwin ordinary mode mutation "
+                                         "environment is not configured"
+                                       : "Darwin regular-object mode "
+                                         "provider is not configured"));
+      EXPECT_EQ(neverd_session_is_loaded(Session), 0);
+      EXPECT_EQ(runCLIRequest(Path, Profile, Options, Output),
+                Variant ? process_cli::Incomplete : process_cli::GuestFailure);
+      ASSERT_NO_FATAL_FAILURE(expectCLIReport(Output, *Report));
+    }
+#endif
+}
+INSTANTIATE_TEST_SUITE_P(
+    Platforms, DarwinCreatedAttributesPublic,
+    testing::Values(
+        DarwinAttributeProfile{"macos-arm64", MacOSMachO64},
+        DarwinAttributeProfile{"macos-x86_64", MacOSMachO64},
+        DarwinAttributeProfile{"ios-arm64", IOSMachO64},
+        DarwinAttributeProfile{"ios-simulator-arm64", IOSSimulatorMachO64},
+        DarwinAttributeProfile{"ios-simulator-x86_64", IOSSimulatorMachO64}),
+    [](const testing::TestParamInfo<DarwinAttributeProfile> &Info) {
+      std::string Name = Info.param.File;
+      std::replace(Name.begin(), Name.end(), '-', '_');
+      return Name;
+    });
+
+TEST_F(ProcessPublic,
+       DarwinCreatedRegularAttributesRejectMalformedProvidersBeforeLoading) {
+#ifndef NEVERD_DARWIN_FIXTURE_DIR
+  GTEST_SKIP() << "Clang and ld64.lld Darwin fixtures unavailable";
+#else
+  Path = (std::filesystem::path(NEVERD_DARWIN_FIXTURE_DIR) /
+          "ios-simulator-x86_64")
+             .string();
   for (const char *Purpose : {"mode_mutations", "ownership_mutations"})
     for (const char *Bad : {"null", "1", "\"true\"", "[]", "{}"}) {
       auto Files = llvm::cantFail(

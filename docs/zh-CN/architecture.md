@@ -1479,6 +1479,8 @@ Swift SDK Published 的 enclosing-instance 访问器保留四个指针载体：�
 
 Objective-C 源码导出器对完整原生单元和各方法单元同时关闭 `CEmitterOptions::EmitRecordGuards` 与 `CEmitterOptions::UseUnalignedPointers`。精确宽度的字节复制保留非对齐内存访问语义，并使生成的宏不进入移动端解析器；条件指令和修改宏的指令仍被拒绝。
 
+解析器还会识别 C 生成器共享的完整固定 `ContractionPolicy` 指令块，保留原文供编译使用，不求值任意条件指令。被修改、截断或包在额外条件中的版本仍不受支持。
+
 ## 有界目录批量属性
 
 DarwinFiles 负责公共属性导入、名称/stat 有效性与记录编码；DarwinDirectory 负责批量分组、显式对象授权和描述对象拥有的迭代/游标/EOF 状态，与 getdirentries64 共用当前子项投影。dup 共享同一描述对象，零 seek 重置迭代契约。JSON 提供显式策略输入，服务派发不推断文件系统观察。

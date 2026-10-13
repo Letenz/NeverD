@@ -57,7 +57,8 @@ target_include_directories(NeverDMobile PUBLIC
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS})
 target_include_directories(NeverDMobile PRIVATE
-  ${CMAKE_SOURCE_DIR}/lib/sdk)
+  ${CMAKE_SOURCE_DIR}/lib/sdk
+  ${CMAKE_SOURCE_DIR}/lib/backend/c)
 target_link_libraries(NeverDMobile PUBLIC ZLIB::ZLIB neverd_shared)
 if(APPLE)
   # Resolve LLVM Support through libneverd's existing registry. Linking the

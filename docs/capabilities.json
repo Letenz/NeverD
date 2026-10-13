@@ -18625,7 +18625,18 @@
           "runner": "gtest",
           "target": "NeverDProcessPublicTests",
           "source": "unittests/emulation/ProcessPublicTests.cpp",
-          "filter": "ProcessPublic.DarwinCreatedRegularAttributesPreserveProvidersAcrossCAndCLI",
+          "filter": "*/DarwinCreatedAttributesPublic.PreserveProvidersAcrossCAndCLI/*",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDProcessPublicTests",
+          "source": "unittests/emulation/ProcessPublicTests.cpp",
+          "filter": "ProcessPublic.DarwinCreatedRegularAttributesRejectMalformedProvidersBeforeLoading",
           "platforms": [
             "darwin",
             "linux",

@@ -1622,6 +1622,8 @@ Die Beweisschlüssel für Frame-Offsets normalisieren die oberste Summe der ursp
 
 Der Objective-C-Quellexport deaktiviert `CEmitterOptions::EmitRecordGuards` und `CEmitterOptions::UseUnalignedPointers` für die vollständige native Einheit und jede Methodeneinheit. Bytekopien mit exakter Breite erhalten die Semantik nicht ausgerichteter Speicherzugriffe und halten erzeugte Makros vom mobilen Parser fern; bedingte und makroverändernde Direktiven werden weiterhin abgelehnt.
 
+Der Parser erkennt auch den vollständigen festen `ContractionPolicy`-Block, den die C-Generatoren gemeinsam verwenden. Er erhält den Text für die Kompilierung und wertet keine beliebigen bedingten Direktiven aus. Geänderte, abgeschnittene oder zusätzlich bedingt umschlossene Blöcke bleiben nicht unterstützt.
+
 ## Begrenzte Verzeichnisattribute in Gruppen
 
 DarwinFiles besitzt gemeinsamen Attributimport, Namen/stat-Gültigkeit und Datensatzkodierung. DarwinDirectory besitzt Gruppen, Objektberechtigung und beschreibungsgebundene Iteration/Cursor/EOF; die aktuellen Kinder werden gemeinsam mit getdirentries64 projiziert. dup teilt eine Beschreibung, Null-seek setzt den Vertrag zurück. JSON liefert explizite Eingaben; der Dispatch erfindet keine Dateisystembeobachtung.
