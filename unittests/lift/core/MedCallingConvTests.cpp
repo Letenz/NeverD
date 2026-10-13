@@ -1745,9 +1745,10 @@ TEST(HighCallArguments, X87WaitLeavesEarlierCallSetupInPlace) {
     Call.Opcode = NdOp::CALL;
     Call.Addr = 0x1010;
     Call.addInput(MedVar::makeConst(Callee, Slot));
-    if (!I386)
-      Call.CalleeRegisterArgs = 1;
-    Call.CalleeStackArgs = 1;
+    // A summarized x86-64 callee takes its register arguments as the call's
+    // inputs (LowToMed); the scan collects them only without a summary.
+    if (I386)
+      Call.CalleeStackArgs = 1;
     Block.Ops.push_back(Call);
 
     MedToHighConverter Converter;
