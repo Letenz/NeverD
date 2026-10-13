@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "unittests/lift/eh/fixtures"
 SOURCES = ("native_seh_resume.ll", "native_seh_resume_runtime.c",
            "native_seh_resume_probe.asm")
-EXPECTED = (123478, 12378, 13678, 1378, 1, 1, 1, 1, 128)
+EXPECTED = (1234782349, 123782349, 136782349, 13782349, 1, 1, 1, 1, 128)
 OBSERVATION = re.compile(
     r"NATIVE_SEH_RESUME (\d+) (\d+) (\d+) (\d+) registers=(\d+) "
     r"stack=(\d+) guards=(\d+) consistent=(\d+) iterations=(\d+) "
@@ -48,6 +48,20 @@ def compile_step(command: list[str], directory: Path, record: dict) -> None:
          "stdout": result.stdout, "stderr": result.stderr})
     if result.returncode:
         raise ValueError("native resume protocol compilation failed")
+
+
+def compile_and_link_c_runtime(compiler: str, source: Path, objects: list[Path],
+                               image: Path, directory: Path, record: dict,
+                               flags: list[str]) -> None:
+    # /TC applies to every input, including .obj files. Keep it in a source-only
+    # compilation, then let the driver pass every COFF object to the linker.
+    runtime = directory / "runtime.obj"
+    compile_step([compiler, "/nologo", "/W4", "/WX", "/TC", "/c", *flags,
+                  f"/Fo{runtime}", str(source)], directory, record)
+    compile_step([compiler, "/nologo", f"/Fe{image}", str(runtime),
+                  *map(str, objects), "/link", "/debug", "/incremental:no",
+                  "/fixed:no", f"/pdb:{image.with_suffix('.pdb')}",
+                  f"/map:{image.with_suffix('.map')}"], directory, record)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,13 +108,10 @@ def main(argv: list[str] | None = None) -> int:
                          case, record)
             compile_step([args.assembler, "/nologo", "/c", f"/Fo{wrapper}",
                           str(FIXTURES / SOURCES[2])], case, record)
-            compile_step([args.compiler, "/nologo", "/W4", "/WX", "/TC",
-                          "/Od" if optimization == 0 else "/O2", "/GS", "/MD", "/Z7",
-                          f"/Fo{case / 'runtime.obj'}", f"/Fe{image}",
-                          str(FIXTURES / SOURCES[1]), str(llvm_object), str(wrapper),
-                          "/link", "/debug", "/incremental:no", "/fixed:no",
-                          f"/pdb:{case / 'resume.pdb'}", f"/map:{case / 'resume.map'}"],
-                         case, record)
+            compile_and_link_c_runtime(
+                args.compiler, FIXTURES / SOURCES[1], [llvm_object, wrapper],
+                image, case, record,
+                ["/Od" if optimization == 0 else "/O2", "/GS", "/MD", "/Z7"])
             data = image.read_bytes()
             require_architecture(data, "x64")
             record["sha256"] = hashlib.sha256(data).hexdigest()
