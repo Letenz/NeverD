@@ -4490,6 +4490,172 @@ TEST_F(SessionCAPITest, PrepareFunctionAcceptsAnEntryAtAddressZero) {
   EXPECT_TRUE(State.FunctionSources.empty());
 }
 
+TEST_F(SessionCAPITest, SourceOptionsKeepOrdinaryAndEnhancedPagesIndependent) {
+  // (x ^ y) + 2 * (x & y), followed by a separately named constant function.
+  std::string Body("\x89\xf8\x31\xf0\x21\xf7\x01\xff\x01\xf8\xc3", 11);
+  Body.resize(16, '\x90');
+  Body.append("\xb8\x07\x00\x00\x00\xc3", 6);
+  const auto Path =
+      write("source-options.elf", makeNativeELF(false, 0x400000, {}, Body));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry, 11));
+  State.Img.Symbols.push_back(neverd::Symbol::makeFunc(Entry + 16, 6));
+  State.resetFunctionsFromImage();
+  const auto Ordinary = takeString(neverd_decompile(Session, Entry));
+  ASSERT_FALSE(Ordinary.empty()) << takeString(neverd_last_error(Session));
+  const auto Low = takeString(neverd_ir_low(Session, Entry));
+  const auto Med = takeString(neverd_ir_med(Session, Entry));
+  const auto *PreparedLow = State.PipeResult.LowFuncs.data();
+  const auto *PreparedMed = State.PipeResult.MedFuncs.data();
+  const auto *PreparedHigh = State.PipeResult.HighFuncs.data();
+  ASSERT_EQ(State.EnhancedHighIR, nullptr);
+  auto Full = takeView(neverd_ir_view_ex_json(Session, Entry, "c", 0, 2048,
+                                              R"({"symbolic":true})"));
+  ASSERT_TRUE(Full.getString("text")) << takeString(neverd_last_error(Session));
+  ASSERT_TRUE(Full.getBoolean("complete").value_or(false));
+  const auto Enhanced = Full.getString("text")->str();
+  ASSERT_NE(Full.getArray("rows"), nullptr);
+  EXPECT_TRUE(std::any_of(Full.getArray("rows")->begin(),
+                          Full.getArray("rows")->end(), [](const auto &Value) {
+                            const auto *Row = Value.getAsObject();
+                            const auto *Addresses =
+                                Row ? Row->getArray("addresses") : nullptr;
+                            return Addresses && !Addresses->empty();
+                          }));
+  EXPECT_NE(Ordinary.find('^'), std::string::npos) << Ordinary;
+  EXPECT_EQ(Enhanced.find('^'), std::string::npos) << Enhanced;
+  EXPECT_NE(Ordinary, Enhanced);
+  ASSERT_NE(State.EnhancedHighIR, nullptr);
+  const auto *Variant = State.EnhancedHighIR.get();
+  std::string Paged;
+  for (size_t Offset = 0;;) {
+    const auto Page = takeView(neverd_ir_view_ex_json(
+        Session, Entry, "c", Offset, 2, R"({"symbolic":true})"));
+    ASSERT_TRUE(Page.getString("text"));
+    Paged += Page.getString("text")->str();
+    if (Page.getBoolean("complete").value_or(false))
+      break;
+    ASSERT_TRUE(Page.getInteger("next_offset"));
+    ASSERT_GT(*Page.getInteger("next_offset"), Offset);
+    Offset = *Page.getInteger("next_offset");
+    ASSERT_LT(Offset, 10000u);
+  }
+  EXPECT_EQ(Paged, Enhanced);
+  EXPECT_EQ(State.EnhancedHighIR.get(), Variant);
+  EXPECT_EQ(State.PipeResult.LowFuncs.data(), PreparedLow);
+  EXPECT_EQ(State.PipeResult.MedFuncs.data(), PreparedMed);
+  EXPECT_EQ(State.PipeResult.HighFuncs.data(), PreparedHigh);
+  EXPECT_EQ(State.SourceOptions, neverd::SourceViewOptions{});
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Ordinary);
+  EXPECT_EQ(takeString(neverd_ir_low(Session, Entry)), Low);
+  EXPECT_EQ(takeString(neverd_ir_med(Session, Entry)), Med);
+
+  // Selecting another function cannot borrow its predecessor's enhanced IR.
+  ASSERT_EQ(neverd_prepare_function(Session, Entry + 16), 1);
+  EXPECT_EQ(State.EnhancedHighIR, nullptr);
+  const auto Other = takeView(neverd_ir_view_ex_json(
+      Session, Entry + 16, "c", 0, 2048, R"({"symbolic":true})"));
+  ASSERT_TRUE(Other.getString("text"));
+  EXPECT_EQ(Other.getString("text")->find('^'), llvm::StringRef::npos);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Ordinary);
+  EXPECT_EQ(State.EnhancedHighIR, nullptr);
+}
+
+TEST_F(SessionCAPITest, SourceOptionsDoNotDependOnLLVMViewOrder) {
+  const auto Path = write("source-view-order.elf", makeAnalysisCacheELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = seedAnalysisCacheSymbols(Session);
+  auto &State = *neverd::sdk::toSession(Session);
+  std::string Original, Enhanced, Med;
+  for (bool LLVMFirst : {false, true}) {
+    SCOPED_TRACE(LLVMFirst);
+    State.clearPipeline();
+    ASSERT_EQ(neverd_prepare_function(Session, Entry), 1);
+    const auto Before = takeString(neverd_ir_med(Session, Entry));
+    if (LLVMFirst) {
+      ASSERT_FALSE(takeString(neverd_decompile_llvm(Session, Entry)).empty())
+          << takeString(neverd_last_error(Session));
+      EXPECT_EQ(takeString(neverd_ir_med(Session, Entry)), Before);
+    }
+    const auto Plain = takeString(neverd_decompile(Session, Entry));
+    const auto Page = takeView(neverd_ir_view_ex_json(
+        Session, Entry, "c", 0, 2048, R"({"symbolic":true})"));
+    ASSERT_TRUE(Page.getString("text"));
+    if (!LLVMFirst) {
+      Original = Plain;
+      Enhanced = Page.getString("text")->str();
+      Med = Before;
+    } else {
+      EXPECT_EQ(Plain, Original);
+      EXPECT_EQ(Page.getString("text"), Enhanced);
+      EXPECT_EQ(Before, Med);
+    }
+  }
+}
+
+TEST_F(SessionCAPITest, SourceOptionsValidateBeforeChangingAnalysis) {
+  const auto Path = write("source-validation.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Original = takeString(neverd_decompile(Session, Entry));
+  auto &State = *neverd::sdk::toSession(Session);
+  const auto *Prepared = State.PipeResult.HighFuncs.data();
+  for (const char *Bad :
+       {"[]", "null", "{", R"({"symbolic":1})", R"({"unknown":true})",
+        R"({"llvm_optimization":"O4"})", R"({"llvm_passes":[]})",
+        R"({"llvm_optimization":"custom"})",
+        R"({"llvm_optimization":"custom","llvm_passes":["inline"]})",
+        R"({"llvm_optimization":"custom","llvm_passes":["dce","dce"]})",
+        R"({"llvm_optimization":"custom","llvm_passes":[1]})"}) {
+    SCOPED_TRACE(Bad);
+    EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "llvmc", 0, 10, Bad),
+              nullptr);
+    EXPECT_FALSE(takeString(neverd_last_error(Session)).empty());
+    EXPECT_EQ(State.PipeResult.HighFuncs.data(), Prepared);
+    EXPECT_EQ(State.SourceOptions, neverd::SourceViewOptions{});
+  }
+  EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "c", 0, 10,
+                                   R"({"llvm_optimization":"O3"})"),
+            nullptr);
+  EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "low", 0, 10, "{}"),
+            nullptr);
+  EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "c", 0, 0, "{}"), nullptr);
+  EXPECT_EQ(neverd_ir_view_ex_json(Session, Entry, "c", 0, 2049, "{}"),
+            nullptr);
+  EXPECT_EQ(takeString(neverd_decompile(Session, Entry)), Original);
+}
+
+TEST_F(SessionCAPITest, SourceLLVMProfilesKeepTheirOwnModulesAndEmission) {
+  const auto Path = write("llvm-options.elf", makeNativeELF(false));
+  ASSERT_EQ(neverd_session_load(Session, Path.c_str()), 1);
+  const auto Entry = neverd_session_entry_addr(Session);
+  const auto Ordinary = takeString(neverd_decompile_llvm(Session, Entry));
+  ASSERT_FALSE(Ordinary.empty());
+  auto &State = *neverd::sdk::toSession(Session);
+  for (const char *Options :
+       {R"({"llvm_optimization":"O0"})", R"({"llvm_optimization":"O1"})",
+        R"({"llvm_optimization":"O2"})", R"({"llvm_optimization":"O3"})",
+        R"({"llvm_optimization":"custom","llvm_passes":[]})",
+        R"({"llvm_optimization":"custom","llvm_passes":["instcombine","dce"]})",
+        R"({"symbolic":true})"}) {
+    SCOPED_TRACE(Options);
+    const auto Page = takeView(
+        neverd_ir_view_ex_json(Session, Entry, "llvmc", 0, 2048, Options));
+    ASSERT_TRUE(Page.getString("text"))
+        << takeString(neverd_last_error(Session));
+    EXPECT_TRUE(Page.getBoolean("complete").value_or(false));
+    EXPECT_EQ(State.SourceOptions, neverd::SourceViewOptions{});
+    EXPECT_EQ(takeString(neverd_decompile_llvm(Session, Entry)), Ordinary);
+    // A rendered variant must coexist with the baseline rather than overwrite
+    // it.
+    EXPECT_GE(State.FunctionSources.size(), 2u);
+    EXPECT_NE(State.FunctionSources.front().Options,
+              std::next(State.FunctionSources.begin())->Options);
+  }
+}
+
 TEST_F(SessionCAPITest, SourcePagesReadTheFunctionsKeptEmission) {
   // A copy: renaming writes its sidecar beside the input.
   const auto Input = Directory / "kept-emission.o";

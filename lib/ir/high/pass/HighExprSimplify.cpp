@@ -86,33 +86,102 @@ static ExprPtr joinLocalSlices(const ExprPtr &E) {
 
 /// Nothing in \p E can be observed except its value: no call, memory access
 /// or atomic.  Only such a subexpression may be dropped as irrelevant.
-static bool isEffectFree(const HighExpr &E, unsigned Depth = 0) {
-  if (Depth > 64)
-    return false;
-  switch (E.Kind) {
-  case ExprKind::Var:
-  case ExprKind::Const:
-  case ExprKind::Undef:
-  case ExprKind::Phi:
-    return true;
-  case ExprKind::BinOp:
-  case ExprKind::UnaryOp:
-  case ExprKind::Cast:
-  case ExprKind::BitCast:
-    if (E.Op == NdOp::ATOMIC_ADD || E.Op == NdOp::ATOMIC_XCHG ||
-        E.Op == NdOp::ATOMIC_CMPXCHG)
-      return false;
-    for (const ExprPtr &Op : E.Operands)
-      if (!Op || !isEffectFree(*Op, Depth + 1))
-        return false;
-    return true;
-  default:
-    return false;
-  }
+static bool isEffectFree(const ExprPtr &E) {
+  size_t Budget = 128;
+  return discardableIntegerValue(E, Budget);
 }
 
 static bool isZeroConst(const ExprPtr &E) {
   return E && E->Kind == ExprKind::Const && E->ConstVal == 0;
+}
+
+/// A constant mask observes only these bits. In particular, a masked status
+/// word must not evaluate unknown incoming bits that the machine never reads.
+/// This is local bit projection, independent of optional symbolic rewriting.
+/// Copy changed paths because another use of a shared node may read more bits.
+static ExprPtr demandMaskedBits(const ExprPtr &E, uint64_t Demand,
+                                size_t &Budget) {
+  if (!E || !Budget || !E->Type || E->Type->Kind != NdTypeKind::Int ||
+      !E->Type->Size || E->Type->Size > 8 ||
+      E->IntrinsicId != Intrinsic::None || !E->IntrinsicOutputs.empty() ||
+      E->MemoryOrdering != NdMemoryOrdering::None ||
+      E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return E;
+  --Budget;
+  const auto Mask = [](unsigned Bytes) {
+    return Bytes == 8 ? UINT64_MAX : (uint64_t{1} << (Bytes * 8)) - 1;
+  };
+  Demand &= Mask(E->Type->Size);
+  if (!Demand) {
+    size_t DropBudget = 128;
+    if (!discardableIntegerValue(E, DropBudget))
+      return E;
+    auto Zero = HighExpr::makeConst(0, E->Type->Size,
+                                    ConstantAddressProvenance::Scalar);
+    Zero->Type = E->Type;
+    return isZeroConst(E) ? E : Zero;
+  }
+  if (E->Kind == ExprKind::Const) {
+    if (!E->Operands.empty())
+      return E;
+    if ((E->ConstVal & Demand) == E->ConstVal)
+      return E;
+    auto Copy = std::make_shared<HighExpr>(*E);
+    Copy->ConstVal &= Demand;
+    return Copy;
+  }
+  const bool Cast = E->Kind == ExprKind::Cast && E->CastTo &&
+                    E->CastTo->Kind == NdTypeKind::Int &&
+                    E->CastTo->Size == E->Type->Size &&
+                    E->CastTo->IsSigned == E->Type->IsSigned;
+  const bool Extend = E->Kind == ExprKind::UnaryOp &&
+                      (E->Op == NdOp::INT_ZEXT || E->Op == NdOp::INT_SEXT);
+  if ((Cast || Extend) && E->Operands.size() == 1) {
+    const auto &In = E->Operands[0];
+    if (!In || !In->Type || In->Type->Kind != NdTypeKind::Int ||
+        !In->Type->Size || In->Type->Size > 8 ||
+        (Extend && In->Type->Size > E->Type->Size))
+      return E;
+    const uint64_t InputMask = Mask(In->Type->Size);
+    uint64_t InputDemand = Demand & InputMask;
+    const bool Signed = Cast ? In->Type->IsSigned : E->Op == NdOp::INT_SEXT;
+    if (Signed && (Demand & ~InputMask))
+      InputDemand |= uint64_t{1} << (In->Type->Size * 8 - 1);
+    auto Projected = demandMaskedBits(In, InputDemand, Budget);
+    if (Projected == In)
+      return E;
+    auto Copy = std::make_shared<HighExpr>(*E);
+    Copy->Operands = {std::move(Projected)};
+    return Copy;
+  }
+  if (E->Kind != ExprKind::BinOp || E->Operands.size() != 2 ||
+      (E->Op != NdOp::INT_AND && E->Op != NdOp::INT_OR &&
+       E->Op != NdOp::INT_XOR))
+    return E;
+  const auto &L = E->Operands[0], &R = E->Operands[1];
+  if (!L || !R || !L->Type || !R->Type || L->Type->Kind != NdTypeKind::Int ||
+      R->Type->Kind != NdTypeKind::Int || L->Type->Size != E->Type->Size ||
+      R->Type->Size != E->Type->Size)
+    return E;
+  auto ChildDemand = [&](const ExprPtr &Other) {
+    // Two constants must not each give the other responsibility for a set
+    // OR bit and then both erase it.
+    if (Other->Kind != ExprKind::Const ||
+        (L->Kind == ExprKind::Const && R->Kind == ExprKind::Const))
+      return Demand;
+    if (E->Op == NdOp::INT_AND)
+      return Demand & Other->ConstVal;
+    if (E->Op == NdOp::INT_OR)
+      return Demand & ~Other->ConstVal;
+    return Demand;
+  };
+  auto Left = demandMaskedBits(L, ChildDemand(R), Budget);
+  auto Right = demandMaskedBits(R, ChildDemand(L), Budget);
+  if (Left == L && Right == R)
+    return E;
+  auto Copy = std::make_shared<HighExpr>(*E);
+  Copy->Operands = {std::move(Left), std::move(Right)};
+  return Copy;
 }
 
 /// Rewrite \p X knowing only its low \p Bytes bytes are read (the operand
@@ -148,7 +217,7 @@ static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
   case NdOp::INT_AND: {
     for (const auto &[C, Other] : {std::pair{R, L}, std::pair{L, R}})
       if (C && C->Kind == ExprKind::Const) {
-        if ((C->ConstVal & Mask) == 0 && Other && isEffectFree(*Other))
+        if ((C->ConstVal & Mask) == 0 && Other && isEffectFree(Other))
           return Zero();
         if ((C->ConstVal & Mask) == Mask)
           return demandLowBytes(Other, Bytes);
@@ -186,7 +255,7 @@ static ExprPtr demandLowBytes(const ExprPtr &X, unsigned Bytes) {
     if (!Integer || !R || R->Kind != ExprKind::Const)
       return X;
     // Every demanded byte comes from below the shift amount: all zero.
-    if (R->ConstVal >= uint64_t{Bytes} * 8 && L && isEffectFree(*L))
+    if (R->ConstVal >= uint64_t{Bytes} * 8 && L && isEffectFree(L))
       return Zero();
     ExprPtr NL = demandLowBytes(L, Bytes);
     return NL == L ? X : WithOperands({NL, R});
@@ -747,6 +816,26 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
 
   Changed |= discardMaskedConcatHigh(E);
 
+  if (E->Op == NdOp::INT_AND && E->Type && E->Type->Kind == NdTypeKind::Int &&
+      E->Type->Size && E->Type->Size <= 8 &&
+      E->IntrinsicId == Intrinsic::None && E->IntrinsicOutputs.empty() &&
+      E->MemoryOrdering == NdMemoryOrdering::None &&
+      E->MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+      E->Operands[0] && E->Operands[1])
+    for (unsigned I = 0; I < 2; ++I)
+      if (E->Operands[I]->Kind == ExprKind::Const && E->Operands[1 - I]->Type &&
+          E->Operands[1 - I]->Type->Size == E->Type->Size) {
+        size_t Budget = 64;
+        auto Projected = demandMaskedBits(E->Operands[1 - I],
+                                          E->Operands[I]->ConstVal, Budget);
+        if (Projected != E->Operands[1 - I]) {
+          auto Copy = std::make_shared<HighExpr>(*E);
+          Copy->Operands[1 - I] = std::move(Projected);
+          Replace(std::move(Copy));
+        }
+        break;
+      }
+
   // Sub-piece identity elimination.  SUBBYTES(x, 0) that extracts x's full
   // width, or the low bytes of a zero/sign-extended value back to its
   // original width, is a no-op.  Such chains arise from modelling x86-64
@@ -817,7 +906,7 @@ static void simplifyExprRecursive(ExprPtr &E, HighExprSet &Seen,
       E->Type->Size <= 8)
     for (unsigned I = 0; I < 2; ++I)
       if (isZeroConst(E->Operands[I]) && E->Operands[1 - I] &&
-          isEffectFree(*E->Operands[1 - I])) {
+          isEffectFree(E->Operands[1 - I])) {
         Replace(HighExpr::makeConst(0, E->Type->Size));
         return;
       }
