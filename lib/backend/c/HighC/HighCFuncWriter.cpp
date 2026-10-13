@@ -1060,6 +1060,7 @@ void HighCWriter::writeAnalysisOnlyFunction(const HighFunc &Func) {
 
 void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
   FrameSlots.clear();
+  FrameAddressEscapes = false;
   FrameAliases.clear();
   AmbiguousFrameAliases.clear();
   const bool SavedHandler = InEHClauseBody;
@@ -1352,6 +1353,11 @@ void HighCWriter::collectNamedFrameSlots(const HighFunc &Func) {
       else
         It->second.AddressTaken = true;
     }
+
+  // Slots that only share bytes keep their addresses to themselves; the
+  // slots marked below are address-taken for their storage, not escapes.
+  FrameAddressEscapes = llvm::any_of(
+      FrameSlots, [](const auto &Entry) { return Entry.second.AddressTaken; });
 
   // Slots that share bytes are one object, not separate variables: a byte
   // stored at -0x82 changes what a later read of the eight bytes at -0x84
@@ -3199,6 +3205,21 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
     bool Cleanup = false;
     bool Handler = false;
   };
+  // An address the function computes from a frame address and a run-time
+  // value may be any frame byte.  What a load returns is no such
+  // computation: a frame address stored to memory has escaped.
+  std::function<bool(const HighExpr &, unsigned)> ComputedFromFrame =
+      [&](const HighExpr &E, unsigned Depth) -> bool {
+    if (Depth > limits::kMaxFrameDisplacementDepth || frameDisplacement(E))
+      return true;
+    if (E.Kind == ExprKind::Load || E.Kind == ExprKind::Call)
+      return false;
+    bool Hit = false;
+    E.forEachChildExpr([&](const ExprPtr &Child) {
+      Hit = Hit || (Child && ComputedFromFrame(*Child, Depth + 1));
+    });
+    return Hit;
+  };
   std::map<const HighStmt *, Site> Sites;
   std::map<uint64_t, std::vector<const HighStmt *>> Linear;
   std::map<uint64_t, uint64_t> JoinAfterTry;
@@ -3819,10 +3840,12 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
           Load ? frameDisplacement(*Load->Operands[0]) : std::nullopt;
       const std::optional<std::string> SlotName =
           Load ? namedFrameSlot(*Load->Operands[0]) : std::nullopt;
-      // Memory reached otherwise than through this one named slot.
-      const bool Escapes = ReadsMemory && (!Load || !Slot || !SlotName ||
-                                           isAddressTakenSlot(*SlotName) ||
-                                           Load != C.Stmt->Val.get());
+      // Memory reached otherwise than through this one named slot, which
+      // any slot is once a frame address escapes.
+      const bool Escapes =
+          ReadsMemory &&
+          (!Load || !Slot || !SlotName || FrameAddressEscapes ||
+           isAddressTakenSlot(*SlotName) || Load != C.Stmt->Val.get());
       const int64_t Width = Load && Load->Type ? Load->Type->Size : 8;
       auto Overlaps = [&](int64_t Disp, int64_t Size) {
         return Disp < *Slot + Width && *Slot < Disp + Size;
@@ -3855,7 +3878,8 @@ void HighCWriter::collectValueForward(const HighFunc &Func) {
             const auto Disp = frameDisplacement(*WriteAddr);
             const int64_t Size = WriteType ? WriteType->Size : 8;
             if (Escapes ? !Disp || !Slot || Overlaps(*Disp, Size)
-                        : Disp && Overlaps(*Disp, Size))
+                : Disp  ? Overlaps(*Disp, Size)
+                        : ComputedFromFrame(*WriteAddr, 0))
               return true;
           }
           if (S.Kind == StmtKind::Assign && S.Dst &&
