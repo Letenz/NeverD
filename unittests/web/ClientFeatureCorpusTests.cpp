@@ -17,6 +17,7 @@
 #include "neverd/web/Error.h"
 #include "neverd/web/PackageArchive.h"
 #include "neverd/web/SourceFeatures.h"
+#include "neverd/web/SourceLimits.h"
 #include "neverd/web/SourceNavigation.h"
 
 #include <algorithm>
@@ -28,7 +29,11 @@
 namespace {
 using namespace neverd::web;
 
-TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
+void inspectCapturedClientUnits(SourceAnalysisMode Mode) {
+  const auto RecordProperty = [](const std::string &Key,
+                                 const std::string &Value) {
+    ::testing::Test::RecordProperty(Key, Value);
+  };
 #ifdef _WIN32
   GTEST_SKIP() << "POSIX capture host qualification required";
 #endif
@@ -73,7 +78,9 @@ TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
     Bytes += Text.size();
     SourceAnalysis Source;
     try {
-      Source = inspectJavaScript(M.SourceArtifactID, Text, "module");
+      Source = Mode == SourceAnalysisMode::Large
+                   ? inspectLargeJavaScript(M.SourceArtifactID, Text, "module")
+                   : inspectJavaScript(M.SourceArtifactID, Text, "module");
     } catch (const Error &Failure) {
       const std::string_view Code(Failure.what());
       if (Code == "source_byte_budget_exceeded")
@@ -139,6 +146,12 @@ TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
   EXPECT_EQ(FeatureUnits + FeatureUnavailable, Parsed);
   EXPECT_GT(FeatureUnits, 0);
   EXPECT_EQ(OrderUnits + OrderUnavailable, FeatureUnits);
+  if (Mode == SourceAnalysisMode::Large) {
+    EXPECT_EQ(Parsed, Sources);
+    EXPECT_EQ(FeatureUnavailable, 0u);
+    EXPECT_EQ(OrderUnavailable, 0u);
+  }
+  RecordProperty("parser_profile", std::string(sourceLimits(Mode).Profile));
   RecordProperty("source_count", std::to_string(Sources));
   RecordProperty("source_bytes", std::to_string(Bytes));
   RecordProperty("parsed_units", std::to_string(Parsed));
@@ -179,6 +192,14 @@ TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
   }
   for (const auto &[Reason, Count] : ParserReasons)
     RecordProperty("parser_reason_" + Reason, std::to_string(Count));
+}
+
+TEST(WebSourceFeatures, CapturedClaudeClientUnitsWhenSupplied) {
+  inspectCapturedClientUnits(SourceAnalysisMode::Interactive);
+}
+
+TEST(WebSourceFeatures, CapturedClaudeLargeClientUnitsWhenSupplied) {
+  inspectCapturedClientUnits(SourceAnalysisMode::Large);
 }
 
 } // namespace

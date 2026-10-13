@@ -19,6 +19,8 @@
 
 namespace neverd::web {
 
+enum class SourceAnalysisMode { Interactive, Large, Recovery };
+
 struct SyntaxChild {
   std::string Field;
   uint32_t Index = 0;
@@ -72,6 +74,7 @@ struct SourceLexeme {
 };
 
 struct SourceAnalysis {
+  SourceAnalysisMode Mode = SourceAnalysisMode::Interactive;
   std::string ID;
   std::string ArtifactID;
   std::string BlobHash;
@@ -98,5 +101,11 @@ inline constexpr std::string_view JavaScriptLexemeProfile =
 SourceAnalysis inspectJavaScript(std::string_view ArtifactID,
                                  std::string_view Bytes,
                                  std::string_view SourceType);
+
+/// Explicit single-source analysis with larger bounded parser/model admission.
+/// The interactive operation never falls back to this profile automatically.
+SourceAnalysis inspectLargeJavaScript(std::string_view ArtifactID,
+                                      std::string_view Bytes,
+                                      std::string_view SourceType);
 
 } // namespace neverd::web

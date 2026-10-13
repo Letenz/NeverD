@@ -549,6 +549,14 @@ NEVERD_API const char *neverd_web_source_analyze_json(
     size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
     const char *SourceType, size_t SourceTypeSize);
 
+/// Explicit large-source profile (8 MiB, 1.5M nodes), with one such source
+/// per published revision. Interactive admission remains independent.
+/// Uses the same metadata pages, navigation and source evidence consumers.
+NEVERD_API const char *neverd_web_source_analyze_large_json(
+    neverd_web_session_t Session, const char *ExpectedRevision,
+    size_t RevisionSize, const char *ArtifactID, size_t ArtifactIDSize,
+    const char *SourceType, size_t SourceTypeSize);
+
 /// Explicit local raw disclosure of a captured direct-byte source selection
 /// into a NEW private directory. Uses the independent recovery parser;
 /// interactive source/cache limits remain unchanged. SourceType is required.

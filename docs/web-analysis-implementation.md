@@ -2862,7 +2862,7 @@ original hash through 64 KiB reads, and preserves original/expanded origins and
 selected ranges. Its 32 MiB materialization/output limit is independent of
 ordinary 1 MiB / 100,000-node source admission and the 200,000-node cache.
 `SourceRecovery` remains the only formatter and same-parser-tree proof owner.
-Large models never enter interactive caches or semantic consumers. The new
+Recovery models never enter interactive caches or semantic consumers. The new
 always-declared C API and direct/Wails CLI forms are thin selection layers;
 worker/MCP exclude the raw operation. See the
 [profile](web-readable-export-profile.md).
@@ -3670,3 +3670,58 @@ Provenance scans 7,565 files, capability ownership validates 23 declarations,
 and new C++ files pass the LLVM formatter check. Web/JS/ASAR remain ON.
 Final receipts use `/tmp/neverd-passive-structure-integrated-*`, with the
 successful complete rerun in `integrated-web-tests-fixed.log`.
+
+## Explicit large-source analysis (2026-10-13)
+
+The additive `hermes-602befee-large-source-js-v1` profile addresses the four
+real Claude request-source selections refused by interactive byte/parser
+admission. `SourceLimits` owns input, AST, lexeme, decoded-string, model-storage,
+parser-allocation and work bounds. Parsing, complete lexical binding, navigation,
+features, configuration order and passive interfaces consume that profile
+without partitioning source syntax. Interactive admission stays at 1 MiB and
+100,000 nodes; readable recovery remains a separate non-semantic model.
+
+Explicit admission permits 8 MiB and 1,500,000 nodes. The session retains one
+large source independently of interactive counters and revokes both at a new
+revision. Parser-profile-bound source/node identities, complete original
+anchors, ordinary metadata pages and existing redaction apply throughout the
+C API, CLI, worker and MCP. Independent record and other consumer limits remain
+in force. Charged parser/model storage is not a whole-process RSS bound. See
+the [selection contract](web-passive-report-profile.md#explicit-large-source-selections).
+
+Pinned macOS ARM64 Claude Code 2.1.296 modules 141, 299, 415 and 1452 retain
+180,783, 185,080, 1,165,367 and 286,849 AST nodes, respectively. Their exact
+original hashes/lengths are in `LargeSourceTests.cpp`; passive reports retain
+12, 33, 141 and 31 static rows. The complete retained package has 2,364 parsed,
+navigated feature inventories with no parser/feature refusals, 418 configuration
+objects, 3,702 terms and 32 possible later overwrites. Named configuration
+loading links remain zero. These are syntax candidates, not runtime requests
+or effective configuration policy.
+
+Continuation verification against `8600156fe`:
+
+- The Release engine/CLI/SDK/worker/MCP build succeeded. The complete owning Web
+  directory passed **796 of 827** checks with **31 explicit skips** in 30.88 s,
+  including the four pinned large modules, both whole-package source-feature
+  profiles and all eight captured Claude platform packages.
+- All five explicit large-source CLI forms passed with an unusable external-tool
+  PATH, private canaries and no stderr. The initial continuation run exposed
+  reused test logs: LLVM redirection preserves old file tails. Independent logs
+  per command fix the harness; production output was unchanged.
+- Worker/MCP and availability passed six cases, with the one backend-omission
+  check explicitly skipped in the normal build. Qt Web review passed in 3.31 s.
+- Parser OFF rebuilt successfully; **21 of 22** selected SDK/report/transport/
+  availability checks passed with the same omission-only skip. The new C symbol
+  remains exported and its operation explicitly reports `capability_unavailable`.
+- Web backend OFF rebuilt successfully; six of seven availability/transport
+  checks passed with worker's positive backend case explicitly skipped. The
+  always-declared large-source C API returned the same unavailable contract.
+- The new symbol is registered in the existing separate Web public-surface
+  inventory. The 23-capability ownership check, source-provenance scan and LLVM
+  formatter check pass.
+
+Receipts use `/tmp/neverd-js-continuation-*`; the prior pinned full-client
+property receipt is `/tmp/neverd-large-source-full-client.xml`. The original
+temporary full Bun/SEA/pkg/nexe producer-container corpora are absent from this
+host, so their optional tests remain coverage omissions. No proprietary source
+or ignored `superpowers` document is included in the change.

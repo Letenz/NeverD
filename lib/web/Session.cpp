@@ -40,7 +40,7 @@ std::string sourceSummary(const SourceAnalysis &Source, uint64_t Revision,
       {"blob_sha256", Source.BlobHash},
       {"source_type", Source.SourceType},
       {"parse_status", Source.ParseStatus},
-      {"parser_profile", std::string(JavaScriptParserProfile)},
+      {"parser_profile", std::string(sourceLimits(Source).Profile)},
       {"node_count", Source.Nodes.size()},
       {"comment_count", Source.CommentCount},
       {"lexeme_status", Source.LexemeStatus},
@@ -771,6 +771,23 @@ std::string Session::capabilities() {
       {"max_cached_nodes", MaxCachedNodes},
       {"executes_input", false},
       {"semantic_validation_complete", false}});
+  Operations.emplace_back("source_analyze_large");
+  const auto LargeLimits = sourceLimits(SourceAnalysisMode::Large);
+  Analyses.emplace_back(llvm::json::Object{
+      {"kind", "javascript_large_source_inventory"},
+      {"profile", std::string(LargeLimits.Profile)},
+      {"max_source_bytes", std::to_string(LargeLimits.Bytes)},
+      {"max_source_nodes", LargeLimits.Nodes},
+      {"max_source_lexemes", LargeLimits.Lexemes},
+      {"max_decoded_string_units", LargeLimits.StringUnits},
+      {"max_source_model_bytes", std::to_string(LargeLimits.ModelBytes)},
+      {"max_parser_allocation_bytes", std::to_string(LargeLimits.ParserBytes)},
+      {"max_parser_allocations", LargeLimits.ParserAllocations},
+      {"max_parser_seconds", LargeLimits.ParserSeconds},
+      {"analysis_work_multiplier", LargeLimits.WorkMultiplier},
+      {"max_cached_sources", 1},
+      {"automatic_fallback", false},
+      {"executes_input", false}});
   Analyses.emplace_back(llvm::json::Object{
       {"kind", "javascript_module_evidence"},
       {"profile", std::string(JavaScriptModuleProfile)},
@@ -907,6 +924,7 @@ std::string Session::commit(std::string_view Token) {
                          {"redaction_policy", "metadata-only-v1"}});
   State->Published = std::move(Current);
   State->Sources.clear();
+  State->LargeSourceID.clear();
   State->Bindings.clear();
   State->Navigation.clear();
   State->Semantics.clear();
@@ -1064,37 +1082,59 @@ std::string Session::artifacts(std::string_view ExpectedRevision,
 std::string Session::analyzeSource(std::string_view ExpectedRevision,
                                    std::string_view ArtifactID,
                                    std::string_view SourceType) {
+  return analyzeSource(ExpectedRevision, ArtifactID, SourceType,
+                       SourceAnalysisMode::Interactive);
+}
+
+std::string Session::analyzeSource(std::string_view ExpectedRevision,
+                                   std::string_view ArtifactID,
+                                   std::string_view SourceType,
+                                   SourceAnalysisMode Mode) {
 #ifndef NEVERD_ENABLE_WEB_JAVASCRIPT
   throw Error("capability_unavailable");
 #else
   std::lock_guard Lock(State->Mutex);
   State->requireRevision(ExpectedRevision);
+  if (Mode != SourceAnalysisMode::Interactive &&
+      Mode != SourceAnalysisMode::Large)
+    throw Error("unsupported_source_analysis_mode");
   if (SourceType != "script" && SourceType != "module" &&
       SourceType != "commonjs")
     throw Error("unsupported_source_type");
   for (const auto &[ID, Source] : State->Sources)
-    if (Source.ArtifactID == ArtifactID && Source.SourceType == SourceType) {
+    if (Source.ArtifactID == ArtifactID && Source.SourceType == SourceType &&
+        Source.Mode == Mode) {
       const auto Bindings = State->Bindings.find(ID);
       return sourceSummary(
           Source, State->Revision,
           Bindings == State->Bindings.end() ? nullptr : &Bindings->second);
     }
-  const auto Bytes = State->sourceBytes(ArtifactID, MaxJavaScriptBytes,
+  const auto Limits = sourceLimits(Mode);
+  const auto Bytes = State->sourceBytes(ArtifactID, Limits.Bytes,
                                         "source_byte_budget_exceeded");
   // Reserve room for a complete maximum-size result before calling a parser.
   // Concurrent jobs and repeated queries cannot escape the session budget.
-  if (State->Sources.size() >= MaxCachedSources ||
-      State->CachedNodes > MaxCachedNodes - MaxJavaScriptNodes ||
-      State->CachedLexemes > 400000 - MaxJavaScriptLexemes)
+  const bool Large = Mode == SourceAnalysisMode::Large;
+  if (Large && !State->LargeSourceID.empty())
+    throw Error("large_source_cache_budget_exceeded");
+  if (!Large && (State->Sources.size() - !State->LargeSourceID.empty() >=
+                     MaxCachedSources ||
+                 State->CachedNodes > MaxCachedNodes - MaxJavaScriptNodes ||
+                 State->CachedLexemes > 400000 - MaxJavaScriptLexemes))
     throw Error("source_cache_budget_exceeded");
-  auto Source = inspectJavaScript(ArtifactID, Bytes, SourceType);
+  auto Source = Large ? inspectLargeJavaScript(ArtifactID, Bytes, SourceType)
+                      : inspectJavaScript(ArtifactID, Bytes, SourceType);
   auto Reply = sourceSummary(Source, State->Revision);
   const auto Count = Source.Nodes.size();
   const auto Lexemes = Source.Lexemes.size();
-  const auto ID = Source.ID;
+  auto ID = Source.ID;
   State->Sources.emplace(ID, std::move(Source));
-  State->CachedNodes += Count;
-  State->CachedLexemes += Lexemes;
+  if (Large) {
+    State->LargeSourceID = std::move(ID);
+  } else {
+    State->CachedNodes += Count;
+    State->CachedLexemes += Lexemes;
+  }
   return Reply;
 #endif
 }

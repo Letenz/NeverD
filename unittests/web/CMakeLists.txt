@@ -88,6 +88,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
     ElectronEntryTests.cpp
     ElectronSourceTests.cpp
     SourceTests.cpp
+    LargeSourceTests.cpp
     SourceRecoveryTests.cpp
     SourceRewriteTests.cpp
     SourceRenameTests.cpp

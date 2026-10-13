@@ -12,20 +12,19 @@
 #include "neverd/web/ParserBudget.h"
 
 #include "neverd/web/Error.h"
+#include "neverd/web/SourceLimits.h"
 
 namespace neverd::web {
 namespace {
 thread_local ParserBudget *Active = nullptr;
 }
 
-ParserBudget::ParserBudget(Profile Selected)
-    : Previous(Active),
-      Deadline(std::chrono::steady_clock::now() +
-               std::chrono::seconds(Selected == Profile::Recovery ? 30 : 5)) {
-  if (Selected == Profile::Recovery) {
-    MaxBytes = 256 * 1024 * 1024;
-    MaxWork = 1600000;
-  }
+ParserBudget::ParserBudget(SourceAnalysisMode Mode) : Previous(Active) {
+  const auto Limits = sourceLimits(Mode);
+  MaxBytes = Limits.ParserBytes;
+  MaxWork = Limits.ParserAllocations;
+  Deadline = std::chrono::steady_clock::now() +
+             std::chrono::seconds(Limits.ParserSeconds);
   Active = this;
 }
 

@@ -17,9 +17,11 @@
 namespace neverd::web {
 
 uint64_t validateSourceModel(const SourceAnalysis &Source) {
+  const auto Limits = sourceLimits(Source);
   if (Source.ParseStatus != "parsed" || Source.Nodes.empty() ||
-      Source.Nodes.size() > MaxJavaScriptNodes ||
-      Source.Nodes[0].Kind != "Program" || !Source.Nodes[0].ParentID.empty() ||
+      Source.Nodes.size() > Limits.Nodes ||
+      Source.Nodes[0].End > Limits.Bytes || Source.Nodes[0].Kind != "Program" ||
+      !Source.Nodes[0].ParentID.empty() ||
       (Source.SourceType != "script" && Source.SourceType != "module" &&
        Source.SourceType != "commonjs"))
     throw Error("invalid_source_model");
@@ -50,9 +52,9 @@ uint64_t validateSourceModel(const SourceAnalysis &Source) {
 
 SourceDeclarationIndex indexSourceDeclarations(const SourceAnalysis &S,
                                                const SourceBindingAnalysis &B) {
-  if (B.SourceID != S.ID || S.Nodes.size() > MaxJavaScriptNodes ||
-      B.Declarations.size() > 2 * MaxJavaScriptNodes ||
-      B.Bindings.size() > 2 * MaxJavaScriptNodes)
+  const auto Limit = sourceLimits(S).Nodes;
+  if (B.SourceID != S.ID || S.Nodes.size() > Limit ||
+      B.Declarations.size() > 2 * Limit || B.Bindings.size() > 2 * Limit)
     throw Error("invalid_source_binding_model");
   SourceDeclarationIndex Result;
   Result.UniqueBindings.assign(S.Nodes.size(), NoSourceIndex);

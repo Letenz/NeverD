@@ -513,6 +513,14 @@ int main(int argc, char **argv) {
     if (hasBindings) {
       reply = process.call("web_source_analyze", sourceRequest, "1", project);
       check(reply.at("status") == "ok", "Worker source analysis failed");
+      const auto large = web.execute("web_source_analyze_large", sourceRequest);
+      reply =
+          process.call("web_source_analyze_large", sourceRequest, "1", project);
+      check(reply.at("payload") == large &&
+                large.at("parser_profile") ==
+                    "hermes-602befee-large-source-js-v1" &&
+                large.at("source_id") != bindingRequest.at("source_id"),
+            "Worker lost explicit large-source profile or direct API parity");
       reply = process.call("web_source_bindings_analyze", bindingRequest, "1",
                            project);
       check(reply.at("payload") == bindingSummary &&

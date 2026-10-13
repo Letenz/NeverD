@@ -37,7 +37,8 @@ class Resolver {
   std::vector<ScopeState> State;
 
   void step(uint64_t Count = 1) {
-    if (Count > MaxJavaScriptBindingSteps - Result.Steps)
+    if (Count >
+        sourceWorkLimit(Source, MaxJavaScriptBindingSteps) - Result.Steps)
       throw Error("source_binding_budget_exceeded");
     Result.Steps += Count;
   }

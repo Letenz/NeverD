@@ -14,6 +14,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/sdk/NeverDCAPIWeb.h"
+#include "neverd/web/SourceLimits.h"
 
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -245,6 +246,108 @@ protected:
         SourceID.data(), SourceID.size(), Byte));
   }
 };
+
+#if NEVERD_TEST_WEB_JAVASCRIPT && !defined(_WIN32)
+TEST_F(WebSDK, LargeSourceHasIndependentCacheAnchorsAndRevisionOwnership) {
+  const std::string Text = "/*" +
+                           std::string(neverd::web::MaxJavaScriptBytes, ' ') +
+                           "*/fetch(`/CANARY/${unknown}`);";
+  write(Text);
+  std::ofstream(Root / "small.js") << "const SECRET_CANARY=1;";
+  const auto RootPath = Root.string();
+  const auto Preview = take(neverd_web_import_preview_json(
+      Session, RootPath.data(), RootPath.size(), nullptr, 0));
+  const auto Commit = commit(field(Preview, "preview_token"));
+  const auto Revision = field(Commit, "revision");
+  const auto Items = page(Revision, 0, 3);
+  const auto *Rows = Items.getAsObject()->getArray("items");
+  ASSERT_NE(Rows, nullptr);
+  ASSERT_EQ(Rows->size(), 3u);
+  const auto Big = field((*Rows)[1], "artifact_id");
+  const auto Small = field((*Rows)[2], "artifact_id");
+  EXPECT_EQ(errorCode(analyze(Revision, Big, "module")),
+            "source_byte_budget_exceeded");
+  auto Large = [&](std::string_view ID, std::string_view Type = "module") {
+    return take(neverd_web_source_analyze_large_json(
+        Session, Revision.data(), Revision.size(), ID.data(), ID.size(),
+        Type.data(), Type.size()));
+  };
+  const auto Source = Large(Big);
+  ASSERT_EQ(field(Source, "parse_status"), "parsed");
+  EXPECT_EQ(field(Source, "parser_profile"),
+            neverd::web::LargeJavaScriptParserProfile);
+  const auto ID = field(Source, "source_id");
+  EXPECT_EQ(Source, Large(Big));
+  EXPECT_EQ(errorCode(Large(Small)), "large_source_cache_budget_exceeded");
+  EXPECT_EQ(field(analyze(Revision, Small, "module"), "parse_status"),
+            "parsed");
+  const auto Nodes = nodes(Revision, ID, 0, 1);
+  EXPECT_EQ(Nodes.getAsObject()->getInteger("next_offset"), 1);
+  const auto Offset = Text.find("fetch");
+  const auto Anchor = anchor(Revision, ID, Offset, 5);
+  EXPECT_EQ(field(Anchor, "status"), "ok");
+  EXPECT_EQ(
+      Anchor.getAsObject()->getObject("storage")->getString("byte_offset"),
+      std::to_string(Offset));
+  const auto Token = preview();
+  const auto Next = field(commit(Token), "revision");
+  EXPECT_EQ(errorCode(nodes(Revision, ID)), "stale_revision");
+  EXPECT_EQ(errorCode(nodes(Next, ID)), "unknown_source");
+  const auto NewRoot = rootID(Next);
+  EXPECT_EQ(field(take(neverd_web_source_analyze_large_json(
+                      Session, Next.data(), Next.size(), NewRoot.data(),
+                      NewRoot.size(), "module", 6)),
+                  "parse_status"),
+            "parsed");
+}
+#ifdef NEVERD_WEB_TEST_CLI
+TEST_F(WebSDK, CliExplicitLargeAnalysisKeepsEvidenceOfflineAndRedacted) {
+  write("/*" + std::string(neverd::web::MaxJavaScriptBytes, ' ') +
+        "*/function CANARY(){return fetch(`/CANARY/${CANARY}`)}");
+  for (const auto Command :
+       {"navigate-large", "bindings-large", "interfaces-large",
+        "interface-relations-large", "report-source-large"}) {
+    SCOPED_TRACE(Command);
+    // LLVM redirects preserve existing file tails; use fresh logs per command.
+    const auto Output = (Root / (std::string(Command) + ".stdout")).string();
+    const auto Errors = (Root / (std::string(Command) + ".stderr")).string();
+    const llvm::StringRef Args[] = {NEVERD_WEB_TEST_CLI, "web", Command, Path,
+                                    "module"};
+    const llvm::StringRef Environment[] = {"PATH=/neverd-no-external-tools",
+                                           "NEVERD_SIGNATURE_CACHE=off"};
+    const std::optional<llvm::StringRef> Redirects[] = {std::nullopt, Output,
+                                                        Errors};
+    std::string LaunchError;
+    ASSERT_EQ(llvm::sys::ExecuteAndWait(NEVERD_WEB_TEST_CLI, Args, Environment,
+                                        Redirects, 20, 0, &LaunchError),
+              0)
+        << LaunchError;
+    std::ifstream Stdout(Output), Stderr(Errors);
+    const std::string Out{std::istreambuf_iterator<char>(Stdout), {}};
+    const std::string Err{std::istreambuf_iterator<char>(Stderr), {}};
+    EXPECT_EQ(Out.find("CANARY"), std::string::npos);
+    EXPECT_TRUE(Err.empty());
+    if (std::string_view(Command) == "navigate-large" ||
+        std::string_view(Command) == "bindings-large")
+      EXPECT_NE(Out.find(neverd::web::LargeJavaScriptParserProfile),
+                std::string::npos);
+    std::istringstream Lines(Out);
+    std::string Line;
+    while (std::getline(Lines, Line)) {
+      auto Parsed = llvm::json::parse(Line);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Object = Parsed->getAsObject();
+      ASSERT_NE(Object, nullptr);
+      EXPECT_EQ(Object->getString("status"), "ok");
+      if (const auto Executes = Object->getBoolean("executes_input"))
+        EXPECT_FALSE(*Executes);
+      if (const auto Network = Object->getBoolean("network_access"))
+        EXPECT_FALSE(*Network);
+    }
+  }
+}
+#endif
+#endif
 
 TEST_F(WebSDK, OwnershipAndBorrowedBufferAdmission) {
   EXPECT_EQ(errorCode(take(neverd_web_metadata_json(nullptr))),
@@ -1976,6 +2079,10 @@ TEST_F(WebSDK, DisabledParserHasNoImplicitExternalFallback) {
   write("const x = 1;");
   commit(preview());
   EXPECT_EQ(errorCode(analyze("1", rootID("1"))), "capability_unavailable");
+  const auto ID = rootID("1");
+  EXPECT_EQ(errorCode(take(neverd_web_source_analyze_large_json(
+                Session, "1", 1, ID.data(), ID.size(), "module", 6))),
+            "capability_unavailable");
   EXPECT_EQ(errorCode(mapLookup("1", "missing-map", "missing-source", 0)),
             "capability_unavailable");
   EXPECT_EQ(errorCode(bindings("1", "missing-source")),
