@@ -330,8 +330,13 @@ bool liftCoreMove(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   }
 
   // --- NOP ---
-  case X86_INS_NOP:
   case X86_INS_FNOP:
+    // FNOP still checks pending x87 exceptions and moves the FPU instruction
+    // pointer; an owned context executes it in liftFPU.
+    if (L.ownsX87Context())
+      return false;
+    [[fallthrough]];
+  case X86_INS_NOP:
     S.emit(NdOp::NOP, {}, {});
     break;
 

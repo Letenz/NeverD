@@ -12,6 +12,7 @@
 #include "neverd/decode/Decoder.h"
 
 #include "neverd/decode/AArch64NativeDecode.h"
+#include "neverd/ir/X87Context.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/AArch64Lifter.h"
 #include "neverd/lift/ARMLifter.h"
@@ -134,12 +135,22 @@ bool Decoder::init(Arch TheArch, InstructionMode Mode) {
 }
 
 void Decoder::configureFor(const BinaryImage &Img) {
+  if (!X86)
+    return;
   // A PE image runs on Windows, whose system service convention an x64
   // SYSCALL follows.
+  X86->setSyscallConvention(Img.abiFormat() == BinaryFormat::COFF
+                                ? X86Lifter::SyscallConvention::WindowsNT
+                                : X86Lifter::SyscallConvention::Linux);
+  // The calling convention also decides whether long double values cross
+  // calls, and so who owns the x87 register stack.
+  X86->setX87ContextOwnership(
+      x87ContextOwnsStack(Img.Arch, Img.abiFormat(), Img.X87ContextOverride));
+}
+
+void Decoder::setX87ContextOwnership(bool Owned) {
   if (X86)
-    X86->setSyscallConvention(Img.abiFormat() == BinaryFormat::COFF
-                                  ? X86Lifter::SyscallConvention::WindowsNT
-                                  : X86Lifter::SyscallConvention::Linux);
+    X86->setX87ContextOwnership(Owned);
 }
 
 bool Decoder::init(const BinaryImage &Img) {
