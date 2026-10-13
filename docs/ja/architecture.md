@@ -1563,3 +1563,9 @@ DarwinFileSystems.cpp owns LP64 filesystem record serialization and read-only co
 宣言されたマウント一覧は順序付きキャッシュと明示的な更新結果を提供します。プロセスごとにキャッシュを保持し、重複した記録と空の一覧を正確に扱います。未宣言の一覧は不明のままです。Apple アプリが使うファイルシステム照会を追加しましたが、dyld、Mach IPC、完全な Objective-C/Swift と Foundation/UIKit 環境は未完成です。
 
 DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fstatfs64 and getfsstat64. DarwinFiles owns bounded declaration admission and a per-process vector selecting immutable cached/refreshed records. The strict ProcessDarwinFilesJSON reader uses one complete snapshot parser for both object observations and mount enumeration. Enumeration never derives a global mount relation from object paths or equal IDs. It does not change object-bound snapshots, credentials, metadata, contents, namespace, descriptors or VM authority. Refresh selection commits before complete copyout faults. A partially accessible current record is an explicit fail-stop boundary before that record refreshes; earlier complete records remain committed.
+
+## Swift scalar instruction completion
+
+復元された x86_64 Swift は、従来のスカラー形式に加えて、厳密なレジスター ADD/SUB/MUL/DIV 命令完了形式をサポートします。両形式は同じ補助関数で数値ビットと完全な入出力 MXCSR を保持します。メモリー、パック演算、SQRT/MIN/MAX、FMA、変換、丸め、近似演算は未対応です。確認された Swift スタック引数の復元失敗を修正しますが、完全な macOS/iOS ランタイムとフレームワーク環境は未完成です。
+
+The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits only register X86FPArithState with scalar control16|optional8|kind and 4/8-byte elements for Add/Subtract/Multiply/Divide. It normalizes the intrinsic and element width to the existing scalar helper key, then removes only the proven literal control operand. Left, Right and State retain their order. A function mixing legacy and generic forms defines each helper once. Target guards, file-level module_preamble declarations, optimization-disabled arithmetic and complete state packing remain unchanged; no ARM64 MXCSR substitution or memory/packed lowering is inferred.

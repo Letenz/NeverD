@@ -1762,8 +1762,9 @@ readable C execute the actual instruction, and concrete execution reuses the
 common packed evaluator and authenticated memory access owner. Existing scalar
 ADD/SUB/MUL/DIV register contracts remain valid. FMA4,
 EVEX/SAE, enabled alignment checking and unavailable CPU-feature faults retain
-their separate contracts. Swift explicitly refuses this new completion surface
-until it has an equivalent lowering.
+their separate contracts. Swift supports only the exact scalar register ADD/SUB/MUL/DIV forms
+through the existing scalar numerical/MXCSR helpers. The remaining completion
+forms are explicitly refused.
 
 VEX FMA3 uses append-only `X86FPFmaState` and `X86FPFmaMemoryState` contracts.
 Their six LowIR inputs retain the physical destination, vvvv and r/m sources
@@ -4692,3 +4693,9 @@ DarwinFileSystems.cpp owns LP64 filesystem record serialization and read-only co
 Declared mount enumeration now provides ordered cached observations and explicitly supplied successful refreshes. Each process keeps its own cache. Duplicate records remain separate, and an empty table is distinct from an unknown table. This supports another common filesystem query used by Apple applications; dyld, Mach IPC and the full Objective-C/Swift and Foundation/UIKit environment remain incomplete.
 
 DarwinFileSystems.cpp is the sole LP64 statfs record serializer for statfs64, fstatfs64 and getfsstat64. DarwinFiles owns bounded declaration admission and a per-process vector selecting immutable cached/refreshed records. The strict ProcessDarwinFilesJSON reader uses one complete snapshot parser for both object observations and mount enumeration. Enumeration never derives a global mount relation from object paths or equal IDs. It does not change object-bound snapshots, credentials, metadata, contents, namespace, descriptors or VM authority. Refresh selection commits before complete copyout faults. A partially accessible current record is an explicit fail-stop boundary before that record refreshes; earlier complete records remain committed.
+
+## Swift scalar instruction completion
+
+Recovered x86_64 Swift now supports exact scalar register ADD/SUB/MUL/DIV instruction completions as well as the earlier scalar forms. Both preserve numerical bits and complete incoming/outgoing MXCSR through the same helper. Memory, packed arithmetic, SQRT/MIN/MAX, FMA, conversion, rounding and approximate operations remain unsupported. This repairs the observed Swift stack-parameter recovery failures; full macOS/iOS runtime and framework support remains incomplete.
+
+The shared X86FPState shape and helper-layout validators remain authoritative. HighSwiftEmitter admits only register X86FPArithState with scalar control16|optional8|kind and 4/8-byte elements for Add/Subtract/Multiply/Divide. It normalizes the intrinsic and element width to the existing scalar helper key, then removes only the proven literal control operand. Left, Right and State retain their order. A function mixing legacy and generic forms defines each helper once. Target guards, file-level module_preamble declarations, optimization-disabled arithmetic and complete state packing remain unchanged; no ARM64 MXCSR substitution or memory/packed lowering is inferred.

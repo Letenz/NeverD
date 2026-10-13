@@ -3922,7 +3922,7 @@
         "Encrypted native slices are rejected. Unresolved metadata and pointer encodings reduce coverage. Swift source signatures use the built-in LLVM component and are checked against native symbol entries; metadata-only runs neither the native source exporter nor signature demangling. Signature inventory records demangler {name: llvm-swift-demangle, execution: builtin, version: 6.3.3}. No external demangler or toolchain-discovery process or logs are used; the former executable option and environment setting are removed.",
         "Overall success records output publication, not complete method recovery. Recovered coverage requires every inventoried callable to have its supported body or proven compiler projection; incomplete metadata can still make overall coverage partial or unknown. An exhaustive original-program inventory is not guaranteed.",
         "Metadata-only emits declarations, metadata and the selected binary, without native C, Objective-C bodies or method-body coverage. Full recovery analyzes one selected native artifact, and max-func can leave discovered methods unrecovered.",
-        "Recovered x86_64 Swift scalar SSE add/subtract/multiply/divide retain typed numerical/MXCSR effects through LLVM compiler pointer intrinsics. Output requires an x86_64 Swift target and file-level module_preamble declarations; shared SDK/mobile assembly preserves each distinct preamble once and exact method identities. Conversion state and general 96-bit memory/arithmetic remain unsupported. Native Intel unmasked-trap execution is a separate gate; Rosetta forces exception masks and cannot validate it. This does not complete macOS/iOS runtime or framework support."
+        "Recovered x86_64 Swift scalar register add/subtract/multiply/divide accepts both the legacy state forms and exact generic X86FPArithState completions, preserving typed numerical bits and complete incoming/outgoing MXCSR through the same normalized helper key and LLVM compiler pointer intrinsics. Output requires an x86_64 Swift target and file-level module_preamble declarations; shared SDK/mobile assembly preserves each distinct preamble once and exact method identities. Memory, packed/horizontal/alternating arithmetic, SQRT/MIN/MAX, FMA, conversion, rounding and approximate state operations remain unsupported. Independent masked execution compares generated Swift and original SSE against literal numerical/MXCSR cases at Onone/O. Native Intel unmasked-trap execution is a separate gate; Rosetta forces exception masks and cannot validate it. The four-variant858-check macOS Swift corpus does not complete physical iOS, macOS/iOS runtime or framework support."
       ],
       "tests": [
         {
@@ -4117,6 +4117,46 @@
             "darwin",
             "linux",
             "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.GenericScalarRegisterCompletionUsesLegacyHelpers",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.GenericScalarCompletionRejectsOtherShapesAndControls",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.GenericScalarCompletionCompilesAndExecutesCompleteState",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "runner": "gtest",
+          "target": "NeverDLiftTests",
+          "source": "unittests/backend/HighSwiftEmitterTests.cpp",
+          "filter": "HighSwiftEmitter.MixedScalarCompletionDeduplicatesHelpersAndExecutesState",
+          "platforms": [
+            "darwin"
           ]
         }
       ],
