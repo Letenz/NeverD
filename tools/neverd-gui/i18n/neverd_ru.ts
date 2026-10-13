@@ -1467,6 +1467,14 @@ Double-click to go to the declaration.</source>
         <source>Saved variable names belong to a different source rendering</source>
         <translation>Сохранённые имена переменных относятся к другому представлению исходного кода</translation>
     </message>
+    <message>
+        <source>Expand block (Ctrl+Shift+])</source>
+        <translation>Развернуть блок (Ctrl+Shift+])</translation>
+    </message>
+    <message>
+        <source>Collapse block (Ctrl+Shift+[)</source>
+        <translation>Свернуть блок (Ctrl+Shift+[)</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2143,6 +2151,22 @@ Use this PDB for analysis? Its symbols, types, function signatures and address r
     <message>
         <source>This engine cannot use an unverified PDB for analysis</source>
         <translation>Этот движок не может использовать непроверенный PDB для анализа</translation>
+    </message>
+    <message>
+        <source>Line</source>
+        <translation>Строка</translation>
+    </message>
+    <message>
+        <source>Column</source>
+        <translation>Столбец</translation>
+    </message>
+    <message>
+        <source>Code</source>
+        <translation>Код</translation>
+    </message>
+    <message>
+        <source>Wait for the function to finish loading before finding references</source>
+        <translation>Дождитесь загрузки функции перед поиском ссылок</translation>
     </message>
 </context>
 <context>

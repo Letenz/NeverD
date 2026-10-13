@@ -306,6 +306,17 @@ in the image's language, EVM bytecode as Solidity and an SBF program as Rust.
 `neverd headers --json` lists the languages a program offers under
 `language.pseudocode`.
 
+Pseudocode, C and LLVM C also fold multiline brace blocks, including `if/else`,
+`while`, `do`, `for` and `switch`. Click the arrow beside the header's line number,
+or use Ctrl+Shift+[ to collapse the current block and Ctrl+Shift+] to expand it;
+Keypad -/+ work too. The header and closing line stay visible, so an `else`
+keeps its own arrow. Nested blocks retain their folding state when their parent
+is expanded. Line numbers remain the original source numbers, and copying or
+exporting includes the hidden code. Instruction and local-reference navigation
+and text search expand every fold hiding the target. Refreshing the same function
+preserves block folds while its brace structure is unchanged. Braces in comments
+and quoted strings do not define folding ranges; incomplete source stays expanded.
+
 Strings are found by default in ASCII, UTF-8, UTF-16LE and UTF-32LE (the
 `wchar_t` of Linux and macOS), and C strings that are not UTF-8 in the common
 code pages: windows-1252, GBK, Big5, Shift-JIS and EUC-KR, all in one pass.
@@ -358,6 +369,14 @@ and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
+In a pseudocode, C or LLVM C window, X on a declared local variable or parameter
+lists its occurrences in the current function, with source line, column and
+code. The list uses the variable's identity from the complete loaded document,
+so similarly spelled names, member names, strings and comments are excluded.
+Selecting an occurrence stays in the originating code window, expands any fold
+that hides the row and selects the identifier. Renamed locals keep their
+original identity. A source reload or project close retires the old list.
+
 The output window's command line evaluates expressions in hexadecimal by
 default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 `hex`, `strref`, `analyze` and `save`; `help` lists them. **Options → Show command palette**
@@ -387,6 +406,7 @@ default (`#10` is decimal) and runs `g`, `x`, `n`, `c`, `d`, `f`, `graph`,
 | Ctrl+Shift+F12 | String references |
 | F6 / Shift+F6 | Next / previous window |
 | Ctrl+F | Quick filter in a list; find text in a disassembly, pseudocode or IR window |
+| Ctrl+Shift+[ / Ctrl+Shift+] | Collapse / expand the current pseudocode brace block |
 | Ctrl+F5 | Write the function's pseudocode to a C file |
 | Alt+A | String literal options |
 | Ctrl+W | Save the database |
