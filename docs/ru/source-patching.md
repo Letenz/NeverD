@@ -1,6 +1,6 @@
 **Languages**: [English](../source-patching.md) | [简体中文](../zh-CN/source-patching.md) | [繁體中文](../zh-TW/source-patching.md) | [日本語](../ja/source-patching.md) | [한국어](../ko/source-patching.md) | [Français](../fr/source-patching.md) | [Deutsch](../de/source-patching.md) | [Español](../es/source-patching.md) | [Italiano](../it/source-patching.md) | [Русский](source-patching.md) | [العربية](../ar/source-patching.md)
 
-<!-- i18n-source: af0496e17f69d27942f632e67383d2ae53c3e13604d41b59653c43ed61041184 -->
+<!-- i18n-source: f682c59ea924e0d6188c4b2c418b7ad04e246df77c9925a04788a84818d838ab -->
 
 [← Documentation Index](README.md)
 
@@ -129,4 +129,4 @@ ctest --test-dir build-source -L \
 
 Копия LLVM также исправляет GOT-ссылки на данные Mach-O x64: таблица типизированного catch Clang отсчитывается от конца четырёхбайтового поля релокации. r3/r4 сдвигает её на четыре байта; проверка перед публикацией отклоняет такой результат. На Mac x64 работает через Rosetta 2, ARM64 — напрямую.
 
-При проверке в нативной среде Windows x64 [96cf7cd59](https://github.com/NeverSight/NeverD/actions/runs/38200205814) успешно выполнены все 15 специализированных тестов PE/объектов/trampoline и все 48 тестов матрицы целей, без пропусков. Тест FH3 выполнил семь сценариев C++. Использованы Clang 22.1.6, нативные MSVC и Windows SDK.
+При проверке в нативной среде Windows x64 [2ed7e78fc](https://github.com/NeverSight/NeverD/actions/runs/38307461805) успешно выполнены все 16 специализированных тестов PE/объектов/trampoline и все 143 теста CPU-матрицы целей, без пропусков. Тест FH3 выполнил семь сценариев C++; матрица использует Unicorn. Использованы Clang 22.1.6, нативные MSVC и Windows SDK, а также интегрированный LLVM.
